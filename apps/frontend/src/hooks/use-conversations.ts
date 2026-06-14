@@ -85,16 +85,13 @@ export function useConversations(workspaceId: string, streamId: string, options?
   // INV-53: invalidate bootstrap on resubscribe (reconnect) so any events
   // missed during the disconnect are reconciled from the server.
   //
-  // In active sync-v2 mode the workspace catch-up cursor replays the missed
-  // conversation events (stream-scoped sync-log entries) through the
-  // gate-registered handlers below, so the blanket invalidation is redundant
-  // there — but "off" is the runtime kill switch and "shadow" applies
-  // nothing, so both keep this healing, as do mounts outside the SyncEngine
-  // provider. The mode is fixed per engine lifetime; a flag flip recreates
-  // the engine and re-runs this effect with the new mode.
+  // When a SyncEngine is mounted its workspace catch-up cursor replays the
+  // missed conversation events (stream-scoped sync-log entries) through the
+  // gate-registered handlers, so the blanket invalidation is redundant there.
+  // Mounts outside the SyncEngine provider (no engine) keep this healing.
   useEffect(() => {
     if (reconnectCount === 0 || !workspaceId || !streamId || !enabled) return
-    if (syncEngine?.syncCursorMode === "active") return
+    if (syncEngine) return
     queryClient.invalidateQueries({ queryKey: conversationKeys.list(workspaceId, streamId, { status, limit }) })
   }, [reconnectCount, workspaceId, streamId, status, limit, enabled, queryClient, syncEngine])
 

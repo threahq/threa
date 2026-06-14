@@ -1,5 +1,13 @@
 # Sync v2 PR E+ — healing-path inventory and deletion verdicts
 
+> **Update (flag retired).** The `sync-v2-cursor` feature flag has since been
+> deleted and active mode hardwired: the `SyncEngine` always runs the cursor
+> when a sync service is wired. The `off`/`shadow` paths and the per-flag mode
+> branching are gone, so the gates described below as "active mode" /
+> "`syncCursorMode === "active"`" are now simply "a `SyncEngine` is mounted"
+> (engine present). The healing verdicts are unchanged; only the predicate
+> simplified. Entries below are kept as the historical record of each PR.
+
 Survey of every remaining client-side healing path (blanket reconnect
 invalidations, bootstrap refetches, INV-53 redundancy) now that the workspace
 sync cursor is the default (`sync-v2-cursor: active`, #884) and the

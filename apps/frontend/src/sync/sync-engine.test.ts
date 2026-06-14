@@ -11,7 +11,6 @@ import {
   DEFAULT_USER_PREFERENCES,
   DEFAULT_WORKSPACE_SETTINGS,
   defaultFeatureFlags,
-  defaultFeatureFlagValue,
   DEFAULT_SIDEBAR_CONFIG,
   LabelableResourceTypes,
   type WorkspaceBootstrap,
@@ -893,124 +892,6 @@ describe("SyncEngine.backfillStreamGap", () => {
   })
 })
 
-describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
-  beforeEach(async () => {
-    resetRevealGate()
-    await Promise.all([db.workspaces.clear(), db.syncCursors.clear()])
-  })
-
-  function makeShadowDeps(catchUp: ReturnType<typeof vi.fn>) {
-    return {
-      ...makeDeps(),
-      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      syncCursorMode: "shadow" as const,
-    }
-  }
-
-  function emptyPage(head: string): SyncCatchUpResponse {
-    return { entries: [], head }
-  }
-
-  function entry(syncId: string, eventType = "message:created"): SyncCatchUpResponse["entries"][number] {
-    return { syncId, eventType, payload: {}, createdAt: new Date().toISOString() }
-  }
-
-  it("seeds the cursor from head on first run instead of replaying the log", async () => {
-    const catchUp = vi.fn(async () => emptyPage("42"))
-    const engine = new SyncEngine(makeShadowDeps(catchUp))
-
-    await engine.onConnect(asSocket(new MockSocket()))
-
-    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("42"))
-    expect(catchUp).toHaveBeenCalledTimes(1)
-    expect(catchUp).toHaveBeenCalledWith("ws_1", { after: "0", limit: 1 }, expect.any(AbortSignal))
-    engine.destroy()
-  })
-
-  it("advances the cursor only from this workspace's live payloads carrying syncId", async () => {
-    const catchUp = vi.fn(async () => emptyPage("5"))
-    const engine = new SyncEngine(makeShadowDeps(catchUp))
-    const socket = new MockSocket()
-
-    await engine.onConnect(asSocket(socket))
-    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("5"))
-
-    socket.trigger("message:created", { workspaceId: "ws_1", syncId: "7" })
-    expect(engine.getSyncCursor()).toBe("7")
-
-    // Lower id, other workspace, missing syncId: none move the cursor
-    socket.trigger("message:created", { workspaceId: "ws_1", syncId: "6" })
-    socket.trigger("message:created", { workspaceId: "ws_other", syncId: "9" })
-    socket.trigger("stream:read", { workspaceId: "ws_1" })
-    expect(engine.getSyncCursor()).toBe("7")
-    engine.destroy()
-  })
-
-  it("pages catch-up from the persisted cursor until an empty page, advancing by fetched entries", async () => {
-    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    const catchUp = vi
-      .fn()
-      .mockResolvedValueOnce({ entries: [entry("11"), entry("12", "stream:read")], head: "12" })
-      .mockResolvedValue(emptyPage("12"))
-    const engine = new SyncEngine(makeShadowDeps(catchUp))
-
-    await engine.onConnect(asSocket(new MockSocket()))
-
-    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("12"))
-    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", { after: "10", limit: 500 }, expect.any(AbortSignal))
-    expect(catchUp).toHaveBeenNthCalledWith(2, "ws_1", { after: "12", limit: 500 }, expect.any(AbortSignal))
-    engine.destroy()
-  })
-
-  it("single-flights concurrent shadow catch-ups", async () => {
-    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    let resolveFirst: ((value: SyncCatchUpResponse) => void) | undefined
-    const catchUp = vi.fn(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirst ??= resolve)))
-    const engine = new SyncEngine(makeShadowDeps(catchUp))
-    const socket = new MockSocket()
-    await engine.onConnect(asSocket(socket))
-
-    await engine.refreshAfterConnectivityResume()
-    await engine.refreshAfterConnectivityResume()
-    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
-    expect(catchUp).toHaveBeenCalledTimes(1)
-
-    resolveFirst?.(emptyPage("10"))
-    engine.destroy()
-  })
-
-  it("aborts an in-flight shadow catch-up on destroy", async () => {
-    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    let capturedSignal: AbortSignal | undefined
-    const catchUp = vi.fn((_workspaceId: unknown, _params: unknown, signal?: AbortSignal) => {
-      capturedSignal = signal
-      return new Promise<SyncCatchUpResponse>(() => {})
-    })
-    const engine = new SyncEngine(makeShadowDeps(catchUp))
-
-    await engine.onConnect(asSocket(new MockSocket()))
-    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
-    expect(capturedSignal?.aborted).toBe(false)
-
-    engine.destroy()
-    expect(capturedSignal?.aborted).toBe(true)
-  })
-
-  it("does nothing when the shadow flag is off", async () => {
-    const catchUp = vi.fn(async () => emptyPage("42"))
-    const deps = { ...makeShadowDeps(catchUp), syncCursorMode: "off" as const }
-    const engine = new SyncEngine(deps)
-    const socket = new MockSocket()
-
-    await engine.onConnect(asSocket(socket))
-    socket.trigger("message:created", { workspaceId: "ws_1", syncId: "7" })
-
-    expect(catchUp).not.toHaveBeenCalled()
-    expect(engine.getSyncCursor()).toBeNull()
-    engine.destroy()
-  })
-})
-
 describe("SyncEngine sync-v2 cursor (active mode)", () => {
   beforeEach(async () => {
     resetRevealGate()
@@ -1026,7 +907,6 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     return {
       ...makeDeps(),
       syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      syncCursorMode: "active" as const,
     }
   }
 
@@ -1383,39 +1263,30 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
   })
 })
 
-describe("SyncEngine sync-v2 cursor mode wiring", () => {
-  function makeSyncDeps(syncCursorMode?: "shadow" | "off" | "active") {
+describe("SyncEngine cursor gate wiring", () => {
+  function makeSyncDeps() {
     const catchUp = vi.fn(async (): Promise<SyncCatchUpResponse> => ({ entries: [], head: "0" }))
-    return { ...makeDeps(), syncService: { catchUp }, syncCursorMode }
+    return { ...makeDeps(), syncService: { catchUp } }
   }
 
-  it("resolves the mode from deps, falling back to the registry default, and forces off without a sync service", () => {
-    const fromRegistry = new SyncEngine(makeSyncDeps())
-    expect(fromRegistry.syncCursorMode).toBe(defaultFeatureFlagValue("sync-v2-cursor"))
-    fromRegistry.destroy()
-
-    const explicit = new SyncEngine(makeSyncDeps("active"))
-    expect(explicit.syncCursorMode).toBe("active")
-    // Active mode is the only one that owns an event gate.
-    expect(explicit.getLiveEventSource()).not.toBeNull()
-    explicit.destroy()
+  it("owns an event gate when a sync service is wired, and none without one", () => {
+    const withSyncService = new SyncEngine(makeSyncDeps())
+    expect(withSyncService.getLiveEventSource()).not.toBeNull()
+    withSyncService.destroy()
 
     const withoutSyncService = new SyncEngine(makeDeps())
-    expect(withoutSyncService.syncCursorMode).toBe("off")
     expect(withoutSyncService.getLiveEventSource()).toBeNull()
     withoutSyncService.destroy()
   })
 
-  it("isSyncEngineCurrent forces recreation on workspace change, destroy, and a mode change only", () => {
-    const engine = new SyncEngine(makeSyncDeps("shadow"))
+  it("isSyncEngineCurrent forces recreation on workspace change and destroy only", () => {
+    const engine = new SyncEngine(makeSyncDeps())
 
-    expect(isSyncEngineCurrent(engine, "ws_other", "shadow")).toBe(false)
-    expect(isSyncEngineCurrent(engine, "ws_1", "active")).toBe(false)
-    expect(isSyncEngineCurrent(engine, "ws_1", "off")).toBe(false)
-    expect(isSyncEngineCurrent(engine, "ws_1", "shadow")).toBe(true)
+    expect(isSyncEngineCurrent(engine, "ws_other")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1")).toBe(true)
 
     engine.destroy()
-    expect(isSyncEngineCurrent(engine, "ws_1", "shadow")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1")).toBe(false)
   })
 })
 
@@ -1438,7 +1309,6 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
     return {
       ...makeDeps(),
       syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      syncCursorMode: "active" as const,
     }
   }
 
@@ -1611,29 +1481,6 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
     engine.destroy()
   })
 
-  it("does not react to heartbeats in shadow mode", async () => {
-    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
-    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    const engine = new SyncEngine({
-      ...makeDeps(),
-      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      syncCursorMode: "shadow" as const,
-    })
-    const socket = new MockSocket()
-    await engine.onConnect(asSocket(socket))
-    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
-    const baseline = catchUp.mock.calls.length
-
-    vi.useFakeTimers()
-    socket.trigger("sync:heartbeat", heartbeat("99"))
-    vi.advanceTimersByTime(10_000)
-    vi.useRealTimers()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-
-    expect(catchUp.mock.calls.length).toBe(baseline)
-    engine.destroy()
-  })
-
   it("destroy during the grace window cancels the pending catch-up", async () => {
     const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
     const { engine, socket } = await connectSettledEngine(catchUp)
@@ -1701,7 +1548,6 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
       ...makeDeps(),
       syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
       labelService: { list },
-      syncCursorMode: "active" as const,
     }
   }
 
@@ -1804,7 +1650,7 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
-  it("keeps the full reconnect bootstrap in off mode", async () => {
+  it("keeps the full reconnect bootstrap without a sync service", async () => {
     const deps = makeDeps()
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
@@ -1817,12 +1663,11 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
-  it("keeps the full reconnect bootstrap in active mode when no labelService is wired", async () => {
+  it("keeps the full reconnect bootstrap when a sync service is wired but no labelService is", async () => {
     const catchUp = vi.fn(async () => emptyPage("0"))
     const deps = {
       ...makeDeps(),
       syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      syncCursorMode: "active" as const,
     }
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()

@@ -20,13 +20,12 @@ import {
 import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
-import type { SyncV2CursorMode } from "./sync-v2-mode"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { reconcileLabels } from "@/hooks/use-labels"
-import { defaultFeatureFlagValue, type WorkspaceBootstrap } from "@threa/types"
+import type { WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
   workspaceId: string
@@ -45,7 +44,7 @@ interface SyncEngineDeps {
    *  workspace catch-up can't replay: assignments on public streams the viewer
    *  can see (INV-62) but has no `stream_members` row for, so the
    *  stream-group-scoped `label:*` event never reaches their sync-log cursor.
-   *  Absent (off/shadow/test deps) → the reconnect bootstrap stays full. */
+   *  Absent (no-syncService/test deps) → the reconnect bootstrap stays full. */
   labelService?: {
     list: (workspaceId: string) => Promise<{
       labels: import("@threa/types").Label[]
@@ -69,6 +68,10 @@ interface SyncEngineDeps {
     delete: (workspaceId: string, id: string) => Promise<void>
     sendNow: (workspaceId: string, id: string) => Promise<import("@threa/types").ScheduledMessageView>
   }
+  /** When provided, the engine runs the sync-log cursor: it pages catch-up on
+   *  every connect/resume/heartbeat and applies entries through the live
+   *  handlers via the event gate. Absent (degenerate test deps) → no cursor,
+   *  no gate, full reconnect bootstrap. */
   syncService?: {
     catchUp: (
       workspaceId: string,
@@ -76,10 +79,6 @@ interface SyncEngineDeps {
       signal?: AbortSignal
     ) => Promise<import("@threa/types").SyncCatchUpResponse>
   }
-  /** Resolved `sync-v2-cursor` flag value, fixed for this engine's lifetime —
-   *  the workspace layout recreates the engine when the flag changes (see
-   *  shouldRecreateSyncEngine). Defaults to the registry default. */
-  syncCursorMode?: SyncV2CursorMode
 }
 
 /** Safety valve for catch-up paging (20 pages × 500 entries). */
@@ -127,15 +126,12 @@ export class SyncEngine {
   /** Whether the engine has been destroyed. Public for ref-check re-creation. */
   isDestroyed = false
 
-  // Sync-engine v2 cursor: one lastSyncId per workspace. In shadow mode it is
-  // advanced by live events and exercised against the catch-up endpoint
-  // without owning any healing; in active mode catch-up entries are applied
-  // through the live handlers via the event gate. See sync-log-cursor.ts.
-  // Public so the React layer can detect a flag change (shouldRecreateSyncEngine).
-  readonly syncCursorMode: SyncV2CursorMode
+  // Sync-engine cursor: one lastSyncId per workspace. Catch-up entries are
+  // applied through the live handlers via the event gate, while live events
+  // buffer-and-splice around each catch-up window. Present iff syncService is
+  // wired. See sync-log-cursor.ts.
   private readonly eventGate: SocketEventGate | null
   private syncLogCursor: SyncLogCursor | null = null
-  private syncCursorCleanup: (() => void) | null = null
   private activeCatchUp: Promise<void> | null = null
   private catchUpAbort: AbortController | null = null
   /** Bumped on every gate pause (connect/resume trigger). A catch-up run
@@ -167,13 +163,11 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
-    this.syncCursorMode = deps.syncService ? (deps.syncCursorMode ?? defaultFeatureFlagValue("sync-v2-cursor")) : "off"
-    this.eventGate =
-      this.syncCursorMode === "active"
-        ? new SocketEventGate(this.workspaceId, {
-            onApplied: (syncId) => this.syncLogCursor?.advance(syncId),
-          })
-        : null
+    this.eventGate = deps.syncService
+      ? new SocketEventGate(this.workspaceId, {
+          onApplied: (syncId) => this.syncLogCursor?.advance(syncId),
+        })
+      : null
   }
 
   /** Update the current stream ID (called from React when route changes). */
@@ -220,9 +214,7 @@ export class SyncEngine {
       this.cleanupStreamHandlers()
     }
 
-    if (this.syncCursorMode === "shadow") {
-      this.trackSyncCursor(socket)
-    } else if (this.syncCursorMode === "active") {
+    if (this.eventGate) {
       this.trackHeartbeat(socket)
       // Read-before-stamp: the cursor position (head, on a first run) must be
       // read BEFORE the bootstrap data fetch so any race falls on the
@@ -242,8 +234,7 @@ export class SyncEngine {
         getCurrentStreamId: () => this.currentStreamId,
         getCurrentUser: () => this.currentUser,
         subscribeStream: (streamId: string) => void this.subscribeStream(streamId),
-      },
-      this.syncCursorMode
+      }
     )
 
     await this.runBootstrap(isReconnect)
@@ -252,7 +243,7 @@ export class SyncEngine {
     this.kickOperationQueue()
 
     // Runs after bootstrap so it never competes for the connection setup
-    // window. Shadow logs only; active applies through the gate.
+    // window. Applies entries through the gate (no-op without a sync service).
     void this.runCatchUp(isReconnect ? "reconnect" : "connect")
   }
 
@@ -266,13 +257,14 @@ export class SyncEngine {
     // Same pause-before-bootstrap rule as onConnect: the catch-up position
     // must not move between this trigger and the catch-up fetch.
     this.beginCatchUpCycle()
-    // Resume is a reconnect-shaped trigger: in active mode the slim path
-    // (per-stream deltas for visible streams + a viewer-label reconcile) plus
-    // the catch-up replay below re-seeds every workspace-scoped projection, so
-    // a full snapshot refetch would only duplicate what catch-up already heals.
-    // off/shadow modes and the first connect fall through to the full snapshot
-    // inside runBootstrap; the below-floor catch-up fallback re-forces full when
-    // the cursor has dropped beneath the retained sync-log floor.
+    // Resume is a reconnect-shaped trigger: when the cursor is active the slim
+    // path (per-stream deltas for visible streams + a viewer-label reconcile)
+    // plus the catch-up replay below re-seeds every workspace-scoped
+    // projection, so a full snapshot refetch would only duplicate what catch-up
+    // already heals. No-syncService deps and the first connect fall through to
+    // the full snapshot inside runBootstrap; the below-floor catch-up fallback
+    // re-forces full when the cursor has dropped beneath the retained
+    // sync-log floor.
     await this.runBootstrap(true)
     void this.runCatchUp("resume")
   }
@@ -462,16 +454,16 @@ export class SyncEngine {
   // =========================================================================
 
   private async bootstrapWorkspace(_isReconnect: boolean, forceFull = false): Promise<void> {
-    // Active-mode reconnect slimming: catch-up replay (which runs right after
-    // this) re-seeds every workspace-scoped projection through the
-    // gate-registered handlers, so re-fetching the full workspace snapshot on
-    // every reconnect is redundant. Skip it and instead do only what catch-up
-    // can't: the per-stream message deltas (the per-stream cursor mechanism,
-    // unchanged) and a reconcile of the viewer's label assignments (the one
-    // non-member public-stream slice the sync-log can't carry). `forceFull`
-    // (below-floor fallback) and the first connect / off / shadow / no-label-
-    // service cases keep the full snapshot.
-    if (_isReconnect && !forceFull && this.syncCursorMode === "active" && this.deps.labelService) {
+    // Reconnect slimming: catch-up replay (which runs right after this)
+    // re-seeds every workspace-scoped projection through the gate-registered
+    // handlers, so re-fetching the full workspace snapshot on every reconnect
+    // is redundant. Skip it and instead do only what catch-up can't: the
+    // per-stream message deltas (the per-stream cursor mechanism, unchanged)
+    // and a reconcile of the viewer's label assignments (the one non-member
+    // public-stream slice the sync-log can't carry). `forceFull` (below-floor
+    // fallback) and the first connect / no-syncService / no-labelService cases
+    // keep the full snapshot.
+    if (_isReconnect && !forceFull && this.eventGate && this.deps.labelService) {
       await this.slimReconnectBootstrap()
       return
     }
@@ -938,28 +930,8 @@ export class SyncEngine {
     this.deps.syncStatus.setError(key, null)
   }
 
-  /**
-   * Shadow-mode half of the v2 live path: every socket event whose payload
-   * carries a `syncId` for this workspace advances the cursor. Events
-   * without one are bot-scoped or pre-deploy and stay invisible to the
-   * cursor. Registered with `onAny` so all 40+ event types hit one
-   * chokepoint instead of 40 handler edits.
-   */
-  private trackSyncCursor(socket: Socket): void {
-    this.syncLogCursor ??= new SyncLogCursor(this.workspaceId)
-    void this.syncLogCursor.load()
-
-    this.cleanupSyncCursorTracking()
-    const listener = (_event: string, ...args: unknown[]) => {
-      const payload = args[0] as { workspaceId?: unknown; syncId?: unknown } | undefined
-      if (!payload || payload.workspaceId !== this.workspaceId || typeof payload.syncId !== "string") return
-      this.syncLogCursor?.advance(payload.syncId)
-    }
-    socket.onAny(listener)
-    this.syncCursorCleanup = () => socket.offAny(listener)
-  }
-
-  /** Handler registration target: the gate in active mode, the socket otherwise. */
+  /** Handler registration target: the gate when the cursor is active, else the
+   *  raw socket (degenerate no-syncService deps). */
   private liveEventSource(socket: Socket): SyncEventSource {
     return this.eventGate ?? socket
   }
@@ -1078,14 +1050,13 @@ export class SyncEngine {
 
   /**
    * Catch-up after connect/reconnect/resume: pages the sync endpoint from the
-   * cursor. Shadow mode logs what active mode WOULD have applied; active mode
-   * applies entries through the gate. Entries fetched here are events the
-   * live path never advanced past — after a disconnect that is the healing
-   * the cursor owns; on a healthy resume it should be ~zero.
+   * cursor and applies entries through the gate. Entries fetched here are
+   * events the live path never advanced past — after a disconnect that is the
+   * healing the cursor owns; on a healthy resume it should be ~zero.
    * Single-flighted; never throws into callers.
    */
   private runCatchUp(trigger: string): Promise<void> {
-    if (this.syncCursorMode === "off" || this.isDestroyed) return Promise.resolve()
+    if (!this.eventGate || this.isDestroyed) return Promise.resolve()
     if (this.activeCatchUp) {
       // Same cycle: share the in-flight run. An OLDER cycle's run, though,
       // started from a position read before this trigger's gap — its applies
@@ -1109,17 +1080,12 @@ export class SyncEngine {
     this.activeCatchUpCycle = cycle
     const abort = new AbortController()
     this.catchUpAbort = abort
-    const run =
-      this.syncCursorMode === "active"
-        ? this.performActiveCatchUp(trigger, abort.signal, cycle)
-        : this.performShadowCatchUp(trigger, abort.signal)
-    const promise = run
+    const promise = this.performActiveCatchUp(trigger, abort.signal, cycle)
       .catch((error) => {
         // A destroy-triggered abort is expected teardown, not a failure.
         if (this.isDestroyed) return
         console.error("Sync-v2 catch-up failed", {
           workspaceId: this.workspaceId,
-          mode: this.syncCursorMode,
           trigger,
           error,
         })
@@ -1278,73 +1244,6 @@ export class SyncEngine {
     }
   }
 
-  private async performShadowCatchUp(trigger: string, signal: AbortSignal): Promise<void> {
-    const syncService = this.deps.syncService!
-    const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
-    await cursorStore.load()
-
-    const cursorBefore = cursorStore.get()
-    if (cursorBefore === null) {
-      // No cursor yet (first run on this device): seed from head instead of
-      // replaying the whole retained log — everything at or below head is
-      // covered by the bootstrap snapshot path. NOTE: this jump is legal
-      // only because shadow mode owns no healing. Active mode reads head
-      // BEFORE the bootstrap data fetch (read-before-stamp rule) so the
-      // race falls on the duplicate side, never the gap side — see
-      // initializeActiveCursor.
-      const { head } = await syncService.catchUp(this.workspaceId, { after: "0", limit: 1 }, signal)
-      if (this.isDestroyed) return
-      cursorStore.advance(head)
-      console.info("Sync-v2 shadow cursor seeded from head", { workspaceId: this.workspaceId, trigger, head })
-      return
-    }
-
-    let cursor = cursorBefore
-    let head = cursorBefore
-    let pages = 0
-    let fetched = 0
-    const byEventType: Record<string, number> = {}
-
-    while (pages < MAX_CATCHUP_PAGES) {
-      const response = await syncService.catchUp(this.workspaceId, { after: cursor, limit: CATCHUP_PAGE_LIMIT }, signal)
-      if (this.isDestroyed) return
-      head = response.head
-      if (response.entries.length === 0) break
-
-      pages += 1
-      fetched += response.entries.length
-      for (const entry of response.entries) {
-        byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
-      }
-      // Shadow advances by fetched entries — "applied" is a no-op here. The
-      // live onAny path may concurrently advance past this; monotonic max
-      // makes the race converge.
-      cursor = response.entries[response.entries.length - 1].syncId
-      cursorStore.advance(cursor)
-    }
-
-    if (fetched > 0 || trigger !== "connect") {
-      console.info("Sync-v2 shadow catch-up", {
-        workspaceId: this.workspaceId,
-        trigger,
-        cursorBefore,
-        cursorAfter: cursor,
-        head,
-        fetched,
-        pages,
-        byEventType,
-        truncated: pages >= MAX_CATCHUP_PAGES,
-      })
-    }
-  }
-
-  private cleanupSyncCursorTracking(): void {
-    if (this.syncCursorCleanup) {
-      this.syncCursorCleanup()
-      this.syncCursorCleanup = null
-    }
-  }
-
   private cleanupWorkspaceHandlers(): void {
     if (this.workspaceHandlerCleanup) {
       this.workspaceHandlerCleanup()
@@ -1361,7 +1260,6 @@ export class SyncEngine {
   private cleanupAllHandlers(): void {
     this.cleanupWorkspaceHandlers()
     this.cleanupStreamHandlers()
-    this.cleanupSyncCursorTracking()
     this.cleanupHeartbeatTracking()
   }
 }
@@ -1379,21 +1277,13 @@ function parseHeartbeatHead(value: string): bigint | null {
 }
 
 /**
- * Whether `engine` can keep serving this workspace at this sync-v2 cursor
- * mode; when false, the React layer destroys it and constructs a fresh one.
- * The mode is fixed per engine lifetime — mutating it mid-cycle would break
- * the gate/cursor ordering invariants — so a flag change is handled like a
- * workspace switch: destroy → construct. The fresh engine runs a full cycle
- * (pause → cursor read → bootstrap → catch-up), so every ordering invariant
- * holds per instance. This is what makes "off" a runtime kill switch and
- * "active" flippable without a reload.
+ * Whether `engine` can keep serving this workspace; when false, the React
+ * layer destroys it and constructs a fresh one. Only a workspace switch (or a
+ * prior destroy) forces recreation now that the cursor mode is fixed — the
+ * engine always runs the active cursor when a sync service is wired.
  */
-export function isSyncEngineCurrent(
-  engine: SyncEngine,
-  workspaceId: string,
-  syncCursorMode: SyncV2CursorMode
-): boolean {
-  return engine.workspaceId === workspaceId && !engine.isDestroyed && engine.syncCursorMode === syncCursorMode
+export function isSyncEngineCurrent(engine: SyncEngine, workspaceId: string): boolean {
+  return engine.workspaceId === workspaceId && !engine.isDestroyed
 }
 
 // React context for accessing the SyncEngine from any component

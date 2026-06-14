@@ -22,9 +22,9 @@ describe("useScheduledList refetchOnReconnect (sync-v2 mode gate)", () => {
     } as unknown as contextsModule.ScheduledService)
   })
 
-  function mockEngine(mode: "off" | "shadow" | "active" | null) {
+  function mockEngine(present: boolean) {
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue(
-      mode === null ? null : ({ syncCursorMode: mode } as unknown as syncEngineModule.SyncEngine)
+      present ? ({} as unknown as syncEngineModule.SyncEngine) : null
     )
   }
 
@@ -58,8 +58,8 @@ describe("useScheduledList refetchOnReconnect (sync-v2 mode gate)", () => {
     })
   }
 
-  it("skips the reconnect refetch in active sync-v2 mode (resume catch-up covers the online flip)", async () => {
-    mockEngine("active")
+  it("skips the reconnect refetch when a sync engine is mounted (resume catch-up covers the online flip)", async () => {
+    mockEngine(true)
     await mountInvalidatedOffline()
 
     await act(async () => {
@@ -70,19 +70,8 @@ describe("useScheduledList refetchOnReconnect (sync-v2 mode gate)", () => {
     expect(listFn).toHaveBeenCalledTimes(1)
   })
 
-  it.each(["off", "shadow"] as const)("keeps the reconnect refetch in %s sync-v2 mode", async (mode) => {
-    mockEngine(mode)
-    await mountInvalidatedOffline()
-
-    act(() => {
-      onlineManager.setOnline(true)
-    })
-
-    await waitFor(() => expect(listFn).toHaveBeenCalledTimes(2))
-  })
-
   it("keeps the reconnect refetch without a sync engine", async () => {
-    mockEngine(null)
+    mockEngine(false)
     await mountInvalidatedOffline()
 
     act(() => {

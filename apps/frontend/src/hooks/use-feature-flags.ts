@@ -19,8 +19,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
  *
  * Most callers want {@link useFeatureFlag} instead — reach for this variant
  * only when "not yet delivered" must be distinguished from "set to the
- * default" (e.g. the sync-v2 mode resolution, which substitutes its own
- * fallback during the unknown window).
+ * default" during a flag's pre-bootstrap window.
  */
 export function useFeatureFlagWhenKnown<K extends FeatureFlagKey>(
   workspaceId: string,

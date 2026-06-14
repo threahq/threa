@@ -196,22 +196,17 @@ export function useScheduledList(workspaceId: string, status: ScheduledMessageSt
       await replaceScheduledPage(workspaceId, status, res.scheduled, fetchStartedAt, res.nextCursor !== null, streamId)
       return res
     },
-    // INV-53: workspace-sync invalidates `scheduledKeys.all` on reconnect at
-    // the top of `registerWorkspaceSocketHandlers` (in active sync-v2 mode
-    // the catch-up cursor replays the missed events instead);
-    // refetchOnReconnect catches the pure online/offline case. In active mode
-    // that same online flip already runs `refreshAfterConnectivityResume()` →
-    // catch-up (workspace-layout's isOnline effect), replaying the user-scoped
-    // scheduled entries through the gate-registered workspace-sync handlers,
-    // so active skips the blanket refetch — "off" (kill switch), "shadow",
-    // and mounts without an engine keep it. The mode is fixed per engine
-    // lifetime; a flag flip recreates the engine and re-renders with the new
-    // option. refetchOnMount + staleTime: Infinity makes the invalidation
-    // actually fire on next render.
+    // INV-53: when a SyncEngine is mounted, a socket reconnect runs
+    // `refreshAfterConnectivityResume()` → workspace catch-up (workspace-
+    // layout's isOnline effect), replaying the user-scoped scheduled entries
+    // through the gate-registered workspace-sync handlers, so the engine path
+    // skips the blanket `refetchOnReconnect`. Mounts without an engine keep it
+    // for the pure online/offline case. refetchOnMount + staleTime: Infinity
+    // makes the invalidation actually fire on next render.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: syncEngine?.syncCursorMode !== "active",
+    refetchOnReconnect: !syncEngine,
     enabled: !!workspaceId,
   })
 

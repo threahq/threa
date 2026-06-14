@@ -148,23 +148,17 @@ export function useSavedList(workspaceId: string, status: SavedStatus) {
       await replaceSavedPage(workspaceId, status, res.saved, fetchStartedAt, res.nextCursor !== null)
       return res
     },
-    // INV-53: socket reconnects close their own event gap by invalidating
-    // `savedKeys.all` at the top of `registerWorkspaceSocketHandlers` (in
-    // active sync-v2 mode the catch-up cursor replays the missed events
-    // instead); `refetchOnReconnect` then catches the pure browser
-    // online/offline case. In active mode that same online flip already runs
-    // `refreshAfterConnectivityResume()` → catch-up (workspace-layout's
-    // isOnline effect), replaying the user-scoped saved entries through the
-    // gate-registered workspace-sync handlers, so active skips the blanket
-    // refetch — "off" (kill switch), "shadow", and mounts without an engine
-    // keep it. The mode is fixed per engine lifetime; a flag flip recreates
-    // the engine and re-renders with the new option. `refetchOnMount: true`
-    // plus `staleTime: Infinity` makes the invalidation land on the next
-    // render.
+    // INV-53: when a SyncEngine is mounted, a socket reconnect runs
+    // `refreshAfterConnectivityResume()` → workspace catch-up (workspace-
+    // layout's isOnline effect), replaying the user-scoped saved entries
+    // through the gate-registered workspace-sync handlers, so the engine path
+    // skips the blanket `refetchOnReconnect`. Mounts without an engine keep it
+    // for the pure browser online/offline case. `refetchOnMount: true` plus
+    // `staleTime: Infinity` makes the invalidation land on the next render.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: syncEngine?.syncCursorMode !== "active",
+    refetchOnReconnect: !syncEngine,
     enabled: !!workspaceId,
   })
 

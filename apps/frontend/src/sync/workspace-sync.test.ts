@@ -7,7 +7,6 @@ import {
   mergeReconnectWorkspaceBootstrap,
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
-import { readMirroredSyncV2Mode } from "./sync-v2-mode"
 import { SocketEventGate } from "./socket-event-gate"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
@@ -297,17 +296,6 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap())
 
     expect(await db.streams.get("stream_keep")).toBeDefined()
-  })
-
-  it("mirrors the sync-v2 mode so the next engine construction sees the delivered value", async () => {
-    localStorage.removeItem("sync-v2-mode:ws_1")
-
-    await applyWorkspaceBootstrap(
-      "ws_1",
-      makeBootstrap({ featureFlags: { ...defaultFeatureFlags(), "sync-v2-cursor": "active" } })
-    )
-
-    expect(readMirroredSyncV2Mode("ws_1")).toBe("active")
   })
 })
 
@@ -683,42 +671,30 @@ describe("registerWorkspaceSocketHandlers", () => {
     subscribeStream: vi.fn(),
   }
 
-  it("skips the INV-53 saved/scheduled reconnect invalidations in active sync-v2 mode", () => {
+  it("does not run the INV-53 saved/scheduled reconnect invalidations on registration", () => {
+    // The workspace catch-up cursor replays the missed user-scoped saved/
+    // scheduled entries through these same handlers, so registration never
+    // blanket-invalidates those caches.
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { socket } = createTestSocket()
 
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: savedKeys.all })
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
     cleanup()
   })
 
-  it.each(["off", "shadow"] as const)(
-    "runs the INV-53 saved/scheduled reconnect invalidations in %s mode (kill switch restores healing)",
-    (mode) => {
-      const queryClient = new QueryClient()
-      const invalidate = vi.spyOn(queryClient, "invalidateQueries")
-      const { socket } = createTestSocket()
-
-      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, mode)
-
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: savedKeys.all })
-      expect(invalidate).toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
-      cleanup()
-    }
-  )
-
-  it("applies gate-dispatched saved/scheduled catch-up replays to IDB in active mode", async () => {
-    // The coverage the mode-gated `refetchOnReconnect` is traded for: in
-    // active mode these handlers register on the engine's event gate, so a
-    // catch-up replay (gate.dispatch, never the raw socket) writes the rows
-    // through the same code path as a live emit.
+  it("applies gate-dispatched saved/scheduled catch-up replays to IDB", async () => {
+    // The coverage the engine-gated `refetchOnReconnect` is traded for: these
+    // handlers register on the engine's event gate, so a catch-up replay
+    // (gate.dispatch, never the raw socket) writes the rows through the same
+    // code path as a live emit.
     await Promise.all([db.savedMessages.clear(), db.scheduledMessages.clear()])
     const queryClient = new QueryClient()
     const gate = new SocketEventGate("ws_1")
-    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
 
     const now = new Date().toISOString()
     const saved: SavedMessageView = {
@@ -780,7 +756,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     await db.labelAssignments.clear()
     const queryClient = new QueryClient()
     const gate = new SocketEventGate("ws_1")
-    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
 
     const assignment: LabelAssignment = {
       workspaceId: "ws_1",
@@ -818,7 +794,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     emit("memo:created", { workspaceId: "ws_1", memoId: "memo_1" })
 
@@ -830,7 +806,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     emit("memo:created", { workspaceId: "ws_other", memoId: "memo_1" })
 
@@ -851,7 +827,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     emit(eventType, { workspaceId: "ws_1", invitationId: "invite_1" })
 
@@ -863,7 +839,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
 
     emit("invitation:sent", { workspaceId: "ws_other", invitationId: "invite_1" })
 
@@ -881,7 +857,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const gate = new SocketEventGate("ws_1")
-    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
 
     await gate.dispatch("invitation:revoked", { workspaceId: "ws_1", invitationId: "invite_1" })
 
@@ -903,17 +879,11 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(
-      socket,
-      "ws_1",
-      queryClient,
-      {
-        getCurrentStreamId: () => undefined,
-        getCurrentUser: () => ({ id: "workos_1" }),
-        subscribeStream,
-      },
-      "off"
-    )
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream,
+    })
 
     emit("stream:created", {
       workspaceId: "ws_1",
@@ -946,33 +916,25 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
-  it("applies feature_flags:updated to the bootstrap cache and the sync-v2 mode mirror", () => {
-    localStorage.removeItem("sync-v2-mode:ws_1")
+  it("applies feature_flags:updated to the bootstrap cache", () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(
-      socket,
-      "ws_1",
-      queryClient,
-      {
-        getCurrentStreamId: () => undefined,
-        getCurrentUser: () => ({ id: "workos_1" }),
-        subscribeStream: vi.fn(),
-      },
-      "off"
-    )
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
 
     emit("feature_flags:updated", {
       workspaceId: "ws_1",
       targetUserId: "member_1",
-      featureFlags: { ...defaultFeatureFlags(), "sync-v2-cursor": "off" },
+      featureFlags: defaultFeatureFlags(),
     })
 
     const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    expect(cached?.featureFlags["sync-v2-cursor"]).toBe("off")
-    expect(readMirroredSyncV2Mode("ws_1")).toBe("off")
+    expect(cached?.featureFlags).toEqual(defaultFeatureFlags())
 
     cleanup()
   })
@@ -1017,17 +979,11 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(
-      socket,
-      "ws_1",
-      queryClient,
-      {
-        getCurrentStreamId: () => undefined,
-        getCurrentUser: () => ({ id: "workos_1" }),
-        subscribeStream,
-      },
-      "off"
-    )
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream,
+    })
 
     emit("stream:created", {
       workspaceId: "ws_1",
@@ -1091,17 +1047,11 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(
-      socket,
-      "ws_1",
-      queryClient,
-      {
-        getCurrentStreamId: () => undefined,
-        getCurrentUser: () => ({ id: "workos_1" }),
-        subscribeStream,
-      },
-      "off"
-    )
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream,
+    })
 
     emit("stream:member_added", {
       workspaceId: "ws_1",
@@ -1222,17 +1172,11 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(
-      socket,
-      "ws_1",
-      queryClient,
-      {
-        getCurrentStreamId: () => "stream_1",
-        getCurrentUser: () => ({ id: "workos_1" }),
-        subscribeStream,
-      },
-      "off"
-    )
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => "stream_1",
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream,
+    })
 
     emit("stream:read", {
       workspaceId: "ws_1",
@@ -1316,17 +1260,11 @@ describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
 
   function register(queryClient: QueryClient, currentStreamId?: string) {
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(
-      socket,
-      "ws_1",
-      queryClient,
-      {
-        getCurrentStreamId: () => currentStreamId,
-        getCurrentUser: () => ({ id: "workos_1" }),
-        subscribeStream: vi.fn(),
-      },
-      "off"
-    )
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => currentStreamId,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
     return { emit, cleanup }
   }
 
