@@ -242,6 +242,11 @@ describe("loadCrossSurfaceStitch", () => {
       const trimmed = await loadCrossSurfaceStitch(client, { workspaceId: wsId, thread, maxChars: 150 })
       expect(trimmed!.messages.map((m) => m.id)).toEqual([newest])
 
+      // A positive-but-insufficient budget (smaller than even the newest member)
+      // fades to nothing rather than overshooting with a forced message.
+      const insufficient = await loadCrossSurfaceStitch(client, { workspaceId: wsId, thread, maxChars: 50 })
+      expect(insufficient).toBeNull()
+
       // A deep thread leaves no budget — the stitch fades to nothing.
       const exhausted = await loadCrossSurfaceStitch(client, { workspaceId: wsId, thread, maxChars: 0 })
       expect(exhausted).toBeNull()

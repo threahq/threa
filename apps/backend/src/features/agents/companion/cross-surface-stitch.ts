@@ -94,6 +94,12 @@ export async function loadCrossSurfaceStitch(
   // Fill the remaining budget newest-first so an oversized discussion keeps the
   // messages closest to the spawn point (most relevant to why the thread exists).
   const kept = trimToCharBudget(members, maxChars)
+  // `trimToCharBudget` always keeps the newest message even when it alone
+  // exceeds the budget — correct for the thread's own window (the trigger must
+  // survive), but the stitch is optional background that must fade to nothing
+  // once the thread is deep enough to fill the budget. If even the single kept
+  // message overflows the remainder, contribute nothing rather than overshoot.
+  if (kept.length === 1 && kept[0].contentMarkdown.length > maxChars) return null
   return { messages: kept, topic: conversation.topicSummary?.trim() || null }
 }
 
