@@ -1,4 +1,4 @@
-import type { ComponentProps, MouseEvent, ReactNode } from "react"
+import type { ComponentProps, MouseEvent, ReactNode, RefObject } from "react"
 import { type LucideIcon, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
@@ -266,6 +266,13 @@ interface SidebarActionContextMenuProps {
    * hijack the same long-press gesture.
    */
   disabled?: boolean
+  /**
+   * The row's focusable element (its `<Link>`). On close Radix would otherwise
+   * restore focus to the trigger — here a non-focusable wrapper `<div>` — which
+   * drops focus to `<body>`. Returning it to the row keeps keyboard navigation
+   * where the user left it.
+   */
+  focusRef?: RefObject<HTMLElement | null>
 }
 
 /**
@@ -274,7 +281,7 @@ interface SidebarActionContextMenuProps {
  * `SidebarActionItem[]`, so they never drift. Renders `children` untouched when
  * there are no actions or the menu is disabled.
  */
-export function SidebarActionContextMenu({ actions, children, disabled }: SidebarActionContextMenuProps) {
+export function SidebarActionContextMenu({ actions, children, disabled, focusRef }: SidebarActionContextMenuProps) {
   const { setMenuOpen } = useSidebar()
 
   if (disabled || actions.length === 0) return <>{children}</>
@@ -282,7 +289,15 @@ export function SidebarActionContextMenu({ actions, children, disabled }: Sideba
   return (
     <ContextMenu onOpenChange={setMenuOpen}>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
-      <ContextMenuContent className="w-40">
+      <ContextMenuContent
+        className="w-40"
+        onCloseAutoFocus={(event) => {
+          const target = focusRef?.current
+          if (!target) return
+          event.preventDefault()
+          target.focus()
+        }}
+      >
         {actions.map((action) => (
           <SidebarActionContextMenuEntry key={action.id} action={action} />
         ))}

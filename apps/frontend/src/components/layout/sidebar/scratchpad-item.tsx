@@ -145,7 +145,7 @@ export function ScratchpadItem({
 
   return (
     <>
-      <SidebarActionContextMenu actions={actions} disabled={isMobile}>
+      <SidebarActionContextMenu actions={actions} disabled={isMobile} focusRef={itemRef}>
         <div className="group relative">
           <Link
             ref={itemRef}

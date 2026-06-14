@@ -1,5 +1,5 @@
 import { Archive, Settings } from "lucide-react"
-import type { ReactNode } from "react"
+import { useRef, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { toast } from "sonner"
@@ -18,6 +18,17 @@ const setMenuOpen = vi.fn()
 
 function renderWithRouter(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>)
+}
+
+function ContextMenuHarness({ actions }: { actions: SidebarActionItem[] }) {
+  const ref = useRef<HTMLAnchorElement>(null)
+  return (
+    <SidebarActionContextMenu actions={actions} focusRef={ref}>
+      <a ref={ref} href="/row" data-testid="row">
+        Row
+      </a>
+    </SidebarActionContextMenu>
+  )
 }
 
 describe("sidebar-actions", () => {
@@ -127,6 +138,20 @@ describe("sidebar-actions", () => {
       fireEvent.contextMenu(screen.getByText("Stream row"))
 
       expect(screen.queryByText("Settings")).not.toBeInTheDocument()
+    })
+
+    it("restores focus to the row element when the menu closes", async () => {
+      const user = userEvent.setup()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(<ContextMenuHarness actions={actions} />)
+
+      fireEvent.contextMenu(screen.getByTestId("row"))
+      await screen.findByText("Settings")
+
+      await user.keyboard("{Escape}")
+
+      await waitFor(() => expect(screen.getByTestId("row")).toHaveFocus())
     })
 
     it("renders children untouched when there are no actions", () => {
