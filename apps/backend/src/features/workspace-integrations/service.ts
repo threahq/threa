@@ -193,15 +193,16 @@ export class WorkspaceIntegrationService {
    * allowed and never offered as a toggle.
    */
   async getAvailableToolCategories(workspaceId: string): Promise<ToolPrivacyCategory[]> {
+    // GitHub and Linear are independent lookups — fan them out so they don't
+    // serialize on the bootstrap path. Each short-circuits (no query) when its
+    // integration is disabled for the deployment.
+    const [github, linear] = await Promise.all([
+      this.isGitHubEnabled() ? this.getGithubIntegration(workspaceId) : Promise.resolve(null),
+      this.isLinearEnabled() ? this.getLinearIntegration(workspaceId) : Promise.resolve(null),
+    ])
     const categories: ToolPrivacyCategory[] = ["web", "workspace"]
-    if (this.isGitHubEnabled()) {
-      const github = await this.getGithubIntegration(workspaceId)
-      if (github?.status === WorkspaceIntegrationStatuses.ACTIVE) categories.push("github")
-    }
-    if (this.isLinearEnabled()) {
-      const linear = await this.getLinearIntegration(workspaceId)
-      if (linear?.status === WorkspaceIntegrationStatuses.ACTIVE) categories.push("linear")
-    }
+    if (github?.status === WorkspaceIntegrationStatuses.ACTIVE) categories.push("github")
+    if (linear?.status === WorkspaceIntegrationStatuses.ACTIVE) categories.push("linear")
     return categories
   }
 

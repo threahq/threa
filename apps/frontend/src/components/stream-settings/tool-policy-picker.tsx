@@ -7,16 +7,25 @@ import { cn } from "@/lib/utils"
 import { useUpdateToolPolicy } from "@/hooks/use-streams"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 
-// `messaging` is intentionally absent: the agent's own reply tool is always
-// allowed, so it is never offered as a toggle. These are the gateable groups.
-const CATEGORY_OPTIONS: { value: ToolPrivacyCategory; label: string; description: string }[] = [
-  { value: "web", label: "Web", description: "Web search and fetching public URLs." },
-  { value: "workspace", label: "Workspace", description: "Search this workspace's messages, streams, and memos." },
-  { value: "github", label: "GitHub", description: "Read from connected GitHub." },
-  { value: "linear", label: "Linear", description: "Read from connected Linear." },
-]
+// `messaging` is intentionally excluded: the agent's own reply tool is always
+// allowed, so it is never offered as a toggle. The copy is keyed by a `Record`
+// over every *other* category, so adding a new `ToolPrivacyCategory` is a
+// compile error here until it's given picker copy (or excluded) — the picker can
+// never silently drop a category the backend reports as configured.
+type GateableCategory = Exclude<ToolPrivacyCategory, "messaging">
 
-const ALL_GATEABLE = CATEGORY_OPTIONS.map((option) => option.value)
+const CATEGORY_META: Record<GateableCategory, { label: string; description: string }> = {
+  web: { label: "Web", description: "Web search and fetching public URLs." },
+  workspace: { label: "Workspace", description: "Search this workspace's messages, streams, and memos." },
+  github: { label: "GitHub", description: "Read from connected GitHub." },
+  linear: { label: "Linear", description: "Read from connected Linear." },
+}
+
+const CATEGORY_OPTIONS: { value: GateableCategory; label: string; description: string }[] = (
+  Object.keys(CATEGORY_META) as GateableCategory[]
+).map((value) => ({ value, ...CATEGORY_META[value] }))
+
+const ALL_GATEABLE: ToolPrivacyCategory[] = CATEGORY_OPTIONS.map((option) => option.value)
 
 // Inside the enclave Ariadne only builds web tools, so on an encrypted
 // scratchpad the other categories exist as toggles but aren't wired yet.
