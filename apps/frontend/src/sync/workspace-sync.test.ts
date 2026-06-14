@@ -790,6 +790,42 @@ describe("registerWorkspaceSocketHandlers", () => {
     gate.dispose()
   })
 
+  it("applies a gate-dispatched notification-level catch-up replay to IDB", async () => {
+    // A mute/notify change made in another session reaches this one as either a
+    // live emit or a catch-up replay (gate.dispatch); both share this handler,
+    // which writes the new level into the streamMemberships mirror so the badge
+    // updates without a re-bootstrap.
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
+
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: null,
+      lastReadEventId: null,
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+
+    await gate.dispatch("stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      notificationLevel: "muted",
+    })
+
+    await vi.waitFor(async () => {
+      expect((await db.streamMemberships.get("ws_1:stream_1"))?.notificationLevel).toBe("muted")
+    })
+
+    cleanup()
+    gate.dispose()
+  })
+
   it("invalidates the memo search queries when a memo:created event lands", () => {
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")

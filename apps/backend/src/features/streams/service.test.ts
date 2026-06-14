@@ -2,7 +2,7 @@ import { afterAll, describe, test, expect, mock, spyOn, beforeEach } from "bun:t
 import type { PoolClient } from "pg"
 import { StreamService } from "./service"
 import { StreamRepository } from "./repository"
-import { StreamMemberRepository } from "./member-repository"
+import { StreamMemberRepository, type StreamMember } from "./member-repository"
 import { StreamEventRepository } from "./event-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
@@ -68,6 +68,65 @@ describe("StreamService.isMemberOnForUpdate", () => {
       [dbClient, "stream_thread", "usr_1"],
       [dbClient, "stream_root", "usr_1"],
     ])
+  })
+})
+
+describe("StreamService.setNotificationLevel", () => {
+  let service: StreamService
+  const mockUpdateMember = spyOn(StreamMemberRepository, "update")
+
+  const membership: StreamMember = {
+    streamId: "stream_1",
+    memberId: "usr_1",
+    notificationLevel: "muted",
+    lastReadEventId: null,
+    lastReadAt: null,
+    joinedAt: new Date("2026-01-01T00:00:00.000Z"),
+  }
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockFindById.mockReset()
+    mockUpdateMember.mockReset()
+    mockInsertOutbox.mockReset()
+  })
+
+  test("emits stream:notification_level_updated to the acting user on a real change", async () => {
+    mockFindById.mockResolvedValue({ id: "stream_1", type: "channel" } as never)
+    mockUpdateMember.mockResolvedValue(membership as never)
+
+    const result = await service.setNotificationLevel("ws_1", "stream_1", "usr_1", "muted")
+
+    expect(result).toEqual(membership)
+    expect(mockInsertOutbox).toHaveBeenCalledWith(expect.anything(), "stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      notificationLevel: "muted",
+    })
+  })
+
+  test("unmute (null level) skips stream validation and broadcasts the cleared level", async () => {
+    mockUpdateMember.mockResolvedValue({ ...membership, notificationLevel: null } as never)
+
+    await service.setNotificationLevel("ws_1", "stream_1", "usr_1", null)
+
+    expect(mockFindById).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).toHaveBeenCalledWith(expect.anything(), "stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      notificationLevel: null,
+    })
+  })
+
+  test("does not emit when the user is not a member (no membership row updated)", async () => {
+    mockUpdateMember.mockResolvedValue(null)
+
+    const result = await service.setNotificationLevel("ws_1", "stream_1", "usr_1", null)
+
+    expect(result).toBeNull()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 })
 
