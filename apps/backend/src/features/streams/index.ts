@@ -10,6 +10,7 @@ export {
   checkStreamAccess,
   listAccessibleStreamIds,
   resolveEffectiveAccessStream,
+  rootReadableConditionSql,
   streamAccessPredicateSql,
 } from "./access"
 

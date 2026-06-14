@@ -186,6 +186,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const outsider = uniqueId("usr")
     const channel = uniqueId("stream")
     const thread = uniqueId("stream")
+    await addRootStream(workspaceId, channel, "private")
     await addMembership(channel, me)
     await addThread(workspaceId, thread, channel, channel)
 
@@ -248,6 +249,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const channel = uniqueId("stream")
     const thread = uniqueId("stream")
     const subThread = uniqueId("stream")
+    await addRootStream(workspaceId, channel, "private")
     await addMembership(channel, me)
     await addThread(workspaceId, thread, channel, channel)
     await addThread(workspaceId, subThread, channel, thread)
@@ -266,6 +268,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const joiner = uniqueId("usr")
     const channel = uniqueId("stream")
     const thread = uniqueId("stream")
+    await addRootStream(workspaceId, channel, "private")
     await addThread(workspaceId, thread, channel, channel)
 
     // Thread content from before the channel join, must never surface.
