@@ -260,8 +260,17 @@ export async function buildStreamContext(
   // budget BEFORE enrichment, so quote/shared-message/attachment expansion only
   // runs on kept messages. Older messages that fall out fold into the rolling
   // conversation summary downstream (it keys off the oldest kept message).
+  //
+  // The thread builder prepends the root/parent message as the thread anchor —
+  // the only history entry from a different stream (`streamId !== stream.id`).
+  // Pin it so a long thread can never trim away its own anchor; the trim runs
+  // over the remaining in-stream messages. A no-op for non-thread surfaces,
+  // whose history is all from `stream.id`.
   if (options?.maxChars !== undefined) {
-    context.conversationHistory = trimToCharBudget(context.conversationHistory, options.maxChars)
+    const history = context.conversationHistory
+    const anchor = history.length > 0 && history[0].streamId !== stream.id ? history[0] : undefined
+    const trimmed = trimToCharBudget(anchor ? history.slice(1) : history, options.maxChars)
+    context.conversationHistory = anchor ? [anchor, ...trimmed] : trimmed
   }
 
   // Enrich with attachment context if requested

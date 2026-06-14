@@ -508,5 +508,73 @@ describe("Context Builder", () => {
         expect(trimmed.conversationHistory).toHaveLength(1)
       })
     })
+
+    test("keeps the prepended thread root anchor even when the budget trims thread messages", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const workosUserId = userId()
+        const wsId = workspaceId()
+        const channelId = streamId()
+        const threadId = streamId()
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Thread Budget Workspace",
+          slug: `ctx-ws-${wsId}`,
+          createdBy: workosUserId,
+        })
+        const ownerUserId = (await addTestMember(client, wsId, workosUserId)).id
+
+        await StreamRepository.insert(client, {
+          id: channelId,
+          workspaceId: wsId,
+          type: StreamTypes.CHANNEL,
+          displayName: "Discussions",
+          slug: "discussions",
+          visibility: Visibilities.PUBLIC,
+          createdBy: ownerUserId,
+        })
+
+        const parentMsgId = messageId()
+        await MessageRepository.insert(client, {
+          id: parentMsgId,
+          streamId: channelId,
+          sequence: BigInt(1),
+          authorId: ownerUserId,
+          authorType: "user",
+          ...testMessageContent("ANCHOR: the parent message that spawned the thread"),
+        })
+
+        const thread = await StreamRepository.insert(client, {
+          id: threadId,
+          workspaceId: wsId,
+          type: StreamTypes.THREAD,
+          displayName: "Thread Discussion",
+          visibility: Visibilities.PRIVATE,
+          parentStreamId: channelId,
+          parentMessageId: parentMsgId,
+          rootStreamId: channelId,
+          createdBy: ownerUserId,
+        })
+
+        // Three ~100-char thread replies; a 150 char budget keeps only the newest
+        // thread reply, but the anchor (from the channel) must remain pinned.
+        for (let i = 1; i <= 3; i++) {
+          await MessageRepository.insert(client, {
+            id: messageId(),
+            streamId: threadId,
+            sequence: BigInt(i),
+            authorId: ownerUserId,
+            authorType: "user",
+            ...testMessageContent(`${"r".repeat(100)}-${i}`),
+          })
+        }
+
+        const trimmed = await buildStreamContext(client, thread, { maxMessages: 10, maxChars: 150 })
+
+        expect(trimmed.conversationHistory.at(0)?.contentMarkdown).toContain("ANCHOR")
+        expect(trimmed.conversationHistory.at(-1)?.contentMarkdown).toContain("-3")
+        // Anchor + the single newest thread reply that fits the budget.
+        expect(trimmed.conversationHistory).toHaveLength(2)
+      })
+    })
   })
 })
