@@ -263,6 +263,40 @@ describe("SyncLogRepository catch-up reads", () => {
     expect((await listFor(workspaceId, me)).map((e) => e.syncId)).toEqual([deepMessage])
   })
 
+  // INV-62 / checkStreamAccess parity: a thread inherits access through its
+  // root's `streams` row. The FK-less schema (INV-1) permits a dangling
+  // root_stream_id, and when that root row is absent the thread resolves to no
+  // readable root, so catch-up denies it — exactly as checkStreamAccess does
+  // (resolveEffectiveAccessStream collapses a missing root back to the thread,
+  // which then fails its own membership/visibility check). A stream_members row
+  // on the dangling root id does not resurrect inheritance: the inherited leg
+  // JOINs the root `streams` row, which isn't there. Re-inserting the root is
+  // the only change that follows, and delivery resolves — proving the absent
+  // root caused the denial, not an unrelated gap.
+  test("a thread whose root stream row is missing is denied; adding the root restores inheritance", async () => {
+    const workspaceId = uniqueId("ws")
+    const me = uniqueId("usr")
+    const root = uniqueId("stream") // deliberately left out of `streams` at first
+    const thread = uniqueId("stream")
+    await addThread(workspaceId, thread, root, root)
+    await addMembership(root, me) // member of the still-missing root
+
+    const threadMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${thread}`],
+      payload: { workspaceId, kind: "dangling-root-thread" },
+    })
+
+    // Root row absent → no inherited access, and the direct-membership leg only
+    // covers the root id (which carries no entries of its own), never the thread.
+    expect(await listFor(workspaceId, me)).toEqual([])
+
+    // The sole change: the root `streams` row now exists. Inheritance resolves
+    // through it (private root + membership) and the thread message is delivered.
+    await addRootStream(workspaceId, root, "private")
+    expect((await listFor(workspaceId, me)).map((e) => e.syncId)).toEqual([threadMessage])
+  })
+
   test("inherited thread visibility is bounded by the root membership's join position", async () => {
     const workspaceId = uniqueId("ws")
     const joiner = uniqueId("usr")
