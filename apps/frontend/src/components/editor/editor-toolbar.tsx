@@ -30,6 +30,7 @@ import { toggleMultilineBlock } from "./multiline-blocks"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings, formatKeyBinding } from "@/lib/keyboard-shortcuts"
+import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 
 interface EditorToolbarProps {
   editor: Editor | null
@@ -630,13 +631,11 @@ function TableControls({
           <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        side="top"
-        className="w-48 p-1"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-        onCloseAutoFocus={(e) => e.preventDefault()}
-      >
+      {/* Table commands operate on the editor's live selection, so focus must
+         stay on the editor on every platform (not just mobile) — pass `true`.
+         This also adds the mousedown guard that keeps tapping a menu item from
+         blurring the editor (and flickering the mobile keyboard). */}
+      <PopoverContent align="start" side="top" className="w-48 p-1" {...keepEditorFocusProps(true)}>
         <TableMenuItem
           icon={Rows3}
           label="Add row above"
