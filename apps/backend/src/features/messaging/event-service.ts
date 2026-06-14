@@ -1176,12 +1176,18 @@ export class EventService {
         toScope: draftStreamScope(destinationThread.id),
         rootStreamId,
       })
-      for (const draft of rescopedDrafts) {
-        await OutboxRepository.insert(client, "draft:upserted", {
-          workspaceId: params.workspaceId,
-          targetUserId: draft.userId,
-          draft: toDraftView(draft),
-        })
+      if (rescopedDrafts.length > 0) {
+        await OutboxRepository.insertMany(
+          client,
+          rescopedDrafts.map((draft) => ({
+            eventType: "draft:upserted" as const,
+            payload: {
+              workspaceId: params.workspaceId,
+              targetUserId: draft.userId,
+              draft: toDraftView(draft),
+            },
+          }))
+        )
       }
 
       await MessageRepository.updateStreamScopedReferences(client, {
