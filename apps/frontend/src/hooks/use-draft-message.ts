@@ -9,24 +9,10 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
-import { cancelPendingDraftUpsert, enqueueDraftDelete, enqueueDraftUpsert } from "@/sync/draft-sync"
+import { enqueueDraftUpsert, syncDraftRemoval } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
-
-/**
- * Queue a server delete (or just cancel a queued push) for a draft being
- * removed locally — Stage 3 mirror. Only confirmed drafts (`baseVersion > 0`)
- * have a server row to delete; a never-synced draft just needs its pending push
- * dropped. The row must be read before deletion to know which.
- */
-async function syncDraftRemoval(workspaceId: string, row: CachedDraft | undefined, id: string): Promise<void> {
-  if ((row?.baseVersion ?? 0) > 0) {
-    await enqueueDraftDelete(workspaceId, id)
-  } else {
-    await cancelPendingDraftUpsert(id)
-  }
-}
 
 // Key formats (a draft's `scope`):
 // - "stream:{streamId}" for messages in existing streams
@@ -101,7 +87,7 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
   setComposerLoadedInCache(workspaceId, scope, null)
   // Sync side-effect after the local state is fully cleared (keeps the local
   // clear tight so observers never see drafts-gone-but-pointer-still-set).
-  if (loadedId) await syncDraftRemoval(workspaceId, removed, loadedId)
+  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, removed?.baseVersion)
 }
 
 /**
@@ -118,7 +104,7 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
   await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
   // Sync side-effects after the local state is fully cleared.
-  for (const row of rows) await syncDraftRemoval(workspaceId, row, row.id)
+  for (const row of rows) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
 }
 
 /**

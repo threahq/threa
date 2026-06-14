@@ -175,16 +175,31 @@ describe("applyDraftUpserted", () => {
 })
 
 describe("applyDraftDeleted", () => {
-  it("removes the local draft, clears its loaded pointer, and drops a queued push", async () => {
-    await db.drafts.put(localDraft({ id: "draft_x" }))
+  it("removes a clean local draft and clears its loaded pointer", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
     await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
-    await enqueueDraftUpsert(workspaceId, "draft_x")
 
     await applyDraftDeleted({ workspaceId, targetUserId: userId, draftId: "draft_x" }, workspaceId)
 
     expect(await db.drafts.get("draft_x")).toBeUndefined()
     expect((await db.composerLoaded.get(scope))?.draftId).toBeUndefined()
+  })
+
+  it("preserves unpushed local edits as a fresh draft instead of deleting (no-loss)", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("my edits") }))
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
+    await enqueueDraftUpsert(workspaceId, "draft_x") // a queued push = unpushed local edits
+
+    await applyDraftDeleted({ workspaceId, targetUserId: userId, draftId: "draft_x" }, workspaceId)
+
+    // The deleted id is gone, but our edits survive under a fresh, never-confirmed id.
+    expect(await db.drafts.get("draft_x")).toBeUndefined()
+    const ours = (await db.drafts.toArray()).find((d) => d.id !== "draft_x")
+    expect(ours?.contentJson).toEqual(makeDoc("my edits"))
+    expect(ours?.baseVersion).toBe(0)
+    expect((await db.composerLoaded.get(scope))?.draftId).toBe(ours!.id)
     expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
+    expect(await hasPendingDraftUpsert(ours!.id)).toBe(true)
   })
 })
 

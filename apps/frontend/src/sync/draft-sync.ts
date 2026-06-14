@@ -242,6 +242,24 @@ export async function cancelPendingDraftUpsert(draftId: string): Promise<void> {
   if (dupes.length > 0) await db.pendingOperations.bulkDelete(dupes.map((op) => op.id))
 }
 
+/**
+ * Mirror a locally-removed draft to the backend: a confirmed draft
+ * (`baseVersion > 0`) has a server row to delete; a never-synced one only needs
+ * its queued push dropped (nothing exists server-side). Shared by every local
+ * delete path (composer clear, scope purge, stash discard).
+ */
+export async function syncDraftRemoval(
+  workspaceId: string,
+  id: string,
+  baseVersion: number | undefined
+): Promise<void> {
+  if ((baseVersion ?? 0) > 0) {
+    await enqueueDraftDelete(workspaceId, id)
+  } else {
+    await cancelPendingDraftUpsert(id)
+  }
+}
+
 // ============================================================================
 // Inbound apply — socket events + bootstrap reconcile
 // ============================================================================
@@ -294,9 +312,31 @@ export async function applyDraftUpserted(payload: DraftUpsertedPayload, expected
   if (ourRow) await enqueueDraftUpsert(draft.workspaceId, newId)
 }
 
-/** Apply an inbound `draft:deleted` (a draft discarded/resolved on another device). */
+/**
+ * Apply an inbound `draft:deleted` (a draft discarded/resolved on another
+ * device). If this device has unpushed edits on that id, the remote delete must
+ * not destroy them (cardinal no-loss rule): preserve them under a fresh id that
+ * re-syncs — the same split shape as inbound-upsert drift — instead of deleting.
+ * Otherwise drop the row and clear its pointer.
+ */
 export async function applyDraftDeleted(payload: DraftDeletedPayload, expectedWorkspaceId: string): Promise<void> {
   if (payload.workspaceId !== expectedWorkspaceId) return
+
+  if (await hasPendingDraftUpsert(payload.draftId)) {
+    const current = await db.drafts.get(payload.draftId)
+    if (current) {
+      const replacementId = generateLocalDraftId()
+      await cancelPendingDraftUpsert(payload.draftId)
+      await migrateLocalDraftId(payload.workspaceId, payload.draftId, {
+        ...current,
+        id: replacementId,
+        baseVersion: 0,
+      })
+      await enqueueDraftUpsert(payload.workspaceId, replacementId)
+      return
+    }
+  }
+
   await cancelPendingDraftUpsert(payload.draftId)
   await deleteLocalDraft(payload.workspaceId, payload.draftId)
 }

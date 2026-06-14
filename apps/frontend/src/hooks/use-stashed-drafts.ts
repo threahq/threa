@@ -7,19 +7,10 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
-import { cancelPendingDraftUpsert, enqueueDraftDelete, enqueueDraftUpsert } from "@/sync/draft-sync"
+import { enqueueDraftUpsert, syncDraftRemoval } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
-
-/** Stage 3 mirror for a stash row removed locally — see use-draft-message. */
-async function syncDraftRemoval(row: CachedDraft): Promise<void> {
-  if ((row.baseVersion ?? 0) > 0) {
-    await enqueueDraftDelete(row.workspaceId, row.id)
-  } else {
-    await cancelPendingDraftUpsert(row.id)
-  }
-}
 
 // Re-exported so components (which cannot import from `@/db` per INV-15) can
 // still get the row type they render without reaching into the data layer.
@@ -101,7 +92,7 @@ export async function popStashedDraft(id: string): Promise<CachedDraft | null> {
     deleteDraftFromCache(row.workspaceId, id)
     // Restore is copy-then-pop (the content is reloaded into the composer as a
     // fresh draft), so the popped stash row is removed server-side too (Stage 3).
-    await syncDraftRemoval(row)
+    await syncDraftRemoval(row.workspaceId, row.id, row.baseVersion)
   }
   return row
 }
@@ -112,7 +103,7 @@ export async function deleteStashedDraftById(id: string): Promise<void> {
   await db.drafts.delete(id)
   if (row) {
     deleteDraftFromCache(row.workspaceId, id)
-    await syncDraftRemoval(row)
+    await syncDraftRemoval(row.workspaceId, row.id, row.baseVersion)
   }
 }
 

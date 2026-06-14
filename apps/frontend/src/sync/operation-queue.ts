@@ -222,13 +222,15 @@ async function executeOperation(
     case "upsert_draft": {
       // Silent retry, no error surface (a failed draft save is invisible — the
       // local copy stands). Reads the draft fresh and reconciles split/version.
-      if (!draftsService) throw new Error("draftsService is required to replay upsert_draft ops")
+      // Without a drafts service this context is local-only: drop the op rather
+      // than throw (a throw would retry forever, never reaching a service).
+      if (!draftsService) break
       await executeDraftUpsert(workspaceId, payload.draftId as string, payload.writeId as string, draftsService)
       break
     }
 
     case "delete_draft": {
-      if (!draftsService) throw new Error("draftsService is required to replay delete_draft ops")
+      if (!draftsService) break
       await executeDraftDelete(workspaceId, payload.draftId as string, draftsService)
       break
     }
