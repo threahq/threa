@@ -452,17 +452,16 @@ export async function applyDraftDeleted(payload: DraftDeletedPayload, expectedWo
  */
 export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[]): Promise<void> {
   const serverIds = new Set(drafts.map((d) => d.id))
-  // Read the pending `upsert_draft` / `delete_draft` ids once and reuse the sets
-  // across the loops instead of scanning `pendingOperations` per draft
-  // (O(drafts) → O(1) scans). A queued delete means the user discarded that
-  // draft here; the re-seed must not resurrect it before the delete drains.
-  const pendingOps = await db.pendingOperations.toArray()
-  const pendingUpsertIds = new Set(
-    pendingOps.filter((op) => op.type === "upsert_draft").map((op) => op.payload.draftId as string)
-  )
-  const pendingDeleteIds = new Set(
-    pendingOps.filter((op) => op.type === "delete_draft").map((op) => op.payload.draftId as string)
-  )
+  // Read the queued `upsert_draft` / `delete_draft` ids once (indexed, in
+  // parallel) and reuse the sets across the loops, rather than scanning the op
+  // table per draft. A queued delete means the user discarded that draft here;
+  // the re-seed must not resurrect it before the delete drains.
+  const [upsertOps, deleteOps] = await Promise.all([
+    db.pendingOperations.where("type").equals("upsert_draft").toArray(),
+    db.pendingOperations.where("type").equals("delete_draft").toArray(),
+  ])
+  const pendingUpsertIds = new Set(upsertOps.map((op) => op.payload.draftId as string))
+  const pendingDeleteIds = new Set(deleteOps.map((op) => op.payload.draftId as string))
   for (const draft of drafts) {
     await applyDraftUpserted(
       { workspaceId: draft.workspaceId, targetUserId: draft.userId, draft },
