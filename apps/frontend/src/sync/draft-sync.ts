@@ -3,6 +3,7 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 import {
   deleteDraftFromCache,
   hasSeededDraftCache,
+  migrateLoadedDraftInCache,
   setComposerLoadedInCache,
   upsertDraftInCache,
 } from "@/stores/draft-store"
@@ -126,10 +127,11 @@ export async function migrateLocalDraftId(workspaceId: string, fromId: string, t
     }
     await db.drafts.delete(fromId)
   })
+  // One cache signal (delete-old + insert-new + repoint) so a reader never sees
+  // the loaded draft missing mid-migration — i.e. the composer never flashes
+  // empty during a server split or a remote-delete preserve.
   if (hasSeededDraftCache(workspaceId)) {
-    deleteDraftFromCache(workspaceId, fromId)
-    upsertDraftInCache(workspaceId, toRow)
-    if (repointedScope) setComposerLoadedInCache(workspaceId, repointedScope, toRow.id)
+    migrateLoadedDraftInCache(workspaceId, fromId, toRow, repointedScope)
   }
 }
 
@@ -396,6 +398,11 @@ export async function executeDraftUpsert(
       id: res.draft.id,
       baseVersion: res.draft.version,
     })
+    // Re-route the queue to the migrated id: any pending op still targets the old
+    // id (now a no-op), and edits typed during the in-flight split push live under
+    // the new id — push them so they reach the server instead of stranding locally.
+    await cancelPendingDraftUpsert(draftId)
+    await enqueueDraftUpsert(workspaceId, res.draft.id)
     return
   }
 

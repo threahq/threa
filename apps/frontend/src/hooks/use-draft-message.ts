@@ -63,7 +63,7 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
     attachments: fields.attachments,
     contextRefs,
     clientUpdatedAt: Date.now(),
-    // Carry the sync bookkeeping forward (Stage 3). Without this, editing a
+    // Carry the sync bookkeeping forward. Without this, editing a
     // confirmed draft would reset baseVersion to undefined, and the next push
     // (expectedVersion 0) would collide with the server's existing row and the
     // server would SPLIT it into a duplicate — once per keystroke after the
@@ -85,7 +85,7 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
     })
     upsertLoadedDraftInCache(workspaceId, row, scope)
   }
-  // Mirror to the backend (Stage 3): a coalesced, debounced push that retries
+  // Mirror to the backend: a coalesced, debounced push that retries
   // silently. The caller kicks the queue so it drains promptly.
   await enqueueDraftUpsert(workspaceId, id)
   return row
@@ -153,7 +153,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
   // Drains the offline queue so a debounced draft push (enqueued by the write
   // helpers) mirrors to the backend promptly instead of waiting for the next
   // reconnect. Optional — outside a workspace (login/loading) there is no engine
-  // and the local write still stands (Stage 3).
+  // and the local write still stands.
   const syncEngine = useOptionalSyncEngine()
 
   // When a stream becomes encrypted, cancel any debounced plaintext save still

@@ -211,6 +211,40 @@ export function upsertLoadedDraftInCache(workspaceId: string, draft: CachedDraft
 }
 
 /**
+ * Re-key a draft in the cache (`fromId` → `toRow.id`) and, when `repointScope`
+ * is set, point that scope's composer-loaded pointer at the new id — all in ONE
+ * cache signal. Mirrors `upsertLoadedDraftInCache` for the id-migration path
+ * (server split, remote-delete preserve): doing delete-old + insert-new + repoint
+ * as three separate signals leaves intermediate frames where the loaded draft is
+ * absent from the cache, so a user typing during a split sees the composer flash
+ * empty. One `seedDraftCache` keeps the observed state consistent.
+ */
+export function migrateLoadedDraftInCache(
+  workspaceId: string,
+  fromId: string,
+  toRow: CachedDraft,
+  repointScope: string | null
+): void {
+  const drafts = (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== fromId)
+  const index = drafts.findIndex((candidate) => candidate.id === toRow.id)
+  if (index === -1) {
+    drafts.push(toRow)
+  } else {
+    drafts[index] = toRow
+  }
+  let loaded = cache.loaded.get(workspaceId) ?? []
+  if (repointScope) {
+    loaded = loaded.filter((row) => row.scope !== repointScope)
+    loaded.push({ scope: repointScope, workspaceId, draftId: toRow.id })
+  }
+  seedDraftCache(workspaceId, {
+    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    drafts,
+    loaded,
+  })
+}
+
+/**
  * Set (or clear, with `draftId: null`) the composer-loaded pointer for a scope
  * in the in-memory cache. Mirrors the `composerLoaded` IDB row so the composer
  * resolves its checked-out draft synchronously on first paint.

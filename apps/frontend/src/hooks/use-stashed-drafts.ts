@@ -67,7 +67,7 @@ export async function createStashedDraft(
   }
   await db.drafts.add(row)
   upsertDraftInCache(workspaceId, row)
-  // Mirror the new stash to the backend so it roams across devices (Stage 3).
+  // Mirror the new stash to the backend so it roams across devices.
   await enqueueDraftUpsert(workspaceId, row.id)
   return row
 }
@@ -91,7 +91,7 @@ export async function popStashedDraft(id: string): Promise<CachedDraft | null> {
   if (row) {
     deleteDraftFromCache(row.workspaceId, id)
     // Restore is copy-then-pop (the content is reloaded into the composer as a
-    // fresh draft), so the popped stash row is removed server-side too (Stage 3).
+    // fresh draft), so the popped stash row is removed server-side too.
     await syncDraftRemoval(row.workspaceId, row.id, row.baseVersion)
   }
   return row

@@ -307,6 +307,26 @@ describe("executeDraftUpsert", () => {
     expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_new")
   })
 
+  it("re-routes the queued push to the migrated id on a split (mid-push edits aren't stranded)", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("mine") }))
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
+    await enqueueDraftUpsert(workspaceId, "draft_x") // edits typed during the in-flight push
+    const upsert = vi.fn(
+      async (_w: string, id: string): Promise<UpsertDraftResponse> => ({
+        draft: wireDraft({ id: "draft_new", version: 1 }),
+        split: true,
+        originalId: id,
+      })
+    )
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    // The stale op for the old id is gone; the migrated draft has a fresh push so
+    // its content reaches the server instead of stranding locally.
+    expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
+    expect(await hasPendingDraftUpsert("draft_new")).toBe(true)
+  })
+
   it("reads the draft fresh and no-ops when it was deleted after enqueue", async () => {
     const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => ({ draft: wireDraft(), split: false }))
     await executeDraftUpsert(workspaceId, "draft_missing", "write_a", service(upsert))
