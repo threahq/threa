@@ -984,47 +984,62 @@ type)` are how the episode is computed, not a parallel dimension._
    time-based, or both (e.g., within the window **or** within 24h), and
    whether the user can explicitly start fresh ("new conversation" affordance,
    like clearing a Claude.ai thread).
-   _Resolved as **both, combined as OR** — continue the episode if the prior
-   completed session is recent in **either** dimension (message gap within the
-   window **or** wall-clock gap within a horizon), with **time as the primary
-   signal and count as the guard** — and **no dedicated DM "clear" affordance
-   now** (INV-36): the explicit fresh-start path is bounded-surface creation,
-   and if a DM-specific control is ever needed it is an episode-boundary marker
-   the recency check reads, never a history mutation. Like Q7 this fixes the
-   shape of unbuilt C-2 work, not shipped behavior: today `lastSeenSequence` is
-   only the companion **dedup** cursor (`companion-outbox-handler.ts:131-144`,
-   "message already seen, skipping"), and the DM-mention path it would tune
-   doesn't set it at all (`persona-agent-worker.ts:66` excludes
-   `AgentTriggers.MENTION`). The DM episode-by-recency rule (§2.5, line ~554) is
-   the C-2 surface this boundary parameterizes._
-   - _**Both, OR'd — the two signals catch complementary "same conversation"
-     cases.** The count window catches a **busy** recent burst (many messages in
-     a short span, clearly one thread); the time horizon catches the
-     **quiet-but-recent** case the question names (a long-ish pause in a sparse
-     DM a human still reads as continuous). AND would drop the quiet case (the
-     stated failure); either alone has a blind spot. Both inputs are already on
-     the row — `last_seen_sequence` (the cursor `companion-outbox-handler.ts`
-     already compares) and `completed_at` (`session-repository.ts:34`) — so the
-     check stays the single query §2.5 promised, now reading two columns._
-   - _**The error asymmetry is why the combinator is OR, not AND.** A false
-     *continue* injects a stale digest chain: cheap and self-correcting — the
-     reader block already orders re-verification, the live user turn outweighs
-     system-context, and the carry ages out (the same self-heal reasoning as the
-     Q5 digest ruling, item 5 above), while digests stay scope-filtered (§2.5).
-     A false *fresh* drops context the user expected the agent to still hold —
-     the exact forgetting C-1/C-2 exist to kill. The costlier mistake is the
-     false fresh, so the boundary errs toward continuing._
-   - _**Time leads, count guards.** Human "is this the same conversation"
-     intuition on a flat DM is dominated by wall-clock, not message count: reply,
-     step away 30 minutes, return is one conversation however many messages flew;
-     return in five days is a new one however few did. So the time horizon (start
-     at the question's ~24h) is the leading edge and the count window is the cheap
-     upper guard for the busy case. The values land as named constants at the
-     source of truth (INV-33), tuned by eval in the C-2 build (INV-44/45), not
-     magic numbers in the handler. C-2 also dissolves the count window's original
-     **mechanical** rationale — "the intervening messages fill the gap" — because
-     overflow now folds into the rolling summary; the count survives only as a
-     **semantic** guard, not a gap-filling constraint._
+   _Resolved as **the structural window edge, explicitly NOT wall-clock** —
+   continue the episode iff the prior completed session's `lastSeenSequence`
+   falls inside the budgeted window the turn is about to build; the true
+   continuity axis is **semantic, hence model-based (INV-54)** when that proxy
+   proves too coarse, built only when it demonstrably fails (INV-36) — and **no
+   dedicated DM "clear" affordance now** (INV-36): the explicit fresh-start path
+   is bounded-surface creation, and if a DM-specific control is ever needed it is
+   an episode-boundary marker the recency check reads, never a history mutation.
+   Like Q7 this fixes the shape of unbuilt C-2 work, not shipped behavior: today
+   `lastSeenSequence` is only the companion **dedup** cursor
+   (`companion-outbox-handler.ts:131-144`, "message already seen, skipping"), and
+   the DM-mention path it would tune doesn't set it at all
+   (`persona-agent-worker.ts:66` excludes `AgentTriggers.MENTION`). The DM
+   episode-by-recency rule (§2.5, line ~554) is the C-2 surface this boundary
+   parameterizes._
+   - _**Wall-clock is rejected as a metric (Kris's call).** Human conversational
+     continuity does not decay on a clock, so no time horizon is a useful
+     boundary. A direct reply weeks later is the **same** conversation — a
+     colleague replying eight weeks on, after two stacked four-week Swedish
+     vacations, is continuing the thread, not starting a new one — yet no horizon
+     short enough to ever fire survives that gap, and a horizon long enough to
+     survive it never fires, so it does no work either way. Worse, a clock
+     boundary is actively wrong in the common case: it splits a paused-but-
+     continuing thread that a human reads as one. The earlier "both, OR'd, time
+     leads" draft had this backwards and is withdrawn._
+   - _**The boundary is the window's own edge, not a free count knob.** Reuse
+     §2.5's mechanism verbatim: continue iff the prior completed session's
+     `lastSeenSequence` falls within the budgeted window about to be built — then
+     the intervening messages are already in context and the digest carry spans no
+     gap; otherwise the digest would bridge messages that aren't present, so start
+     fresh. This is **structural** (a consequence of the window, one query, no new
+     column and no `completed_at` read), it keys on intervening **messages** not
+     the clock, and it gets the vacation case right for free: zero intervening
+     messages → the prior session sits at the window edge → continue. The
+     question's own "quiet DM, long pause" worry is the same shape — few messages
+     → already within the window → already continues; wall-clock never needed to
+     enter._
+   - _**The true axis is semantic, therefore model-based (INV-54).** "Is this
+     message continuing the prior episode?" is a language-dependent judgment; the
+     window-edge count is only a cheap **structural proxy** for it. When the proxy
+     mis-segments — carrying a stale topic across a window that happens to still
+     hold it, or splitting a long real continuation that scrolled past the window
+     — the lever is a model-based continuity / topic-shift decision per INV-54,
+     never a language-specific heuristic and never a clock. Build it when the
+     proxy demonstrably fails (INV-36), not preemptively; C-2's rolling summary
+     also softens proxy errors by keeping older turns present in compressed form
+     rather than dropping them at a hard edge._
+   - _**The error asymmetry: bias toward continue.** A false *continue* injects a
+     stale digest chain: cheap and self-correcting — the reader block already
+     orders re-verification, the live user turn outweighs system-context, and the
+     carry ages out (the same self-heal reasoning as the Q5 digest ruling, item 5
+     above), while digests stay scope-filtered (§2.5). A false *fresh* drops
+     context the user expected the agent to still hold — the exact forgetting
+     C-1/C-2 exist to kill, and only partly mitigated because the in-window
+     messages survive even when the digest is dropped. The costlier mistake is the
+     false fresh, so where the proxy is uncertain it continues._
    - _**No dedicated DM "clear conversation" control now (INV-36), and "clear
      like Claude.ai" is the wrong model for a shared DM.** A DM is a two-party
      (`DM_PARTICIPANT_COUNT = 2`, `constants.ts:13`) shared, append-only timeline
