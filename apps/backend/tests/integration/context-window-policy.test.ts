@@ -21,7 +21,12 @@ import { withTestTransaction, setupTestDatabase, testMessageContent, addTestMemb
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, type Stream } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { AgentSessionRepository, SessionStatuses, resolveContextWindowPolicy } from "../../src/features/agents"
+import {
+  AgentSessionRepository,
+  SessionStatuses,
+  resolveContextWindowPolicy,
+  DEFAULT_CONTEXT_WINDOW_CHARS,
+} from "../../src/features/agents"
 import type { PoolClient } from "pg"
 import { userId, workspaceId, streamId, messageId, sessionId, personaId } from "../../src/lib/id"
 import { StreamTypes, Visibilities } from "@threa/types"
@@ -102,7 +107,12 @@ describe("resolveContextWindowPolicy", () => {
 
       const policy = await resolveContextWindowPolicy(client, { stream: scratchpad, maxMessages: 3 })
 
-      expect(policy).toEqual({ episode: { kind: "stream" }, maxMessages: 3, carryDigests: true })
+      expect(policy).toEqual({
+        episode: { kind: "stream" },
+        maxMessages: 3,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: true,
+      })
     })
   })
 
@@ -114,7 +124,12 @@ describe("resolveContextWindowPolicy", () => {
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
-      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: false }, maxMessages: 3, carryDigests: false })
+      expect(policy).toEqual({
+        episode: { kind: "dm-recency", continues: false },
+        maxMessages: 3,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: false,
+      })
     })
   })
 
@@ -127,7 +142,12 @@ describe("resolveContextWindowPolicy", () => {
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
-      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: true }, maxMessages: 3, carryDigests: true })
+      expect(policy).toEqual({
+        episode: { kind: "dm-recency", continues: true },
+        maxMessages: 3,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: true,
+      })
     })
   })
 
@@ -140,7 +160,12 @@ describe("resolveContextWindowPolicy", () => {
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
-      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: false }, maxMessages: 3, carryDigests: false })
+      expect(policy).toEqual({
+        episode: { kind: "dm-recency", continues: false },
+        maxMessages: 3,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: false,
+      })
     })
   })
 
@@ -153,7 +178,12 @@ describe("resolveContextWindowPolicy", () => {
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
-      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: true }, maxMessages: 3, carryDigests: true })
+      expect(policy).toEqual({
+        episode: { kind: "dm-recency", continues: true },
+        maxMessages: 3,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: true,
+      })
     })
   })
 
@@ -177,7 +207,12 @@ describe("resolveContextWindowPolicy", () => {
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
-      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: true }, maxMessages: 3, carryDigests: true })
+      expect(policy).toEqual({
+        episode: { kind: "dm-recency", continues: true },
+        maxMessages: 3,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: true,
+      })
     })
   })
 
@@ -194,7 +229,12 @@ describe("resolveContextWindowPolicy", () => {
       // into a zero-message window.
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 0 })
 
-      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: false }, maxMessages: 1, carryDigests: false })
+      expect(policy).toEqual({
+        episode: { kind: "dm-recency", continues: false },
+        maxMessages: 1,
+        maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+        carryDigests: false,
+      })
     })
   })
 })

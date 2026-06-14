@@ -420,4 +420,93 @@ describe("Context Builder", () => {
       })
     })
   })
+
+  describe("Budgeted window (C-2b)", () => {
+    test("maxChars trims the window newest-first; maxMessages alone keeps all", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const workosUserId = userId()
+        const wsId = workspaceId()
+        const scratchpadId = streamId()
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Budget Window Workspace",
+          slug: `ctx-ws-${wsId}`,
+          createdBy: workosUserId,
+        })
+        const ownerUserId = (await addTestMember(client, wsId, workosUserId)).id
+
+        const scratchpad = await StreamRepository.insert(client, {
+          id: scratchpadId,
+          workspaceId: wsId,
+          type: StreamTypes.SCRATCHPAD,
+          displayName: "Budgeted scratchpad",
+          description: null,
+          visibility: Visibilities.PRIVATE,
+          createdBy: ownerUserId,
+        })
+
+        // 6 messages of 100 chars each (chronological).
+        const body = "x".repeat(100)
+        for (let i = 1; i <= 6; i++) {
+          await MessageRepository.insert(client, {
+            id: messageId(),
+            streamId: scratchpadId,
+            sequence: BigInt(i),
+            authorId: ownerUserId,
+            authorType: "user",
+            ...testMessageContent(`${body}-${i}`),
+          })
+        }
+
+        // No char budget → all 6 fetched (within the message ceiling).
+        const full = await buildStreamContext(client, scratchpad, { maxMessages: 10 })
+        expect(full.conversationHistory).toHaveLength(6)
+        expect(full.conversationHistory.at(-1)?.contentMarkdown).toContain("-6")
+
+        // ~250 char budget keeps only the newest messages that fit, always the
+        // last one. Each message is ~102 chars, so the window holds the newest 2.
+        const trimmed = await buildStreamContext(client, scratchpad, { maxMessages: 10, maxChars: 250 })
+        expect(trimmed.conversationHistory).toHaveLength(2)
+        expect(trimmed.conversationHistory.at(-1)?.contentMarkdown).toContain("-6")
+        expect(trimmed.conversationHistory.at(0)?.contentMarkdown).toContain("-5")
+      })
+    })
+
+    test("a single oversized message is still kept (window holds at least the trigger)", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const workosUserId = userId()
+        const wsId = workspaceId()
+        const scratchpadId = streamId()
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Oversized Window Workspace",
+          slug: `ctx-ws-${wsId}`,
+          createdBy: workosUserId,
+        })
+        const ownerUserId = (await addTestMember(client, wsId, workosUserId)).id
+
+        const scratchpad = await StreamRepository.insert(client, {
+          id: scratchpadId,
+          workspaceId: wsId,
+          type: StreamTypes.SCRATCHPAD,
+          displayName: "Oversized scratchpad",
+          description: null,
+          visibility: Visibilities.PRIVATE,
+          createdBy: ownerUserId,
+        })
+
+        await MessageRepository.insert(client, {
+          id: messageId(),
+          streamId: scratchpadId,
+          sequence: BigInt(1),
+          authorId: ownerUserId,
+          authorType: "user",
+          ...testMessageContent("y".repeat(1000)),
+        })
+
+        const trimmed = await buildStreamContext(client, scratchpad, { maxMessages: 10, maxChars: 50 })
+        expect(trimmed.conversationHistory).toHaveLength(1)
+      })
+    })
+  })
 })

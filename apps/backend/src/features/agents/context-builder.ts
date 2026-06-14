@@ -146,6 +146,17 @@ export interface BuildStreamContextOptions {
    * outside a turn (evals, the enclave prompt assembly).
    */
   maxMessages?: number
+  /**
+   * Char budget for the verbatim conversation window (C-2b). When set, the
+   * fetched history (capped at `maxMessages`) is trimmed newest-first to this
+   * many chars of raw message markdown, replacing the message-count cliff with
+   * a budgeted window. Omitted by out-of-turn callers (evals, enclave-prompt
+   * assembly), which keep the pure message-count behavior. Applied before
+   * attachment/quote/shared-message enrichment, so enrichment only runs on kept
+   * messages; the 400k `MAX_MESSAGE_CHARS` clamp in `AgentRuntime` is the
+   * backstop for enrichment growth.
+   */
+  maxChars?: number
   /** Current time at invocation (for deterministic testing) */
   currentTime?: Date
   /** Trigger message ID (for determining attachment detail levels) */
@@ -165,6 +176,30 @@ export interface BuildStreamContextOptions {
    * and included as base64 data URLs so the model can see them.
    */
   loadImages?: boolean
+}
+
+/**
+ * Trim a chronological (oldest-first) message list to the newest suffix that
+ * fits within `maxChars` of raw `contentMarkdown`, always keeping at least the
+ * newest message (the trigger). This is the C-2b budgeted-window fill: a deeper,
+ * size-bounded window in place of a fixed message count. Generic over any row
+ * carrying `contentMarkdown` so it can run before the history is enriched into
+ * `MessageWithAttachments`.
+ */
+export function trimToCharBudget<T extends { contentMarkdown: string }>(messages: T[], maxChars: number): T[] {
+  if (messages.length <= 1) return messages
+
+  let total = 0
+  let kept = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const len = messages[i].contentMarkdown.length
+    // Always keep the newest message; stop once another would overflow.
+    if (kept > 0 && total + len > maxChars) break
+    total += len
+    kept++
+  }
+
+  return kept >= messages.length ? messages : messages.slice(messages.length - kept)
 }
 
 /**
@@ -219,6 +254,14 @@ export async function buildStreamContext(
 
     default:
       context = await buildScratchpadContext(db, stream, temporal, maxMessages)
+  }
+
+  // C-2b budgeted window: trim the fetched history newest-first to the char
+  // budget BEFORE enrichment, so quote/shared-message/attachment expansion only
+  // runs on kept messages. Older messages that fall out fold into the rolling
+  // conversation summary downstream (it keys off the oldest kept message).
+  if (options?.maxChars !== undefined) {
+    context.conversationHistory = trimToCharBudget(context.conversationHistory, options.maxChars)
   }
 
   // Enrich with attachment context if requested
