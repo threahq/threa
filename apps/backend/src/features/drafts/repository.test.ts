@@ -200,6 +200,39 @@ describe("DraftsRepository.softDelete", () => {
   })
 })
 
+describe("DraftsRepository.rescopeByScope", () => {
+  afterEach(() => mock.restore())
+
+  it("re-scopes every owner's draft for a scope (no user filter) and bumps the version", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [
+      { ...DRAFT_ROW, id: "draft_01", user_id: "usr_1", scope: "stream:thread_1", root_stream_id: "stream_root" },
+      { ...DRAFT_ROW, id: "draft_02", user_id: "usr_2", scope: "stream:thread_1", root_stream_id: "stream_root" },
+    ])
+
+    const rows = await DraftsRepository.rescopeByScope(db, {
+      workspaceId: "ws_1",
+      fromScope: "thread:msg_1",
+      toScope: "stream:thread_1",
+      rootStreamId: "stream_root",
+    })
+
+    expect(captured.text).toContain("UPDATE drafts SET")
+    expect(captured.text).toContain("scope =")
+    expect(captured.text).toContain("root_stream_id =")
+    expect(captured.text).toContain("version = version + 1")
+    expect(captured.text).toContain("deleted_at IS NULL")
+    // Multi-user: matches by workspace + scope only, never user_id — a shared
+    // thread scope's drafts all follow the message regardless of author.
+    expect(captured.text).not.toContain("user_id =")
+    expect(captured.values).toContain("thread:msg_1")
+    expect(captured.values).toContain("stream:thread_1")
+    expect(captured.values).toContain("stream_root")
+    // Returns each re-scoped row so the caller can emit one event per owner.
+    expect(rows.map((row) => row.userId)).toEqual(["usr_1", "usr_2"])
+  })
+})
+
 describe("DraftsRepository.listByUser", () => {
   afterEach(() => mock.restore())
 

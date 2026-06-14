@@ -516,6 +516,9 @@ export { DEVICE_KEY_LENGTH } from "./api"
 // Command kind constants
 export { CommandKinds, CommandScopes } from "./api"
 
+// Draft scope builders (single source of truth for the scope string format)
+export { draftStreamScope, draftThreadScope } from "./api"
+
 // Discuss-with-Ariadne client-action id (single source of truth)
 export const DISCUSS_WITH_ARIADNE_COMMAND = "discuss-with-ariadne" as const
 

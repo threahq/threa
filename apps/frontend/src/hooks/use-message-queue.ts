@@ -7,9 +7,9 @@ import { parseMarkdown } from "@threa/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
 import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
-import { purgeScopeDrafts } from "./use-draft-message"
+import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
-import { StreamTypes, ShareErrorCodes } from "@threa/types"
+import { StreamTypes, ShareErrorCodes, draftStreamScope } from "@threa/types"
 import type { PendingMessage } from "@/db"
 import type { CreateStreamInput, Stream, StreamWithPreview } from "@threa/types"
 import { ApiError } from "@/api/client"
@@ -39,7 +39,7 @@ function getRetryDelay(retryCount: number): number {
 async function promoteDraft(
   next: PendingMessage,
   streamService: { create: (workspaceId: string, data: CreateStreamInput) => Promise<Stream> },
-  syncEngine: { subscribeStream: (id: string) => Promise<void> },
+  syncEngine: { subscribeStream: (id: string) => Promise<void>; kickOperationQueue: () => void },
   queryClient: QueryClient
 ): Promise<string> {
   const creation = next.streamCreation!
@@ -132,9 +132,12 @@ async function promoteDraft(
       }
     })
     deleteDraftScratchpadFromCache(next.workspaceId, next.draftId)
-    // Drop the scratchpad scope's drafts (the just-sent loaded draft plus any
-    // stash siblings) and its loaded pointer.
-    await purgeScopeDrafts(next.workspaceId, `stream:${next.draftId}`)
+    // Re-point the scratchpad scope's surviving drafts onto the real stream so
+    // stash entries composed before promotion keep roaming (the just-sent loaded
+    // draft was already resolved by the send path). Push each so the server row
+    // follows; kick the op queue so it drains promptly.
+    await rescopeScopeDrafts(next.workspaceId, draftStreamScope(next.draftId), draftStreamScope(realStreamId))
+    syncEngine.kickOperationQueue()
   }
 
   // Notify UI to navigate from draft to real stream

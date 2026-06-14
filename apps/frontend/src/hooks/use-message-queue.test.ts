@@ -23,6 +23,7 @@ let mockIsConnected = true
 const mockStreamCreate = vi.fn()
 
 const mockSubscribeStream = vi.fn()
+const mockKickOperationQueue = vi.fn()
 
 // Mock IndexedDB
 interface MockPendingMessage {
@@ -69,6 +70,7 @@ describe("useMessageQueue", () => {
     mockRegisterQueueNotify.mockReset()
     mockStreamCreate.mockReset()
     mockSubscribeStream.mockReset()
+    mockKickOperationQueue.mockReset()
     mockDelete.mockClear()
     mockUpdate.mockClear()
     mockUpdate.mockResolvedValue(1)
@@ -100,6 +102,7 @@ describe("useMessageQueue", () => {
     // Sync engine
     vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
       subscribeStream: mockSubscribeStream,
+      kickOperationQueue: mockKickOperationQueue,
     } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
 
     // DB tables
@@ -152,8 +155,8 @@ describe("useMessageQueue", () => {
 
     // Draft store
     vi.spyOn(draftStoreModule, "deleteDraftScratchpadFromCache").mockImplementation(() => {})
-    // Post-promotion draft cleanup is exercised via its own tests; stub it here.
-    vi.spyOn(useDraftMessageModule, "purgeScopeDrafts").mockResolvedValue(undefined)
+    // Post-promotion draft re-pointing is exercised via its own tests; stub it here.
+    vi.spyOn(useDraftMessageModule, "rescopeScopeDrafts").mockResolvedValue(undefined)
   })
 
   it("should register its notify callback on mount", () => {

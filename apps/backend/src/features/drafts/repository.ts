@@ -248,6 +248,41 @@ export const DraftsRepository = {
   },
 
   /**
+   * Re-scope every live draft from `fromScope` to `toScope` (thread re-pointing).
+   * When a not-yet-threaded message is converted to a thread, its reply drafts
+   * must follow the message into the new thread stream so they keep roaming.
+   *
+   * Multi-user by design (no `user_id` filter): a shared `thread:{messageId}`
+   * scope can hold reply drafts from several authors, and every owner's draft
+   * follows the message — drafts stay private (each is delivered only to its own
+   * `user:{userId}` room by the caller). Set-based single UPDATE (INV-56), no
+   * select-then-write (INV-20).
+   *
+   * Bumps `version` so the client's drift-aware apply accepts the new scope: a
+   * clean local row sees `version > baseVersion` and adopts it, while a row with
+   * unpushed edits ignores the echo and its queued push splits CAS-safely
+   * (expectedVersion now trails the server). Returns the re-scoped rows so the
+   * caller can emit one `draft:upserted` per owner.
+   */
+  async rescopeByScope(
+    db: Querier,
+    params: { workspaceId: string; fromScope: string; toScope: string; rootStreamId: string | null }
+  ): Promise<Draft[]> {
+    const result = await db.query<DraftRow>(sql`
+      UPDATE drafts SET
+        scope = ${params.toScope},
+        root_stream_id = ${params.rootStreamId},
+        updated_at = NOW(),
+        version = version + 1
+      WHERE workspace_id = ${params.workspaceId}
+        AND scope = ${params.fromScope}
+        AND deleted_at IS NULL
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows.map(mapRow)
+  },
+
+  /**
    * Unconditional soft-delete for explicit discard (no CAS) — the user threw
    * the draft away, so drift doesn't matter. Idempotent on an already-deleted
    * row. Returns the row when it tombstoned, `null` when it was missing.
