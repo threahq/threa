@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { createStashedDraft, popStashedDraft, deleteStashedDraftById } from "./use-stashed-drafts"
+import { createStashedDraft, popStashedDraft } from "./use-stashed-drafts"
 import { upsertLoadedDraft } from "./use-draft-message"
 import type { JSONContent } from "@threa/types"
 import { db } from "@/db"
@@ -93,15 +93,5 @@ describe("popStashedDraft", () => {
     const restored = await popStashedDraft("draft_missing")
 
     expect(restored).toBeNull()
-  })
-})
-
-describe("deleteStashedDraftById", () => {
-  it("deletes the row by id", async () => {
-    const created = await createStashedDraft(workspaceId, scope, { contentJson: makeDoc("x") })
-
-    await deleteStashedDraftById(created!.id)
-
-    expect(await db.drafts.get(created!.id)).toBeUndefined()
   })
 })

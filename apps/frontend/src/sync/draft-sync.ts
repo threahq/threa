@@ -93,13 +93,18 @@ export async function putLocalDraft(row: CachedDraft): Promise<void> {
 /**
  * Delete a draft locally, clearing the composer-loaded pointer when it referred
  * to this id (so a remote delete of the checked-out draft empties the composer
- * rather than dangling a pointer at a missing row).
+ * rather than dangling a pointer at a missing row). Returns the removed row (or
+ * `undefined` if it was already gone) so a user-initiated delete can mirror the
+ * removal to the backend off its `baseVersion`; the inbound-apply callers ignore
+ * the return. Local only — does NOT touch the server (that's `deleteDraftById`).
  */
-export async function deleteLocalDraft(workspaceId: string, id: string): Promise<void> {
+export async function deleteLocalDraft(workspaceId: string, id: string): Promise<CachedDraft | undefined> {
   let clearedScope: string | null = null
+  let removed: CachedDraft | undefined
   await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
     const row = await db.drafts.get(id)
     if (!row) return
+    removed = row
     const loaded = await db.composerLoaded.get(row.scope)
     if (loaded?.draftId === id) {
       await db.composerLoaded.delete(row.scope)
@@ -111,6 +116,22 @@ export async function deleteLocalDraft(workspaceId: string, id: string): Promise
     deleteDraftFromCache(workspaceId, id)
     if (clearedScope) setComposerLoadedInCache(workspaceId, clearedScope, null)
   }
+  return removed
+}
+
+/**
+ * Delete a draft by id AND mirror the removal to the backend — the single
+ * user-initiated draft-delete path. A draft is a draft: whether it was the one
+ * loaded into a composer or a stash sibling, deletion is identical, so the
+ * in-composer stash list and the Drafts explorer both call this rather than
+ * branching on loaded-vs-stashed. Removes the local row (clearing the loaded
+ * pointer when it pointed here) and queues an unconditional, idempotent server
+ * delete so the removal propagates to the author's other devices. No-op on an
+ * already-gone row. Callers kick the operation queue so the delete drains now.
+ */
+export async function deleteDraftById(workspaceId: string, id: string): Promise<void> {
+  const removed = await deleteLocalDraft(workspaceId, id)
+  if (removed) await syncDraftRemoval(workspaceId, id, removed.baseVersion)
 }
 
 /**
@@ -192,6 +213,16 @@ async function pendingDraftOps(
 /** True when a draft has edits queued for push but not yet confirmed by the server. */
 export async function hasPendingDraftUpsert(draftId: string): Promise<boolean> {
   return (await pendingDraftOps("upsert_draft", draftId)).length > 0
+}
+
+/**
+ * True when a draft has a server delete queued but not yet drained. The local
+ * row is already gone (delete-then-enqueue), so an inbound upsert for this id is
+ * a stale view of a draft the user discarded — accepting it would resurrect the
+ * row until the delete op drains. The queued delete is authoritative.
+ */
+export async function hasPendingDraftDelete(draftId: string): Promise<boolean> {
+  return (await pendingDraftOps("delete_draft", draftId)).length > 0
 }
 
 /**
@@ -340,12 +371,21 @@ export async function syncDraftResolution(
 export async function applyDraftUpserted(
   payload: DraftUpsertedPayload,
   expectedWorkspaceId: string,
-  pendingUpsertIds?: ReadonlySet<string>
+  pendingUpsertIds?: ReadonlySet<string>,
+  pendingDeleteIds?: ReadonlySet<string>
 ): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
   // E2E rows carry no plaintext to render/store yet (Stage 4).
   if (draft.contentJson === null) return
+
+  // A queued local delete wins: the user discarded this draft here and its
+  // `delete_draft` op (not yet drained) will remove the server row. Until then,
+  // accepting an echo or a bootstrap re-seed would resurrect the row the user
+  // deleted — so the delete would appear not to "stick". (The set, passed by
+  // bootstrap, avoids a per-draft op-table scan.)
+  const deleting = pendingDeleteIds ? pendingDeleteIds.has(draft.id) : await hasPendingDraftDelete(draft.id)
+  if (deleting) return
 
   const local = await db.drafts.get(draft.id)
   if (!local) {
@@ -412,18 +452,22 @@ export async function applyDraftDeleted(payload: DraftDeletedPayload, expectedWo
  */
 export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[]): Promise<void> {
   const serverIds = new Set(drafts.map((d) => d.id))
-  // Read the pending `upsert_draft` ids once and reuse the set across both loops
-  // instead of scanning `pendingOperations` per draft (O(drafts) → O(1) scans).
-  const pendingUpsertIds = new Set(
-    (await db.pendingOperations.where("type").equals("upsert_draft").toArray()).map(
-      (op) => op.payload.draftId as string
-    )
-  )
+  // Read the queued `upsert_draft` / `delete_draft` ids once (indexed, in
+  // parallel) and reuse the sets across the loops, rather than scanning the op
+  // table per draft. A queued delete means the user discarded that draft here;
+  // the re-seed must not resurrect it before the delete drains.
+  const [upsertOps, deleteOps] = await Promise.all([
+    db.pendingOperations.where("type").equals("upsert_draft").toArray(),
+    db.pendingOperations.where("type").equals("delete_draft").toArray(),
+  ])
+  const pendingUpsertIds = new Set(upsertOps.map((op) => op.payload.draftId as string))
+  const pendingDeleteIds = new Set(deleteOps.map((op) => op.payload.draftId as string))
   for (const draft of drafts) {
     await applyDraftUpserted(
       { workspaceId: draft.workspaceId, targetUserId: draft.userId, draft },
       workspaceId,
-      pendingUpsertIds
+      pendingUpsertIds,
+      pendingDeleteIds
     )
   }
 

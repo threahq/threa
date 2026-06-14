@@ -7,6 +7,7 @@ import {
   applyDraftsBootstrap,
   applyDraftUpserted,
   cachedDraftFromWire,
+  deleteDraftById,
   enqueueDraftDelete,
   enqueueDraftResolve,
   enqueueDraftUpsert,
@@ -464,5 +465,74 @@ describe("executeDraftResolve", () => {
       delete: vi.fn(),
     } as unknown as DraftsServiceLike)
     expect(resolve).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("pending local delete is authoritative (no resurrection)", () => {
+  it("applyDraftUpserted ignores an inbound row whose delete is still queued", async () => {
+    // The user deleted this draft here (e.g. from the Drafts view); its server
+    // delete is queued but not yet drained, and the local row is already gone.
+    await enqueueDraftDelete(workspaceId, "draft_server1")
+
+    // A socket echo (or a re-seed) of the still-present server row arrives.
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft() }, workspaceId)
+
+    // It must NOT be re-created — the queued delete will remove it server-side.
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
+  it("applyDraftsBootstrap does not resurrect a draft whose delete is still queued", async () => {
+    await enqueueDraftDelete(workspaceId, "draft_server1")
+
+    await applyDraftsBootstrap(workspaceId, [wireDraft()])
+
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
+  it("still accepts other server drafts while one has a queued delete", async () => {
+    await enqueueDraftDelete(workspaceId, "draft_server1")
+
+    await applyDraftsBootstrap(workspaceId, [wireDraft(), wireDraft({ id: "draft_server2" })])
+
+    // The guard is scoped to the deleted id only; unrelated drafts still seed.
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+    expect(await db.drafts.get("draft_server2")).toBeDefined()
+  })
+})
+
+describe("deleteDraftById — the single user-initiated delete path", () => {
+  it("removes the row and queues an unconditional server delete for a confirmed draft", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 3 }))
+
+    await deleteDraftById(workspaceId, "draft_x")
+
+    expect(await db.drafts.get("draft_x")).toBeUndefined()
+    const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(dels.map((o) => o.payload.draftId)).toContain("draft_x")
+  })
+
+  it("clears the loaded pointer when the deleted draft was the one loaded (composer empties)", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
+
+    await deleteDraftById(workspaceId, "draft_x")
+
+    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+  })
+
+  it("cancels a never-synced draft's push instead of queuing a server delete", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x" })) // never confirmed → no baseVersion
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+
+    await deleteDraftById(workspaceId, "draft_x")
+
+    expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
+    expect(await db.pendingOperations.where("type").equals("delete_draft").toArray()).toHaveLength(0)
+  })
+
+  it("no-ops on an already-gone row", async () => {
+    await deleteDraftById(workspaceId, "draft_missing")
+
+    expect(await db.pendingOperations.where("type").equals("delete_draft").toArray()).toHaveLength(0)
   })
 })

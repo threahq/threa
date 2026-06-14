@@ -7,7 +7,7 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
-import { enqueueDraftUpsert, syncDraftRemoval } from "@/sync/draft-sync"
+import { deleteDraftById, enqueueDraftUpsert, syncDraftRemoval } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
@@ -97,21 +97,6 @@ export async function popStashedDraft(id: string): Promise<CachedDraft | null> {
   return row
 }
 
-/** Delete a draft without restoring it. */
-export async function deleteStashedDraftById(id: string): Promise<void> {
-  // Read + delete atomically so `baseVersion` reflects a server confirmation
-  // that lands mid-delete (avoids the ghost-draft race).
-  const row = await db.transaction("rw", db.drafts, async () => {
-    const found = await db.drafts.get(id)
-    if (found) await db.drafts.delete(id)
-    return found
-  })
-  if (row) {
-    deleteDraftFromCache(row.workspaceId, id)
-    await syncDraftRemoval(row.workspaceId, row.id, row.baseVersion)
-  }
-}
-
 /**
  * Query + mutate the stashed drafts for a specific scope (a stream or a thread's
  * parent message) — every draft for the scope except the one loaded into the
@@ -120,8 +105,10 @@ export async function deleteStashedDraftById(id: string): Promise<void> {
  * mutations rather than throw.
  *
  * The mutation methods are thin wrappers over the module-level helpers
- * (`createStashedDraft`, `popStashedDraft`, `deleteStashedDraftById`) so the
- * mutation behavior is testable without `renderHook`.
+ * (`createStashedDraft`, `popStashedDraft`, and the shared `deleteDraftById`) so
+ * the mutation behavior is testable without `renderHook`. Deletion routes
+ * through the same `deleteDraftById` the Drafts explorer uses — a draft is a
+ * draft, so the two delete surfaces share one path.
  */
 export function useStashedDrafts(workspaceId: string, scope: string | undefined): UseStashedDraftsResult {
   const allDrafts = useDraftsFromStore(workspaceId)
@@ -156,10 +143,10 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
   )
   const deleteStashedDraft = useCallback(
     async (id: string) => {
-      await deleteStashedDraftById(id)
+      await deleteDraftById(workspaceId, id)
       syncEngine?.kickOperationQueue()
     },
-    [syncEngine]
+    [workspaceId, syncEngine]
   )
 
   return { drafts, isLoaded, stashDraft, restoreStashedDraft, deleteStashedDraft }
