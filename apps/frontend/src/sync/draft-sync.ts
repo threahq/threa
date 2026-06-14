@@ -20,12 +20,15 @@ import type {
  * backend `drafts` feature (Stage 1) through the offline operation queue and the
  * author's `user:{userId}` socket room.
  *
- * The cardinal rule is the same on both sides of the wire: **local wins, and on
- * drift we split** — never overwrite, never lose. Duplicated drafts are
- * acceptable; lost drafts are not. The server splits on a `version` mismatch
- * (keeps the existing row, mints a new id for the incoming content); this module
- * mirrors that rule client-side when an incoming socket row collides with edits
- * this device has not yet pushed.
+ * The cardinal rule is **local wins, and on drift we split** — never overwrite,
+ * never lose. Duplicated drafts are acceptable; lost drafts are not. The split is
+ * resolved in exactly one place: the **server**, which on a `version` mismatch
+ * keeps the existing row and mints a new id for the incoming content
+ * (`executeDraftUpsert` then migrates our local id). Inbound socket rows are
+ * never split client-side — doing so would fork this device's own in-flight
+ * write, whose echo can arrive before the push's ack records `baseVersion`. So
+ * while we hold unpushed edits we simply ignore inbound rows and let our queued
+ * push reach the authoritative server.
  *
  * "Has unpushed local edits" is read from the operation queue itself — a pending
  * `upsert_draft` op for an id IS the local dirty bit — rather than a flag on the
@@ -130,44 +133,6 @@ export async function migrateLocalDraftId(workspaceId: string, fromId: string, t
   }
 }
 
-/**
- * Local split: keep our edits under a fresh id (`newId`) and accept the server
- * row under the original id (`serverRow`), repointing the composer to follow our
- * edits. The original row is re-read INSIDE the transaction (not from a snapshot
- * the caller took before its `await`s) so a keystroke that landed in that window
- * is carried into the split rather than overwritten by the server row — the
- * cardinal no-loss rule. Both rows are written before any delete (atomic, like
- * the id-swap). Returns the row our edits were moved to, or `null` if the
- * original was concurrently removed (nothing to preserve).
- */
-async function splitLocalDraft(
-  workspaceId: string,
-  args: { originalId: string; newId: string; serverRow: CachedDraft }
-): Promise<CachedDraft | null> {
-  const { originalId, newId, serverRow } = args
-  let ourRow: CachedDraft | null = null
-  let repointedScope: string | null = null
-  await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
-    const current = await db.drafts.get(originalId)
-    if (current) {
-      ourRow = { ...current, id: newId, baseVersion: 0 }
-      await db.drafts.put(ourRow)
-    }
-    await db.drafts.put(serverRow)
-    const loaded = await db.composerLoaded.get(serverRow.scope)
-    if (ourRow && loaded?.draftId === originalId) {
-      await db.composerLoaded.put({ ...loaded, draftId: newId })
-      repointedScope = serverRow.scope
-    }
-  })
-  if (hasSeededDraftCache(workspaceId)) {
-    if (ourRow) upsertDraftInCache(workspaceId, ourRow)
-    upsertDraftInCache(workspaceId, serverRow)
-    if (repointedScope) setComposerLoadedInCache(workspaceId, repointedScope, newId)
-  }
-  return ourRow
-}
-
 // ============================================================================
 // Operation-queue helpers (the queue is the source of truth for "dirty")
 // ============================================================================
@@ -266,16 +231,19 @@ export async function syncDraftRemoval(
 
 /**
  * Apply an inbound `draft:upserted` (another device's edit, or an echo of our
- * own confirmed write) with client-side drift detection:
+ * own confirmed write):
  *
  *  - No local row → accept the server row.
  *  - `version <= baseVersion` → stale echo (usually our own write returning);
  *    ignore.
- *  - Newer server version, no unpushed local edits → accept (preserving our
- *    local attachment metadata, which the wire row lacks).
- *  - Newer server version AND unpushed local edits → SPLIT: move our edits to a
- *    fresh id (re-routing the queued push) and accept the server row under the
- *    original id.
+ *  - Newer server version, unpushed local edits exist → IGNORE. The server is
+ *    the single authority on drift: our queued push will reach it and it splits
+ *    CAS-safely (executeDraftUpsert then migrates our local id). Resolving the
+ *    drift here too would fork our OWN in-flight write — its echo can arrive
+ *    before the push's HTTP ack records `baseVersion`, and a local split would
+ *    then mint a duplicate of the draft we are editing.
+ *  - Newer server version, no unpushed edits → accept (preserving local
+ *    attachment metadata the wire row lacks).
  */
 export async function applyDraftUpserted(
   payload: DraftUpsertedPayload,
@@ -295,27 +263,14 @@ export async function applyDraftUpserted(
 
   if (draft.version <= (local.baseVersion ?? 0)) return
 
-  // The pending set (passed by bootstrap) lets a batch apply avoid a
-  // per-draft `pendingOperations` scan; the live socket path resolves it directly.
+  // Unpushed local edits → leave them; the pending push lets the server arbitrate
+  // (the pending set, passed by bootstrap, avoids a per-draft op-table scan).
   const dirty = pendingUpsertIds ? pendingUpsertIds.has(draft.id) : await hasPendingDraftUpsert(draft.id)
-  if (!dirty) {
-    // Confirmed newer version of a draft we are not editing — accept it, keeping
-    // any local attachment metadata (an echo of our own push matches it).
-    await putLocalDraft({ ...cachedDraftFromWire(draft), attachments: local.attachments })
-    return
-  }
+  if (dirty) return
 
-  // Drift — our edits collide with a newer server row from another device. Move
-  // our edits to a fresh id (re-read inside the split txn for the latest content)
-  // and re-route the queued push to it.
-  const newId = generateLocalDraftId()
-  const ourRow = await splitLocalDraft(draft.workspaceId, {
-    originalId: draft.id,
-    newId,
-    serverRow: cachedDraftFromWire(draft),
-  })
-  await cancelPendingDraftUpsert(draft.id)
-  if (ourRow) await enqueueDraftUpsert(draft.workspaceId, newId)
+  // Clean locally — accept the server row, keeping any local attachment metadata
+  // (an echo of our own confirmed push matches it).
+  await putLocalDraft({ ...cachedDraftFromWire(draft), attachments: local.attachments })
 }
 
 /**

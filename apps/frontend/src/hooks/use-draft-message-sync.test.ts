@@ -35,6 +35,22 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect(ops.filter((o) => o.payload.draftId === row.id)).toHaveLength(1)
   })
 
+  it("preserves baseVersion across edits and keeps the same id (no split-on-every-keystroke)", async () => {
+    const row = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("h"), attachments: [] })
+    // Simulate the server confirming the first push at version 1.
+    await db.drafts.put({ ...(await db.drafts.get(row.id))!, baseVersion: 1 })
+
+    // Editing the already-confirmed draft must not reset baseVersion (which would
+    // make the next push expectedVersion 0 and split server-side into a copy).
+    const updated = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("he"), attachments: [] })
+
+    expect(updated.id).toBe(row.id)
+    expect(await db.drafts.count()).toBe(1)
+    expect((await db.drafts.get(row.id))?.baseVersion).toBe(1)
+    // The loaded draft is never also a stash entry — exactly one pointer at it.
+    expect((await db.composerLoaded.get(scope))?.draftId).toBe(row.id)
+  })
+
   it("clearLoadedDraft cancels the push for a never-synced draft (no server delete)", async () => {
     const row = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("hi"), attachments: [] })
 

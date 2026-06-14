@@ -6,6 +6,7 @@ import {
   hasSeededDraftCache,
   setComposerLoadedInCache,
   upsertDraftInCache,
+  upsertLoadedDraftInCache,
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
@@ -62,12 +63,27 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
     attachments: fields.attachments,
     contextRefs,
     clientUpdatedAt: Date.now(),
+    // Carry the sync bookkeeping forward (Stage 3). Without this, editing a
+    // confirmed draft would reset baseVersion to undefined, and the next push
+    // (expectedVersion 0) would collide with the server's existing row and the
+    // server would SPLIT it into a duplicate — once per keystroke after the
+    // first sync. Preserve it so the push CAS-updates in place instead.
+    baseVersion: existing?.baseVersion,
+    attachmentIds: existing?.attachmentIds,
   }
-  await db.drafts.put(row)
-  upsertDraftInCache(workspaceId, row)
-  if (!existing) {
-    await db.composerLoaded.put({ scope, workspaceId, draftId: id })
-    setComposerLoadedInCache(workspaceId, scope, id)
+  if (existing) {
+    await db.drafts.put(row)
+    upsertDraftInCache(workspaceId, row)
+  } else {
+    // A brand-new loaded draft: write the row and its loaded pointer together so
+    // a live reader never observes the draft before the pointer lands — otherwise
+    // the just-created draft flashes into its own stash list for a tick (it isn't
+    // filtered out as "loaded" until the pointer exists).
+    await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+      await db.drafts.put(row)
+      await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+    })
+    upsertLoadedDraftInCache(workspaceId, row, scope)
   }
   // Mirror to the backend (Stage 3): a coalesced, debounced push that retries
   // silently. The caller kicks the queue so it drains promptly.

@@ -185,6 +185,32 @@ export function deleteDraftFromCache(workspaceId: string, draftId: string): void
 }
 
 /**
+ * Upsert a draft AND point the scope's composer-loaded pointer at it in a single
+ * cache signal. Used when a brand-new loaded draft is created: doing the draft
+ * insert and the pointer set as one update means a live reader never observes a
+ * frame where the draft exists but no pointer references it — which would render
+ * the just-created draft as a stash entry for a tick (it isn't filtered out as
+ * "loaded" until the pointer lands).
+ */
+export function upsertLoadedDraftInCache(workspaceId: string, draft: CachedDraft, scope: string): void {
+  const drafts = cache.drafts.get(workspaceId) ?? []
+  const nextDrafts = [...drafts]
+  const index = nextDrafts.findIndex((candidate) => candidate.id === draft.id)
+  if (index === -1) {
+    nextDrafts.push(draft)
+  } else {
+    nextDrafts[index] = draft
+  }
+  const loaded = (cache.loaded.get(workspaceId) ?? []).filter((row) => row.scope !== scope)
+  loaded.push({ scope, workspaceId, draftId: draft.id })
+  seedDraftCache(workspaceId, {
+    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    drafts: nextDrafts,
+    loaded,
+  })
+}
+
+/**
  * Set (or clear, with `draftId: null`) the composer-loaded pointer for a scope
  * in the in-memory cache. Mirrors the `composerLoaded` IDB row so the composer
  * resolves its checked-out draft synchronously on first paint.

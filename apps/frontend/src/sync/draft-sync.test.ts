@@ -143,7 +143,7 @@ describe("applyDraftUpserted", () => {
     expect(row?.attachments).toEqual(attachments)
   })
 
-  it("splits locally on drift — our unpushed edits and the server row both survive", async () => {
+  it("ignores an inbound newer version while we have unpushed edits — no client-side split (server arbitrates)", async () => {
     await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("my edits") }))
     await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
     // a pending push is the local "dirty" bit
@@ -158,19 +158,36 @@ describe("applyDraftUpserted", () => {
       workspaceId
     )
 
-    // original id now holds the server row
-    expect((await db.drafts.get("draft_x"))?.contentJson).toEqual(makeDoc("their edits"))
+    // Exactly one draft remains: our edits, untouched. No duplicate is minted —
+    // the queued push will reach the server, which splits CAS-safely if it's a
+    // real drift (executeDraftUpsert then migrates our id). Splitting here too is
+    // what forked our own in-flight echo into duplicates.
+    expect(await db.drafts.count()).toBe(1)
+    const row = await db.drafts.get("draft_x")
+    expect(row?.contentJson).toEqual(makeDoc("my edits"))
+    expect(row?.baseVersion).toBe(1)
+    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_x")
+    expect(await hasPendingDraftUpsert("draft_x")).toBe(true)
+  })
 
-    // our edits live under a fresh id
-    const all = await db.drafts.toArray()
-    const ours = all.find((d) => d.id !== "draft_x")
-    expect(ours?.contentJson).toEqual(makeDoc("my edits"))
-    expect(ours?.baseVersion).toBe(0)
+  it("does not duplicate on an echo of our own in-flight write (echo-before-ack)", async () => {
+    // Brand-new draft mid-first-push: baseVersion still 0, push still queued.
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 0, contentJson: makeDoc("hello") }))
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
+    await enqueueDraftUpsert(workspaceId, "draft_x")
 
-    // the composer follows our edits, and the push is re-routed to the new id
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe(ours!.id)
-    expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
-    expect(await hasPendingDraftUpsert(ours!.id)).toBe(true)
+    // The server's echo of our own insert arrives before the PUT's HTTP ack.
+    await applyDraftUpserted(
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ id: "draft_x", version: 1, contentJson: makeDoc("hello") }),
+      },
+      workspaceId
+    )
+
+    expect(await db.drafts.count()).toBe(1)
+    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_x")
   })
 })
 
