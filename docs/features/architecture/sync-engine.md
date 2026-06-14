@@ -134,8 +134,8 @@ Every catch-up trigger above is connectivity-shaped (connect, reconnect, online
 flip, resume) — a client whose transport stays healthy for hours would never
 notice a dropped emit. The backend's `SyncHeartbeatWorker` therefore broadcasts
 each workspace's sync-log head to its room (`sync:heartbeat`, every 15s,
-node-local emits under the Postgres adapter). In active sync mode the engine
-compares the head against `max(cursor, lastSeenHead)` — the cursor is per-user
+node-local emits under the Postgres adapter). The engine compares the head
+against `max(cursor, lastSeenHead)` — the cursor is per-user
 filtered and can sit permanently below the workspace-global head, so a catch-up
 that drains to an empty page records that page's `head` as the known-clean
 high-water mark (`lastSeenHead`; non-empty pages don't move it, so a failed or
