@@ -17,6 +17,7 @@ import type { ConversationSummaryService } from "../conversation-summary-service
 import { buildSystemPrompt } from "./prompt/system-prompt"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
 import { loadConversationHighlight } from "./conversation-highlight"
+import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStitch } from "./cross-surface-stitch"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
 import { computeAgentAccessSpec } from "../researcher/access-spec"
@@ -171,6 +172,25 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     windowMessageIds: streamScopedMessages.map((m) => m.id),
   })
 
+  // Cross-surface continuity (§2.8 Q8 follow-up): when this thread was spawned
+  // from a channel discussion, stitch that discussion's own messages in as
+  // background so a persona pulled from a channel into a thread keeps what it
+  // was pulled from. Best-effort and never-awaited, same discipline as the
+  // highlight. Priority fill: the thread's own window takes the char budget
+  // first, the stitch gets only what remains — generous on a fresh thread (when
+  // continuity matters most) and gone once the thread carries its own depth.
+  // Measured before quote/shared-message enrichment so the budget tracks raw
+  // window markdown, the same basis the C-2b fetch trim uses.
+  let crossSurfaceStitch: CrossSurfaceStitch | null = null
+  if (stream.type === StreamTypes.THREAD) {
+    const windowChars = streamContext.conversationHistory.reduce((sum, m) => sum + m.contentMarkdown.length, 0)
+    crossSurfaceStitch = await loadCrossSurfaceStitch(db, {
+      workspaceId,
+      thread: stream,
+      maxChars: policy.maxChars - windowChars,
+    })
+  }
+
   // Build author names from participants + a single batched user+persona lookup.
   // `resolveActorNames` handles the user/persona split (INV-56: batched, never
   // per-row) so we don't reimplement it inline per surface.
@@ -193,6 +213,13 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       for (const reactorId of reactorIds) {
         if (!authorNames.has(reactorId)) unresolvedIds.add(reactorId)
       }
+    }
+  }
+  // Stitched channel-discussion authors are usually not thread participants, so
+  // resolve them in the same batch (INV-56) — the block names them, not "Unknown".
+  if (crossSurfaceStitch) {
+    for (const m of crossSurfaceStitch.messages) {
+      if (!authorNames.has(m.authorId)) unresolvedIds.add(m.authorId)
     }
   }
   const resolvedNames = await resolveActorNames(db, workspaceId, [...unresolvedIds])
@@ -329,6 +356,14 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       })
     : null
 
+  // Render the stitched discussion once author names are fully resolved. Null
+  // when there's nothing to stitch (no spawning conversation, or a deep thread
+  // whose window left no budget).
+  const spawnedFromContext =
+    crossSurfaceStitch && crossSurfaceStitch.messages.length > 0
+      ? formatSpawnedFromContext(crossSurfaceStitch, authorNames, streamContext.temporal)
+      : null
+
   const composeSystemPrompt = (tools: AgentTool[]): string => {
     let systemPrompt = buildSystemPrompt(
       persona,
@@ -338,7 +373,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       mentionerName,
       rollingConversationSummary,
       tools,
-      conversationTopic
+      conversationTopic,
+      spawnedFromContext
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`
