@@ -759,7 +759,7 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const membership = await streamService.setNotificationLevel(streamId, userId, data.notificationLevel)
+      const membership = await streamService.setNotificationLevel(workspaceId, streamId, userId, data.notificationLevel)
       if (!membership) {
         return res.status(404).json({ error: "Not a member of this stream" })
       }

@@ -93,13 +93,44 @@ export async function checkStreamAccess(
 }
 
 /**
+ * The canonical "is this *already-resolved effective root* readable by the
+ * user?" leaf: public visibility OR a `stream_members` row on the root. This is
+ * the single rule that both the per-id predicate ({@link streamAccessPredicateSql})
+ * and the workspace catch-up CTE (`features/sync/repository.ts`) reduce a
+ * stream's effective root down to — extracted so the public-without-membership
+ * branch cannot live in one and be silently dropped from the other (the exact
+ * drift that previously shipped: catch-up replicated the thread→root leg but
+ * omitted the public-root leg). The caller resolves the effective root
+ * (top-level stream → itself, thread → its root) and passes its alias; this
+ * fragment only decides readability of that resolved root.
+ *
+ * `rootAlias` is injected raw (squid `raw`) because it is a SQL alias reference,
+ * not a value — it MUST be a trusted constant supplied by call-site code (e.g.
+ * `"eff_root"`), NEVER derived from user input. Built with squid `sql` so it
+ * carries `$1..$k` placeholders that {@link composeSql} renumbers when splicing
+ * it into a larger query.
+ */
+export function rootReadableConditionSql(userId: string, rootAlias: string): QueryConfig {
+  return sql`(
+    ${sql.raw(rootAlias)}.visibility = ${Visibilities.PUBLIC}
+    OR EXISTS (
+      SELECT 1 FROM stream_members
+      WHERE stream_id = ${sql.raw(rootAlias)}.id AND member_id = ${userId}
+    )
+  )`
+}
+
+/**
  * Canonical SQL predicate for the "thread → root" stream-access rule
  * (INV-62), as a reusable `EXISTS` fragment correlated to a stream-id
  * column. This is the single source of truth for the *set-based* form of
  * the same three rules `checkStreamAccess` enforces per-id (workspace
  * boundary, public root grants read without a `stream_members` row, threads
- * inherit from their root). When the thread→root resolution rule changes,
- * this fragment and the per-id helpers update together.
+ * inherit from their root). The effective root is resolved with
+ * `COALESCE(root_stream_id, id)` (a top-level stream is its own root, a thread
+ * defers to its root; a thread whose root row is missing finds no join and is
+ * denied), then {@link rootReadableConditionSql} decides readability — the same
+ * leaf the catch-up CTE applies, so the two cannot drift.
  *
  * The returned `QueryConfig` is spliced into a larger query via
  * {@link composeSql} (squid's own `sql` tag cannot nest fragments — it would
@@ -117,34 +148,14 @@ export async function checkStreamAccess(
  * workspace boundary inside the EXISTS, so it is correct even when the outer
  * query does not otherwise constrain the stream's workspace.
  */
-export function streamAccessPredicateSql(
-  workspaceId: string,
-  userId: string,
-  streamIdColumn: string
-): QueryConfig {
-  return sql`EXISTS (
+export function streamAccessPredicateSql(workspaceId: string, userId: string, streamIdColumn: string): QueryConfig {
+  return composeSql`EXISTS (
     SELECT 1
     FROM streams eff_s
-    LEFT JOIN streams eff_root ON eff_root.id = eff_s.root_stream_id
-    WHERE eff_s.id = ${sql.raw(streamIdColumn)}
+    JOIN streams eff_root ON eff_root.id = COALESCE(eff_s.root_stream_id, eff_s.id)
+    WHERE ${sql`eff_s.id = ${sql.raw(streamIdColumn)}`}
       AND eff_s.workspace_id = ${workspaceId}
-      AND (
-        (eff_s.root_stream_id IS NULL AND (
-          eff_s.visibility = ${Visibilities.PUBLIC}
-          OR EXISTS (
-            SELECT 1 FROM stream_members
-            WHERE stream_id = eff_s.id AND member_id = ${userId}
-          )
-        ))
-        OR
-        (eff_s.root_stream_id IS NOT NULL AND eff_root.id IS NOT NULL AND (
-          eff_root.visibility = ${Visibilities.PUBLIC}
-          OR EXISTS (
-            SELECT 1 FROM stream_members
-            WHERE stream_id = eff_s.root_stream_id AND member_id = ${userId}
-          )
-        ))
-      )
+      AND ${rootReadableConditionSql(userId, "eff_root")}
   )`
 }
 

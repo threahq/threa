@@ -23,6 +23,7 @@ import type {
   Draft as WireDraft,
   WorkspaceInvitableRole,
   AuthorType,
+  NotificationLevel,
 } from "@threa/types"
 
 /**
@@ -44,6 +45,7 @@ export type OutboxEventType =
   | "stream:display_name_updated"
   | "stream:read"
   | "stream:read_all"
+  | "stream:notification_level_updated"
   | "stream:activity"
   | "attachment:uploaded"
   | "attachment:extraction_completed"
@@ -457,6 +459,15 @@ export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
   lastReadOrdinal: number
 }
 
+// Notification-level event payload (author-scoped — the mute/notify choice is
+// the acting user's own per-stream preference, so it reaches only their other
+// sessions, mirroring stream:read).
+export interface StreamNotificationLevelUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  authorId: string
+  streamId: string
+  notificationLevel: NotificationLevel | null
+}
+
 export interface StreamsReadAllOutboxPayload extends WorkspaceScopedPayload {
   authorId: string
   streamIds: string[]
@@ -757,6 +768,7 @@ export interface OutboxEventPayloadMap {
   "stream:memos_captured": StreamMemosCapturedOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
+  "stream:notification_level_updated": StreamNotificationLevelUpdatedOutboxPayload
   "stream:activity": StreamActivityOutboxPayload
   "attachment:uploaded": AttachmentUploadedOutboxPayload
   "workspace_user:added": WorkspaceUserAddedOutboxPayload
@@ -882,6 +894,7 @@ export function isStreamScopedEvent(event: OutboxEvent): event is OutboxEvent<St
 export type AuthorScopedEventType =
   | "stream:read"
   | "stream:read_all"
+  | "stream:notification_level_updated"
   | "user_preferences:updated"
   | "sidebar_config:updated"
   | "link_preview:dismissed"
@@ -889,6 +902,7 @@ export type AuthorScopedEventType =
 const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
   "stream:read",
   "stream:read_all",
+  "stream:notification_level_updated",
   "link_preview:dismissed",
   "user_preferences:updated",
   "sidebar_config:updated",

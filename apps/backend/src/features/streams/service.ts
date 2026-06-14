@@ -1629,6 +1629,7 @@ export class StreamService {
   }
 
   async setNotificationLevel(
+    workspaceId: string,
     streamId: string,
     memberId: string,
     level: NotificationLevel | null
@@ -1644,7 +1645,20 @@ export class StreamService {
           })
         }
       }
-      return StreamMemberRepository.update(client, streamId, memberId, { notificationLevel: level })
+      const membership = await StreamMemberRepository.update(client, streamId, memberId, { notificationLevel: level })
+      if (membership) {
+        // Mirror the mute/notify choice to the user's other sessions (and the
+        // sync log, so catch-up replays it) in the same transaction — otherwise
+        // the state stays stale cross-tab/device until reconnect. Author-scoped
+        // like stream:read; reaches only this user's rooms (INV-4/INV-7).
+        await OutboxRepository.insert(client, "stream:notification_level_updated", {
+          workspaceId,
+          authorId: memberId,
+          streamId,
+          notificationLevel: level,
+        })
+      }
+      return membership
     })
   }
 

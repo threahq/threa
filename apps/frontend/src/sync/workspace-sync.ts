@@ -134,6 +134,16 @@ interface StreamsReadAllPayload {
   reads: Array<{ streamId: string; lastReadOrdinal: number }>
 }
 
+// Author-scoped: the user's own mute/notify choice for one stream, mirrored to
+// their other sessions so the badge updates live instead of waiting for a
+// reconnect merge.
+interface StreamNotificationLevelUpdatedPayload {
+  workspaceId: string
+  authorId: string
+  streamId: string
+  notificationLevel: StreamMember["notificationLevel"]
+}
+
 interface StreamActivityPayload {
   workspaceId: string
   streamId: string
@@ -886,6 +896,75 @@ export function registerWorkspaceSocketHandlers(
         streamId,
       })
     }
+  }
+
+  // Handle a notification-level change made in another session of this user.
+  // Keeps the mute/notify badge live across tabs/devices (the reconnect merge
+  // in setMutedState otherwise leaves it stale until the next reconnect).
+  const handleStreamNotificationLevelUpdated = (payload: StreamNotificationLevelUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    // The sidebar / quick-switcher / share mute badges render from
+    // `unreadState.mutedStreamIds`, a derived set — NOT from the membership
+    // row's notificationLevel — so the muted set has to move alongside the
+    // membership caches. `setMutedState` centralizes the level→muted rule.
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+      if (!old) return old
+      const streamType = old.streams.find((s) => s.id === payload.streamId)?.type
+      const mutedStreamIds = new Set(old.mutedStreamIds)
+      if (streamType) {
+        setMutedState(mutedStreamIds, payload.streamId, streamType, payload.notificationLevel)
+      }
+      return {
+        ...old,
+        streamMemberships: old.streamMemberships.map((membership) =>
+          membership.streamId === payload.streamId
+            ? { ...membership, notificationLevel: payload.notificationLevel }
+            : membership
+        ),
+        mutedStreamIds: streamType ? Array.from(mutedStreamIds) : old.mutedStreamIds,
+      }
+    })
+
+    // Stream bootstrap membership mirror — drives the settings dialog's level.
+    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+      streamKeys.bootstrap(workspaceId, payload.streamId),
+      (old) => {
+        if (!old?.membership) return old
+        return {
+          ...old,
+          membership: { ...old.membership, notificationLevel: payload.notificationLevel },
+        }
+      }
+    )
+
+    // Persist to IDB so both the membership and the muted set survive a remount
+    // without a re-bootstrap. `db.unreadState` is the live source the badge
+    // hooks observe; `db.streamMemberships` backs the settings dialog.
+    void db.transaction("rw", [db.streamMemberships, db.streams, db.unreadState], async () => {
+      const now = Date.now()
+      const membershipId = `${workspaceId}:${payload.streamId}`
+      const membership = await db.streamMemberships.get(membershipId)
+      if (membership) {
+        await db.streamMemberships.put({
+          ...membership,
+          notificationLevel: payload.notificationLevel,
+          _cachedAt: now,
+        })
+      }
+
+      const stream = await db.streams.get(payload.streamId)
+      const unread = await db.unreadState.get(workspaceId)
+      if (stream && unread) {
+        const mutedStreamIds = new Set(unread.mutedStreamIds)
+        setMutedState(mutedStreamIds, payload.streamId, stream.type, payload.notificationLevel)
+        await db.unreadState.put({
+          ...unread,
+          mutedStreamIds: Array.from(mutedStreamIds),
+          _cachedAt: now,
+        })
+      }
+    })
   }
 
   // Handle stream activity (when a new message is created in any stream)
@@ -1688,6 +1767,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("workspace_user:updated", handleWorkspaceUserUpdated)
   socket.on("stream:read", handleStreamRead)
   socket.on("stream:read_all", handleStreamReadAll)
+  socket.on("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
   socket.on("stream:activity", handleStreamActivity)
   socket.on("stream:display_name_updated", handleStreamDisplayNameUpdated)
   socket.on("stream:member_added", handleStreamMemberAdded)
@@ -1737,6 +1817,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("workspace_user:updated", handleWorkspaceUserUpdated)
     socket.off("stream:read", handleStreamRead)
     socket.off("stream:read_all", handleStreamReadAll)
+    socket.off("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
     socket.off("stream:activity", handleStreamActivity)
     socket.off("stream:display_name_updated", handleStreamDisplayNameUpdated)
     socket.off("stream:member_added", handleStreamMemberAdded)
