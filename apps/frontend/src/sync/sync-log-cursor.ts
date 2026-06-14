@@ -15,7 +15,7 @@ function parseSyncId(value: string, context: string): bigint | null {
   try {
     return BigInt(value)
   } catch {
-    console.warn(`Sync-v2: ignoring malformed sync id (${context})`, { value })
+    console.warn(`Sync: ignoring malformed sync id (${context})`, { value })
     return null
   }
 }

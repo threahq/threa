@@ -1112,7 +1112,7 @@ describe("StreamService.createScratchpad (E2E)", () => {
 })
 
 // The stream:read / stream:read_all payloads carry absolute read positions
-// (sync-v2 phase 2c): clients derive unread as latestOrdinal - lastReadOrdinal,
+// (sync phase 2c): clients derive unread as latestOrdinal - lastReadOrdinal,
 // so these events must say where the read lands in message-ordinal space.
 describe("StreamService.markAsRead", () => {
   let service: StreamService

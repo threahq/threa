@@ -199,7 +199,7 @@ describe("replaceSavedPage", () => {
   })
 })
 
-describe("useSavedList refetchOnReconnect (sync-v2 mode gate)", () => {
+describe("useSavedList refetchOnReconnect (sync mode gate)", () => {
   let listFn: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {

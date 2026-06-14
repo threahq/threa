@@ -456,7 +456,7 @@ describe("Unread Counts", () => {
     })
   })
 
-  // Sync-v2 phase 2c: the unread counter events carry absolute values so
+  // Sync phase 2c: the unread counter events carry absolute values so
   // replayed/duplicated sync-log entries converge instead of compounding.
   // Clients derive unread = latestOrdinal - lastReadOrdinal; these tests pin
   // the ordinal payloads end-to-end through the real write paths.

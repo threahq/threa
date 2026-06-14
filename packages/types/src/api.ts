@@ -1136,7 +1136,7 @@ export interface WorkspaceBootstrap {
   /**
    * Per-stream total message count (message ordinal) at snapshot time —
    * the baseline for deriving unread from absolute counter payloads
-   * (sync-v2 phase 2c): lastReadOrdinal = messageCounts - unreadCounts.
+   * (sync phase 2c): lastReadOrdinal = messageCounts - unreadCounts.
    * Optional during rollout: snapshots cached before the field shipped lack it.
    */
   messageCounts?: Record<string, number>
@@ -1293,7 +1293,7 @@ export interface ActivityCreatedPayload {
   targetUserId: string
   /**
    * The target user's absolute unread counts for the activity's stream
-   * (sync-v2 phase 2c). Clients set counters from these — never increment —
+   * (sync phase 2c). Clients set counters from these — never increment —
    * so replayed/duplicated events converge. Optional: sync-log entries
    * persisted before the field shipped lack it; consumers must fall back to
    * legacy increment-or-skip handling for those.

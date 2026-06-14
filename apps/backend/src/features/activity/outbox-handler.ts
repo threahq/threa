@@ -309,7 +309,7 @@ export class ActivityFeedHandler implements OutboxHandler {
    * one transaction per call to keep outbox writes batched.
    *
    * Each payload carries the target user's absolute unread counts for the
-   * stream (sync-v2 phase 2c): clients set counters from these instead of
+   * stream (sync phase 2c): clients set counters from these instead of
    * incrementing, so replayed/duplicated events converge. The activity rows
    * are committed before this runs, so the counts include them; rows sharing
    * a (user, stream) pair carry identical final counts, which is correct

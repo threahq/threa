@@ -121,8 +121,9 @@ rather than per-phase edits.
   it and is marked drifting above.
 - **e2e scratchpads + enclave**: still `building` and actively changing (e.g. #794
   enclave auto-titles). Both docs exist with `status: building`; refresh when it ships.
-- **sync-v2**: client cursor in shadow mode (#832, #833, #846). Parts of
-  `architecture/sync-engine.md` will need updating when it leaves shadow mode.
+- **sync**: client cursor is the active, sole sync path (#832, #833, #846;
+  made default in #884, flag deleted and hardwired in #926). `architecture/sync-engine.md`
+  is refreshed to the shipped engine.
 - **conversation overlay**: conversation grouping overlay with user corrections (#842)
   is new; fold into threads-and-conversations once it stabilizes.
 

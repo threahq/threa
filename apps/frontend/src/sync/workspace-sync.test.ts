@@ -1198,7 +1198,7 @@ describe("registerWorkspaceSocketHandlers", () => {
   })
 })
 
-describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
+describe("unread counter events (absolute payloads, sync phase 2c)", () => {
   const preview = {
     authorId: "member_2",
     authorType: "user" as const,
@@ -1474,7 +1474,7 @@ describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
   })
 })
 
-describe("latest ordinal seeding and reconnect merge (sync-v2 phase 2c)", () => {
+describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
   beforeEach(async () => {
     await db.unreadState.clear()
   })

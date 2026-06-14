@@ -56,7 +56,7 @@ export function useMarkActivityRead(workspaceId: string) {
 
       // Decrement the per-stream counts together with the workspace total:
       // absolute counter events rederive the total as Σ activityCounts
-      // (sync-v2 phase 2c), so a total-only decrement would resurrect on the
+      // (sync phase 2c), so a total-only decrement would resurrect on the
       // next apply. Rows already read (or self rows) never counted. When the
       // row isn't in any cached list we can't resolve its stream — decrement
       // the total alone and let the next absolute apply settle it.
