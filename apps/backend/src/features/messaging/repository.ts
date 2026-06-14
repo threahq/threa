@@ -751,6 +751,28 @@ export const MessageRepository = {
   },
 
   /**
+   * Sequence of the `windowSize`-th most recent non-deleted message in a
+   * stream — i.e. the oldest message that still falls inside a budgeted
+   * newest-first window of that size. Returns null when the stream has fewer
+   * than `windowSize` messages (the window covers the whole stream). Mirrors
+   * the filter `list()` applies (non-deleted, by `sequence`), so the floor it
+   * reports matches the window `list()` would build. Used by the agent context
+   * window policy to decide whether a prior session's cursor is still inside
+   * the window about to be built (DM episode recency, INV-30 single query).
+   */
+  async findWindowFloorSequence(db: Querier, streamId: string, windowSize: number): Promise<bigint | null> {
+    if (windowSize < 1) return null
+    const result = await db.query<{ sequence: string }>(sql`
+      SELECT sequence::text AS sequence FROM messages
+      WHERE stream_id = ${streamId}
+        AND deleted_at IS NULL
+      ORDER BY sequence DESC
+      OFFSET ${windowSize - 1} LIMIT 1
+    `)
+    return result.rows[0] ? BigInt(result.rows[0].sequence) : null
+  },
+
+  /**
    * Update the embedding for a message.
    * Used by the embedding worker after generating embeddings.
    */

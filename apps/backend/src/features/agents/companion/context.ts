@@ -12,6 +12,7 @@ import { AttachmentRepository } from "../../attachments"
 import { StreamRepository, type Stream } from "../../streams"
 import { awaitAttachmentProcessing } from "../../attachments"
 import { buildStreamContext, type StreamContext } from "../context-builder"
+import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
 import { buildSystemPrompt } from "./prompt/system-prompt"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
@@ -35,6 +36,12 @@ export interface ContextParams {
   messageId: string
   persona: Persona
   trigger?: typeof AgentTriggers.MENTION
+  /**
+   * Per-turn hydration policy, resolved at the dispatch (`Hydrate`) seam by
+   * `resolveContextWindowPolicy`. Fixes the window budget and whether prior
+   * turn digests carry into this turn (DM episode recency, §2.8 Q7/Q8).
+   */
+  policy: ContextWindowPolicy
   /** Invocation time override for deterministic evals/tests. Production uses Date.now(). */
   currentTime?: Date
 }
@@ -93,7 +100,7 @@ async function resolveScratchpadCustomPrompt(
  */
 export async function buildAgentContext(deps: ContextDeps, params: ContextParams): Promise<AgentContext> {
   const { db, userPreferencesService, conversationSummaryService } = deps
-  const { workspaceId, streamId, stream, messageId, persona, trigger, currentTime } = params
+  const { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime } = params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
   const invokingUserId = triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : undefined
@@ -137,6 +144,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   const streamContext = await buildStreamContext(db, stream, {
     preferences,
     currentTime,
+    maxMessages: policy.maxMessages,
     triggerMessageId: messageId,
     includeAttachments: true,
   })
@@ -295,11 +303,18 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // rule. Appended after the base prompt so both first-party drivers fold the
   // identically-formatted block in at the same point (the enclave appends the
   // same formatter's output in run-turn).
-  const turnDigestBlock = await loadTurnDigestPromptBlock(db, {
-    streamId: stream.id,
-    personaId: persona.id,
-    accessibleStreamIds,
-  })
+  //
+  // Gated on the episode boundary (§2.5 / §2.8 Q8): a DM turn that opens a
+  // fresh episode — the prior session's cursor fell outside this window — must
+  // not carry that episode's digest chain. Bounded surfaces always carry
+  // (`policy.carryDigests` is true for them).
+  const turnDigestBlock = policy.carryDigests
+    ? await loadTurnDigestPromptBlock(db, {
+        streamId: stream.id,
+        personaId: persona.id,
+        accessibleStreamIds,
+      })
+    : null
 
   const composeSystemPrompt = (tools: AgentTool[]): string => {
     let systemPrompt = buildSystemPrompt(
