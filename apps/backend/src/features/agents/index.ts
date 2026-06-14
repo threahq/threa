@@ -152,7 +152,7 @@ export type { ResolveQuoteRepliesInput, ResolveQuoteRepliesResult } from "./quot
 export { resolveActorNames } from "./actor-names"
 
 // Context builder
-export { buildStreamContext, enrichMessagesWithAttachments, trimToCharBudget } from "./context-builder"
+export { buildStreamContext, enrichMessagesWithAttachments } from "./context-builder"
 
 // Per-turn hydration policy (window budget + digest carry; the `Hydrate` seam)
 export {
