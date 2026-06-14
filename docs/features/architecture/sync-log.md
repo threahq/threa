@@ -51,9 +51,9 @@ concurrent writers, so two batches never collide on an id.
 
 **Write side: log first, then emit.** When the outbox dispatcher hands a batch to
 `BroadcastHandler`, `sequenceEvents` runs before any socket emit. For each event it calls
-`resolveDeliveryGroups` to compute the groups, skips events that are bot-scoped (`groups`
-is `null`), unroutable (empty groups), or missing a `workspaceId`, and writes the rest to
-`sync_log`. The assigned `sync_id` is spread onto the wire payload, so a live socket
+`resolveDeliveryGroups` to compute the groups. Bot-scoped events (`groups` is `null`) are
+dispatched to the `/bot` namespace instead of the log; events that are unroutable (empty
+groups) or missing a `workspaceId` are dropped; everything else is written to `sync_log`. The assigned `sync_id` is spread onto the wire payload, so a live socket
 recipient and a catch-up recipient apply the same stamped event. Because the log write
 precedes the emit and is idempotent on `outbox_event_id` (a unique index), a crash between
 log and emit loses nothing: the row is already durable, and the reconciliation worker
