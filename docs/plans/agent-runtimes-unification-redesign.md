@@ -1028,8 +1028,20 @@ type)` are how the episode is computed, not a parallel dimension._
    `buildSystemPrompt` renders it as a `## Current Topic` block beside
    `## Conversation Memory`. Read best-effort, never awaited; eligible only while
    unresolved with a non-null `topicSummary`; plaintext-only by construction (the
-   segmenter short-circuits E2E). Pulling the window floor earlier to keep the
-   topic whole, and the cross-surface episode, remain follow-ups (INV-36). The
+   segmenter short-circuits E2E). **The cross-surface stitch has now shipped
+   (companion/plaintext):** `loadCrossSurfaceStitch`
+   (`companion/cross-surface-stitch.ts`) surfaces the discussion a thread was
+   spawned from — when a persona is pulled from a channel into a spawned thread,
+   it resolves the spawning message's conversation (the same prefer→recency-
+   fallback resolver as the highlight, shared via `resolveEligibleConversation`),
+   loads that conversation's PRIMARY members (membership-only stitch depth, the
+   spawning message excluded as it is already the thread's anchor), and renders
+   them as a `## Discussion This Thread Was Spawned From` background block.
+   Priority-fill budget: the thread's own window takes the char budget first and
+   the stitch fills only the remainder, so it is generous on a fresh thread (when
+   continuity matters most) and fades to nothing once the thread carries its own
+   depth. Best-effort, never awaited, plaintext-only by construction. Pulling the
+   window floor earlier to keep the topic whole remains a follow-up (INV-36). The
    DM episode-by-recency rule (§2.5, line ~554) is the surface this
    parameterizes._
    - _**The conversations system is the highlight, not the boundary — read
@@ -1112,6 +1124,9 @@ type)` are how the episode is computed, not a parallel dimension._
      channel and continue in a thread — e.g. the persona is pulled into a channel
      discussion but must answer in a spawned thread — so one conversation lives
      across two streams with two episode keys. The per-stream window here does not
-     stitch that together; cross-surface episode continuity (and the conversation
-     **highlight** that would carry it) is left as a follow-up rather than widened
-     into this boundary now (INV-36)._
+     stitch that together on its own; **cross-surface episode continuity has now
+     shipped** as `loadCrossSurfaceStitch` (the `## Discussion This Thread Was
+Spawned From` block, described under the C-2b status note above), which
+     carries the spawning conversation's own messages into the thread as
+     best-effort background — the conversation **highlight** generalized from
+     marking the in-stream topic to carrying the cross-surface one._

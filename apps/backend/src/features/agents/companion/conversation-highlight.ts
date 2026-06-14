@@ -27,29 +27,63 @@ function eligibleTopic(conversation: Conversation): string | null {
   return topic ? topic : null
 }
 
+export interface ResolveEligibleConversationParams {
+  workspaceId: string
+  /** Prefer this message's own PRIMARY conversation when it passes `isEligible`. */
+  preferMessageId: string
+  /**
+   * Recency-fallback window: when the preferred message isn't eligible, the
+   * most recently active conversation overlapping these messages wins
+   * (`findByMessageIds` orders by `last_activity_at DESC`).
+   */
+  windowMessageIds: string[]
+  /**
+   * Eligibility predicate. The shared prefer→fallback traversal is identical
+   * across surfaces (agent-runtimes §2.8 Q8); only what makes a conversation
+   * worth surfacing differs — the highlight needs a topic summary, the
+   * cross-surface stitch needs member messages — so the caller supplies it.
+   */
+  isEligible: (conversation: Conversation) => boolean
+}
+
+/**
+ * Shared resolver for the "which conversation is this turn part of?" question:
+ * prefer the anchor message's own conversation, else fall back to the most
+ * recently active conversation overlapping the window. Reused by the in-stream
+ * highlight and the cross-surface stitch so the anchoring rule lives in one
+ * place (INV-35).
+ */
+export async function resolveEligibleConversation(
+  db: Querier,
+  params: ResolveEligibleConversationParams
+): Promise<Conversation | null> {
+  const { workspaceId, preferMessageId, windowMessageIds, isEligible } = params
+
+  // Prefer the anchor message's own conversation when the segmenter has already
+  // classified it.
+  const preferred = await ConversationRepository.findPrimaryByMessageId(db, workspaceId, preferMessageId)
+  if (preferred && isEligible(preferred)) return preferred
+
+  // Fallback: the most recently active conversation overlapping the window.
+  // `findByMessageIds` returns overlapping conversations ordered by
+  // last_activity_at DESC, so the first eligible one is the live topic.
+  if (windowMessageIds.length === 0) return null
+  const overlapping = await ConversationRepository.findByMessageIds(db, workspaceId, windowMessageIds)
+  for (const conversation of overlapping) {
+    if (isEligible(conversation)) return conversation
+  }
+  return null
+}
+
 export async function loadConversationHighlight(
   db: Querier,
   params: { workspaceId: string; triggerMessageId: string; windowMessageIds: string[] }
 ): Promise<string | null> {
-  const { workspaceId, triggerMessageId, windowMessageIds } = params
-
-  // Prefer the trigger's own conversation when the segmenter has already
-  // classified it — exact, but rare on the turn the trigger fires.
-  const triggerConversation = await ConversationRepository.findPrimaryByMessageId(db, workspaceId, triggerMessageId)
-  if (triggerConversation) {
-    const topic = eligibleTopic(triggerConversation)
-    if (topic) return topic
-  }
-
-  // Fallback: the most recently active topic overlapping the window.
-  // `findByMessageIds` returns overlapping conversations ordered by
-  // last_activity_at DESC, so the first eligible one is the live topic the
-  // window is sitting in.
-  if (windowMessageIds.length === 0) return null
-  const overlapping = await ConversationRepository.findByMessageIds(db, workspaceId, windowMessageIds)
-  for (const conversation of overlapping) {
-    const topic = eligibleTopic(conversation)
-    if (topic) return topic
-  }
-  return null
+  const conversation = await resolveEligibleConversation(db, {
+    workspaceId: params.workspaceId,
+    preferMessageId: params.triggerMessageId,
+    windowMessageIds: params.windowMessageIds,
+    isEligible: (c) => eligibleTopic(c) !== null,
+  })
+  return conversation ? eligibleTopic(conversation) : null
 }

@@ -117,6 +117,34 @@ describe("buildSystemPrompt", () => {
     expect(blank).not.toContain("## Current Topic")
   })
 
+  test("injects the spawned-from discussion block before Conversation Memory when context is provided", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      "Older turns, summarized.",
+      [],
+      null,
+      "Topic: Migration timeout\n\nAlice (10:30): The migration keeps timing out"
+    )
+
+    expect(prompt).toContain("## Discussion This Thread Was Spawned From")
+    expect(prompt).toContain("Alice (10:30): The migration keeps timing out")
+    expect(prompt.indexOf("## Discussion This Thread Was Spawned From")).toBeLessThan(
+      prompt.indexOf("## Conversation Memory")
+    )
+  })
+
+  test("omits the spawned-from discussion block when no context is provided", () => {
+    const provided = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [], null, null)
+    const blank = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [], null, "   ")
+
+    expect(provided).not.toContain("## Discussion This Thread Was Spawned From")
+    expect(blank).not.toContain("## Discussion This Thread Was Spawned From")
+  })
+
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {
     const prompt = buildSystemPrompt(
       persona,
