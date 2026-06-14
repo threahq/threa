@@ -131,30 +131,41 @@ export async function migrateLocalDraftId(workspaceId: string, fromId: string, t
 }
 
 /**
- * Local split: keep our edits under a fresh id (`ourRow`) and accept the server
+ * Local split: keep our edits under a fresh id (`newId`) and accept the server
  * row under the original id (`serverRow`), repointing the composer to follow our
- * edits. Both rows are written before any delete (atomic, like the id-swap).
+ * edits. The original row is re-read INSIDE the transaction (not from a snapshot
+ * the caller took before its `await`s) so a keystroke that landed in that window
+ * is carried into the split rather than overwritten by the server row — the
+ * cardinal no-loss rule. Both rows are written before any delete (atomic, like
+ * the id-swap). Returns the row our edits were moved to, or `null` if the
+ * original was concurrently removed (nothing to preserve).
  */
 async function splitLocalDraft(
   workspaceId: string,
-  args: { originalId: string; ourRow: CachedDraft; serverRow: CachedDraft }
-): Promise<void> {
-  const { originalId, ourRow, serverRow } = args
+  args: { originalId: string; newId: string; serverRow: CachedDraft }
+): Promise<CachedDraft | null> {
+  const { originalId, newId, serverRow } = args
+  let ourRow: CachedDraft | null = null
   let repointedScope: string | null = null
   await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
-    await db.drafts.put(ourRow)
+    const current = await db.drafts.get(originalId)
+    if (current) {
+      ourRow = { ...current, id: newId, baseVersion: 0 }
+      await db.drafts.put(ourRow)
+    }
     await db.drafts.put(serverRow)
     const loaded = await db.composerLoaded.get(serverRow.scope)
-    if (loaded?.draftId === originalId) {
-      await db.composerLoaded.put({ ...loaded, draftId: ourRow.id })
+    if (ourRow && loaded?.draftId === originalId) {
+      await db.composerLoaded.put({ ...loaded, draftId: newId })
       repointedScope = serverRow.scope
     }
   })
   if (hasSeededDraftCache(workspaceId)) {
-    upsertDraftInCache(workspaceId, ourRow)
+    if (ourRow) upsertDraftInCache(workspaceId, ourRow)
     upsertDraftInCache(workspaceId, serverRow)
-    if (repointedScope) setComposerLoadedInCache(workspaceId, repointedScope, ourRow.id)
+    if (repointedScope) setComposerLoadedInCache(workspaceId, repointedScope, newId)
   }
+  return ourRow
 }
 
 // ============================================================================
@@ -270,12 +281,17 @@ export async function applyDraftUpserted(payload: DraftUpsertedPayload, expected
     return
   }
 
-  // Drift — our edits collide with a newer server row from another device.
-  const ourRow: CachedDraft = { ...local, id: generateLocalDraftId(), baseVersion: 0 }
-  const serverRow = cachedDraftFromWire(draft)
-  await splitLocalDraft(draft.workspaceId, { originalId: draft.id, ourRow, serverRow })
+  // Drift — our edits collide with a newer server row from another device. Move
+  // our edits to a fresh id (re-read inside the split txn for the latest content)
+  // and re-route the queued push to it.
+  const newId = generateLocalDraftId()
+  const ourRow = await splitLocalDraft(draft.workspaceId, {
+    originalId: draft.id,
+    newId,
+    serverRow: cachedDraftFromWire(draft),
+  })
   await cancelPendingDraftUpsert(draft.id)
-  await enqueueDraftUpsert(draft.workspaceId, ourRow.id)
+  if (ourRow) await enqueueDraftUpsert(draft.workspaceId, newId)
 }
 
 /** Apply an inbound `draft:deleted` (a draft discarded/resolved on another device). */
