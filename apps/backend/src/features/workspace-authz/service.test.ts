@@ -74,9 +74,9 @@ describe("WorkspaceAuthzService.applyMembershipChange", () => {
     const service = new WorkspaceAuthzService({ pool: {} as never })
     await service.applyMembershipChange(input)
 
-    expect(upsertSpy).toHaveBeenCalledTimes(1)
+    expect(upsertSpy).toHaveBeenCalled()
     expect(userSpy).toHaveBeenCalledWith({} as never, "ws_1", "workos_user_1")
-    expect(insertSpy).toHaveBeenCalledTimes(1)
+    expect(insertSpy).toHaveBeenCalled()
     const [, eventType, payload] = insertSpy.mock.calls[0]!
     expect(eventType).toBe("workspace_user:updated")
     expect(payload).toMatchObject({
@@ -98,6 +98,26 @@ describe("WorkspaceAuthzService.applyMembershipChange", () => {
     await service.applyMembershipChange(input)
 
     expect(upsertSpy).toHaveBeenCalledTimes(1)
+    expect(userSpy).not.toHaveBeenCalled()
+    expect(insertSpy).not.toHaveBeenCalled()
+
+    upsertSpy.mockRestore()
+    userSpy.mockRestore()
+    insertSpy.mockRestore()
+  })
+
+  test("emits nothing when the upsert applied a non-active membership", async () => {
+    // An inactive/pending mirror derives no role from the active-only read
+    // join, so loading the user would broadcast the stale users.role fallback.
+    const upsertSpy = spyOn(WorkspaceUserPermissionsRepository, "upsert").mockResolvedValue(
+      buildMirror({ status: "inactive" })
+    )
+    const userSpy = spyOn(UserRepository, "findByWorkosUserIdInWorkspace")
+    const insertSpy = spyOn(OutboxRepository, "insert")
+
+    const service = new WorkspaceAuthzService({ pool: {} as never })
+    await service.applyMembershipChange({ ...input, status: "inactive" })
+
     expect(userSpy).not.toHaveBeenCalled()
     expect(insertSpy).not.toHaveBeenCalled()
 

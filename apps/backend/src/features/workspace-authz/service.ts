@@ -74,6 +74,21 @@ export class WorkspaceAuthzService {
         return
       }
 
+      // A non-active membership (inactive/pending) derives no role from the
+      // mirror: the user read's JOIN is gated on status='active', so loading the
+      // user here would fall back to the stale users.role and broadcast the
+      // pre-change role — the opposite of this fix's intent. Deactivation is
+      // surfaced through the removal/credential paths, not this freshness
+      // broadcast, so skip non-active transitions (the same status gate
+      // resolveActivePermissions applies).
+      if (updated.status !== "active") {
+        logger.debug(
+          { workspaceId: input.workspaceId, workosUserId: input.workosUserId, status: updated.status },
+          "workspace_user_permissions upsert is non-active; skipping broadcast"
+        )
+        return
+      }
+
       // Role is derived from the mirror at read time, so the user loaded here —
       // in the SAME transaction, after the upsert — already carries the freshly
       // applied role. Broadcasting it keeps every connected client's cached
