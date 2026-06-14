@@ -792,9 +792,10 @@ describe("registerWorkspaceSocketHandlers", () => {
 
   it("applies a gate-dispatched notification-level catch-up replay to IDB", async () => {
     // A mute/notify change made in another session reaches this one as either a
-    // live emit or a catch-up replay (gate.dispatch); both share this handler,
-    // which writes the new level into the streamMemberships mirror so the badge
-    // updates without a re-bootstrap.
+    // live emit or a catch-up replay (gate.dispatch); both share this handler.
+    // It writes the new level into the streamMemberships mirror AND the derived
+    // unreadState.mutedStreamIds set — the latter is what the sidebar / quick-
+    // switcher / share badges actually render from, so both must move.
     const queryClient = new QueryClient()
     const gate = new SocketEventGate("ws_1")
     const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
@@ -810,6 +811,35 @@ describe("registerWorkspaceSocketHandlers", () => {
       joinedAt: new Date().toISOString(),
       _cachedAt: Date.now(),
     })
+    await db.streams.put({
+      id: "stream_1",
+      workspaceId: "ws_1",
+      type: "channel",
+      displayName: "general",
+      slug: "general",
+      description: null,
+      visibility: "public",
+      parentStreamId: null,
+      parentMessageId: null,
+      rootStreamId: null,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "member_1",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      archivedAt: null,
+      _cachedAt: Date.now(),
+    })
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
 
     await gate.dispatch("stream:notification_level_updated", {
       workspaceId: "ws_1",
@@ -820,6 +850,20 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     await vi.waitFor(async () => {
       expect((await db.streamMemberships.get("ws_1:stream_1"))?.notificationLevel).toBe("muted")
+      // The badge source: muting the channel adds it to the muted set.
+      expect((await db.unreadState.get("ws_1"))?.mutedStreamIds).toContain("stream_1")
+    })
+
+    // Unmuting (back to the channel default) removes it from the set again.
+    await gate.dispatch("stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      notificationLevel: null,
+    })
+
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.mutedStreamIds).not.toContain("stream_1")
     })
 
     cleanup()

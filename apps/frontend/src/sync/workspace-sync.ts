@@ -904,9 +904,17 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamNotificationLevelUpdated = (payload: StreamNotificationLevelUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    // Workspace bootstrap membership row — drives the sidebar mute badge.
+    // The sidebar / quick-switcher / share mute badges render from
+    // `unreadState.mutedStreamIds`, a derived set — NOT from the membership
+    // row's notificationLevel — so the muted set has to move alongside the
+    // membership caches. `setMutedState` centralizes the level→muted rule.
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
+      const streamType = old.streams.find((s) => s.id === payload.streamId)?.type
+      const mutedStreamIds = new Set(old.mutedStreamIds)
+      if (streamType) {
+        setMutedState(mutedStreamIds, payload.streamId, streamType, payload.notificationLevel)
+      }
       return {
         ...old,
         streamMemberships: old.streamMemberships.map((membership) =>
@@ -914,10 +922,11 @@ export function registerWorkspaceSocketHandlers(
             ? { ...membership, notificationLevel: payload.notificationLevel }
             : membership
         ),
+        mutedStreamIds: streamType ? Array.from(mutedStreamIds) : old.mutedStreamIds,
       }
     })
 
-    // Stream bootstrap membership mirror (the open stream view).
+    // Stream bootstrap membership mirror — drives the settings dialog's level.
     queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
       streamKeys.bootstrap(workspaceId, payload.streamId),
       (old) => {
@@ -929,15 +938,30 @@ export function registerWorkspaceSocketHandlers(
       }
     )
 
-    // Persist to IDB so the badge survives a remount without a re-bootstrap.
-    void db.transaction("rw", [db.streamMemberships], async () => {
+    // Persist to IDB so both the membership and the muted set survive a remount
+    // without a re-bootstrap. `db.unreadState` is the live source the badge
+    // hooks observe; `db.streamMemberships` backs the settings dialog.
+    void db.transaction("rw", [db.streamMemberships, db.streams, db.unreadState], async () => {
+      const now = Date.now()
       const membershipId = `${workspaceId}:${payload.streamId}`
       const membership = await db.streamMemberships.get(membershipId)
       if (membership) {
         await db.streamMemberships.put({
           ...membership,
           notificationLevel: payload.notificationLevel,
-          _cachedAt: Date.now(),
+          _cachedAt: now,
+        })
+      }
+
+      const stream = await db.streams.get(payload.streamId)
+      const unread = await db.unreadState.get(workspaceId)
+      if (stream && unread) {
+        const mutedStreamIds = new Set(unread.mutedStreamIds)
+        setMutedState(mutedStreamIds, payload.streamId, stream.type, payload.notificationLevel)
+        await db.unreadState.put({
+          ...unread,
+          mutedStreamIds: Array.from(mutedStreamIds),
+          _cachedAt: now,
         })
       }
     })
