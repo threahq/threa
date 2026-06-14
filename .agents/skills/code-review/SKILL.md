@@ -6,7 +6,7 @@ allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bas
 
 # Multi-Perspective Code Review
 
-5 parallel Sonnet reviewers (Spec, Correctness, Design, UX, Mobile) with inline self-scoring (threshold ≥80/100) → filtered report. The report is ALWAYS printed to chat; when reviewing a GitHub PR it is also posted as a PR comment.
+6 parallel Sonnet reviewers (Spec, Correctness, Data Flow, Design, UX, Mobile) with inline self-scoring (threshold ≥80/100) → filtered report. The report is ALWAYS printed to chat; when reviewing a GitHub PR it is also posted as a PR comment.
 
 > **Remote / web sessions:** `gh` is not installed and the GitHub MCP server cannot reliably update existing issue comments (the supersede step in Step 6 silently no-ops). If `gh` fails with "command not found", use the **`github-api-web` skill** for every GitHub interaction in this skill — list/read/post/**PATCH** comments via `curl $GH_TOKEN`. Do NOT fall back to `mcp__github__*` for the supersede flow; it cannot edit prior comment bodies.
 
@@ -93,7 +93,7 @@ In both modes: read CLAUDE.md files (root + directories touched by the diff). St
 
 ## Step 3: Spawn Review Agents
 
-5 parallel Sonnet agents, all `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "sonnet"`. Each gets: CLAUDE.md content, the plan / distilled chat intent, the diff path (`/tmp/code-review.diff`), and (PR mode) the PR number.
+6 parallel Sonnet agents, all `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "sonnet"`. Each gets: CLAUDE.md content, the plan / distilled chat intent, the diff path (`/tmp/code-review.diff`), and (PR mode) the PR number.
 
 **Shared instructions** (include in every agent prompt):
 
@@ -108,9 +108,9 @@ ISSUES:
 - file.ts:10-20 | CATEGORY | SCORE | Description
 ```
 
-Categories: `claude-md`, `bug`, `plan`, `missing-change`, `abstraction`, `security`, `performance`, `reactivity`, `historical`, `ux-consistency`, `ux-discoverability`, `ux-affordance`, `ux-feedback`, `accessibility`, `mobile-layout`, `mobile-touch`, `mobile-responsive`, `mobile-regression`. No issues → `ISSUES: none`
+Categories: `claude-md`, `bug`, `plan`, `missing-change`, `abstraction`, `security`, `performance`, `reactivity`, `historical`, `data-flow`, `round-trip`, `state-lifecycle`, `ux-consistency`, `ux-discoverability`, `ux-affordance`, `ux-feedback`, `accessibility`, `mobile-layout`, `mobile-touch`, `mobile-responsive`, `mobile-regression`. No issues → `ISSUES: none`
 
-Do NOT flag: pre-existing issues, unchanged lines (except missing corresponding changes), CI-catchable (types/lint/build), general quality without a CLAUDE.md/plan mandate, silenced issues, intentional changes matching PR/chat purpose, theoretical risks, pedantic nitpicks. Quality over quantity — returning few or no issues is correct when the change is sound.
+Do NOT flag: pre-existing issues — UNLESS the diff converts a latent one into a user-visible or data-integrity bug (an issue the change *amplifies* is in scope); unchanged lines (except missing corresponding changes), CI-catchable (types/lint/build), general quality without a CLAUDE.md/plan mandate, silenced issues, intentional changes matching PR/chat purpose, theoretical risks — BUT for sync / optimistic-concurrency / event-echo code, an "our own emitted event is delivered back before our ack/commit lands" interleaving is NOT theoretical; if you dismiss a race as rare you must state the timing budget that makes it rare; pedantic nitpicks. Quality over quantity — returning few or no issues is correct when the change is sound.
 
 ---
 
@@ -119,7 +119,7 @@ Do NOT flag: pre-existing issues, unchanged lines (except missing corresponding 
 2. **Plan/intent adherence:** Compare the diff against the plan / the user's stated intent. Missing corresponding changes? (API→frontend, type→usages, schema→migration, backend pref key→frontend wiring). Skip: supporting infrastructure, implementation choices.
 
 **Agent 2: Correctness** — Two jobs:
-1. **Bug scan:** Logic errors, unhandled edges, off-by-one, null hazards, race conditions, stale-closure/ref bugs, listener leaks, state machines that can wedge. Changes only, significant bugs only.
+1. **Bug scan:** Logic errors, unhandled edges, off-by-one, null hazards, race conditions, stale-closure/ref bugs, listener leaks, state machines that can wedge. Changes only, significant bugs only. For the riskiest change, mentally execute the primary user sequence step by step rather than reading lines in isolation (the cross-function/cross-time lifecycle is Agent 6's job — coordinate, don't duplicate).
 2. **Security:** HIGH-CONFIDENCE vulnerabilities only (>80% exploitable). Trace data flow from user inputs. Categories: injection (SQL/cmd/XXE/template/path traversal), auth bypass, hardcoded secrets, deserialization RCE, XSS, data exposure. **Hard exclusions:** DoS, rate limiting, disk secrets, theoretical races, outdated deps, memory safety, test-only, log spoofing, path-only SSRF, AI prompt content, regex, docs/markdown, missing audit logs, missing hardening without concrete vuln. **Calibration:** React safe unless dangerouslySetInnerHTML. UUIDs unguessable. Env vars trusted.
 
 **Agent 3: Design** — Two jobs:
@@ -141,11 +141,18 @@ Use the user's voiced preferences (from the plan/chat intent) as ground truth fo
 - **Menus/sheets:** do popovers/sheets fit and position correctly on a phone; are desktop-only items correctly hidden on mobile (and vice versa).
 Mobile rubric: 0=not real, 25=minor/subjective, 50=minor friction, 75=clear breakage/friction a real phone user hits, 100=core mobile interaction broken. Do not flag desktop-only concerns, theoretical device issues, or things correctly gated behind `isMobile`.
 
+**Agent 6: Tracing Data Flows** — follow each piece of state through its WHOLE lifecycle, not line-by-line. This is the lens for bugs invisible in a single hunk because the defect is a field dropped, reset, or raced *across* functions and time (the class the other lenses systematically miss):
+- **Field round-trip / preservation:** for every persisted or synced entity the diff touches, list each write path (create, update, optimistic confirm, server reconcile, id-migrate, delete). Flag any path that rebuilds a row and silently drops a field another path sets — version / optimistic-lock / sync-status / id / foreign keys / timestamps. The canonical miss: an edit handler constructs a fresh row literal and omits the `version`/`baseVersion` the confirm path wrote, so the next write looks unsynced and collides/duplicates.
+- **Execution simulation:** pick the 2–3 highest-risk end-to-end sequences a user actually drives (e.g. *create → push → server-confirm → edit → push again*, or *reconnect → bootstrap → live event*) and step through them against the code, writing down the entity's fields at each step. A divergence — a field that should be N reading 0/undefined on step 4 — is the finding; cite the concrete sequence.
+- **Invariants first:** before scanning, write down the invariants the entity must hold (e.g. "exactly one row per scope", "loaded XOR stashed", "version monotonic", "field F round-trips every write") and check each sequence against them.
+- **Echo / self-event interleavings:** when the code emits an event delivered back to the same client (outbox → own room, optimistic echo), treat "the echo arrives before the originating call's ack/commit lands" as a DEFAULT ordering and trace what the handler does in it — this is where self-duplication and self-split bugs live.
+Score 0–100; only output ≥80 (use `data-flow` / `round-trip` / `state-lifecycle`). Favor concrete sequences ("on the 2nd push expectedVersion is 0 because the edit handler dropped baseVersion") over vague "could race".
+
 ---
 
 ## Step 4: Compose Report
 
-Collect all issues from the 5 agents. Drop any with score <80. De-duplicate where two agents found the same thing (keep the clearest framing, note both lenses). Verify the highest-impact claims against the source before publishing — a confidently-posted false positive is worse than a missed nitpick; lower the score or drop it if it doesn't hold.
+Collect all issues from the 6 agents. Drop any with score <80. De-duplicate where two agents found the same thing (keep the clearest framing, note both lenses). Verify the highest-impact claims against the source before publishing — a confidently-posted false positive is worse than a missed nitpick; lower the score or drop it if it doesn't hold.
 
 Confidence 1-7: 7=Excellent(none survived), 6=Very Good(minor), 5=Good(few non-blocking), 4=Acceptable(some), 3=Needs Work(multiple), 2=Significant Concerns(blocking), 1=Major Problems.
 
@@ -159,7 +166,7 @@ Re-run Step 1 to ensure the PR hasn't been closed/drafted during review.
 
 **PR mode also posts a comment.** Use `gh pr comment N --body-file …`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context). In local mode, use the same link format only if a remote/SHA is known; otherwise cite `path/file.ts:10-15`.
 
-**Attribution:** Disclose models. Include `**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x5 (spec, correctness, design, UX, mobile)`.
+**Attribution:** Disclose models. Include `**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x6 (spec, correctness, data-flow, design, UX, mobile)`.
 
 Report body (identical for the chat printout and the PR comment; the PR comment also carries the `<!-- unified-review -->` marker as its first line):
 
@@ -167,7 +174,7 @@ Report body (identical for the chat printout and the PR comment; the PR comment 
 <!-- unified-review -->
 ### Code review
 **Confidence: X/7** — [Label]
-**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x5 (spec, correctness, design, UX, mobile)
+**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x6 (spec, correctness, data-flow, design, UX, mobile)
 
 Found N issues:
 
@@ -177,6 +184,7 @@ Found N issues:
 ---
 <details><summary>📐 Plan Adherence [CLEAN | N issues]</summary>[details]</details>
 <details><summary>🔍 Bugs [CLEAN | N issues]</summary>[details]</details>
+<details><summary>🔁 Data Flow [CLEAN | N issues]</summary>[details]</details>
 <details><summary>📋 CLAUDE.md Compliance [CLEAN | N violations]</summary>[details]</details>
 <details><summary>🏗️ Design [CLEAN | N concerns]</summary>[details]</details>
 <details><summary>🔒 Security [CLEAN | N issues]</summary>[details]</details>
@@ -193,9 +201,9 @@ Found N issues:
 <!-- unified-review -->
 ### Code review
 **Confidence: 7/7** — Excellent
-**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x5 (spec, correctness, design, UX, mobile)
+**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x6 (spec, correctness, data-flow, design, UX, mobile)
 
-No issues found. Checked for bugs, CLAUDE.md compliance, plan adherence, design quality, security, UX, and mobile.
+No issues found. Checked for bugs, data-flow lifecycle, CLAUDE.md compliance, plan adherence, design quality, security, UX, and mobile.
 
 🤖 Generated with unified-review automation
 <sub>If this review was useful, react with 👍. Otherwise, react with 👎.</sub>
@@ -212,10 +220,11 @@ Use `gh api -X PATCH repos/OWNER/REPO/issues/comments/ID -f body=...` locally, o
 ```
 Code review complete — <PR #N: URL | local branch <name> vs <base_ref>>
 Confidence: X/7
-Models: Orchestrator=<runtime model>, Reviewers=sonnet x5
+Models: Orchestrator=<runtime model>, Reviewers=sonnet x6
 Summary:
 - 📐 Plan: <status>
 - 🔍 Bugs: <status>
+- 🔁 Data flow: <status>
 - 📋 CLAUDE.md: <status>
 - 🏗️ Design: <status>
 - 🔒 Security: <status>
