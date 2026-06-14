@@ -796,11 +796,61 @@ no schema change.
 2. **Context handle shape for bots (N-4):** inline last-N history in the
    invocation vs. a fetch-back ref. Inline is simpler and matches the
    enclave's assignment shape (30 messages); a ref scales better and keeps
-   invocation payloads small. Leaning inline-first.
+   invocation payloads small. Leaning inline-first. _Resolved as inline-first,
+   and it has already shipped (Phase 2.3, #871). The claim response carries an
+   `ExternalContextHandle` — `{ kind: "inline", messages }` — built by
+   `buildClaimContext` (`public-api/handlers.ts`): the last
+   `CLAIM_CONTEXT_MAX_MESSAGES` (30, mirroring the enclave's
+   `MAX_HISTORY_MESSAGES`) preceding the trigger, oldest → newest, the trigger
+   excluded (it rides as `promptMarkdown`), the runner's own prior replies
+   tagged `role: "assistant"` so a harness can rebuild a turn-taking transcript.
+   Inline wins now because the claim is already a round-trip: attaching 30
+   messages costs no extra call, no new authenticated read endpoint, and no
+   standing read scope — the very surface N-4 set out to avoid ("so a useful
+   third-party agent doesn't need broad standing read scopes"). A `ref` would
+   defer no access decision either: per-location scoping (INV-62) makes the
+   invocation's location the grant, so `buildClaimContext` runs the same
+   `resolveDeliveryVerdict` predicate regardless of handle shape — and withholds
+   the handle entirely for E2E / cross-workspace / missing-stream, where
+   plaintext history never leaves the enclave path. A ref would only move that
+   identical decision behind a second round-trip. Hydration is at claim time,
+   never double-stored on the invocation row (INV-57); `ExternalTurnDriver`
+   rejects a pre-resolved `contextHandle` loudly (INV-11) rather than dropping
+   it. The type is a discriminated union and `TurnDispatchBinding.contextHandle`
+   is a forward-compat slot, so the deferred `{ kind: "ref" }` variant — a
+   short-lived, invocation-scoped cursor the runner exchanges for paginated
+   history — is a non-breaking wire addition. Build it only when a concrete
+   payload-size trigger forces it: a deep-continuity window (§2.5 C-2, and Q7
+   below) or rolling summary too large for one claim response, or attachment
+   bytes that can't ride inline. Until then, inline is the entire contract
+   (INV-36)._
 3. **Where does the generalized stream tool policy live** — widen
    `e2e_streams.allowed_tool_categories`'s pattern to a `stream_policies`
    table vs. a column on `streams`? Tracking-table instinct (INV-57) suggests
-   the former; read-path simplicity suggests the latter.
+   the former; read-path simplicity suggests the latter. _Resolved as the
+   tracking table, and it has already shipped (Phase 1.4, #847; see the Phase 1
+   status note above). Migration `20260611193158_stream_policies.sql` creates
+   `stream_policies (stream_id PK, workspace_id, allowed_tool_categories TEXT[],
+timestamps)`, carries the non-null `e2e_streams` rows over, and **drops**
+   `e2e_streams.allowed_tool_categories` — one source of truth for plaintext and
+   E2E alike, not two. `StreamPoliciesRepository.getToolPolicy`
+   (`streams/policy-repository.ts`) reads it; companion (`persona-agent.ts`) and
+   enclave (`enclave-runtimes/claim-service.ts` → the assignment) both fold it
+   over their toolsets through the same `negotiateCapabilities` /
+   `isToolAllowedByPolicy` predicate, so the gate is identical across hosts
+   (external bots bring their own tools and aren't gated here). The tracking
+   table won for the reasons INV-57 predicts: the policy is sparse and optional
+   (**a row exists only to RESTRICT — absence means "no restriction"**, so most
+   streams store nothing), and it is transient agent-policy state that doesn't
+   belong on the core `streams` identity row. Read-path simplicity, the column's
+   only edge, is a single keyed `SELECT` either way. Policy rows are keyed by
+   **non-thread root** streams; threads inherit via `rootStreamId` (INV-62), so
+   callers resolve thread → root before the lookup. Categories are validated in
+   code, not a DB enum (INV-3): `TOOL_PRIVACY_CATEGORIES` (`messaging` | `web` |
+   `workspace` | `github` | `linear` in `packages/types/src/tool-privacy.ts`),
+   with `messaging` always allowed. The "per-workspace policy" the category
+   comment gestures at is a future widening the same table absorbs (add a
+   workspace-scoped row or a sibling table) without revisiting this choice._
 4. **`sources: []` willful defeat** (prior doc's spike #3): add the test that
    a turn whose tool results carried sources commits non-empty sources, so the
    required-field guarantee isn't quietly defeated. _Resolved: the test

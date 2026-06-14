@@ -237,6 +237,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     platformAdminService,
     sidebarConfigService,
     invitationService,
+    workspaceIntegrationService,
     activityService,
     commandAvailabilityService,
     avatarService,
@@ -253,6 +254,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     linkPreviewService,
     botRuntimeService,
     commandAvailabilityService,
+    workspaceIntegrationService,
   })
   const message = createMessageHandlers({
     pool,
@@ -421,6 +423,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.patch("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.update)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/bootstrap", ...authed, stream.bootstrap)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId/companion", ...authed, stream.updateCompanionMode)
+  app.patch("/api/workspaces/:workspaceId/streams/:streamId/tool-policy", ...authed, stream.updateToolPolicy)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/notification-level", ...authed, stream.setNotificationLevel)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/join", ...authed, stream.join)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/actors", ...authed, stream.inviteActor)

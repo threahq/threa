@@ -57,6 +57,7 @@ async function promoteDraft(
       companionMode: creation.companionMode,
       parentStreamId: creation.parentStreamId,
       parentMessageId: creation.parentMessageId,
+      allowedToolCategories: creation.allowedToolCategories,
     })
     realStreamId = newStream.id
 

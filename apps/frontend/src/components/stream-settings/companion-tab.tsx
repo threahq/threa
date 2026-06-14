@@ -3,14 +3,33 @@ import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
-import { CompanionModes, type CompanionMode, type Stream } from "@threa/types"
+import {
+  CompanionModes,
+  type CompanionMode,
+  type Stream,
+  type ToolPrivacyCategory,
+  type ToolPrivacyPolicy,
+} from "@threa/types"
+import { ToolPolicyPicker } from "./tool-policy-picker"
 
 interface CompanionTabProps {
   workspaceId: string
   stream: Stream
+  /** The scratchpad's current tool policy (from the bootstrap envelope). */
+  allowedToolCategories: ToolPrivacyPolicy
+  /** Tool categories the workspace has configured, so the picker hides unconnected integrations. */
+  configuredToolCategories?: ToolPrivacyCategory[]
+  /** True only when the viewer can manage this stream's tool policy (scratchpad owner). */
+  canManageToolPolicy: boolean
 }
 
-export function CompanionTab({ workspaceId, stream }: CompanionTabProps) {
+export function CompanionTab({
+  workspaceId,
+  stream,
+  allowedToolCategories,
+  configuredToolCategories,
+  canManageToolPolicy,
+}: CompanionTabProps) {
   const { mutateAsync: updateCompanionMode, isPending } = useUpdateCompanionMode(workspaceId, stream.id)
 
   // On encrypted scratchpads Ariadne runs in the enclave (never the plaintext
@@ -68,6 +87,16 @@ export function CompanionTab({ workspaceId, stream }: CompanionTabProps) {
           On encrypted scratchpads Ariadne replies from inside the encryption enclave, so your content stays end-to-end
           encrypted either way. Companion lets her reply; Quiet keeps this a silent, encrypted dump.
         </p>
+      )}
+
+      {canManageToolPolicy && (
+        <ToolPolicyPicker
+          workspaceId={workspaceId}
+          streamId={stream.id}
+          value={allowedToolCategories}
+          configuredCategories={configuredToolCategories}
+          e2e={isE2e}
+        />
       )}
     </div>
   )

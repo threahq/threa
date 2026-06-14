@@ -40,7 +40,7 @@ import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
 import type { FeatureFlags } from "./feature-flags"
 import type { SidebarConfig } from "./sidebar"
-import type { ToolPrivacyCategory } from "./tool-privacy"
+import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
 
 // ============================================================================
@@ -60,6 +60,12 @@ interface CreateStreamInputBase {
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */
   contextBag?: ContextBag
+  /**
+   * Tool-privacy policy to apply at creation (scratchpads only). Omitted =
+   * unrestricted; an array (incl. `[]`) restricts the agent to those
+   * categories. Persisted to `stream_policies` in the create transaction.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 /**
@@ -185,6 +191,21 @@ export interface StreamBootstrap {
    * `{bag: null, refs: []}` for streams without a bag.
    */
   contextBag?: StreamContextBagPayload
+  /**
+   * The scratchpad's tool-privacy policy: the tool categories its agent may use
+   * (`null` = no restriction). Only populated for scratchpads — the only
+   * surface that can set one; other stream types omit it. Drives the owner's
+   * tool-policy control in stream settings. Optional so older cached bootstrap
+   * payloads still validate.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
+  /**
+   * Which tool categories the owner's policy picker should offer for this
+   * scratchpad: `web` and `workspace` are always present; `github` / `linear`
+   * appear only when that integration is connected for the workspace. Scratchpad
+   * bootstraps only; absent elsewhere (and on older cached payloads).
+   */
+  configuredToolCategories?: ToolPrivacyCategory[]
 }
 
 /**
@@ -1168,6 +1189,14 @@ export interface WorkspaceBootstrap {
    * operator actions and take effect on the next bootstrap.
    */
   viewerIsPlatformAdmin?: boolean
+  /**
+   * Agent tool categories the workspace has tooling configured for: `web` and
+   * `workspace` always, `github`/`linear` only when connected. Drives the
+   * scratchpad tool-policy picker — chiefly the at-creation control, which has
+   * no per-stream bootstrap to read from yet. Optional for older cached
+   * payloads (absent reads as "all gateable").
+   */
+  configuredToolCategories?: ToolPrivacyCategory[]
 }
 
 // ============================================================================

@@ -7,8 +7,17 @@ import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
 import type { BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
+import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import type { StreamEvent } from "./event-repository"
-import type { EventType, JSONContent, LinkPreviewSummary, StreamType, E2eKeyWrapsResponse } from "@threa/types"
+import type {
+  EventType,
+  JSONContent,
+  LinkPreviewSummary,
+  StreamType,
+  E2eKeyWrapsResponse,
+  ToolPrivacyPolicy,
+  ToolPrivacyCategory,
+} from "@threa/types"
 import {
   ARIADNE_PERSONA_SLUG,
   StreamTypes,
@@ -16,6 +25,7 @@ import {
   CompanionModes,
   E2E_ACTOR_KINDS,
   E2E_KEY_WRAP_RECIPIENT_KINDS,
+  TOOL_PRIVACY_CATEGORIES,
 } from "@threa/types"
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
@@ -62,6 +72,13 @@ const createStreamSchema = z
      */
     e2eEnabled: z.literal(true).optional(),
     e2eOwnerKeyId: z.string().min(1).optional(),
+    /**
+     * Optional tool-privacy policy set at creation time (scratchpads only).
+     * `null`/absent = unrestricted; an array (incl. `[]`) restricts the agent
+     * to those categories. Persisted to `stream_policies` in the create
+     * transaction, like the E2E flag and context bag.
+     */
+    allowedToolCategories: z.array(z.enum(TOOL_PRIVACY_CATEGORIES)).nullable().optional(),
   })
   .refine((data) => data.type !== "channel" || data.slug, {
     message: "Slug is required for channels",
@@ -86,6 +103,10 @@ const createStreamSchema = z
   .refine((data) => !data.e2eEnabled || !data.contextBag, {
     message: "contextBag and E2E are mutually exclusive in Phase 1",
     path: ["e2eEnabled"],
+  })
+  .refine((data) => data.allowedToolCategories === undefined || data.type === "scratchpad", {
+    message: "allowedToolCategories is only supported on scratchpad creation",
+    path: ["allowedToolCategories"],
   })
 
 // Canonical base64 (correct alphabet + padding/length). Rejects e.g. "!!!!" or
@@ -137,6 +158,13 @@ const updateStreamSchema = z
 const updateCompanionModeSchema = z.object({
   companionMode: companionModeSchema,
   companionPersonaId: z.string().nullable().optional(),
+})
+
+// `null` = no restriction (clears the policy row); an array (including `[]` =
+// no tools) restricts the agent to exactly those categories. `messaging` is
+// always allowed regardless, so the picker never offers it.
+const updateToolPolicySchema = z.object({
+  allowedCategories: z.array(z.enum(TOOL_PRIVACY_CATEGORIES)).nullable(),
 })
 
 const setNotificationLevelSchema = z.object({
@@ -312,6 +340,7 @@ interface Dependencies {
   linkPreviewService: LinkPreviewService
   botRuntimeService: BotRuntimeService
   commandAvailabilityService: CommandAvailabilityService
+  workspaceIntegrationService: WorkspaceIntegrationService
 }
 
 /**
@@ -445,6 +474,7 @@ export function createStreamHandlers({
   linkPreviewService,
   botRuntimeService,
   commandAvailabilityService,
+  workspaceIntegrationService,
 }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
@@ -484,6 +514,7 @@ export function createStreamHandlers({
         contextBag,
         e2eEnabled,
         e2eOwnerKeyId,
+        allowedToolCategories,
       } = data
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
@@ -566,6 +597,7 @@ export function createStreamHandlers({
         createdBy: userId,
         contextBag,
         e2e: resolvedE2eOwnerKeyId ? { ownerKeyId: resolvedE2eOwnerKeyId } : undefined,
+        allowedToolCategories,
       })
 
       res.status(201).json({ stream })
@@ -691,6 +723,33 @@ export function createStreamHandlers({
       res.json({ stream: updated })
     },
 
+    async updateToolPolicy(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+
+      const { allowedCategories } = validateRequest(updateToolPolicySchema, req.body)
+
+      // Scoped to scratchpads, owner-only: the tool policy is a personal
+      // guardrail on a solo surface, not a shared channel admin setting.
+      const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      if (stream.type !== StreamTypes.SCRATCHPAD) {
+        throw new HttpError("Tool policy can only be set on a scratchpad", {
+          status: 400,
+          code: "INVALID_STREAM_TYPE",
+        })
+      }
+      if (stream.createdBy !== userId) {
+        throw new HttpError("Only the scratchpad owner can change its tool policy", {
+          status: 403,
+          code: "FORBIDDEN",
+        })
+      }
+
+      const allowedToolCategories = await streamService.setStreamToolPolicy(workspaceId, streamId, allowedCategories)
+      res.json({ data: { allowedToolCategories } })
+    },
+
     async setNotificationLevel(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
@@ -775,6 +834,19 @@ export function createStreamHandlers({
       const afterSequence = query.after ? BigInt(query.after) : undefined
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
+
+      // Start the scratchpad tool-policy reads now so they run alongside the
+      // rest of bootstrap instead of serially after enrichment. Only scratchpads
+      // carry a policy; other types resolve to [null, undefined]. The picker uses
+      // `configuredToolCategories` to show only the categories the workspace has
+      // tooling for (GitHub/Linear only when connected).
+      const toolPolicyReads: Promise<[ToolPrivacyPolicy, ToolPrivacyCategory[] | undefined]> =
+        stream.type === StreamTypes.SCRATCHPAD
+          ? Promise.all([
+              streamService.getStreamToolPolicy(workspaceId, stream.id),
+              workspaceIntegrationService.getAvailableToolCategories(workspaceId),
+            ])
+          : Promise.resolve([null, undefined])
 
       // Captured BEFORE the parallel queries fire. Shipped on the wire as the
       // bootstrap's freshness watermark. The frontend stamps `_patchedAt` on
@@ -861,6 +933,10 @@ export function createStreamHandlers({
       // `fetchStreamBag` via the resolver.
       const contextBag = await fetchStreamBag(pool, { workspaceId, streamId, userId }, { skipAccessCheck: true })
 
+      // Resolve the tool-policy reads started up front (parallel with the rest
+      // of bootstrap, not serial after enrichment).
+      const [allowedToolCategories, configuredToolCategories] = await toolPolicyReads
+
       res.json({
         data: {
           stream,
@@ -879,6 +955,8 @@ export function createStreamHandlers({
           mentionCount: activityCounts?.mentionCount ?? 0,
           activityCount: activityCounts?.totalCount ?? 0,
           contextBag,
+          allowedToolCategories,
+          configuredToolCategories,
         },
       })
     },

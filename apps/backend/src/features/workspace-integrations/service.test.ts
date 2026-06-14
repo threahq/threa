@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, it, expect, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import { GitHubClient, WorkspaceIntegrationService } from "./service"
 import type { GitHubAppConfig, LinearOAuthConfig } from "../../lib/env"
@@ -16,6 +16,14 @@ const linearDisabled: LinearOAuthConfig = {
   clientId: "",
   clientSecret: "",
   redirectUri: "",
+  integrationSecret: "secret",
+}
+
+const linearEnabled: LinearOAuthConfig = {
+  enabled: true,
+  clientId: "client",
+  clientSecret: "secret",
+  redirectUri: "https://example.test/callback",
   integrationSecret: "secret",
 }
 
@@ -81,5 +89,73 @@ describe("getGithubClient unauthenticated fallback", () => {
     })
     const client = await service.getGithubClient("ws_1", { allowUnauthenticatedFallback: true })
     expect(client).toBeNull()
+  })
+})
+
+describe("getAvailableToolCategories", () => {
+  it("returns web + workspace only when no integrations are enabled, without touching the DB", async () => {
+    const service = makeService()
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace"])
+  })
+
+  it("includes github when its integration is enabled and connected (active)", async () => {
+    const service = makeServiceWithRow({
+      id: "wsi_1",
+      workspace_id: "ws_1",
+      provider: "github",
+      status: "active",
+      credentials: {},
+      metadata: {},
+      installed_by: "user_1",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace", "github"])
+  })
+
+  it("omits github when enabled for the deployment but not connected for the workspace", async () => {
+    const pool = { query: async () => ({ rows: [] }) } as unknown as Pool
+    const service = new WorkspaceIntegrationService({ pool, github: githubEnabled, linear: linearDisabled })
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace"])
+  })
+
+  it("includes linear when its integration is enabled and connected (active)", async () => {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubDisabled,
+      linear: linearEnabled,
+    })
+    spyOn(service, "getLinearIntegration").mockResolvedValue({
+      status: "active",
+    } as Awaited<ReturnType<WorkspaceIntegrationService["getLinearIntegration"]>>)
+
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace", "linear"])
+  })
+
+  it("includes both github and linear when both are enabled and active", async () => {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubEnabled,
+      linear: linearEnabled,
+    })
+    spyOn(service, "getGithubIntegration").mockResolvedValue({
+      status: "active",
+    } as Awaited<ReturnType<WorkspaceIntegrationService["getGithubIntegration"]>>)
+    spyOn(service, "getLinearIntegration").mockResolvedValue({
+      status: "active",
+    } as Awaited<ReturnType<WorkspaceIntegrationService["getLinearIntegration"]>>)
+
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace", "github", "linear"])
+  })
+
+  it("omits linear when enabled for the deployment but not connected for the workspace", async () => {
+    const service = new WorkspaceIntegrationService({
+      pool: explodingPool,
+      github: githubDisabled,
+      linear: linearEnabled,
+    })
+    spyOn(service, "getLinearIntegration").mockResolvedValue(null)
+
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace"])
   })
 })

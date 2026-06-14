@@ -36,6 +36,7 @@ import {
   type E2eKeyRollRecipient,
   type E2eKeyRollInput,
   type E2eActorRewrapInput,
+  type ToolPrivacyPolicy,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -49,6 +50,7 @@ import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../b
 import { BotRepository } from "../public-api/bot-repository"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
+import { StreamPoliciesRepository } from "./policy-repository"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
@@ -83,6 +85,12 @@ export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema
    * the owner can decrypt.
    */
   e2e?: E2eCreateParams
+  /**
+   * Optional tool-privacy policy set at creation. `undefined` leaves the
+   * scratchpad unrestricted (no row); a `ToolPrivacyPolicy` is written to
+   * `stream_policies` in the same transaction.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 const createChannelParamsSchema = z.object({
@@ -345,7 +353,13 @@ export class StreamService {
     })
   }
 
-  async create(params: CreateStreamParams & { contextBag?: ContextBag; e2e?: E2eCreateParams }): Promise<Stream> {
+  async create(
+    params: CreateStreamParams & {
+      contextBag?: ContextBag
+      e2e?: E2eCreateParams
+      allowedToolCategories?: ToolPrivacyPolicy
+    }
+  ): Promise<Stream> {
     switch (params.type) {
       case StreamTypes.SCRATCHPAD:
         return this.createScratchpad({
@@ -357,6 +371,7 @@ export class StreamService {
           createdBy: params.createdBy,
           contextBag: params.contextBag,
           e2e: params.e2e,
+          allowedToolCategories: params.allowedToolCategories,
         })
       case StreamTypes.CHANNEL:
         if (!params.slug) {
@@ -433,6 +448,18 @@ export class StreamService {
         stream.e2eEnabled = true
         stream.e2eOwnerKeyId = params.e2e.ownerKeyId
         stream.e2eActors = []
+      }
+
+      // Persist an at-creation tool policy in the same transaction, so the
+      // very first turn already respects it. `undefined` = unrestricted (no
+      // row); a policy (incl. `[]`) is written via the shared upsert.
+      if (params.allowedToolCategories !== undefined) {
+        await StreamPoliciesRepository.setToolPolicy(
+          client,
+          params.workspaceId,
+          stream.id,
+          params.allowedToolCategories
+        )
       }
 
       // Publish to outbox for real-time delivery
@@ -664,6 +691,32 @@ export class StreamService {
       })
       return stream
     })
+  }
+
+  /**
+   * Set or clear a scratchpad's tool-privacy policy. A single write on the
+   * `stream_policies` tracking table, so `pool` is passed directly (INV-30) and
+   * there is no outbox event: enforcement reads the policy fresh at the next
+   * turn's claim/dispatch (`negotiateCapabilities`), so a change takes effect on
+   * the next agent turn without a broadcast. Returns the policy as stored, for
+   * the caller's optimistic cache.
+   */
+  async setStreamToolPolicy(
+    workspaceId: string,
+    streamId: string,
+    policy: ToolPrivacyPolicy
+  ): Promise<ToolPrivacyPolicy> {
+    await StreamPoliciesRepository.setToolPolicy(this.pool, workspaceId, streamId, policy)
+    return policy
+  }
+
+  /**
+   * The stream's tool-privacy policy (or `null` for no restriction). Single read
+   * on the tracking table, so `pool` is passed directly (INV-30). Keeps the
+   * bootstrap handler thin — data access stays behind the service (INV-5/INV-34).
+   */
+  async getStreamToolPolicy(workspaceId: string, streamId: string): Promise<ToolPrivacyPolicy> {
+    return StreamPoliciesRepository.getToolPolicy(this.pool, workspaceId, streamId)
   }
 
   async archiveStream(streamId: string, archivedBy: string): Promise<Stream | null> {

@@ -36,6 +36,7 @@ export interface StreamService {
   create: typeof streamsApi.create
   update: typeof streamsApi.update
   updateCompanionMode: typeof streamsApi.updateCompanionMode
+  updateToolPolicy: typeof streamsApi.updateToolPolicy
   archive: typeof streamsApi.archive
   unarchive: typeof streamsApi.unarchive
   getEvents: typeof streamsApi.getEvents
