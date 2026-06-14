@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
-import { resolveDeliveryGroups, permissionGroupsForRole, permissionGroup } from "./delivery-groups"
+import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes } from "@threa/types"
+import {
+  resolveDeliveryGroups,
+  permissionGroupsForRole,
+  permissionGroup,
+  streamGroup,
+  userGroup,
+} from "./delivery-groups"
 import type { OutboxEvent, OutboxEventType } from "./repository"
 
 function event<T extends OutboxEventType>(eventType: T, payload: Record<string, unknown>): OutboxEvent<T> {
@@ -32,6 +38,51 @@ describe("resolveDeliveryGroups — invitation events", () => {
       expect(groups).not.toContain("workspace")
     })
   }
+})
+
+describe("resolveDeliveryGroups — label assignments", () => {
+  // A public-label assignment (no targetUserId) on a stream routes to that
+  // stream's group, so it lands in the sync log under `stream:<id>` and the
+  // public-root catch-up leg replays it to non-members — the same reach a
+  // message has. This is the routing half of that guarantee; the catch-up half
+  // (a non-member of a public channel receives the assignment) is covered in
+  // tests/integration/sync-catch-up.test.ts. Together they let the client drop
+  // the out-of-band label reconcile the reconnect path used to need.
+  it("scopes a public stream-label assignment to the stream group", () => {
+    const groups = resolveDeliveryGroups(
+      event("label:assigned", {
+        workspaceId: "ws_1",
+        targetUserId: null,
+        assignment: { labelId: "label_1", resourceType: LabelableResourceTypes.STREAM, resourceId: "stream_1" },
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_1")])
+  })
+
+  it("scopes a public stream-label unassignment to the stream group", () => {
+    const groups = resolveDeliveryGroups(
+      event("label:unassigned", {
+        workspaceId: "ws_1",
+        targetUserId: null,
+        labelId: "label_1",
+        resourceType: LabelableResourceTypes.STREAM,
+        resourceId: "stream_1",
+        userId: "usr_1",
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_1")])
+  })
+
+  it("routes a private-label assignment to its owner's user group, not a stream", () => {
+    const groups = resolveDeliveryGroups(
+      event("label:assigned", {
+        workspaceId: "ws_1",
+        targetUserId: "usr_1",
+        assignment: { labelId: "label_1", resourceType: LabelableResourceTypes.STREAM, resourceId: "stream_1" },
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_1")])
+  })
 })
 
 describe("permissionGroupsForRole", () => {

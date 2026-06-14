@@ -25,7 +25,6 @@ import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
-import { reconcileLabels } from "@/hooks/use-labels"
 import type { WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
@@ -39,19 +38,6 @@ interface SyncEngineDeps {
       streamId: string,
       params?: { after?: string }
     ) => Promise<import("@threa/types").StreamBootstrap>
-  }
-  /** Viewer-scoped label catalog + assignments (`listForViewer`). Used by the
-   *  active-mode slim reconnect bootstrap to reconcile the one label slice
-   *  workspace catch-up can't replay: assignments on public streams the viewer
-   *  can see (INV-62) but has no `stream_members` row for, so the
-   *  stream-group-scoped `label:*` event never reaches their sync-log cursor.
-   *  Absent (no-syncService/test deps) → the reconnect bootstrap stays full. */
-  labelService?: {
-    list: (workspaceId: string) => Promise<{
-      labels: import("@threa/types").Label[]
-      memberships: import("@threa/types").LabelMember[]
-      assignments: import("@threa/types").LabelAssignment[]
-    }>
   }
   messageService?: {
     update: (workspaceId: string, messageId: string, data: any) => Promise<any>
@@ -491,12 +477,11 @@ export class SyncEngine {
     // re-seeds every workspace-scoped projection through the gate-registered
     // handlers, so re-fetching the full workspace snapshot on every reconnect
     // is redundant. Skip it and instead do only what catch-up can't: the
-    // per-stream message deltas (the per-stream cursor mechanism, unchanged)
-    // and a reconcile of the viewer's label assignments (the one non-member
-    // public-stream slice the sync-log can't carry). `forceFull` (below-floor
-    // fallback) and the first connect / no-syncService / no-labelService cases
-    // keep the full snapshot.
-    if (_isReconnect && !forceFull && this.eventGate && this.deps.labelService) {
+    // per-stream message deltas (the per-stream cursor mechanism, unchanged).
+    // `forceFull` (below-floor fallback) and the first connect / no-syncService
+    // cases keep the full snapshot. `eventGate` is present iff a sync service is
+    // wired, so it stands in for "catch-up will run".
+    if (_isReconnect && !forceFull && this.eventGate) {
       await this.slimReconnectBootstrap()
       return
     }
@@ -701,14 +686,6 @@ export class SyncEngine {
    *   per-stream sequence (INV-61), not the workspace sync-log, so they heal
    *   through `bootstrap?after=` (cursor-before-join), never catch-up. Same
    *   mechanism the full path and post-navigation refresh use.
-   * - The viewer's label assignments. `listEntriesForUser` scopes the sync-log
-   *   to `stream_members` rows, so a `label:assigned/unassigned` on a public
-   *   stream the viewer can see (INV-62) but isn't a member of never replays.
-   *   `labelService.list` returns `listForViewer` (gated through
-   *   `listAccessibleStreamIds`, which includes those streams) and
-   *   `reconcileLabels` bulkPuts + stale-deletes it into IDB — the render
-   *   source. Member-stream label events still replay through catch-up; this
-   *   only backstops the non-member public slice.
    * - Re-subscribing member rooms from the cached membership list, so
    *   `stream:activity` keeps flowing onto the sidebar. Membership added/removed
    *   while offline is replayed by catch-up (`stream:member_*` → subscribe).
@@ -734,12 +711,9 @@ export class SyncEngine {
       }
       if (this.isDestroyed) return
 
-      // Per-stream deltas (each refresh owns its own status + error handling)
-      // and the label reconcile run together; neither depends on the other.
-      await Promise.all([
-        ...this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)),
-        this.reconcileViewerLabels(),
-      ])
+      // Per-stream message deltas: each refresh owns its own status + error
+      // handling, and they run in parallel.
+      await Promise.all(this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)))
       if (this.isDestroyed) return
 
       await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
@@ -750,24 +724,6 @@ export class SyncEngine {
     } catch (error) {
       this.lastWorkspaceError = error
       syncStatus.set(`workspace:${workspaceId}`, "stale")
-    }
-  }
-
-  /**
-   * Reconcile the viewer's label catalog + assignments into IDB. Non-fatal:
-   * member-stream label events still heal through catch-up, so a failed fetch
-   * only leaves the non-member public-stream slice stale until the next
-   * reconnect — never a hard error on the connect path.
-   */
-  private async reconcileViewerLabels(): Promise<void> {
-    const { workspaceId, labelService } = this.deps
-    if (!labelService) return
-    try {
-      const { labels, memberships, assignments } = await labelService.list(workspaceId)
-      if (this.isDestroyed) return
-      await reconcileLabels(workspaceId, labels, memberships, assignments)
-    } catch {
-      // Swallow — catch-up covers member streams; the next reconnect retries.
     }
   }
 
