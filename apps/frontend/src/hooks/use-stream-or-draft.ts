@@ -115,6 +115,16 @@ export interface VirtualStream {
    */
   e2eActors?: E2eActor[]
   /**
+   * Sealed display name for an E2E stream (base64 ciphertext + its
+   * `StreamEnvelope` framing). Carried from the underlying stream so the
+   * open-stream header can decrypt it via `useDecryptedStreamName` — the
+   * workspace-store overlay covers list surfaces, this covers the single-stream
+   * header including the first-open bootstrap path (before the row is in the
+   * workspace cache). Null/absent on plaintext streams and drafts.
+   */
+  sealedNameCiphertext?: string | null
+  sealedNameEnvelope?: unknown | null
+  /**
    * Tool-privacy policy chosen at creation. On drafts this is the local,
    * not-yet-persisted choice (threaded into the create request on the first
    * message); on server streams it is the current policy. `undefined` =
@@ -477,6 +487,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         archivedAt: baseStream.archivedAt,
         e2eEnabled: baseStream.e2eEnabled,
         e2eActors: baseStream.e2eActors,
+        sealedNameCiphertext: baseStream.sealedNameCiphertext ?? null,
+        sealedNameEnvelope: baseStream.sealedNameEnvelope ?? null,
       }
     : undefined
 

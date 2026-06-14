@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreamsRaw } from "@/stores/workspace-store"
 import { requestStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 
 /**
@@ -19,7 +19,7 @@ import { requestStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-
 export function useDecryptStreamNames(workspaceId: string): void {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
-  const streams = useWorkspaceStreams(workspaceId)
+  const streams = useWorkspaceStreamsRaw(workspaceId)
 
   const unlocked = session.status === "unlocked"
   const keyId = session.keyId

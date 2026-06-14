@@ -60,6 +60,7 @@ import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import { streamLabel } from "@/lib/streams"
+import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { StreamLabelStack } from "@/components/labels/stream-label-stack"
@@ -100,6 +101,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const stream = idbPanelStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
+  // The bootstrap fallback above isn't overlaid by the workspace store, so an
+  // E2E scratchpad opened in a panel before its row lands in the cache would
+  // show the placeholder. Decrypt the resolved stream's sealed name directly
+  // (same cache as the overlay) to keep the panel header consistent.
+  const decryptedPanelName = useDecryptedStreamName(workspaceId, stream)
 
   // Show loading indicator only for real streams (not drafts) and only when actively loading after initial data
   const showLoadingIndicator = !isDraft && !!panelId && getStreamState(panelId) === "loading"
@@ -432,7 +438,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   } else if (isThread && stream) {
     headerContent = <ThreadHeader workspaceId={workspaceId} stream={stream} inPanel />
   } else {
-    headerContent = <SidePanelTitle className="flex-1">{stream ? streamLabel(stream) : "Stream"}</SidePanelTitle>
+    headerContent = (
+      <SidePanelTitle className="flex-1">
+        {stream ? (decryptedPanelName ?? streamLabel(stream)) : "Stream"}
+      </SidePanelTitle>
+    )
   }
 
   return (
@@ -479,7 +489,9 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                 description="Choose an action for this stream."
                 header={
                   <div className="px-4 pt-2 pb-3">
-                    <p className="truncate text-base font-semibold text-foreground">{streamLabel(stream)}</p>
+                    <p className="truncate text-base font-semibold text-foreground">
+                      {decryptedPanelName ?? streamLabel(stream)}
+                    </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {stream.type === StreamTypes.THREAD ? "Thread" : "Stream"} actions
                     </p>
