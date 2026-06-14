@@ -295,6 +295,35 @@ describe("executeDraftUpsert", () => {
     await executeDraftUpsert(workspaceId, "draft_missing", "write_a", service(upsert))
     expect(upsert).not.toHaveBeenCalled()
   })
+
+  it("deletes the ghost server row when the draft was discarded mid-push (no resurrection)", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 0 }))
+    // Simulate the user discarding the draft while the PUT is in flight.
+    const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      return { draft: wireDraft({ id: "draft_x", version: 1 }), split: false }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    // The row is not re-created, and a delete is queued to remove the server ghost.
+    expect(await db.drafts.get("draft_x")).toBeUndefined()
+    const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(dels.filter((o) => o.payload.draftId === "draft_x")).toHaveLength(1)
+  })
+
+  it("deletes the split server row when the original was discarded mid-push", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      return { draft: wireDraft({ id: "draft_new", version: 1 }), split: true, originalId: "draft_x" }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(dels.filter((o) => o.payload.draftId === "draft_new")).toHaveLength(1)
+  })
 })
 
 describe("executeDraftDelete", () => {

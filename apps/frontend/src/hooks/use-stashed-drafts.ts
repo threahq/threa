@@ -99,8 +99,13 @@ export async function popStashedDraft(id: string): Promise<CachedDraft | null> {
 
 /** Delete a draft without restoring it. */
 export async function deleteStashedDraftById(id: string): Promise<void> {
-  const row = await db.drafts.get(id)
-  await db.drafts.delete(id)
+  // Read + delete atomically so `baseVersion` reflects a server confirmation
+  // that lands mid-delete (avoids the ghost-draft race).
+  const row = await db.transaction("rw", db.drafts, async () => {
+    const found = await db.drafts.get(id)
+    if (found) await db.drafts.delete(id)
+    return found
+  })
   if (row) {
     deleteDraftFromCache(row.workspaceId, id)
     await syncDraftRemoval(row.workspaceId, row.id, row.baseVersion)

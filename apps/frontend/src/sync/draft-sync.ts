@@ -277,7 +277,11 @@ export async function syncDraftRemoval(
  *    fresh id (re-routing the queued push) and accept the server row under the
  *    original id.
  */
-export async function applyDraftUpserted(payload: DraftUpsertedPayload, expectedWorkspaceId: string): Promise<void> {
+export async function applyDraftUpserted(
+  payload: DraftUpsertedPayload,
+  expectedWorkspaceId: string,
+  pendingUpsertIds?: ReadonlySet<string>
+): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
   // E2E rows carry no plaintext to render/store yet (Stage 4).
@@ -291,7 +295,9 @@ export async function applyDraftUpserted(payload: DraftUpsertedPayload, expected
 
   if (draft.version <= (local.baseVersion ?? 0)) return
 
-  const dirty = await hasPendingDraftUpsert(draft.id)
+  // The pending set (passed by bootstrap) lets a batch apply avoid a
+  // per-draft `pendingOperations` scan; the live socket path resolves it directly.
+  const dirty = pendingUpsertIds ? pendingUpsertIds.has(draft.id) : await hasPendingDraftUpsert(draft.id)
   if (!dirty) {
     // Confirmed newer version of a draft we are not editing — accept it, keeping
     // any local attachment metadata (an echo of our own push matches it).
@@ -352,15 +358,26 @@ export async function applyDraftDeleted(payload: DraftDeletedPayload, expectedWo
  */
 export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[]): Promise<void> {
   const serverIds = new Set(drafts.map((d) => d.id))
+  // Read the pending `upsert_draft` ids once and reuse the set across both loops
+  // instead of scanning `pendingOperations` per draft (O(drafts) → O(1) scans).
+  const pendingUpsertIds = new Set(
+    (await db.pendingOperations.where("type").equals("upsert_draft").toArray()).map(
+      (op) => op.payload.draftId as string
+    )
+  )
   for (const draft of drafts) {
-    await applyDraftUpserted({ workspaceId: draft.workspaceId, targetUserId: draft.userId, draft }, workspaceId)
+    await applyDraftUpserted(
+      { workspaceId: draft.workspaceId, targetUserId: draft.userId, draft },
+      workspaceId,
+      pendingUpsertIds
+    )
   }
 
   const localDrafts = await db.drafts.where("workspaceId").equals(workspaceId).toArray()
   for (const local of localDrafts) {
     if (serverIds.has(local.id)) continue
     const confirmed = (local.baseVersion ?? 0) > 0
-    const queued = await hasPendingDraftUpsert(local.id)
+    const queued = pendingUpsertIds.has(local.id)
     if (confirmed) {
       // Tombstoned on another device — drop it, unless we have unpushed edits
       // (those re-upsert and split server-side rather than vanish).
@@ -368,6 +385,7 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
     } else if (!queued) {
       // Never synced (incl. pre-Stage-3 rows) — mirror it up.
       await enqueueDraftUpsert(workspaceId, local.id)
+      pendingUpsertIds.add(local.id)
     }
   }
 }
@@ -412,7 +430,12 @@ export async function executeDraftUpsert(
     // `draftId` and minted `res.draft.id` for ours — migrate our local id to it.
     // The original id's divergent server row arrives via its own socket event.
     const current = await db.drafts.get(draftId)
-    if (!current) return
+    if (!current) {
+      // Discarded locally while the push was in flight — the server still minted
+      // a fresh row for our (now-gone) content; delete it so it can't resurrect.
+      await enqueueDraftDelete(workspaceId, res.draft.id)
+      return
+    }
     await migrateLocalDraftId(workspaceId, draftId, {
       ...current,
       id: res.draft.id,
@@ -422,10 +445,24 @@ export async function executeDraftUpsert(
   }
 
   // Happy path — confirm our row at the returned version without clobbering any
-  // content typed since the push (only the version basis advances).
-  const current = await db.drafts.get(draftId)
-  if (!current) return
-  await putLocalDraft({ ...current, baseVersion: res.draft.version })
+  // content typed since the push (only the version basis advances). The
+  // existence check and the write share one transaction so a concurrent local
+  // discard can't slip between them and have us re-create a row the user just
+  // deleted; if the row is gone, the server now holds a draft the user threw
+  // away, so we delete it (otherwise it resurrects on the next pull — the
+  // "ghost draft" race).
+  let confirmed: CachedDraft | undefined
+  await db.transaction("rw", db.drafts, async () => {
+    const current = await db.drafts.get(draftId)
+    if (!current) return
+    confirmed = { ...current, baseVersion: res.draft.version }
+    await db.drafts.put(confirmed)
+  })
+  if (!confirmed) {
+    await enqueueDraftDelete(workspaceId, draftId)
+    return
+  }
+  if (hasSeededDraftCache(workspaceId)) upsertDraftInCache(workspaceId, confirmed)
 }
 
 /** Push a draft deletion to the backend (operation-queue replay of `delete_draft`). */

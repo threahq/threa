@@ -78,16 +78,24 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
 /** Delete the loaded draft for `scope` and clear its pointer (stashes survive). */
 export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
   const loadedId = await getLoadedDraftId(scope)
-  const removed = loadedId ? await db.drafts.get(loadedId) : undefined
+  // Read `baseVersion` inside the same transaction as the delete so a server
+  // confirmation that lands mid-clear (the queue setting baseVersion) can't slip
+  // between the read and the delete and leave the server row undeleted — the
+  // "ghost draft" race.
+  let removedBaseVersion: number | undefined
   if (loadedId) {
-    await db.drafts.delete(loadedId)
+    removedBaseVersion = await db.transaction("rw", db.drafts, async () => {
+      const row = await db.drafts.get(loadedId)
+      await db.drafts.delete(loadedId)
+      return row?.baseVersion
+    })
     deleteDraftFromCache(workspaceId, loadedId)
   }
   await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
   // Sync side-effect after the local state is fully cleared (keeps the local
   // clear tight so observers never see drafts-gone-but-pointer-still-set).
-  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, removed?.baseVersion)
+  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, removedBaseVersion)
 }
 
 /**
@@ -96,11 +104,14 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
  * rest (E2EE-4).
  */
 export async function purgeScopeDrafts(workspaceId: string, scope: string): Promise<void> {
-  const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
-  for (const row of rows) {
-    await db.drafts.delete(row.id)
-    deleteDraftFromCache(workspaceId, row.id)
-  }
+  // Read + delete atomically so each row's `baseVersion` reflects any server
+  // confirmation that landed before the delete (avoids the ghost-draft race).
+  const rows = await db.transaction("rw", db.drafts, async () => {
+    const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
+    for (const row of found) await db.drafts.delete(row.id)
+    return found
+  })
+  for (const row of rows) deleteDraftFromCache(workspaceId, row.id)
   await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
   // Sync side-effects after the local state is fully cleared.
