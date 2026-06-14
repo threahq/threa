@@ -21,6 +21,7 @@ related:
     concepts/subscribe-then-bootstrap.md,
     concepts/optimistic-then-reconcile.md,
     architecture/outbox-pattern.md,
+    architecture/sync-log.md,
     architecture/coordinated-loading.md,
   ]
 ---

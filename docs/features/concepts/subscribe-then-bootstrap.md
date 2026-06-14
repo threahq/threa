@@ -8,7 +8,7 @@ public_site: false
 summary: >
   Confirm your real-time subscription before you fetch the snapshot, then reconcile the
   overlap — so no event is lost in the gap between snapshot and subscription.
-related: [architecture/sync-engine.md]
+related: [architecture/sync-engine.md, architecture/sync-log.md]
 ---
 
 ## The principle

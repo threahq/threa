@@ -14,7 +14,7 @@ public_site: false
 summary: >
   Domain writes and their real-time events commit in one transaction; a dispatcher
   fans them out to Socket.io with gap-safe, at-least-once delivery.
-related: [architecture/sync-engine.md]
+related: [architecture/sync-log.md, architecture/sync-engine.md]
 ---
 
 ## The gist
