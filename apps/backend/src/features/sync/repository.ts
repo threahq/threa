@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import { Visibilities } from "@threa/types"
 import { sql, withTransaction, type Querier } from "../../db"
 
 /** One client-routed outbox event headed for the sync log. */
@@ -126,23 +127,30 @@ export const SyncLogRepository = {
    * same source the socket join uses, so catch-up admits exactly what live
    * delivery reached.
    *
-   * A stream is readable when the user is a member of it OR a member of its
-   * root stream (INV-62) — threads never carry their own access;
-   * `checkStreamAccess` resolves a thread's visibility entirely through
-   * `root_stream_id`, so a channel member must receive thread events
-   * (previews, replies by others) for threads they haven't participated in.
-   * The log filter mirrors that exact rule to keep catch-up delivery
-   * congruent with live delivery.
+   * A stream is readable when the user is a member of it, a member of its
+   * root stream, OR the stream's effective root is public (INV-62) — public
+   * root channels grant read access to every workspace member without a
+   * `stream_members` row, and threads never carry their own access;
+   * `checkStreamAccess` / `streamAccessPredicateSql` resolve a thread's
+   * visibility entirely through `root_stream_id`, so a channel member must
+   * receive thread events (previews, replies by others) for threads they
+   * haven't participated in, and a non-member must receive a public channel's
+   * (and its threads') events. The log filter mirrors that exact rule to keep
+   * catch-up delivery congruent with live delivery.
    *
-   * Each visibility grant is bounded below by its membership's join position —
-   * the sync id of the user's latest `stream:member_added` entry for the
-   * member stream (threads inherit the ROOT membership's bound) — so joining a
-   * stream never replays its pre-join history through the log (over-delivery
-   * would leak no-history private streams). Memberships with no member_added
-   * entry predate the log itself, so every log entry postdates the join and no
-   * bound is needed. The member_added entry itself reaches the joiner through
-   * their user group. When several grants cover one stream (direct thread
-   * member AND root member), any grant whose bound passes admits the entry.
+   * Each membership grant is bounded below by its join position — the sync id
+   * of the user's latest `stream:member_added` entry for the member stream
+   * (threads inherit the ROOT membership's bound) — so joining a stream never
+   * replays its pre-join history through the log (over-delivery would leak
+   * no-history private streams). Memberships with no member_added entry
+   * predate the log itself, so every log entry postdates the join and no bound
+   * is needed. The member_added entry itself reaches the joiner through their
+   * user group. Public-root grants carry bound 0 (no join-position gating):
+   * a public channel's history is readable regardless of when — or whether —
+   * the viewer joined, so there is nothing to hide behind a join position.
+   * When several grants cover one stream (e.g. direct thread member AND root
+   * member, or member AND public), any grant whose bound passes admits the
+   * entry.
    */
   async listEntriesForUser(
     db: Querier,
@@ -171,6 +179,18 @@ export const SyncLogRepository = {
         FROM streams s
         JOIN memberships m ON m.stream_id = s.root_stream_id
         WHERE s.workspace_id = ${workspaceId}
+        UNION ALL
+        SELECT s.id, 0 AS bound
+        FROM streams s
+        WHERE s.workspace_id = ${workspaceId}
+          AND s.root_stream_id IS NULL
+          AND s.visibility = ${Visibilities.PUBLIC}
+        UNION ALL
+        SELECT s.id, 0 AS bound
+        FROM streams s
+        JOIN streams root_s ON root_s.id = s.root_stream_id
+        WHERE s.workspace_id = ${workspaceId}
+          AND root_s.visibility = ${Visibilities.PUBLIC}
       )
       SELECT l.sync_id, l.event_type, l.payload, l.created_at
       FROM sync_log l

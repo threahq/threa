@@ -46,6 +46,15 @@ describe("SyncLogRepository catch-up reads", () => {
     )
   }
 
+  /** Inserts a top-level (root) channel stream with the given visibility. */
+  async function addRootStream(workspaceId: string, streamId: string, visibility: "public" | "private") {
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, root_stream_id, created_by)
+       VALUES ($1, $2, 'channel', $3, NULL, $4)`,
+      [streamId, workspaceId, visibility, uniqueId("usr")]
+    )
+  }
+
   /** Appends one entry and returns its sync id. */
   async function appendEntry(workspaceId: string, entry: Omit<SyncLogEntryInput, "outboxEventId">): Promise<bigint> {
     const [outboxEventId] = await reserveOutboxIds(1)
@@ -193,6 +202,44 @@ describe("SyncLogRepository catch-up reads", () => {
 
     // Not a member of the root: sees nothing.
     expect(await listFor(workspaceId, outsider)).toEqual([])
+  })
+
+  // INV-62: a public root channel grants read access to every workspace member
+  // without a `stream_members` row, so catch-up must replay its events (and its
+  // threads') for non-members — the recurring footgun a membership-only filter
+  // hits. This mirrors streamAccessPredicateSql's public-root leg.
+  test("public channel events reach a non-member; private channel events do not", async () => {
+    const workspaceId = uniqueId("ws")
+    const outsider = uniqueId("usr")
+    const publicChannel = uniqueId("stream")
+    const privateChannel = uniqueId("stream")
+    const publicThread = uniqueId("stream")
+    await addRootStream(workspaceId, publicChannel, "public")
+    await addRootStream(workspaceId, privateChannel, "private")
+    await addThread(workspaceId, publicThread, publicChannel, publicChannel)
+
+    const publicMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${publicChannel}`],
+      payload: { workspaceId, kind: "public-channel" },
+    })
+    const publicThreadMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${publicThread}`],
+      payload: { workspaceId, kind: "public-thread" },
+    })
+    // Private channel content must stay hidden from a non-member even though a
+    // `streams` row exists — the public leg must not over-match private roots.
+    await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${privateChannel}`],
+      payload: { workspaceId, kind: "private-channel" },
+    })
+
+    // The outsider joined nothing yet sees the public channel and its thread
+    // (full history, no join bound), but never the private channel.
+    const entries = await listFor(workspaceId, outsider)
+    expect(entries.map((e) => e.syncId)).toEqual([publicMessage, publicThreadMessage])
   })
 
   test("a depth-2 thread inherits visibility from the root, not the immediate parent", async () => {
