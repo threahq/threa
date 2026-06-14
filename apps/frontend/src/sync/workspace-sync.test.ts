@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { db } from "@/db"
 import { QueryClient } from "@tanstack/react-query"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import { streamKeys } from "@/hooks/use-streams"
 import {
   applyWorkspaceBootstrap,
   mergeReconnectWorkspaceBootstrap,
@@ -21,6 +22,8 @@ import {
   type SavedMessageView,
   type ScheduledMessageView,
   type StreamBootstrap,
+  type StreamMember,
+  type StreamWithPreview,
   type WorkspaceBootstrap,
 } from "@threa/types"
 import { assignmentId } from "@/hooks/use-labels"
@@ -865,6 +868,66 @@ describe("registerWorkspaceSocketHandlers", () => {
     await vi.waitFor(async () => {
       expect((await db.unreadState.get("ws_1"))?.mutedStreamIds).not.toContain("stream_1")
     })
+
+    cleanup()
+    gate.dispose()
+  })
+
+  it("applies a gate-dispatched notification-level replay to the in-memory bootstrap caches", async () => {
+    // Companion to the IDB test above. The same handler also moves the two
+    // TanStack caches the UI reads in-memory, with no IDB round-trip or remount:
+    // the workspace bootstrap's derived `mutedStreamIds` (what the sidebar /
+    // quick-switcher / share badges render from) and the stream bootstrap's
+    // `membership.notificationLevel` (the settings dialog's selected level).
+    // setQueryData is synchronous inside the handler, so the caches are current
+    // the moment dispatch resolves — no waitFor needed for these reads.
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs)
+
+    const channel: StreamWithPreview = { ...makeStreamBootstrap("stream_1").stream, lastMessagePreview: null }
+    const membership: StreamMember = {
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: null,
+      lastReadEventId: null,
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+    }
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ streams: [channel], streamMemberships: [membership], mutedStreamIds: [] })
+    )
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_1"), makeStreamBootstrap("stream_1", { membership }))
+
+    await gate.dispatch("stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      notificationLevel: "muted",
+    })
+
+    const mutedWorkspace = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(mutedWorkspace?.mutedStreamIds).toContain("stream_1")
+    expect(mutedWorkspace?.streamMemberships.find((m) => m.streamId === "stream_1")?.notificationLevel).toBe("muted")
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "stream_1"))?.membership?.notificationLevel
+    ).toBe("muted")
+
+    // Unmuting (back to the channel default) reverses both caches in place.
+    await gate.dispatch("stream:notification_level_updated", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      notificationLevel: null,
+    })
+
+    const unmutedWorkspace = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(unmutedWorkspace?.mutedStreamIds).not.toContain("stream_1")
+    expect(unmutedWorkspace?.streamMemberships.find((m) => m.streamId === "stream_1")?.notificationLevel).toBeNull()
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "stream_1"))?.membership?.notificationLevel
+    ).toBeNull()
 
     cleanup()
     gate.dispose()
