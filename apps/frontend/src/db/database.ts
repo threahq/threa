@@ -305,14 +305,17 @@ export interface PendingOperation {
     | "cancel_scheduled_message"
     | "send_scheduled_now"
     | "dispatch_command"
-    // Centralized-draft sync (Stage 3): mirror a local draft to the backend
-    // `drafts` table. Both retry silently with no error surface — a failed
-    // remote draft save is invisible by design because the local copy stands.
-    // `upsert_draft` reads the draft's current content fresh at drain time and
-    // pushes it with `expectedVersion = baseVersion`; the server splits on a
-    // version mismatch. `delete_draft` is an unconditional, idempotent soft
-    // delete (the local row is already gone before the op is enqueued).
+    // Centralized-draft sync: mirror a local draft to the backend `drafts`
+    // table. All retry silently with no error surface — a failed remote draft
+    // save is invisible by design because the local copy stands. `upsert_draft`
+    // reads the draft's current content fresh at drain time and pushes it with
+    // `expectedVersion = baseVersion`; the server splits on a version mismatch.
+    // `resolve_draft` (Stage 4) is the CAS clear-on-send: it removes the server
+    // row only if `expectedVersion` still matches, so a drifted copy survives.
+    // `delete_draft` is an unconditional, idempotent soft delete (the local row
+    // is already gone before the op is enqueued).
     | "upsert_draft"
+    | "resolve_draft"
     | "delete_draft"
   payload: Record<string, unknown>
   createdAt: number

@@ -355,7 +355,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     try {
       // Clear input optimistically inside try so we can restore on failure
       composer.setContent(EMPTY_DOC)
-      composer.clearDraft()
+      composer.resolveDraft()
       composer.clearAttachments()
 
       // Seal the reply under the encrypted root when the parent is E2E — the

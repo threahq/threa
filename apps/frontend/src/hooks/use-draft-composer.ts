@@ -57,6 +57,13 @@ export interface DraftComposerState {
 
   // Clear helpers
   clearDraft: () => Promise<void>
+  /**
+   * Clear the loaded draft because its message was sent (resolve-on-send): same
+   * local teardown as `clearDraft`, but the backend removal is CAS-guarded so a
+   * copy that drifted on another device survives as a stash entry. Send paths
+   * use this; plain discards (stash, empty composer) use `clearDraft`.
+   */
+  resolveDraft: () => Promise<void>
   clearAttachments: () => void
 
   /**
@@ -89,6 +96,7 @@ export function useDraftComposer({
     addAttachment: addDraftAttachment,
     removeAttachment: removeDraftAttachment,
     clearDraft,
+    resolveDraft,
   } = useDraftMessage(workspaceId, draftKey, e2eEnabled)
 
   // Attachment handling
@@ -273,6 +281,7 @@ export function useDraftComposer({
 
     // Clear helpers
     clearDraft,
+    resolveDraft,
     clearAttachments,
     restoreAttachments,
 

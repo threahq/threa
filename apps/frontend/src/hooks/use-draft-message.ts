@@ -10,7 +10,7 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
-import { enqueueDraftUpsert, syncDraftRemoval } from "@/sync/draft-sync"
+import { enqueueDraftUpsert, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
@@ -91,29 +91,59 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
   return row
 }
 
-/** Delete the loaded draft for `scope` and clear its pointer (stashes survive). */
-export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+/**
+ * Remove the loaded draft for `scope` locally (IDB row + pointer + cache) and
+ * report what was removed. Shared by `clearLoadedDraft` (discard) and
+ * `resolveLoadedDraft` (send) — they differ only in how the removal is mirrored
+ * to the backend, so the local teardown lives on one path (INV-43).
+ *
+ * The row delete AND the pointer clear happen in ONE transaction. Reading
+ * `baseVersion` here also keeps a mid-clear server confirmation from slipping
+ * between read and delete (the "ghost draft" race). Crucially the pointer clear
+ * is inside the txn too: otherwise a `draft:upserted` echo landing between the
+ * row delete and the pointer clear would find no local row and re-insert the
+ * just-cleared draft as an orphan stash entry (resurrection race).
+ */
+async function removeLoadedDraftLocally(
+  workspaceId: string,
+  scope: string
+): Promise<{ loadedId: string | null; baseVersion: number | undefined }> {
   const loadedId = await getLoadedDraftId(scope)
-  // Delete the draft row AND clear its loaded pointer in ONE transaction. Reading
-  // `baseVersion` here also keeps a mid-clear server confirmation from slipping
-  // between read and delete (the "ghost draft" race). Crucially the pointer clear
-  // is inside the txn too: otherwise a `draft:upserted` echo landing between the
-  // row delete and the pointer clear would find no local row and re-insert the
-  // just-cleared draft as an orphan stash entry (resurrection race).
-  const removedBaseVersion = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
-    let baseVersion: number | undefined
+  const baseVersion = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    let version: number | undefined
     if (loadedId) {
       const row = await db.drafts.get(loadedId)
-      baseVersion = row?.baseVersion
+      version = row?.baseVersion
       await db.drafts.delete(loadedId)
     }
     await db.composerLoaded.delete(scope)
-    return baseVersion
+    return version
   })
   if (loadedId) deleteDraftFromCache(workspaceId, loadedId)
   setComposerLoadedInCache(workspaceId, scope, null)
+  return { loadedId, baseVersion }
+}
+
+/**
+ * Discard the loaded draft for `scope` and clear its pointer (stashes survive).
+ * The backend mirror is an UNCONDITIONAL delete — the user threw it away, so
+ * drift doesn't matter.
+ */
+export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+  const { loadedId, baseVersion } = await removeLoadedDraftLocally(workspaceId, scope)
   // Sync side-effect after the local state is fully cleared.
-  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, removedBaseVersion)
+  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, baseVersion)
+}
+
+/**
+ * Resolve the loaded draft for `scope` after its message sent: remove it locally
+ * (same teardown as a discard), but mirror the removal to the backend as a
+ * CAS clear-on-send so a copy that drifted on another device survives as a stash
+ * entry instead of being collaterally deleted (plan §resolve-on-send).
+ */
+export async function resolveLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+  const { loadedId, baseVersion } = await removeLoadedDraftLocally(workspaceId, scope)
+  if (loadedId) await syncDraftResolution(workspaceId, loadedId, baseVersion)
 }
 
 /**
@@ -302,6 +332,23 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
     syncEngine?.kickOperationQueue()
   }, [draftKey, workspaceId, syncEngine])
 
+  /**
+   * Clear the loaded draft because its message was sent (resolve-on-send). Same
+   * local teardown as `clearDraft`, but the backend removal is CAS-guarded so a
+   * draft edited on another device after this send started survives as a stash
+   * entry. Used by the send/schedule/command paths; plain discards use
+   * `clearDraft`.
+   */
+  const resolveDraft = useCallback(async () => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+
+    await resolveLoadedDraft(workspaceId, draftKey)
+    syncEngine?.kickOperationQueue()
+  }, [draftKey, workspaceId, syncEngine])
+
   // Cleanup timeout on unmount
   useEffect(() => {
     return () => {
@@ -323,5 +370,6 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
     addAttachment,
     removeAttachment,
     clearDraft,
+    resolveDraft,
   }
 }

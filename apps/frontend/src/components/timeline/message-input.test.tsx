@@ -56,6 +56,7 @@ let mockMessageSendMode: "enter" | "cmdEnter" = "enter"
 // Mock hooks
 const mockSendMessage = vi.fn()
 const mockClearDraft = vi.fn()
+const mockResolveDraft = vi.fn()
 const mockClearAttachments = vi.fn()
 const mockSetContent = vi.fn()
 const mockSetIsSending = vi.fn()
@@ -200,6 +201,7 @@ beforeEach(() => {
         isSending: mockComposerState.isSending,
         setIsSending: mockSetIsSending,
         clearDraft: mockClearDraft,
+        resolveDraft: mockResolveDraft,
         clearAttachments: mockClearAttachments,
         isLoaded: mockComposerState.isLoaded,
       }) as unknown as ReturnType<typeof hooksModule.useDraftComposer>
@@ -384,7 +386,7 @@ describe("MessageInput", () => {
       })
     })
 
-    it("should clear draft and attachments after sending", async () => {
+    it("should resolve the draft and clear attachments after sending", async () => {
       mockComposerState.canSend = true
       mockComposerState.content = makeDoc("Hello world")
 
@@ -393,7 +395,10 @@ describe("MessageInput", () => {
       const sendButton = screen.getByRole("button", { name: /send/i })
       await userEvent.click(sendButton)
 
-      expect(mockClearDraft).toHaveBeenCalled()
+      // Send uses the CAS resolve path (not the unconditional discard) so a copy
+      // edited on another device survives as a stash entry.
+      expect(mockResolveDraft).toHaveBeenCalled()
+      expect(mockClearDraft).not.toHaveBeenCalled()
       expect(mockClearAttachments).toHaveBeenCalled()
     })
 
@@ -437,7 +442,7 @@ describe("MessageInput", () => {
       await userEvent.click(sendButton)
 
       expect(mockSetContent).toHaveBeenCalledWith(EMPTY_DOC)
-      expect(mockClearDraft).not.toHaveBeenCalled()
+      expect(mockResolveDraft).not.toHaveBeenCalled()
 
       resolveSend?.({})
     })

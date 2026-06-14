@@ -232,6 +232,7 @@ function WorkspaceSyncHandler({
       draftsService: {
         list: (wid: string) => draftsApi.list(wid),
         upsert: draftsApi.upsert,
+        resolve: draftsApi.resolve,
         delete: draftsApi.delete,
       },
       syncService: syncApi,
