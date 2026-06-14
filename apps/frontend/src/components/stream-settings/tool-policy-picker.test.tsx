@@ -85,6 +85,20 @@ describe("ToolPolicyPicker", () => {
     expect(screen.queryByRole("checkbox", { name: /linear/i })).not.toBeInTheDocument()
   })
 
+  it("still shows a granted category the workspace no longer configures, so it can be revoked", async () => {
+    renderPicker(["web", "github"], { configuredCategories: ["web", "workspace"] })
+
+    // GitHub is no longer configured but remains granted — it must stay visible
+    // and checked so the owner can turn it off.
+    const github = screen.getByRole("checkbox", { name: /github/i })
+    expect(github).toBeInTheDocument()
+    expect(github).toBeChecked()
+
+    await userEvent.click(github)
+
+    expect(updateToolPolicy).toHaveBeenCalledWith("ws_1", "stream_sp", ["web"])
+  })
+
   it("disables non-web categories on an encrypted scratchpad (enclave is web-only)", () => {
     renderPicker([], { configuredCategories: ["web", "workspace"], e2e: true })
 

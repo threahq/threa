@@ -58,8 +58,14 @@ interface ToolPolicyControlProps {
 export function ToolPolicyControl({ value, onChange, configuredCategories, e2e, disabled }: ToolPolicyControlProps) {
   const restricted = value !== null
   const allowed = new Set(value ?? [])
-  const shown = configuredCategories ?? ALL_GATEABLE
-  const options = CATEGORY_OPTIONS.filter((option) => shown.includes(option.value))
+  // Show the configured categories *plus* anything already granted — a category
+  // can be stored (e.g. GitHub) and later un-configured (the integration is
+  // disconnected). Dropping it from the picker would strand the grant on,
+  // invisible and unrevokable; the union keeps it editable so the owner can turn
+  // it off. (The stored grant is already inert — no tools are built for it — so
+  // this is display-only, not an enforcement change.)
+  const shown = new Set<ToolPrivacyCategory>([...(configuredCategories ?? ALL_GATEABLE), ...allowed])
+  const options = CATEGORY_OPTIONS.filter((option) => shown.has(option.value))
 
   const handleRestrictToggle = (on: boolean) => onChange(on ? [] : null)
 
