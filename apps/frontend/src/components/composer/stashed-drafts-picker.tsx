@@ -9,6 +9,7 @@ import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import type { CachedDraft } from "@/hooks"
 
 /** Keystroke hint for the "Save current" action. Rendered only on non-mobile (no hardware keyboard). */
@@ -128,7 +129,7 @@ export function StashedDraftsPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" className="w-80 p-0">
+        <PopoverContent align="end" side="top" className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <p className="text-sm font-medium">
               Drafts

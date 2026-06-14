@@ -21,6 +21,7 @@ import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/da
 import { ScheduledEditDialog } from "@/components/scheduled/scheduled-edit-dialog"
 import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-drawer"
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
+import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 
 interface ScheduledMessagesPickerProps {
   workspaceId: string
@@ -83,6 +84,7 @@ export function ScheduledMessagesPicker({
   const { items } = useScheduledList(workspaceId, "pending", streamId)
   const cancelMutation = useCancelScheduled(workspaceId)
   const sendNowMutation = useSendScheduledNow(workspaceId)
+  const isMobile = useIsMobile()
   // Browser-local timezone is the default everywhere in the UI — native
   // pickers operate in device-local, so we keep the custom-time path on
   // device-local to avoid silent drift. The user's saved profile timezone
@@ -202,7 +204,7 @@ export function ScheduledMessagesPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" className="w-80 p-0">
+        <PopoverContent align="end" side="top" className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
           {mode === "list" ? (
             <ListMode
               workspaceId={workspaceId}

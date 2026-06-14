@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, fireEvent, act } from "@testing-library/react"
+import { render, screen, fireEvent, createEvent, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { Editor } from "@tiptap/react"
 import { EditorToolbar } from "./editor-toolbar"
@@ -312,5 +312,25 @@ describe("EditorToolbar", () => {
 
     fireEvent.click(deleteTable)
     expect(chainStub.deleteTable).toHaveBeenCalled()
+  })
+
+  it("keeps editor focus when tapping a table menu item (no mobile keyboard flicker)", async () => {
+    const editor = createEditorStub()
+    vi.mocked(editor.isActive).mockImplementation((type) => type === "table")
+    const user = userEvent.setup()
+    render(<EditorToolbar editor={editor} isVisible inline inlinePosition="below" />)
+
+    await user.click(screen.getByRole("button", { name: "Edit table" }))
+
+    const addRow = screen.getByRole("button", { name: "Add row above" })
+    // mousedown is suppressed so the tap never blurs the editor (keyboard stays up)...
+    const mousedown = createEvent.mouseDown(addRow)
+    fireEvent(addRow, mousedown)
+    expect(mousedown.defaultPrevented).toBe(true)
+
+    // ...but the command still fires on click.
+    const chainStub = (editor as unknown as { __chainState: { addRowBefore: ReturnType<typeof vi.fn> } }).__chainState
+    fireEvent.click(addRow)
+    expect(chainStub.addRowBefore).toHaveBeenCalled()
   })
 })
