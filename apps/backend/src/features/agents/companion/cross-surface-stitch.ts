@@ -88,7 +88,15 @@ export async function loadCrossSurfaceStitch(
   const members = memberIds
     .map((id) => byId.get(id))
     .filter((m): m is Message => m !== undefined && !m.deletedAt)
-    .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
+    // Order by sequence — the workspace-global monotonic timeline order (INV-61).
+    // createdAt can tie for messages sent in the same millisecond, and an id
+    // (ULID) tiebreak doesn't track send order, so a chronological sort is
+    // non-deterministic for same-instant messages.
+    .sort((a, b) => {
+      if (a.sequence < b.sequence) return -1
+      if (a.sequence > b.sequence) return 1
+      return 0
+    })
   if (members.length === 0) return null
 
   // Fill the remaining budget newest-first so an oversized discussion keeps the
