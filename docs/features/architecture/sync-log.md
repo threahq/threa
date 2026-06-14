@@ -129,11 +129,6 @@ record a clean head, so the next heartbeat re-triggers it until it drains fully.
 
 What the log deliberately does not carry today:
 
-- **Label assignments on public streams you have not joined.** Stream-group entries are
-  admitted through `stream_members` plus the public-root rule, but `label:assigned` and
-  `label:unassigned` on a public stream you can see without a membership row do not replay.
-  The client reconciles label state out of band on reconnect (`reconcileViewerLabels`)
-  instead. This is the one non-member public-stream slice the log does not cover.
 - **Private `stream:created` for members who join later.** A private stream's creation
   logs only to the creator's user group. A member added afterwards learns of the stream
   through their `stream:member_added` entry, not a replayed `stream:created`, so catch-up
