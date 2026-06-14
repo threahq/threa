@@ -18,6 +18,7 @@ import {
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
+import { applyDraftsBootstrap, type DraftsServiceLike } from "./draft-sync"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
@@ -67,6 +68,12 @@ interface SyncEngineDeps {
     ) => Promise<import("@threa/types").ScheduledMessageView>
     delete: (workspaceId: string, id: string) => Promise<void>
     sendNow: (workspaceId: string, id: string) => Promise<import("@threa/types").ScheduledMessageView>
+  }
+  /** Centralized drafts (Stage 3). `list` seeds the bootstrap reconcile on
+   *  connect/reconnect (INV-53); `upsert`/`delete` replay the offline draft
+   *  push queue. Absent (test deps) → drafts stay local-only. */
+  draftsService?: DraftsServiceLike & {
+    list: (workspaceId: string) => Promise<{ drafts: import("@threa/types").Draft[] }>
   }
   /** When provided, the engine runs the sync-log cursor: it pages catch-up on
    *  every connect/resume/heartbeat and applies entries through the live
@@ -239,8 +246,13 @@ export class SyncEngine {
 
     await this.runBootstrap(isReconnect)
 
-    // Process pending offline operations (edits, deletes, reactions)
+    // Process pending offline operations (edits, deletes, reactions, drafts)
     this.kickOperationQueue()
+
+    // Pull + reconcile the author's drafts (INV-53), paired with the user-room
+    // subscription and re-run on reconnect. Fire-and-forget so the network pull
+    // never blocks the connect path — drafts are local-first.
+    void this.syncDrafts()
 
     // Runs after bootstrap so it never competes for the connection setup
     // window. Applies entries through the gate (no-op without a sync service).
@@ -336,8 +348,29 @@ export class SyncEngine {
       this.deps.messageService,
       this.deps.reactionService ?? { add: async () => {}, remove: async () => {} },
       this.deps.scheduledService,
+      this.deps.draftsService,
       () => this.socket !== null && !this.isDestroyed
     )
+  }
+
+  /**
+   * Bootstrap-and-reconcile the author's drafts against the server (INV-53):
+   * paired with the existing `user:{userId}` socket subscription and re-run on
+   * every (re)connect to close the disconnect gap. Reconcile may enqueue pushes
+   * for never-synced local drafts, so we kick the queue afterwards. Failures are
+   * swallowed — drafts are local-first, so a failed pull never blocks the app.
+   */
+  private async syncDrafts(): Promise<void> {
+    const draftsService = this.deps.draftsService
+    if (!draftsService) return
+    try {
+      const { drafts } = await draftsService.list(this.deps.workspaceId)
+      if (this.isDestroyed) return
+      await applyDraftsBootstrap(this.deps.workspaceId, drafts)
+      this.kickOperationQueue()
+    } catch {
+      // Local copy stands; the next (re)connect retries the pull.
+    }
   }
 
   /** Current sync-log cursor (v2), or null when none is tracked yet. */

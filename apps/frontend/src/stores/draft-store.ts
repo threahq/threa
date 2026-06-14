@@ -160,8 +160,8 @@ export function deleteDraftScratchpadFromCache(workspaceId: string, draftId: str
   })
 }
 
-export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): void {
-  const drafts = cache.drafts.get(workspaceId) ?? []
+/** Return a copy of `drafts` with `draft` upserted by id (pure; no cache signal). */
+function withDraftUpserted(drafts: CachedDraft[], draft: CachedDraft): CachedDraft[] {
   const next = [...drafts]
   const index = next.findIndex((candidate) => candidate.id === draft.id)
   if (index === -1) {
@@ -169,9 +169,13 @@ export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): voi
   } else {
     next[index] = draft
   }
+  return next
+}
+
+export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): void {
   seedDraftCache(workspaceId, {
     scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: next,
+    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? [], draft),
     loaded: cache.loaded.get(workspaceId) ?? [],
   })
 }
@@ -181,6 +185,55 @@ export function deleteDraftFromCache(workspaceId: string, draftId: string): void
     scratchpads: cache.scratchpads.get(workspaceId) ?? [],
     drafts: (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== draftId),
     loaded: cache.loaded.get(workspaceId) ?? [],
+  })
+}
+
+/**
+ * Upsert a draft AND point the scope's composer-loaded pointer at it in a single
+ * cache signal. Used when a brand-new loaded draft is created: doing the draft
+ * insert and the pointer set as one update means a live reader never observes a
+ * frame where the draft exists but no pointer references it — which would render
+ * the just-created draft as a stash entry for a tick (it isn't filtered out as
+ * "loaded" until the pointer lands).
+ */
+export function upsertLoadedDraftInCache(workspaceId: string, draft: CachedDraft, scope: string): void {
+  const loaded = (cache.loaded.get(workspaceId) ?? []).filter((row) => row.scope !== scope)
+  loaded.push({ scope, workspaceId, draftId: draft.id })
+  seedDraftCache(workspaceId, {
+    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? [], draft),
+    loaded,
+  })
+}
+
+/**
+ * Re-key a draft in the cache (`fromId` → `toRow.id`) and, when `repointScope`
+ * is set, point that scope's composer-loaded pointer at the new id — all in ONE
+ * cache signal. Mirrors `upsertLoadedDraftInCache` for the id-migration path
+ * (server split, remote-delete preserve): doing delete-old + insert-new + repoint
+ * as three separate signals leaves intermediate frames where the loaded draft is
+ * absent from the cache, so a user typing during a split sees the composer flash
+ * empty. One `seedDraftCache` keeps the observed state consistent.
+ */
+export function migrateLoadedDraftInCache(
+  workspaceId: string,
+  fromId: string,
+  toRow: CachedDraft,
+  repointScope: string | null
+): void {
+  const drafts = withDraftUpserted(
+    (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== fromId),
+    toRow
+  )
+  let loaded = cache.loaded.get(workspaceId) ?? []
+  if (repointScope) {
+    loaded = loaded.filter((row) => row.scope !== repointScope)
+    loaded.push({ scope: repointScope, workspaceId, draftId: toRow.id })
+  }
+  seedDraftCache(workspaceId, {
+    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    drafts,
+    loaded,
   })
 }
 

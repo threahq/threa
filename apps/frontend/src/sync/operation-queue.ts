@@ -3,6 +3,7 @@ import type { CachedEvent, PendingOperation } from "@/db/database"
 import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threa/types"
 import { ApiError, commandsApi } from "@/api"
 import { persistScheduledRows, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
+import { executeDraftDelete, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 
 function getRetryDelay(retryCount: number): number {
   if (retryCount <= 3) return 0
@@ -32,14 +33,16 @@ interface ScheduledServiceLike {
 }
 
 function isPermanentCommandDispatchError(error: unknown): error is ApiError {
-  return ApiError.isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429
+  return (
+    ApiError.isApiError(error) &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.status !== 429
+  )
 }
 
-async function markCommandDispatchFailed(
-  workspaceId: string,
-  optimisticEventId: string,
-  error: Error
-): Promise<void> {
+async function markCommandDispatchFailed(workspaceId: string, optimisticEventId: string, error: Error): Promise<void> {
   const dispatched = await db.events.get(optimisticEventId)
   if (!dispatched) return
   const failedEvent: CachedEvent = {
@@ -93,6 +96,7 @@ export async function processOperationQueue(
   messageService: MessageServiceLike,
   reactionService: ReactionServiceLike,
   scheduledService: ScheduledServiceLike | undefined,
+  draftsService: DraftsServiceLike | undefined,
   isOnline: () => boolean
 ): Promise<void> {
   const processor = async () => {
@@ -107,7 +111,7 @@ export async function processOperationQueue(
       if (!next) break
 
       try {
-        await executeOperation(next, messageService, reactionService, scheduledService)
+        await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
         await db.pendingOperations.delete(next.id)
       } catch {
         const retryCount = next.retryCount + 1
@@ -134,7 +138,8 @@ async function executeOperation(
   op: PendingOperation,
   messageService: MessageServiceLike,
   reactionService: ReactionServiceLike,
-  scheduledService: ScheduledServiceLike | undefined
+  scheduledService: ScheduledServiceLike | undefined,
+  draftsService: DraftsServiceLike | undefined
 ): Promise<void> {
   const { workspaceId, type, payload } = op
 
@@ -211,6 +216,22 @@ async function executeOperation(
         if (!isPermanentCommandDispatchError(error)) throw error
         await markCommandDispatchFailed(workspaceId, optimisticEventId, error)
       }
+      break
+    }
+
+    case "upsert_draft": {
+      // Silent retry, no error surface (a failed draft save is invisible — the
+      // local copy stands). Reads the draft fresh and reconciles split/version.
+      // Without a drafts service this context is local-only: drop the op rather
+      // than throw (a throw would retry forever, never reaching a service).
+      if (!draftsService) break
+      await executeDraftUpsert(workspaceId, payload.draftId as string, payload.writeId as string, draftsService)
+      break
+    }
+
+    case "delete_draft": {
+      if (!draftsService) break
+      await executeDraftDelete(workspaceId, payload.draftId as string, draftsService)
       break
     }
   }

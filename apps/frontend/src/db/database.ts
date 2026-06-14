@@ -305,6 +305,15 @@ export interface PendingOperation {
     | "cancel_scheduled_message"
     | "send_scheduled_now"
     | "dispatch_command"
+    // Centralized-draft sync (Stage 3): mirror a local draft to the backend
+    // `drafts` table. Both retry silently with no error surface — a failed
+    // remote draft save is invisible by design because the local copy stands.
+    // `upsert_draft` reads the draft's current content fresh at drain time and
+    // pushes it with `expectedVersion = baseVersion`; the server splits on a
+    // version mismatch. `delete_draft` is an unconditional, idempotent soft
+    // delete (the local row is already gone before the op is enqueued).
+    | "upsert_draft"
+    | "delete_draft"
   payload: Record<string, unknown>
   createdAt: number
   retryCount: number
@@ -365,6 +374,26 @@ export interface CachedDraft {
   contextRefs?: DraftContextRef[]
   /** Authoring-device clock (ms); drives recency ordering. */
   clientUpdatedAt: number
+  /**
+   * Server attachment ids for this draft (Stage 3 sync). The wire `Draft`
+   * carries only attachment ids, not the `DraftAttachment` display metadata
+   * (filename/mime/size), so a draft arriving from another device keeps its ids
+   * here even when this device has no local `attachments` metadata for them —
+   * preserving the references across a round-trip so a later edit-push from this
+   * device never wipes them server-side. When this device authored the draft,
+   * `attachments` is the source of truth and `attachmentIds` mirrors its ids.
+   * Absent on rows written before Stage 3 (derive from `attachments` on push).
+   */
+  attachmentIds?: string[]
+  /**
+   * Last server-confirmed optimistic-lock version (Stage 3 sync). Sent as
+   * `expectedVersion` on the next push; the server increments it on accept and
+   * SPLITS on mismatch. Absent / `undefined` on a draft this client has never
+   * pushed (treated as 0 → the first push inserts at version 1, or splits if the
+   * id already exists server-side). Never decreases — a stale socket echo whose
+   * version is `<= baseVersion` is ignored.
+   */
+  baseVersion?: number
 }
 
 /**

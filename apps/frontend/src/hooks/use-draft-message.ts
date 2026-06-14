@@ -6,9 +6,12 @@ import {
   hasSeededDraftCache,
   setComposerLoadedInCache,
   upsertDraftInCache,
+  upsertLoadedDraftInCache,
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
+import { enqueueDraftUpsert, syncDraftRemoval } from "@/sync/draft-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 
@@ -60,25 +63,57 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
     attachments: fields.attachments,
     contextRefs,
     clientUpdatedAt: Date.now(),
+    // Carry the sync bookkeeping forward. Without this, editing a
+    // confirmed draft would reset baseVersion to undefined, and the next push
+    // (expectedVersion 0) would collide with the server's existing row and the
+    // server would SPLIT it into a duplicate — once per keystroke after the
+    // first sync. Preserve it so the push CAS-updates in place instead.
+    baseVersion: existing?.baseVersion,
+    attachmentIds: existing?.attachmentIds,
   }
-  await db.drafts.put(row)
-  upsertDraftInCache(workspaceId, row)
-  if (!existing) {
-    await db.composerLoaded.put({ scope, workspaceId, draftId: id })
-    setComposerLoadedInCache(workspaceId, scope, id)
+  if (existing) {
+    await db.drafts.put(row)
+    upsertDraftInCache(workspaceId, row)
+  } else {
+    // A brand-new loaded draft: write the row and its loaded pointer together so
+    // a live reader never observes the draft before the pointer lands — otherwise
+    // the just-created draft flashes into its own stash list for a tick (it isn't
+    // filtered out as "loaded" until the pointer exists).
+    await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+      await db.drafts.put(row)
+      await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+    })
+    upsertLoadedDraftInCache(workspaceId, row, scope)
   }
+  // Mirror to the backend: a coalesced, debounced push that retries
+  // silently. The caller kicks the queue so it drains promptly.
+  await enqueueDraftUpsert(workspaceId, id)
   return row
 }
 
 /** Delete the loaded draft for `scope` and clear its pointer (stashes survive). */
 export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
   const loadedId = await getLoadedDraftId(scope)
-  if (loadedId) {
-    await db.drafts.delete(loadedId)
-    deleteDraftFromCache(workspaceId, loadedId)
-  }
-  await db.composerLoaded.delete(scope)
+  // Delete the draft row AND clear its loaded pointer in ONE transaction. Reading
+  // `baseVersion` here also keeps a mid-clear server confirmation from slipping
+  // between read and delete (the "ghost draft" race). Crucially the pointer clear
+  // is inside the txn too: otherwise a `draft:upserted` echo landing between the
+  // row delete and the pointer clear would find no local row and re-insert the
+  // just-cleared draft as an orphan stash entry (resurrection race).
+  const removedBaseVersion = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    let baseVersion: number | undefined
+    if (loadedId) {
+      const row = await db.drafts.get(loadedId)
+      baseVersion = row?.baseVersion
+      await db.drafts.delete(loadedId)
+    }
+    await db.composerLoaded.delete(scope)
+    return baseVersion
+  })
+  if (loadedId) deleteDraftFromCache(workspaceId, loadedId)
   setComposerLoadedInCache(workspaceId, scope, null)
+  // Sync side-effect after the local state is fully cleared.
+  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, removedBaseVersion)
 }
 
 /**
@@ -87,13 +122,20 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
  * rest (E2EE-4).
  */
 export async function purgeScopeDrafts(workspaceId: string, scope: string): Promise<void> {
-  const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
-  for (const row of rows) {
-    await db.drafts.delete(row.id)
-    deleteDraftFromCache(workspaceId, row.id)
-  }
-  await db.composerLoaded.delete(scope)
+  // Read + delete the rows AND clear the loaded pointer atomically: `baseVersion`
+  // reflects any server confirmation that landed before the delete (ghost-draft
+  // race), and clearing the pointer inside the txn prevents an inbound echo from
+  // re-inserting a just-purged draft as an orphan (resurrection race).
+  const rows = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
+    for (const row of found) await db.drafts.delete(row.id)
+    await db.composerLoaded.delete(scope)
+    return found
+  })
+  for (const row of rows) deleteDraftFromCache(workspaceId, row.id)
   setComposerLoadedInCache(workspaceId, scope, null)
+  // Sync side-effects after the local state is fully cleared.
+  for (const row of rows) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
 }
 
 /**
@@ -112,6 +154,11 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
   const loaded = useComposerLoadedFromStore(workspaceId)
   const loadedId = e2eEnabled ? null : (loaded.find((row) => row.scope === draftKey)?.draftId ?? null)
   const resolvedDraft = loadedId ? drafts.find((draft) => draft.id === loadedId) : undefined
+  // Drains the offline queue so a debounced draft push (enqueued by the write
+  // helpers) mirrors to the backend promptly instead of waiting for the next
+  // reconnect. Optional — outside a workspace (login/loading) there is no engine
+  // and the local write still stands.
+  const syncEngine = useOptionalSyncEngine()
 
   // When a stream becomes encrypted, cancel any debounced plaintext save still
   // in flight — otherwise it fires after the purge below and re-persists the
@@ -153,6 +200,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
       // Delete draft only when content + attachments + contextRefs are all empty.
       if (isEmptyContent(contentJson) && finalAttachments.length === 0 && finalContextRefs.length === 0) {
         await clearLoadedDraft(workspaceId, draftKey)
+        syncEngine?.kickOperationQueue()
         return
       }
 
@@ -161,8 +209,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
         attachments: finalAttachments,
         contextRefs: finalContextRefs,
       })
+      syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled]
+    [draftKey, workspaceId, e2eEnabled, syncEngine]
   )
 
   const saveDraftDebounced = useCallback(
@@ -207,8 +256,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
         // Preserve sidecar so a paste/upload doesn't wipe an attached chip.
         contextRefs: currentDraft?.contextRefs,
       })
+      syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled]
+    [draftKey, workspaceId, e2eEnabled, syncEngine]
   )
 
   /**
@@ -227,6 +277,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
       // Delete draft if both content and attachments are empty
       if (isEmptyContent(currentDraft.contentJson) && remainingAttachments.length === 0) {
         await clearLoadedDraft(workspaceId, draftKey)
+        syncEngine?.kickOperationQueue()
         return
       }
 
@@ -235,8 +286,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
         attachments: remainingAttachments,
         contextRefs: currentDraft.contextRefs,
       })
+      syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled]
+    [draftKey, workspaceId, e2eEnabled, syncEngine]
   )
 
   const clearDraft = useCallback(async () => {
@@ -247,7 +299,8 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
     }
 
     await clearLoadedDraft(workspaceId, draftKey)
-  }, [draftKey, workspaceId])
+    syncEngine?.kickOperationQueue()
+  }, [draftKey, workspaceId, syncEngine])
 
   // Cleanup timeout on unmount
   useEffect(() => {

@@ -32,6 +32,8 @@ import type {
   LabelMemberLeftPayload,
   LabelAssignedPayload,
   LabelUnassignedPayload,
+  DraftUpsertedPayload,
+  DraftDeletedPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { memoKeys } from "@/hooks/use-memos"
@@ -47,6 +49,7 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
   applyActivityCounts,
   applyStreamActivityOrdinal,
@@ -1663,6 +1666,18 @@ export function registerWorkspaceSocketHandlers(
     void db.labelAssignments.delete(assignmentId(workspaceId, resourceType, resourceId, labelId, userId))
   }
 
+  // Drafts (Stage 3) — user-scoped, so these arrive only in the author's own
+  // room. Apply is drift-aware (splits locally on a collision with unpushed
+  // edits); see draft-sync.ts. The store layer (IDB + draft-store cache), not
+  // the TanStack workspace bootstrap, is the draft read model.
+  const handleDraftUpserted = (payload: DraftUpsertedPayload) => {
+    void applyDraftUpserted(payload, workspaceId)
+  }
+
+  const handleDraftDeleted = (payload: DraftDeletedPayload) => {
+    void applyDraftDeleted(payload, workspaceId)
+  }
+
   // Register all handlers
   socket.on("stream:created", handleStreamCreated)
   socket.on("stream:updated", handleStreamUpdated)
@@ -1706,6 +1721,8 @@ export function registerWorkspaceSocketHandlers(
   socket.on("label:member_left", handleLabelMemberLeft)
   socket.on("label:assigned", handleLabelAssigned)
   socket.on("label:unassigned", handleLabelUnassigned)
+  socket.on("draft:upserted", handleDraftUpserted)
+  socket.on("draft:deleted", handleDraftDeleted)
 
   return () => {
     abortController.abort()
@@ -1753,6 +1770,8 @@ export function registerWorkspaceSocketHandlers(
     socket.off("label:member_left", handleLabelMemberLeft)
     socket.off("label:assigned", handleLabelAssigned)
     socket.off("label:unassigned", handleLabelUnassigned)
+    socket.off("draft:upserted", handleDraftUpserted)
+    socket.off("draft:deleted", handleDraftDeleted)
   }
 }
 
