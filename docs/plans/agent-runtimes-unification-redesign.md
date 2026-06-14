@@ -1018,7 +1018,18 @@ type)` are how the episode is computed, not a parallel dimension._
    biasing further toward continue. The enclave window stays count-based until
    the in-enclave sealed summary (C-2c, §2.8 Q6) lands — deepening it without a
    sealed rolling summary would only move the cliff (and competes with the 48MB
-   assignment cap, E2EE-23). The conversation highlight remains a follow-up. The
+   assignment cap, E2EE-23). **The conversation highlight's topic-marking half has
+   now shipped (companion/plaintext):** `loadConversationHighlight`
+   (`companion/conversation-highlight.ts`) resolves the topic the segmenter
+   placed the turn in — preferring the trigger's own conversation
+   (`findPrimaryByMessageId`), then falling back to the most recently active
+   topic overlapping the window (`findByMessageIds`, ordered by
+   `last_activity_at DESC`) because extraction lags the turn — and
+   `buildSystemPrompt` renders it as a `## Current Topic` block beside
+   `## Conversation Memory`. Read best-effort, never awaited; eligible only while
+   unresolved with a non-null `topicSummary`; plaintext-only by construction (the
+   segmenter short-circuits E2E). Pulling the window floor earlier to keep the
+   topic whole, and the cross-surface episode, remain follow-ups (INV-36). The
    DM episode-by-recency rule (§2.5, line ~554) is the surface this
    parameterizes._
    - _**The conversations system is the highlight, not the boundary — read
