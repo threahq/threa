@@ -2078,6 +2078,7 @@ export async function applyWorkspaceBootstrap(
       emojis: bootstrap.emojis,
       emojiWeights: bootstrap.emojiWeights,
       commands: bootstrap.commands,
+      configuredToolCategories: bootstrap.configuredToolCategories,
       _cachedAt: now,
     },
   })
@@ -2318,6 +2319,7 @@ export async function applyReconnectBootstrapBatch(
       emojis: finalBootstrap.emojis,
       emojiWeights: finalBootstrap.emojiWeights,
       commands: finalBootstrap.commands,
+      configuredToolCategories: finalBootstrap.configuredToolCategories,
       _cachedAt: now,
     },
   })

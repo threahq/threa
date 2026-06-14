@@ -9,7 +9,15 @@ import type { BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import type { StreamEvent } from "./event-repository"
-import type { EventType, JSONContent, LinkPreviewSummary, StreamType, E2eKeyWrapsResponse } from "@threa/types"
+import type {
+  EventType,
+  JSONContent,
+  LinkPreviewSummary,
+  StreamType,
+  E2eKeyWrapsResponse,
+  ToolPrivacyPolicy,
+  ToolPrivacyCategory,
+} from "@threa/types"
 import {
   ARIADNE_PERSONA_SLUG,
   StreamTypes,
@@ -828,6 +836,19 @@ export function createStreamHandlers({
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
+      // Start the scratchpad tool-policy reads now so they run alongside the
+      // rest of bootstrap instead of serially after enrichment. Only scratchpads
+      // carry a policy; other types resolve to [null, undefined]. The picker uses
+      // `configuredToolCategories` to show only the categories the workspace has
+      // tooling for (GitHub/Linear only when connected).
+      const toolPolicyReads: Promise<[ToolPrivacyPolicy, ToolPrivacyCategory[] | undefined]> =
+        stream.type === StreamTypes.SCRATCHPAD
+          ? Promise.all([
+              StreamPoliciesRepository.getToolPolicy(pool, workspaceId, stream.id),
+              workspaceIntegrationService.getAvailableToolCategories(workspaceId),
+            ])
+          : Promise.resolve([null, undefined])
+
       // Captured BEFORE the parallel queries fire. Shipped on the wire as the
       // bootstrap's freshness watermark. The frontend stamps `_patchedAt` on
       // any IDB row mutated by a socket handler, and at apply time skips
@@ -913,18 +934,9 @@ export function createStreamHandlers({
       // `fetchStreamBag` via the resolver.
       const contextBag = await fetchStreamBag(pool, { workspaceId, streamId, userId }, { skipAccessCheck: true })
 
-      // Only scratchpads can carry a tool policy (the only surface that can set
-      // one); omit elsewhere so the settings control renders only where it
-      // applies. `configuredToolCategories` tells the owner's picker which
-      // toggles to show — a workspace without GitHub/Linear connected never
-      // offers those categories.
-      const isScratchpad = stream.type === StreamTypes.SCRATCHPAD
-      const [allowedToolCategories, configuredToolCategories] = isScratchpad
-        ? await Promise.all([
-            StreamPoliciesRepository.getToolPolicy(pool, workspaceId, stream.id),
-            workspaceIntegrationService.getAvailableToolCategories(workspaceId),
-          ])
-        : [null, undefined]
+      // Resolve the tool-policy reads started up front (parallel with the rest
+      // of bootstrap, not serial after enrichment).
+      const [allowedToolCategories, configuredToolCategories] = await toolPolicyReads
 
       res.json({
         data: {

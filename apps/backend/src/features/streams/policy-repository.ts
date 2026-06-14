@@ -45,11 +45,20 @@ export const StreamPoliciesRepository = {
       `)
       return
     }
-    await db.query(sql`
+    // `stream_id` is the PK, so the conflict target can't carry `workspace_id`;
+    // the `WHERE` on the update path asserts the existing row's workspace matches
+    // the caller's (INV-8). A mismatch — which the access checks upstream already
+    // prevent — updates zero rows and fails loudly here (INV-11) instead of
+    // silently mutating another workspace's policy.
+    const result = await db.query(sql`
       INSERT INTO stream_policies (stream_id, workspace_id, allowed_tool_categories, updated_at)
       VALUES (${streamId}, ${workspaceId}, ${policy}, NOW())
       ON CONFLICT (stream_id)
       DO UPDATE SET allowed_tool_categories = EXCLUDED.allowed_tool_categories, updated_at = NOW()
+      WHERE stream_policies.workspace_id = EXCLUDED.workspace_id
     `)
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new Error(`stream_policies workspace mismatch for stream ${streamId}`)
+    }
   },
 }
