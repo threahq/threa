@@ -47,7 +47,6 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
-import { mirrorSyncV2Mode, type SyncV2CursorMode } from "./sync-v2-mode"
 import {
   applyActivityCounts,
   applyStreamActivityOrdinal,
@@ -463,27 +462,14 @@ export function registerWorkspaceSocketHandlers(
     getCurrentStreamId: () => string | undefined
     getCurrentUser: () => { id: string } | null
     subscribeStream: (streamId: string) => void
-  },
-  syncCursorMode: SyncV2CursorMode
+  }
 ): () => void {
   const abortController = new AbortController()
 
-  // Close the reconnect event gap (INV-53): if the Saved or Scheduled view
-  // is mounted when the socket re-registers, invalidate so TanStack refetches
-  // and rehydrates IDB with any rows whose upsert/delete events we missed
-  // during the disconnect. `refetchOnReconnect: true` alone only covers
-  // browser network online/offline, not socket.io reconnects.
-  //
-  // In active sync-v2 mode the workspace catch-up cursor replays the missed
-  // saved/scheduled events (user-scoped sync-log entries) through these same
-  // handlers, so the blanket refetch is redundant there — but "off" is the
-  // runtime kill switch and "shadow" applies nothing, so both must keep this
-  // healing. The mode is fixed per SyncEngine lifetime; a flag flip recreates
-  // the engine and re-registers these handlers with the new mode.
-  if (syncCursorMode !== "active") {
-    queryClient.invalidateQueries({ queryKey: savedKeys.all })
-    queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
-  }
+  // The reconnect event gap for saved/scheduled rows (INV-53) is closed by the
+  // workspace catch-up cursor, which replays the missed user-scoped sync-log
+  // entries through these same handlers — so no blanket `savedKeys`/
+  // `scheduledKeys` invalidation is needed here.
 
   // Handle stream created
   const handleStreamCreated = (payload: StreamPayload) => {
@@ -1235,10 +1221,6 @@ export function registerWorkspaceSocketHandlers(
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    // Keep the sync-v2 mode mirror current so the next SyncEngine
-    // construction (which runs before any bootstrap is cached) starts from
-    // this delivered value. See sync-v2-mode.ts.
-    mirrorSyncV2Mode(workspaceId, payload.featureFlags)
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, featureFlags: payload.featureFlags }))
   }
 
@@ -1795,10 +1777,6 @@ export async function applyWorkspaceBootstrap(
 ): Promise<void> {
   const now = Date.now()
 
-  // Mirror the sync-v2 mode so the next SyncEngine construction (which runs
-  // before any bootstrap exists) starts from this delivered flag value.
-  mirrorSyncV2Mode(workspaceId, bootstrap.featureFlags)
-
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
 
@@ -2016,10 +1994,6 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>
 }> {
   const now = Date.now()
-
-  // Same as applyWorkspaceBootstrap: the flag map comes straight from the
-  // fresh server snapshot (the reconnect merge only adjusts streams/counters).
-  mirrorSyncV2Mode(workspaceId, workspaceBootstrap.featureFlags)
 
   const [localStreams, localMemberships, localUnreadState] = await Promise.all([
     db.streams.where("workspaceId").equals(workspaceId).toArray(),

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { defaultFeatureFlagValue, FEATURE_FLAGS, type WorkspaceBootstrap } from "@threa/types"
+import { defaultFeatureFlags, type WorkspaceBootstrap } from "@threa/types"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { WorkspaceSettingsDialog } from "./workspace-settings-dialog"
 import * as generalTabModule from "./general-tab"
@@ -40,12 +40,6 @@ function renderDialog(initialEntry: string, queryClient = new QueryClient()) {
 function seedBootstrapFlags(queryClient: QueryClient, featureFlags: WorkspaceBootstrap["featureFlags"]) {
   queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { featureFlags } as WorkspaceBootstrap)
 }
-
-// Derived from the registry, never literals: reordering a flag's declared
-// values (rollout default flips are a one-line registry change) must not
-// break these tests.
-const FLAG_DEFAULT = defaultFeatureFlagValue("sync-v2-cursor")
-const FLAG_OVERRIDE = FEATURE_FLAGS["sync-v2-cursor"].find((v) => v !== FLAG_DEFAULT)!
 
 describe("WorkspaceSettingsDialog", () => {
   beforeEach(() => {
@@ -84,25 +78,9 @@ describe("WorkspaceSettingsDialog", () => {
   })
 
   describe("feature flags tab", () => {
-    it("shows the tab with the viewer's non-default flags only", async () => {
-      const user = userEvent.setup()
+    it("hides the tab when there are no overridden flags", async () => {
       const queryClient = new QueryClient()
-      seedBootstrapFlags(queryClient, { "sync-v2-cursor": FLAG_OVERRIDE })
-
-      renderDialog("/w/ws_1?ws-settings=general", queryClient)
-
-      await user.click(await screen.findByRole("button", { name: /Feature flags/i }))
-
-      await waitFor(() => {
-        expect(screen.getByTestId("search")).toHaveTextContent("?ws-settings=feature-flags")
-      })
-      expect(screen.getByText("sync-v2-cursor")).toBeVisible()
-      expect(screen.getByText(FLAG_OVERRIDE)).toBeVisible()
-    })
-
-    it("hides the tab when every flag is at its default", async () => {
-      const queryClient = new QueryClient()
-      seedBootstrapFlags(queryClient, { "sync-v2-cursor": FLAG_DEFAULT })
+      seedBootstrapFlags(queryClient, defaultFeatureFlags())
 
       renderDialog("/w/ws_1?ws-settings=general", queryClient)
 
@@ -115,7 +93,6 @@ describe("WorkspaceSettingsDialog", () => {
 
       expect(await screen.findByText("General panel")).toBeVisible()
       expect(screen.queryByRole("button", { name: /Feature flags/i })).not.toBeInTheDocument()
-      expect(screen.queryByText("sync-v2-cursor")).not.toBeInTheDocument()
     })
   })
 })

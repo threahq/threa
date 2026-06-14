@@ -36,11 +36,11 @@ a socket heartbeat exists."
    behind; it is NOT a transport-liveness mechanism. Dead transports stay
    covered by socket.io's native pingTimeout and the page-resume probe
    (`pingSocket`).
-3. **Rides `sync-v2-cursor` active mode.** The server emits unconditionally
-   (clients in `off`/`shadow` or on old builds ignore the event); the client
-   handler exists only in active mode, where the gate/cursor machinery lives.
-   No new feature flag; flipping `sync-v2-cursor` to `off` also kills
-   heartbeat-triggered catch-up.
+3. **Rides the active cursor.** The server emits unconditionally (clients on
+   old builds ignore the event); the client handler runs only when the cursor
+   is active — i.e. a `SyncEngine` with a sync service wired, where the
+   gate/cursor machinery lives. (Originally gated by `sync-v2-cursor` active
+   mode; that flag has since been deleted and active mode hardwired.)
 4. **One PR**: server emitter + client trigger + tests, no healing deletions
    bundled in.
 5. **15s interval** (owner choice over the recommended 30s), env-configurable;

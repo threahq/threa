@@ -125,35 +125,13 @@ describe("useConversations event registration", () => {
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: listKey() }))
   })
 
-  it.each(["off", "shadow"] as const)("keeps the reconnect invalidation in %s sync-v2 mode", async (mode) => {
+  it("skips the reconnect invalidation when a sync engine is mounted (catch-up replay covers the gap)", async () => {
     const { socket } = createTestSocket()
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
 
     const gate = new SocketEventGate(WORKSPACE_ID)
     vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
       getLiveEventSource: () => gate,
-      syncCursorMode: mode,
-    } as unknown as syncEngineModule.SyncEngine)
-
-    const { queryClient, wrapper } = createWrapper()
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
-
-    reconnectCount = 1
-    renderHook(() => useConversations(WORKSPACE_ID, STREAM_ID), { wrapper })
-
-    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: listKey() }))
-
-    gate.dispose()
-  })
-
-  it("skips the reconnect invalidation in active sync-v2 mode (catch-up replay covers the gap)", async () => {
-    const { socket } = createTestSocket()
-    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
-
-    const gate = new SocketEventGate(WORKSPACE_ID)
-    vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue({
-      getLiveEventSource: () => gate,
-      syncCursorMode: "active",
     } as unknown as syncEngineModule.SyncEngine)
 
     const { queryClient, wrapper } = createWrapper()

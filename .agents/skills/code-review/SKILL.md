@@ -12,20 +12,33 @@ allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bas
 
 ## Step 0: Resolve Target & Mode
 
-This skill runs in one of two modes. Pick based on what the user gave you:
+This skill runs in one of two modes. The default is to review (and post to) the PR the branch is about; only stay local when there is no PR or the user asked you to.
 
-- **PR mode** — a PR number/URL was provided (e.g. `/code-review 903`). Review that PR; post a comment AND print to chat. Use the `gh pr …` paths below.
-- **Local mode** — no PR was named, or the user said "the current branch", "this diff", "what I have", "chat-first", or is iterating before a PR exists. Review the working branch against its base; print the report to chat only (no GitHub posting). This is the default when there is no open PR for the branch.
+- **PR mode** — review a specific PR, **post the report as a PR comment AND print it to chat**. Use when EITHER:
+  - a PR number/URL was provided (e.g. `/code-review 903`) — the explicit target; or
+  - no number was given but an **open, non-draft PR exists for the current branch** — the implicit target. Resolve it first:
+    ```bash
+    # gh (local sessions):
+    gh pr view --json number,state,isDraft,url -q '"\(.number)|\(.state)|\(.isDraft)|\(.url)"' 2>/dev/null
+    # web/remote sessions (no gh): use the github-api-web skill or GitHub MCP —
+    #   GET /repos/OWNER/REPO/pulls?head=OWNER:<branch>&state=open  → take the first open PR
+    ```
+    If that resolves to an OPEN, non-draft PR, target it and state which PR you picked.
+- **Local mode** — review the working branch against its base; **print to chat only, no GitHub posting**. Use ONLY when there is genuinely no open PR for the branch, OR the user explicitly asked to stay local ("the current branch", "this diff", "what I have", "chat-first", "don't post", or iterating before a PR exists).
 
-If ambiguous (a PR number is absent but an open PR exists for the branch): prefer **local mode** and mention in the chat report that an open PR exists, so the user can re-run with the number to post it.
+Precedence: an explicit "stay local" request wins over an open PR. A provided number always wins. Otherwise, if an open PR exists for the branch, use PR mode and post.
 
-Resolve the base and diff for **local mode**:
+Resolve the base and diff for **local mode** (PR mode gets its diff from the PR — see Step 2):
 
 ```bash
 base="${BASE:-main}"
 if git rev-parse --verify "origin/$base" >/dev/null 2>&1; then base_ref="origin/$base"; else base_ref="$base"; fi
-git diff --quiet "$base_ref"...HEAD && git diff --quiet "$base_ref" && echo "NO_CHANGES" || echo "HAS_CHANGES"
-{ git diff "$base_ref"...HEAD; git diff "$base_ref"; } > /tmp/code-review.diff   # committed + uncommitted
+git diff --quiet "$base_ref"...HEAD && git diff --quiet HEAD && echo "NO_CHANGES" || echo "HAS_CHANGES"
+# Committed-since-merge-base (three-dot) + uncommitted working-tree edits (vs HEAD).
+# Do NOT diff the two-dot `git diff "$base_ref"`: when origin/main has advanced past
+# the branch point it folds that unrelated main-ahead churn into the review and
+# produces phantom "this PR also changes X" findings.
+{ git diff "$base_ref"...HEAD; git diff HEAD; } > /tmp/code-review.diff
 git rev-parse HEAD            # HEAD SHA for links (only clickable if a remote exists)
 git branch --show-current
 ```

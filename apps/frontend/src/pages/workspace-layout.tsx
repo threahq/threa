@@ -58,8 +58,6 @@ import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
-import { resolveSyncV2Mode } from "@/sync/sync-v2-mode"
-import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { SettingsDialog } from "@/components/settings"
@@ -207,20 +205,12 @@ function WorkspaceSyncHandler({
   const isOnline = useOnlineStatus()
   const { streamId: currentStreamId } = useParams<{ streamId: string }>()
   const wasOfflineRef = useRef(!navigator.onLine)
-  // Sync-v2 cursor mode for this engine's lifetime. The flag value rides the
-  // bootstrap, which doesn't exist yet at construction time, so resolution
-  // falls back to the localStorage mirror (last delivered value), then the
-  // registry default — see sync-v2-mode.ts. Once the bootstrap (or a
-  // `feature_flags:updated` event) delivers a different value, the engine is
-  // recreated below with the new mode: a runtime kill switch ("off") and
-  // activation path ("active") with no redeploy or reload.
-  const syncV2Mode = resolveSyncV2Mode(workspaceId, useFeatureFlagWhenKnown(workspaceId, "sync-v2-cursor"))
-  // Construct SyncEngine once per workspace + sync-v2 mode. Use ref to survive
-  // StrictMode double-render — useMemo + destroy effect breaks because the
-  // cleanup destroys the engine before the socket connect effect fires.
+  // Construct SyncEngine once per workspace. Use ref to survive StrictMode
+  // double-render — useMemo + destroy effect breaks because the cleanup
+  // destroys the engine before the socket connect effect fires.
   const syncEngineRef = useRef<SyncEngine | null>(null)
   let syncEngine = syncEngineRef.current
-  if (!syncEngine || !isSyncEngineCurrent(syncEngine, workspaceId, syncV2Mode)) {
+  if (!syncEngine || !isSyncEngineCurrent(syncEngine, workspaceId)) {
     syncEngine?.destroy()
     syncEngine = new SyncEngine({
       workspaceId,
@@ -240,7 +230,6 @@ function WorkspaceSyncHandler({
       },
       labelService: { list: labelService.list },
       syncService: syncApi,
-      syncCursorMode: syncV2Mode,
     })
     syncEngineRef.current = syncEngine
   }
