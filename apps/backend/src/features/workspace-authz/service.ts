@@ -5,7 +5,10 @@ import {
   type WorkspacePermissionSlug,
   type WorkspaceRoleSlug,
 } from "@threa/types"
-import { logger, type WorkosMembershipStatus } from "@threa/backend-common"
+import { logger, serializeBigInt, type WorkosMembershipStatus } from "@threa/backend-common"
+import { withTransaction } from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
+import { UserRepository } from "../workspaces"
 import { WorkspaceUserPermissionsRepository } from "./repository"
 
 export interface ApplyMembershipChangeInput {
@@ -61,13 +64,38 @@ export class WorkspaceAuthzService {
   }
 
   async applyMembershipChange(input: ApplyMembershipChangeInput): Promise<void> {
-    const updated = await WorkspaceUserPermissionsRepository.upsert(this.pool, input)
-    if (!updated) {
-      logger.debug(
-        { workspaceId: input.workspaceId, workosUserId: input.workosUserId },
-        "workspace_user_permissions upsert ignored as stale"
-      )
-    }
+    await withTransaction(this.pool, async (client) => {
+      const updated = await WorkspaceUserPermissionsRepository.upsert(client, input)
+      if (!updated) {
+        logger.debug(
+          { workspaceId: input.workspaceId, workosUserId: input.workosUserId },
+          "workspace_user_permissions upsert ignored as stale"
+        )
+        return
+      }
+
+      // Role is derived from the mirror at read time, so the user loaded here —
+      // in the SAME transaction, after the upsert — already carries the freshly
+      // applied role. Broadcasting it keeps every connected client's cached
+      // role current (e.g. a demoted admin loses the admin UI) without waiting
+      // for a reconnect or reload (INV-4/INV-7).
+      const user = await UserRepository.findByWorkosUserIdInWorkspace(client, input.workspaceId, input.workosUserId)
+      if (!user) {
+        // Mirror landed before the regional user row (e.g. between invite
+        // acceptance and the next WorkOS poll). There is nothing to broadcast
+        // yet; the user's first read will derive the role from the mirror.
+        logger.debug(
+          { workspaceId: input.workspaceId, workosUserId: input.workosUserId },
+          "workspace_user_permissions upsert applied before user row exists; skipping broadcast"
+        )
+        return
+      }
+
+      await OutboxRepository.insert(client, "workspace_user:updated", {
+        workspaceId: input.workspaceId,
+        user: serializeBigInt(user),
+      })
+    })
   }
 
   async applyMembershipRemoval(input: ApplyMembershipRemovalInput): Promise<void> {
