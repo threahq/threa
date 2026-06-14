@@ -1,13 +1,21 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useSyncExternalStore } from "react"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
-import { tryOpenStreamName } from "@/lib/crypto/message-envelope"
+import {
+  getCachedStreamName,
+  getStreamNameCacheVersion,
+  requestStreamName,
+  streamNameCacheKey,
+  subscribeStreamNameCache,
+} from "@/lib/crypto/stream-name-cache"
 
 interface SealedNameStream {
   id: string
   e2eEnabled?: boolean
   sealedNameCiphertext?: string | null
   sealedNameEnvelope?: unknown
+  /** The root whose SSK seals this name; a scratchpad is its own root. */
+  rootStreamId?: string | null
 }
 
 /**
@@ -18,6 +26,12 @@ interface SealedNameStream {
  * user sees. Returns null for plaintext streams, a locked session, a missing
  * sealed name, or any decrypt failure — callers fall back to the plaintext label
  * (which is also what a locked session shows).
+ *
+ * Reads the shared `stream-name-cache` (the single decrypt authority), so the
+ * open-stream header and the list-surface overlay never drift. Keying the cache
+ * on the ciphertext makes the lookup self-guarding: a previous stream's name or
+ * a pre-rename name maps to a different key, so it can never flash before the
+ * current name's async decrypt resolves.
  */
 export function useDecryptedStreamName(
   workspaceId: string,
@@ -25,44 +39,31 @@ export function useDecryptedStreamName(
 ): string | null {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
+  const version = useSyncExternalStore(subscribeStreamNameCache, getStreamNameCacheVersion, getStreamNameCacheVersion)
 
   const streamId = stream?.id
   const e2eEnabled = stream?.e2eEnabled ?? false
   const ciphertext = stream?.sealedNameCiphertext ?? null
-  const sealedEnvelope = stream?.sealedNameEnvelope ?? null
+  const envelope = stream?.sealedNameEnvelope ?? null
+  const rootStreamId = stream?.rootStreamId ?? undefined
   const unlocked = session.status === "unlocked"
   const keyId = session.keyId
   const privateKey = session.privateKey
 
-  // A stable key for the exact inputs a decrypted name depends on. The decrypted
-  // value is stored against it and only returned when it still matches, so a
-  // previous stream's name (or a pre-rename name) is never shown after the inputs
-  // change but before the async decrypt resolves.
-  const sourceKey =
-    e2eEnabled && streamId && ciphertext && sealedEnvelope && unlocked && keyId && privateKey
-      ? `${workspaceId}:${streamId}:${ciphertext}:${keyId}`
-      : null
-  const [result, setResult] = useState<{ sourceKey: string | null; name: string | null }>({
-    sourceKey: null,
-    name: null,
-  })
+  const key = e2eEnabled && streamId && ciphertext ? streamNameCacheKey(workspaceId, streamId, ciphertext) : null
 
   useEffect(() => {
-    if (!sourceKey || !streamId || !ciphertext || !sealedEnvelope || !keyId || !privateKey) {
-      setResult({ sourceKey: null, name: null })
-      return
-    }
-    let cancelled = false
-    void tryOpenStreamName(
-      { ciphertext, envelope: sealedEnvelope },
-      { workspaceId, streamId, recipientKeyId: keyId, privateKey }
-    ).then((decrypted) => {
-      if (!cancelled) setResult({ sourceKey, name: decrypted })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [sourceKey, workspaceId, streamId, ciphertext, sealedEnvelope, keyId, privateKey])
+    if (!key || !streamId || !ciphertext || !envelope || !unlocked || !keyId || !privateKey) return
+    requestStreamName(
+      key,
+      { ciphertext, envelope },
+      { workspaceId, streamId, rootStreamId: rootStreamId ?? streamId, recipientKeyId: keyId, privateKey }
+    )
+  }, [key, streamId, ciphertext, envelope, rootStreamId, unlocked, keyId, privateKey, workspaceId])
 
-  return result.sourceKey === sourceKey ? result.name : null
+  return useMemo(
+    () => (key && unlocked ? getCachedStreamName(key) : null),
+    // `version` re-reads the cache when a decrypt lands; the rest key the lookup.
+    [key, unlocked, version]
+  )
 }
