@@ -160,8 +160,8 @@ export function deleteDraftScratchpadFromCache(workspaceId: string, draftId: str
   })
 }
 
-export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): void {
-  const drafts = cache.drafts.get(workspaceId) ?? []
+/** Return a copy of `drafts` with `draft` upserted by id (pure; no cache signal). */
+function withDraftUpserted(drafts: CachedDraft[], draft: CachedDraft): CachedDraft[] {
   const next = [...drafts]
   const index = next.findIndex((candidate) => candidate.id === draft.id)
   if (index === -1) {
@@ -169,9 +169,13 @@ export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): voi
   } else {
     next[index] = draft
   }
+  return next
+}
+
+export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): void {
   seedDraftCache(workspaceId, {
     scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: next,
+    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? [], draft),
     loaded: cache.loaded.get(workspaceId) ?? [],
   })
 }
@@ -193,19 +197,11 @@ export function deleteDraftFromCache(workspaceId: string, draftId: string): void
  * "loaded" until the pointer lands).
  */
 export function upsertLoadedDraftInCache(workspaceId: string, draft: CachedDraft, scope: string): void {
-  const drafts = cache.drafts.get(workspaceId) ?? []
-  const nextDrafts = [...drafts]
-  const index = nextDrafts.findIndex((candidate) => candidate.id === draft.id)
-  if (index === -1) {
-    nextDrafts.push(draft)
-  } else {
-    nextDrafts[index] = draft
-  }
   const loaded = (cache.loaded.get(workspaceId) ?? []).filter((row) => row.scope !== scope)
   loaded.push({ scope, workspaceId, draftId: draft.id })
   seedDraftCache(workspaceId, {
     scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: nextDrafts,
+    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? [], draft),
     loaded,
   })
 }
@@ -225,13 +221,10 @@ export function migrateLoadedDraftInCache(
   toRow: CachedDraft,
   repointScope: string | null
 ): void {
-  const drafts = (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== fromId)
-  const index = drafts.findIndex((candidate) => candidate.id === toRow.id)
-  if (index === -1) {
-    drafts.push(toRow)
-  } else {
-    drafts[index] = toRow
-  }
+  const drafts = withDraftUpserted(
+    (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== fromId),
+    toRow
+  )
   let loaded = cache.loaded.get(workspaceId) ?? []
   if (repointScope) {
     loaded = loaded.filter((row) => row.scope !== repointScope)

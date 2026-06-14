@@ -94,23 +94,25 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
 /** Delete the loaded draft for `scope` and clear its pointer (stashes survive). */
 export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
   const loadedId = await getLoadedDraftId(scope)
-  // Read `baseVersion` inside the same transaction as the delete so a server
-  // confirmation that lands mid-clear (the queue setting baseVersion) can't slip
-  // between the read and the delete and leave the server row undeleted — the
-  // "ghost draft" race.
-  let removedBaseVersion: number | undefined
-  if (loadedId) {
-    removedBaseVersion = await db.transaction("rw", db.drafts, async () => {
+  // Delete the draft row AND clear its loaded pointer in ONE transaction. Reading
+  // `baseVersion` here also keeps a mid-clear server confirmation from slipping
+  // between read and delete (the "ghost draft" race). Crucially the pointer clear
+  // is inside the txn too: otherwise a `draft:upserted` echo landing between the
+  // row delete and the pointer clear would find no local row and re-insert the
+  // just-cleared draft as an orphan stash entry (resurrection race).
+  const removedBaseVersion = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    let baseVersion: number | undefined
+    if (loadedId) {
       const row = await db.drafts.get(loadedId)
+      baseVersion = row?.baseVersion
       await db.drafts.delete(loadedId)
-      return row?.baseVersion
-    })
-    deleteDraftFromCache(workspaceId, loadedId)
-  }
-  await db.composerLoaded.delete(scope)
+    }
+    await db.composerLoaded.delete(scope)
+    return baseVersion
+  })
+  if (loadedId) deleteDraftFromCache(workspaceId, loadedId)
   setComposerLoadedInCache(workspaceId, scope, null)
-  // Sync side-effect after the local state is fully cleared (keeps the local
-  // clear tight so observers never see drafts-gone-but-pointer-still-set).
+  // Sync side-effect after the local state is fully cleared.
   if (loadedId) await syncDraftRemoval(workspaceId, loadedId, removedBaseVersion)
 }
 
@@ -120,15 +122,17 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
  * rest (E2EE-4).
  */
 export async function purgeScopeDrafts(workspaceId: string, scope: string): Promise<void> {
-  // Read + delete atomically so each row's `baseVersion` reflects any server
-  // confirmation that landed before the delete (avoids the ghost-draft race).
-  const rows = await db.transaction("rw", db.drafts, async () => {
+  // Read + delete the rows AND clear the loaded pointer atomically: `baseVersion`
+  // reflects any server confirmation that landed before the delete (ghost-draft
+  // race), and clearing the pointer inside the txn prevents an inbound echo from
+  // re-inserting a just-purged draft as an orphan (resurrection race).
+  const rows = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
     const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
     for (const row of found) await db.drafts.delete(row.id)
+    await db.composerLoaded.delete(scope)
     return found
   })
   for (const row of rows) deleteDraftFromCache(workspaceId, row.id)
-  await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
   // Sync side-effects after the local state is fully cleared.
   for (const row of rows) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
