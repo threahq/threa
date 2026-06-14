@@ -710,6 +710,15 @@ export class StreamService {
     return policy
   }
 
+  /**
+   * The stream's tool-privacy policy (or `null` for no restriction). Single read
+   * on the tracking table, so `pool` is passed directly (INV-30). Keeps the
+   * bootstrap handler thin — data access stays behind the service (INV-5/INV-34).
+   */
+  async getStreamToolPolicy(workspaceId: string, streamId: string): Promise<ToolPrivacyPolicy> {
+    return StreamPoliciesRepository.getToolPolicy(this.pool, workspaceId, streamId)
+  }
+
   async archiveStream(streamId: string, archivedBy: string): Promise<Stream | null> {
     return withTransaction(this.pool, async (client) => {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })

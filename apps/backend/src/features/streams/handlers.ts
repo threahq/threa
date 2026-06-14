@@ -33,7 +33,6 @@ import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
-import { StreamPoliciesRepository } from "./policy-repository"
 
 const createStreamSchema = z
   .object({
@@ -844,7 +843,7 @@ export function createStreamHandlers({
       const toolPolicyReads: Promise<[ToolPrivacyPolicy, ToolPrivacyCategory[] | undefined]> =
         stream.type === StreamTypes.SCRATCHPAD
           ? Promise.all([
-              StreamPoliciesRepository.getToolPolicy(pool, workspaceId, stream.id),
+              streamService.getStreamToolPolicy(workspaceId, stream.id),
               workspaceIntegrationService.getAvailableToolCategories(workspaceId),
             ])
           : Promise.resolve([null, undefined])
