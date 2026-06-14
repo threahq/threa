@@ -63,7 +63,7 @@ function mapRowToSummary(row: ConversationSummaryRow): AgentConversationSummary 
     personaId: row.persona_id,
     summary: row.summary,
     sealed:
-      row.summary_ciphertext && row.key_generation !== null
+      row.summary_ciphertext && row.summary_envelope !== null && row.key_generation !== null
         ? {
             ciphertext: row.summary_ciphertext.toString("base64"),
             envelope: row.summary_envelope,
@@ -99,14 +99,24 @@ export const ConversationSummaryRepository = {
 
   async upsert(db: Querier, params: UpsertConversationSummaryParams): Promise<AgentConversationSummary> {
     const isSealed = "sealed" in params && params.sealed !== undefined
-    const summary = isSealed ? null : params.summary
+    if (!isSealed && params.summary === undefined) {
+      // The discriminated union enforces "exactly one representation" for typed
+      // callers; this guards the same rule at runtime for an untyped caller (e.g.
+      // an unvalidated request body), since the table carries no DB CHECK (INV-3)
+      // and a silent all-null insert would be the worse failure (INV-11).
+      throw new Error(
+        "ConversationSummaryRepository.upsert requires exactly one representation: `summary` (plaintext) or `sealed`"
+      )
+    }
+    const summary = isSealed ? null : (params.summary ?? null)
     const ciphertext = isSealed ? Buffer.from(params.sealed.ciphertext, "base64") : null
     const envelope = isSealed ? JSON.stringify(params.sealed.envelope) : null
     const keyGeneration = isSealed ? params.sealed.keyGeneration : null
 
     // The monotonic cursor decides whether the incoming summary supersedes the
-    // stored one; every representation column moves together with it so a
-    // plaintext row never keeps stale sealed bytes (or vice versa) after a flip.
+    // stored one; every representation column (summary, summary_ciphertext,
+    // summary_envelope, key_generation) moves together with it so a plaintext row
+    // never keeps stale sealed bytes (or vice versa) after a flip.
     const result = await db.query<ConversationSummaryRow>(sql`
       INSERT INTO agent_conversation_summaries (
         id, workspace_id, stream_id, persona_id, summary, summary_ciphertext,

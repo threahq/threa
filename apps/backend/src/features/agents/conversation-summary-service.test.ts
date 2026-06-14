@@ -235,4 +235,42 @@ describe("ConversationSummaryService", () => {
     expect(summary).toBe("Existing summary")
     expect(upsertSummarySpy).not.toHaveBeenCalled()
   })
+
+  test("refuses to overwrite a sealed (E2E) summary row", async () => {
+    const service = new ConversationSummaryService({
+      ai: mockAI,
+      modelId: TEST_MODEL_ID,
+      temperature: TEST_TEMPERATURE,
+    })
+
+    findSummarySpy.mockResolvedValue({
+      id: "agsum_sealed",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      personaId: "persona_1",
+      summary: null,
+      sealed: {
+        ciphertext: "Y2lwaGVydGV4dA==",
+        envelope: { v: 2, keyGeneration: 0, iv: "aXYxMjM0NTY3OA==", aad: "YWFk" },
+        keyGeneration: 0,
+      },
+      lastSummarizedSequence: 30n,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    })
+    listMessagesSpy.mockResolvedValue([makeMessage(29n, "Older boundary message")])
+    listByRangeSpy.mockResolvedValue([makeMessage(11n, "Dropped message")])
+
+    const summary = await service.updateForContext({
+      db: {} as any,
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      personaId: "persona_1",
+      keptMessages: [makeMessage(31n, "Recent message")],
+    })
+
+    expect(summary).toBeNull()
+    expect(mockGenerateObject).not.toHaveBeenCalled()
+    expect(upsertSummarySpy).not.toHaveBeenCalled()
+  })
 })

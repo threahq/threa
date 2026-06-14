@@ -134,7 +134,11 @@ export { StreamPersonaParticipantRepository } from "./stream-persona-participant
 export type { StreamPersonaParticipant } from "./stream-persona-participant-repository"
 
 export { ConversationSummaryRepository } from "./conversation-summary-repository"
-export type { AgentConversationSummary, UpsertConversationSummaryParams } from "./conversation-summary-repository"
+export type {
+  AgentConversationSummary,
+  UpsertConversationSummaryParams,
+  SealedSummary,
+} from "./conversation-summary-repository"
 export { ConversationSummaryService } from "./conversation-summary-service"
 
 // Quote-reply resolution (used by both companion/ and researcher/)

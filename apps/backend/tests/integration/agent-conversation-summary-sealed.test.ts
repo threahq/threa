@@ -119,4 +119,19 @@ describe("ConversationSummaryRepository sealed rolling summary", () => {
     expect(afterAdvance?.sealed).toBeNull()
     expect(afterAdvance?.lastSummarizedSequence).toBe(9n)
   })
+
+  test("rejects an upsert that carries neither a plaintext nor a sealed summary", async () => {
+    // The discriminated union blocks this for typed callers; the cast simulates an
+    // untyped caller (e.g. an unvalidated body) to exercise the runtime guard that
+    // stands in for the absent DB CHECK.
+    await expect(
+      ConversationSummaryRepository.upsert(pool, {
+        id: agentConversationSummaryId(),
+        workspaceId: workspaceId(),
+        streamId: streamId(),
+        personaId: PERSONA_ID,
+        lastSummarizedSequence: 1n,
+      } as unknown as Parameters<typeof ConversationSummaryRepository.upsert>[1])
+    ).rejects.toThrow(/exactly one representation/)
+  })
 })
