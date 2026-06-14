@@ -65,6 +65,10 @@ CodeRabbit reviews PRs automatically using the project rules in `.coderabbit.yam
 
 If tests fail, fix them or explicitly isolate the failure in a separate follow-up change.
 
+### Opening Pull Requests
+
+When a unit of work is complete — committed, pushed, and verified — default to opening a pull request with the `/create-pr` skill rather than stopping at the pushed branch. The skill writes the structured description (summary, design decisions, file changes) the reviewers and CodeRabbit expect. Skip it only when the user has said not to open a PR, when the work is mid-stream and not yet coherent, or when a PR for the branch already exists (push the follow-up commits to it instead).
+
 ## Project Structure
 
 Monorepo with Bun workspaces:
