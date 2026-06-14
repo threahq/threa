@@ -923,6 +923,61 @@ timestamps)`, carries the non-null `e2e_streams` rows over, and **drops**
    want deep continuity; a channel mention probably still wants the shallow
    window. The `ContextWindowPolicy` should be per-trigger-kind (deep for
    companion-mode scratchpad turns, shallow for mention turns), not global.
+   _Resolved as per-**episode**, not per-trigger-kind as a free axis and not
+   global: one policy **type** — the C-2 budgeted-window + rolling-summary
+   mechanism — instantiated per dispatch from facts the turn already carries,
+   selected at the `Hydrate` step and handed to the driver, never chosen inside
+   it. `ContextWindowPolicy` does not exist in code yet (it lands with C-2);
+   this fixes its shape rather than describing shipped behavior._
+   - _**The axis is the episode, and §2.5 already computes it.** Keying
+     directly on the two trigger kinds (`mention`, `companion`; `AGENT_TRIGGERS`,
+     `packages/types/src/constants.ts:430`) is almost right but
+     under-determined: a `mention` lands in either a channel-thread or a DM, and
+     those want different continuity rules, while `companion` only ever fires on
+     a companion-mode scratchpad (`companion-outbox-handler.ts:87-94` gates on
+     `StreamTypes.SCRATCHPAD` + `CompanionModes.ON`). The disambiguating fact is
+     the **episode** §2.5 already defines from surface shape + recency —
+     scratchpad/thread = the stream, channel = the spawned thread, DM = recency.
+     So the policy's input is the resolved episode; `(trigger kind, stream
+type)` are how the episode is computed, not a parallel dimension._
+   - _**The mapping.** `companion` (scratchpad, companion mode) → **deep**: a
+     token-budgeted window filled newest-first, overflow folded into the rolling
+     summary (C-2). `mention` in a channel → **shallow**: the mention already
+     spawns a bounded thread (§2.5 "channels reduce to threads"; the routing is
+     documented at `mention-invoke-outbox-handler.ts:17-23` and the thread is
+     created by the `PersonaAgent`, per that handler's own note), so the episode
+     is that thread and
+     the existing surrounding depth is the right cap. `mention` in a DM → the
+     DM-episode window by recency (`lastSeenSequence`,
+     `session-repository.ts:92`, the same cursor `companion-outbox-handler.ts`
+     already compares against); the count/time boundary itself is Q8._
+   - _**One path, not two (INV-29/INV-43).** Deep and shallow are the same
+     mechanism with different budgets, not two code paths: on a bounded thread
+     nothing overflows, so the rolling summary degrades to a no-op and the deep
+     path's machinery is inert. Two literal branches keyed on trigger kind would
+     be the footgun the shared-behavior rule exists to prevent._
+   - _**Where it lives — the question's "where".** Not a global constant
+     (today's flat `MAX_CONTEXT_MESSAGES = 20`, `context-builder.ts:135`, applied
+     identically by all four stream-type builders with no trigger branching —
+     the cliff C-2 removes), not a per-driver hardcode (the enclave's
+     `MAX_HISTORY_MESSAGES`, 30 at `claim-service.ts:36` / 200 at
+     `assignment.ts:16`), and not a new config surface (INV-36 — no per-persona
+     "window depth" knob; the signal is already in the trigger). It is a derived
+     value on the dispatch binding, read at the `Hydrate` step, the same
+     forward-compat slot the inline `contextHandle` already occupies (Q2)._
+   - _**Reconciles C-2 and forces Q2's `ref`.** C-2's "one `ContextWindowPolicy`
+     consumed by all drivers" means one shared **type/mechanism**; a policy is
+     parameterized by definition, so per-episode **values** are no contradiction
+     — they are the inputs the noun already implied (the same shape Q3 settled
+     for tool policy: one `negotiateCapabilities` predicate, per-stream
+     parameters). And the deep window is the concrete payload-size forcing
+     function Q2 deferred to: when a deep budget overflows the inline claim
+     response or the 48 MB assignment (E2EE-23), that is when the deferred
+     `{ kind: "ref" }` context handle gets built; until then inline carries it.
+     Note `truncateMessages(messages, maxChars)` (`runtime/truncation.ts:124`)
+     is char-based per-message clamping, not the budgeted newest-first fill — it
+     bounds a single oversized message; the window-fill + rolling-summary is the
+     new C-2 work this policy parameterizes._
 8. **DM episode boundary tuning:** "invocation within the last ~20 messages"
    is a message-count heuristic; a long pause in a quiet DM still reads as the
    same conversation to a human. Decide whether the boundary is count-based,
