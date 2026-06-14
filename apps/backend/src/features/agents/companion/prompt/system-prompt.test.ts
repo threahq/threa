@@ -92,6 +92,31 @@ describe("buildSystemPrompt", () => {
     )
   })
 
+  test("injects the Current Topic highlight before Conversation Memory when a topic is provided", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      "Older turns, summarized.",
+      [],
+      "Designing the CSV export pipeline"
+    )
+
+    expect(prompt).toContain("## Current Topic")
+    expect(prompt).toContain("The conversation is currently focused on: Designing the CSV export pipeline")
+    expect(prompt.indexOf("## Current Topic")).toBeLessThan(prompt.indexOf("## Conversation Memory"))
+  })
+
+  test("omits the Current Topic section when no topic is provided", () => {
+    const provided = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [], null)
+    const blank = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [], "   ")
+
+    expect(provided).not.toContain("## Current Topic")
+    expect(blank).not.toContain("## Current Topic")
+  })
+
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {
     const prompt = buildSystemPrompt(
       persona,

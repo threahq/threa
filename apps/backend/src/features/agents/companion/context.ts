@@ -16,6 +16,7 @@ import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
 import { buildSystemPrompt } from "./prompt/system-prompt"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
+import { loadConversationHighlight } from "./conversation-highlight"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
 import { computeAgentAccessSpec } from "../researcher/access-spec"
@@ -157,6 +158,17 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamId: stream.id,
     personaId: persona.id,
     keptMessages: streamScopedMessages,
+  })
+
+  // Best-effort "Current Topic" highlight (§2.8 Q8): the topic the segmenter has
+  // placed this turn in, surfaced over the contiguous window. Reads current
+  // classification only — never awaits extraction — so it degrades to no
+  // highlight when the segmenter is behind, and is plaintext-only by
+  // construction (the segmenter short-circuits E2E streams).
+  const conversationTopic = await loadConversationHighlight(db, {
+    workspaceId,
+    triggerMessageId: messageId,
+    windowMessageIds: streamScopedMessages.map((m) => m.id),
   })
 
   // Build author names from participants + a single batched user+persona lookup.
@@ -325,7 +337,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       trigger,
       mentionerName,
       rollingConversationSummary,
-      tools
+      tools,
+      conversationTopic
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`
