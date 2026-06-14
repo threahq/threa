@@ -984,3 +984,65 @@ type)` are how the episode is computed, not a parallel dimension._
    time-based, or both (e.g., within the window **or** within 24h), and
    whether the user can explicitly start fresh ("new conversation" affordance,
    like clearing a Claude.ai thread).
+   _Resolved as **both, combined as OR** — continue the episode if the prior
+   completed session is recent in **either** dimension (message gap within the
+   window **or** wall-clock gap within a horizon), with **time as the primary
+   signal and count as the guard** — and **no dedicated DM "clear" affordance
+   now** (INV-36): the explicit fresh-start path is bounded-surface creation,
+   and if a DM-specific control is ever needed it is an episode-boundary marker
+   the recency check reads, never a history mutation. Like Q7 this fixes the
+   shape of unbuilt C-2 work, not shipped behavior: today `lastSeenSequence` is
+   only the companion **dedup** cursor (`companion-outbox-handler.ts:131-144`,
+   "message already seen, skipping"), and the DM-mention path it would tune
+   doesn't set it at all (`persona-agent-worker.ts:66` excludes
+   `AgentTriggers.MENTION`). The DM episode-by-recency rule (§2.5, line ~554) is
+   the C-2 surface this boundary parameterizes._
+   - _**Both, OR'd — the two signals catch complementary "same conversation"
+     cases.** The count window catches a **busy** recent burst (many messages in
+     a short span, clearly one thread); the time horizon catches the
+     **quiet-but-recent** case the question names (a long-ish pause in a sparse
+     DM a human still reads as continuous). AND would drop the quiet case (the
+     stated failure); either alone has a blind spot. Both inputs are already on
+     the row — `last_seen_sequence` (the cursor `companion-outbox-handler.ts`
+     already compares) and `completed_at` (`session-repository.ts:34`) — so the
+     check stays the single query §2.5 promised, now reading two columns._
+   - _**The error asymmetry is why the combinator is OR, not AND.** A false
+     *continue* injects a stale digest chain: cheap and self-correcting — the
+     reader block already orders re-verification, the live user turn outweighs
+     system-context, and the carry ages out (the same self-heal reasoning as the
+     Q5 digest ruling, item 5 above), while digests stay scope-filtered (§2.5).
+     A false *fresh* drops context the user expected the agent to still hold —
+     the exact forgetting C-1/C-2 exist to kill. The costlier mistake is the
+     false fresh, so the boundary errs toward continuing._
+   - _**Time leads, count guards.** Human "is this the same conversation"
+     intuition on a flat DM is dominated by wall-clock, not message count: reply,
+     step away 30 minutes, return is one conversation however many messages flew;
+     return in five days is a new one however few did. So the time horizon (start
+     at the question's ~24h) is the leading edge and the count window is the cheap
+     upper guard for the busy case. The values land as named constants at the
+     source of truth (INV-33), tuned by eval in the C-2 build (INV-44/45), not
+     magic numbers in the handler. C-2 also dissolves the count window's original
+     **mechanical** rationale — "the intervening messages fill the gap" — because
+     overflow now folds into the rolling summary; the count survives only as a
+     **semantic** guard, not a gap-filling constraint._
+   - _**No dedicated DM "clear conversation" control now (INV-36), and "clear
+     like Claude.ai" is the wrong model for a shared DM.** A DM is a two-party
+     (`DM_PARTICIPANT_COUNT = 2`, `constants.ts:13`) shared, append-only timeline
+     under contiguity (INV-61): one participant can't clear the other's view and
+     the timeline can't be vacated, so the single-user "clear thread" affordance
+     doesn't transfer. The explicit fresh-start that **does** exist in Threa is
+     bounded-surface creation — a new scratchpad or thread is a fresh episode by
+     construction (§2.5) — and that is the primary surface, so the unbounded DM is
+     the only place the affordance is even missing. The recency boundary handles
+     the common case automatically; per INV-36 no control ships until a need the
+     auto-boundary doesn't cover is demonstrated._
+   - _**If a DM-specific fresh-start is later wanted, it is an episode-boundary
+     marker the recency check reads — not a history mutation.** The realizing
+     shape: record a user-declared boundary (a sentinel — a no-op episode row or
+     a timeline marker the boundary query consults) so the next invocation's
+     recency check resolves to "fresh" regardless of count or time. This keeps the
+     one boundary predicate the single authority (mirroring Q7's "one path" and
+     the §2.5 catch-up cursor's single owner), mutates no history (no INV-61
+     violation, nothing deleted), and works identically on plaintext and E2E
+     because it gates digest **carry**, not content. Until a concrete need
+     appears, the automatic recency boundary is the entire contract (INV-36)._
