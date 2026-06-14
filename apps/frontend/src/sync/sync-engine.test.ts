@@ -5,20 +5,15 @@ import { SyncEngine, isSyncEngineCurrent } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
-import { assignmentId } from "@/hooks/use-labels"
 import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
   DEFAULT_WORKSPACE_SETTINGS,
   defaultFeatureFlags,
   DEFAULT_SIDEBAR_CONFIG,
-  LabelableResourceTypes,
   type WorkspaceBootstrap,
   type StreamBootstrap,
   type SyncCatchUpResponse,
-  type Label,
-  type LabelMember,
-  type LabelAssignment,
 } from "@threa/types"
 
 type EventHandler = (...args: unknown[]) => void
@@ -1522,59 +1517,28 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     return { entries: [], head }
   }
 
-  /** A public-stream assignment on a stream the viewer can see but isn't a
-   *  member of — the slice `listEntriesForUser` (stream_members scoped) can't
-   *  replay, so only the label reconcile heals it. */
-  function publicStreamAssignment(overrides?: Partial<LabelAssignment>): LabelAssignment {
-    return {
-      labelId: "label_1",
-      resourceType: LabelableResourceTypes.STREAM,
-      resourceId: "stream_public",
-      userId: "user_1",
-      workspaceId: "ws_1",
-      assignedAt: new Date().toISOString(),
-      ...overrides,
-    }
-  }
-
-  function makeReconnectDeps(assignments: LabelAssignment[] = []) {
+  function makeReconnectDeps() {
     const catchUp = vi.fn(async () => emptyPage("0"))
-    const list = vi.fn(async () => ({
-      labels: [] as Label[],
-      memberships: [] as LabelMember[],
-      assignments,
-    }))
     return {
       ...makeDeps(),
       syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      labelService: { list },
     }
   }
 
-  it("skips the full workspace snapshot on an active reconnect and reconciles viewer labels instead", async () => {
-    const deps = makeReconnectDeps([publicStreamAssignment()])
+  it("skips the full workspace snapshot on an active reconnect", async () => {
+    const deps = makeReconnectDeps()
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
-    // First connect runs the full bootstrap and does not touch labelService.
     await engine.onConnect(asSocket(socket))
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
-    expect(deps.labelService.list).not.toHaveBeenCalled()
     deps.workspaceService.bootstrap.mockClear()
 
-    // Reconnect: no full snapshot fetch; the viewer label reconcile runs and
-    // lands the non-member public-stream assignment in IDB (the render source).
+    // Reconnect: catch-up replay re-seeds every workspace-scoped projection, so
+    // the slim path skips the full snapshot refetch.
     await engine.onConnect(asSocket(socket))
 
     expect(deps.workspaceService.bootstrap).not.toHaveBeenCalled()
-    expect(deps.labelService.list).toHaveBeenCalledWith("ws_1")
-    await vi.waitFor(async () =>
-      expect(
-        await db.labelAssignments.get(
-          assignmentId("ws_1", LabelableResourceTypes.STREAM, "stream_public", "label_1", "user_1")
-        )
-      ).toBeDefined()
-    )
     engine.destroy()
   })
 
@@ -1663,46 +1627,20 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
-  it("keeps the full reconnect bootstrap when a sync service is wired but no labelService is", async () => {
-    const catchUp = vi.fn(async () => emptyPage("0"))
-    const deps = {
-      ...makeDeps(),
-      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-    }
+  it("slims an active-mode resume too — no full snapshot", async () => {
+    const deps = makeReconnectDeps()
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
     await engine.onConnect(asSocket(socket))
     deps.workspaceService.bootstrap.mockClear()
-    await engine.onConnect(asSocket(socket))
-
-    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
-    engine.destroy()
-  })
-
-  it("slims an active-mode resume too — no full snapshot, label reconcile instead", async () => {
-    const deps = makeReconnectDeps([publicStreamAssignment()])
-    const engine = new SyncEngine(deps)
-    const socket = new MockSocket()
-
-    await engine.onConnect(asSocket(socket))
-    deps.workspaceService.bootstrap.mockClear()
-    deps.labelService.list.mockClear()
 
     // Resume is reconnect-shaped: catch-up replay + the slim bootstrap re-seed
     // everything the full snapshot would, so resume takes the slim path in
-    // active mode and lands the non-member public-stream assignment in IDB.
+    // active mode.
     await engine.refreshAfterConnectivityResume()
 
     expect(deps.workspaceService.bootstrap).not.toHaveBeenCalled()
-    expect(deps.labelService.list).toHaveBeenCalledWith("ws_1")
-    await vi.waitFor(async () =>
-      expect(
-        await db.labelAssignments.get(
-          assignmentId("ws_1", LabelableResourceTypes.STREAM, "stream_public", "label_1", "user_1")
-        )
-      ).toBeDefined()
-    )
     engine.destroy()
   })
 

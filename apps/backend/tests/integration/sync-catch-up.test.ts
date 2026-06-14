@@ -243,6 +243,37 @@ describe("SyncLogRepository catch-up reads", () => {
     expect(entries.map((e) => e.syncId)).toEqual([publicMessage, publicThreadMessage])
   })
 
+  // The reconnect path once reconciled label assignments out of band because a
+  // membership-only catch-up filter dropped a public channel's `label:assigned`
+  // for non-members. With the public-root leg, a public-stream label assignment
+  // rides `stream:<id>` into the log and replays to a non-member exactly like a
+  // message, so that out-of-band reconcile is redundant. This pins the slice it
+  // covered: the public-channel assignment reaches the outsider; the same event
+  // type on a private channel never does (the visibility rule does the gating,
+  // not a label-specific bypass).
+  test("public-stream label assignments reach a non-member through catch-up; private ones do not", async () => {
+    const workspaceId = uniqueId("ws")
+    const outsider = uniqueId("usr")
+    const publicChannel = uniqueId("stream")
+    const privateChannel = uniqueId("stream")
+    await addRootStream(workspaceId, publicChannel, "public")
+    await addRootStream(workspaceId, privateChannel, "private")
+
+    const publicAssignment = await appendEntry(workspaceId, {
+      eventType: "label:assigned",
+      groups: [`stream:${publicChannel}`],
+      payload: { workspaceId, kind: "public-channel-label" },
+    })
+    await appendEntry(workspaceId, {
+      eventType: "label:unassigned",
+      groups: [`stream:${privateChannel}`],
+      payload: { workspaceId, kind: "private-channel-label" },
+    })
+
+    const entries = await listFor(workspaceId, outsider)
+    expect(entries.map((e) => e.syncId)).toEqual([publicAssignment])
+  })
+
   test("a depth-2 thread inherits visibility from the root, not the immediate parent", async () => {
     const workspaceId = uniqueId("ws")
     const me = uniqueId("usr")

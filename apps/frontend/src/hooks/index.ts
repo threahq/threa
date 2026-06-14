@@ -211,7 +211,6 @@ export {
   selectLabelStreams,
   useAssignLabel,
   useUnassignLabel,
-  reconcileLabels,
   labelKeys,
   type LabelViewerContext,
   type ResourceLabelState,

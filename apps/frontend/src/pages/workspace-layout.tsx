@@ -27,7 +27,6 @@ import {
   useStreamService,
   useMessageService,
   useScheduledService,
-  useLabelService,
   PanelProvider,
   QuickSwitcherProvider,
   PreferencesProvider,
@@ -199,7 +198,6 @@ function WorkspaceSyncHandler({
   const streamService = useStreamService()
   const messageService = useMessageService()
   const scheduledService = useScheduledService()
-  const labelService = useLabelService()
   const syncStatusStore = useContext(SyncStatusContext)
   const { user } = useAuth()
   const isOnline = useOnlineStatus()
@@ -228,7 +226,6 @@ function WorkspaceSyncHandler({
         delete: scheduledService.delete,
         sendNow: scheduledService.sendNow,
       },
-      labelService: { list: labelService.list },
       draftsService: {
         list: (wid: string) => draftsApi.list(wid),
         upsert: draftsApi.upsert,
