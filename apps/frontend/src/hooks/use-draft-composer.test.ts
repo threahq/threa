@@ -16,6 +16,7 @@ const mockSaveDraftDebounced = vi.fn()
 const mockAddDraftAttachment = vi.fn()
 const mockRemoveDraftAttachment = vi.fn()
 const mockClearDraft = vi.fn()
+const mockResolveDraft = vi.fn()
 
 interface MockDraftState {
   isLoaded: boolean
@@ -64,6 +65,7 @@ describe("useDraftComposer", () => {
     mockAddDraftAttachment.mockReset()
     mockRemoveDraftAttachment.mockReset()
     mockClearDraft.mockReset()
+    mockResolveDraft.mockReset()
     mockHandleFileSelect.mockReset()
     mockRemoveAttachment.mockReset()
     mockClearAttachments.mockReset()
@@ -92,6 +94,7 @@ describe("useDraftComposer", () => {
           addAttachment: mockAddDraftAttachment,
           removeAttachment: mockRemoveDraftAttachment,
           clearDraft: mockClearDraft,
+          resolveDraft: mockResolveDraft,
         } as unknown as ReturnType<typeof useDraftMessageModule.useDraftMessage>
       }
     )
@@ -567,6 +570,16 @@ describe("useDraftComposer", () => {
       })
 
       expect(mockClearDraft).toHaveBeenCalled()
+    })
+
+    it("should expose resolveDraft from useDraftMessage", () => {
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.resolveDraft()
+      })
+
+      expect(mockResolveDraft).toHaveBeenCalled()
     })
 
     it("should expose clearAttachments from useAttachments", () => {

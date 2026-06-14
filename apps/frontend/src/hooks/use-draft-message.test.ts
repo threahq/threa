@@ -350,4 +350,45 @@ describe("useDraftMessage", () => {
       expect(await loadedDraft(draftKey)).toBeUndefined()
     })
   })
+
+  describe("resolveDraft", () => {
+    it("removes the loaded draft locally and enqueues a CAS resolve for a confirmed draft", async () => {
+      await db.pendingOperations.clear()
+      // A draft the server has already confirmed at version 2.
+      await db.drafts.put({
+        id: "draft_confirmed",
+        workspaceId,
+        scope: draftKey,
+        contentJson: makeDoc("sent"),
+        attachments: [],
+        baseVersion: 2,
+        clientUpdatedAt: Date.now(),
+      })
+      await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
+
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+      await act(async () => {
+        await result.current.resolveDraft()
+      })
+
+      expect(await db.drafts.get("draft_confirmed")).toBeUndefined()
+      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+      expect(resolves).toHaveLength(1)
+      expect(resolves[0]?.payload).toMatchObject({ draftId: "draft_confirmed", expectedVersion: 2 })
+    })
+
+    it("does not enqueue a server resolve for a never-synced draft (nothing to resolve)", async () => {
+      await db.pendingOperations.clear()
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("x"), attachments: [] })
+
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+      await act(async () => {
+        await result.current.resolveDraft()
+      })
+
+      expect(await loadedDraft(draftKey)).toBeUndefined()
+      expect(await db.pendingOperations.where("type").equals("resolve_draft").count()).toBe(0)
+    })
+  })
 })

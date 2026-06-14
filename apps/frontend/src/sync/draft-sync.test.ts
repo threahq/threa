@@ -8,10 +8,13 @@ import {
   applyDraftUpserted,
   cachedDraftFromWire,
   enqueueDraftDelete,
+  enqueueDraftResolve,
   enqueueDraftUpsert,
   executeDraftDelete,
+  executeDraftResolve,
   executeDraftUpsert,
   hasPendingDraftUpsert,
+  syncDraftResolution,
   type DraftsServiceLike,
 } from "./draft-sync"
 
@@ -264,11 +267,39 @@ describe("enqueueDraftUpsert / enqueueDraftDelete", () => {
     const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
     expect(dels.filter((o) => o.payload.draftId === "draft_x")).toHaveLength(1)
   })
+
+  it("enqueueDraftResolve drops a queued push and adds a CAS resolve carrying expectedVersion", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    await enqueueDraftResolve(workspaceId, "draft_x", 3)
+
+    expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
+    const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+    const forDraft = resolves.filter((o) => o.payload.draftId === "draft_x")
+    expect(forDraft).toHaveLength(1)
+    expect(forDraft[0]?.payload.expectedVersion).toBe(3)
+  })
+})
+
+describe("syncDraftResolution", () => {
+  it("enqueues a CAS resolve for a confirmed draft (baseVersion > 0)", async () => {
+    await syncDraftResolution(workspaceId, "draft_x", 4)
+
+    const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+    expect(resolves.filter((o) => o.payload.draftId === "draft_x" && o.payload.expectedVersion === 4)).toHaveLength(1)
+  })
+
+  it("only drops the pending push for a never-synced draft (nothing to resolve server-side)", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    await syncDraftResolution(workspaceId, "draft_x", 0)
+
+    expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
+    expect(await db.pendingOperations.where("type").equals("resolve_draft").count()).toBe(0)
+  })
 })
 
 describe("executeDraftUpsert", () => {
   function service(upsert: DraftsServiceLike["upsert"]): DraftsServiceLike {
-    return { upsert, delete: vi.fn(async () => {}) }
+    return { upsert, resolve: vi.fn(async () => ({ resolved: true })), delete: vi.fn(async () => {}) }
   }
 
   it("pushes expectedVersion = baseVersion and confirms the returned version without clobbering content", async () => {
@@ -368,5 +399,27 @@ describe("executeDraftDelete", () => {
     const del = vi.fn(async () => {})
     await executeDraftDelete(workspaceId, "draft_x", { upsert: vi.fn(), delete: del } as unknown as DraftsServiceLike)
     expect(del).toHaveBeenCalledWith(workspaceId, "draft_x")
+  })
+})
+
+describe("executeDraftResolve", () => {
+  it("delegates a CAS resolve carrying expectedVersion to the service", async () => {
+    const resolve = vi.fn(async () => ({ resolved: true }))
+    await executeDraftResolve(workspaceId, "draft_x", 5, {
+      upsert: vi.fn(),
+      resolve,
+      delete: vi.fn(),
+    } as unknown as DraftsServiceLike)
+    expect(resolve).toHaveBeenCalledWith(workspaceId, "draft_x", { expectedVersion: 5 })
+  })
+
+  it("propagates a declined resolve (drift) without throwing — the drifted copy survives", async () => {
+    const resolve = vi.fn(async () => ({ resolved: false }))
+    await executeDraftResolve(workspaceId, "draft_x", 2, {
+      upsert: vi.fn(),
+      resolve,
+      delete: vi.fn(),
+    } as unknown as DraftsServiceLike)
+    expect(resolve).toHaveBeenCalledTimes(1)
   })
 })

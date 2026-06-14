@@ -485,7 +485,7 @@ function MessageInputComponent({
         // path does. Either branch below consumes the command, so the user
         // shouldn't see their chip linger after pressing send.
         composer.setContent(EMPTY_DOC)
-        composer.clearDraft()
+        composer.resolveDraft()
         setExpanded(false)
 
         // Client-action commands are routed locally — `/discuss-with-ariadne`
@@ -538,7 +538,7 @@ function MessageInputComponent({
         })
 
         composer.setContent(EMPTY_DOC)
-        composer.clearDraft()
+        composer.resolveDraft()
         composer.clearAttachments()
         if (result.navigateTo) {
           navigate(result.navigateTo, { replace: result.replace ?? false })
@@ -584,7 +584,7 @@ function MessageInputComponent({
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           scheduledFor: when.toISOString(),
         })
-        composer.clearDraft()
+        composer.resolveDraft()
         composer.clearAttachments()
         toast.success("Scheduled")
       } catch (err) {

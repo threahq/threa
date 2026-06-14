@@ -3,7 +3,7 @@ import type { CachedEvent, PendingOperation } from "@/db/database"
 import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threa/types"
 import { ApiError, commandsApi } from "@/api"
 import { persistScheduledRows, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
-import { executeDraftDelete, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
+import { executeDraftDelete, executeDraftResolve, executeDraftUpsert, type DraftsServiceLike } from "./draft-sync"
 
 function getRetryDelay(retryCount: number): number {
   if (retryCount <= 3) return 0
@@ -226,6 +226,21 @@ async function executeOperation(
       // than throw (a throw would retry forever, never reaching a service).
       if (!draftsService) break
       await executeDraftUpsert(workspaceId, payload.draftId as string, payload.writeId as string, draftsService)
+      break
+    }
+
+    case "resolve_draft": {
+      // CAS clear-on-send (silent retry, no error surface). Drops the server row
+      // only if `expectedVersion` still matches; a drifted copy survives. Without
+      // a drafts service this context is local-only — drop the op (a throw would
+      // retry forever, never reaching a service).
+      if (!draftsService) break
+      await executeDraftResolve(
+        workspaceId,
+        payload.draftId as string,
+        payload.expectedVersion as number,
+        draftsService
+      )
       break
     }
 

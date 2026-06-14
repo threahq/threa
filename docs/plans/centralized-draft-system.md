@@ -193,12 +193,40 @@ Each stage is an independently mergeable PR with its own tests, sized for a clea
 
 ### Stage 4 — Resolve-on-send, thread re-pointing, E2E
 
-**Scope:** Close the loop on the message lifecycle and encrypted streams.
+**Scope:** Close the loop on the message lifecycle and encrypted streams. Shipped
+as three independently mergeable PRs (the three workstreams are independent and
+E2E is the largest/riskiest), not one combined PR.
 
-**Changes:**
+#### Stage 4a — Resolve-on-send (frontend wiring) — DONE
 
-- Send path (`use-stream-or-draft.ts` / `message-input.tsx`): carry `draftId + version`; on send success enqueue `resolve_draft` (CAS delete), clear loaded pointer.
+The backend resolve endpoint, service, CAS repo method, and tests already landed
+in Stage 1 (`POST /drafts/:id/resolve`, `softDeleteCas`, `DraftsService.resolve`).
+4a is the frontend wiring that calls it:
+
+- `api/drafts.ts`: `resolve(workspaceId, id, { expectedVersion })`.
+- `db/database.ts`: `PendingOperation.type` += `resolve_draft`.
+- `sync/draft-sync.ts`: `enqueueDraftResolve` (coalesced CAS resolve op),
+  `syncDraftResolution` (confirmed → resolve, never-synced → cancel push),
+  `executeDraftResolve` (queue replay), `DraftsServiceLike.resolve`.
+- `sync/operation-queue.ts`: `resolve_draft` case (silent retry, break when no service).
+- `hooks/use-draft-message.ts`: shared `removeLoadedDraftLocally`; `resolveLoadedDraft`
+  (CAS) alongside `clearLoadedDraft` (unconditional discard); `resolveDraft` callback.
+- `hooks/use-draft-composer.ts`: expose `resolveDraft`.
+- Send/schedule/command sites (`message-input.tsx`, `thread/stream-panel.tsx`):
+  call `resolveDraft` (CAS, drifted copy survives) instead of `clearDraft`. Stash
+  move + empty-composer discard keep `clearDraft` (unconditional).
+- `pages/workspace-layout.tsx`: wire `draftsApi.resolve` into `draftsService`.
+
+**Verification:** `bun run test` (frontend unit/integration — resolve enqueue/execute,
+CAS-vs-cancel by baseVersion, send uses resolve not clear). Backend resolve tests
+from Stage 1 still green.
+
+#### Stage 4b — Thread re-pointing
+
 - `moveMessagesToThread` (`event-service.ts`): re-scope user's `thread:{targetMessageId}` drafts → `stream:{threadStreamId}` (+ `root_stream_id`) in the move transaction, emit `draft:upserted`. Frontend handler moves the local draft + loaded pointer. Fold the unpromoted-draft-stream case into the existing `promoteDraft` flow (re-scope + push on promotion).
+
+#### Stage 4c — E2E
+
 - E2E: seal draft to stream SSK before persist/push; store ciphertext locally; decrypt on load.
 
 **Reuse:** `sealOutgoingMessage` E2E path; existing `promoteDraft` / `setParentThreadId`; resolve CAS from Stage 1.

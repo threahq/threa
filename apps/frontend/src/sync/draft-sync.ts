@@ -12,6 +12,8 @@ import type {
   DraftDeletedPayload,
   DraftUpsertedPayload,
   JSONContent,
+  ResolveDraftInput,
+  ResolveDraftResponse,
   UpsertDraftInput,
   UpsertDraftResponse,
 } from "@threa/types"
@@ -45,6 +47,7 @@ const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 /** Minimal surface of the drafts REST client the queue replays against. */
 export interface DraftsServiceLike {
   upsert: (workspaceId: string, id: string, input: UpsertDraftInput) => Promise<UpsertDraftResponse>
+  resolve: (workspaceId: string, id: string, input: ResolveDraftInput) => Promise<ResolveDraftResponse>
   delete: (workspaceId: string, id: string) => Promise<void>
 }
 
@@ -147,7 +150,10 @@ function writeId(): string {
   return `write_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
 
-async function pendingDraftOps(type: "upsert_draft" | "delete_draft", draftId: string): Promise<PendingOperation[]> {
+async function pendingDraftOps(
+  type: "upsert_draft" | "resolve_draft" | "delete_draft",
+  draftId: string
+): Promise<PendingOperation[]> {
   const ops = await db.pendingOperations.where("type").equals(type).toArray()
   return ops.filter((op) => op.payload.draftId === draftId)
 }
@@ -203,6 +209,37 @@ export async function enqueueDraftDelete(workspaceId: string, draftId: string): 
   })
 }
 
+/**
+ * Enqueue a CAS clear-on-send for a draft (resolve-on-send) and drop any queued
+ * push or delete for it. `expectedVersion` is the last server-confirmed version
+ * (`baseVersion`); the server removes the row only if it still matches, so a
+ * copy that drifted on another device survives as a stash entry. Use only when
+ * the draft reached the server (`baseVersion > 0`); for a never-synced draft
+ * call `cancelPendingDraftUpsert` — there is nothing on the server to resolve.
+ */
+export async function enqueueDraftResolve(
+  workspaceId: string,
+  draftId: string,
+  expectedVersion: number
+): Promise<void> {
+  await db.transaction("rw", db.pendingOperations, async () => {
+    const stale = [
+      ...(await pendingDraftOps("upsert_draft", draftId)),
+      ...(await pendingDraftOps("resolve_draft", draftId)),
+      ...(await pendingDraftOps("delete_draft", draftId)),
+    ]
+    if (stale.length > 0) await db.pendingOperations.bulkDelete(stale.map((op) => op.id))
+    await db.pendingOperations.add({
+      id: operationId(),
+      workspaceId,
+      type: "resolve_draft",
+      payload: { draftId, expectedVersion },
+      createdAt: Date.now(),
+      retryCount: 0,
+    })
+  })
+}
+
 /** Drop any queued push for a draft (e.g. an unsynced draft was discarded). */
 export async function cancelPendingDraftUpsert(draftId: string): Promise<void> {
   const dupes = await pendingDraftOps("upsert_draft", draftId)
@@ -222,6 +259,26 @@ export async function syncDraftRemoval(
 ): Promise<void> {
   if ((baseVersion ?? 0) > 0) {
     await enqueueDraftDelete(workspaceId, id)
+  } else {
+    await cancelPendingDraftUpsert(id)
+  }
+}
+
+/**
+ * Mirror a sent draft's removal to the backend CAS-safely (resolve-on-send): a
+ * confirmed draft (`baseVersion > 0`) is resolved on the version it was last
+ * confirmed at, so a copy that drifted on another device survives as a stash
+ * entry; a never-synced one only needs its queued push dropped (nothing exists
+ * server-side). The counterpart to `syncDraftRemoval` for the send path — the
+ * local row is already gone by the time this runs.
+ */
+export async function syncDraftResolution(
+  workspaceId: string,
+  id: string,
+  baseVersion: number | undefined
+): Promise<void> {
+  if ((baseVersion ?? 0) > 0) {
+    await enqueueDraftResolve(workspaceId, id, baseVersion as number)
   } else {
     await cancelPendingDraftUpsert(id)
   }
@@ -425,6 +482,25 @@ export async function executeDraftUpsert(
     return
   }
   if (hasSeededDraftCache(workspaceId)) upsertDraftInCache(workspaceId, confirmed)
+}
+
+/**
+ * Resolve a draft on the backend after its message sent (operation-queue replay
+ * of `resolve_draft`). CAS-guarded by `expectedVersion`: the server keeps a
+ * drifted copy (`resolved: false`) rather than deleting it, and that copy
+ * re-syncs as a stash entry on the next bootstrap. Either outcome is terminal
+ * for this op — the local row is already gone — so the response is informational
+ * and nothing more runs locally. Throws (network) so the queue retries; resolve
+ * is idempotent (a re-run hits an already-tombstoned row and returns
+ * `resolved: false`), so no idempotency key is needed.
+ */
+export async function executeDraftResolve(
+  workspaceId: string,
+  draftId: string,
+  expectedVersion: number,
+  service: DraftsServiceLike
+): Promise<void> {
+  await service.resolve(workspaceId, draftId, { expectedVersion })
 }
 
 /** Push a draft deletion to the backend (operation-queue replay of `delete_draft`). */
