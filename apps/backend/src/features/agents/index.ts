@@ -155,7 +155,12 @@ export { resolveActorNames } from "./actor-names"
 export { buildStreamContext, enrichMessagesWithAttachments } from "./context-builder"
 
 // Per-turn hydration policy (window budget + digest carry; the `Hydrate` seam)
-export { resolveContextWindowPolicy, DEFAULT_CONTEXT_WINDOW_MESSAGES } from "./context-window-policy"
+export {
+  resolveContextWindowPolicy,
+  DEFAULT_CONTEXT_WINDOW_MESSAGES,
+  CONTEXT_WINDOW_CANDIDATE_CEILING,
+  DEFAULT_CONTEXT_WINDOW_CHARS,
+} from "./context-window-policy"
 export type { ContextWindowPolicy, ContextEpisode, ResolveContextWindowPolicyParams } from "./context-window-policy"
 
 // Enclave system-prompt assembly (shared builder + reduced toolset) so the

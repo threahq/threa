@@ -927,8 +927,10 @@ timestamps)`, carries the non-null `e2e_streams` rows over, and **drops**
    global: one policy **type** — the C-2 budgeted-window + rolling-summary
    mechanism — instantiated per dispatch from facts the turn already carries,
    selected at the `Hydrate` step and handed to the driver, never chosen inside
-   it. `ContextWindowPolicy` does not exist in code yet (it lands with C-2);
-   this fixes its shape rather than describing shipped behavior._
+   it. `ContextWindowPolicy` now exists in code (C-2a created the type + the
+   `Hydrate`-seam resolver; C-2b added the char budget it carries); the deep
+   budgeted-window fill is the companion default, with the bounded-surface case
+   degrading to a no-op as described below._
    - _**The axis is the episode, and §2.5 already computes it.** Keying
      directly on the two trigger kinds (`mention`, `companion`; `AGENT_TRIGGERS`,
      `packages/types/src/constants.ts:430`) is almost right but
@@ -1001,10 +1003,24 @@ type)` are how the episode is computed, not a parallel dimension._
    (`Hydrate`) seam — reading the prior completed session's `lastSeenSequence`
    (`findLatestCompletedByStream`) against the window floor
    (`MessageRepository.findWindowFloorSequence`) — and `buildAgentContext` gates
-   the digest block on it. The token-budget window fill (C-2b), the in-enclave
-   sealed summary (C-2c, §2.8 Q6), and the conversation highlight remain
-   follow-ups. The DM episode-by-recency rule (§2.5, line ~554) is the surface
-   this parameterizes._
+   the digest block on it. **C-2b has now shipped (companion/plaintext):** the
+   policy carries a char budget (`maxChars`, `DEFAULT_CONTEXT_WINDOW_CHARS`)
+   alongside a deepened candidate ceiling (`CONTEXT_WINDOW_CANDIDATE_CEILING`),
+   and `buildStreamContext` fills the window newest-first under that budget
+   (`trimToCharBudget`) before enrichment — the count cliff is gone on the
+   companion path, and overflow folds into the existing `ConversationSummaryService`
+   rolling summary automatically (it keys off the oldest kept message). The
+   budget is char-based (the project's ~4-chars-per-token heuristic, no
+   model-specific tokenizer) and is applied at the fetch layer on raw markdown,
+   with the 400k `MAX_MESSAGE_CHARS` clamp as the enrichment backstop. The DM
+   boundary now uses the deepened ceiling as its recency horizon (the window's
+   widest extent, per "only a gap that clears the whole window starts fresh"),
+   biasing further toward continue. The enclave window stays count-based until
+   the in-enclave sealed summary (C-2c, §2.8 Q6) lands — deepening it without a
+   sealed rolling summary would only move the cliff (and competes with the 48MB
+   assignment cap, E2EE-23). The conversation highlight remains a follow-up. The
+   DM episode-by-recency rule (§2.5, line ~554) is the surface this
+   parameterizes._
    - _**The conversations system is the highlight, not the boundary — read
      best-effort, never awaited.** `conversations` (`20251225231931_conversations.sql`,
      feature `conversations/`) groups a stream's messages into "a coherent unit of

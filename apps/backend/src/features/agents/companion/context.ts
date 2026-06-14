@@ -145,6 +145,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     preferences,
     currentTime,
     maxMessages: policy.maxMessages,
+    maxChars: policy.maxChars,
     triggerMessageId: messageId,
     includeAttachments: true,
   })
