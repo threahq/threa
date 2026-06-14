@@ -999,16 +999,15 @@ type)` are how the episode is computed, not a parallel dimension._
    (`persona-agent-worker.ts:66` excludes `AgentTriggers.MENTION`). The DM
    episode-by-recency rule (§2.5, line ~554) is the C-2 surface this boundary
    parameterizes._
-   - _**Wall-clock is rejected as a metric (Kris's call).** Human conversational
-     continuity does not decay on a clock, so no time horizon is a useful
-     boundary. A direct reply weeks later is the **same** conversation — a
-     colleague replying eight weeks on, after two stacked four-week Swedish
-     vacations, is continuing the thread, not starting a new one — yet no horizon
-     short enough to ever fire survives that gap, and a horizon long enough to
-     survive it never fires, so it does no work either way. Worse, a clock
-     boundary is actively wrong in the common case: it splits a paused-but-
-     continuing thread that a human reads as one. The earlier "both, OR'd, time
-     leads" draft had this backwards and is withdrawn._
+   - _**Wall-clock is rejected as a metric.** Human conversational continuity
+     does not decay on a clock, so no time horizon is a useful boundary. A direct
+     reply weeks later is the **same** conversation — a colleague replying eight
+     weeks on, after two stacked four-week Swedish vacations, is continuing the
+     thread, not starting a new one — yet no horizon short enough to ever fire
+     survives that gap, and a horizon long enough to survive it never fires, so it
+     does no work either way. Worse, a clock boundary is actively wrong in the
+     common case: it splits a paused-but-continuing thread that a human reads as
+     one._
    - _**The boundary is the window's own edge, not a free count knob.** Reuse
      §2.5's mechanism verbatim: continue iff the prior completed session's
      `lastSeenSequence` falls within the budgeted window about to be built — then
