@@ -1,10 +1,15 @@
 import { Archive, Settings } from "lucide-react"
-import type { ReactNode } from "react"
+import { useRef, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { toast } from "sonner"
-import { render, screen, userEvent, waitFor, spyOnExport } from "@/test"
-import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
+import { fireEvent, render, screen, userEvent, waitFor, spyOnExport } from "@/test"
+import {
+  SidebarActionContextMenu,
+  SidebarActionDrawer,
+  SidebarActionMenu,
+  type SidebarActionItem,
+} from "./sidebar-actions"
 import * as contextsModule from "@/contexts"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
@@ -13,6 +18,17 @@ const setMenuOpen = vi.fn()
 
 function renderWithRouter(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>)
+}
+
+function ContextMenuHarness({ actions }: { actions: SidebarActionItem[] }) {
+  const ref = useRef<HTMLAnchorElement>(null)
+  return (
+    <SidebarActionContextMenu actions={actions} focusRef={ref}>
+      <a ref={ref} href="/row" data-testid="row">
+        Row
+      </a>
+    </SidebarActionContextMenu>
+  )
 }
 
 describe("sidebar-actions", () => {
@@ -87,6 +103,68 @@ describe("sidebar-actions", () => {
       await user.click(screen.getByText("Settings"))
 
       expect(onSelect).toHaveBeenCalled()
+    })
+  })
+
+  describe("SidebarActionContextMenu", () => {
+    it("opens on right-click and runs the selected action", async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect }]
+
+      renderWithRouter(
+        <SidebarActionContextMenu actions={actions}>
+          <div>Stream row</div>
+        </SidebarActionContextMenu>
+      )
+
+      fireEvent.contextMenu(screen.getByText("Stream row"))
+
+      await user.click(await screen.findByText("Settings"))
+
+      expect(onSelect).toHaveBeenCalled()
+      expect(setMenuOpen).toHaveBeenCalledWith(true)
+    })
+
+    it("renders children untouched when disabled", () => {
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(
+        <SidebarActionContextMenu actions={actions} disabled>
+          <div>Stream row</div>
+        </SidebarActionContextMenu>
+      )
+
+      fireEvent.contextMenu(screen.getByText("Stream row"))
+
+      expect(screen.queryByText("Settings")).not.toBeInTheDocument()
+    })
+
+    it("restores focus to the row element when the menu closes", async () => {
+      const user = userEvent.setup()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(<ContextMenuHarness actions={actions} />)
+
+      fireEvent.contextMenu(screen.getByTestId("row"))
+      await screen.findByText("Settings")
+
+      await user.keyboard("{Escape}")
+
+      await waitFor(() => expect(screen.getByTestId("row")).toHaveFocus())
+    })
+
+    it("renders children untouched when there are no actions", () => {
+      renderWithRouter(
+        <SidebarActionContextMenu actions={[]}>
+          <div>Stream row</div>
+        </SidebarActionContextMenu>
+      )
+
+      fireEvent.contextMenu(screen.getByText("Stream row"))
+
+      expect(screen.getByText("Stream row")).toBeInTheDocument()
+      expect(setMenuOpen).not.toHaveBeenCalled()
     })
   })
 

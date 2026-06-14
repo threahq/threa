@@ -16,6 +16,7 @@ import { streamLabel } from "@/lib/streams"
 import { copyStreamLink } from "@/lib/stream-links"
 import { BADGE_CONFIG, URGENCY_COLORS } from "./config"
 import {
+  SidebarActionContextMenu,
   SidebarActionDrawer,
   SidebarActionMenu,
   type SidebarActionItem,
@@ -341,77 +342,79 @@ export function StreamItem({
 
   return (
     <>
-      <div className="group relative">
-        <Link
-          ref={itemRef}
-          to={`/w/${workspaceId}/s/${stream.id}`}
-          onClick={handleClick}
-          onTouchStart={isMobile ? longPress.handlers.onTouchStart : undefined}
-          onTouchEnd={isMobile ? longPress.handlers.onTouchEnd : undefined}
-          onTouchMove={isMobile ? longPress.handlers.onTouchMove : undefined}
-          onContextMenu={isMobile ? longPress.handlers.onContextMenu : undefined}
-          className={cn(
-            "flex items-stretch rounded-lg text-sm transition-colors",
-            isActive ? "bg-primary/10" : "hover:bg-muted/50",
-            hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
-            isMobile && canOpenDrawer && "select-none",
-            longPress.isPressed && "opacity-70 transition-opacity duration-100"
-          )}
-        >
-          {showUrgencyStrip && <UrgencyStrip urgency={stream.urgency} />}
+      <SidebarActionContextMenu actions={actions} disabled={isMobile} focusRef={itemRef}>
+        <div className="group relative">
+          <Link
+            ref={itemRef}
+            to={`/w/${workspaceId}/s/${stream.id}`}
+            onClick={handleClick}
+            onTouchStart={isMobile ? longPress.handlers.onTouchStart : undefined}
+            onTouchEnd={isMobile ? longPress.handlers.onTouchEnd : undefined}
+            onTouchMove={isMobile ? longPress.handlers.onTouchMove : undefined}
+            onContextMenu={isMobile ? longPress.handlers.onContextMenu : undefined}
+            className={cn(
+              "flex items-stretch rounded-lg text-sm transition-colors",
+              isActive ? "bg-primary/10" : "hover:bg-muted/50",
+              hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
+              isMobile && canOpenDrawer && "select-none",
+              longPress.isPressed && "opacity-70 transition-opacity duration-100"
+            )}
+          >
+            {showUrgencyStrip && <UrgencyStrip urgency={stream.urgency} />}
 
-          <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
-            <StreamItemAvatar
-              icon={avatar.icon}
-              className={avatar.className}
-              avatarUrl={dmPeerAvatar?.avatarUrl}
-              avatarAlt={name}
-              badge={threadBadge}
-            />
-
-            <div
-              className={cn(
-                "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
-                showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
-              )}
-            >
-              <div className="flex items-center gap-2 pr-8">
-                <span
-                  className={cn(
-                    "truncate text-sm",
-                    hasUnread ? "font-semibold" : "font-medium",
-                    // The truncation ellipsis inherits the color of this element. When a grey parent-stream
-                    // context trails the title it's the usual cut point, so tint the container grey (and keep
-                    // the title itself at foreground) so the ellipsis matches the text it's shortening.
-                    threadRootContext && "text-muted-foreground/60"
-                  )}
-                >
-                  {threadRootContext ? <span className="text-foreground">{name}</span> : name}
-                  {threadRootContext && <span className="font-normal text-xs"> · {threadRootContext}</span>}
-                </span>
-                {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
-                  <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                )}
-                <div className="ml-auto flex items-center gap-1.5">
-                  <StreamLabelDots streamId={stream.id} />
-                  <MentionIndicator count={mentionCount} />
-                </div>
-              </div>
-              <StreamItemPreview
-                preview={preview}
-                getActorName={getActorName}
-                toEmoji={toEmoji}
-                compact={compact}
-                showPreviewOnHover={showPreviewOnHover}
-                isMobile={isMobile}
-                e2eEnabled={stream.e2eEnabled}
+            <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
+              <StreamItemAvatar
+                icon={avatar.icon}
+                className={avatar.className}
+                avatarUrl={dmPeerAvatar?.avatarUrl}
+                avatarAlt={name}
+                badge={threadBadge}
               />
-            </div>
-          </div>
-        </Link>
 
-        <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
-      </div>
+              <div
+                className={cn(
+                  "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
+                  showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
+                )}
+              >
+                <div className="flex items-center gap-2 pr-8">
+                  <span
+                    className={cn(
+                      "truncate text-sm",
+                      hasUnread ? "font-semibold" : "font-medium",
+                      // The truncation ellipsis inherits the color of this element. When a grey parent-stream
+                      // context trails the title it's the usual cut point, so tint the container grey (and keep
+                      // the title itself at foreground) so the ellipsis matches the text it's shortening.
+                      threadRootContext && "text-muted-foreground/60"
+                    )}
+                  >
+                    {threadRootContext ? <span className="text-foreground">{name}</span> : name}
+                    {threadRootContext && <span className="font-normal text-xs"> · {threadRootContext}</span>}
+                  </span>
+                  {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
+                    <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                  )}
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <StreamLabelDots streamId={stream.id} />
+                    <MentionIndicator count={mentionCount} />
+                  </div>
+                </div>
+                <StreamItemPreview
+                  preview={preview}
+                  getActorName={getActorName}
+                  toEmoji={toEmoji}
+                  compact={compact}
+                  showPreviewOnHover={showPreviewOnHover}
+                  isMobile={isMobile}
+                  e2eEnabled={stream.e2eEnabled}
+                />
+              </div>
+            </div>
+          </Link>
+
+          <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+        </div>
+      </SidebarActionContextMenu>
       {labelPickerOpen && (
         <LabelPicker
           workspaceId={workspaceId}

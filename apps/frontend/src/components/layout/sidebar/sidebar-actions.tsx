@@ -1,4 +1,4 @@
-import type { ComponentProps, MouseEvent, ReactNode } from "react"
+import type { ComponentProps, MouseEvent, ReactNode, RefObject } from "react"
 import { type LucideIcon, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
@@ -11,6 +11,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { RelativeTime } from "@/components/relative-time"
 import { Separator } from "@/components/ui/separator"
 import { useSidebar } from "@/contexts"
@@ -192,6 +199,110 @@ export function SidebarActionMenu({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+function SidebarActionContextMenuEntry({ action }: { action: SidebarActionItem }) {
+  const isDestructive = action.variant === "destructive"
+  const content = <SidebarActionContent action={action} iconClassName="mr-2 h-4 w-4" />
+  const itemClassName = cn(isDestructive && "text-destructive focus:text-destructive")
+
+  let item: ReactNode
+  if (action.href && action.external) {
+    item = (
+      <ContextMenuItem asChild className={itemClassName}>
+        <a
+          href={action.href}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => {
+            void runSidebarAction(action)
+          }}
+        >
+          {content}
+        </a>
+      </ContextMenuItem>
+    )
+  } else if (action.href) {
+    item = (
+      <ContextMenuItem asChild className={itemClassName}>
+        <Link
+          to={action.href}
+          onClick={() => {
+            void runSidebarAction(action)
+          }}
+        >
+          {content}
+        </Link>
+      </ContextMenuItem>
+    )
+  } else {
+    item = (
+      <ContextMenuItem
+        className={itemClassName}
+        onSelect={() => {
+          void runSidebarAction(action)
+        }}
+      >
+        {content}
+      </ContextMenuItem>
+    )
+  }
+
+  return (
+    <div>
+      {action.separatorBefore && <ContextMenuSeparator />}
+      {item}
+    </div>
+  )
+}
+
+interface SidebarActionContextMenuProps {
+  actions: SidebarActionItem[]
+  children: ReactNode
+  /**
+   * Suppress the right-click menu. Used on mobile, where a long-press already
+   * opens the {@link SidebarActionDrawer} — Radix's context menu would otherwise
+   * hijack the same long-press gesture.
+   */
+  disabled?: boolean
+  /**
+   * The row's focusable element (its `<Link>`). On close Radix would otherwise
+   * restore focus to the trigger — here a non-focusable wrapper `<div>` — which
+   * drops focus to `<body>`. Returning it to the row keeps keyboard navigation
+   * where the user left it.
+   */
+  focusRef?: RefObject<HTMLElement | null>
+}
+
+/**
+ * Wraps a sidebar row so a desktop right-click opens the same actions exposed by
+ * the hover "…" {@link SidebarActionMenu}. Both menus render the same
+ * `SidebarActionItem[]`, so they never drift. Renders `children` untouched when
+ * there are no actions or the menu is disabled.
+ */
+export function SidebarActionContextMenu({ actions, children, disabled, focusRef }: SidebarActionContextMenuProps) {
+  const { setMenuOpen } = useSidebar()
+
+  if (disabled || actions.length === 0) return <>{children}</>
+
+  return (
+    <ContextMenu onOpenChange={setMenuOpen}>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent
+        className="w-40"
+        onCloseAutoFocus={(event) => {
+          const target = focusRef?.current
+          if (!target) return
+          event.preventDefault()
+          target.focus()
+        }}
+      >
+        {actions.map((action) => (
+          <SidebarActionContextMenuEntry key={action.id} action={action} />
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
