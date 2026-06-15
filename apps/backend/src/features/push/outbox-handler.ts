@@ -97,6 +97,7 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
         return
       }
       await this.pushService.deliverRewrapNudge(payload)
+      return
     }
   }
 }

@@ -15,8 +15,11 @@ import { e2eKeyWrapKeys } from "./stream-encryption-affordance"
  * The per-stream affordance only heals the stream the owner has open; this lifts
  * that to the workspace so a turn in a scratchpad the owner *isn't* looking at
  * still resolves the moment the signal lands, without waiting for them to open
- * it. A locked session can't re-wrap — the per-stream affordance covers it on
- * the next unlock, and the graced web-push pulls an offline owner back.
+ * it. A locked session can't re-wrap: this listener drops the event, and the
+ * per-stream affordance only heals once the owner actually opens that stream —
+ * so an owner who unlocks without visiting it relies on the backend re-emitting
+ * the nudge (every `REWRAP_SOCKET_REEMIT_MS`) to a now-unlocked tab. The graced
+ * web-push is the offline owner's path back.
  *
  * Side-effect only; renders nothing. Mounted once per workspace inside the
  * socket + E2E-session providers.

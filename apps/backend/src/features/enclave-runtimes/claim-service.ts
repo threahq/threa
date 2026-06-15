@@ -73,12 +73,18 @@ const STALE_RUNNING_HEARTBEAT_MS = 60_000
 /**
  * Re-emit windows for the proactive owner re-wrap nudge. The socket signal
  * heals an online unlocked owner in place, so it re-arms briskly (a newly
- * online owner gets pinged within the window). The web-push nudge re-arms far
+ * online owner gets pinged within the window). The web-push nudge re-arms
  * slower — it pulls an offline owner back to the app, and waking a device is
- * costly to repeat, so once per stuck episode is the goal.
+ * costly to repeat — but must stay **under** `ENCLAVE_PENDING_PARK_AFTER_MS`
+ * (15 min): the ledger isn't reset when a stream heals, so a heal-then-restick
+ * within the window is deduped against the prior episode's stamp. If web-push
+ * re-armed slower than a turn can park, an offline owner whose scratchpad
+ * re-sticks (fresh EIK on the next enclave start) could have the new turn park
+ * before a fresh nudge is allowed. Re-arming inside the park window guarantees
+ * the re-stuck turn gets its own web-push before it dead-letters.
  */
 const REWRAP_SOCKET_REEMIT_MS = 5 * 60 * 1000
-const REWRAP_WEBPUSH_REEMIT_MS = 30 * 60 * 1000
+const REWRAP_WEBPUSH_REEMIT_MS = 10 * 60 * 1000
 
 /**
  * Grace before the first web-push: a turn that just went unservable may still
