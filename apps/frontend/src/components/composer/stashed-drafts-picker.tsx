@@ -10,13 +10,20 @@ import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
-import type { CachedDraft } from "@/hooks"
+import type { CachedDraft, DraftPreview } from "@/hooks"
 
 /** Keystroke hint for the "Save current" action. Rendered only on non-mobile (no hardware keyboard). */
 const MOD_SYMBOL = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "⌘" : "Ctrl+"
 
 interface StashedDraftsPickerProps {
   drafts: CachedDraft[]
+  /**
+   * Decrypted (or plaintext) inline previews per draft id, computed by the host
+   * via `useDecryptedDraftPreviews`. The picker stays presentational — it never
+   * touches the decrypt cache or session itself. Absent → previews fall back to
+   * the row's `contentJson` (plaintext-only callers / tests).
+   */
+  previewById?: Map<string, DraftPreview>
   /** True when the composer has something worth stashing (controls "Save current" enablement). */
   canStashCurrent: boolean
   /** Called when the user clicks "Save current draft" or presses Enter on the save affordance. */
@@ -34,14 +41,7 @@ interface StashedDraftsPickerProps {
   size?: "compact" | "fab"
 }
 
-function getPreview(draft: CachedDraft): string {
-  try {
-    const md = serializeToMarkdown(draft.contentJson)
-    const stripped = stripMarkdownToInline(md).trim()
-    if (stripped.length > 0) return stripped
-  } catch {
-    // Fall through to attachment-only label below.
-  }
+function attachmentOrEmptyLabel(draft: CachedDraft): string {
   const attachmentCount = draft.attachments?.length ?? 0
   if (attachmentCount > 0) {
     return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
@@ -49,8 +49,35 @@ function getPreview(draft: CachedDraft): string {
   return "Empty draft"
 }
 
+function plaintextPreview(draft: CachedDraft): string {
+  try {
+    const md = serializeToMarkdown(draft.contentJson)
+    const stripped = stripMarkdownToInline(md).trim()
+    if (stripped.length > 0) return stripped
+  } catch {
+    // Fall through to attachment-only label below.
+  }
+  return attachmentOrEmptyLabel(draft)
+}
+
+/**
+ * The row label: the host-supplied decrypted preview when present (E2E + plaintext
+ * alike), otherwise derived from `contentJson` for plaintext-only callers/tests.
+ * A sealed draft mid-decrypt / locked / failed gets a status label instead of a
+ * blank row.
+ */
+function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>): string {
+  const preview = previewById?.get(draft.id)
+  if (!preview) return plaintextPreview(draft)
+  if (preview.status === "decrypting") return "Decrypting…"
+  if (preview.status === "locked") return "Encrypted draft"
+  if (preview.status === "failed") return "Couldn't decrypt"
+  return preview.text || attachmentOrEmptyLabel(draft)
+}
+
 export function StashedDraftsPicker({
   drafts,
+  previewById,
   canStashCurrent,
   onStashCurrent,
   onRestore,
@@ -163,7 +190,7 @@ export function StashedDraftsPicker({
           ) : (
             <ul className="max-h-64 overflow-y-auto py-1" role="list">
               {drafts.map((draft) => {
-                const preview = getPreview(draft)
+                const preview = rowPreview(draft, previewById)
                 const attachmentCount = draft.attachments?.length ?? 0
                 return (
                   <li key={draft.id} className="group/row">

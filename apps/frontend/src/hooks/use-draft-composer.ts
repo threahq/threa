@@ -59,6 +59,20 @@ export interface DraftComposerState {
   isSending: boolean
   setIsSending: (sending: boolean) => void
 
+  /**
+   * Persist the composer's current content into its loaded draft row immediately
+   * (bypassing the debounce), sealing it for E2E. Used by stash/restore to flush
+   * unsaved keystrokes into the row before it is detached or swapped, so nothing
+   * typed since the last debounce tick is lost.
+   */
+  saveDraft: (content: JSONContent) => Promise<void>
+  /**
+   * Re-run the composer's init from whatever draft is now loaded for the scope.
+   * Called after a stash/restore pointer move so the editor re-reads (and, for
+   * E2E, re-decrypts) the newly-loaded draft instead of keeping the old one.
+   */
+  markNeedsRehydrate: () => void
+
   // Clear helpers
   clearDraft: () => Promise<void>
   /**
@@ -102,6 +116,7 @@ export function useDraftComposer({
     contentJson: savedDraft,
     attachments: savedAttachments,
     contextRefs: savedContextRefs = [] as DraftContextRef[],
+    saveDraft,
     saveDraftDebounced,
     addAttachment: addDraftAttachment,
     removeAttachment: removeDraftAttachment,
@@ -141,6 +156,28 @@ export function useDraftComposer({
   const suspendAttachmentPersistence = useRef(false)
   const staleAttachmentIdsRef = useRef<Set<string>>(new Set())
   const restoredAttachmentIdsRef = useRef<Set<string>>(new Set())
+  // Latest pending attachments, read by the reset below without making it a
+  // dependency (which would churn its identity every render).
+  const pendingAttachmentsRef = useRef(pendingAttachments)
+  pendingAttachmentsRef.current = pendingAttachments
+
+  // Blank the composer to an un-initialized state so the init effect below
+  // re-hydrates it from whatever draft is now loaded for the scope. Used on both
+  // a scope change and an explicit stash/restore — the latter is a pointer move
+  // that swaps the loaded draft WITHIN the same scope, so the editor must re-read
+  // from the newly-pointed draft (decrypting it on the way in for E2E) exactly as
+  // it would after a scope change.
+  const resetForReinit = useCallback(() => {
+    hasInitialized.current = false
+    userEngagedRef.current = false
+    suspendAttachmentPersistence.current = true
+    staleAttachmentIdsRef.current = new Set(
+      pendingAttachmentsRef.current.filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_")).map((a) => a.id)
+    )
+    restoredAttachmentIdsRef.current = new Set()
+    setContent(initialContent)
+    clearAttachments()
+  }, [clearAttachments, initialContent])
 
   // Initialize content and attachments from saved draft, reset on scope change
   useEffect(() => {
@@ -148,15 +185,7 @@ export function useDraftComposer({
 
     // On scope change, reset state
     if (isScopeChange) {
-      hasInitialized.current = false
-      userEngagedRef.current = false
-      suspendAttachmentPersistence.current = true
-      staleAttachmentIdsRef.current = new Set(
-        pendingAttachments.filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_")).map((a) => a.id)
-      )
-      restoredAttachmentIdsRef.current = new Set()
-      setContent(initialContent)
-      clearAttachments()
+      resetForReinit()
     }
 
     // Track scope changes
@@ -180,16 +209,7 @@ export function useDraftComposer({
       restoredAttachmentIdsRef.current = new Set(savedAttachments.map((attachment: { id: string }) => attachment.id))
       hasInitialized.current = true
     }
-  }, [
-    scopeId,
-    isDraftLoaded,
-    savedDraft,
-    savedAttachments,
-    restoreAttachments,
-    clearAttachments,
-    initialContent,
-    pendingAttachments,
-  ])
+  }, [scopeId, isDraftLoaded, savedDraft, savedAttachments, restoreAttachments, resetForReinit])
 
   // Late hydrate: an E2E draft can finish decrypting AFTER the one-shot init
   // above already ran — it was locked or still decrypting when the composer
@@ -313,6 +333,10 @@ export function useDraftComposer({
     canSend,
     isSending,
     setIsSending,
+
+    // Flush / re-hydrate (used by stash + restore)
+    saveDraft,
+    markNeedsRehydrate: resetForReinit,
 
     // Clear helpers
     clearDraft,

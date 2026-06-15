@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect, useRef } from "react"
+import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import {
@@ -7,6 +7,7 @@ import {
   useStreamOrDraft,
   useComposerHeightPublish,
   useStashComposer,
+  useDecryptedDraftPreviews,
   useMentionStreamContext,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -240,8 +241,17 @@ function MessageInputComponent({
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
-  // many-per-scope stash and the `?stash=<id>` URL auto-restore.
-  const stash = useStashComposer(composer, workspaceId, draftKey, e2eEnabled)
+  // many-per-scope stash and the `?stash=<id>` URL auto-restore. Stash + restore
+  // are pointer moves, so they work for plaintext and E2E alike (no gating).
+  const stash = useStashComposer(composer, workspaceId, draftKey)
+  // Decrypt-on-read previews for the stash pile (sealed rows decrypt via the
+  // shared cache; plaintext rows resolve from contentJson). All entries share
+  // this stream's encrypted root.
+  const stashPreviewInputs = useMemo(
+    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
+    [stash.drafts, e2eRootStreamId]
+  )
+  const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
   // Use a ref so the handler always reads fresh composer state without
   // re-registering on every render (composer object is not memoized).
@@ -675,7 +685,8 @@ function MessageInputComponent({
     stashedDraftsTrigger: (
       <StashedDraftsPicker
         drafts={stash.drafts}
-        canStashCurrent={composer.canSend && !e2eEnabled}
+        previewById={stashPreviews}
+        canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
         onDelete={stash.handleDeleteStashed}
@@ -685,7 +696,8 @@ function MessageInputComponent({
     stashedDraftsTriggerFab: (
       <StashedDraftsPicker
         drafts={stash.drafts}
-        canStashCurrent={composer.canSend && !e2eEnabled}
+        previewById={stashPreviews}
+        canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
         onDelete={stash.handleDeleteStashed}

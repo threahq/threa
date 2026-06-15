@@ -32,6 +32,7 @@ import {
   useQueueDraftMessage,
   useComposerHeightPublish,
   useStashComposer,
+  useDecryptedDraftPreviews,
   useWorkspaceUserId,
 } from "@/hooks"
 import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
@@ -183,12 +184,21 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   // a draft, so we pass `undefined` as the scope in that case — the hook
   // returns an empty list and silently no-ops.
   const stashScope = draftKey || undefined
-  const stash = useStashComposer(composer, workspaceId, stashScope, e2eBase?.e2eEnabled === true)
+  // Stash + restore are pointer moves, so they work for plaintext and E2E alike.
+  const stash = useStashComposer(composer, workspaceId, stashScope)
+  // Decrypt-on-read previews for the pile (sealed rows via the shared cache,
+  // plaintext from contentJson); every entry shares this thread's encrypted root.
+  const stashPreviewInputs = useMemo(
+    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRoot })),
+    [stash.drafts, e2eRoot]
+  )
+  const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
   const stashedDraftsTrigger = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
-      canStashCurrent={composer.canSend && !e2eBase?.e2eEnabled}
+      previewById={stashPreviews}
+      canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
       onDelete={stash.handleDeleteStashed}
@@ -199,7 +209,8 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const stashedDraftsTriggerFab = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
-      canStashCurrent={composer.canSend && !e2eBase?.e2eEnabled}
+      previewById={stashPreviews}
+      canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
       onDelete={stash.handleDeleteStashed}

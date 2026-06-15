@@ -1,23 +1,15 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
 import { useStashedDrafts, type CachedDraft } from "./use-stashed-drafts"
 import type { DraftComposerState } from "./use-draft-composer"
-import type { DraftAttachment } from "@/db"
-import type { PendingAttachment } from "./use-attachments"
-
-/** Distil the uploaded-attachment snapshot the stash pile persists. */
-function snapshotUploadedAttachments(pending: PendingAttachment[]): DraftAttachment[] {
-  return pending
-    .filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_"))
-    .map((a) => ({ id: a.id, filename: a.filename, mimeType: a.mimeType, sizeBytes: a.sizeBytes }))
-}
 
 export interface UseStashComposerResult {
   /** Stashed drafts for the current scope, newest first. Empty when `scope` is undefined. */
   drafts: CachedDraft[]
-  /** Snapshot the current composer content + attachments into the stash, clear the editor, toast. Empty composer → silent no-op. */
+  /** Snapshot the current composer content into the stash, clear the editor, toast. Empty composer → silent no-op. */
   handleStashDraft: () => Promise<void>
   /** Swap: stash current content first (if any), then load the chosen stashed row into the composer. */
   handleRestoreStashed: (id: string) => Promise<void>
@@ -27,72 +19,64 @@ export interface UseStashComposerResult {
 
 /**
  * Binds the stashed-drafts pile (`useStashedDrafts`) to a `DraftComposerState`
- * so the two composer hosts (`MessageInput` and `StreamPanel`) don't each
- * carry their own copy of the stash / restore / delete callbacks. The hook
- * also owns the `?stash=<id>` URL auto-restore: the param is consumed
- * _after_ the restore resolves so a mid-flight failure doesn't silently
- * strip the deep link — a refresh will retry (dedup via a ref prevents
- * loops within a single mount).
+ * so the two composer hosts (`MessageInput` and `StreamPanel`) don't each carry
+ * their own copy of the stash / restore / delete callbacks. It also owns the
+ * `?stash=<id>` URL auto-restore.
+ *
+ * Stash and restore are **pointer moves**, not content snapshots — exactly "a
+ * stashed draft is a draft without the active state". Stashing flushes the live
+ * editor into its row (sealed for E2E) and detaches the loaded pointer so the row
+ * becomes a stash entry; restoring points the scope at the chosen row and lets
+ * the composer re-read (decrypting on the way in for E2E) the newly-loaded body.
+ * Because nothing is copied, an encrypted draft rides the identical path with no
+ * plaintext ever leaving memory (E2EE-4) — so the pile works the same for
+ * plaintext and E2E streams with no special-casing here.
  */
 export function useStashComposer(
   composer: DraftComposerState,
   workspaceId: string,
-  scope: string | undefined,
-  // Stashing snapshots the composer's plaintext content, so it is disabled for
-  // encrypted streams in v1 (E2EE-4): the ambient draft still roams sealed, but
-  // the manual save-for-later pile is a follow-up. Both stash + restore no-op
-  // when set, so every trigger (button, keyboard, `?stash=` URL) is covered.
-  e2eEnabled = false
+  scope: string | undefined
 ): UseStashComposerResult {
   const stashedDrafts = useStashedDrafts(workspaceId, scope)
 
   const handleStashDraft = useCallback(async () => {
-    if (e2eEnabled) return // E2EE-4: never snapshot encrypted-stream plaintext into a stash row.
-    const row = await stashedDrafts.stashDraft({
-      contentJson: composer.content,
-      attachments: snapshotUploadedAttachments(composer.pendingAttachments),
-    })
-    if (!row) return // Empty composer: silent no-op per product brief.
+    if (!scope) return
+    // Nothing worth stashing → silent no-op (parity with the picker's disabled
+    // button and the product brief). Attachments alone count as content.
+    const hasContent = !isEmptyContent(composer.content)
+    const hasAttachments = composer.uploadedIds.length > 0
+    if (!hasContent && !hasAttachments) return
 
-    composer.setContent(EMPTY_DOC)
-    await composer.clearDraft()
-    composer.clearAttachments()
+    // Flush the live editor into its row first (sealed for E2E, E2EE-4) so the
+    // stash entry carries exactly what the user was typing, then detach it.
+    await composer.saveDraft(composer.content)
+    const stashedId = await stashLoadedDraft(workspaceId, scope)
+    if (!stashedId) return
+    // Re-init the (now draft-less) composer so the editor blanks out.
+    composer.markNeedsRehydrate()
     toast.success("Saved as draft")
-  }, [composer, stashedDrafts, e2eEnabled])
+  }, [composer, workspaceId, scope])
 
   const handleRestoreStashed = useCallback(
     async (id: string) => {
-      // Encrypted streams don't expose the stash in v1: a restore would both
-      // snapshot the composer's plaintext (E2EE-4) and load a sealed row's empty
-      // placeholder. No-op so the `?stash=` deep link can't trip either.
-      if (e2eEnabled) return
-      // Swap semantics: stash whatever the composer holds first so switching
-      // drafts never silently destroys work. A thrown error here (e.g. IDB
-      // quota) is swallowed — losing a recent auto-save is a smaller harm
-      // than aborting the deliberate restore of an explicit stash row.
+      if (!scope) return
+      // Swap semantics: flush whatever the composer holds into its row first so
+      // switching drafts never silently destroys work — it stays as a stash entry
+      // once the pointer moves off it. A thrown flush (e.g. IDB quota, or a seal
+      // that raced a lock) is swallowed: losing a recent auto-save is a smaller
+      // harm than aborting the deliberate restore of an explicit stash row.
       try {
-        await stashedDrafts.stashDraft({
-          contentJson: composer.content,
-          attachments: snapshotUploadedAttachments(composer.pendingAttachments),
-        })
+        await composer.saveDraft(composer.content)
       } catch (err) {
-        console.error("Failed to stash current content before restoring", err)
+        console.error("Failed to flush current content before restoring", err)
       }
 
-      const row = await stashedDrafts.restoreStashedDraft(id)
-      if (!row) return
-
-      composer.clearAttachments()
-      composer.setContent(row.contentJson)
-      // handleContentChange drives the debounced write into DraftMessage
-      // once the editor picks up the new content.
-      composer.handleContentChange(row.contentJson)
-      if (row.attachments && row.attachments.length > 0) {
-        composer.restoreAttachments(row.attachments)
-      }
+      await restoreStashedDraftToComposer(workspaceId, scope, id)
+      // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
+      composer.markNeedsRehydrate()
       toast.success("Draft restored")
     },
-    [composer, stashedDrafts, e2eEnabled]
+    [composer, workspaceId, scope]
   )
 
   const handleDeleteStashed = useCallback(
@@ -102,11 +86,11 @@ export function useStashComposer(
     [stashedDrafts]
   )
 
-  // Auto-restore when the URL carries `?stash=<id>` — how the /drafts
-  // explorer deep-links to a specific snapshot. The dedup ref prevents the
-  // same id firing twice within one mount if React re-runs the effect, and
-  // the param is stripped only after the restore resolves so a thrown
-  // error doesn't silently eat the deep link.
+  // Auto-restore when the URL carries `?stash=<id>` — how the /drafts explorer
+  // deep-links to a specific snapshot. The dedup ref prevents the same id firing
+  // twice within one mount if React re-runs the effect, and the param is stripped
+  // only after the restore resolves so a thrown error doesn't silently eat the
+  // deep link (a refresh can retry).
   const [searchParams, setSearchParams] = useSearchParams()
   const pendingStashRestoreRef = useRef<string | null>(null)
   useEffect(() => {
@@ -131,10 +115,7 @@ export function useStashComposer(
   }, [searchParams, setSearchParams, scope, composer.isLoaded, handleRestoreStashed])
 
   return {
-    // The stash is disabled for encrypted streams in v1, so surface no entries
-    // there — a sealed row that arrives via sync would otherwise render as a
-    // restore control whose handler no-ops (a dead button).
-    drafts: e2eEnabled ? [] : stashedDrafts.drafts,
+    drafts: stashedDrafts.drafts,
     handleStashDraft,
     handleRestoreStashed,
     handleDeleteStashed,

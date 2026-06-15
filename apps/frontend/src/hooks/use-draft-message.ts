@@ -267,6 +267,41 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
 }
 
 /**
+ * Stash the draft currently loaded into the composer for `scope`: detach it (clear
+ * the device-local loaded pointer) so it becomes a stash entry, WITHOUT copying or
+ * re-writing its body. The row stays at rest exactly as it is — plaintext or sealed
+ * (E2EE-4) — and keeps roaming; only the "checked out" pointer is cleared. This is
+ * the shape-agnostic stash: there is no plaintext snapshot to leak for an E2E draft
+ * because the sealed row already holds the body. Returns the detached draft id, or
+ * `null` when nothing was loaded. Callers flush the live editor content into the row
+ * first (so unsaved keystrokes survive) and reset the editor afterward.
+ */
+export async function stashLoadedDraft(workspaceId: string, scope: string): Promise<string | null> {
+  const draftId = (await db.composerLoaded.get(scope))?.draftId ?? null
+  if (!draftId) return null
+  await db.composerLoaded.delete(scope)
+  setComposerLoadedInCache(workspaceId, scope, null)
+  return draftId
+}
+
+/**
+ * Restore stash entry `draftId` into the composer for `scope` by pointing the
+ * scope at it. Whatever was loaded becomes a stash entry automatically (the scope
+ * points at exactly one draft), so this is a swap that never loses work. The row's
+ * body — plaintext or sealed — is untouched; the composer decrypts on read. Like
+ * stash, it is a pure pointer move: no snapshot, no server round-trip (the row was
+ * already pushed when it was last edited).
+ */
+export async function restoreStashedDraftToComposer(
+  workspaceId: string,
+  scope: string,
+  draftId: string
+): Promise<void> {
+  await db.composerLoaded.put({ scope, workspaceId, draftId })
+  setComposerLoadedInCache(workspaceId, scope, draftId)
+}
+
+/**
  * Re-scope every draft for `fromScope` to `toScope` and push each so the server
  * row follows. The client-initiated counterpart to inbound thread re-pointing:
  * used by `promoteDraft` when a not-yet-created scratchpad becomes a real stream,

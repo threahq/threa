@@ -32,10 +32,30 @@ const listeners = new Map<string, Set<() => void>>()
 // can detect they're stale and refuse to write plaintext back into the cache.
 let generation = 0
 
+// A monotonic version bumped on EVERY cache change, with its own listener set.
+// Per-id subscriptions (`subscribeToDecryption`) suit a single rendered message;
+// a batch reader (e.g. decrypted draft previews across a list) instead watches
+// this one signal and re-reads the ids it cares about.
+let cacheVersion = 0
+const versionListeners = new Set<() => void>()
+
 function emit(eventId: string): void {
+  cacheVersion++
+  for (const listener of versionListeners) listener()
   const set = listeners.get(eventId)
   if (!set) return
   for (const listener of set) listener()
+}
+
+/** Snapshot of the global cache version — changes on any insert/seed/invalidate/clear. */
+export function getDecryptCacheVersion(): number {
+  return cacheVersion
+}
+
+/** Subscribe to ANY cache change (for batch readers like draft-preview lists). */
+export function subscribeDecryptCacheVersion(listener: () => void): () => void {
+  versionListeners.add(listener)
+  return () => versionListeners.delete(listener)
 }
 
 function touch(eventId: string, entry: DecryptCacheEntry): void {
