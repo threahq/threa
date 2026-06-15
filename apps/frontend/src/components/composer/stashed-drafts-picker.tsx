@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
-import { serializeToMarkdown } from "@threa/prosemirror"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
-import { stripMarkdownToInline } from "@/lib/markdown"
+import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -49,17 +48,6 @@ function attachmentOrEmptyLabel(draft: CachedDraft): string {
   return "Empty draft"
 }
 
-function plaintextPreview(draft: CachedDraft): string {
-  try {
-    const md = serializeToMarkdown(draft.contentJson)
-    const stripped = stripMarkdownToInline(md).trim()
-    if (stripped.length > 0) return stripped
-  } catch {
-    // Fall through to attachment-only label below.
-  }
-  return attachmentOrEmptyLabel(draft)
-}
-
 /**
  * The row label: the host-supplied decrypted preview when present (E2E + plaintext
  * alike), otherwise derived from `contentJson` for plaintext-only callers/tests.
@@ -68,10 +56,8 @@ function plaintextPreview(draft: CachedDraft): string {
  */
 function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>): string {
   const preview = previewById?.get(draft.id)
-  if (!preview) return plaintextPreview(draft)
-  if (preview.status === "decrypting") return "Decrypting…"
-  if (preview.status === "locked") return "Encrypted draft"
-  if (preview.status === "failed") return "Couldn't decrypt"
+  if (!preview) return draftInlineText(draft.contentJson) || attachmentOrEmptyLabel(draft)
+  if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
   return preview.text || attachmentOrEmptyLabel(draft)
 }
 

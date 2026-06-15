@@ -12,11 +12,10 @@ import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
-import { serializeToMarkdown } from "@threa/prosemirror"
-import type { CompanionMode, JSONContent } from "@threa/types"
+import type { CompanionMode } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
-import { stripMarkdownToInline } from "@/lib/markdown"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { useDecryptedDraftPreviews, type DraftPreview, type DraftPreviewInput } from "./use-decrypted-draft-previews"
 
 export type DraftType = "scratchpad" | "channel" | "dm" | "thread"
@@ -93,28 +92,16 @@ function truncatePreview(content: string, maxLength: number = 80): string {
 }
 
 /**
- * Get a display-safe inline preview from JSONContent. Markdown is stripped
- * here (not at the render site) because every current consumer renders the
- * value as plain inline text — keeping that guarantee at the source
- * satisfies INV-60 without requiring every caller to remember the strip.
- */
-function getContentPreview(contentJson: JSONContent | undefined): string {
-  if (!contentJson || isEmptyContent(contentJson)) return ""
-  return stripMarkdownToInline(serializeToMarkdown(contentJson))
-}
-
-/**
  * The explorer preview for a draft row. Plaintext rows read `contentJson`
  * directly; E2E rows (ciphertext at rest) read the decrypted body from the shared
  * cache via `previewMap`, falling back to a status label so a sealed draft still
  * shows up identifiably instead of as a blank/empty row (the bug this fixes).
  */
 function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPreview>): string {
-  if (draft.ciphertext == null) return truncatePreview(getContentPreview(draft.contentJson))
+  if (draft.ciphertext == null) return truncatePreview(draftInlineText(draft.contentJson))
   const preview = previewMap.get(draft.id)
-  if (!preview || preview.status === "locked") return "Encrypted draft"
-  if (preview.status === "decrypting") return "Decrypting…"
-  if (preview.status === "failed") return "Couldn't decrypt"
+  if (!preview) return "Encrypted draft"
+  if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
   return truncatePreview(preview.text) || "Encrypted draft"
 }
 

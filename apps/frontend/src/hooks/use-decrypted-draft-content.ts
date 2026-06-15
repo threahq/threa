@@ -1,48 +1,28 @@
 import { useEffect, useSyncExternalStore } from "react"
-import type { JSONContent } from "@threa/types"
-import {
-  getCachedDecryption,
-  requestDecryption,
-  subscribeToDecryption,
-  type DecryptCacheEntry,
-} from "@/lib/crypto/decrypt-cache"
+import { getCachedDecryption, subscribeToDecryption, type DecryptCacheEntry } from "@/lib/crypto/decrypt-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"
-import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import type { CachedDraft } from "@/db"
+import {
+  isE2eUnlocked,
+  requestDraftDecryption,
+  resolveDraftDecryption,
+  type DraftDecryption,
+} from "@/lib/drafts/decryption"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 
 /**
- * Decrypt-on-read for a draft, following the same path messages use
- * (`useDecryptedMessageContent`): one entity carries either plaintext
- * (`contentJson`) or the `ciphertext`/`envelope` sibling shape, and this hook
- * branches on `ciphertext` and decrypts through the shared `decrypt-cache`.
+ * Decrypt-on-read for the ONE draft loaded into the composer, following the same
+ * shared `decrypt-cache` messages use. Branches on `ciphertext`: a plaintext draft
+ * renders `contentJson` directly; a sealed draft decrypts in memory (IDB holds only
+ * ciphertext — E2EE-4), dropped on lock and re-decrypted on unlock (cache miss →
+ * re-request). A failed decrypt is `failed`, not a permanent spinner.
  *
- * Reusing that cache is what makes E2E drafts behave: the plaintext lives in
- * memory only (IDB holds ciphertext, treated like the backend — E2EE-4), it is
- * dropped on lock (the cache is cleared by `lock()`), and it is re-decrypted on
- * the next unlock (cache miss → re-request). A failed decrypt is a `failed`
- * status, not a permanent spinner.
- *
- * Statuses mirror the message hook:
- *  - `none`      — no draft loaded.
- *  - `plaintext` — a non-E2E draft; render `contentJson` directly.
- *  - `locked`    — E2E draft but the session isn't unlocked.
- *  - `pending`   — unlocked, decrypt in flight (or the root isn't known yet).
- *  - `decrypted` — unlocked, decrypt succeeded; render the returned content.
- *  - `failed`    — decrypt threw (wrong recipient, tampered/garbled payload).
- *
- * `rootStreamId` is the encrypted stream whose SSK wraps the body (a thread
- * passes its root). Like the message hook gating on stream hydration, decrypt
- * holds at `pending` until it is known, so we never decrypt against an unknown
- * root and poison the cache with a permanent failure.
+ * Subscribes per-id (not the global cache version) so the composer — a hot path —
+ * only re-renders when THIS draft's body changes. `rootStreamId` is the encrypted
+ * root whose SSK wraps the body (a thread passes its root); decrypt holds at
+ * `pending` until it is known so we never poison the cache against an unknown root.
  */
-export type DecryptedDraftContent =
-  | { status: "none" }
-  | { status: "plaintext"; contentJson: JSONContent }
-  | { status: "locked" }
-  | { status: "pending" }
-  | { status: "decrypted"; contentJson: JSONContent }
-  | { status: "failed" }
+export type DecryptedDraftContent = DraftDecryption
 
 export function useDecryptedDraftContent(
   workspaceId: string,
@@ -51,10 +31,7 @@ export function useDecryptedDraftContent(
 ): DecryptedDraftContent {
   const userId = useCurrentWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
-
   const draftId = draft?.id
-  const ciphertext = draft?.ciphertext
-  const envelope = draft?.envelope
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => (draftId ? subscribeToDecryption(draftId, listener) : () => {}),
@@ -62,31 +39,16 @@ export function useDecryptedDraftContent(
     () => undefined
   )
 
-  const sessionUnlocked = session.status === "unlocked" && !!session.privateKey && !!session.keyId
-  const canDecrypt = !!draftId && !!ciphertext && !!rootStreamId && sessionUnlocked
-  const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
-
   useEffect(() => {
-    if (!needsDecrypt || !draftId || !ciphertext || !rootStreamId || !session.privateKey || !session.keyId) return
-    void requestDecryption(
-      draftId,
-      { contentMarkdown: "", ciphertext, envelope },
-      {
-        privateKey: session.privateKey,
-        recipientKeyId: session.keyId,
+    if (draft) {
+      requestDraftDecryption(
+        draft,
+        { privateKey: session.privateKey, recipientKeyId: session.keyId },
         workspaceId,
-        streamId: rootStreamId,
-        rootStreamId,
-      }
-    )
-  }, [needsDecrypt, draftId, ciphertext, envelope, rootStreamId, session.privateKey, session.keyId, workspaceId])
+        rootStreamId
+      )
+    }
+  }, [draft, session.privateKey, session.keyId, workspaceId, rootStreamId])
 
-  if (!draft) return { status: "none" }
-  if (!ciphertext) return { status: "plaintext", contentJson: draft.contentJson ?? EMPTY_DOC }
-  if (!sessionUnlocked) return { status: "locked" }
-  if (cached?.status === "decrypted" && cached.content) {
-    return { status: "decrypted", contentJson: cached.content.contentJson }
-  }
-  if (cached?.status === "failed") return { status: "failed" }
-  return { status: "pending" }
+  return resolveDraftDecryption(draft, isE2eUnlocked(session), cached)
 }

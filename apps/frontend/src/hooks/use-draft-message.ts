@@ -554,12 +554,10 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     }
   }, [])
 
-  // The renderable body comes from the shared read path: decrypted/plaintext
-  // content, or the empty placeholder while locked/decrypting/failed/absent.
-  const contentJson =
-    decryptedContent.status === "decrypted" || decryptedContent.status === "plaintext"
-      ? decryptedContent.contentJson
-      : EMPTY_DOC
+  // The renderable body comes from the shared read path: the decrypted/plaintext
+  // content, or the empty placeholder while locked/decrypting/failed/absent (the
+  // shared core returns null contentJson for those states).
+  const contentJson = decryptedContent.contentJson ?? EMPTY_DOC
 
   return {
     /** True once Dexie has loaded and (for an E2E draft) the read has settled (not mid-decrypt). */
