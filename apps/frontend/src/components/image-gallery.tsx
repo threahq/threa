@@ -490,6 +490,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     },
     []
   )
+  // Clear any in-flight confirmation when the viewed item changes or the gallery
+  // reopens, so a checkmark from item A never lingers onto item B's button.
+  useEffect(() => {
+    setCopyDone(false)
+    setDownloadDone(false)
+    if (copyResetRef.current) clearTimeout(copyResetRef.current)
+    if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
+  }, [isOpen, current?.attachmentId])
 
   const handleDownload = useCallback(async () => {
     if (!current) return
