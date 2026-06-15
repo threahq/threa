@@ -24,11 +24,31 @@ export interface ReadUrlResult {
   url: string
   title: string
   content: string
+  /** Absolute URLs of images embedded in the page, surfaced for vision-capable
+   * callers to view via a follow-up read_url. Omitted when none/not applicable. */
+  images?: string[]
 }
 
 const MAX_CONTENT_LENGTH = 50000
 const FETCH_TIMEOUT_MS = 30000
 const MAX_REDIRECTS = 5
+
+// Image types Anthropic/OpenAI vision models accept natively.
+const SUPPORTED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+// A single image is capped near 5MB by the providers; stay under it.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+// Cap the image-URL list so a media-heavy page can't flood the result.
+const MAX_IMAGE_URLS = 20
+
+export interface CreateReadUrlToolParams {
+  /**
+   * Whether the calling model can see images. When true, a URL that resolves to
+   * an image is fetched and returned as a multimodal image block (instead of
+   * being rejected), and HTML pages surface their embedded image URLs so the
+   * model can choose to view one. When false, images are reported as unreadable.
+   */
+  supportsVision?: boolean
+}
 
 const nhm = new NodeHtmlMarkdown()
 
@@ -201,12 +221,24 @@ async function fetchWithRedirectValidation(
   return response
 }
 
-export function createReadUrlTool() {
+export function createReadUrlTool(params: CreateReadUrlToolParams = {}) {
+  const { supportsVision = false } = params
+
+  // Vision-only guidance: only advertise image viewing to models that can see.
+  const imageDescription = supportsVision
+    ? " If the URL points directly at an image (PNG, JPEG, GIF, or WebP), the image itself is returned for you to view. " +
+      "When reading an HTML page, any images it embeds are listed under `images` as URLs you can read_url to view."
+    : ""
+  const imagePromptLine = supportsVision
+    ? "\n- To look at an image: pass an image URL directly (the image comes back for you to view), or read an HTML page and then read_url one of the image URLs listed under `images`"
+    : ""
+
   return defineAgentTool({
     name: "read_url",
     description:
       "Fetch and read the content of a web page or JSON resource. Use this after web_search when you need more detail than the snippet provides, or when the user shares a specific URL to analyze. " +
-      "HTML pages are returned as markdown. JSON is returned in full when small; when large, you instead get the data's `shape` (a schema sketch), a sampled `preview`, and a `hint` — then call again with `select` (e.g. '.data.items[0:20]') to drill into a specific part.",
+      "HTML pages are returned as markdown. JSON is returned in full when small; when large, you instead get the data's `shape` (a schema sketch), a sampled `preview`, and a `hint` — then call again with `select` (e.g. '.data.items[0:20]') to drill into a specific part." +
+      imageDescription,
     categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.READ_URL],
     promptBlock: `## Reading URLs
 
@@ -216,7 +248,7 @@ When to use read_url:
 - After web_search when you need more detail than the snippet provides
 - When the user shares a specific URL they want you to analyze
 - To verify information or get complete context from a source
-- To read JSON APIs: small responses come back in full. For large ones you get the data's \`shape\` (a schema sketch), a sampled \`preview\`, and a \`hint\` — then call read_url again with a \`select\` path (e.g. \`.data.items[0:20]\`, \`.results[3].name\`, \`.users[*].email\`) to drill into the part you need.`,
+- To read JSON APIs: small responses come back in full. For large ones you get the data's \`shape\` (a schema sketch), a sampled \`preview\`, and a \`hint\` — then call read_url again with a \`select\` path (e.g. \`.data.items[0:20]\`, \`.results[3].name\`, \`.users[*].email\`) to drill into the part you need.${imagePromptLine}`,
     inputSchema: ReadUrlSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -254,7 +286,14 @@ When to use read_url:
         const contentType = (response.headers.get("content-type") || "").toLowerCase()
         const isHtml = contentType.includes("text/html")
         const isPlain = contentType.includes("text/plain")
+        const isImage = contentType.startsWith("image/")
         const declaresJson = /\bjson\b/.test(contentType) || contentType.includes("+json")
+
+        // A URL that resolves to an image: read it as a picture for vision-capable
+        // callers, otherwise report it as unreadable rather than dumping bytes.
+        if (isImage) {
+          return await readImageContent(response, input.url, contentType, supportsVision)
+        }
 
         if (!isHtml && !isPlain && !declaresJson) {
           return {
@@ -292,6 +331,12 @@ When to use read_url:
         }
 
         const readResult: ReadUrlResult = { url: input.url, title, content }
+        // Surface embedded image URLs only to vision-capable callers — they are
+        // useless noise to a model that can't then view them.
+        if (supportsVision && isHtml) {
+          const images = extractImageUrls(body, input.url)
+          if (images.length > 0) readResult.images = images
+        }
         logger.debug({ url: input.url, contentLength: content.length }, "URL read completed")
 
         const output = JSON.stringify(readResult)
@@ -352,6 +397,96 @@ When to use read_url:
 function extractTitle(html: string): string {
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
   return titleMatch?.[1]?.trim() || "Untitled"
+}
+
+/**
+ * Fetch a URL whose content type is an image and return it as a multimodal
+ * image block for vision-capable callers. Non-vision callers get an explanatory
+ * error; oversized or unsupported images are refused before they reach the model.
+ */
+async function readImageContent(
+  response: Response,
+  url: string,
+  contentType: string,
+  supportsVision: boolean
+): Promise<AgentToolResult> {
+  const mimeType = contentType.split(";")[0].trim()
+
+  if (!supportsVision) {
+    return {
+      output: JSON.stringify({
+        error: `This URL is an image (${mimeType}); the current model cannot view images, so it cannot be read.`,
+        url,
+      }),
+    }
+  }
+
+  if (!SUPPORTED_IMAGE_MIME_TYPES.includes(mimeType)) {
+    return {
+      output: JSON.stringify({
+        error: `Unsupported image type: ${mimeType}. Supported image types are PNG, JPEG, GIF, and WebP.`,
+        url,
+      }),
+    }
+  }
+
+  // Refuse an oversized image the server declares up front, before downloading it.
+  const declaredLength = Number(response.headers.get("content-length"))
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_IMAGE_BYTES) {
+    return {
+      output: JSON.stringify({
+        error: `Image is too large (${declaredLength} bytes; max ${MAX_IMAGE_BYTES}).`,
+        url,
+      }),
+    }
+  }
+
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (bytes.length > MAX_IMAGE_BYTES) {
+    return {
+      output: JSON.stringify({
+        error: `Image is too large (${bytes.length} bytes; max ${MAX_IMAGE_BYTES}).`,
+        url,
+      }),
+    }
+  }
+
+  const dataUrl = `data:${mimeType};base64,${bytes.toString("base64")}`
+  logger.debug({ url, mimeType, byteSize: bytes.length }, "Image read for vision analysis")
+
+  return {
+    output: JSON.stringify({ url, kind: "image", mimeType, byteSize: bytes.length }),
+    multimodal: [{ type: "image", url: dataUrl }],
+    sources: [{ type: "web", title: url, url }],
+  }
+}
+
+/**
+ * Extract embedded image URLs from an HTML body, resolved to absolute http(s)
+ * URLs, deduped, and capped. Data-URI and non-http sources are skipped — the
+ * caller views these via a follow-up read_url, which only fetches over http(s).
+ */
+function extractImageUrls(html: string, baseUrl: string): string[] {
+  const urls: string[] = []
+  const seen = new Set<string>()
+  const re = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi
+  let match: RegExpExecArray | null
+  while ((match = re.exec(html)) !== null) {
+    const raw = match[1]?.trim()
+    if (!raw || raw.startsWith("data:")) continue
+    let resolved: string
+    try {
+      resolved = new URL(raw, baseUrl).toString()
+    } catch {
+      continue
+    }
+    if (!resolved.startsWith("http://") && !resolved.startsWith("https://")) continue
+    if (seen.has(resolved)) continue
+    seen.add(resolved)
+    urls.push(resolved)
+    if (urls.length >= MAX_IMAGE_URLS) break
+  }
+  return urls
 }
 
 type ParseJsonResult = { matched: true; value: unknown } | { matched: false } | { error: string }
