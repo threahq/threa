@@ -16,12 +16,16 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>): number {
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    // Synchronous initial read so the first painted frame already reflects the
-    // real width (the ResizeObserver callback below only fires on later changes).
-    setWidth(el.clientWidth)
+    // Measure padding-box width (clientWidth) on both the initial read and the
+    // observer so the value never jumps box models — contentRect is content-box
+    // while clientWidth includes padding, and mixing them would shift by the
+    // padding on the first resize. The synchronous initial read keeps the first
+    // painted frame at the real width (the observer only fires on later changes).
+    const measure = (target: HTMLElement) => setWidth(target.clientWidth)
+    measure(el)
     const observer = new ResizeObserver((entries) => {
       const entry = entries[entries.length - 1]
-      setWidth(Math.round(entry.contentRect.width))
+      measure(entry.target as HTMLElement)
     })
     observer.observe(el)
     return () => observer.disconnect()

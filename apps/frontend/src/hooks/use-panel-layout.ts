@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useResizeDrag } from "./use-resize-drag"
+import { useElementWidth } from "./use-element-width"
 
 const DEFAULT_PANEL_WIDTH = 480
 const MIN_PANEL_WIDTH = 300
@@ -25,13 +26,14 @@ export function usePanelLayout(isPanelOpen: boolean) {
   const [showContent, setShowContent] = useState(isPanelOpen)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Live-clamped panel width: opening a panel — or a smaller window — re-caps
-  // the stored width so the default 480 can't crush the main column before the
-  // user drags. Guarded on a real measurement so the first pre-ref render
-  // doesn't collapse the panel to MIN and flash. Drag and keyboard resize base
-  // off this clamped value (not the raw state) so they don't jump on a
-  // constrained window.
-  const containerWidth = containerRef.current?.offsetWidth ?? 0
+  // Live-clamped panel width: opening a panel — or a smaller window / sidebar
+  // collapse — re-caps the stored width so the default 480 can't crush the main
+  // column before the user drags. `useElementWidth` (ResizeObserver) keeps this
+  // reactive to container resize, not just to React state changes. Guarded on a
+  // real measurement so the first pre-measure render doesn't collapse the panel
+  // to MIN and flash. Drag and keyboard resize base off this clamped value (not
+  // the raw state) so they don't jump on a constrained window.
+  const containerWidth = useElementWidth(containerRef)
   const maxWidth = panelMaxWidth(containerWidth)
   const effectiveWidth = containerWidth > 0 ? Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, panelWidth)) : panelWidth
 
@@ -54,13 +56,14 @@ export function usePanelLayout(isPanelOpen: boolean) {
     [isPanelOpen]
   )
 
-  const handleWidthChange = useCallback((newWidth: number) => {
-    if (!containerRef.current) {
-      throw new Error("usePanelLayout: containerRef must be attached to a DOM element for max-width clamping")
-    }
-    const maxWidth = panelMaxWidth(containerRef.current.offsetWidth)
-    setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, newWidth)))
-  }, [])
+  const handleWidthChange = useCallback(
+    (newWidth: number) => {
+      // No measurement yet (pre-mount drag is impossible, but stay safe) — skip.
+      if (containerWidth <= 0) return
+      setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, newWidth)))
+    },
+    [containerWidth, maxWidth]
+  )
 
   const { isResizing, handleResizeStart } = useResizeDrag({
     width: effectiveWidth,
