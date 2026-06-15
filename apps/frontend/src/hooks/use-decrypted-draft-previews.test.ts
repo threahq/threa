@@ -46,14 +46,14 @@ function plaintextDraft(id: string, text: string): CachedDraft {
   }
 }
 
-function sealedDraft(id: string): CachedDraft {
+function sealedDraft(id: string, ciphertext = "ct_sealed"): CachedDraft {
   return {
     id,
     workspaceId,
     scope: `stream:${rootStreamId}`,
     contentJson: EMPTY_DOC,
     attachments: [],
-    ciphertext: "ct_sealed",
+    ciphertext,
     envelope: { v: 2 },
     e2eVersion: 2,
     clientUpdatedAt: 1,
@@ -106,5 +106,31 @@ describe("useDecryptedDraftPreviews", () => {
     const draft = sealedDraft("draft_e")
     const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
     await waitFor(() => expect(result.current.get("draft_e")).toEqual({ text: "", status: "failed" }))
+  })
+
+  it("resolves each id independently across a mixed batch in one render", async () => {
+    // The whole reason this hook exists (vs. the per-id one in a loop) is to build
+    // a correct per-id map across MANY drafts at once. One unlocked session, four
+    // drafts, four different outcomes — distinct ciphertexts let one decrypt fail
+    // while another hangs in the SAME render, so a bug that smeared inputs[0]'s
+    // state across the map (or only handled the first row) would surface here.
+    vi.spyOn(messageEnvelope, "tryDecryptMessagePayload").mockImplementation((payload) =>
+      payload.ciphertext === "ct_fail" ? Promise.resolve(null) : new Promise<null>(() => {})
+    )
+    seedDecryption("draft_seeded", { contentMarkdown: "seeded body", contentJson: makeDoc("seeded body") })
+
+    const inputs = [
+      { draft: plaintextDraft("draft_plain", "plain body"), rootStreamId: undefined },
+      { draft: sealedDraft("draft_seeded"), rootStreamId },
+      { draft: sealedDraft("draft_fail", "ct_fail"), rootStreamId },
+      { draft: sealedDraft("draft_hang", "ct_hang"), rootStreamId },
+    ]
+    const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, inputs))
+
+    await waitFor(() => expect(result.current.get("draft_fail")).toEqual({ text: "", status: "failed" }))
+    expect(result.current.get("draft_plain")).toEqual({ text: "plain body", status: "ready" })
+    expect(result.current.get("draft_seeded")).toEqual({ text: "seeded body", status: "ready" })
+    expect(result.current.get("draft_hang")).toEqual({ text: "", status: "decrypting" })
+    expect(result.current.size).toBe(4)
   })
 })
