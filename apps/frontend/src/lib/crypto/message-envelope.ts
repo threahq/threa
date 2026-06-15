@@ -79,9 +79,10 @@ export async function sealStreamMessage(input: SealStreamMessageInput): Promise<
 /**
  * Seal a stream's display name under its SSK, bound to `(streamId, "name",
  * generation)` so a malicious server can't relocate it onto another stream or
- * swap it with a message body. Stored alongside the plaintext `displayName`
- * (which stays the locked-state fallback); an unlocked client prefers this
- * tamper-evident copy. Reuses the same SSK ciphertext path as messages.
+ * swap it with a message body. This is the ONLY persisted copy of an E2E
+ * stream's name — the server scrubs `display_name` to null when a sealed name
+ * is set (INV-E1, no plaintext at rest); a locked client shows the placeholder.
+ * Reuses the same SSK ciphertext path as messages.
  */
 export async function sealStreamName(input: {
   name: string

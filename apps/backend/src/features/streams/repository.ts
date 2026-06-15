@@ -134,7 +134,9 @@ export interface InsertStreamParams {
 }
 
 export interface UpdateStreamParams {
-  displayName?: string
+  // `null` scrubs the plaintext name — used by a sealed-only E2E rename, where
+  // the authoritative name lives in `e2e_streams.name_ciphertext`.
+  displayName?: string | null
   slug?: string
   description?: string
   visibility?: Visibility

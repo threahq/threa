@@ -8,6 +8,7 @@ import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/h
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
 import { CompanionModes, LabelableResourceTypes } from "@threa/types"
@@ -63,6 +64,11 @@ export function ScratchpadItem({
 
   const currentDisplayName = streamWithPreview.displayName ?? null
   const name = currentDisplayName || streamFallbackLabel("scratchpad", "sidebar")
+  // Resolved once by the stream-list builder off the shared name cache, so the
+  // row shows a loader (not the "New scratchpad" placeholder) while an encrypted
+  // scratchpad's sealed name is still decrypting on cold load — same treatment as
+  // the open-stream header.
+  const nameDecrypting = streamWithPreview.nameDecrypting ?? false
   const preview = streamWithPreview.lastMessagePreview
 
   useUrgencyTracking(itemRef, streamWithPreview.id, streamWithPreview.urgency, scrollContainerRef)
@@ -179,10 +185,14 @@ export function ScratchpadItem({
                 )}
               >
                 <div className="flex items-center gap-2 pr-8">
-                  <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
-                    {name}
-                    {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
-                  </span>
+                  {nameDecrypting ? (
+                    <Skeleton className="h-4 w-28" />
+                  ) : (
+                    <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
+                      {name}
+                      {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
+                    </span>
+                  )}
                   <div className="ml-auto flex items-center gap-1.5">
                     <StreamLabelDots streamId={streamWithPreview.id} />
                     <MentionIndicator count={mentionCount} />

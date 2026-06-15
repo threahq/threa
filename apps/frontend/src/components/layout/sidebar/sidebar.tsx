@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
-import { getE2eSessionState } from "@/stores/e2e-session-store"
+import { getE2eSessionState, useE2eSession } from "@/stores/e2e-session-store"
+import { resolveSealedNamePending } from "@/hooks/use-decrypted-stream-name"
+import { getStreamNameCacheVersion, subscribeStreamNameCache } from "@/lib/crypto/stream-name-cache"
 import {
   useActivityCounts,
   useAllDrafts,
@@ -97,6 +99,16 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
   const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
   const e2eUnlock = useE2eUnlockOptional()
+  // Resolve the sealed-name loading state for the whole list in one place (the
+  // session + shared name cache), so each row reads it as plain data instead of
+  // re-wiring the session. `nameCacheVersion` re-evaluates when a decrypt settles
+  // — including a failure, which leaves the overlaid row unchanged.
+  const e2eSessionStatus = useE2eSession(workspaceId, currentUser?.id ?? "").status
+  const nameCacheVersion = useSyncExternalStore(
+    subscribeStreamNameCache,
+    getStreamNameCacheVersion,
+    getStreamNameCacheVersion
+  )
 
   const draftCount = allDrafts.length
   const savedCount = useLiveSavedCount(workspaceId)
@@ -155,6 +167,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           urgency,
           section,
           dmPeerUserId,
+          nameDecrypting: resolveSealedNamePending(workspaceId, streamWithPreview, e2eSessionStatus),
         }
       })
   }, [
@@ -168,6 +181,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     idbDmPeers,
     workspaceUsers,
     unreadState,
+    workspaceId,
+    e2eSessionStatus,
+    nameCacheVersion,
   ])
 
   // System streams are auto-created infrastructure — don't count toward "has content"

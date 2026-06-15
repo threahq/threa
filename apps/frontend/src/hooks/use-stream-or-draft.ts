@@ -4,10 +4,10 @@ import { useNavigate } from "react-router-dom"
 import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
-import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { sealStreamName, type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
-import { resolveCurrentStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
+import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
+import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { sealOutgoingMessage } from "@/lib/crypto/seal-send"
+import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -494,39 +494,17 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
   const rename = useCallback(
     async (newName: string) => {
-      // For an encrypted stream the name has two copies: the plaintext fallback
-      // and a sealed (tamper-evident) copy an unlocked client prefers. We must
-      // never leave a STALE sealed name — if we can't produce a fresh seal (the
-      // session is locked or the key can't be resolved), explicitly CLEAR it
-      // (null) so the new plaintext name is authoritative, instead of leaving the
-      // old ciphertext to outrank it after the next unlock.
-      let sealedNameFields: { sealedNameCiphertext: string | null; sealedNameEnvelope: unknown } | undefined
-      if (baseStream?.e2eEnabled && currentUserId) {
-        sealedNameFields = { sealedNameCiphertext: null, sealedNameEnvelope: null }
-        const session = getE2eSessionState(workspaceId, currentUserId)
-        if (session.status === "unlocked" && session.privateKey && session.keyId) {
-          const streamKey = await resolveCurrentStreamKey({
-            workspaceId,
-            streamId,
-            recipientKeyId: session.keyId,
-            privateKey: session.privateKey,
-          })
-          if (streamKey) {
-            const sealed = await sealStreamName({
-              name: newName,
-              streamId,
-              ssk: streamKey.key,
-              keyGeneration: streamKey.keyGeneration,
-            })
-            sealedNameFields = { sealedNameCiphertext: sealed.ciphertext, sealedNameEnvelope: sealed.envelope }
-          }
-        }
-      }
+      // An E2E stream's name is sealed-only: we persist the tamper-evident
+      // ciphertext and NEVER the plaintext, so the server can't read it (the
+      // server scrubs `display_name` to null when a sealed name is set). Sealing
+      // needs the SSK, so it throws when the session is locked — the rename
+      // affordance is disabled in that state, and this is the backstop that
+      // keeps a rename from ever falling back to writing plaintext.
+      const updateInput = baseStream?.e2eEnabled
+        ? await sealStreamRename({ workspaceId, streamId, userId: currentUserId ?? "", name: newName })
+        : { displayName: newName }
 
-      const updatedStream = await streamService.update(workspaceId, streamId, {
-        displayName: newName,
-        ...sealedNameFields,
-      })
+      const updatedStream = await streamService.update(workspaceId, streamId, updateInput)
       await db.streams.put(toCachedStream(updatedStream, idbStream))
 
       queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {

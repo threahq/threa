@@ -776,27 +776,36 @@ export class StreamService {
   async updateStream(
     streamId: string,
     data: {
-      displayName?: string
+      displayName?: string | null
       slug?: string
       description?: string
       visibility?: Visibility
       /**
        * Sealed (encrypted) display name for an E2E stream — stored on
-       * `e2e_streams`, not `streams`. The plaintext `displayName` stays the
-       * locked-state fallback; this is the authoritative name an unlocked client
-       * prefers. `{ciphertext, envelope}` sets it, `null` clears it (rename
-       * without a fresh seal), `undefined` leaves it untouched. Required to come
-       * with a `displayName` so the two never desync.
+       * `e2e_streams`, not `streams`. The server holds opaque bytes it can't
+       * read. `{ciphertext, envelope}` SETS it (an E2E rename); `null` CLEARS it
+       * (revert to a plaintext name); `undefined` leaves it untouched. Setting a
+       * sealed name is sealed-only: the plaintext `display_name` is scrubbed to
+       * null so the server never holds the cleartext name at rest.
        */
       sealedName?: { ciphertext: string; envelope: unknown } | null
     }
   ): Promise<Stream | null> {
     const { sealedName, ...streamData } = data
-    // A sealed-name change (set or clear) must accompany a plaintext displayName,
-    // or `streams.display_name` and the sealed copy desync (locked/sidebar
-    // surfaces show the old label while unlocked clients decrypt the new one).
-    if (sealedName !== undefined && streamData.displayName === undefined) {
-      throw new HttpError("displayName is required when sealedName is provided", {
+    if (sealedName) {
+      // Setting a sealed name is a sealed-only E2E rename: the authoritative name
+      // lives in the ciphertext, so scrub the plaintext `display_name` to null —
+      // the server must never hold the cleartext name at rest (INV-E1). Enforced
+      // here, not trusted from the client, so a stale/leaky plaintext can't ride
+      // along. Trade-off: server-side name search (ILIKE/similarity on
+      // display_name) can't see E2E streams — name search for them is
+      // client-side over decrypted names.
+      streamData.displayName = null
+    } else if (sealedName === null && streamData.displayName == null) {
+      // Clearing a sealed name reverts to a plaintext label, so one must be
+      // provided — otherwise the stream loses its name entirely (no ciphertext,
+      // no cleartext).
+      throw new HttpError("displayName is required when clearing a sealed name", {
         status: 400,
         code: "SEALED_NAME_REQUIRES_DISPLAY_NAME",
       })
@@ -827,7 +836,22 @@ export class StreamService {
         // otherwise an E2E `stream:updated` would ship a partial shape (missing
         // e2eEnabled / actors / sealed name). INV-7.
         if (sealedName !== undefined) {
-          await E2eStreamsRepository.updateSealedName(client, stream.workspaceId, streamId, sealedName)
+          const sealedUpdated = await E2eStreamsRepository.updateSealedName(
+            client,
+            stream.workspaceId,
+            streamId,
+            sealedName
+          )
+          // No e2e_streams row means this isn't an E2E stream. Setting a sealed
+          // name has already scrubbed `display_name` to null above, so a silent
+          // no-op here would strand the stream with no name at all — fail loudly
+          // instead (INV-11).
+          if (!sealedUpdated) {
+            throw new HttpError("Sealed name updates require an end-to-end encrypted stream", {
+              status: 400,
+              code: "STREAM_NOT_E2E",
+            })
+          }
         }
         const result = (await StreamRepository.findById(client, streamId)) ?? stream
 

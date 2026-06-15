@@ -14,6 +14,9 @@ import * as usePreloadImagesModule from "@/hooks/use-preload-images"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as draftStoreModule from "@/stores/draft-store"
 import * as loadingComponentsModule from "@/components/loading"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
+import * as e2eSessionModule from "@/stores/e2e-session-store"
+import { clearStreamNameCache, primeStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 
 type MockQueryResult = {
   status: "pending" | "success" | "error"
@@ -31,7 +34,14 @@ let mockSeedCacheFromIdbResult = false
 let mockHasSeededWorkspaceCache = false
 let mockWorkspace: { id: string } | undefined
 let mockUsers: Array<{ id: string; avatarUrl: string | null }> = []
-let mockStreams: Array<{ id: string; lastMessagePreview?: { createdAt: string } | null }> = []
+let mockStreams: Array<{
+  id: string
+  lastMessagePreview?: { createdAt: string } | null
+  e2eEnabled?: boolean
+  sealedNameCiphertext?: string | null
+  sealedNameEnvelope?: unknown
+}> = []
+let mockE2eSessionStatus: e2eSessionModule.E2eSessionStatus = "no-key"
 let mockMemberships: Array<{ streamId: string }> = []
 let mockDmPeers: Array<{ streamId: string; userId: string }> = []
 let mockPersonas: Array<{ id: string }> = []
@@ -99,6 +109,20 @@ function installSpies() {
   )
   vi.spyOn(draftStoreModule, "seedDraftCacheFromIdb").mockImplementation(async () => undefined)
   vi.spyOn(draftStoreModule, "hasSeededDraftCache").mockImplementation(() => mockHasSeededDraftCache)
+  // The sealed-name reveal gate reads the current user's session; default to a
+  // no-key (non-E2E) workspace so existing cases are unaffected.
+  vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("user_1")
+  vi.spyOn(e2eSessionModule, "useE2eSession").mockImplementation(
+    () =>
+      ({
+        status: mockE2eSessionStatus,
+        keyId: null,
+        publicKey: null,
+        privateKey: null,
+        deviceTrusted: false,
+        error: null,
+      }) as e2eSessionModule.E2eSessionState
+  )
   vi.spyOn(loadingComponentsModule, "StreamContentSkeleton").mockImplementation(() => (
     <div data-testid="stream-content-skeleton">Stream Content Skeleton</div>
   ))
@@ -158,12 +182,15 @@ describe("CoordinatedLoadingProvider", () => {
     mockHasSeededDraftCache = false
     mockSyncStatuses = new Map()
     mockSyncErrors = new Map()
+    mockE2eSessionStatus = "no-key"
+    clearStreamNameCache()
     installSpies()
   })
 
   afterEach(() => {
     vi.useRealTimers()
     vi.clearAllMocks()
+    clearStreamNameCache()
   })
 
   it("reports loading initially while initial data is unresolved", async () => {
@@ -599,6 +626,56 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("stream-state").textContent).toBe("idle")
     expect(screen.getByTestId("has-errors").textContent).toBe("false")
     warnSpy.mockRestore()
+  })
+
+  it("holds the reveal until an unlocked session's sealed name decrypts, then reveals", async () => {
+    makeReadyWorkspaceState()
+    mockSeedCacheFromIdbResult = true
+    mockE2eSessionStatus = "unlocked"
+    mockStreams = [{ id: "stream_1", e2eEnabled: true, sealedNameCiphertext: "ct_1", sealedNameEnvelope: { v: 1 } }]
+
+    const { rerender } = render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    // Everything else is ready, but the sealed name hasn't decrypted yet, so the
+    // gate holds rather than flashing the placeholder.
+    expect(screen.getByTestId("phase").textContent).not.toBe("ready")
+
+    // The decrypt lands (seeded into the shared cache) → the gate opens.
+    act(() => {
+      primeStreamName(streamNameCacheKey("workspace_1", "stream_1", "ct_1"), "Quarterly Plan")
+    })
+    rerender(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("does not wait on sealed names while the session is locked (reveals with the placeholder)", async () => {
+    makeReadyWorkspaceState()
+    mockSeedCacheFromIdbResult = true
+    mockE2eSessionStatus = "locked"
+    // A sealed name that can never decrypt while locked must not deadlock the reveal.
+    mockStreams = [{ id: "stream_1", e2eEnabled: true, sealedNameCiphertext: "ct_1", sealedNameEnvelope: { v: 1 } }]
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
   })
 })
 

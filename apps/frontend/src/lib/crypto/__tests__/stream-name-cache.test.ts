@@ -3,6 +3,7 @@ import {
   applyDecryptedNameOverlay,
   clearStreamNameCache,
   getCachedStreamName,
+  isStreamNamePending,
   requestStreamName,
   streamNameCacheKey,
   subscribeStreamNameCache,
@@ -104,6 +105,43 @@ describe("stream-name-cache", () => {
     resolveOpen("Top Secret")
     await pending
     expect(getCachedStreamName(KEY)).toBeNull()
+  })
+})
+
+describe("isStreamNamePending", () => {
+  it("is pending before any decrypt has been attempted (so a loader covers the first frame)", () => {
+    expect(isStreamNamePending(KEY)).toBe(true)
+  })
+
+  it("is pending while a decrypt is in flight and settles once it lands", async () => {
+    let resolveOpen: (value: string | null) => void = () => {}
+    vi.spyOn(messageEnvelope, "tryOpenStreamName").mockImplementation(
+      () =>
+        new Promise<string | null>((r) => {
+          resolveOpen = r
+        })
+    )
+    const pending = requestStreamName(KEY, PAYLOAD, STUB_OPTS)
+    expect(isStreamNamePending(KEY)).toBe(true)
+
+    resolveOpen("Launch Plan")
+    await pending
+    expect(isStreamNamePending(KEY)).toBe(false)
+  })
+
+  it("is not pending after a decrypt settles without a name (non-recipient / forged AAD)", async () => {
+    stubOpen(null)
+    await requestStreamName(KEY, PAYLOAD, STUB_OPTS)
+    // Settled, no name — the placeholder is the answer, so no perpetual loader.
+    expect(isStreamNamePending(KEY)).toBe(false)
+  })
+
+  it("becomes pending again after the cache is cleared on lock", async () => {
+    stubOpen("Budget")
+    await requestStreamName(KEY, PAYLOAD, STUB_OPTS)
+    expect(isStreamNamePending(KEY)).toBe(false)
+    clearStreamNameCache()
+    expect(isStreamNamePending(KEY)).toBe(true)
   })
 })
 
