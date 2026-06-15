@@ -1,12 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import type { JSONContent } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
+import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
+import * as currentUserHook from "./use-current-workspace-user-id"
+import * as e2eSessionStore from "@/stores/e2e-session-store"
 import { useAllDrafts } from "./use-all-drafts"
+
+const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
+const UNLOCKED_SESSION = {
+  status: "unlocked",
+  keyId: "ek_1",
+  publicKey: null,
+  privateKey: {} as CryptoKey,
+  deviceTrusted: true,
+  error: null,
+} as ReturnType<typeof e2eSessionStore.useE2eSession>
 
 const workspaceId = "ws_1"
 
@@ -48,6 +61,18 @@ beforeEach(async () => {
   await db.composerLoaded.clear()
   await db.pendingOperations.clear()
   await db.draftScratchpads.clear()
+  // The drafts explorer now decrypts E2E previews via the shared cache, which
+  // reads the viewer id + session; default them to "no viewer / locked" so these
+  // plaintext-draft tests run without an AuthProvider (INV-48 namespace spyOn).
+  vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+  vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue({
+    status: "locked",
+    keyId: null,
+    publicKey: null,
+    privateKey: null,
+    deviceTrusted: false,
+    error: null,
+  } as ReturnType<typeof e2eSessionStore.useE2eSession>)
 })
 
 describe("useAllDrafts deleteDraft", () => {
@@ -98,5 +123,64 @@ describe("useAllDrafts deleteDraft", () => {
     expect(await db.composerLoaded.get(scope)).toBeUndefined()
     expect(await pendingDeleteIds()).toContain("draft_loaded")
     expect(kickOperationQueue).toHaveBeenCalled()
+  })
+})
+
+describe("useAllDrafts E2E drafts", () => {
+  it("lists a sealed draft with its decrypted preview instead of dropping it", async () => {
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(UNLOCKED_SESSION)
+    clearDecryptCache()
+
+    // A sealed draft at rest: ciphertext only, the empty placeholder as contentJson.
+    await db.drafts.add({
+      id: "draft_e2e",
+      workspaceId,
+      scope: "stream:stream_enc",
+      contentJson: EMPTY_DOC,
+      attachments: [],
+      ciphertext: "ct_sealed",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      baseVersion: 1,
+      clientUpdatedAt: 2000,
+    })
+    // The viewer already holds the plaintext in the shared cache (seeded by the
+    // authoring device's save, or a prior decrypt-on-read).
+    seedDecryption("draft_e2e", { contentMarkdown: "secret body", contentJson: makeDoc("secret body") })
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts.some((d) => d.id === "draft_e2e")).toBe(true))
+    const row = result.current.drafts.find((d) => d.id === "draft_e2e")!
+    // The encrypted draft shows up (not filtered out for an empty contentJson),
+    // and its preview is the decrypted body — never the ciphertext or a blank.
+    expect(row.preview).toBe("secret body")
+    expect(row.isStashed).toBe(true)
+  })
+
+  it("shows an 'Encrypted draft' placeholder (not a blank row) while the session is locked", async () => {
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
+    // Default locked session from beforeEach stands.
+    clearDecryptCache()
+    await db.drafts.add({
+      id: "draft_locked",
+      workspaceId,
+      scope: "stream:stream_enc",
+      contentJson: EMPTY_DOC,
+      attachments: [],
+      ciphertext: "ct_sealed",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      baseVersion: 1,
+      clientUpdatedAt: 2000,
+    })
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useAllDrafts(workspaceId), { wrapper })
+
+    await waitFor(() => expect(result.current.drafts.some((d) => d.id === "draft_locked")).toBe(true))
+    expect(result.current.drafts.find((d) => d.id === "draft_locked")!.preview).toBe("Encrypted draft")
   })
 })

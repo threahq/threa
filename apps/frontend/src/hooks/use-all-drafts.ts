@@ -12,11 +12,11 @@ import { deleteDraftById } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
-import { serializeToMarkdown } from "@threa/prosemirror"
-import type { CompanionMode, JSONContent } from "@threa/types"
+import type { CompanionMode } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
-import { stripMarkdownToInline } from "@/lib/markdown"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
+import { useDecryptedDraftPreviews, type DraftPreview, type DraftPreviewInput } from "./use-decrypted-draft-previews"
 
 export type DraftType = "scratchpad" | "channel" | "dm" | "thread"
 
@@ -92,14 +92,31 @@ function truncatePreview(content: string, maxLength: number = 80): string {
 }
 
 /**
- * Get a display-safe inline preview from JSONContent. Markdown is stripped
- * here (not at the render site) because every current consumer renders the
- * value as plain inline text — keeping that guarantee at the source
- * satisfies INV-60 without requiring every caller to remember the strip.
+ * The explorer preview for a draft row. Plaintext rows read `contentJson`
+ * directly; E2E rows (ciphertext at rest) read the decrypted body from the shared
+ * cache via `previewMap`, falling back to a status label so a sealed draft still
+ * shows up identifiably instead of as a blank/empty row (the bug this fixes).
  */
-function getContentPreview(contentJson: JSONContent | undefined): string {
-  if (!contentJson || isEmptyContent(contentJson)) return ""
-  return stripMarkdownToInline(serializeToMarkdown(contentJson))
+function draftPreviewLabel(draft: CachedDraft, previewMap: Map<string, DraftPreview>): string {
+  if (draft.ciphertext == null) return truncatePreview(draftInlineText(draft.contentJson))
+  const preview = previewMap.get(draft.id)
+  if (!preview) return "Encrypted draft"
+  if (preview.status !== "ready") return draftPreviewStatusLabel(preview.status)
+  return truncatePreview(preview.text) || "Encrypted draft"
+}
+
+/** The encrypted root whose SSK seals a draft's body, for decrypt-on-read previews. */
+function resolveRootStreamId(
+  parsed: { type: "stream" | "thread"; id: string },
+  streamMap: Map<string, CachedStream>,
+  messageToStreamMap: Map<string, { streamId: string; parentMessageId: string }>
+): string | null {
+  if (parsed.type === "thread") {
+    const info = messageToStreamMap.get(parsed.id)
+    if (!info) return null
+    return streamMap.get(info.streamId)?.rootStreamId ?? info.streamId
+  }
+  return streamMap.get(parsed.id)?.rootStreamId ?? parsed.id
 }
 
 interface ResolvedDraftLocation {
@@ -257,11 +274,45 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [cachedEvents])
 
+  const draftsById = useMemo(() => {
+    const map = new Map<string, CachedDraft>()
+    for (const draft of allDrafts) map.set(draft.id, draft)
+    return map
+  }, [allDrafts])
+
+  // E2E draft rows that need a decrypt-on-read preview — every sealed row (loaded
+  // or stashed) plus the loaded draft of an E2E scratchpad (its own encrypted
+  // root). Resolved here once and decrypted through the shared cache so the
+  // explorer lists encrypted drafts with readable previews instead of dropping
+  // them (their `contentJson` is the empty placeholder at rest).
+  const previewInputs = useMemo((): DraftPreviewInput[] => {
+    const inputs: DraftPreviewInput[] = []
+    for (const scratchpad of draftScratchpads ?? []) {
+      const loadedId = loadedByScope.get(`stream:${scratchpad.id}`) ?? null
+      const loadedDraft = loadedId ? draftsById.get(loadedId) : undefined
+      if (loadedDraft?.ciphertext != null) inputs.push({ draft: loadedDraft, rootStreamId: scratchpad.id })
+    }
+    for (const draft of allDrafts) {
+      if (draft.ciphertext == null) continue
+      const parsed = parseDraftMessageKey(draft.scope)
+      if (!parsed) continue
+      // Scratchpad-scoped rows are handled above (the loaded one); skip siblings.
+      if (parsed.type === "stream" && isDraftId(parsed.id)) continue
+      // No resolvable encrypted root (e.g. a thread whose parent isn't cached yet)
+      // → don't queue a decrypt that can never fire; the row shows "Encrypted
+      // draft" until the root resolves, rather than a stuck "Decrypting…".
+      const rootStreamId = resolveRootStreamId(parsed, streamMap, messageToStreamMap)
+      if (!rootStreamId) continue
+      inputs.push({ draft, rootStreamId })
+    }
+    return inputs
+  }, [allDrafts, draftScratchpads, loadedByScope, draftsById, streamMap, messageToStreamMap])
+
+  const previewMap = useDecryptedDraftPreviews(workspaceId, previewInputs)
+
   // Combine and transform drafts
   const drafts = useMemo((): UnifiedDraft[] => {
     const result: UnifiedDraft[] = []
-    const draftsById = new Map<string, CachedDraft>()
-    for (const draft of allDrafts) draftsById.set(draft.id, draft)
 
     // Scratchpads (streams not yet created on the server). Their content is the
     // loaded draft for the `stream:{scratchpadId}` scope.
@@ -270,17 +321,18 @@ export function useAllDrafts(workspaceId: string) {
       const loadedId = loadedByScope.get(scope) ?? null
       const loadedDraft = loadedId ? draftsById.get(loadedId) : undefined
 
+      const isE2e = loadedDraft?.ciphertext != null
       const hasContent = !isEmptyContent(loadedDraft?.contentJson)
       const hasAttachments = (loadedDraft?.attachments?.length ?? 0) > 0
 
-      if (hasContent || hasAttachments) {
+      if (loadedDraft && (hasContent || hasAttachments || isE2e)) {
         const displayName = scratchpad.displayName ?? streamFallbackLabel("scratchpad", "sidebar")
         result.push({
           id: scratchpad.id,
           type: "scratchpad",
           streamId: scratchpad.id,
           displayName,
-          preview: truncatePreview(getContentPreview(loadedDraft?.contentJson)),
+          preview: draftPreviewLabel(loadedDraft, previewMap),
           attachmentCount: loadedDraft?.attachments?.length ?? 0,
           updatedAt: loadedDraft?.clientUpdatedAt ?? scratchpad.createdAt,
           href: `/w/${workspaceId}/s/${scratchpad.id}`,
@@ -301,9 +353,13 @@ export function useAllDrafts(workspaceId: string) {
       // supports them.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
 
+      // An E2E draft's `contentJson` is the empty placeholder (the body is sealed),
+      // so it counts as content on the strength of its ciphertext — otherwise it
+      // would be dropped from the explorer entirely.
+      const isE2e = draft.ciphertext != null
       const hasContent = !isEmptyContent(draft.contentJson)
       const hasAttachments = (draft.attachments?.length ?? 0) > 0
-      if (!hasContent && !hasAttachments) continue
+      if (!isE2e && !hasContent && !hasAttachments) continue
 
       const resolved = resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
       const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
@@ -321,7 +377,7 @@ export function useAllDrafts(workspaceId: string) {
         type: resolved.draftType,
         streamId: resolved.streamId,
         displayName: resolved.displayName,
-        preview: truncatePreview(getContentPreview(draft.contentJson)),
+        preview: draftPreviewLabel(draft, previewMap),
         attachmentCount: draft.attachments?.length ?? 0,
         updatedAt: draft.clientUpdatedAt,
         href,
@@ -336,7 +392,7 @@ export function useAllDrafts(workspaceId: string) {
     result.sort((a, b) => b.updatedAt - a.updatedAt)
 
     return result
-  }, [draftScratchpads, allDrafts, loadedByScope, streamMap, messageToStreamMap, workspaceId])
+  }, [draftScratchpads, allDrafts, draftsById, loadedByScope, streamMap, messageToStreamMap, previewMap, workspaceId])
 
   // Delete a draft by its `UnifiedDraft.id`. Scratchpad rows carry a scratchpad
   // id; every other row carries a unified draft id — both `draft_`-prefixed, so

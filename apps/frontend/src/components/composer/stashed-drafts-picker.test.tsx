@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
 import * as useMobileModule from "@/hooks/use-mobile"
-import type { CachedDraft } from "@/hooks"
+import type { CachedDraft, DraftPreview } from "@/hooks"
 
 let isMobileMockValue = false
 
@@ -83,6 +83,43 @@ describe("StashedDraftsPicker", () => {
 
     await userEvent.click(screen.getByText("Saved one"))
     expect(onRestore).toHaveBeenCalledWith("draft_1")
+  })
+
+  describe("preview rendering", () => {
+    const sealed = makeDraft("draft_e", "placeholder")
+    const open = () => userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+    const preview = (status: DraftPreview["status"], text = ""): Map<string, DraftPreview> =>
+      new Map([["draft_e", { text, status }]])
+
+    it("renders the host-supplied decrypted body when ready", async () => {
+      renderPicker({ drafts: [sealed], previewById: preview("ready", "decrypted body") })
+      await open()
+      expect(screen.getByText("decrypted body")).toBeInTheDocument()
+    })
+
+    it("shows 'Decrypting…' while the body is in flight", async () => {
+      renderPicker({ drafts: [sealed], previewById: preview("decrypting") })
+      await open()
+      expect(screen.getByText("Decrypting…")).toBeInTheDocument()
+    })
+
+    it("shows 'Encrypted draft' while the session is locked", async () => {
+      renderPicker({ drafts: [sealed], previewById: preview("locked") })
+      await open()
+      expect(screen.getByText("Encrypted draft")).toBeInTheDocument()
+    })
+
+    it("shows 'Couldn't decrypt' on a failed decrypt", async () => {
+      renderPicker({ drafts: [sealed], previewById: preview("failed") })
+      await open()
+      expect(screen.getByText("Couldn't decrypt")).toBeInTheDocument()
+    })
+
+    it("falls back to the plaintext body when no preview map is supplied", async () => {
+      renderPicker({ drafts: [makeDraft("draft_p", "plain body")] })
+      await open()
+      expect(screen.getByText("plain body")).toBeInTheDocument()
+    })
   })
 
   describe("delete confirmation", () => {

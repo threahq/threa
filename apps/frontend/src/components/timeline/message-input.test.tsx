@@ -217,6 +217,9 @@ beforeEach(() => {
     mutate: vi.fn(),
     isPending: false,
   } as unknown as ReturnType<typeof hooksModule.useScheduleMessage>)
+  // Stash previews decrypt via the shared cache, which reads auth/session; these
+  // tests render without an AuthProvider, so stub the batch hook to an empty map.
+  vi.spyOn(hooksModule, "useDecryptedDraftPreviews").mockReturnValue(new Map())
 
   vi.spyOn(composerModule, "FloatingComposerShell").mockImplementation((({
     children,

@@ -12,6 +12,7 @@ const makeDoc = (text: string): JSONContent => ({
 })
 
 // Mock useDraftMessage
+const mockSaveDraft = vi.fn()
 const mockSaveDraftDebounced = vi.fn()
 const mockAddDraftAttachment = vi.fn()
 const mockRemoveDraftAttachment = vi.fn()
@@ -36,6 +37,7 @@ interface MockDraftState {
 let mockDraftIsLoaded = true
 let mockDraftContentJson: JSONContent = EMPTY_DOC
 let mockDraftAttachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }> = []
+let mockDraftLoadedId: string | null = "draft_mock"
 let mockDraftStateByKey: Record<string, MockDraftState> = {}
 
 // Mock useAttachments
@@ -61,6 +63,7 @@ describe("useDraftComposer", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    mockSaveDraft.mockReset()
     mockSaveDraftDebounced.mockReset()
     mockAddDraftAttachment.mockReset()
     mockRemoveDraftAttachment.mockReset()
@@ -74,6 +77,7 @@ describe("useDraftComposer", () => {
     mockDraftIsLoaded = true
     mockDraftContentJson = EMPTY_DOC
     mockDraftAttachments = []
+    mockDraftLoadedId = "draft_mock"
     mockDraftStateByKey = {}
     mockPendingAttachments = []
 
@@ -90,6 +94,8 @@ describe("useDraftComposer", () => {
           contentJson: state.contentJson,
           attachments: state.attachments,
           contextRefs: state.contextRefs ?? [],
+          loadedDraftId: mockDraftLoadedId,
+          saveDraft: mockSaveDraft,
           saveDraftDebounced: mockSaveDraftDebounced,
           addAttachment: mockAddDraftAttachment,
           removeAttachment: mockRemoveDraftAttachment,
@@ -645,6 +651,171 @@ describe("useDraftComposer", () => {
       const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
 
       expect(result.current.handleFileSelect).toBe(mockHandleFileSelect)
+    })
+  })
+
+  describe("flushDraft (safe flush — never deletes)", () => {
+    it("persists the live editor content when it is non-empty", async () => {
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.setContent(makeDoc("unsaved keystrokes"))
+      })
+      await act(async () => {
+        await result.current.flushDraft()
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("unsaved keystrokes"))
+    })
+
+    it("no-ops on an empty editor so a restore mid-hydration can't delete the loaded draft", async () => {
+      // Regression: stash/restore used to flush `composer.content` unconditionally;
+      // when the editor was still mid-hydration (transiently empty), the save took
+      // the empty→delete path and destroyed the loaded draft.
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      await act(async () => {
+        await result.current.flushDraft()
+      })
+
+      expect(mockSaveDraft).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("markNeedsRehydrate (stash-restore re-hydration)", () => {
+    it("applies the newly-loaded draft body in place after a rehydrate", () => {
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("first")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("first"))
+
+      // A restore swaps the loaded pointer to a different draft, then re-hydrates.
+      mockDraftContentJson = makeDoc("restored")
+      act(() => {
+        result.current.markNeedsRehydrate()
+      })
+      rerender()
+
+      expect(result.current.content).toEqual(makeDoc("restored"))
+    })
+
+    it("does not re-fill the editor after the user clears it (no clobber)", () => {
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("saved body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("saved body"))
+
+      // User clears the editor — `savedDraft` still lags at "saved body" for a tick.
+      act(() => {
+        result.current.handleContentChange(EMPTY_DOC)
+      })
+      rerender()
+
+      // Stays cleared: the late-hydrate yields to user engagement.
+      expect(result.current.content).toEqual(EMPTY_DOC)
+    })
+
+    it("does not re-fill after a send-style clear while the loaded row lags (restored-then-sent)", () => {
+      // Regression: a restored draft sent without further typing left `userEngaged`
+      // false; the editor cleared on send but the late-hydrate re-filled it from the
+      // still-present `savedDraft` before the resolve removed the row.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("restored body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("restored body")) // hydrated; user did NOT type
+
+      // Send clears the editor; the loaded row still lags (savedDraft unchanged for a tick).
+      act(() => {
+        result.current.setContent(EMPTY_DOC)
+      })
+      rerender()
+
+      // Stays cleared — no rising edge of body-availability, so no re-fill.
+      expect(result.current.content).toEqual(EMPTY_DOC)
+    })
+
+    it("blanks the editor when the loaded draft is removed underneath it (resolved on another device)", () => {
+      // Start typing on one device, finish + send on another: the partial draft
+      // must not linger here once its pointer is cleared (loaded id → null).
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("roamed body")
+      mockDraftLoadedId = "draft_roamed"
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("roamed body"))
+
+      // The draft is sent/resolved elsewhere: its `draft:deleted` clears the pointer.
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      rerender()
+
+      expect(result.current.content).toEqual(EMPTY_DOC)
+    })
+
+    it("does not clobber typed content when a deferred (decrypting) draft body lands after the user types", () => {
+      // Repro of the staging data-loss bug: restore an E2E draft whose sealed body
+      // is still decrypting. `isDraftLoaded` stays false, so the one-shot init is
+      // DEFERRED. The user types into the blanked editor; when the decrypt lands,
+      // `isDraftLoaded` flips true and the deferred init runs for the FIRST time.
+      // It must yield to the keystrokes the user already made — a focused composer
+      // is never overwritten by anything but the user's own typing.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("original body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("original body"))
+
+      // Restore a different draft, then simulate its sealed body still decrypting.
+      act(() => {
+        result.current.markNeedsRehydrate()
+      })
+      mockDraftIsLoaded = false
+      mockDraftContentJson = EMPTY_DOC
+      rerender()
+
+      // User types into the blank editor before the restored body is readable.
+      act(() => {
+        result.current.handleContentChange(makeDoc("typed during decrypt"))
+      })
+      expect(result.current.content).toEqual(makeDoc("typed during decrypt"))
+
+      // Decrypt lands: the loaded body becomes available and isLoaded flips true.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("decrypted loaded body")
+      rerender()
+
+      expect(result.current.content).toEqual(makeDoc("typed during decrypt"))
+    })
+
+    it("preserves in-progress edits when the loaded pointer briefly flickers to null", () => {
+      // Repro of the mobile revert seen on staging: while the user edits (live
+      // content ahead of the debounced save), `loadedDraftId` momentarily reads
+      // null — a transient re-read of the loaded pointer. The clear-on-removal
+      // effect used to blank the editor and reset the engagement guard; on the
+      // pointer's return, the late-hydrate rising edge then re-filled the stale
+      // last-saved body, dropping the un-saved keystrokes. A real removal migrates
+      // unpushed edits to a NEW id rather than nulling, so a null-while-engaged is
+      // a flicker and must never wipe the editor.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("saved body")
+      mockDraftLoadedId = "draft_x"
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("saved body"))
+
+      // User types ahead of the debounce (savedDraft still lags at "saved body").
+      act(() => {
+        result.current.handleContentChange(makeDoc("saved body and more"))
+      })
+      expect(result.current.content).toEqual(makeDoc("saved body and more"))
+
+      // Pointer flickers to null (no loaded row → savedDraft reads empty) …
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      rerender()
+      // … then returns, with savedDraft still the stale last-saved body.
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("saved body")
+      rerender()
+
+      expect(result.current.content).toEqual(makeDoc("saved body and more"))
     })
   })
 })

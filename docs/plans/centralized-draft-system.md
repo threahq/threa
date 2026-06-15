@@ -226,9 +226,56 @@ from Stage 1 still green.
 
 - `moveMessagesToThread` (`event-service.ts`): re-scope user's `thread:{targetMessageId}` drafts → `stream:{threadStreamId}` (+ `root_stream_id`) in the move transaction, emit `draft:upserted`. Frontend handler moves the local draft + loaded pointer. Fold the unpromoted-draft-stream case into the existing `promoteDraft` flow (re-scope + push on promotion).
 
-#### Stage 4c — E2E
+#### Stage 4c — E2E — DONE (body only)
 
 - E2E: seal draft to stream SSK before persist/push; store ciphertext locally; decrypt on load.
+
+The backend (table + `upsertSchema` + repo/service/view) already carried the
+`ciphertext` / `envelope` / `e2eVersion` triple from Stage 1, so 4c was
+frontend-only:
+
+- `lib/crypto/seal-draft.ts` (new): `sealDraftContent` (reuses `sealOutgoingMessage`,
+  the draft id binds the AAD in the message-id slot) and `decryptDraftContent`
+  (reuses `tryDecryptMessagePayload`; the AAD travels in the envelope, so no draft
+  id needed on open).
+- `hooks/use-draft-message.ts`: the old "encrypted streams disable persistence"
+  gate is replaced. The hook now reads the viewer id (`useCurrentWorkspaceUserId`,
+  extracted to its own hook) + `useE2eSession`, and the third arg is `e2eStreamId`
+  (the encrypted root to seal against) instead of a boolean. **Unlocked** → seal on
+  save (`upsertLoadedSealedDraft` writes ciphertext + an EMPTY_DOC placeholder, never
+  plaintext) and decrypt-on-load into the composer (gated by `isLoaded` until the
+  decrypt resolves). **Locked** → behaves exactly as before (nothing loads/persists;
+  the sealed row waits on disk). Mount sweep is `purgePlaintextScopeDrafts` (keeps
+  sealed rows, removes only plaintext-at-rest).
+- `sync/draft-sync.ts`: `cachedDraftFromWire` maps the triple; `applyDraftUpserted`
+  no longer drops E2E rows; `executeDraftUpsert` pushes the ciphertext triple (null
+  `contentJson`) for sealed rows.
+- Call sites (`message-input.tsx`, `thread/stream-panel.tsx`) pass the encrypted
+  root (`rootStreamId ?? id`); `use-draft-composer.ts` threads `e2eStreamId`.
+
+**Scope boundary (v1) — deferred follow-up, non-regressing vs. pre-4c:**
+
+- **E2E-draft attachments / context refs / slash commands are not sealed yet** —
+  only the body roams. They stay session-local exactly as before (per-file
+  attachment-key roaming across devices is its own design).
+
+**Shipped beyond the initial cut, so the feature is usable end-to-end:**
+
+- **Manual stash (Cmd+S) works for encrypted streams.** Stash/restore are pointer
+  moves (`stashLoadedDraft` / `restoreStashedDraftToComposer`), not plaintext
+  snapshots: the sealed row is detached/attached via the `composerLoaded` pointer,
+  so nothing plaintext leaves memory (E2EE-4) and the pile behaves the same for
+  plaintext and E2E. `flushDraft` only persists a non-empty editor, so a restore
+  fired mid-hydration can't delete the loaded draft.
+- **The `/drafts` explorer lists E2E drafts** with decrypt-on-read previews
+  (`useDecryptedDraftPreviews` over the shared cache): a ciphertext row counts as
+  content, and its body decrypts in memory, falling back to an `Encrypted draft` /
+  `Decrypting…` label while locked or mid-decrypt. Rows whose encrypted root can't
+  be resolved yet are simply not queued for decrypt (no stuck spinner).
+- **Unlock-after-open loads in place.** A draft that decrypts only after the
+  session unlocks — or a stash-restore pointer swap — re-hydrates the already-open
+  composer via a late-hydrate effect (no stream reopen required), guarded by
+  `userEngagedRef` so it never clobbers typed content.
 
 **Reuse:** `sealOutgoingMessage` E2E path; existing `promoteDraft` / `setParentThreadId`; resolve CAS from Stage 1.
 

@@ -32,10 +32,30 @@ const listeners = new Map<string, Set<() => void>>()
 // can detect they're stale and refuse to write plaintext back into the cache.
 let generation = 0
 
+// A monotonic version bumped on EVERY cache change, with its own listener set.
+// Per-id subscriptions (`subscribeToDecryption`) suit a single rendered message;
+// a batch reader (e.g. decrypted draft previews across a list) instead watches
+// this one signal and re-reads the ids it cares about.
+let cacheVersion = 0
+const versionListeners = new Set<() => void>()
+
 function emit(eventId: string): void {
+  cacheVersion++
+  for (const listener of versionListeners) listener()
   const set = listeners.get(eventId)
   if (!set) return
   for (const listener of set) listener()
+}
+
+/** Snapshot of the global cache version — changes on any insert/seed/invalidate/clear. */
+export function getDecryptCacheVersion(): number {
+  return cacheVersion
+}
+
+/** Subscribe to ANY cache change (for batch readers like draft-preview lists). */
+export function subscribeDecryptCacheVersion(listener: () => void): () => void {
+  versionListeners.add(listener)
+  return () => versionListeners.delete(listener)
 }
 
 function touch(eventId: string, entry: DecryptCacheEntry): void {
@@ -88,7 +108,10 @@ export function requestDecryption(
   touch(eventId, { status: "pending", content: null })
 
   const startGeneration = generation
-  const promise = (async (): Promise<DecryptCacheEntry> => {
+  // A holder so the async body can compare against its own promise identity
+  // (`holder.promise` is assigned synchronously below, before any await resolves).
+  const holder: { promise?: Promise<DecryptCacheEntry> } = {}
+  holder.promise = (async (): Promise<DecryptCacheEntry> => {
     const decrypted = await tryDecryptMessagePayload(payload, opts)
     const entry: DecryptCacheEntry = decrypted
       ? { status: "decrypted", content: decrypted }
@@ -97,14 +120,18 @@ export function requestDecryption(
     // in flight, drop the result — writing it back would leak plaintext past
     // the lock boundary.
     if (startGeneration !== generation) return entry
+    // A concurrent `invalidateDecryption` (or a fresh `seedDecryption`) may have
+    // replaced this id's slot while we were decrypting; only the current inflight
+    // writes back, so a stale decrypt can never clobber freshly-authored content.
+    if (inflight.get(eventId) !== holder.promise) return entry
     touch(eventId, entry)
     inflight.delete(eventId)
     emit(eventId)
     return entry
   })()
 
-  inflight.set(eventId, promise)
-  return promise
+  inflight.set(eventId, holder.promise)
+  return holder.promise
 }
 
 /**
@@ -121,6 +148,24 @@ export function seedDecryption(eventId: string, content: DecryptedMessageContent
   touch(eventId, { status: "decrypted", content })
   inflight.delete(eventId)
   emit(eventId)
+}
+
+/**
+ * Drop the cached (and in-flight) decryption for a single id and notify
+ * subscribers. Unlike `clearDecryptCache` (which wipes everything on lock), this
+ * targets one id so a caller can REPLACE stale plaintext for a reused id.
+ *
+ * `seedDecryption` deliberately no-ops when an id already has a decrypted entry
+ * (a message's id is immutable, so its first good decrypt is final). A draft id,
+ * by contrast, is stable across edits — every keystroke re-seals the SAME id with
+ * new plaintext. Without invalidation the second edit's seed would be ignored and
+ * the read path would serve the FIRST edit's body on the next remount. The draft
+ * write path therefore invalidates this id, then seeds the fresh plaintext.
+ */
+export function invalidateDecryption(eventId: string): void {
+  const had = entries.delete(eventId)
+  const wasInflight = inflight.delete(eventId)
+  if (had || wasInflight) emit(eventId)
 }
 
 export function clearDecryptCache(): void {

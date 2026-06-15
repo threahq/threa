@@ -32,6 +32,7 @@ import {
   useQueueDraftMessage,
   useComposerHeightPublish,
   useStashComposer,
+  useDecryptedDraftPreviews,
   useWorkspaceUserId,
 } from "@/hooks"
 import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
@@ -52,6 +53,7 @@ import {
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer, StashedDraftsPicker } from "@/components/composer"
+import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentMessage } from "./thread-parent-message"
@@ -172,24 +174,36 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", parentMessageId: draftInfo.parentMessageId }) : ""
   // A draft thread has no stream row of its own yet — its E2E state is the
   // parent's (threads inherit the root's SSK server-side, INV-E1). Read the flag
-  // off the parent so the composer encrypts attachments before upload and skips
-  // plaintext draft persistence, exactly as it would in the sealed thread.
+  // and the encrypted root off the thread stream when it exists, else the parent,
+  // so the composer encrypts attachments before upload and seals the draft body
+  // to the root's key — exactly as it would in the sealed thread.
+  const e2eBase = stream ?? parentStream
+  const e2eRoot = e2eBase?.e2eEnabled ? (e2eBase.rootStreamId ?? e2eBase.id) : undefined
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: draftInfo?.parentMessageId ?? "",
-    e2eEnabled: (stream ?? parentStream)?.e2eEnabled === true,
+    e2eStreamId: e2eRoot,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
   // a draft, so we pass `undefined` as the scope in that case — the hook
   // returns an empty list and silently no-ops.
   const stashScope = draftKey || undefined
+  // Stash + restore are pointer moves, so they work for plaintext and E2E alike.
   const stash = useStashComposer(composer, workspaceId, stashScope)
+  // Decrypt-on-read previews for the pile (sealed rows via the shared cache,
+  // plaintext from contentJson); every entry shares this thread's encrypted root.
+  const stashPreviewInputs = useMemo(
+    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRoot })),
+    [stash.drafts, e2eRoot]
+  )
+  const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
   const stashedDraftsTrigger = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
+      previewById={stashPreviews}
       canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
@@ -201,6 +215,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const stashedDraftsTriggerFab = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
+      previewById={stashPreviews}
       canStashCurrent={composer.canSend}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
@@ -209,6 +224,13 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
       size="fab"
     />
   ) : undefined
+
+  // Reply composer placeholder: surface an E2E draft's decrypt state so the
+  // briefly-empty editor doesn't read as "no draft", and a failed decrypt says
+  // so plainly instead of leaving a permanent spinner.
+  let replyPlaceholder = "Write your reply..."
+  if (composer.decryptFailed) replyPlaceholder = "Couldn't decrypt your saved draft"
+  else if (composer.isDecrypting) replyPlaceholder = "Decrypting your draft…"
 
   // Draft thread expand state
   const [draftExpanded, setDraftExpanded] = useState(false)
@@ -538,7 +560,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     hasFailed={composer.hasFailed}
                     submitLabel="Reply"
                     submittingLabel="Creating..."
-                    placeholder="Write your reply..."
+                    placeholder={replyPlaceholder}
                     workspaceId={workspaceId}
                     scopeId={panelId}
                     memoAnchorStreamId={draftInfo.parentStreamId}
@@ -591,6 +613,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
               )}
             </div>
             <FloatingComposerShell ref={draftComposerRef} hidden={draftExpanded}>
+              <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!e2eRoot} streamId={e2eRoot} />
               {!draftExpanded && (
                 <MessageComposer
                   content={composer.content}
@@ -607,7 +630,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   hasFailed={composer.hasFailed}
                   submitLabel="Reply"
                   submittingLabel="Creating..."
-                  placeholder="Write your reply..."
+                  placeholder={replyPlaceholder}
                   autoFocus={!isMobile}
                   workspaceId={workspaceId}
                   scopeId={panelId}

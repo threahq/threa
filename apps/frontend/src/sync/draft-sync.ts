@@ -12,12 +12,12 @@ import type {
   Draft,
   DraftDeletedPayload,
   DraftUpsertedPayload,
-  JSONContent,
   ResolveDraftInput,
   ResolveDraftResponse,
   UpsertDraftInput,
   UpsertDraftResponse,
 } from "@threa/types"
+import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 
 /**
  * Stage 3 draft sync — wires the local-first draft store (Stage 2) to the
@@ -38,12 +38,12 @@ import type {
  * `upsert_draft` op for an id IS the local dirty bit — rather than a flag on the
  * row, so the two can never drift apart.
  *
- * E2E drafts (null `contentJson`, ciphertext-only) are out of scope here: Stage
- * 3 never pushes them (the composer hook gates encrypted streams), and inbound
- * E2E rows are ignored until decrypt-on-load lands in Stage 4.
+ * E2E drafts roam as ciphertext (Stage 4c): the composer seals the body before
+ * it is persisted and pushed, so this layer carries the `ciphertext` / `envelope`
+ * / `e2eVersion` triple (with null `contentJson`) over the wire and stores it
+ * sealed at rest — the plaintext is decrypted into memory only when the composer
+ * loads the draft. The drift/split bookkeeping below is content-shape-agnostic.
  */
-
-const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
 /** Minimal surface of the drafts REST client the queue replays against. */
 export interface DraftsServiceLike {
@@ -71,12 +71,18 @@ export function cachedDraftFromWire(draft: Draft): CachedDraft {
     id: draft.id,
     workspaceId: draft.workspaceId,
     scope: draft.scope,
+    // E2E rows carry null `contentJson` on the wire (the body lives sealed in
+    // `ciphertext`); the placeholder keeps the local shape uniform and the
+    // composer decrypts the body into memory on load.
     contentJson: draft.contentJson ?? EMPTY_DOC,
     attachments: [],
     contextRefs,
     attachmentIds: draft.attachmentIds,
     baseVersion: draft.version,
     clientUpdatedAt: Number.isNaN(clientUpdatedAt) ? Date.now() : clientUpdatedAt,
+    ...(draft.ciphertext != null
+      ? { ciphertext: draft.ciphertext, envelope: draft.envelope, e2eVersion: draft.e2eVersion ?? undefined }
+      : {}),
   }
 }
 
@@ -376,8 +382,6 @@ export async function applyDraftUpserted(
 ): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
-  // E2E rows carry no plaintext to render/store yet (Stage 4).
-  if (draft.contentJson === null) return
 
   // A queued local delete wins: the user discarded this draft here and its
   // `delete_draft` op (not yet drained) will remove the server row. Until then,
@@ -507,7 +511,15 @@ export async function executeDraftUpsert(
   const row = await db.drafts.get(draftId)
   if (!row) return // discarded locally after the op was enqueued — nothing to push
 
-  const attachmentIds = row.attachments.length > 0 ? row.attachments.map((a) => a.id) : (row.attachmentIds ?? [])
+  const isE2e = row.ciphertext != null
+  // A sealed row never ships attachment linkage: v1 is body-only, and an E2E row
+  // must not push plaintext attachment ids alongside its ciphertext (E2EE-4) — no
+  // matter how the row acquired them (e.g. a pre-seal wire row). Enforced here at
+  // the push boundary, not just on the write paths.
+  let attachmentIds: string[] = []
+  if (!isE2e) {
+    attachmentIds = row.attachments.length > 0 ? row.attachments.map((a) => a.id) : (row.attachmentIds ?? [])
+  }
   const input: UpsertDraftInput = {
     scope: row.scope,
     // The server owns root_stream_id on thread re-pointing (it sets it when a
@@ -517,9 +529,14 @@ export async function executeDraftUpsert(
     expectedVersion: row.baseVersion ?? 0,
     writeId: writeIdValue,
     clientUpdatedAt: new Date(row.clientUpdatedAt).toISOString(),
-    contentJson: row.contentJson,
+    // An E2E draft pushes its sealed body, never plaintext — the server stores
+    // the ciphertext opaquely and the upsert schema rejects carrying both.
+    contentJson: isE2e ? null : row.contentJson,
     attachmentIds,
     contextRefs: (row.contextRefs as unknown as Record<string, unknown>[] | undefined) ?? null,
+    ciphertext: isE2e ? row.ciphertext : null,
+    envelope: isE2e ? row.envelope : null,
+    e2eVersion: isE2e ? (row.e2eVersion ?? null) : null,
   }
 
   const res = await service.upsert(workspaceId, draftId, input)

@@ -53,14 +53,16 @@ export {
 
 export { useDraftMessage, getDraftMessageKey } from "./use-draft-message"
 
-export {
-  useStashedDrafts,
-  type UseStashedDraftsResult,
-  type StashDraftInput,
-  type CachedDraft,
-} from "./use-stashed-drafts"
+export { useStashedDrafts, type UseStashedDraftsResult, type CachedDraft } from "./use-stashed-drafts"
 
 export { useStashComposer, type UseStashComposerResult } from "./use-stash-composer"
+
+export {
+  useDecryptedDraftPreviews,
+  type DraftPreview,
+  type DraftPreviewStatus,
+  type DraftPreviewInput,
+} from "./use-decrypted-draft-previews"
 
 export { useStreamSocket } from "./use-stream-socket"
 

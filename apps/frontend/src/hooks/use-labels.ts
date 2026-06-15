@@ -1,7 +1,6 @@
 import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { useAuth } from "@/auth"
 import { useLabelService } from "@/contexts"
 import { db, type CachedLabel, type CachedLabelMembership, type CachedLabelAssignment, type CachedStream } from "@/db"
 import {
@@ -9,8 +8,8 @@ import {
   useWorkspaceLabelMemberships,
   useWorkspaceLabelAssignments,
   useWorkspaceStreams,
-  useWorkspaceUsers,
 } from "@/stores/workspace-store"
+import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 import { LabelableResourceTypes, Visibilities } from "@threa/types"
 import type {
   CreateLabelInput,
@@ -238,15 +237,9 @@ export interface LabelViewerContext {
  * consulted for them.
  */
 export function useLabelsView(workspaceId: string): LabelViewerContext {
-  const { user } = useAuth()
-  const workspaceUsers = useWorkspaceUsers(workspaceId)
   const labels = useWorkspaceLabels(workspaceId)
   const memberships = useWorkspaceLabelMemberships(workspaceId)
-
-  const currentUserId = useMemo(() => {
-    if (!user) return null
-    return workspaceUsers.find((u) => u.workosUserId === user.id)?.id ?? null
-  }, [user, workspaceUsers])
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
 
   return useMemo(() => {
     const joinedLabelIds = new Set<string>()
@@ -356,16 +349,6 @@ export function usePromoteLabel(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
     },
   })
-}
-
-/** Resolve the current viewer's workspace-scoped user id (UserId), or null. */
-function useCurrentWorkspaceUserId(workspaceId: string): string | null {
-  const { user } = useAuth()
-  const workspaceUsers = useWorkspaceUsers(workspaceId)
-  return useMemo(() => {
-    if (!user) return null
-    return workspaceUsers.find((u) => u.workosUserId === user.id)?.id ?? null
-  }, [user, workspaceUsers])
 }
 
 export interface ResourceLabelState {

@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useEffect, useRef } from "react"
+import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import {
@@ -7,6 +7,7 @@ import {
   useStreamOrDraft,
   useComposerHeightPublish,
   useStashComposer,
+  useDecryptedDraftPreviews,
   useMentionStreamContext,
 } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -226,18 +227,31 @@ function MessageInputComponent({
   // through their root channel for access grants — handled inside the hook.
   const streamContext = useMentionStreamContext(workspaceId, stream)
 
+  const e2eEnabled = stream?.e2eEnabled === true
+  // The encrypted root holds the SSK + wraps (a thread shares its root's key), so
+  // both sealing and the repair notice key off the root, not the (maybe-thread) id.
+  const e2eRootStreamId = e2eEnabled ? (stream?.rootStreamId ?? streamId) : undefined
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: streamId,
-    e2eEnabled: stream?.e2eEnabled === true,
+    e2eStreamId: e2eRootStreamId,
   })
   const quoteReplyCtx = useQuoteReply()
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
-  // many-per-scope stash and the `?stash=<id>` URL auto-restore.
+  // many-per-scope stash and the `?stash=<id>` URL auto-restore. Stash + restore
+  // are pointer moves, so they work for plaintext and E2E alike (no gating).
   const stash = useStashComposer(composer, workspaceId, draftKey)
+  // Decrypt-on-read previews for the stash pile (sealed rows decrypt via the
+  // shared cache; plaintext rows resolve from contentJson). All entries share
+  // this stream's encrypted root.
+  const stashPreviewInputs = useMemo(
+    () => stash.drafts.map((draft) => ({ draft, rootStreamId: e2eRootStreamId })),
+    [stash.drafts, e2eRootStreamId]
+  )
+  const stashPreviews = useDecryptedDraftPreviews(workspaceId, stashPreviewInputs)
 
   // Use a ref so the handler always reads fresh composer state without
   // re-registering on every render (composer object is not memoized).
@@ -612,6 +626,14 @@ function MessageInputComponent({
     )
   }
 
+  // While an unlocked E2E draft's sealed body decrypts into the composer, signal
+  // it in the placeholder so the briefly-empty editor doesn't read as "no draft";
+  // a failed decrypt says so plainly instead of leaving a permanent spinner.
+  const offlinePlaceholder = isOffline ? "Type a message (sent when back online)" : undefined
+  let composerPlaceholder = offlinePlaceholder
+  if (composer.decryptFailed) composerPlaceholder = "Couldn't decrypt your saved draft"
+  else if (composer.isDecrypting) composerPlaceholder = "Decrypting your draft…"
+
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {
     content: composer.content,
@@ -629,7 +651,7 @@ function MessageInputComponent({
     canSubmit: composer.canSend,
     isSubmitting: composer.isSending,
     hasFailed: composer.hasFailed,
-    placeholder: isOffline ? "Type a message (sent when back online)" : undefined,
+    placeholder: composerPlaceholder,
     messageSendMode,
     scopeId: streamId,
     onEditLastMessage: triggerEditLast
@@ -663,6 +685,7 @@ function MessageInputComponent({
     stashedDraftsTrigger: (
       <StashedDraftsPicker
         drafts={stash.drafts}
+        previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
@@ -673,6 +696,7 @@ function MessageInputComponent({
     stashedDraftsTriggerFab: (
       <StashedDraftsPicker
         drafts={stash.drafts}
+        previewById={stashPreviews}
         canStashCurrent={composer.canSend}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
@@ -721,7 +745,7 @@ function MessageInputComponent({
           This replaces a previous ref-counted React state mechanism that was prone to
           leaks across hydration races and virtualization cycles. */}
       <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
-        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!stream?.e2eEnabled} streamId={stream?.id} />
+        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>
