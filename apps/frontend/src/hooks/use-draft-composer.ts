@@ -85,15 +85,6 @@ export interface DraftComposerState {
   resolveDraft: () => Promise<void>
   clearAttachments: () => void
 
-  /**
-   * Hydrate attachments from a snapshot (e.g. when restoring a stashed draft).
-   * Pushes them into the pending-attachments list; the persistence effect
-   * then writes them into the scope's loaded draft on next flush.
-   */
-  restoreAttachments: (
-    attachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }>
-  ) => void
-
   // Loading
   isLoaded: boolean
   /** An E2E draft whose sealed body is still being decrypted into the composer. */
@@ -356,13 +347,7 @@ export function useDraftComposer({
   )
 
   // Check if document has actual content (not just empty paragraphs)
-  const hasContent =
-    content.content?.some((node) => {
-      if (node.type === "paragraph") {
-        return node.content && node.content.length > 0
-      }
-      return true // Non-paragraph nodes count as content
-    }) ?? false
+  const hasContent = hasDocContent(content)
 
   // Sending while uploads are still in flight is not safe: the message would
   // be created before attachment IDs exist, leaving uploaded files unattached.
@@ -418,7 +403,6 @@ export function useDraftComposer({
     clearDraft,
     resolveDraft,
     clearAttachments,
-    restoreAttachments,
 
     // Loading
     isLoaded: isDraftLoaded,

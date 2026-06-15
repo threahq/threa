@@ -22,13 +22,11 @@ import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
  * root whose SSK wraps the body (a thread passes its root); decrypt holds at
  * `pending` until it is known so we never poison the cache against an unknown root.
  */
-export type DecryptedDraftContent = DraftDecryption
-
 export function useDecryptedDraftContent(
   workspaceId: string,
   draft: CachedDraft | undefined,
   rootStreamId: string | null | undefined
-): DecryptedDraftContent {
+): DraftDecryption {
   const userId = useCurrentWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
   const draftId = draft?.id
