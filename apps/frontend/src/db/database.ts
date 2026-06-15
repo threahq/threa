@@ -107,6 +107,17 @@ export interface CachedStream {
    * older cached rows still parse; treated as an empty set when absent.
    */
   e2eActors?: E2eActor[]
+  /**
+   * The stream's display name sealed under the SSK (base64 ciphertext + its
+   * `StreamEnvelope` framing). Persisting *ciphertext* at rest is safe — it
+   * mirrors how message bodies keep ciphertext in `db.events.payload` and
+   * decrypt only in memory. An unlocked client decrypts this and prefers it
+   * over the plaintext `displayName`; the decrypted plaintext is held only in
+   * the memory-only `stream-name-cache` and is never written back to IDB.
+   * Both null until the stream is renamed (or auto-titled) while E2E.
+   */
+  sealedNameCiphertext?: string | null
+  sealedNameEnvelope?: unknown | null
   _cachedAt: number
 }
 

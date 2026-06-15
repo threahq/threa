@@ -1,5 +1,10 @@
-import { useSyncExternalStore } from "react"
+import { useMemo, useSyncExternalStore } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
+import {
+  applyDecryptedNameOverlay,
+  getStreamNameCacheVersion,
+  subscribeStreamNameCache,
+} from "@/lib/crypto/stream-name-cache"
 import {
   db,
   type CachedWorkspace,
@@ -313,13 +318,32 @@ export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorksp
   )
 }
 
-export function useWorkspaceStreams(workspaceId: string | undefined): CachedStream[] {
+/**
+ * The raw cached streams — no decrypted-name overlay. The decryptor
+ * (`useDecryptStreamNames`) reads this so it isn't woken by its own output: it
+ * only needs the sealed ciphertext (unchanged by the overlay), and subscribing
+ * to the post-overlay hook would re-run it on every name that lands.
+ */
+export function useWorkspaceStreamsRaw(workspaceId: string | undefined): CachedStream[] {
   useWorkspaceCacheSignal(workspaceId)
   const cached = workspaceId ? (cache.streams.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
     () => (workspaceId ? db.streams.where("workspaceId").equals(workspaceId).toArray() : []),
     [workspaceId],
     cached
+  )
+}
+
+export function useWorkspaceStreams(workspaceId: string | undefined): CachedStream[] {
+  const streams = useWorkspaceStreamsRaw(workspaceId)
+  // Decrypt-at-the-read-boundary: overlay the tamper-evident decrypted name onto
+  // `displayName` so every label resolver reflects it without per-surface changes.
+  // The plaintext lives only in the memory-only `stream-name-cache`; IDB keeps
+  // ciphertext. `version` re-overlays when a decrypt lands (see `stream-name-cache`).
+  const version = useSyncExternalStore(subscribeStreamNameCache, getStreamNameCacheVersion, getStreamNameCacheVersion)
+  return useMemo(
+    () => (workspaceId ? applyDecryptedNameOverlay(workspaceId, streams) : streams),
+    [streams, workspaceId, version]
   )
 }
 

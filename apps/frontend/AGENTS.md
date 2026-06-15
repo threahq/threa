@@ -52,6 +52,20 @@ Pick the entry point by what you're holding:
 selects context-appropriate placeholder wording for unnamed streams; pass the
 one that matches the surface. `streamLabel` defaults to `"generic"`.
 
+### E2E sealed names resolve through the same path
+
+An E2E scratchpad's name can be sealed (the enclave auto-title, or a manual
+rename re-sealed under the SSK). The server-mutable plaintext `displayName` is
+only the locked-state fallback; an unlocked owner should see the tamper-evident
+decrypted copy. You do **not** thread this through call sites: `useWorkspaceStreams`
+overlays the decrypted name onto `displayName` at the store-read boundary, so
+`streamLabel`/`resolveStreamName`/`useStreamName` already reflect it everywhere.
+The plaintext is held only in the memory-only `lib/crypto/stream-name-cache`
+(decrypt authority), never persisted — IDB keeps `sealedNameCiphertext`. A locked
+session shows the placeholder; the open-stream header reads the same cache via
+`useDecryptedStreamName`. Don't re-decrypt names per surface — extend the cache /
+overlay if a new surface bypasses the workspace store.
+
 ### Why this exists
 
 DM display names are computed per-viewer on the backend at bootstrap and are

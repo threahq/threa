@@ -52,6 +52,7 @@ import {
   useUnreadTabIndicator,
   useBackgroundBootstrapSync,
 } from "@/hooks"
+import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useAuth } from "@/auth"
@@ -312,6 +313,11 @@ function MessageQueueHandler() {
   return null
 }
 
+function StreamNameDecryptor({ workspaceId }: { workspaceId: string }) {
+  useDecryptStreamNames(workspaceId)
+  return null
+}
+
 function UnreadTabIndicator({ workspaceId }: { workspaceId: string }) {
   useUnreadTabIndicator(workspaceId)
   return null
@@ -417,6 +423,7 @@ export function WorkspaceLayout() {
           <AppUpdateChecker />
           <FreshnessWatchers />
           <MessageQueueHandler />
+          <StreamNameDecryptor workspaceId={workspaceId} />
           <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={streamIds}>
             <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
               <UserProfileProvider>

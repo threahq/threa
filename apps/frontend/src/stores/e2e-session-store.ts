@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import { clearStreamKeyCache } from "@/lib/crypto/stream-key-cache"
+import { clearStreamNameCache } from "@/lib/crypto/stream-name-cache"
 import { clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
 import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
@@ -911,6 +912,7 @@ export async function lock(workspaceId: string, userId: string): Promise<void> {
   // only surface holding plaintext for this session.
   clearDecryptCache()
   clearStreamKeyCache()
+  clearStreamNameCache()
   clearAttachmentRefCache()
   // Bump the generation so a concurrent loadE2eKeyForUser can't restore the
   // device key we're about to delete back into an unlocked state.
@@ -1077,5 +1079,6 @@ export function resetE2eSessionStoreCache(): void {
   listeners.clear()
   clearDecryptCache()
   clearStreamKeyCache()
+  clearStreamNameCache()
   clearAttachmentRefCache()
 }
