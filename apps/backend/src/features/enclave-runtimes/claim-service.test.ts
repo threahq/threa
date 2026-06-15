@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import * as db from "../../db"
 import * as agents from "../agents"
-import { AgentSessionRepository } from "../agents"
+import { AgentSessionRepository, ConversationSummaryRepository } from "../agents"
 import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { hashCallbackToken } from "./callback-token"
@@ -86,6 +86,7 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
   spyOn(MessageRepository, "findSurrounding").mockResolvedValue([])
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
   spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([])
+  spyOn(ConversationSummaryRepository, "findByStreamAndPersona").mockResolvedValue(null)
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
@@ -212,6 +213,7 @@ describe("EnclaveClaimService.claimTurn", () => {
       {
         id: "msg_history",
         authorType: "user",
+        sequence: 1n,
         ciphertext: Buffer.from("cipher:earlier"),
         envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
       },
@@ -287,6 +289,50 @@ describe("EnclaveClaimService.claimTurn", () => {
       { ciphertext: "b2xk", envelope, completedAt: "2026-06-10T10:00:00.000Z" },
       { ciphertext: "bmV3", envelope, completedAt: "2026-06-11T10:00:00.000Z" },
     ])
+  })
+
+  it("ships the prior sealed rolling summary with its cursor and the deepened window budget (C-2)", async () => {
+    arrangeClaim()
+    const envelope = { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" }
+    spyOn(ConversationSummaryRepository, "findByStreamAndPersona").mockResolvedValue({
+      id: "agsum_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      personaId: agents.ARIADNE_AGENT_ID,
+      summary: null,
+      sealed: { ciphertext: "c3VtbWFyeQ==", envelope, keyGeneration: 1 },
+      lastSummarizedSequence: 17n,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as never)
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+    const assignment = await service().claimTurn("eik_live")
+
+    expect(assignment!.priorSummary).toEqual({ ciphertext: "c3VtbWFyeQ==", envelope })
+    expect(assignment!.summaryCursor).toBe("17")
+    expect(assignment!.maxChars).toBe(agents.DEFAULT_CONTEXT_WINDOW_CHARS)
+  })
+
+  it("omits the prior summary (cursor-free) but still ships the window budget when no summary exists yet", async () => {
+    arrangeClaim()
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+    const assignment = await service().claimTurn("eik_live")
+
+    expect(assignment).not.toHaveProperty("priorSummary")
+    expect(assignment).not.toHaveProperty("summaryCursor")
+    expect(assignment!.maxChars).toBe(agents.DEFAULT_CONTEXT_WINDOW_CHARS)
   })
 
   it("returns null without claiming when the queue is empty", async () => {

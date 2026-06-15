@@ -55,6 +55,7 @@ function noopCallbacks(overrides: Partial<BackendCallbacks>): BackendCallbacks {
     step: async () => {},
     substep: async () => {},
     sealedName: async () => {},
+    sealedSummary: async () => {},
     complete: async () => {},
     fail: async () => {},
     ...overrides,

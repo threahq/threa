@@ -4,6 +4,7 @@ import { buildMessageAad } from "../envelope"
 import { exportPublicKey, generateKeyPair } from "../hpke"
 import {
   buildNameAad,
+  buildSummaryAad,
   buildWrapAad,
   generateStreamKey,
   openMessage,
@@ -50,6 +51,26 @@ describe("buildNameAad", () => {
     expect(() => buildNameAad({ streamId: "a|b", keyGeneration: 0 })).toThrow()
     expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: -1 })).toThrow()
     expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: 1.5 })).toThrow()
+  })
+})
+
+describe("buildSummaryAad", () => {
+  it("binds streamId, a fixed 'summary' label, and generation", () => {
+    const aad = buildSummaryAad({ streamId: "stream_1", keyGeneration: 0 })
+    expect(utf8Decode(aad)).toBe("stream_1|summary|0")
+  })
+
+  it("is disjoint from a name AAD with the same stream + generation (no ciphertext swap)", () => {
+    const summary = buildSummaryAad({ streamId: "stream_1", keyGeneration: 1 })
+    const name = buildNameAad({ streamId: "stream_1", keyGeneration: 1 })
+    expect(utf8Decode(summary)).not.toBe(utf8Decode(name))
+  })
+
+  it("rejects an empty streamId, a delimiter in the id, and a bad generation", () => {
+    expect(() => buildSummaryAad({ streamId: "", keyGeneration: 0 })).toThrow()
+    expect(() => buildSummaryAad({ streamId: "a|b", keyGeneration: 0 })).toThrow()
+    expect(() => buildSummaryAad({ streamId: "stream_1", keyGeneration: -1 })).toThrow()
+    expect(() => buildSummaryAad({ streamId: "stream_1", keyGeneration: 1.5 })).toThrow()
   })
 
   it("seals a name that opens under the same slot and rejects a relocated one", async () => {

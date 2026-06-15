@@ -5,6 +5,7 @@ import {
   base64ToBytes,
   buildMessageAad,
   buildNameAad,
+  buildSummaryAad,
   buildWrapAad,
   bytesToBase64,
   decryptAttachmentBytes,
@@ -25,6 +26,7 @@ import type {
   SealedStepStart,
   EnclaveSealedSubstep,
   EnclaveSealedName,
+  EnclaveSealedSummary,
   EnclaveSskWrap,
 } from "@threa/types"
 import {
@@ -36,8 +38,13 @@ import {
   formatTurnDigestsForPrompt,
   generateTurnDigest,
   parseTurnDigestStepContent,
+  foldRollingSummary,
+  formatConversationMemoryForPrompt,
+  ROLLING_SUMMARY_BATCH_SIZE,
+  ROLLING_SUMMARY_MAX_BATCHES,
   type NewMessageAwareness,
   type NewMessageInfo,
+  type RollingSummaryMessage,
   type TurnDigestPromptEntry,
   type TurnRequest,
   type TurnSink,
@@ -111,6 +118,14 @@ export interface EnclaveTurnDeps {
    */
   onSealedName?: (sealed: EnclaveSealedName) => Promise<void>
   /**
+   * Persist the sealed rolling conversation summary (C-2), best-effort after the
+   * turn when the verbatim window overflowed. The enclave folds the overflow
+   * messages into the prior summary, seals the result under the reply SSK, and
+   * POSTs it with the advanced cursor; a throw here is swallowed (summarizing
+   * never blocks or fails the turn). Omitted → no rolling summary.
+   */
+  onSealedSummary?: (sealed: EnclaveSealedSummary) => Promise<void>
+  /**
    * Cooperative cancellation for long-running tools (research). Wired to the
    * runtime's `toolSignalProvider`, so the user's "Stop research" aborts the web
    * sub-loop gracefully — it returns partial findings and the turn still replies,
@@ -144,7 +159,7 @@ export async function runEnclaveTurn(
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
   const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, onSealedName, tools, abortSignal } = deps
-  const { pollNewMessages } = deps
+  const { pollNewMessages, onSealedSummary } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -167,8 +182,10 @@ export async function runEnclaveTurn(
   // envelope) for any message that carried attachments; an `[Attached: …]`
   // note (with the attachment id) tells the model what's there, and it pulls
   // the actual bytes on demand via `load_attachment` — only the trigger's
-  // files are fed eagerly.
-  const messages: ModelMessage[] = []
+  // files are fed eagerly. Keep each item's clear `sequence` and clean markdown
+  // alongside its model message so the rolling summary (C-2) can fold the
+  // overflow and advance its cursor.
+  const opened: OpenedHistoryItem[] = []
   for (const item of request.history) {
     const ssk = sskByGeneration.get(item.envelope.keyGeneration)
     if (!ssk) continue
@@ -179,7 +196,12 @@ export async function runEnclaveTurn(
     })
     const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
     for (const ref of attachmentRefs) refsById.set(ref.attachmentId, ref)
-    messages.push({ role: item.role, content: withAttachmentNote(contentMarkdown, attachmentRefs) })
+    opened.push({
+      sequence: BigInt(item.sequence),
+      role: item.role,
+      content: contentMarkdown,
+      modelMessage: { role: item.role, content: withAttachmentNote(contentMarkdown, attachmentRefs) },
+    })
   }
 
   const promptSsk = sskByGeneration.get(request.prompt.envelope.keyGeneration)
@@ -192,6 +214,13 @@ export async function runEnclaveTurn(
   const { contentMarkdown: promptText, attachmentRefs: promptRefs } = parseSealedPayload(promptRaw)
   for (const ref of promptRefs) refsById.set(ref.attachmentId, ref)
   const promptContent = await buildUserContent(promptText, promptRefs, ciphertextById)
+
+  // Deepened verbatim window (C-2): fill history newest-first under the char
+  // budget; the trigger is always kept. Anything older that overflows the budget
+  // is folded into the rolling summary at turn end. With no budget the whole
+  // shipped window stays verbatim (byte-identical to before this slice).
+  const { kept, overflow } = splitVerbatimWindow(opened, promptText.length, request.maxChars)
+  const messages: ModelMessage[] = kept.map((item) => item.modelMessage)
   messages.push({ role: "user", content: promptContent } as ModelMessage)
 
   const replySsk = sskByGeneration.get(request.reply.keyGeneration)
@@ -218,6 +247,30 @@ export async function runEnclaveTurn(
     }
   }
   const digestBlock = formatTurnDigestsForPrompt(digestEntries)
+
+  // Prior sealed rolling summary (C-2): open the running memory of earlier turns
+  // that overflowed the verbatim window and render it as the `## Conversation
+  // Memory` block — the SAME formatter the in-process companion uses, so the two
+  // surfaces read identical memory. An unopenable (no wrap for its generation) or
+  // malformed prior summary degrades to no block, never fatal — parity with
+  // history/digests; the fold below then starts fresh from the cursor.
+  const summaryCursor = request.summaryCursor ? BigInt(request.summaryCursor) : null
+  let priorSummaryText: string | null = null
+  if (request.priorSummary) {
+    const summarySsk = sskByGeneration.get(request.priorSummary.envelope.keyGeneration)
+    if (summarySsk) {
+      try {
+        priorSummaryText = await openMessageAsString({
+          key: summarySsk,
+          envelope: request.priorSummary.envelope,
+          ciphertext: base64ToBytes(request.priorSummary.ciphertext),
+        })
+      } catch {
+        priorSummaryText = null
+      }
+    }
+  }
+  const memoryBlock = formatConversationMemoryForPrompt(priorSummaryText)
 
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
   const messageIds: string[] = []
@@ -272,7 +325,7 @@ export async function runEnclaveTurn(
   // policy above). Advertise exactly the built toolset, then fold in prior
   // turns' digests.
   const toolSections = buildToolPromptSections(turnTools)
-  const systemPrompt = [request.system, toolSections, digestBlock]
+  const systemPrompt = [request.system, toolSections, memoryBlock, digestBlock]
     .filter((block): block is string => Boolean(block))
     .join("\n\n")
 
@@ -402,6 +455,50 @@ export async function runEnclaveTurn(
     }
   }
 
+  // Rolling conversation summary (C-2): fold the messages that overflowed the
+  // verbatim window into the prior summary, seal the result under the reply SSK
+  // (the auto-title pattern — post-run, in-enclave, plaintext never leaves), and
+  // POST it back with the advanced cursor. Only messages newer than the prior
+  // cursor are folded, so nothing is summarized twice. The same shared fold the
+  // in-process companion runs, so the two surfaces produce identical memory.
+  // Best-effort and last: the replies are already delivered, so a summary
+  // failure must never affect the turn. Usage accumulates into the same total.
+  const toFold = summaryCursor === null ? overflow : overflow.filter((item) => item.sequence > summaryCursor)
+  if (toFold.length > 0 && onSealedSummary) {
+    try {
+      let summary = priorSummaryText ?? ""
+      let foldedThrough = summaryCursor ?? 0n
+      let batches = 0
+      for (let i = 0; i < toFold.length && batches < ROLLING_SUMMARY_MAX_BATCHES; i += ROLLING_SUMMARY_BATCH_SIZE) {
+        const batch = toFold.slice(i, i + ROLLING_SUMMARY_BATCH_SIZE)
+        summary = await foldRollingSummary({
+          ai,
+          model,
+          modelString: request.model,
+          existingSummary: summary,
+          newMessages: batch.map(toRollingSummaryMessage),
+        })
+        foldedThrough = batch[batch.length - 1].sequence
+        batches++
+      }
+      if (summary) {
+        const sealed = await sealMessage({
+          key: replySsk,
+          keyGeneration: request.reply.keyGeneration,
+          payload: summary,
+          aad: buildSummaryAad({ streamId: request.streamId, keyGeneration: request.reply.keyGeneration }),
+        })
+        await onSealedSummary({
+          ciphertext: bytesToBase64(sealed.ciphertext),
+          envelope: sealed.envelope,
+          lastSummarizedSequence: foldedThrough.toString(),
+        })
+      }
+    } catch {
+      // The rolling summary is non-essential; a failure must never affect the reply.
+    }
+  }
+
   return {
     messageIds,
     model: request.model,
@@ -415,6 +512,49 @@ export async function runEnclaveTurn(
       ? { lastProcessedSequence: loopResult.lastProcessedSequence.toString() }
       : {}),
   }
+}
+
+/**
+ * One opened history message: its clear stream `sequence` and clean markdown
+ * (for the rolling-summary fold) carried alongside the `ModelMessage` (with
+ * attachment notes) the verbatim window feeds the model.
+ */
+interface OpenedHistoryItem {
+  sequence: bigint
+  role: "user" | "assistant"
+  content: string
+  modelMessage: ModelMessage
+}
+
+/**
+ * Fill the verbatim window newest-first under `maxChars` (C-2): the trigger's
+ * chars are always charged first (it is always kept), then history is kept from
+ * newest to oldest while the running total stays within budget. Returns the kept
+ * history (oldest→newest, for the model) and the overflow (oldest→newest, to fold
+ * into the rolling summary). With no budget the whole window is kept verbatim and
+ * nothing overflows — byte-identical to before this slice. At least one history
+ * message is kept when any exist, so a degenerate budget can't blank the window.
+ */
+function splitVerbatimWindow(
+  opened: OpenedHistoryItem[],
+  promptChars: number,
+  maxChars: number | undefined
+): { kept: OpenedHistoryItem[]; overflow: OpenedHistoryItem[] } {
+  if (maxChars === undefined) return { kept: opened, overflow: [] }
+  let used = promptChars
+  let keptCount = 0
+  for (let i = opened.length - 1; i >= 0; i--) {
+    const len = opened[i].content.length
+    if (used + len > maxChars && keptCount > 0) break
+    used += len
+    keptCount++
+  }
+  const cut = opened.length - keptCount
+  return { kept: opened.slice(cut), overflow: opened.slice(0, cut) }
+}
+
+function toRollingSummaryMessage(item: OpenedHistoryItem): RollingSummaryMessage {
+  return { sequence: item.sequence, authorLabel: item.role, content: item.content }
 }
 
 /**

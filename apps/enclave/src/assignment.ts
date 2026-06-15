@@ -30,6 +30,12 @@ const MAX_INLINE_ATTACHMENTS = 64
  * `TURN_DIGEST_INJECT_COUNT` (5); this caps a malformed body.
  */
 const MAX_RECENT_DIGESTS = 16
+/**
+ * Upper bound on the verbatim-window char budget. Generous over the companion's
+ * 80k default — it only rejects an absurd/malformed value, the real limiter is
+ * the budget the claim service ships.
+ */
+const MAX_WINDOW_CHARS = 1_000_000
 
 const streamEnvelopeSchema = z.object({
   v: z.number(),
@@ -65,8 +71,16 @@ export const sessionAssignmentSchema = z.object({
     )
     .min(1)
     .max(MAX_WRAP_RECIPIENTS),
-  /** Prior turns, oldest→newest. Each item's role tells the model who spoke. */
-  history: z.array(sealedMessageSchema.extend({ role: z.enum(["user", "assistant"]) })).max(MAX_HISTORY_MESSAGES),
+  /**
+   * Prior turns, oldest→newest. Each item's role tells the model who spoke;
+   * `sequence` (base-10) is the message's clear stream sequence, which the
+   * enclave uses to advance the rolling summary cursor over folded messages
+   * (C-2). MUST be declared — Zod strips unknown keys, and a missing sequence
+   * would silently break the cursor.
+   */
+  history: z
+    .array(sealedMessageSchema.extend({ role: z.enum(["user", "assistant"]), sequence: z.string().regex(/^\d+$/) }))
+    .max(MAX_HISTORY_MESSAGES),
   /** The user message that triggered this invocation (always the latest `user` turn). */
   prompt: sealedMessageSchema,
   /** Ariadne's system prompt — non-secret persona text the backend supplies in the clear. */
@@ -127,4 +141,22 @@ export const sessionAssignmentSchema = z.object({
     .array(sealedMessageSchema.extend({ completedAt: z.string().min(1) }))
     .max(MAX_RECENT_DIGESTS)
     .optional(),
+  /**
+   * Char budget for the verbatim window (C-2). The enclave fills history
+   * newest-first up to this and folds the overflow into the rolling summary.
+   * MUST be declared — Zod strips unknown keys, and dropping it would silently
+   * disable the budget so the enclave kept the whole window verbatim.
+   */
+  maxChars: z.number().int().min(1).max(MAX_WINDOW_CHARS).optional(),
+  /**
+   * The stream's prior sealed rolling summary (C-2): opaque ciphertext the
+   * enclave opens with its SSK wrap, folds the overflow into, and re-seals.
+   * Declared for the same Zod-strips-unknown reason.
+   */
+  priorSummary: sealedMessageSchema.optional(),
+  /**
+   * The prior summary's `last_summarized_sequence` (base-10) — the highest
+   * sequence already folded, so the enclave only summarizes newer history.
+   */
+  summaryCursor: z.string().regex(/^\d+$/).optional(),
 })

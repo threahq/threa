@@ -36,6 +36,7 @@ export {
   unwrapStreamKey,
   buildWrapAad,
   buildNameAad,
+  buildSummaryAad,
   type StreamEnvelope,
   type SealMessageInput,
   type SealMessageResult,
