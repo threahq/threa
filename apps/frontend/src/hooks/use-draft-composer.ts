@@ -83,6 +83,8 @@ export interface DraftComposerState {
   isLoaded: boolean
   /** An E2E draft whose sealed body is still being decrypted into the composer. */
   isDecrypting: boolean
+  /** An E2E draft whose sealed body couldn't be decrypted (wrong recipient / garbled). */
+  decryptFailed: boolean
 }
 
 export function useDraftComposer({
@@ -96,6 +98,7 @@ export function useDraftComposer({
   const {
     isLoaded: isDraftLoaded,
     isDecrypting,
+    decryptFailed,
     contentJson: savedDraft,
     attachments: savedAttachments,
     contextRefs: savedContextRefs = [] as DraftContextRef[],
@@ -126,6 +129,12 @@ export function useDraftComposer({
   const [content, setContent] = useState<JSONContent>(initialContent)
   const [isSending, setIsSending] = useState(false)
   const hasInitialized = useRef(false)
+  // True once the user has touched the editor for the current draft. Gates the
+  // late-hydrate effect below so it only ever fills an editor the user hasn't
+  // engaged with — never overwriting typed content nor re-filling a draft the
+  // user just cleared (whose `savedDraft` lags by a debounce tick). Reset on
+  // scope change and on an explicit restore.
+  const userEngagedRef = useRef(false)
   const prevScopeIdRef = useRef<string | null>(null)
   // Keeps attachment persistence suspended until the previous scope's uploaded
   // attachments are gone from React state.
@@ -140,6 +149,7 @@ export function useDraftComposer({
     // On scope change, reset state
     if (isScopeChange) {
       hasInitialized.current = false
+      userEngagedRef.current = false
       suspendAttachmentPersistence.current = true
       staleAttachmentIdsRef.current = new Set(
         pendingAttachments.filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_")).map((a) => a.id)
@@ -181,6 +191,22 @@ export function useDraftComposer({
     pendingAttachments,
   ])
 
+  // Late hydrate: an E2E draft can finish decrypting AFTER the one-shot init
+  // above already ran — it was locked or still decrypting when the composer
+  // mounted, so `savedDraft` was empty then and becomes the real body only once
+  // the session unlocks. When that plaintext lands and the user hasn't engaged
+  // with the editor, drop it in. Every clause is a guard against clobbering:
+  // `isDraftLoaded`/`hasInitialized` wait for the first apply to be done;
+  // `userEngagedRef` yields the editor the moment the user types; `hasDocContent`
+  // skips when the editor already shows something (so a manual clear, whose
+  // `savedDraft` lags by a debounce tick, is never re-filled).
+  useEffect(() => {
+    if (!isDraftLoaded || !hasInitialized.current) return
+    if (userEngagedRef.current) return
+    if (hasDocContent(content)) return
+    if (hasDocContent(savedDraft)) setContent(savedDraft)
+  }, [isDraftLoaded, savedDraft, content])
+
   // When attachments change, persist to draft storage
   useEffect(() => {
     const uploaded = pendingAttachments.filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_"))
@@ -216,6 +242,8 @@ export function useDraftComposer({
   // Handle content change with draft persistence
   const handleContentChange = useCallback(
     (newContent: JSONContent) => {
+      // The user owns the editor from here on — suppress the late-hydrate effect.
+      userEngagedRef.current = true
       setContent(newContent)
       saveDraftDebounced(newContent)
     },
@@ -295,5 +323,6 @@ export function useDraftComposer({
     // Loading
     isLoaded: isDraftLoaded,
     isDecrypting,
+    decryptFailed,
   }
 }

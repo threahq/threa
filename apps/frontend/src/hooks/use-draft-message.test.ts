@@ -8,7 +8,7 @@ import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-stor
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
 import * as sealDraft from "@/lib/crypto/seal-draft"
-import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
+import { seedDecryption, clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({
@@ -499,6 +499,38 @@ describe("useDraftMessage", () => {
       expect(result.current.contentJson).toEqual(EMPTY_DOC)
       // The sealed row is kept (only plaintext rows are purged) so it decrypts on unlock.
       expect(await db.drafts.get("draft_sealed")).toBeDefined()
+    })
+
+    it("re-seeds the decrypt cache on every edit of the same draft id (no stale first edit)", async () => {
+      // A draft id is stable across edits, so the seal path must REPLACE the
+      // cached plaintext each time. Without `invalidateDecryption`, `seedDecryption`
+      // would short-circuit on the already-decrypted id and the read path would
+      // serve the FIRST edit forever — the latest keystrokes look lost on remount
+      // (safe in the sealed row at rest, but never displayed).
+      vi.spyOn(sealDraft, "sealDraftContent").mockResolvedValue({
+        ciphertext: "ct",
+        envelope: { v: 2 },
+        e2eVersion: 2,
+        contentMarkdown: "x",
+      })
+      await seedDraftCacheFromIdb(workspaceId)
+
+      await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        { contentJson: makeDoc("first edit"), attachments: [] },
+        { senderId: "user_1", streamId: e2eStreamId }
+      )
+      const id = (await db.composerLoaded.get(draftKey))!.draftId!
+      expect(getCachedDecryption(id)?.content?.contentJson).toEqual(makeDoc("first edit"))
+
+      await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        { contentJson: makeDoc("second edit"), attachments: [] },
+        { senderId: "user_1", streamId: e2eStreamId }
+      )
+      expect(getCachedDecryption(id)?.content?.contentJson).toEqual(makeDoc("second edit"))
     })
 
     it("keeps content in the composer (no plaintext written) when the session is locked", async () => {

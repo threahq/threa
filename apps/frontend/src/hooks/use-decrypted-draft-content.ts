@@ -7,10 +7,9 @@ import {
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"
+import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import type { CachedDraft } from "@/db"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
-
-const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
 /**
  * Decrypt-on-read for a draft, following the same path messages use

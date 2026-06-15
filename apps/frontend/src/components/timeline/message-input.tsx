@@ -617,9 +617,12 @@ function MessageInputComponent({
   }
 
   // While an unlocked E2E draft's sealed body decrypts into the composer, signal
-  // it in the placeholder so the briefly-empty editor doesn't read as "no draft".
+  // it in the placeholder so the briefly-empty editor doesn't read as "no draft";
+  // a failed decrypt says so plainly instead of leaving a permanent spinner.
   const offlinePlaceholder = isOffline ? "Type a message (sent when back online)" : undefined
-  const composerPlaceholder = composer.isDecrypting ? "Decrypting your draft…" : offlinePlaceholder
+  let composerPlaceholder = offlinePlaceholder
+  if (composer.decryptFailed) composerPlaceholder = "Couldn't decrypt your saved draft"
+  else if (composer.isDecrypting) composerPlaceholder = "Decrypting your draft…"
 
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {

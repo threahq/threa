@@ -14,10 +14,10 @@ import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraft
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { sealDraftContent } from "@/lib/crypto/seal-draft"
-import { seedDecryption } from "@/lib/crypto/decrypt-cache"
+import { invalidateDecryption, seedDecryption } from "@/lib/crypto/decrypt-cache"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 import { useDecryptedDraftContent } from "./use-decrypted-draft-content"
 
@@ -34,8 +34,6 @@ export function getDraftMessageKey(
 }
 
 const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.env.VITE_DRAFT_DEBOUNCE_MS) : 500
-
-const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
 /** Resolve the draft id currently checked out into the composer for a scope. */
 async function getLoadedDraftId(scope: string): Promise<string | null> {
@@ -65,10 +63,12 @@ export interface DraftSealContext {
  * only the `ciphertext`/`envelope`/`e2eVersion` sibling is persisted — IDB never
  * holds the plaintext (E2EE-4, treat IDB like the backend).
  *
- * On the E2E path the shared decrypt cache is seeded with the just-authored
- * plaintext, so the read path (`useDecryptedDraftContent`) serves the live body
- * with no self-decrypt round-trip and an edit is never served stale from a prior
- * cached decrypt of this id. The seed is dropped with every other entry on lock.
+ * On the E2E path the shared decrypt cache is invalidated and then re-seeded with
+ * the just-authored plaintext, so the read path (`useDecryptedDraftContent`) serves
+ * the live body with no self-decrypt round-trip. The invalidate matters because a
+ * draft id is stable across edits: `seedDecryption` alone no-ops once an id is
+ * decrypted, so without it the SECOND edit would be ignored and a remount would
+ * render the first edit's body. The seed is dropped with every other entry on lock.
  *
  * v1 seals the body only — attachments / context refs on E2E drafts stay
  * session-local — so the seal path doesn't carry them.
@@ -145,7 +145,10 @@ export async function upsertLoadedDraft(
   }
 
   if (seal) {
-    // Keep the read path serving the live plaintext (see the doc comment above).
+    // Keep the read path serving the live plaintext (see the doc comment above):
+    // invalidate the reused id's stale entry, then seed the fresh body so the
+    // next decrypt-on-read (and any remount) serves THIS edit, not a prior one.
+    invalidateDecryption(id)
     seedDecryption(id, {
       contentMarkdown: serializeToMarkdown(fields.contentJson),
       contentJson: fields.contentJson,

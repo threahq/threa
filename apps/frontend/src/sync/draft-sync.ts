@@ -12,12 +12,12 @@ import type {
   Draft,
   DraftDeletedPayload,
   DraftUpsertedPayload,
-  JSONContent,
   ResolveDraftInput,
   ResolveDraftResponse,
   UpsertDraftInput,
   UpsertDraftResponse,
 } from "@threa/types"
+import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 
 /**
  * Stage 3 draft sync — wires the local-first draft store (Stage 2) to the
@@ -44,8 +44,6 @@ import type {
  * sealed at rest — the plaintext is decrypted into memory only when the composer
  * loads the draft. The drift/split bookkeeping below is content-shape-agnostic.
  */
-
-const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
 /** Minimal surface of the drafts REST client the queue replays against. */
 export interface DraftsServiceLike {

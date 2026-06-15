@@ -208,6 +208,13 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     />
   ) : undefined
 
+  // Reply composer placeholder: surface an E2E draft's decrypt state so the
+  // briefly-empty editor doesn't read as "no draft", and a failed decrypt says
+  // so plainly instead of leaving a permanent spinner.
+  let replyPlaceholder = "Write your reply..."
+  if (composer.decryptFailed) replyPlaceholder = "Couldn't decrypt your saved draft"
+  else if (composer.isDecrypting) replyPlaceholder = "Decrypting your draft…"
+
   // Draft thread expand state
   const [draftExpanded, setDraftExpanded] = useState(false)
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
@@ -530,7 +537,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     hasFailed={composer.hasFailed}
                     submitLabel="Reply"
                     submittingLabel="Creating..."
-                    placeholder="Write your reply..."
+                    placeholder={replyPlaceholder}
                     workspaceId={workspaceId}
                     scopeId={panelId}
                     memoAnchorStreamId={draftInfo.parentStreamId}
@@ -600,7 +607,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   hasFailed={composer.hasFailed}
                   submitLabel="Reply"
                   submittingLabel="Creating..."
-                  placeholder={composer.isDecrypting ? "Decrypting your draft…" : "Write your reply..."}
+                  placeholder={replyPlaceholder}
                   autoFocus={!isMobile}
                   workspaceId={workspaceId}
                   scopeId={panelId}
