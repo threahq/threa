@@ -3,6 +3,7 @@ import {
   ATTACHMENT_AAD,
   ATTACHMENT_KEY_GENERATION,
   buildMessageAad,
+  buildSummaryAad,
   buildWrapAad,
   bytesToBase64,
   generateStreamKey,
@@ -71,6 +72,17 @@ async function sealUnder(ssk: Uint8Array, text: string, messageId: string, sende
     keyGeneration,
     payload: text,
     aad: buildMessageAad({ streamId: STREAM_ID, messageId, senderId }),
+  })
+  return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
+}
+
+/** Seal a prior rolling summary under the real summary slot (`buildSummaryAad`), as the enclave does. */
+async function sealSummaryUnder(ssk: Uint8Array, text: string, keyGeneration = GEN) {
+  const sealed = await sealMessage({
+    key: ssk,
+    keyGeneration,
+    payload: text,
+    aad: buildSummaryAad({ streamId: STREAM_ID, keyGeneration }),
   })
   return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
 }
@@ -331,6 +343,149 @@ describe("runEnclaveTurn", () => {
     expect(titled).toBe(false)
   })
 
+  it("opens the prior sealed summary into the `## Conversation Memory` block (C-2)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    // Sealed under the real summary slot (`buildSummaryAad`), exactly as the enclave seals it.
+    const priorSummary = await sealSummaryUnder(ssk, "We decided to ship on Friday.")
+    const prompt = await sealUnder(ssk, "What did we decide?", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Friday."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({ wraps: [wrap], prompt, priorSummary })
+    )
+
+    const system = String(chat.seen[0]?.messages[0]?.content)
+    expect(system).toContain("## Conversation Memory")
+    expect(system).toContain("We decided to ship on Friday.")
+  })
+
+  it("folds the overflow under the char budget and POSTs a sealed summary with the advanced cursor (C-2)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const h1 = await sealUnder(ssk, "Old message one, plenty of content.", "msg_1", "usr_owner")
+    const h2 = await sealUnder(ssk, "Old message two, also content.", "msg_2", "usr_owner")
+    const h3 = await sealUnder(ssk, "Newest history kept verbatim.", "msg_3", "usr_owner")
+    const prompt = await sealUnder(ssk, "Now answer.", "msg_user", "usr_owner")
+    // First chat = the turn's reply; second = the rolling-summary fold call.
+    const chat = stubChat([textReply("Answered."), textReply("Rolling memory of the older turns.")])
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    let sealedSummary: {
+      ciphertext: string
+      envelope: { keyGeneration: number }
+      lastSummarizedSequence: string
+    } | null = null
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        onSealedSummary: async (s) => void (sealedSummary = s),
+      },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        // Tiny budget: only the trigger + newest history stay verbatim; the two
+        // older messages overflow and fold into the summary.
+        maxChars: 1,
+        history: [
+          { ...h1, role: "user", sequence: "1" },
+          { ...h2, role: "user", sequence: "2" },
+          { ...h3, role: "user", sequence: "3" },
+        ],
+      })
+    )
+
+    expect(sealedSummary).not.toBeNull()
+    // The cursor advances to the highest folded sequence; the newest (msg_3) was
+    // kept verbatim, so the overflow folded is msg_1 and msg_2.
+    expect(sealedSummary!.lastSummarizedSequence).toBe("2")
+    expect(sealedSummary!.envelope.keyGeneration).toBe(GEN)
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: sealedSummary!.envelope as never,
+      ciphertext: Buffer.from(sealedSummary!.ciphertext, "base64"),
+    })
+    expect(opened).toBe("Rolling memory of the older turns.")
+  })
+
+  it("does not summarize when there is no char budget (window stays verbatim)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const h1 = await sealUnder(ssk, "An earlier message.", "msg_1", "usr_owner")
+    const prompt = await sealUnder(ssk, "Continue.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Okay."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    let summarized = false
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        onSealedSummary: async () => void (summarized = true),
+      },
+      baseRequest({ wraps: [wrap], prompt, history: [{ ...h1, role: "user", sequence: "1" }] })
+    )
+
+    expect(summarized).toBe(false)
+  })
+
+  it("skips the fold when a prior summary was shipped but its generation can't be opened (no data loss on key roll)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    // A prior summary sealed under a generation this enclave holds NO wrap for
+    // (the key rolled and the wrap hasn't been revived yet): it ships, but the
+    // enclave can't open it. Folding a replacement would advance the cursor past
+    // the already-summarized messages 1..K and erase them, so the fold must skip.
+    const priorSummary = await sealSummaryUnder(generateStreamKey(), "Earlier memory the enclave can't open.", 99)
+    const h1 = await sealUnder(ssk, "Old one, plenty of content.", "msg_1", "usr_owner")
+    const h2 = await sealUnder(ssk, "Old two, also content.", "msg_2", "usr_owner")
+    const prompt = await sealUnder(ssk, "Continue.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Okay."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    let summarized = false
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        onSealedSummary: async () => void (summarized = true),
+      },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        priorSummary,
+        summaryCursor: "1",
+        maxChars: 1, // forces overflow that would otherwise fold
+        history: [
+          { ...h1, role: "user", sequence: "2" },
+          { ...h2, role: "user", sequence: "3" },
+        ],
+      })
+    )
+
+    // The unreadable prior summary is preserved by NOT writing a replacement.
+    expect(summarized).toBe(false)
+  })
+
   it("seals every message when the loop sends more than one", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()
@@ -380,8 +535,8 @@ describe("runEnclaveTurn", () => {
       baseRequest({
         wraps: [wrap],
         history: [
-          { ...unreadable, role: "user" },
-          { ...readable, role: "assistant" },
+          { ...unreadable, role: "user", sequence: "1" },
+          { ...readable, role: "assistant", sequence: "2" },
         ],
         prompt,
       })
@@ -735,7 +890,7 @@ describe("runEnclaveTurn", () => {
     }
     const history = [
       await sealUnder(ssk, serializeSealedPayload("here's the plan", [ref]), "msg_old", "usr_owner"),
-    ].map((m) => ({ ...m, role: "user" as const }))
+    ].map((m, i) => ({ ...m, role: "user" as const, sequence: String(i + 1) }))
     const prompt = await sealUnder(ssk, "what does the plan file say?", "msg_user", "usr_owner")
 
     // Turn script: the model asks for the file, then replies.

@@ -4,6 +4,7 @@ import { buildMessageAad } from "../envelope"
 import { exportPublicKey, generateKeyPair } from "../hpke"
 import {
   buildNameAad,
+  buildSummaryAad,
   buildWrapAad,
   generateStreamKey,
   openMessage,
@@ -50,6 +51,50 @@ describe("buildNameAad", () => {
     expect(() => buildNameAad({ streamId: "a|b", keyGeneration: 0 })).toThrow()
     expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: -1 })).toThrow()
     expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: 1.5 })).toThrow()
+  })
+})
+
+describe("buildSummaryAad", () => {
+  it("binds streamId, a fixed 'summary' label, and generation", () => {
+    const aad = buildSummaryAad({ streamId: "stream_1", keyGeneration: 0 })
+    expect(utf8Decode(aad)).toBe("stream_1|summary|0")
+  })
+
+  it("is disjoint from a name AAD with the same stream + generation (no ciphertext swap)", () => {
+    const summary = buildSummaryAad({ streamId: "stream_1", keyGeneration: 1 })
+    const name = buildNameAad({ streamId: "stream_1", keyGeneration: 1 })
+    expect(utf8Decode(summary)).not.toBe(utf8Decode(name))
+  })
+
+  it("rejects an empty streamId, a delimiter in the id, and a bad generation", () => {
+    expect(() => buildSummaryAad({ streamId: "", keyGeneration: 0 })).toThrow()
+    expect(() => buildSummaryAad({ streamId: "a|b", keyGeneration: 0 })).toThrow()
+    expect(() => buildSummaryAad({ streamId: "stream_1", keyGeneration: -1 })).toThrow()
+    expect(() => buildSummaryAad({ streamId: "stream_1", keyGeneration: 1.5 })).toThrow()
+  })
+
+  it("seals a summary that opens under its slot but rejects relocation to the name or message slot", async () => {
+    const key = generateStreamKey()
+    const { envelope, ciphertext } = await sealMessage({
+      key,
+      keyGeneration: 0,
+      payload: "Rolling memory of earlier turns.",
+      aad: buildSummaryAad({ streamId: "stream_1", keyGeneration: 0 }),
+    })
+
+    // A faithful open (AAD on the envelope) recovers the summary.
+    await expect(openMessageAsString({ key, envelope, ciphertext })).resolves.toBe("Rolling memory of earlier turns.")
+
+    // A server that re-presents the summary ciphertext where a NAME is expected
+    // (recomputing the name AAD) forges the binding; the AES-GCM tag check fails.
+    const asName = { ...envelope, aad: bytesToBase64(buildNameAad({ streamId: "stream_1", keyGeneration: 0 })) }
+    await expect(openMessageAsString({ key, envelope: asName, ciphertext })).rejects.toThrow()
+
+    // Likewise relocating it onto a message slot, or onto another stream, fails.
+    const asMessage = { ...envelope, aad: bytesToBase64(MSG_AAD) }
+    await expect(openMessageAsString({ key, envelope: asMessage, ciphertext })).rejects.toThrow()
+    const otherStream = { ...envelope, aad: bytesToBase64(buildSummaryAad({ streamId: "stream_2", keyGeneration: 0 })) }
+    await expect(openMessageAsString({ key, envelope: otherStream, ciphertext })).rejects.toThrow()
   })
 
   it("seals a name that opens under the same slot and rejects a relocated one", async () => {

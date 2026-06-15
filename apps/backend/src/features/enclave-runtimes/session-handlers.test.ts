@@ -5,7 +5,13 @@ import type { Server } from "socket.io"
 import { AuthorTypes, ENCLAVE_CALLBACK_TOKEN_HEADER } from "@threa/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
-import { AgentSessionRepository, PersonaRepository, SessionStatuses } from "../agents"
+import {
+  AgentSessionRepository,
+  ARIADNE_AGENT_ID,
+  ConversationSummaryRepository,
+  PersonaRepository,
+  SessionStatuses,
+} from "../agents"
 import { UserRepository } from "../workspaces"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -307,6 +313,52 @@ describe("createEnclaveSessionHandlers.sealedName", () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
     const { handlers } = makeHandlers()
     await expect(handlers.sealedName(req("session_1", NAME_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
+  })
+})
+
+describe("createEnclaveSessionHandlers.sealedSummary", () => {
+  const SUMMARY_BODY = {
+    ciphertext: "Y3Q=",
+    envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+    lastSummarizedSequence: "42",
+  }
+
+  it("upserts the sealed rolling summary keyed to the stream + Ariadne with the advanced cursor", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    const upsert = spyOn(ConversationSummaryRepository, "upsert").mockResolvedValue({} as never)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.sealedSummary(req("session_1", SUMMARY_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(upsert).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        personaId: ARIADNE_AGENT_ID,
+        sealed: { ciphertext: "Y3Q=", envelope: SUMMARY_BODY.envelope, keyGeneration: 0 },
+        lastSummarizedSequence: 42n,
+      })
+    )
+  })
+
+  it("rejects a body whose cursor is not a base-10 integer", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    const { handlers } = makeHandlers()
+    await expect(
+      handlers.sealedSummary(req("session_1", { ...SUMMARY_BODY, lastSummarizedSequence: "not-a-number" }), fakeRes())
+    ).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("409s when the session is no longer running", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    const { handlers } = makeHandlers()
+    await expect(handlers.sealedSummary(req("session_1", SUMMARY_BODY), fakeRes())).rejects.toMatchObject({
+      status: 409,
+    })
   })
 })
 
@@ -963,6 +1015,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   const ENVELOPE = { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" }
   const mismatchCases: [keyof ReturnType<typeof makeHandlers>["handlers"], unknown][] = [
     ["sealedName", { ciphertext: "Y3Q=", envelope: ENVELOPE }],
+    ["sealedSummary", { ciphertext: "Y3Q=", envelope: ENVELOPE, lastSummarizedSequence: "1" }],
     ["stepStarted", STEP_START_BODY],
     ["substep", { stepType: "web_search", ciphertext: "Y3Q=", envelope: ENVELOPE }],
     ["complete", COMPLETE_BODY],

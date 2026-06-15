@@ -15,14 +15,16 @@ import {
   type JSONContent,
 } from "@threa/types"
 import { withTransaction } from "../../db"
-import { eventId } from "../../lib/id"
+import { eventId, agentConversationSummaryId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
 import {
   AgentSessionRepository,
+  ConversationSummaryRepository,
   PersonaRepository,
   SessionStatuses,
+  ARIADNE_AGENT_ID,
   getBuiltInAgentConfig,
   failSessionWithLifecycle,
   type AgentSession,
@@ -80,6 +82,16 @@ const messageSchema = z.object({
 const sealedNameSchema = z.object({
   ciphertext: z.base64().min(1),
   envelope: streamEnvelopeSchema,
+})
+
+// A sealed rolling conversation summary (C-2). Like a sealed name (a single
+// per-(stream, persona) slot, no messageId) plus the advanced cursor — the
+// highest message sequence folded in, base-10 — which gates the row's monotonic
+// update so a redelivered/raced fold can't regress it. Same base64 validation.
+const sealedSummarySchema = z.object({
+  ciphertext: z.base64().min(1),
+  envelope: streamEnvelopeSchema,
+  lastSummarizedSequence: z.string().regex(/^\d+$/),
 })
 
 const completeSchema = z.object({
@@ -454,6 +466,49 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           streamId: updated.id,
           stream: updated,
         })
+      })
+
+      res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/sessions/:id/sealed-summary
+     * Persist the enclave's sealed rolling conversation summary (C-2) — the
+     * running memory of the turns that overflowed the verbatim window. The server
+     * can't summarize an encrypted scratchpad (it only holds ciphertext), so the
+     * enclave folds the overflow in-enclave, seals it, and POSTs it here. Stored
+     * on `agent_conversation_summaries` via the same monotonic-cursor upsert the
+     * companion uses: the `last_summarized_sequence` gate makes a redelivered or
+     * raced fold idempotent (an older cursor no-ops). No broadcast — the summary
+     * is turn context, never a user-visible row.
+     */
+    async sealedSummary(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = sealedSummarySchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+      assertCallbackBound(session, req)
+      assertReplyGeneration(session, parsed.data.envelope)
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
+      await ConversationSummaryRepository.upsert(pool, {
+        // A fresh id only matters on the insert path; ON CONFLICT (stream_id,
+        // persona_id) keeps the existing row's id, so a per-call id is safe.
+        id: agentConversationSummaryId(),
+        workspaceId: stream.workspaceId,
+        streamId: session.streamId,
+        personaId: ARIADNE_AGENT_ID,
+        sealed: {
+          ciphertext: parsed.data.ciphertext,
+          envelope: parsed.data.envelope,
+          keyGeneration: parsed.data.envelope.keyGeneration,
+        },
+        lastSummarizedSequence: BigInt(parsed.data.lastSummarizedSequence),
       })
 
       res.status(204).end()

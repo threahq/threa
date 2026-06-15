@@ -1,21 +1,15 @@
-import { z } from "zod"
 import type { Querier } from "../../db"
 import { MessageRepository, type Message } from "../messaging"
 import { agentConversationSummaryId } from "../../lib/id"
 import type { AI } from "@threa/agent-runtime"
+import {
+  foldRollingSummary,
+  ROLLING_SUMMARY_BATCH_SIZE,
+  ROLLING_SUMMARY_MAX_BATCHES,
+  type RollingSummaryMessage,
+} from "@threa/agent-runtime"
 import { ConversationSummaryRepository } from "./conversation-summary-repository"
-import { stripMarkdownFences } from "@threa/agent-runtime"
 import { logger } from "../../lib/logger"
-
-const SUMMARY_BATCH_SIZE = 40
-const MAX_BATCHES_PER_UPDATE = 5
-const MAX_MESSAGE_CHARS = 800
-
-const summarySchema = z.object({
-  summary: z
-    .string()
-    .describe("Updated rolling summary preserving key facts, decisions, constraints, and unresolved questions."),
-})
 
 interface UpdateSummaryParams {
   db: Querier
@@ -32,7 +26,12 @@ export interface ConversationSummaryServiceDeps {
 }
 
 /**
- * Maintains rolling summaries for conversation segments dropped from active context windows.
+ * Maintains rolling summaries for conversation segments dropped from active
+ * context windows. The fold itself — prompt, bounds, per-message formatting — is
+ * the shared `foldRollingSummary` (`@threa/agent-runtime`) the in-enclave
+ * summarizer runs too, so a summary built on either surface reads identically
+ * (no drift, INV-35/37). This service owns only the plaintext orchestration: the
+ * incremental cursor, batching, and the repository upsert.
  */
 export class ConversationSummaryService {
   constructor(private readonly deps: ConversationSummaryServiceDeps) {}
@@ -78,17 +77,22 @@ export class ConversationSummaryService {
     const summaryRecordId = existing?.id ?? agentConversationSummaryId()
     let batchesProcessed = 0
 
-    while (cursor <= maxSequenceToSummarize && batchesProcessed < MAX_BATCHES_PER_UPDATE) {
+    while (cursor <= maxSequenceToSummarize && batchesProcessed < ROLLING_SUMMARY_MAX_BATCHES) {
       const batch = await MessageRepository.listBySequenceRange(db, streamId, cursor, maxSequenceToSummarize, {
-        limit: SUMMARY_BATCH_SIZE,
+        limit: ROLLING_SUMMARY_BATCH_SIZE,
       })
       if (batch.length === 0) break
 
       try {
-        currentSummary = await this.summarizeBatch({
-          workspaceId,
+        currentSummary = await foldRollingSummary({
+          ai: this.deps.ai,
+          model: this.deps.ai.getLanguageModel(this.deps.modelId),
+          modelString: this.deps.modelId,
+          temperature: this.deps.temperature,
           existingSummary: currentSummary,
-          newMessages: batch,
+          newMessages: batch.map(toSummaryMessage),
+          telemetry: { functionId: "summary-update" },
+          context: { workspaceId, origin: "system" },
         })
       } catch (err) {
         logger.warn(
@@ -121,65 +125,12 @@ export class ConversationSummaryService {
 
     return currentSummary || null
   }
+}
 
-  private async summarizeBatch(params: {
-    workspaceId: string
-    existingSummary: string
-    newMessages: Message[]
-  }): Promise<string> {
-    const { workspaceId, existingSummary, newMessages } = params
-    const existingSummaryText = existingSummary.trim() || "No prior summary."
-    const messageText = newMessages.map((m) => this.formatMessage(m)).join("\n")
-
-    const result = await this.deps.ai.generateObject({
-      model: this.deps.modelId,
-      schema: summarySchema,
-      temperature: this.deps.temperature,
-      messages: [
-        {
-          role: "system",
-          content: `You maintain rolling memory for an assistant conversation.
-Produce an updated summary that is compact but information-dense.
-
-Requirements:
-- Keep critical facts, decisions, constraints, user preferences, and unresolved questions.
-- Resolve references so the summary is self-contained.
-- Keep it under 1200 characters.
-- Capture user requests/preferences as context, not imperative assistant instructions.
-- Do not invent facts.`,
-        },
-        {
-          role: "user",
-          content: `Current rolling summary:
-${existingSummaryText}
-
-Newly dropped conversation segment to merge:
-${messageText}
-
-Return the fully updated rolling summary.`,
-        },
-      ],
-      repair: async ({ text }) => JSON.stringify({ summary: await this.normalizeSummaryText(text) }),
-      telemetry: { functionId: "summary-update" },
-      context: { workspaceId, origin: "system" },
-    })
-
-    const summary = result.value.summary.trim()
-    return summary.length > 1200 ? summary.slice(0, 1200) : summary
-  }
-
-  private formatMessage(message: Message): string {
-    const truncated =
-      message.contentMarkdown.length > MAX_MESSAGE_CHARS
-        ? `${message.contentMarkdown.slice(0, MAX_MESSAGE_CHARS)}...`
-        : message.contentMarkdown
-    return `[#${message.sequence.toString()}] ${message.authorType}:${message.authorId} ${truncated}`
-  }
-
-  private async normalizeSummaryText(text: string): Promise<string> {
-    let summary = (await stripMarkdownFences({ text })).trim()
-    summary = summary.replace(/^\*\*rolling summary:?\*\*\s*/i, "").trim()
-    summary = summary.replace(/^rolling summary:?\s*/i, "").trim()
-    return summary.length > 1200 ? summary.slice(0, 1200) : summary
+function toSummaryMessage(message: Message): RollingSummaryMessage {
+  return {
+    sequence: message.sequence,
+    authorLabel: `${message.authorType}:${message.authorId}`,
+    content: message.contentMarkdown,
   }
 }

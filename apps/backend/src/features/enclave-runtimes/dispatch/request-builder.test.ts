@@ -25,11 +25,13 @@ function wrap(keyId: string, gen: number): StreamE2eKeyWrap {
   }
 }
 
+let seq = 0n
 function msg(id: string, authorType: "user" | "persona", text: string, gen = 1): Message {
   return {
     id,
     authorType,
     authorId: "usr_kris",
+    sequence: ++seq,
     createdAt: new Date("2026-06-02T09:27:00.000Z"),
     ciphertext: Buffer.from(`cipher:${text}`),
     envelope: { v: 2, keyGeneration: gen, iv: "aXY=", aad: "YWFk" },

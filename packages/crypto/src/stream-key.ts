@@ -265,3 +265,33 @@ export function buildNameAad(parts: { streamId: string; keyGeneration: number })
     utf8Encode(String(parts.keyGeneration))
   )
 }
+
+/**
+ * Canonical AAD for a stream's *sealed rolling conversation summary* (C-2) — the
+ * enclave-computed running memory of the turns that overflow the verbatim window
+ * (`agent_conversation_summaries.summary_ciphertext`). Binds the ciphertext to
+ * its `(streamId, generation)` slot plus a fixed `summary` label, so a malicious
+ * server can't relocate a sealed summary onto another stream or swap it with a
+ * sealed name (`…|name|…`) or message body (`streamId|messageId|senderId`). The
+ * `summary` literal keeps this namespace disjoint from the others even though
+ * several start with `streamId|generation`. Keep stable — changing it breaks
+ * every existing sealed summary. Same delimiter-safety rules as `buildNameAad`.
+ */
+export function buildSummaryAad(parts: { streamId: string; keyGeneration: number }): Uint8Array<ArrayBuffer> {
+  if (parts.streamId.length === 0) {
+    throw new Error("buildSummaryAad: streamId must be non-empty")
+  }
+  if (parts.streamId.includes("|")) {
+    throw new Error("buildSummaryAad: streamId must not contain '|'")
+  }
+  if (!Number.isInteger(parts.keyGeneration) || parts.keyGeneration < 0) {
+    throw new Error("buildSummaryAad: keyGeneration must be a non-negative integer")
+  }
+  return concatBytes(
+    utf8Encode(parts.streamId),
+    utf8Encode("|"),
+    utf8Encode("summary"),
+    utf8Encode("|"),
+    utf8Encode(String(parts.keyGeneration))
+  )
+}

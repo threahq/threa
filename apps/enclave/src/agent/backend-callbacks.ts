@@ -6,6 +6,7 @@ import {
   type EnclaveSessionHeartbeatResponse,
   type SealedReply,
   type EnclaveSealedName,
+  type EnclaveSealedSummary,
   type SealedStep,
   type SealedStepStart,
   type EnclaveSealedSubstep,
@@ -51,6 +52,8 @@ export interface BackendCallbacks {
   fail(sessionId: string, failure: EnclaveSessionFailure): Promise<void>
   /** Persist a sealed auto-generated stream title (best-effort; for untitled E2E scratchpads). */
   sealedName(sessionId: string, sealed: EnclaveSealedName): Promise<void>
+  /** Persist the sealed rolling conversation summary (best-effort; C-2). */
+  sealedSummary(sessionId: string, sealed: EnclaveSealedSummary): Promise<void>
 }
 
 const HEARTBEAT_TIMEOUT_MS = 10_000
@@ -165,6 +168,16 @@ export function createBackendCallbacks(config: EnclaveConfig, callbackToken?: st
         signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session sealed-name failed: ${res.status}`)
+    },
+
+    async sealedSummary(sessionId, sealed) {
+      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/sealed-summary`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sealed),
+        signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session sealed-summary failed: ${res.status}`)
     },
   }
 }

@@ -39,15 +39,19 @@ describe("ConversationSummaryService", () => {
   const TEST_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
   const TEST_TEMPERATURE = 0.1
 
-  const mockGenerateObject = mock((_options: unknown) =>
+  // The companion now folds through the shared `foldRollingSummary`, which calls
+  // `generateTextWithTools` (the narrow surface the enclave shares) rather than
+  // `generateObject` — so the summary is plain text, not a schema'd object.
+  const mockGenerateText = mock((_options: unknown) =>
     Promise.resolve({
-      value: { summary: "Updated summary with key decisions and pending task" },
-      response: { usage: {} },
-      usage: {},
+      text: "Updated summary with key decisions and pending task",
+      toolCalls: [],
+      response: { messages: [] },
     })
   )
   const mockAI = {
-    generateObject: mockGenerateObject,
+    generateTextWithTools: mockGenerateText,
+    getLanguageModel: mock((_modelId: string) => ({}) as unknown),
   } as unknown as AI
 
   const findSummarySpy = spyOn(ConversationSummaryRepository, "findByStreamAndPersona")
@@ -56,7 +60,7 @@ describe("ConversationSummaryService", () => {
   const listByRangeSpy = spyOn(MessageRepository, "listBySequenceRange")
 
   beforeEach(() => {
-    mockGenerateObject.mockClear()
+    mockGenerateText.mockClear()
     findSummarySpy.mockClear()
     upsertSummarySpy.mockClear()
     listMessagesSpy.mockClear()
@@ -100,7 +104,7 @@ describe("ConversationSummaryService", () => {
     })
 
     expect(summary).toBe("Updated summary with key decisions and pending task")
-    expect(mockGenerateObject).toHaveBeenCalledTimes(1)
+    expect(mockGenerateText).toHaveBeenCalledTimes(1)
     expect(listByRangeSpy).toHaveBeenCalledWith({}, "stream_1", 1n, 20n, { limit: 40 })
     expect(upsertSummarySpy).toHaveBeenCalledWith(
       {},
@@ -149,22 +153,18 @@ describe("ConversationSummaryService", () => {
     })
 
     expect(listByRangeSpy).toHaveBeenCalledWith({}, "stream_1", 51n, 79n, { limit: 40 })
-    const firstGenerateObjectCall = mockGenerateObject.mock.calls[0]?.[0] as
-      | { context?: unknown; telemetry?: unknown; repair?: ((args: { text: string }) => string) | false }
+    // The fold carries the cost-attribution context and telemetry through to the
+    // shared `generateTextWithTools` call, and folds the prior summary in (so the
+    // running memory accumulates rather than restarting each batch).
+    const firstFoldCall = mockGenerateText.mock.calls[0]?.[0] as
+      | { context?: unknown; telemetry?: unknown; temperature?: number; messages?: { content: string }[] }
       | undefined
-    expect(firstGenerateObjectCall).toMatchObject({
+    expect(firstFoldCall).toMatchObject({
       context: { workspaceId: "ws_1", origin: "system" },
       telemetry: { functionId: "summary-update" },
+      temperature: TEST_TEMPERATURE,
     })
-    const repairFn = firstGenerateObjectCall?.repair
-    expect(typeof repairFn).toBe("function")
-    if (typeof repairFn !== "function") {
-      throw new Error("Expected repair function to be provided")
-    }
-    const repaired = await repairFn({
-      text: "**Rolling Summary:**\n\nUser asked about fish identification.",
-    })
-    expect(repaired).toBe(JSON.stringify({ summary: "User asked about fish identification." }))
+    expect(firstFoldCall?.messages?.[0]?.content).toContain("Existing summary of older context")
   })
 
   test("returns existing summary without AI call when no new dropped messages need summarization", async () => {
@@ -197,7 +197,7 @@ describe("ConversationSummaryService", () => {
     })
 
     expect(summary).toBe("Existing summary")
-    expect(mockGenerateObject).not.toHaveBeenCalled()
+    expect(mockGenerateText).not.toHaveBeenCalled()
     expect(upsertSummarySpy).not.toHaveBeenCalled()
   })
 
@@ -222,7 +222,7 @@ describe("ConversationSummaryService", () => {
     })
     listMessagesSpy.mockResolvedValue([makeMessage(29n, "Older boundary message")])
     listByRangeSpy.mockResolvedValue([makeMessage(11n, "Dropped message that needs summarization")])
-    mockGenerateObject.mockRejectedValueOnce(new Error("No object generated"))
+    mockGenerateText.mockRejectedValueOnce(new Error("No object generated"))
 
     const summary = await service.updateForContext({
       db: {} as any,
@@ -270,7 +270,7 @@ describe("ConversationSummaryService", () => {
     })
 
     expect(summary).toBeNull()
-    expect(mockGenerateObject).not.toHaveBeenCalled()
+    expect(mockGenerateText).not.toHaveBeenCalled()
     expect(upsertSummarySpy).not.toHaveBeenCalled()
   })
 })

@@ -16,6 +16,9 @@ import { MessageRepository } from "../messaging"
 import { AttachmentRepository } from "../attachments"
 import {
   AgentSessionRepository,
+  ConversationSummaryRepository,
+  CONTEXT_WINDOW_CANDIDATE_CEILING,
+  DEFAULT_CONTEXT_WINDOW_CHARS,
   SessionStatuses,
   ARIADNE_AGENT_ID,
   buildEnclaveSystemPrompt,
@@ -31,9 +34,6 @@ import {
   ENCLAVE_PENDING_PARK_AFTER_MS,
   type EnclaveInvocation,
 } from "./invocations-repository"
-
-/** How many prior messages of context to ship with an assignment. */
-const MAX_HISTORY_MESSAGES = 30
 
 /**
  * Caps on inline attachment shipping (the enclave can't fetch from S3, so
@@ -216,7 +216,14 @@ export class EnclaveClaimService {
     const [wraps, surrounding, rootStream, preferences, authors, allowedToolCategories] = await Promise.all([
       // Root's wraps — the thread shares the root's SSK and has no wraps of its own.
       StreamE2eKeyWrapsRepository.listForStream(pool, workspaceId, e2eStreamId),
-      MessageRepository.findSurrounding(pool, triggerId, streamId, MAX_HISTORY_MESSAGES, 0),
+      // The deepened verbatim window (C-2): ship up to the shared policy ceiling of
+      // prior messages. The enclave fills newest-first under `DEFAULT_CONTEXT_WINDOW_CHARS`
+      // and folds the overflow into the rolling summary, so this is the candidate
+      // ceiling, not the window depth — the char budget is the real limiter. Sourced
+      // from `CONTEXT_WINDOW_CANDIDATE_CEILING` rather than a parallel literal;
+      // referenced here (request time) not at module load to avoid the agents-barrel
+      // import cycle's TDZ. The enclave schema's own history cap must stay ≥ this.
+      MessageRepository.findSurrounding(pool, triggerId, streamId, CONTEXT_WINDOW_CANDIDATE_CEILING, 0),
       triggerStream.rootStreamId
         ? StreamRepository.findById(pool, triggerStream.rootStreamId)
         : Promise.resolve(triggerStream),
@@ -256,16 +263,19 @@ export class EnclaveClaimService {
     ]
     const attachmentCiphertexts = await this.loadAttachmentCiphertexts(attachmentCiphertextIds)
 
-    // Prior turns' sealed digests (C-1): ship the opaque turn_digest step
-    // ciphertext from this stream's recent completed sessions so the enclave —
-    // the only party holding the SSK wraps — can fold them into the turn's
-    // context. The backend never opens them (INV-E7); the enclave skips any
-    // generation it has no wrap for.
-    const digestRows = await AgentSessionRepository.findRecentDigestStepsByStream(pool, {
-      streamId,
-      personaId: ARIADNE_AGENT_ID,
-      limit: TURN_DIGEST_INJECT_COUNT,
-    })
+    // Prior turns' sealed digests (C-1) + the prior sealed rolling summary (C-2):
+    // both are opaque to the backend (only the enclave's SSK wraps open them,
+    // INV-E7) and neither depends on the other, so fetch them together. Digests:
+    // the recent turn_digest step ciphertext from this stream's completed
+    // sessions. Summary: the single (stream, persona) row the enclave extends.
+    const [digestRows, summaryRow] = await Promise.all([
+      AgentSessionRepository.findRecentDigestStepsByStream(pool, {
+        streamId,
+        personaId: ARIADNE_AGENT_ID,
+        limit: TURN_DIGEST_INJECT_COUNT,
+      }),
+      ConversationSummaryRepository.findByStreamAndPersona(pool, streamId, ARIADNE_AGENT_ID),
+    ])
     const recentDigests = digestRows
       .filter((row) => row.step.contentCiphertext && row.step.contentEnvelope)
       .reverse() // newest-first from the repo → oldest-first for the prompt
@@ -274,6 +284,18 @@ export class EnclaveClaimService {
         envelope: row.step.contentEnvelope as EnclaveStreamEnvelope,
         completedAt: (row.step.completedAt ?? row.sessionCreatedAt).toISOString(),
       }))
+
+    // Ship the prior summary's sealed bytes (the enclave folds the overflow into
+    // them and re-seals): only its generation's SSK wrap, already in `wraps`,
+    // opens it; a row without sealed bytes (the plaintext-companion shape, never
+    // produced for an E2E stream) ships nothing. `summaryCursor` is the highest
+    // sequence already folded, so the enclave never re-summarizes below it.
+    const priorSummary = summaryRow?.sealed
+      ? { ciphertext: summaryRow.sealed.ciphertext, envelope: summaryRow.sealed.envelope as EnclaveStreamEnvelope }
+      : undefined
+    // The cursor only means something paired with a summary to extend; without a
+    // sealed prior summary the enclave folds from the start of the shipped window.
+    const summaryCursor = priorSummary ? summaryRow!.lastSummarizedSequence.toString() : undefined
 
     const sid = newSessionId()
     const assignment = buildEnclaveSessionAssignment({
@@ -301,6 +323,11 @@ export class EnclaveClaimService {
       allowedToolCategories,
       attachmentCiphertexts,
       recentDigests,
+      // Deepened verbatim window (C-2): the enclave fills history newest-first up
+      // to this char budget and folds the overflow into the rolling summary.
+      maxChars: DEFAULT_CONTEXT_WINDOW_CHARS,
+      priorSummary,
+      summaryCursor,
       // Ask the enclave to seal a title only for an untitled scratchpad: gate on
       // the *trigger's own* stream (a top-level scratchpad message titles it; a
       // thread reply never does), while `e2e.hasSealedName` is the root's — the

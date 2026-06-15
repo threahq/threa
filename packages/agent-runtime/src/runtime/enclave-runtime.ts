@@ -53,6 +53,18 @@ export {
   type ToolWorkRecord,
   type TurnDigestPromptEntry,
 } from "./turn-digest"
+export {
+  foldRollingSummary,
+  clampRollingSummary,
+  formatConversationMemoryForPrompt,
+  ROLLING_SUMMARY_MAX_CHARS,
+  ROLLING_SUMMARY_MAX_TOKENS,
+  ROLLING_SUMMARY_TEMPERATURE,
+  ROLLING_SUMMARY_BATCH_SIZE,
+  ROLLING_SUMMARY_MAX_BATCHES,
+  type RollingSummaryMessage,
+  type FoldRollingSummaryParams,
+} from "./rolling-summary"
 
 // Web primitives + bounded research — enclave-safe (call external services
 // directly, no backend callback, no AI provider layer / OTEL pull).

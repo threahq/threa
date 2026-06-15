@@ -588,6 +588,28 @@ export interface EnclaveSealedName {
 }
 
 /**
+ * The sealed rolling conversation summary (C-2) the enclave folded at turn end,
+ * POSTed to `POST .../sessions/:id/sealed-summary`. The server can't read message
+ * content, so it can't summarize an encrypted scratchpad — the enclave (which
+ * sees plaintext) folds the messages that overflowed the verbatim window into the
+ * prior summary, seals the result under the stream SSK bound by AAD to
+ * `streamId|summary|generation` (`buildSummaryAad` — a slot disjoint from the
+ * sealed name `…|name|…` and the message body `streamId|messageId|senderId`, so a
+ * malicious server can't relocate a summary onto another stream or swap it for a
+ * name/message), and the backend stores the ciphertext on
+ * `agent_conversation_summaries`. No `messageId`: a summary is a single
+ * per-(stream, persona) slot, not a message. `lastSummarizedSequence` is the
+ * advanced cursor as a base-10 string — non-secret metadata (a message sequence)
+ * that gates the row's monotonic update so concurrent/redelivered folds can't
+ * regress it.
+ */
+export interface EnclaveSealedSummary {
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+  lastSummarizedSequence: string
+}
+
+/**
  * One sealed trace step a sealed-capable agent driver produced this turn — the
  * enclave today, any owner-granted sealed actor later — POSTed to
  * `POST .../sessions/:id/steps` the moment the agent loop emits it (the LLM's
@@ -692,7 +714,14 @@ export interface EnclaveSessionAssignment {
    */
   callbackToken: string
   wraps: EnclaveSskWrap[]
-  history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
+  /**
+   * Prior turns, oldest→newest. `sequence` is the message's stream sequence as a
+   * base-10 string — non-secret metadata (the interjection pull already ships it
+   * in clear) the enclave needs to advance the rolling summary's
+   * `last_summarized_sequence` cursor over the messages that overflow the
+   * verbatim window (C-2). `role` tells the model who spoke.
+   */
+  history: (EnclaveSealedMessage & { role: "user" | "assistant"; sequence: string })[]
   prompt: EnclaveSealedMessage
   system: string
   model: string
@@ -749,6 +778,30 @@ export interface EnclaveSessionAssignment {
    * never leaves ciphertext on the backend (INV-E7).
    */
   recentDigests?: (EnclaveSealedMessage & { completedAt: string })[]
+  /**
+   * Char budget for the verbatim conversation window (C-2; the companion's
+   * `ContextWindowPolicy.maxChars`, default 80k). The enclave fills its decrypted
+   * history newest-first up to this budget; messages that overflow are folded
+   * into the rolling summary. Omitted → the enclave keeps its whole shipped
+   * window verbatim (no fold), today's behavior.
+   */
+  maxChars?: number
+  /**
+   * The stream's prior sealed rolling summary (C-2), if one exists — the opaque
+   * ciphertext the enclave sealed on an earlier turn. The enclave opens it with
+   * the SSK wrap for its generation (skipped if it has none, like history), folds
+   * the newly-overflowed messages into it, and re-seals the result. The backend
+   * never reads it (INV-E7). Omitted → start a fresh summary.
+   */
+  priorSummary?: EnclaveSealedMessage
+  /**
+   * The prior summary's `last_summarized_sequence` cursor, base-10 — the highest
+   * message sequence already folded into `priorSummary`. The enclave only folds
+   * history newer than this, so a message is never summarized twice; it advances
+   * the cursor and reports the new value on the sealed-summary callback. Absent
+   * when there is no prior summary (fold from the start of the shipped window).
+   */
+  summaryCursor?: string
 }
 
 /**

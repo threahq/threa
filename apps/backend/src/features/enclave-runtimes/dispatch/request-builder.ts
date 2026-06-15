@@ -71,6 +71,22 @@ export interface BuildInvokeInputs {
    * `completedAt` is clear timing metadata (the step row already exposes it).
    */
   recentDigests?: { ciphertext: string; envelope: EnclaveStreamEnvelope; completedAt: string }[]
+  /**
+   * Char budget for the enclave's verbatim window (C-2). The enclave fills
+   * history newest-first up to this and folds the overflow into the rolling
+   * summary; omitted → it keeps the whole shipped window verbatim.
+   */
+  maxChars?: number
+  /**
+   * The stream's prior sealed rolling summary, if any — opaque ciphertext the
+   * enclave opens with its SSK wrap, folds the overflow into, and re-seals.
+   */
+  priorSummary?: { ciphertext: string; envelope: EnclaveStreamEnvelope }
+  /**
+   * The prior summary's `last_summarized_sequence` (base-10) — the highest
+   * sequence already folded, so the enclave only summarizes newer history.
+   */
+  summaryCursor?: string
 }
 
 export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): EnclaveSessionAssignment | null {
@@ -104,6 +120,9 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
       ciphertext: m.ciphertext!.toString("base64"),
       envelope: m.envelope as EnclaveStreamEnvelope,
       role: m.authorType === "persona" ? ("assistant" as const) : ("user" as const),
+      // Clear metadata: the message's stream sequence, so the enclave can advance
+      // the rolling summary cursor over the messages it folds (C-2).
+      sequence: m.sequence.toString(),
     }))
 
   return {
@@ -135,6 +154,12 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
     // Prior turns' sealed digests (C-1) — shipped only when present so the
     // no-digest assignment stays byte-identical to before.
     ...(inputs.recentDigests && inputs.recentDigests.length > 0 ? { recentDigests: inputs.recentDigests } : {}),
+    // Deepened verbatim window + rolling summary (C-2). Each field is shipped
+    // only when present so a stream with no prior summary / no budget stays
+    // byte-identical to before.
+    ...(inputs.maxChars !== undefined ? { maxChars: inputs.maxChars } : {}),
+    ...(inputs.priorSummary ? { priorSummary: inputs.priorSummary } : {}),
+    ...(inputs.summaryCursor !== undefined ? { summaryCursor: inputs.summaryCursor } : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
     // Clear metadata for the enclave's "Triggered by" CONTEXT step; the body is
     // the decrypted prompt, sealed enclave-side. Omitted when the author name
