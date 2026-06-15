@@ -227,12 +227,14 @@ function MessageInputComponent({
   const streamContext = useMentionStreamContext(workspaceId, stream)
 
   const e2eEnabled = stream?.e2eEnabled === true
+  // The encrypted root holds the SSK + wraps (a thread shares its root's key), so
+  // both sealing and the repair notice key off the root, not the (maybe-thread) id.
+  const e2eRootStreamId = e2eEnabled ? (stream?.rootStreamId ?? streamId) : undefined
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: streamId,
-    // Seal drafts to the encrypted root's SSK (a thread shares its root's key).
-    e2eStreamId: e2eEnabled ? (stream?.rootStreamId ?? streamId) : undefined,
+    e2eStreamId: e2eRootStreamId,
   })
   const quoteReplyCtx = useQuoteReply()
 
@@ -728,7 +730,7 @@ function MessageInputComponent({
           This replaces a previous ref-counted React state mechanism that was prone to
           leaks across hydration races and virtualization cycles. */}
       <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
-        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!stream?.e2eEnabled} streamId={stream?.id} />
+        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>
