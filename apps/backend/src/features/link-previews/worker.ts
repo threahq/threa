@@ -316,10 +316,13 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     const metadata = await parseHtmlMeta(html, url)
 
     // Reddit's anti-bot interstitial returns HTTP 200 with only a "Please wait for verification"
-    // <title> and no OpenGraph tags, whereas every real Reddit post/comment page carries og:image.
-    // Treating a missing image as the wall (rather than matching the English title literally) keeps
-    // this language-independent and stops the challenge page from being cached as a completed preview.
-    if (isRedditUrl(url) && !metadata.imageUrl) {
+    // <title> and no OpenGraph tags at all, so it yields neither an og:image nor an og:description.
+    // Require BOTH to be absent before treating it as the wall: a real Reddit page — including a
+    // text-only post, subreddit, or profile that carries no og:image — still serves an og:description,
+    // so keying on image alone would discard those good previews. Checking the absence of structured
+    // metadata (not the English title) keeps this language-independent, and stops the challenge page
+    // from being cached as a completed preview.
+    if (isRedditUrl(url) && !metadata.imageUrl && !metadata.description) {
       log.warn({ url }, "Reddit served anti-bot interstitial; marking preview failed for retry")
       return { status: "failed", expiresAt: minutesFromNow(30) }
     }

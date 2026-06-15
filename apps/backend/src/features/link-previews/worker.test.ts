@@ -1058,6 +1058,53 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
+  test("keeps a text-only Reddit preview (title + description, no og:image) instead of marking it failed", async () => {
+    // The recognized UA gets real OG HTML for text posts/subreddits/profiles, which carry an
+    // og:description but often no og:image. Keying the interstitial guard on image alone would
+    // discard these good previews; the guard requires BOTH image and description to be absent.
+    const url = "https://www.reddit.com/r/learnprogramming/"
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          `<html><head>` +
+            `<meta property="og:title" content="r/learnprogramming">` +
+            `<meta property="og:description" content="A subreddit for learning to program.">` +
+            `</head></html>`,
+          { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+        )
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: redditServiceMock(url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_reddit_text",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_reddit", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_reddit",
+      [
+        expect.objectContaining({
+          id: "lp_reddit",
+          metadata: expect.objectContaining({
+            title: "r/learnprogramming",
+            description: "A subreddit for learning to program.",
+            status: "completed",
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
   test("marks Reddit failed instead of caching the 'Please wait for verification' interstitial", async () => {
     // The anti-bot wall returns HTTP 200 with only a <title> and no OpenGraph tags. Without this
     // guard, the URL-derived/<title> fallback gets cached as a completed 24h preview showing
