@@ -5,7 +5,7 @@ import { db, type CachedStream } from "@/db"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { clearStreamNameCache } from "@/lib/crypto/stream-name-cache"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
-import { useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
+import { useSealedNamePendingResolver, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { useStreamName } from "@/hooks/use-stream-name"
 import * as e2eSession from "@/stores/e2e-session-store"
 import * as workspaces from "@/hooks/use-workspaces"
@@ -78,6 +78,17 @@ function DecryptingHarness() {
   useDecryptStreamNames(WS)
   const decrypting = useStreamNameDecrypting(WS, SEALED_STREAM)
   return <span data-testid="state">{decrypting ? "decrypting" : "settled"}</span>
+}
+
+const PLAINTEXT_STREAM = { id: "stream_plain", e2eEnabled: false, sealedNameCiphertext: null, rootStreamId: null }
+
+// Mirrors how the list surfaces (sidebar builder, coordinated-loading reveal
+// gate) consume the single authority: wire it once, then apply across rows.
+function ListHarness() {
+  useDecryptStreamNames(WS)
+  const isPending = useSealedNamePendingResolver(WS)
+  const anyPending = [SEALED_STREAM, PLAINTEXT_STREAM].some(isPending)
+  return <span data-testid="any-pending">{anyPending ? "pending" : "settled"}</span>
 }
 
 async function seedSealedStream() {
@@ -179,5 +190,40 @@ describe("useStreamNameDecrypting (cold-load loading state)", () => {
     render(<DecryptingHarness />)
 
     await waitFor(() => expect(screen.getByTestId("state")).toHaveTextContent("settled"))
+  })
+})
+
+describe("useSealedNamePendingResolver (the single list authority)", () => {
+  it("reports pending across rows until the sealed name lands, ignoring plaintext rows", async () => {
+    vi.spyOn(e2eSession, "useE2eSession").mockReturnValue(session({ status: "unlocked" }))
+    let resolveDecrypt: (value: string | null) => void = () => {}
+    vi.spyOn(messageEnvelope, "tryOpenStreamName").mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveDecrypt = resolve
+        })
+    )
+
+    await seedSealedStream()
+    render(<ListHarness />)
+
+    // One sealed name is still decrypting → the list reports pending; the
+    // plaintext row never contributes pending.
+    expect(screen.getByTestId("any-pending")).toHaveTextContent("pending")
+
+    await act(async () => {
+      resolveDecrypt("Quarterly Plan")
+    })
+    await waitFor(() => expect(screen.getByTestId("any-pending")).toHaveTextContent("settled"))
+  })
+
+  it("never reports pending while the session is locked (so the reveal gate can't deadlock)", async () => {
+    vi.spyOn(messageEnvelope, "tryOpenStreamName").mockResolvedValue("Should Not Appear")
+    vi.spyOn(e2eSession, "useE2eSession").mockReturnValue(session({ status: "locked", privateKey: null }))
+
+    await seedSealedStream()
+    render(<ListHarness />)
+
+    await waitFor(() => expect(screen.getByTestId("any-pending")).toHaveTextContent("settled"))
   })
 })
