@@ -784,5 +784,38 @@ describe("useDraftComposer", () => {
 
       expect(result.current.content).toEqual(makeDoc("typed during decrypt"))
     })
+
+    it("preserves in-progress edits when the loaded pointer briefly flickers to null", () => {
+      // Repro of the mobile revert seen on staging: while the user edits (live
+      // content ahead of the debounced save), `loadedDraftId` momentarily reads
+      // null — a transient re-read of the loaded pointer. The clear-on-removal
+      // effect used to blank the editor and reset the engagement guard; on the
+      // pointer's return, the late-hydrate rising edge then re-filled the stale
+      // last-saved body, dropping the un-saved keystrokes. A real removal migrates
+      // unpushed edits to a NEW id rather than nulling, so a null-while-engaged is
+      // a flicker and must never wipe the editor.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("saved body")
+      mockDraftLoadedId = "draft_x"
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("saved body"))
+
+      // User types ahead of the debounce (savedDraft still lags at "saved body").
+      act(() => {
+        result.current.handleContentChange(makeDoc("saved body and more"))
+      })
+      expect(result.current.content).toEqual(makeDoc("saved body and more"))
+
+      // Pointer flickers to null (no loaded row → savedDraft reads empty) …
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      rerender()
+      // … then returns, with savedDraft still the stale last-saved body.
+      mockDraftLoadedId = "draft_x"
+      mockDraftContentJson = makeDoc("saved body")
+      rerender()
+
+      expect(result.current.content).toEqual(makeDoc("saved body and more"))
+    })
   })
 })

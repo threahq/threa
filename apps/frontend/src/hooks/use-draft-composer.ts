@@ -280,13 +280,20 @@ export function useDraftComposer({
   // Blank the editor the moment the loaded draft is removed underneath the
   // composer: sent/resolved here, or discarded/resolved on another device (its
   // `draft:deleted` clears this scope's pointer). Without this the just-sent or
-  // remotely-cleared body lingers on screen. A transition to null is always safe
-  // to clear — the delete path preserves any unpushed local edits under a NEW id
-  // (so the loaded id MIGRATES rather than going null).
+  // remotely-cleared body lingers on screen.
+  //
+  // But NOT while the user is actively editing non-empty content. A genuine
+  // removal of a draft with unpushed edits MIGRATES those edits to a new id (the
+  // loaded id changes value rather than going null — see `applyDraftDeleted`), so
+  // a null arriving WHILE the editor holds engaged keystrokes is a transient
+  // re-read flicker of the loaded pointer, not a real removal. Blanking on it
+  // wiped the in-progress edits and, on the pointer's return, the late-hydrate
+  // rising edge re-filled the stale last-saved body — the keystrokes were lost.
+  // A clean (unedited) loaded draft still clears: that is the cross-device case.
   useEffect(() => {
     const prev = prevLoadedIdRef.current
     prevLoadedIdRef.current = loadedDraftId ?? null
-    if (prev && !loadedDraftId) {
+    if (prev && !loadedDraftId && !(userEngagedRef.current && hasDocContent(contentRef.current))) {
       userEngagedRef.current = false
       setContent(initialContent)
       clearAttachments()
