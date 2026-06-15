@@ -8,6 +8,7 @@ import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-stor
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
 import * as sealDraft from "@/lib/crypto/seal-draft"
+import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({
@@ -424,14 +425,36 @@ describe("useDraftMessage", () => {
     } as ReturnType<typeof e2eSessionStore.useE2eSession>
 
     beforeEach(() => {
+      clearDecryptCache()
       vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
       vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(unlockedSession)
     })
 
+    /** Persist a sealed (E2E) draft loaded into the composer for the scope. */
+    async function putSealedLoaded(id: string) {
+      await db.drafts.put({
+        id,
+        workspaceId,
+        scope: draftKey,
+        contentJson: EMPTY_DOC,
+        attachments: [],
+        ciphertext: "ct_sealed",
+        envelope: { v: 2 },
+        e2eVersion: 2,
+        baseVersion: 1,
+        clientUpdatedAt: Date.now(),
+      })
+      await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: id })
+      await seedDraftCacheFromIdb(workspaceId)
+    }
+
     it("seals the body and persists ciphertext only — never plaintext at rest (E2EE-4)", async () => {
-      const sealSpy = vi
-        .spyOn(sealDraft, "sealDraftContent")
-        .mockResolvedValue({ ciphertext: "ct_sealed", envelope: { v: 2 }, e2eVersion: 2 })
+      const sealSpy = vi.spyOn(sealDraft, "sealDraftContent").mockResolvedValue({
+        ciphertext: "ct_sealed",
+        envelope: { v: 2 },
+        e2eVersion: 2,
+        contentMarkdown: "top secret",
+      })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
 
@@ -451,62 +474,31 @@ describe("useDraftMessage", () => {
       expect(await db.pendingOperations.where("type").equals("upsert_draft").count()).toBe(1)
     })
 
-    it("decrypts a sealed loaded draft into the composer on load", async () => {
-      vi.spyOn(sealDraft, "decryptDraftContent").mockResolvedValue(makeDoc("decrypted body"))
-      await db.drafts.put({
-        id: "draft_sealed",
-        workspaceId,
-        scope: draftKey,
-        contentJson: EMPTY_DOC,
-        attachments: [],
-        ciphertext: "ct_sealed",
-        envelope: { v: 2 },
-        e2eVersion: 2,
-        baseVersion: 1,
-        clientUpdatedAt: Date.now(),
-      })
-      await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_sealed" })
-      await seedDraftCacheFromIdb(workspaceId)
+    it("surfaces the decrypted body on load via the shared decrypt cache", async () => {
+      await putSealedLoaded("draft_sealed")
+      // The plaintext is in the shared cache — seeded by the authoring device's
+      // save, or (on a fresh device) populated by the read path's decrypt. Either
+      // way the composer reads it back the same way a message does.
+      seedDecryption("draft_sealed", { contentMarkdown: "decrypted body", contentJson: makeDoc("decrypted body") })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
 
       await waitFor(() => expect(result.current.isLoaded).toBe(true))
       expect(result.current.contentJson).toEqual(makeDoc("decrypted body"))
+      expect(result.current.isDecrypting).toBe(false)
     })
 
-    it("drops the decrypted body from memory on lock and re-decrypts on the next unlock (E2EE-4)", async () => {
-      let session = unlockedSession
-      vi.spyOn(e2eSessionStore, "useE2eSession").mockImplementation(() => session)
-      const decryptSpy = vi.spyOn(sealDraft, "decryptDraftContent").mockResolvedValue(makeDoc("secret body"))
-      await db.drafts.put({
-        id: "draft_sealed",
-        workspaceId,
-        scope: draftKey,
-        contentJson: EMPTY_DOC,
-        attachments: [],
-        ciphertext: "ct",
-        envelope: { v: 2 },
-        e2eVersion: 2,
-        baseVersion: 1,
-        clientUpdatedAt: Date.now(),
-      })
-      await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_sealed" })
-      await seedDraftCacheFromIdb(workspaceId)
+    it("reports a locked sealed draft as empty (not stuck), without losing the row", async () => {
+      vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+      await putSealedLoaded("draft_sealed")
 
-      const { result, rerender } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
-      await waitFor(() => expect(result.current.contentJson).toEqual(makeDoc("secret body")))
-      expect(decryptSpy).toHaveBeenCalledTimes(1)
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
 
-      // Lock: the in-memory plaintext must go, and the composer must stop surfacing it.
-      session = LOCKED_SESSION
-      rerender()
-      await waitFor(() => expect(result.current.contentJson).toEqual(EMPTY_DOC))
-
-      // Unlock again: the body is re-decrypted from the still-sealed row, not reused.
-      session = unlockedSession
-      rerender()
-      await waitFor(() => expect(result.current.contentJson).toEqual(makeDoc("secret body")))
-      expect(decryptSpy).toHaveBeenCalledTimes(2)
+      await waitFor(() => expect(result.current.isLoaded).toBe(true))
+      expect(result.current.isDecrypting).toBe(false)
+      expect(result.current.contentJson).toEqual(EMPTY_DOC)
+      // The sealed row is kept (only plaintext rows are purged) so it decrypts on unlock.
+      expect(await db.drafts.get("draft_sealed")).toBeDefined()
     })
 
     it("keeps content in the composer (no plaintext written) when the session is locked", async () => {

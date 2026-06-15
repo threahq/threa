@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
-import { sealDraftContent, decryptDraftContent } from "./seal-draft"
+import { sealDraftContent } from "./seal-draft"
+import { tryDecryptMessagePayload } from "./message-envelope"
 import * as sessionStore from "@/stores/e2e-session-store"
 import * as streamKeyCache from "./stream-key-cache"
 
@@ -33,7 +34,7 @@ beforeEach(() => {
 })
 
 describe("seal-draft", () => {
-  it("round-trips a draft body through the stream SSK (seal → decrypt)", async () => {
+  it("round-trips a draft body through the stream SSK (seal → shared decrypt path)", async () => {
     vi.spyOn(sessionStore, "getE2eSessionState").mockReturnValue(unlockedSession)
     vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({ keyGeneration: 1, key: ssk })
     vi.spyOn(streamKeyCache, "resolveStreamKey").mockResolvedValue(ssk)
@@ -48,19 +49,20 @@ describe("seal-draft", () => {
     expect(typeof sealed.ciphertext).toBe("string")
     expect(sealed.ciphertext.length).toBeGreaterThan(0)
     expect(sealed.e2eVersion).toBe(2)
+    expect(sealed.contentMarkdown).toBe("hello e2e world")
 
-    const decrypted = await decryptDraftContent({
-      ciphertext: sealed.ciphertext,
-      envelope: sealed.envelope,
-      e2eVersion: sealed.e2eVersion,
-      workspaceId,
-      streamId,
-      privateKey: unlockedSession.privateKey!,
-      recipientKeyId: unlockedSession.keyId!,
-    })
-    // The body survives the seal → wire → open round-trip (modulo markdown
-    // serialization, which is the same transform a sent message goes through).
-    expect(decrypted).toEqual(parseMarkdown("hello e2e world"))
+    // Decrypt via the same primitive the shared decrypt-cache uses on read.
+    const opened = await tryDecryptMessagePayload(
+      { contentMarkdown: "", ciphertext: sealed.ciphertext, envelope: sealed.envelope, e2eVersion: sealed.e2eVersion },
+      {
+        privateKey: unlockedSession.privateKey!,
+        recipientKeyId: unlockedSession.keyId!,
+        workspaceId,
+        streamId,
+        rootStreamId: streamId,
+      }
+    )
+    expect(opened?.contentJson).toEqual(parseMarkdown("hello e2e world"))
   })
 
   it("throws when the session is locked (the caller keeps content in the composer)", async () => {
@@ -76,18 +78,24 @@ describe("seal-draft", () => {
     ).rejects.toThrow()
   })
 
-  it("returns null when the viewer can't resolve the stream key", async () => {
+  it("the decrypt path returns null when the viewer can't resolve the stream key", async () => {
     vi.spyOn(streamKeyCache, "resolveStreamKey").mockResolvedValue(null)
 
-    const decrypted = await decryptDraftContent({
-      ciphertext: "AAAA",
-      envelope: { v: 2, keyGeneration: 1, iv: "AAAA", aad: "AAAA" },
-      e2eVersion: 2,
-      workspaceId,
-      streamId,
-      privateKey: {} as CryptoKey,
-      recipientKeyId: "ek_1",
-    })
-    expect(decrypted).toBeNull()
+    const opened = await tryDecryptMessagePayload(
+      {
+        contentMarkdown: "",
+        ciphertext: "AAAA",
+        envelope: { v: 2, keyGeneration: 1, iv: "AAAA", aad: "AAAA" },
+        e2eVersion: 2,
+      },
+      {
+        privateKey: {} as CryptoKey,
+        recipientKeyId: "ek_1",
+        workspaceId,
+        streamId,
+        rootStreamId: streamId,
+      }
+    )
+    expect(opened).toBeNull()
   })
 })
