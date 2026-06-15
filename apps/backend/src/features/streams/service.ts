@@ -836,7 +836,22 @@ export class StreamService {
         // otherwise an E2E `stream:updated` would ship a partial shape (missing
         // e2eEnabled / actors / sealed name). INV-7.
         if (sealedName !== undefined) {
-          await E2eStreamsRepository.updateSealedName(client, stream.workspaceId, streamId, sealedName)
+          const sealedUpdated = await E2eStreamsRepository.updateSealedName(
+            client,
+            stream.workspaceId,
+            streamId,
+            sealedName
+          )
+          // No e2e_streams row means this isn't an E2E stream. Setting a sealed
+          // name has already scrubbed `display_name` to null above, so a silent
+          // no-op here would strand the stream with no name at all — fail loudly
+          // instead (INV-11).
+          if (!sealedUpdated) {
+            throw new HttpError("Sealed name updates require an end-to-end encrypted stream", {
+              status: 400,
+              code: "STREAM_NOT_E2E",
+            })
+          }
         }
         const result = (await StreamRepository.findById(client, streamId)) ?? stream
 

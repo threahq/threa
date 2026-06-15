@@ -196,7 +196,14 @@ export function StreamPage() {
   // would surprise the user with a stale/placeholder value (UX-35).
   const currentDisplayedName = decryptedStreamName ?? stream?.displayName ?? ""
 
+  // Renaming a sealed scratchpad needs an unlocked session to seal the new name;
+  // a non-encrypted scratchpad can always be renamed. Gate every rename affordance
+  // (header title click and menu item) on this so a locked session can't open the
+  // editor only for `rename()` to reject on seal.
+  const canRenameScratchpad = !isEncryptedScratchpad || e2eUnlocked
+
   const handleStartRename = () => {
+    if (!canRenameScratchpad) return
     setEditValue(currentDisplayedName)
     setIsEditing(true)
   }
@@ -261,10 +268,9 @@ export function StreamPage() {
     onSelect: () => openExplorer({ streamIds: [streamId] }),
   })
   if (isScratchpad) {
-    // Renaming a sealed scratchpad needs an unlocked session to seal the new
-    // name; hide the affordance while locked rather than let it fall back to
+    // Hide the rename affordance while locked rather than let it fall back to
     // plaintext. Archive/unarchive stay available regardless of lock state.
-    if (!isEncryptedScratchpad || e2eUnlocked) {
+    if (canRenameScratchpad) {
       streamMenuActions.push({
         id: "rename",
         label: "Rename",
@@ -412,14 +418,21 @@ export function StreamPage() {
   } else if (isScratchpad) {
     headerTitle = (
       <div
-        className="group inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 hover:bg-accent/50 hover:outline hover:outline-1 hover:outline-border cursor-pointer transition-colors min-w-0"
-        onClick={handleStartRename}
+        className={cn(
+          "group inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 transition-colors min-w-0",
+          canRenameScratchpad
+            ? "cursor-pointer hover:bg-accent/50 hover:outline hover:outline-1 hover:outline-border"
+            : "cursor-default"
+        )}
+        onClick={canRenameScratchpad ? handleStartRename : undefined}
       >
         <h1 className="font-semibold truncate">
           {streamName}
           {isDraft && <span className="ml-2 text-xs font-normal text-muted-foreground">(draft)</span>}
         </h1>
-        <Pencil className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+        {canRenameScratchpad && (
+          <Pencil className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+        )}
       </div>
     )
   } else if (isDm && dmPeerUserId) {

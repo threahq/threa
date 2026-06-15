@@ -1315,6 +1315,22 @@ describe("StreamService.updateStream sealed-name handling", () => {
     })
   })
 
+  test("setting a sealed name on a non-E2E stream fails loudly and emits no outbox event", async () => {
+    const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
+    mockUpdate.mockResolvedValue(stream)
+    // No e2e_streams row to update — the stream isn't E2E.
+    mockUpdateSealedName.mockResolvedValue(false)
+
+    await expect(
+      service.updateStream("stream_1", {
+        sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
+      })
+    ).rejects.toMatchObject({ status: 400, code: "STREAM_NOT_E2E" })
+
+    // Transaction rolls back; no stream:updated event for a half-applied rename.
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+
   test("clearing a sealed name without a displayName is rejected", async () => {
     await expect(service.updateStream("stream_1", { sealedName: null })).rejects.toMatchObject({
       status: 400,
