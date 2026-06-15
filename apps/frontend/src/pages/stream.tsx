@@ -43,7 +43,8 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
-import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
+import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
@@ -142,6 +143,10 @@ export function StreamPage() {
   // For an unlocked encrypted stream, the tamper-evident decrypted name; null
   // otherwise (plaintext stream, locked, or not yet decrypted) → plaintext label.
   const decryptedStreamName = useDecryptedStreamName(workspaceId ?? "", stream)
+  // True while a sealed name is still resolving (session settling, or unlocked
+  // but the decrypt hasn't landed) so the header shows a loader instead of
+  // flashing the "unnamed" placeholder on cold load.
+  const nameDecrypting = useStreamNameDecrypting(workspaceId ?? "", stream)
   // Renaming an E2E stream seals the new name under its key, so it requires an
   // unlocked session — the affordance is omitted while locked (the stream is in
   // its locked/unlock state then anyway).
@@ -438,10 +443,14 @@ export function StreamPage() {
         )}
         onClick={canRenameScratchpad ? handleStartRename : undefined}
       >
-        <h1 className="font-semibold truncate">
-          {streamName}
-          {isDraft && <span className="ml-2 text-xs font-normal text-muted-foreground">(draft)</span>}
-        </h1>
+        {nameDecrypting && !pendingName ? (
+          <Skeleton className="h-5 w-40" />
+        ) : (
+          <h1 className="font-semibold truncate">
+            {streamName}
+            {isDraft && <span className="ml-2 text-xs font-normal text-muted-foreground">(draft)</span>}
+          </h1>
+        )}
         {canRenameScratchpad && (
           <Pencil className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
         )}

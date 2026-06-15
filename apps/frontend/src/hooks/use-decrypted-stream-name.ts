@@ -4,6 +4,7 @@ import { useE2eSession } from "@/stores/e2e-session-store"
 import {
   getCachedStreamName,
   getStreamNameCacheVersion,
+  isStreamNamePending,
   requestStreamName,
   streamNameCacheKey,
   subscribeStreamNameCache,
@@ -66,4 +67,35 @@ export function useDecryptedStreamName(
     // `version` re-reads the cache when a decrypt lands; the rest key the lookup.
     [key, unlocked, version]
   )
+}
+
+/**
+ * Whether a sealed E2E stream's name is still resolving — the session is settling
+ * (`unknown`/`unlocking`) or it's unlocked and the decrypt hasn't landed yet — so
+ * a surface can show a loader instead of flashing the placeholder during the
+ * cold-load decrypt window. Returns false for plaintext streams, a locked/no-key
+ * session (the placeholder is then the right, settled answer), and once the name
+ * has decrypted (or definitively failed). Reads the same cache as
+ * `useDecryptedStreamName`, so the two never disagree.
+ */
+export function useStreamNameDecrypting(workspaceId: string, stream: SealedNameStream | null | undefined): boolean {
+  const userId = useWorkspaceUserId(workspaceId)
+  const session = useE2eSession(workspaceId, userId ?? "")
+  const version = useSyncExternalStore(subscribeStreamNameCache, getStreamNameCacheVersion, getStreamNameCacheVersion)
+
+  const e2eEnabled = stream?.e2eEnabled ?? false
+  const streamId = stream?.id
+  const ciphertext = stream?.sealedNameCiphertext ?? null
+  const key = e2eEnabled && streamId && ciphertext ? streamNameCacheKey(workspaceId, streamId, ciphertext) : null
+
+  return useMemo(() => {
+    if (!key) return false
+    // The session hasn't resolved yet — the name is loading, not absent.
+    if (session.status === "unknown" || session.status === "unlocking") return true
+    // Unlocked: loading only until the decrypt lands (or definitively fails).
+    if (session.status === "unlocked") return isStreamNamePending(key)
+    // locked / no-key: the placeholder is the settled answer, not a loading state.
+    return false
+    // `version` re-evaluates pending when a decrypt settles; the rest key it.
+  }, [key, session.status, version])
 }

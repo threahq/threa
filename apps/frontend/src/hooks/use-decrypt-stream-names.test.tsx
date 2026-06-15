@@ -5,6 +5,7 @@ import { db, type CachedStream } from "@/db"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { clearStreamNameCache } from "@/lib/crypto/stream-name-cache"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
+import { useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { useStreamName } from "@/hooks/use-stream-name"
 import * as e2eSession from "@/stores/e2e-session-store"
 import * as workspaces from "@/hooks/use-workspaces"
@@ -63,6 +64,20 @@ function Harness() {
   useDecryptStreamNames(WS)
   const name = useStreamName(WS, STREAM, "sidebar")
   return <span data-testid="label">{name}</span>
+}
+
+const SEALED_STREAM = {
+  id: STREAM,
+  e2eEnabled: true,
+  sealedNameCiphertext: CIPHERTEXT,
+  sealedNameEnvelope: { v: 2 },
+  rootStreamId: null,
+}
+
+function DecryptingHarness() {
+  useDecryptStreamNames(WS)
+  const decrypting = useStreamNameDecrypting(WS, SEALED_STREAM)
+  return <span data-testid="state">{decrypting ? "decrypting" : "settled"}</span>
 }
 
 async function seedSealedStream() {
@@ -131,5 +146,38 @@ describe("decrypted stream name overlay (reactive integration)", () => {
 
     await waitFor(() => expect(screen.getByTestId("label")).toHaveTextContent("New scratchpad"))
     expect(open).not.toHaveBeenCalled()
+  })
+})
+
+describe("useStreamNameDecrypting (cold-load loading state)", () => {
+  it("reports decrypting until the name lands, so the header shows a loader not the placeholder", async () => {
+    vi.spyOn(e2eSession, "useE2eSession").mockReturnValue(session({ status: "unlocked" }))
+    let resolveDecrypt: (value: string | null) => void = () => {}
+    vi.spyOn(messageEnvelope, "tryOpenStreamName").mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveDecrypt = resolve
+        })
+    )
+
+    await seedSealedStream()
+    render(<DecryptingHarness />)
+
+    expect(screen.getByTestId("state")).toHaveTextContent("decrypting")
+
+    await act(async () => {
+      resolveDecrypt("Quarterly Plan")
+    })
+    await waitFor(() => expect(screen.getByTestId("state")).toHaveTextContent("settled"))
+  })
+
+  it("is settled (placeholder, not a loader) while the session is locked", async () => {
+    vi.spyOn(messageEnvelope, "tryOpenStreamName").mockResolvedValue("Should Not Appear")
+    vi.spyOn(e2eSession, "useE2eSession").mockReturnValue(session({ status: "locked", privateKey: null }))
+
+    await seedSealedStream()
+    render(<DecryptingHarness />)
+
+    await waitFor(() => expect(screen.getByTestId("state")).toHaveTextContent("settled"))
   })
 })
