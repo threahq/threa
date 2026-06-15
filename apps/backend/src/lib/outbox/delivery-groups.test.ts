@@ -40,6 +40,25 @@ describe("resolveDeliveryGroups — invitation events", () => {
   }
 })
 
+describe("resolveDeliveryGroups — enclave re-wrap nudges", () => {
+  it("routes the socket nudge to the owner only — only they can re-wrap", () => {
+    const groups = resolveDeliveryGroups(
+      event("enclave:rewrap_needed", { workspaceId: "ws_1", targetUserId: "usr_owner", rootStreamId: "stream_1" })
+    )
+    expect(groups).toEqual([userGroup("usr_owner")])
+    expect(groups).not.toContain("workspace")
+  })
+
+  it("keeps the web-push nudge off the wire (null) — it's the push handler's, never a broadcast", () => {
+    const groups = resolveDeliveryGroups(
+      event("enclave:rewrap_nudge", { workspaceId: "ws_1", targetUserId: "usr_owner", rootStreamId: "stream_1" })
+    )
+    // Null = not broadcast and not sync-logged (it would otherwise fall through
+    // to the workspace-wide default and leak a per-owner signal to everyone).
+    expect(groups).toBeNull()
+  })
+})
+
 describe("resolveDeliveryGroups — label assignments", () => {
   // A public-label assignment (no targetUserId) on a stream routes to that
   // stream's group, so it lands in the sync log under `stream:<id>` and the

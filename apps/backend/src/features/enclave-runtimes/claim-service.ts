@@ -27,12 +27,15 @@ import {
 } from "../agents"
 import { hashCallbackToken } from "./callback-token"
 import { buildEnclaveSessionAssignment } from "./dispatch/request-builder"
+import { ENCLAVE_RUNTIME_STALENESS_MS } from "./service"
+import { EnclaveRewrapNotificationsRepository } from "./rewrap-notifications-repository"
 import {
   EnclaveInvocationsRepository,
   ENCLAVE_CLAIM_TTL_SECONDS,
   ENCLAVE_CLAIM_MAX_ATTEMPTS,
   ENCLAVE_PENDING_PARK_AFTER_MS,
   type EnclaveInvocation,
+  type UnservablePendingInvocation,
 } from "./invocations-repository"
 
 /**
@@ -66,6 +69,26 @@ const MAX_NO_OP_CLAIMS_PER_POLL = 20
  * completing the invocation (which would silently drop the turn).
  */
 const STALE_RUNNING_HEARTBEAT_MS = 60_000
+
+/**
+ * Re-emit windows for the proactive owner re-wrap nudge. The socket signal
+ * heals an online unlocked owner in place, so it re-arms briskly (a newly
+ * online owner gets pinged within the window). The web-push nudge re-arms far
+ * slower — it pulls an offline owner back to the app, and waking a device is
+ * costly to repeat, so once per stuck episode is the goal.
+ */
+const REWRAP_SOCKET_REEMIT_MS = 5 * 60 * 1000
+const REWRAP_WEBPUSH_REEMIT_MS = 30 * 60 * 1000
+
+/**
+ * Grace before the first web-push: a turn that just went unservable may still
+ * resolve without bugging an offline owner — the owner's own tab heals it over
+ * the socket signal, or a still-capable instance heartbeats back into the live
+ * set. Only after this window has the stuck state proven durable enough to wake
+ * a device. Well inside `ENCLAVE_PENDING_PARK_AFTER_MS`, so the nudge lands with
+ * room for the owner to act before the turn parks.
+ */
+const REWRAP_WEBPUSH_GRACE_MS = 2 * 60 * 1000
 
 /**
  * One claimed invocation's resolution: an assignment to hand the poller, a
@@ -132,6 +155,10 @@ export class EnclaveClaimService {
       )
     }
 
+    // Same cadence as parkExhausted: nudge owners of turns this fleet can't
+    // serve so they re-wrap before the turn ages into the parked set above.
+    await this.nudgeUnservableOwners()
+
     for (let i = 0; i < MAX_NO_OP_CLAIMS_PER_POLL; i++) {
       const claimToken = randomUUID()
       const invocation = await EnclaveInvocationsRepository.claimNext(this.pool, {
@@ -148,6 +175,83 @@ export class EnclaveClaimService {
       // No-op claim — the row was completed in place; take the next one.
     }
     return null
+  }
+
+  /**
+   * Nudge the owners of pending turns no live EIK can serve. A live enclave
+   * exists but minted a fresh key (every start mints one) and holds no wrap for
+   * the stream, so only the owner's unlocked device can re-wrap (the enclave
+   * can't seal to itself, INV-E7). Best-effort — a nudge failure must never
+   * break the claim poll, so it logs and moves on (the row still parks visibly
+   * on its own timer if no one heals it). Coalesced per (workspace, root
+   * stream): the wraps and the heal are the root's, so one nudge serves all its
+   * pending turns.
+   */
+  private async nudgeUnservableOwners(): Promise<void> {
+    try {
+      const rows = await EnclaveInvocationsRepository.findUnservablePending(this.pool, {
+        stalenessMs: ENCLAVE_RUNTIME_STALENESS_MS,
+      })
+      if (rows.length === 0) return
+
+      const byStream = new Map<string, UnservablePendingInvocation>()
+      for (const row of rows) {
+        const key = `${row.workspaceId}:${row.rootStreamId}`
+        const existing = byStream.get(key)
+        // Keep the oldest pending row per stream — its age drives the web-push grace.
+        if (!existing || row.createdAt < existing.createdAt) byStream.set(key, row)
+      }
+
+      const now = Date.now()
+      for (const row of byStream.values()) {
+        await this.emitRewrapNudge(row, now)
+      }
+    } catch (err) {
+      logger.error({ err }, "Enclave re-wrap nudge sweep failed")
+    }
+  }
+
+  /**
+   * Emit the two-tier nudge for one unservable stream, each tier deduped on its
+   * own clock so a churny fleet can't spam the owner. The dedup claim and the
+   * outbox insert share a transaction (INV-7) so the clock never advances
+   * without the event that justifies it (and vice versa).
+   */
+  private async emitRewrapNudge(row: UnservablePendingInvocation, now: number): Promise<void> {
+    const { workspaceId, rootStreamId, ownerUserId } = row
+
+    // Socket tier: heal an online unlocked owner in place, immediately.
+    await withTransaction(this.pool, async (tx) => {
+      const claimed = await EnclaveRewrapNotificationsRepository.claimSocketNudge(tx, {
+        workspaceId,
+        rootStreamId,
+        reemitMs: REWRAP_SOCKET_REEMIT_MS,
+      })
+      if (!claimed) return
+      await OutboxRepository.insert(tx, "enclave:rewrap_needed", {
+        workspaceId,
+        targetUserId: ownerUserId,
+        rootStreamId,
+      })
+    })
+
+    // Web-push tier: pull an offline owner back, but only once the stuck state
+    // has outlived the grace window (an online owner's socket heal, or a
+    // capable instance reappearing, resolves it first without waking a device).
+    if (now - row.createdAt.getTime() < REWRAP_WEBPUSH_GRACE_MS) return
+    await withTransaction(this.pool, async (tx) => {
+      const claimed = await EnclaveRewrapNotificationsRepository.claimWebpushNudge(tx, {
+        workspaceId,
+        rootStreamId,
+        reemitMs: REWRAP_WEBPUSH_REEMIT_MS,
+      })
+      if (!claimed) return
+      await OutboxRepository.insert(tx, "enclave:rewrap_nudge", {
+        workspaceId,
+        targetUserId: ownerUserId,
+        rootStreamId,
+      })
+    })
   }
 
   /**

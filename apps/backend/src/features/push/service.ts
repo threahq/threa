@@ -16,7 +16,11 @@ import {
 } from "@threa/types"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
-import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../lib/outbox"
+import type {
+  ActivityCreatedOutboxPayload,
+  SavedReminderFiredOutboxPayload,
+  EnclaveRewrapNudgeOutboxPayload,
+} from "../../lib/outbox"
 
 /** Maximum push subscriptions per user per workspace to bound parallel delivery calls */
 const MAX_SUBSCRIPTIONS_PER_USER = 10
@@ -384,6 +388,51 @@ export class PushService {
         // Standalone (message-less) items preview their own title.
         contentPreview: resolveSavedReminderPreview(saved.message?.contentMarkdown) ?? saved.title,
         unavailableReason: saved.unavailableReason ?? null,
+      },
+    })
+
+    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload)
+  }
+
+  /**
+   * Deliver the offline owner's re-wrap nudge: an enclave turn in their E2E
+   * scratchpad is stuck because no live agent instance holds the stream's key,
+   * and only their unlocked device can re-wrap it. The graced web-push pulls
+   * them back to the app, where the heal fires on open. Respects the global
+   * notification preference and do-not-disturb like a saved reminder — an owner
+   * who silenced push isn't woken; their next app open heals it regardless.
+   * Focus-suppression (via `getTargetSubscriptions`) keeps it off a device the
+   * owner is already looking at — there the socket signal already healed it.
+   */
+  async deliverRewrapNudge(payload: EnclaveRewrapNudgeOutboxPayload): Promise<void> {
+    if (!this.canSend) return
+
+    const { workspaceId, targetUserId, rootStreamId } = payload
+
+    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    if (prefLevel === PrefNotificationLevels.NONE) return
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
+
+    const { active: activeSubscriptions, expired: expiredSubscriptions } = await this.getTargetSubscriptions(
+      workspaceId,
+      targetUserId
+    )
+
+    if (expiredSubscriptions.length > 0) {
+      await this.deliverSessionExpiredAndCleanup(workspaceId, targetUserId, expiredSubscriptions)
+    }
+
+    if (activeSubscriptions.length === 0) return
+
+    const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
+
+    // Structured payload (INV-46): the service worker composes the display text.
+    const pushPayload = JSON.stringify({
+      data: {
+        kind: "rewrap_needed",
+        workspaceId,
+        workosUserId: recipientWorkosUserId ?? undefined,
+        streamId: rootStreamId,
       },
     })
 

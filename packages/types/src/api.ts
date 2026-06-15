@@ -1882,6 +1882,18 @@ export interface DraftDeletedPayload {
 }
 
 /**
+ * Wire payload broadcast on `enclave:rewrap_needed` socket events. Tells the
+ * owner's online tab that an enclave turn in `rootStreamId` is stuck because no
+ * live agent instance holds the stream's key — only the owner's unlocked device
+ * can re-wrap it (the enclave can't seal to itself). The tab heals in place.
+ */
+export interface EnclaveRewrapNeededPayload {
+  workspaceId: string
+  targetUserId: string
+  rootStreamId: string
+}
+
+/**
  * Wire body for `POST /labels`. Slug is server-derived from `name` (validated
  * for uniqueness via partial unique indexes scoped to visibility); `color` is
  * required so frontend doesn't have to invent defaults for new public labels

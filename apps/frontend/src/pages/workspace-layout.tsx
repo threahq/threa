@@ -68,6 +68,7 @@ import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
+import { EnclaveRewrapNudgeListener } from "@/components/encryption/enclave-rewrap-nudge-listener"
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
@@ -437,6 +438,7 @@ export function WorkspaceLayout() {
                               <QuickSwitcherProvider openSwitcher={openSwitcher}>
                                 <PanelProvider>
                                   <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
+                                  <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
                                   <MediaGalleryProvider>
                                     <TraceProvider>
                                       <SidebarProvider>

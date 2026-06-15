@@ -5,6 +5,7 @@ import {
   type StreamReadOutboxPayload,
   type StreamsReadAllOutboxPayload,
   type SavedReminderFiredOutboxPayload,
+  type EnclaveRewrapNudgeOutboxPayload,
 } from "../../lib/outbox"
 import type { PushService } from "./service"
 import { logger } from "../../lib/logger"
@@ -86,6 +87,16 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
         return
       }
       await this.pushService.deliverPushForSavedReminder(payload)
+      return
+    }
+
+    if (event.eventType === "enclave:rewrap_nudge") {
+      const payload = event.payload as EnclaveRewrapNudgeOutboxPayload
+      if (!payload?.workspaceId || !payload?.targetUserId || !payload?.rootStreamId) {
+        logger.warn({ eventId: event.id }, "Skipping malformed enclave:rewrap_nudge payload")
+        return
+      }
+      await this.pushService.deliverRewrapNudge(payload)
     }
   }
 }

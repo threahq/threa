@@ -477,6 +477,7 @@ export type {
   DraftListResponse,
   DraftUpsertedPayload,
   DraftDeletedPayload,
+  EnclaveRewrapNeededPayload,
   // Labels
   CreateLabelInput,
   UpdateLabelInput,

@@ -558,9 +558,10 @@ interface PushData {
   /**
    * Payload kind: "test" is sent by the in-app diagnostic to verify
    * end-to-end delivery; "saved_reminder" marks reminder pushes so clicks on
-   * standalone (message-less) items can land on the Saved page.
+   * standalone (message-less) items can land on the Saved page;
+   * "rewrap_needed" pulls the owner back to re-key a stuck encrypted scratchpad.
    */
-  kind?: "test" | "saved_reminder"
+  kind?: "test" | "saved_reminder" | "rewrap_needed"
 }
 
 self.addEventListener("push", (event) => {
@@ -620,6 +621,25 @@ self.addEventListener("push", (event) => {
         tag: "session-expired",
         vibrate: THREA_VIBRATION_PATTERN,
         data: { ...data, action: "session_expired" },
+      } as ExtendedNotificationOptions)
+    )
+    return
+  }
+
+  // Re-wrap nudge: an enclave turn in the owner's encrypted scratchpad is stuck
+  // until they reopen the app so their unlocked device can re-key the stream.
+  // Always display — by the time this fires the owner is away (a focused tab
+  // would already have healed it over the socket), so suppressing would strand
+  // the turn. The click lands on the stream via the generic deep-link below.
+  if (data.kind === "rewrap_needed") {
+    event.waitUntil(
+      self.registration.showNotification("Your assistant is waiting", {
+        body: "Open Threa to let your assistant reply in your encrypted scratchpad.",
+        icon: "/threa-logo-192.png",
+        badge: "/threa-logo-192.png",
+        tag: data.streamId ? `rewrap:${data.streamId}` : "rewrap",
+        vibrate: THREA_VIBRATION_PATTERN,
+        data: { ...data, kind: "rewrap_needed" },
       } as ExtendedNotificationOptions)
     )
     return

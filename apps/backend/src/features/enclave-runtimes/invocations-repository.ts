@@ -77,6 +77,28 @@ export interface EnclaveInvocation {
   completedAt: Date | null
 }
 
+/**
+ * A pending turn that no live EIK can serve, paired with the stream owner who
+ * can heal it. The owner is the only party who can re-wrap (only their UIK
+ * opens the SSK to seal it to a fresh EIK, INV-E7), so the proactive nudge
+ * targets them. `createdAt` ages the row for the web-push grace gate.
+ */
+export interface UnservablePendingInvocation {
+  id: string
+  workspaceId: string
+  rootStreamId: string
+  ownerUserId: string
+  createdAt: Date
+}
+
+interface UnservablePendingRow {
+  id: string
+  workspace_id: string
+  root_stream_id: string
+  owner_user_id: string
+  created_at: Date
+}
+
 interface EnclaveInvocationRow {
   id: string
   workspace_id: string
@@ -323,5 +345,62 @@ export const EnclaveInvocationsRepository = {
       RETURNING *
     `)
     return result.rows.map(mapRow)
+  },
+
+  /**
+   * Pending turns that a live enclave exists for but no live EIK can serve —
+   * the proactive re-wrap nudge's trigger. Servability is `claimNext`'s
+   * both-sides rule (one EIK covering the reply's current generation AND the
+   * prompt's trigger generation), inverted: the row qualifies when at least one
+   * live EIK is registered (so a re-wrap has somewhere to land — a zero-instance
+   * gap is ops, not an owner re-wrap) yet none of them holds wraps for both
+   * generations. A fresh EIK on every enclave start makes this the precise
+   * "owner must re-wrap" signal: a healthy fleet that already holds the wraps
+   * just serves the turn and never surfaces here. Coalesced per (workspace,
+   * root stream) by the caller — the wraps and the heal are the root's.
+   */
+  async findUnservablePending(db: Querier, params: { stalenessMs: number }): Promise<UnservablePendingInvocation[]> {
+    const result = await db.query<UnservablePendingRow>(sql`
+      SELECT i.id, i.workspace_id, i.root_stream_id, e.owner_user_id, i.created_at
+      FROM enclave_invocations i
+      JOIN e2e_streams e
+        ON e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
+      WHERE i.status = 'pending'
+        AND EXISTS (
+          SELECT 1 FROM enclave_runtimes r
+          WHERE r.revoked_at IS NULL
+            AND r.last_seen_at > NOW() - (${params.stalenessMs} * INTERVAL '1 millisecond')
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM enclave_runtimes r
+          WHERE r.revoked_at IS NULL
+            AND r.last_seen_at > NOW() - (${params.stalenessMs} * INTERVAL '1 millisecond')
+            AND EXISTS (
+              SELECT 1 FROM stream_e2e_key_wraps w
+              WHERE w.workspace_id = i.workspace_id
+                AND w.stream_id = i.root_stream_id
+                AND w.recipient_kind = 'enclave'
+                AND w.recipient_key_id = r.key_id
+                AND w.key_generation = e.current_key_generation
+            )
+            AND EXISTS (
+              SELECT 1 FROM stream_e2e_key_wraps w
+              JOIN messages m ON m.id = i.message_id
+              WHERE w.workspace_id = i.workspace_id
+                AND w.stream_id = i.root_stream_id
+                AND w.recipient_kind = 'enclave'
+                AND w.recipient_key_id = r.key_id
+                AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+            )
+        )
+      ORDER BY i.created_at ASC, i.id ASC
+    `)
+    return result.rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      rootStreamId: row.root_stream_id,
+      ownerUserId: row.owner_user_id,
+      createdAt: row.created_at,
+    }))
   },
 }

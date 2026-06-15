@@ -151,6 +151,13 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return null
   }
 
+  // Push-only: the web-push re-wrap nudge is consumed by the push handler, not
+  // the socket broadcast. Returning null keeps it off the wire and the sync log
+  // (its socket sibling `enclave:rewrap_needed` carries the live-tab signal).
+  if (isOutboxEventType(event, "enclave:rewrap_nudge")) {
+    return null
+  }
+
   // User-scoped events: deliver to the target user only
   if (isUserScopedEvent(event)) {
     const { targetUserId } = event.payload as ActivityCreatedOutboxPayload
