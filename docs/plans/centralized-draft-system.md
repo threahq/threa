@@ -253,22 +253,29 @@ frontend-only:
 - Call sites (`message-input.tsx`, `thread/stream-panel.tsx`) pass the encrypted
   root (`rootStreamId ?? id`); `use-draft-composer.ts` threads `e2eStreamId`.
 
-**Scope boundary (v1) — deferred follow-ups, all non-regressing vs. pre-4c:**
+**Scope boundary (v1) — deferred follow-up, non-regressing vs. pre-4c:**
 
 - **E2E-draft attachments / context refs / slash commands are not sealed yet** —
   only the body roams. They stay session-local exactly as before (per-file
   attachment-key roaming across devices is its own design).
-- **The manual stash (Cmd+S) is disabled for encrypted streams** (`useStashComposer`
-  no-ops + the trigger is disabled): stashing snapshots composer plaintext, which
-  would violate E2EE-4. The ambient (auto-saved) draft still roams.
-- **The `/drafts` explorer doesn't list E2E drafts** (sealed rows have an empty
-  placeholder body, so the existing empty-content filter skips them). The
-  in-composer stash list is empty for encrypted streams (`useStashComposer`
-  returns no entries when E2E), so a sealed row never renders as a dead restore
-  control.
-- **Unlock-after-open**: a draft that decrypts only after the session unlocks
-  needs the stream reopened to load into an already-mounted composer (the common
-  flow — unlock at workspace entry, then open — works).
+
+**Shipped beyond the initial cut, so the feature is usable end-to-end:**
+
+- **Manual stash (Cmd+S) works for encrypted streams.** Stash/restore are pointer
+  moves (`stashLoadedDraft` / `restoreStashedDraftToComposer`), not plaintext
+  snapshots: the sealed row is detached/attached via the `composerLoaded` pointer,
+  so nothing plaintext leaves memory (E2EE-4) and the pile behaves the same for
+  plaintext and E2E. `flushDraft` only persists a non-empty editor, so a restore
+  fired mid-hydration can't delete the loaded draft.
+- **The `/drafts` explorer lists E2E drafts** with decrypt-on-read previews
+  (`useDecryptedDraftPreviews` over the shared cache): a ciphertext row counts as
+  content, and its body decrypts in memory, falling back to an `Encrypted draft` /
+  `Decrypting…` label while locked or mid-decrypt. Rows whose encrypted root can't
+  be resolved yet are simply not queued for decrypt (no stuck spinner).
+- **Unlock-after-open loads in place.** A draft that decrypts only after the
+  session unlocks — or a stash-restore pointer swap — re-hydrates the already-open
+  composer via a late-hydrate effect (no stream reopen required), guarded by
+  `userEngagedRef` so it never clobbers typed content.
 
 **Reuse:** `sealOutgoingMessage` E2E path; existing `promoteDraft` / `setParentThreadId`; resolve CAS from Stage 1.
 

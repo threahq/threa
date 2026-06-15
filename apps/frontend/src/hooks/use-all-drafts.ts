@@ -311,7 +311,12 @@ export function useAllDrafts(workspaceId: string) {
       if (!parsed) continue
       // Scratchpad-scoped rows are handled above (the loaded one); skip siblings.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
-      inputs.push({ draft, rootStreamId: resolveRootStreamId(parsed, streamMap, messageToStreamMap) })
+      // No resolvable encrypted root (e.g. a thread whose parent isn't cached yet)
+      // → don't queue a decrypt that can never fire; the row shows "Encrypted
+      // draft" until the root resolves, rather than a stuck "Decrypting…".
+      const rootStreamId = resolveRootStreamId(parsed, streamMap, messageToStreamMap)
+      if (!rootStreamId) continue
+      inputs.push({ draft, rootStreamId })
     }
     return inputs
   }, [allDrafts, draftScratchpads, loadedByScope, draftsById, streamMap, messageToStreamMap])

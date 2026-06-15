@@ -87,7 +87,7 @@ describe("E2E draft roam (seal → wire → apply → decrypt)", () => {
     // At rest on B: ciphertext only, never the plaintext body (E2EE-4).
     const stored = await db.drafts.get("draft_x")
     expect(stored?.ciphertext).toBe(sealed.ciphertext)
-    expect(stored?.e2eVersion).toBe(2)
+    expect(stored?.e2eVersion).toBe(sealed.e2eVersion)
     expect(stored?.contentJson).toEqual(EMPTY_DOC)
 
     // B decrypts on read — the same primitive the shared decrypt cache runs.

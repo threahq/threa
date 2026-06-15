@@ -99,12 +99,14 @@ export async function upsertLoadedDraft(
       workspaceId,
       scope,
       // E2EE-4: the plaintext never lands on disk — the sealed body is the
-      // at-rest copy and `contentJson` is only the empty placeholder.
+      // at-rest copy and `contentJson` is only the empty placeholder. v1 seals
+      // the body only and does not carry attachments, so `attachmentIds` is left
+      // off too — an E2E row must not ship plaintext attachment linkage to the
+      // server/disk alongside its sealed body.
       contentJson: EMPTY_DOC,
       attachments: [],
       clientUpdatedAt: Date.now(),
       baseVersion: existing?.baseVersion,
-      attachmentIds: existing?.attachmentIds,
       ciphertext: sealed.ciphertext,
       envelope: sealed.envelope,
       e2eVersion: sealed.e2eVersion,
