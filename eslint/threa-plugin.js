@@ -196,6 +196,110 @@ const noQueryClientGetQueryDataInRenderRule = {
   },
 }
 
+function isNavigationCall(node) {
+  if (node?.type !== "CallExpression") {
+    return false
+  }
+
+  const callee = node.callee
+
+  if (isIdentifierNamed(callee, "navigate")) {
+    return true
+  }
+
+  return (
+    callee?.type === "MemberExpression" &&
+    !callee.computed &&
+    (isIdentifierNamed(callee.property, "push") || isIdentifierNamed(callee.property, "replace")) &&
+    (isIdentifierNamed(callee.object, "history") ||
+      isIdentifierNamed(callee.object, "router") ||
+      isIdentifierNamed(callee.object, "navigate"))
+  )
+}
+
+// Walk a handler's body for a navigation call, without descending into nested
+// function definitions (a nested function's navigation belongs to its own event,
+// not this button's click).
+function handlerNavigatesInline(fnNode) {
+  const start = fnNode?.body
+  if (!start) {
+    return false
+  }
+
+  const queue = [start]
+
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current || typeof current.type !== "string") {
+      continue
+    }
+
+    if (isNavigationCall(current)) {
+      return true
+    }
+
+    if (current !== start && isFunctionNode(current)) {
+      continue
+    }
+
+    for (const [key, value] of Object.entries(current)) {
+      if (key === "parent" || !value) {
+        continue
+      }
+
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          if (item && typeof item.type === "string") queue.push(item)
+        }
+      } else if (typeof value.type === "string") {
+        queue.push(value)
+      }
+    }
+  }
+
+  return false
+}
+
+const noButtonNavigationRule = {
+  meta: {
+    type: "suggestion",
+    docs: {
+      description: "Disallow navigation inside a button's onClick handler; navigation uses links (INV-40)",
+    },
+    schema: [],
+    messages: {
+      navInButton:
+        "Navigation belongs in a <Link to={…}>, not a button onClick (INV-40). Reserve buttons for actions; use a link to navigate.",
+    },
+  },
+  create(context) {
+    return {
+      JSXOpeningElement(node) {
+        const elementName = node.name?.type === "JSXIdentifier" ? node.name.name : null
+        if (elementName !== "button" && elementName !== "Button") {
+          return
+        }
+
+        for (const attr of node.attributes) {
+          if (attr.type !== "JSXAttribute" || attr.name?.name !== "onClick") {
+            continue
+          }
+
+          const value = attr.value
+          if (value?.type !== "JSXExpressionContainer") {
+            continue
+          }
+
+          const expr = value.expression
+          if (isFunctionNode(expr) && handlerNavigatesInline(expr)) {
+            context.report({ node: attr, messageId: "navInButton" })
+          }
+        }
+      },
+    }
+  },
+}
+
 export const dotenvRestrictedImportPattern = {
   group: ["dotenv", "dotenv/config"],
   message: "Bun auto-loads .env. Do not import dotenv in this repo.",
@@ -256,6 +360,7 @@ const threaPlugin = {
   rules: {
     "no-nested-component-definitions": noNestedComponentDefinitionsRule,
     "no-queryclient-getquerydata-in-render": noQueryClientGetQueryDataInRenderRule,
+    "no-button-navigation": noButtonNavigationRule,
   },
 }
 

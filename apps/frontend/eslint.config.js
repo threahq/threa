@@ -14,6 +14,7 @@ import threaPlugin, {
  * - INV-18: do not define components inside other components
  * - INV-26 / INV-48: no skipped/todo tests and no mock.module()/vi.mock();
  *   prefer scoped spyOn patterns so mocks don't leak across tests
+ * - INV-40: navigation uses links — no navigate()/router.push() in a button onClick
  * - INV-47: no nested ternaries
  * - Frontend Patterns: no direct queryClient.getQueryData() reads during render
  *
@@ -52,6 +53,7 @@ export default [
     rules: {
       "threa/no-nested-component-definitions": "error",
       "threa/no-queryclient-getquerydata-in-render": "error",
+      "threa/no-button-navigation": "error",
       "no-restricted-imports": [
         "error",
         {
