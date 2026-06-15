@@ -146,11 +146,11 @@ export function useDraftComposer({
   const [content, setContent] = useState<JSONContent>(initialContent)
   const [isSending, setIsSending] = useState(false)
   const hasInitialized = useRef(false)
-  // True once the user has touched the editor for the current draft. Gates the
-  // late-hydrate effect below so it only ever fills an editor the user hasn't
-  // engaged with — never overwriting typed content nor re-filling a draft the
-  // user just cleared (whose `savedDraft` lags by a debounce tick). Reset on
-  // scope change and on an explicit restore.
+  // True once the user has touched the editor for the current draft. Gates BOTH
+  // the one-shot init fill and the late-hydrate effect below so they only ever
+  // fill an editor the user hasn't engaged with — never overwriting typed content
+  // nor re-filling a draft the user just cleared (whose `savedDraft` lags by a
+  // debounce tick). Reset on scope change and on an explicit restore.
   const userEngagedRef = useRef(false)
   // Set by an explicit scope-change / stash-restore: the NEXT available loaded-draft
   // body must be applied even over transient content the init effect may have
@@ -229,7 +229,14 @@ export function useDraftComposer({
 
     // Restore saved draft content and attachments
     if (!hasInitialized.current) {
-      if (hasDocContent(savedDraft)) {
+      // This one-shot init can be DEFERRED past the user's first keystroke: an E2E
+      // body only becomes readable once its decrypt lands (`isDraftLoaded` gates
+      // this effect off until then), so a fast typist may already own the editor by
+      // the time it finally runs. Filling content the user has engaged with would
+      // overwrite their keystrokes with the stale loaded body — a focused composer
+      // is never overwritten by anything but the user's own typing. Same guard the
+      // late-hydrate effect below uses.
+      if (hasDocContent(savedDraft) && !userEngagedRef.current) {
         setContent(savedDraft)
       }
       if (savedAttachments.length > 0) {
@@ -321,8 +328,11 @@ export function useDraftComposer({
   // Handle content change with draft persistence
   const handleContentChange = useCallback(
     (newContent: JSONContent) => {
-      // The user owns the editor from here on — suppress the late-hydrate effect.
+      // The user owns the editor from here on — suppress the init/late-hydrate
+      // fills, and cancel any pending rehydrate: a restore/scope-change body that
+      // hasn't landed yet is now moot, since the user's keystrokes supersede it.
       userEngagedRef.current = true
+      awaitingRehydrateRef.current = false
       setContent(newContent)
       saveDraftDebounced(newContent)
     },

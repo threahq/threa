@@ -750,5 +750,39 @@ describe("useDraftComposer", () => {
 
       expect(result.current.content).toEqual(EMPTY_DOC)
     })
+
+    it("does not clobber typed content when a deferred (decrypting) draft body lands after the user types", () => {
+      // Repro of the staging data-loss bug: restore an E2E draft whose sealed body
+      // is still decrypting. `isDraftLoaded` stays false, so the one-shot init is
+      // DEFERRED. The user types into the blanked editor; when the decrypt lands,
+      // `isDraftLoaded` flips true and the deferred init runs for the FIRST time.
+      // It must yield to the keystrokes the user already made — a focused composer
+      // is never overwritten by anything but the user's own typing.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("original body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("original body"))
+
+      // Restore a different draft, then simulate its sealed body still decrypting.
+      act(() => {
+        result.current.markNeedsRehydrate()
+      })
+      mockDraftIsLoaded = false
+      mockDraftContentJson = EMPTY_DOC
+      rerender()
+
+      // User types into the blank editor before the restored body is readable.
+      act(() => {
+        result.current.handleContentChange(makeDoc("typed during decrypt"))
+      })
+      expect(result.current.content).toEqual(makeDoc("typed during decrypt"))
+
+      // Decrypt lands: the loaded body becomes available and isLoaded flips true.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("decrypted loaded body")
+      rerender()
+
+      expect(result.current.content).toEqual(makeDoc("typed during decrypt"))
+    })
   })
 })
