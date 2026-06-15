@@ -151,21 +151,6 @@ export function isBlockedUrl(url: string): boolean {
 }
 
 /**
- * Detect Reddit URLs (incl. subdomains and the redd.it shortener).
- *
- * Reddit gates generic crawlers behind a "Please wait for verification" anti-bot interstitial, so
- * these hosts need the recognized-crawler User-Agent and the interstitial guard in the worker.
- */
-export function isRedditUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase()
-    return hostname === "reddit.com" || hostname.endsWith(".reddit.com") || hostname === "redd.it"
-  } catch {
-    return false
-  }
-}
-
-/**
  * Normalize a URL for deduplication.
  * Lowercases host, strips tracking parameters, removes trailing slash.
  */

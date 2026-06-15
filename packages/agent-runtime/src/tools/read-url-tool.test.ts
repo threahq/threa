@@ -77,6 +77,27 @@ describe("read-url-tool", () => {
     expect(capturedHeaders!["User-Agent"]).toContain("Agent Reader")
   })
 
+  it("sends the recognized crawler User-Agent for Reddit so it gets past the anti-bot wall", async () => {
+    // Reddit serves a "Please wait for verification" interstitial to the polite Threa UA; the
+    // recognized crawler token gets the real HTML, matching the link-preview worker's handling.
+    let capturedHeaders: Record<string, string> | null = null
+
+    globalThis.fetch = mock((_url: string, options: RequestInit) => {
+      capturedHeaders = options.headers as Record<string, string>
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/html" }),
+        text: () => Promise.resolve("<html><head><title>r/ClaudeAI</title></head><body>posts</body></html>"),
+      } as Response)
+    }) as unknown as typeof fetch
+
+    const tool = createReadUrlTool()
+    await tool.config.execute({ url: "https://www.reddit.com/r/ClaudeAI/comments/abc/title/" }, toolOpts)
+
+    expect(capturedHeaders!["User-Agent"]).toBe("facebookexternalhit/1.1")
+  })
+
   it("should return error for non-HTML content types", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve({

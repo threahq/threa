@@ -3,7 +3,7 @@ import type { Job, JobHandler } from "../../lib/queue"
 import type { LinkPreviewExtractJobData } from "../../lib/queue/job-queue"
 import type { LinkPreviewService } from "./service"
 import type { LinkPreview, UpdateLinkPreviewParams } from "./repository"
-import { detectContentType, isBlockedUrl, isRedditUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
+import { detectContentType, isBlockedUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
 import { fetchGitHubPreview } from "./github-preview"
 import { fetchLinearPreview } from "./linear-preview"
 import {
@@ -13,8 +13,8 @@ import {
   MAX_HTML_BYTES,
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
-  REDDIT_FETCH_USER_AGENT,
 } from "./config"
+import { isRedditUrl, resolveFetchUserAgent } from "@threa/types"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const log = logger.child({ module: "link-preview-worker" })
@@ -209,7 +209,7 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     const response = await fetch(url, {
       method: "GET",
       headers: {
-        "User-Agent": isRedditUrl(url) ? REDDIT_FETCH_USER_AGENT : FETCH_USER_AGENT,
+        "User-Agent": resolveFetchUserAgent("Link Preview", url),
         Accept: "text/html, application/xhtml+xml, */*",
       },
       signal: controller.signal,

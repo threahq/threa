@@ -15,17 +15,6 @@ export const FETCH_TIMEOUT_MS = 10_000
  */
 export const FETCH_USER_AGENT = threaFetchUserAgent("Link Preview")
 
-/**
- * User-Agent for Reddit fetches.
- *
- * Reddit serves a "Please wait for verification" anti-bot interstitial to generic crawler UAs —
- * even polite ones carrying the `+`-prefixed contact URL that gets us past Amazon-class gates. It
- * allowlists the well-known social link-unfurl crawlers (this is how Slack/Discord/iMessage show
- * Reddit previews), so Reddit requests go out under a recognized crawler token to receive the real
- * server-rendered OpenGraph HTML. Mirrors the existing `Twitterbot/1.0` precedent for X image fetches.
- */
-export const REDDIT_FETCH_USER_AGENT = "facebookexternalhit/1.1"
-
 /** Maximum HTML bytes to read before stopping (some sites like YouTube put meta tags 600KB+ in) */
 export const MAX_HTML_BYTES = 512 * 1024
 
