@@ -12,6 +12,7 @@ const makeDoc = (text: string): JSONContent => ({
 })
 
 // Mock useDraftMessage
+const mockSaveDraft = vi.fn()
 const mockSaveDraftDebounced = vi.fn()
 const mockAddDraftAttachment = vi.fn()
 const mockRemoveDraftAttachment = vi.fn()
@@ -61,6 +62,7 @@ describe("useDraftComposer", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    mockSaveDraft.mockReset()
     mockSaveDraftDebounced.mockReset()
     mockAddDraftAttachment.mockReset()
     mockRemoveDraftAttachment.mockReset()
@@ -90,6 +92,7 @@ describe("useDraftComposer", () => {
           contentJson: state.contentJson,
           attachments: state.attachments,
           contextRefs: state.contextRefs ?? [],
+          saveDraft: mockSaveDraft,
           saveDraftDebounced: mockSaveDraftDebounced,
           addAttachment: mockAddDraftAttachment,
           removeAttachment: mockRemoveDraftAttachment,
@@ -645,6 +648,68 @@ describe("useDraftComposer", () => {
       const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
 
       expect(result.current.handleFileSelect).toBe(mockHandleFileSelect)
+    })
+  })
+
+  describe("flushDraft (safe flush — never deletes)", () => {
+    it("persists the live editor content when it is non-empty", async () => {
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      act(() => {
+        result.current.setContent(makeDoc("unsaved keystrokes"))
+      })
+      await act(async () => {
+        await result.current.flushDraft()
+      })
+
+      expect(mockSaveDraft).toHaveBeenCalledWith(makeDoc("unsaved keystrokes"))
+    })
+
+    it("no-ops on an empty editor so a restore mid-hydration can't delete the loaded draft", async () => {
+      // Regression: stash/restore used to flush `composer.content` unconditionally;
+      // when the editor was still mid-hydration (transiently empty), the save took
+      // the empty→delete path and destroyed the loaded draft.
+      const { result } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+
+      await act(async () => {
+        await result.current.flushDraft()
+      })
+
+      expect(mockSaveDraft).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("markNeedsRehydrate (stash-restore re-hydration)", () => {
+    it("applies the newly-loaded draft body in place after a rehydrate", () => {
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("first")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("first"))
+
+      // A restore swaps the loaded pointer to a different draft, then re-hydrates.
+      mockDraftContentJson = makeDoc("restored")
+      act(() => {
+        result.current.markNeedsRehydrate()
+      })
+      rerender()
+
+      expect(result.current.content).toEqual(makeDoc("restored"))
+    })
+
+    it("does not re-fill the editor after the user clears it (no clobber)", () => {
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("saved body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("saved body"))
+
+      // User clears the editor — `savedDraft` still lags at "saved body" for a tick.
+      act(() => {
+        result.current.handleContentChange(EMPTY_DOC)
+      })
+      rerender()
+
+      // Stays cleared: the late-hydrate yields to user engagement.
+      expect(result.current.content).toEqual(EMPTY_DOC)
     })
   })
 })

@@ -48,8 +48,9 @@ export function useStashComposer(
     if (!hasContent && !hasAttachments) return
 
     // Flush the live editor into its row first (sealed for E2E, E2EE-4) so the
-    // stash entry carries exactly what the user was typing, then detach it.
-    await composer.saveDraft(composer.content)
+    // stash entry carries exactly what the user was typing, then detach it. The
+    // flush never deletes (it no-ops on empty), so it can't destroy the draft.
+    await composer.flushDraft()
     const stashedId = await stashLoadedDraft(workspaceId, scope)
     if (!stashedId) return
     // Re-init the (now draft-less) composer so the editor blanks out.
@@ -62,11 +63,13 @@ export function useStashComposer(
       if (!scope) return
       // Swap semantics: flush whatever the composer holds into its row first so
       // switching drafts never silently destroys work — it stays as a stash entry
-      // once the pointer moves off it. A thrown flush (e.g. IDB quota, or a seal
-      // that raced a lock) is swallowed: losing a recent auto-save is a smaller
-      // harm than aborting the deliberate restore of an explicit stash row.
+      // once the pointer moves off it. `flushDraft` only persists a non-empty
+      // editor, so a restore fired while the composer is still mid-hydration
+      // (transiently empty) can NEVER delete the currently-loaded draft. A thrown
+      // flush (e.g. IDB quota, or a seal that raced a lock) is swallowed: losing a
+      // recent auto-save is a smaller harm than aborting the deliberate restore.
       try {
-        await composer.saveDraft(composer.content)
+        await composer.flushDraft()
       } catch (err) {
         console.error("Failed to flush current content before restoring", err)
       }

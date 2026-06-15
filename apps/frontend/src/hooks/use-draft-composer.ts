@@ -60,12 +60,13 @@ export interface DraftComposerState {
   setIsSending: (sending: boolean) => void
 
   /**
-   * Persist the composer's current content into its loaded draft row immediately
-   * (bypassing the debounce), sealing it for E2E. Used by stash/restore to flush
-   * unsaved keystrokes into the row before it is detached or swapped, so nothing
-   * typed since the last debounce tick is lost.
+   * Persist the live editor content into the loaded draft row immediately
+   * (bypassing the debounce, sealing it for E2E) — but only when it is non-empty,
+   * so it never takes the empty→delete path. Used by stash/restore to preserve
+   * unsaved keystrokes before the loaded draft is detached or swapped, without
+   * risking deletion of a draft whose editor is still mid-hydration.
    */
-  saveDraft: (content: JSONContent) => Promise<void>
+  flushDraft: () => Promise<void>
   /**
    * Re-run the composer's init from whatever draft is now loaded for the scope.
    * Called after a stash/restore pointer move so the editor re-reads (and, for
@@ -150,6 +151,11 @@ export function useDraftComposer({
   // user just cleared (whose `savedDraft` lags by a debounce tick). Reset on
   // scope change and on an explicit restore.
   const userEngagedRef = useRef(false)
+  // Set by an explicit scope-change / stash-restore: the NEXT available loaded-draft
+  // body must be applied even over transient content the init effect may have
+  // re-filled from the previous draft during the swap (the in-place restore race).
+  // Cleared once that body lands; still yields to `userEngagedRef`.
+  const awaitingRehydrateRef = useRef(false)
   const prevScopeIdRef = useRef<string | null>(null)
   // Keeps attachment persistence suspended until the previous scope's uploaded
   // attachments are gone from React state.
@@ -160,6 +166,19 @@ export function useDraftComposer({
   // dependency (which would churn its identity every render).
   const pendingAttachmentsRef = useRef(pendingAttachments)
   pendingAttachmentsRef.current = pendingAttachments
+  // Latest editor content, so `flushDraft` always persists what's on screen now
+  // rather than a value captured in a stale closure.
+  const contentRef = useRef(content)
+  contentRef.current = content
+
+  // Persist the live editor content into the loaded draft row immediately
+  // (sealed for E2E), but ONLY when it is non-empty. A stash/restore can fire
+  // while the editor is still mid-hydration (transiently empty) — taking the
+  // empty→delete path then would silently destroy the loaded draft. An
+  // intentional clear is handled by the debounced save, never here.
+  const flushDraft = useCallback(async () => {
+    if (hasDocContent(contentRef.current)) await saveDraft(contentRef.current)
+  }, [saveDraft])
 
   // Blank the composer to an un-initialized state so the init effect below
   // re-hydrates it from whatever draft is now loaded for the scope. Used on both
@@ -170,6 +189,7 @@ export function useDraftComposer({
   const resetForReinit = useCallback(() => {
     hasInitialized.current = false
     userEngagedRef.current = false
+    awaitingRehydrateRef.current = true
     suspendAttachmentPersistence.current = true
     staleAttachmentIdsRef.current = new Set(
       pendingAttachmentsRef.current.filter((a) => a.status === "uploaded" && !a.id.startsWith("temp_")).map((a) => a.id)
@@ -211,20 +231,31 @@ export function useDraftComposer({
     }
   }, [scopeId, isDraftLoaded, savedDraft, savedAttachments, restoreAttachments, resetForReinit])
 
-  // Late hydrate: an E2E draft can finish decrypting AFTER the one-shot init
-  // above already ran — it was locked or still decrypting when the composer
-  // mounted, so `savedDraft` was empty then and becomes the real body only once
-  // the session unlocks. When that plaintext lands and the user hasn't engaged
-  // with the editor, drop it in. Every clause is a guard against clobbering:
-  // `isDraftLoaded`/`hasInitialized` wait for the first apply to be done;
-  // `userEngagedRef` yields the editor the moment the user types; `hasDocContent`
-  // skips when the editor already shows something (so a manual clear, whose
-  // `savedDraft` lags by a debounce tick, is never re-filled).
+  // Late hydrate: the loaded draft's body can become available AFTER the one-shot
+  // init above already ran — an E2E draft that was locked or still decrypting at
+  // mount (unlock/decrypt lands later), or a stash/restore pointer move that
+  // swaps in a different draft whose body decrypts on a later tick. When that
+  // body lands and the user hasn't engaged with the editor, drop it in.
+  //
+  // Crucially this is NOT gated on `hasInitialized`: `markNeedsRehydrate` clears
+  // it on a restore, and the restored body may only resolve across a pending
+  // decrypt — so the apply has to survive that window. `userEngagedRef` is the
+  // real guard: it flips true on the first keystroke, so this never overwrites
+  // typed content nor re-fills a draft the user just cleared (whose `savedDraft`
+  // lags by a debounce tick).
+  //
+  // Apply when EITHER the editor is empty (unlock/late decrypt into an untouched
+  // editor) OR an explicit rehydrate is pending (scope change / stash-restore) —
+  // the latter overrides transient content the init effect may have re-filled
+  // from the OUTGOING draft before the pointer swap propagated (the in-place
+  // restore race). The override fires once, then clears.
   useEffect(() => {
-    if (!isDraftLoaded || !hasInitialized.current) return
+    if (!isDraftLoaded) return
     if (userEngagedRef.current) return
-    if (hasDocContent(content)) return
-    if (hasDocContent(savedDraft)) setContent(savedDraft)
+    if (!hasDocContent(savedDraft)) return
+    if (!awaitingRehydrateRef.current && hasDocContent(content)) return
+    setContent(savedDraft)
+    awaitingRehydrateRef.current = false
   }, [isDraftLoaded, savedDraft, content])
 
   // When attachments change, persist to draft storage
@@ -335,7 +366,7 @@ export function useDraftComposer({
     setIsSending,
 
     // Flush / re-hydrate (used by stash + restore)
-    saveDraft,
+    flushDraft,
     markNeedsRehydrate: resetForReinit,
 
     // Clear helpers
