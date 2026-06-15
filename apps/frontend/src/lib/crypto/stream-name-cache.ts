@@ -133,3 +133,17 @@ export function clearStreamNameCache(): void {
   inflight.clear()
   emit()
 }
+
+/**
+ * Seed the cache with a plaintext name we already hold — the local rename path,
+ * which sealed the name itself, so it knows the cleartext without decrypting.
+ * Keyed by the fresh ciphertext, so the store-read overlay and the open-stream
+ * header resolve the new name the instant the stream row flips to that ciphertext
+ * instead of flashing the placeholder while an async re-decrypt of our own write
+ * round-trips. Memory-only and cleared on lock like every other entry.
+ */
+export function primeStreamName(key: string, name: string): void {
+  if (names.get(key) === name) return
+  names.set(key, name)
+  emit()
+}

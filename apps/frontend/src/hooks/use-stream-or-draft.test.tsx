@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type MessageService, type StreamService } from "@/contexts"
 import { PendingMessagesProvider } from "@/contexts/pending-messages-context"
 import { clearAllCachedData, db } from "@/db"
@@ -12,6 +12,10 @@ import { seedWorkspaceCache } from "@/stores/workspace-store"
 import { SyncEngineContext } from "@/sync/sync-engine"
 import { workspaceKeys } from "./use-workspaces"
 import { useStreamOrDraft } from "./use-stream-or-draft"
+import * as e2eSession from "@/stores/e2e-session-store"
+import * as streamKeyCache from "@/lib/crypto/stream-key-cache"
+import * as messageEnvelope from "@/lib/crypto/message-envelope"
+import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 
 function createWrapper(
   queryClient: QueryClient,
@@ -420,5 +424,223 @@ describe("useStreamOrDraft draft DM send", () => {
     expect(bootstrap?.streams).toContainEqual(expect.objectContaining({ id: "stream_dm_1", displayName: "Invitee" }))
     expect(bootstrap?.streamMemberships).toContainEqual(expect.objectContaining({ streamId: "stream_dm_1" }))
     expect(bootstrap?.dmPeers).toContainEqual(expect.objectContaining({ streamId: "stream_dm_1", userId: "member_2" }))
+  })
+})
+
+// The top-bar header editor renames a scratchpad by calling
+// `useStreamOrDraft().rename` on blur/Enter; these cover that engine for an
+// encrypted scratchpad (the inline editor lives inside the stream page and
+// isn't separately mountable).
+describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
+  const CREATED_AT = "2026-03-31T10:00:00Z"
+
+  function seedScratchpad(streamOverrides: Record<string, unknown>): string {
+    const streamId = "stream_pad_1"
+    seedWorkspaceCache("ws_1", {
+      workspace: {
+        id: "ws_1",
+        name: "Workspace",
+        slug: "workspace",
+        createdAt: CREATED_AT,
+        updatedAt: CREATED_AT,
+        _cachedAt: Date.now(),
+      },
+      users: [
+        {
+          id: "member_1",
+          workspaceId: "ws_1",
+          workosUserId: "workos_1",
+          email: "kris@example.com",
+          role: "owner",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
+          setupCompleted: true,
+          joinedAt: CREATED_AT,
+          _cachedAt: Date.now(),
+        },
+      ],
+      streams: [
+        {
+          id: streamId,
+          workspaceId: "ws_1",
+          type: "scratchpad" as const,
+          displayName: null,
+          slug: null,
+          description: null,
+          visibility: "private" as const,
+          parentStreamId: null,
+          parentMessageId: null,
+          rootStreamId: null,
+          companionMode: "on" as const,
+          companionPersonaId: null,
+          createdBy: "member_1",
+          createdAt: CREATED_AT,
+          updatedAt: CREATED_AT,
+          archivedAt: null,
+          lastMessagePreview: null,
+          _cachedAt: Date.now(),
+          ...streamOverrides,
+        },
+      ],
+      memberships: [
+        {
+          id: `ws_1:${streamId}`,
+          workspaceId: "ws_1",
+          streamId,
+          memberId: "member_1",
+          notificationLevel: null,
+          lastReadEventId: null,
+          lastReadAt: null,
+          joinedAt: CREATED_AT,
+          _cachedAt: Date.now(),
+        },
+      ],
+      dmPeers: [],
+      personas: [],
+      bots: [],
+      unreadState: {
+        id: "ws_1",
+        workspaceId: "ws_1",
+        unreadCounts: {},
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        mutedStreamIds: [],
+        _cachedAt: Date.now(),
+      },
+      userPreferences: {
+        id: "ws_1",
+        workspaceId: "ws_1",
+        userId: "member_1",
+        theme: "system",
+        sendMode: "enter",
+        _cachedAt: Date.now(),
+      },
+      metadata: { id: "ws_1", workspaceId: "ws_1", emojis: [], emojiWeights: {}, commands: [], _cachedAt: Date.now() },
+    })
+    return streamId
+  }
+
+  beforeEach(async () => {
+    await clearAllCachedData()
+  })
+
+  afterEach(() => {
+    clearStreamNameCache()
+    vi.restoreAllMocks()
+  })
+
+  it("seals the new name and persists a sealed-only update (no plaintext) for an encrypted scratchpad", async () => {
+    vi.spyOn(e2eSession, "getE2eSessionState").mockReturnValue({
+      status: "unlocked",
+      keyId: "e2ek_alice",
+      publicKey: null,
+      privateKey: {} as CryptoKey,
+      deviceTrusted: true,
+      error: null,
+    } as never)
+    vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({
+      key: new Uint8Array(32),
+      keyGeneration: 0,
+    } as never)
+    vi.spyOn(messageEnvelope, "sealStreamName").mockResolvedValue({ ciphertext: "Y3Q=", envelope: { v: 1 } as never })
+
+    const streamId = seedScratchpad({ e2eEnabled: true, sealedNameCiphertext: "old_ct", sealedNameEnvelope: { v: 0 } })
+    const update = vi.fn().mockImplementation(async (_ws: string, id: string, data: Record<string, unknown>) => ({
+      id,
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: null,
+      parentMessageId: null,
+      rootStreamId: null,
+      companionMode: "on",
+      companionPersonaId: null,
+      createdBy: "member_1",
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+      archivedAt: null,
+      e2eEnabled: true,
+      ...data,
+    }))
+
+    const queryClient = new QueryClient()
+    const { result } = renderHook(() => useStreamOrDraft("ws_1", streamId), {
+      wrapper: createWrapper(queryClient, { streamService: { update } }),
+    })
+
+    await waitFor(() => expect(result.current.stream?.e2eEnabled).toBe(true))
+
+    await act(async () => {
+      await result.current.rename("Therapy notes")
+    })
+
+    // The PATCH carries only the sealed ciphertext — never the plaintext name.
+    expect(update).toHaveBeenCalledWith("ws_1", streamId, {
+      sealedNameCiphertext: "Y3Q=",
+      sealedNameEnvelope: { v: 1 },
+    })
+    expect(update.mock.calls[0]![2]).not.toHaveProperty("displayName")
+
+    // The just-typed name is seeded into the decrypt cache keyed by the fresh
+    // ciphertext, so the header/sidebar render it immediately (no flicker).
+    expect(getCachedStreamName(streamNameCacheKey("ws_1", streamId, "Y3Q="))).toBe("Therapy notes")
+
+    const persisted = await db.streams.get(streamId)
+    expect(persisted).toMatchObject({ sealedNameCiphertext: "Y3Q=", displayName: null })
+  })
+
+  it("renames a plaintext scratchpad by writing displayName directly (no sealing)", async () => {
+    const sealSpy = vi.spyOn(messageEnvelope, "sealStreamName")
+    const streamId = seedScratchpad({ e2eEnabled: false })
+    const update = vi.fn().mockImplementation(async (_ws: string, id: string, data: Record<string, unknown>) => ({
+      id,
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: null,
+      parentMessageId: null,
+      rootStreamId: null,
+      companionMode: "on",
+      companionPersonaId: null,
+      createdBy: "member_1",
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+      archivedAt: null,
+      ...data,
+    }))
+
+    const queryClient = new QueryClient()
+    const { result } = renderHook(() => useStreamOrDraft("ws_1", streamId), {
+      wrapper: createWrapper(queryClient, { streamService: { update } }),
+    })
+
+    await waitFor(() => expect(result.current.stream?.id).toBe(streamId))
+
+    await act(async () => {
+      await result.current.rename("Groceries")
+    })
+
+    expect(update).toHaveBeenCalledWith("ws_1", streamId, { displayName: "Groceries" })
+    expect(sealSpy).not.toHaveBeenCalled()
   })
 })

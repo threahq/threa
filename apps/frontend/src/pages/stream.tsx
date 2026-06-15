@@ -155,6 +155,11 @@ export function StreamPage() {
 
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
+  // The just-submitted name, held while the rename is in flight so the header
+  // shows it continuously instead of dipping to the persisted name during the
+  // network round-trip. Cleared once the write lands (the decrypt cache is seeded
+  // by then, so it resolves straight to the new name).
+  const [pendingName, setPendingName] = useState<string | null>(null)
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -185,7 +190,7 @@ export function StreamPage() {
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
   if (stream) {
-    streamName = decryptedStreamName ?? streamLabel(stream)
+    streamName = pendingName ?? decryptedStreamName ?? streamLabel(stream)
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
@@ -214,7 +219,14 @@ export function StreamPage() {
 
     if (!trimmed || trimmed === currentDisplayedName) return
 
-    await rename(trimmed)
+    setPendingName(trimmed)
+    try {
+      await rename(trimmed)
+    } catch (err) {
+      console.error("Failed to rename stream", err)
+    } finally {
+      setPendingName(null)
+    }
   }
 
   const handleArchive = async () => {

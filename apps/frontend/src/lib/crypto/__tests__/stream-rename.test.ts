@@ -3,6 +3,7 @@ import { sealStreamRename, StreamNameSealUnavailableError } from "../stream-rena
 import * as e2eSession from "@/stores/e2e-session-store"
 import * as streamKeyCache from "../stream-key-cache"
 import * as messageEnvelope from "../message-envelope"
+import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "../stream-name-cache"
 
 const WS = "ws_1"
 const STREAM = "stream_01"
@@ -32,7 +33,10 @@ function unlockedSession(): SessionState {
   } as SessionState
 }
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  clearStreamNameCache()
+})
 
 describe("sealStreamRename", () => {
   it("throws instead of falling back to plaintext when the session is locked", async () => {
@@ -70,5 +74,24 @@ describe("sealStreamRename", () => {
 
     expect(fields).toEqual({ sealedNameCiphertext: "Y3Q=", sealedNameEnvelope: { v: 1 } })
     expect(fields).not.toHaveProperty("displayName")
+  })
+
+  it("seeds the decrypt cache with the new name keyed by the fresh ciphertext (no re-decrypt flicker)", async () => {
+    vi.spyOn(e2eSession, "getE2eSessionState").mockReturnValue(unlockedSession())
+    vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({
+      key: new Uint8Array(32),
+      keyGeneration: 0,
+    } as never)
+    vi.spyOn(messageEnvelope, "sealStreamName").mockResolvedValue({
+      ciphertext: "Y3Q=",
+      envelope: { v: 1 } as never,
+    })
+
+    await sealStreamRename({ workspaceId: WS, streamId: STREAM, userId: USER, name: "Therapy notes" })
+
+    // The cleartext we just sealed is immediately resolvable on this device,
+    // keyed by the fresh ciphertext, so the overlay/header render the new name
+    // the instant the stream row flips to it instead of decrypting our own write.
+    expect(getCachedStreamName(streamNameCacheKey(WS, STREAM, "Y3Q="))).toBe("Therapy notes")
   })
 })

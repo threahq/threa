@@ -1,6 +1,7 @@
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { sealStreamName } from "@/lib/crypto/message-envelope"
 import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
+import { primeStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 
 /** Sealed-name PATCH fields for an E2E rename — sent WITHOUT a plaintext `displayName`. */
 export interface SealedNameFields {
@@ -57,5 +58,10 @@ export async function sealStreamRename(params: {
     ssk: streamKey.key,
     keyGeneration: streamKey.keyGeneration,
   })
+  // Seed the decrypt cache with the cleartext we just sealed, keyed by the fresh
+  // ciphertext, so the header and list overlay show the new name the moment the
+  // stream row flips to it — without flashing the placeholder while a re-decrypt
+  // of our own write round-trips (the rename flicker).
+  primeStreamName(streamNameCacheKey(workspaceId, streamId, sealed.ciphertext), name)
   return { sealedNameCiphertext: sealed.ciphertext, sealedNameEnvelope: sealed.envelope }
 }
