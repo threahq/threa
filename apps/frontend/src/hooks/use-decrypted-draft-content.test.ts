@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import type { JSONContent } from "@threa/types"
 import type { CachedDraft } from "@/db"
-import { useDecryptedDraftPreviews } from "./use-decrypted-draft-previews"
+import { useDecryptedDraftContent } from "./use-decrypted-draft-content"
 import { requestDecryption, seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as messageEnvelope from "@/lib/crypto/message-envelope"
 import * as currentUserHook from "./use-current-workspace-user-id"
@@ -35,9 +35,9 @@ const locked = {
   error: null,
 } as ReturnType<typeof e2eSessionStore.useE2eSession>
 
-function plaintextDraft(id: string, text: string): CachedDraft {
+function plaintextDraft(text: string): CachedDraft {
   return {
-    id,
+    id: "draft_p",
     workspaceId,
     scope: `stream:${rootStreamId}`,
     contentJson: makeDoc(text),
@@ -46,7 +46,7 @@ function plaintextDraft(id: string, text: string): CachedDraft {
   }
 }
 
-function sealedDraft(id: string): CachedDraft {
+function sealedDraft(id = "draft_e"): CachedDraft {
   return {
     id,
     workspaceId,
@@ -67,44 +67,42 @@ beforeEach(() => {
   vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(unlocked)
 })
 
-describe("useDecryptedDraftPreviews", () => {
-  it("returns plaintext previews straight from contentJson", () => {
-    const draft = plaintextDraft("draft_p", "hello plain")
-    const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId: undefined }]))
-    expect(result.current.get("draft_p")).toEqual({ text: "hello plain", status: "ready" })
+describe("useDecryptedDraftContent", () => {
+  it("reports none when there is no draft", () => {
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, undefined, rootStreamId))
+    expect(result.current.status).toBe("none")
   })
 
-  it("returns the decrypted body for a sealed draft already in the shared cache", () => {
-    const draft = sealedDraft("draft_e")
-    seedDecryption("draft_e", { contentMarkdown: "secret body", contentJson: makeDoc("secret body") })
-    const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    expect(result.current.get("draft_e")).toEqual({ text: "secret body", status: "ready" })
+  it("reports plaintext (with the body) for a non-E2E draft", () => {
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, plaintextDraft("hi"), undefined))
+    expect(result.current).toEqual({ status: "plaintext", contentJson: makeDoc("hi") })
   })
 
-  it("reports a sealed draft as locked while the session is locked (no decrypt attempted)", () => {
+  it("reports locked for a sealed draft while the session is locked", () => {
     vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(locked)
-    const draft = sealedDraft("draft_e")
-    const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    expect(result.current.get("draft_e")).toEqual({ text: "", status: "locked" })
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, sealedDraft(), rootStreamId))
+    expect(result.current.status).toBe("locked")
   })
 
-  it("reports decrypting for an unlocked sealed draft whose body hasn't landed yet", () => {
-    // Decrypt is in flight (never resolves here) → the preview is `decrypting`.
-    vi.spyOn(messageEnvelope, "tryDecryptMessagePayload").mockReturnValue(new Promise(() => {}))
-    const draft = sealedDraft("draft_e")
-    const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    expect(result.current.get("draft_e")).toEqual({ text: "", status: "decrypting" })
+  it("reports decrypted (with the body) when the shared cache already holds the plaintext", () => {
+    seedDecryption("draft_e", { contentMarkdown: "secret", contentJson: makeDoc("secret") })
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, sealedDraft(), rootStreamId))
+    expect(result.current).toEqual({ status: "decrypted", contentJson: makeDoc("secret") })
   })
 
-  it("reports failed when the decrypt returns null", async () => {
+  it("reports pending while unlocked but the encrypted root isn't known yet (no decrypt fired)", () => {
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, sealedDraft(), undefined))
+    expect(result.current.status).toBe("pending")
+  })
+
+  it("reports failed when the decrypt returns null (wrong recipient / garbled)", async () => {
     vi.spyOn(messageEnvelope, "tryDecryptMessagePayload").mockResolvedValue(null)
     await requestDecryption(
       "draft_e",
       { contentMarkdown: "", ciphertext: "ct_sealed", envelope: { v: 2 } },
       { privateKey: {} as CryptoKey, recipientKeyId: "ek_1", workspaceId, streamId: rootStreamId, rootStreamId }
     )
-    const draft = sealedDraft("draft_e")
-    const { result } = renderHook(() => useDecryptedDraftPreviews(workspaceId, [{ draft, rootStreamId }]))
-    await waitFor(() => expect(result.current.get("draft_e")).toEqual({ text: "", status: "failed" }))
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, sealedDraft(), rootStreamId))
+    await waitFor(() => expect(result.current.status).toBe("failed"))
   })
 })
