@@ -568,6 +568,13 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     isDecrypting: decryptedContent.status === "pending",
     /** An E2E draft whose body couldn't be decrypted (wrong recipient / garbled). */
     decryptFailed: decryptedContent.status === "failed",
+    /**
+     * The draft id currently checked out into the composer for this scope, or null.
+     * Goes null when the draft is removed underneath the composer — sent/resolved
+     * here, or discarded/resolved on another device — which the composer uses to
+     * clear the editor so a gone draft doesn't linger.
+     */
+    loadedDraftId: loadedId,
     contentJson,
     attachments: resolvedDraft?.attachments ?? [],
     /** Sidecar context refs attached to the draft (see DraftContextRef). */

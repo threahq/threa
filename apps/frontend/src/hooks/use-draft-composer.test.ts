@@ -37,6 +37,7 @@ interface MockDraftState {
 let mockDraftIsLoaded = true
 let mockDraftContentJson: JSONContent = EMPTY_DOC
 let mockDraftAttachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }> = []
+let mockDraftLoadedId: string | null = "draft_mock"
 let mockDraftStateByKey: Record<string, MockDraftState> = {}
 
 // Mock useAttachments
@@ -76,6 +77,7 @@ describe("useDraftComposer", () => {
     mockDraftIsLoaded = true
     mockDraftContentJson = EMPTY_DOC
     mockDraftAttachments = []
+    mockDraftLoadedId = "draft_mock"
     mockDraftStateByKey = {}
     mockPendingAttachments = []
 
@@ -92,6 +94,7 @@ describe("useDraftComposer", () => {
           contentJson: state.contentJson,
           attachments: state.attachments,
           contextRefs: state.contextRefs ?? [],
+          loadedDraftId: mockDraftLoadedId,
           saveDraft: mockSaveDraft,
           saveDraftDebounced: mockSaveDraftDebounced,
           addAttachment: mockAddDraftAttachment,
@@ -709,6 +712,42 @@ describe("useDraftComposer", () => {
       rerender()
 
       // Stays cleared: the late-hydrate yields to user engagement.
+      expect(result.current.content).toEqual(EMPTY_DOC)
+    })
+
+    it("does not re-fill after a send-style clear while the loaded row lags (restored-then-sent)", () => {
+      // Regression: a restored draft sent without further typing left `userEngaged`
+      // false; the editor cleared on send but the late-hydrate re-filled it from the
+      // still-present `savedDraft` before the resolve removed the row.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("restored body")
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("restored body")) // hydrated; user did NOT type
+
+      // Send clears the editor; the loaded row still lags (savedDraft unchanged for a tick).
+      act(() => {
+        result.current.setContent(EMPTY_DOC)
+      })
+      rerender()
+
+      // Stays cleared — no rising edge of body-availability, so no re-fill.
+      expect(result.current.content).toEqual(EMPTY_DOC)
+    })
+
+    it("blanks the editor when the loaded draft is removed underneath it (resolved on another device)", () => {
+      // Start typing on one device, finish + send on another: the partial draft
+      // must not linger here once its pointer is cleared (loaded id → null).
+      mockDraftIsLoaded = true
+      mockDraftContentJson = makeDoc("roamed body")
+      mockDraftLoadedId = "draft_roamed"
+      const { result, rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(result.current.content).toEqual(makeDoc("roamed body"))
+
+      // The draft is sent/resolved elsewhere: its `draft:deleted` clears the pointer.
+      mockDraftLoadedId = null
+      mockDraftContentJson = EMPTY_DOC
+      rerender()
+
       expect(result.current.content).toEqual(EMPTY_DOC)
     })
   })

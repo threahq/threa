@@ -114,6 +114,7 @@ export function useDraftComposer({
     isLoaded: isDraftLoaded,
     isDecrypting,
     decryptFailed,
+    loadedDraftId,
     contentJson: savedDraft,
     attachments: savedAttachments,
     contextRefs: savedContextRefs = [] as DraftContextRef[],
@@ -156,6 +157,14 @@ export function useDraftComposer({
   // re-filled from the previous draft during the swap (the in-place restore race).
   // Cleared once that body lands; still yields to `userEngagedRef`.
   const awaitingRehydrateRef = useRef(false)
+  // Tracks whether the loaded draft's body was available last render, so the
+  // late-hydrate fires only on the RISING edge (a body arriving into an empty
+  // editor — unlock/decrypt), never on a falling edge (a send/clear emptying it).
+  const prevSavedAvailableRef = useRef(false)
+  // Tracks the loaded draft id so the composer can blank the editor the moment the
+  // draft is removed underneath it (sent/resolved here, or discarded/resolved on
+  // another device — id → null), instead of leaving a gone draft on screen.
+  const prevLoadedIdRef = useRef<string | null>(null)
   const prevScopeIdRef = useRef<string | null>(null)
   // Keeps attachment persistence suspended until the previous scope's uploaded
   // attachments are gone from React state.
@@ -233,30 +242,49 @@ export function useDraftComposer({
 
   // Late hydrate: the loaded draft's body can become available AFTER the one-shot
   // init above already ran — an E2E draft that was locked or still decrypting at
-  // mount (unlock/decrypt lands later), or a stash/restore pointer move that
-  // swaps in a different draft whose body decrypts on a later tick. When that
-  // body lands and the user hasn't engaged with the editor, drop it in.
+  // mount (unlock/decrypt lands later), or a stash/restore pointer move that swaps
+  // in a different draft whose body decrypts on a later tick. When that body lands
+  // and the user hasn't engaged with the editor, drop it in.
   //
-  // Crucially this is NOT gated on `hasInitialized`: `markNeedsRehydrate` clears
-  // it on a restore, and the restored body may only resolve across a pending
-  // decrypt — so the apply has to survive that window. `userEngagedRef` is the
-  // real guard: it flips true on the first keystroke, so this never overwrites
-  // typed content nor re-fills a draft the user just cleared (whose `savedDraft`
-  // lags by a debounce tick).
-  //
-  // Apply when EITHER the editor is empty (unlock/late decrypt into an untouched
-  // editor) OR an explicit rehydrate is pending (scope change / stash-restore) —
-  // the latter overrides transient content the init effect may have re-filled
-  // from the OUTGOING draft before the pointer swap propagated (the in-place
-  // restore race). The override fires once, then clears.
+  // `userEngagedRef` is the real guard: it flips true on the first keystroke, so
+  // this never overwrites typed content. The two apply paths are deliberately
+  // narrow so a SEND/clear (which empties the editor) can't trigger a re-fill:
+  //  - explicit rehydrate (scope change / stash-restore): override transient
+  //    content once, even across a pending decrypt (`awaitingRehydrateRef`).
+  //  - unlock/late-decrypt: apply only on the RISING edge of body-availability
+  //    (the body just became available) into a still-empty editor. A send clears
+  //    the editor while `savedDraft` briefly lags non-empty — that's a falling
+  //    edge / no edge, so it never re-fills the just-sent content.
   useEffect(() => {
-    if (!isDraftLoaded) return
-    if (userEngagedRef.current) return
-    if (!hasDocContent(savedDraft)) return
-    if (!awaitingRehydrateRef.current && hasDocContent(content)) return
-    setContent(savedDraft)
-    awaitingRehydrateRef.current = false
+    const savedAvailable = hasDocContent(savedDraft)
+    const becameAvailable = savedAvailable && !prevSavedAvailableRef.current
+    prevSavedAvailableRef.current = savedAvailable
+    if (!isDraftLoaded || userEngagedRef.current || !savedAvailable) return
+    if (awaitingRehydrateRef.current) {
+      setContent(savedDraft)
+      awaitingRehydrateRef.current = false
+      return
+    }
+    if (becameAvailable && !hasDocContent(content)) {
+      setContent(savedDraft)
+    }
   }, [isDraftLoaded, savedDraft, content])
+
+  // Blank the editor the moment the loaded draft is removed underneath the
+  // composer: sent/resolved here, or discarded/resolved on another device (its
+  // `draft:deleted` clears this scope's pointer). Without this the just-sent or
+  // remotely-cleared body lingers on screen. A transition to null is always safe
+  // to clear — the delete path preserves any unpushed local edits under a NEW id
+  // (so the loaded id MIGRATES rather than going null).
+  useEffect(() => {
+    const prev = prevLoadedIdRef.current
+    prevLoadedIdRef.current = loadedDraftId ?? null
+    if (prev && !loadedDraftId) {
+      userEngagedRef.current = false
+      setContent(initialContent)
+      clearAttachments()
+    }
+  }, [loadedDraftId, initialContent, clearAttachments])
 
   // When attachments change, persist to draft storage
   useEffect(() => {
