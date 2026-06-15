@@ -44,6 +44,20 @@ export class ConversationSummaryService {
     const oldestKeptSequence = keptMessages[0].sequence
     const existing = await ConversationSummaryRepository.findByStreamAndPersona(db, streamId, personaId)
 
+    if (existing?.sealed) {
+      // A sealed row is owned by the enclave/E2E path, which computes its rolling
+      // summary in-enclave. The companion path must never overwrite it — that would
+      // flip an E2E row to plaintext and destroy the sealed context. Unreachable by
+      // construction today (a stream is E2E xor not, and the companion never runs on
+      // E2E streams), so reaching it means that invariant broke: refuse loudly
+      // rather than silently corrupt sealed data (INV-11).
+      logger.error(
+        { workspaceId, streamId, personaId },
+        "Companion summary update found a sealed (E2E) summary row; refusing to overwrite"
+      )
+      return null
+    }
+
     const olderMessages = await MessageRepository.list(db, streamId, {
       limit: 1,
       beforeSequence: oldestKeptSequence,
