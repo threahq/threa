@@ -1,6 +1,19 @@
-import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react"
 import { usePreloadImages } from "@/hooks/use-preload-images"
 import { useCoordinatedStreamQueries } from "@/hooks/use-coordinated-stream-queries"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useE2eSession } from "@/stores/e2e-session-store"
+import { resolveSealedNamePending } from "@/hooks/use-decrypted-stream-name"
+import { getStreamNameCacheVersion, subscribeStreamNameCache } from "@/lib/crypto/stream-name-cache"
 import {
   hasSeededWorkspaceCache,
   seedCacheFromIdb,
@@ -179,6 +192,24 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   // user's real layout. A row always exists after the first bootstrap (the server
   // seeds the default), so this only ever waits on a genuinely-unloaded config.
   const idbSidebarConfig = useWorkspaceSidebarConfig(workspaceId)
+  // Hold the initial reveal until every sealed E2E stream name has decrypted, so
+  // the first painted render shows real names instead of flashing the placeholder
+  // and popping to the decrypted name a tick later. `resolveSealedNamePending`
+  // only waits while the session is settling or unlocked-and-decrypting; it
+  // returns false for a locked/no-key session (the placeholder is then the right
+  // answer) and once a decrypt settles, so this can't deadlock the reveal.
+  // `nameCacheVersion` re-evaluates it when a decrypt lands.
+  const currentUserId = useWorkspaceUserId(workspaceId)
+  const e2eSessionStatus = useE2eSession(workspaceId, currentUserId ?? "").status
+  const nameCacheVersion = useSyncExternalStore(
+    subscribeStreamNameCache,
+    getStreamNameCacheVersion,
+    getStreamNameCacheVersion
+  )
+  const sealedNamesPending = useMemo(
+    () => idbStreams.some((stream) => resolveSealedNamePending(workspaceId, stream, e2eSessionStatus)),
+    [idbStreams, workspaceId, e2eSessionStatus, nameCacheVersion]
+  )
   const streamById = useMemo(() => new Map(idbStreams.map((stream) => [stream.id, stream])), [idbStreams])
   const workspaceDataReady =
     hasSeededWorkspaceCache(workspaceId) &&
@@ -242,6 +273,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     workspaceLoading ||
     (!isReady && streamsLoading) ||
     draftsLoading ||
+    (!isReady && sealedNamesPending) ||
     (isReady && hasSettledInitialSyncRef.current && isAnySyncing)
 
   if (isBootstrapDebugEnabled()) {
@@ -274,6 +306,8 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       workspaceLoading,
       streamsLoading,
       draftsLoading,
+      e2eSessionStatus,
+      sealedNamesPending,
       isAnySyncing,
       isLoading,
       isReady,
