@@ -11,7 +11,7 @@ import {
   useId,
 } from "react"
 import { flushSync } from "react-dom"
-import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2 } from "lucide-react"
+import { ArrowUp, X, Plus, AtSign, Slash, Paperclip } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton, type MicButtonHandle } from "./mic-button"
+import { ComposerActionBar } from "./composer-action-bar"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
@@ -520,6 +521,13 @@ export function MessageComposer({
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click()
   }, [fileInputRef])
+
+  // Stable wrappers that read the editor handle at call time (not render time),
+  // so they stay fresh whether invoked from an inline toolbar button or a
+  // folded "+" overflow menu item.
+  const insertEmoji = useCallback(() => richEditorRef.current?.insertEmoji(), [])
+  const insertMention = useCallback(() => richEditorRef.current?.insertMention(), [])
+  const insertSlash = useCallback(() => richEditorRef.current?.insertSlash(), [])
 
   const handleSubmit = useCallback(() => {
     setFormatOpen(false)
@@ -1122,126 +1130,20 @@ export function MessageComposer({
                     }
                   />
                 ) : (
-                  <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-muted-foreground flex-1 select-none pointer-events-none">
-                      Select text to format
-                    </span>
-                    {onExpandClick && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Expand to fullscreen editor"
-                            className="h-7 w-7 shrink-0"
-                            onClick={onExpandClick}
-                            disabled={controlsDisabled}
-                          >
-                            <Maximize2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs">
-                          Expand editor
-                        </TooltipContent>
-                      </Tooltip>
-                    )}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Formatting"
-                          aria-pressed={formatOpen}
-                          className={cn("h-7 w-7 shrink-0", formatOpen && "bg-accent text-accent-foreground")}
-                          onClick={() => setFormatOpen((v) => !v)}
-                          disabled={controlsDisabled}
-                        >
-                          <span className="text-[13px] font-bold leading-none tracking-tight">Aa</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Formatting
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Insert emoji"
-                          className="h-7 w-7 shrink-0"
-                          onClick={() => richEditorRef.current?.insertEmoji()}
-                          disabled={controlsDisabled}
-                        >
-                          <span className="text-sm leading-none">😊</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Emoji
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Insert mention"
-                          className="h-7 w-7 shrink-0"
-                          onClick={() => richEditorRef.current?.insertMention()}
-                          disabled={controlsDisabled}
-                        >
-                          <AtSign className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Mention
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Insert command"
-                          className="h-7 w-7 shrink-0 hidden sm:inline-flex"
-                          onClick={() => richEditorRef.current?.insertSlash()}
-                          disabled={controlsDisabled}
-                        >
-                          <Slash className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Command
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Attach files"
-                          className="h-7 w-7 shrink-0"
-                          onClick={handleAttachClick}
-                          disabled={controlsDisabled}
-                        >
-                          <Paperclip className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Attach files
-                      </TooltipContent>
-                    </Tooltip>
-                    {micButton}
-                    {stashedDraftsTrigger}
-                    {scheduledMessagesTrigger}
-                    {sendButton}
-                  </div>
+                  <ComposerActionBar
+                    disabled={controlsDisabled}
+                    formatOpen={formatOpen}
+                    onToggleFormat={() => setFormatOpen((v) => !v)}
+                    onInsertEmoji={insertEmoji}
+                    onInsertMention={insertMention}
+                    onInsertCommand={insertSlash}
+                    onAttachClick={handleAttachClick}
+                    onExpandClick={onExpandClick}
+                    micButton={micButton}
+                    stashedDraftsTrigger={stashedDraftsTrigger}
+                    scheduledMessagesTrigger={scheduledMessagesTrigger}
+                    sendButton={sendButton}
+                  />
                 )}
               </div>
             )}
