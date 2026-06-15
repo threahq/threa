@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useE2eSession } from "@/stores/e2e-session-store"
+import { useE2eSession, type E2eSessionStatus } from "@/stores/e2e-session-store"
 import {
   getCachedStreamName,
   getStreamNameCacheVersion,
@@ -70,32 +70,46 @@ export function useDecryptedStreamName(
 }
 
 /**
- * Whether a sealed E2E stream's name is still resolving — the session is settling
- * (`unknown`/`unlocking`) or it's unlocked and the decrypt hasn't landed yet — so
- * a surface can show a loader instead of flashing the placeholder during the
- * cold-load decrypt window. Returns false for plaintext streams, a locked/no-key
- * session (the placeholder is then the right, settled answer), and once the name
- * has decrypted (or definitively failed). Reads the same cache as
- * `useDecryptedStreamName`, so the two never disagree.
+ * Whether a sealed E2E stream's name is still resolving, given the session status:
+ * the session is settling (`unknown`/`unlocking`) or it's unlocked and the decrypt
+ * hasn't landed yet — so a surface can show a loader instead of flashing the
+ * placeholder during the cold-load decrypt window. False for plaintext streams, a
+ * locked/no-key session (the placeholder is then the settled answer), and once the
+ * name has decrypted (or definitively failed).
+ *
+ * Pure so the single decision can be computed at the read boundary that already
+ * resolves the name — the open-stream header (via `useStreamNameDecrypting`) and
+ * the sidebar's stream-list builder — rather than each leaf row re-wiring the
+ * session. Reads the same cache as the name overlay, so loader and label agree.
+ */
+export function resolveSealedNamePending(
+  workspaceId: string,
+  stream: SealedNameStream | null | undefined,
+  sessionStatus: E2eSessionStatus
+): boolean {
+  const e2eEnabled = stream?.e2eEnabled ?? false
+  const streamId = stream?.id
+  const ciphertext = stream?.sealedNameCiphertext ?? null
+  if (!e2eEnabled || !streamId || !ciphertext) return false
+  if (sessionStatus === "unknown" || sessionStatus === "unlocking") return true
+  if (sessionStatus === "unlocked") return isStreamNamePending(streamNameCacheKey(workspaceId, streamId, ciphertext))
+  return false
+}
+
+/**
+ * Hook form of {@link resolveSealedNamePending} for a single open stream (the
+ * header), which already has session context. List surfaces resolve this through
+ * their stream-list builder instead, off the same shared cache.
  */
 export function useStreamNameDecrypting(workspaceId: string, stream: SealedNameStream | null | undefined): boolean {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
+  // `version` re-evaluates pending when a decrypt settles (including a failure,
+  // which doesn't change the overlaid row).
   const version = useSyncExternalStore(subscribeStreamNameCache, getStreamNameCacheVersion, getStreamNameCacheVersion)
 
-  const e2eEnabled = stream?.e2eEnabled ?? false
-  const streamId = stream?.id
-  const ciphertext = stream?.sealedNameCiphertext ?? null
-  const key = e2eEnabled && streamId && ciphertext ? streamNameCacheKey(workspaceId, streamId, ciphertext) : null
-
-  return useMemo(() => {
-    if (!key) return false
-    // The session hasn't resolved yet — the name is loading, not absent.
-    if (session.status === "unknown" || session.status === "unlocking") return true
-    // Unlocked: loading only until the decrypt lands (or definitively fails).
-    if (session.status === "unlocked") return isStreamNamePending(key)
-    // locked / no-key: the placeholder is the settled answer, not a loading state.
-    return false
-    // `version` re-evaluates pending when a decrypt settles; the rest key it.
-  }, [key, session.status, version])
+  return useMemo(
+    () => resolveSealedNamePending(workspaceId, stream, session.status),
+    [workspaceId, stream, session.status, version]
+  )
 }

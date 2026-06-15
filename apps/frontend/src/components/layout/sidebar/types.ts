@@ -17,4 +17,11 @@ export interface StreamItemData extends StreamWithPreview {
   urgency: UrgencyLevel
   section: SectionKey
   dmPeerUserId?: string
+  /**
+   * True while this stream's sealed E2E name is still decrypting on cold load, so
+   * the row renders a loader instead of the placeholder. Resolved once by the
+   * sidebar builder off the shared name cache + session (see
+   * `resolveSealedNamePending`), not per row.
+   */
+  nameDecrypting?: boolean
 }

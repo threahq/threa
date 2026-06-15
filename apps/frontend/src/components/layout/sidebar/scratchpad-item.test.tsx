@@ -222,6 +222,42 @@ describe("ScratchpadItem", () => {
     expect(screen.queryByLabelText("AI companion attached")).not.toBeInTheDocument()
   })
 
+  it("shows a loader instead of the placeholder while an encrypted scratchpad's sealed name decrypts", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ e2eEnabled: true, companionMode: "off", displayName: null, nameDecrypting: true })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    // Neither the decrypted name nor the "New scratchpad" placeholder flashes
+    // while the name is still resolving.
+    expect(screen.queryByText("New scratchpad")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Encrypted scratchpad")).toBeInTheDocument()
+  })
+
+  it("renders the decrypted name once resolved (no loader)", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({
+          e2eEnabled: true,
+          companionMode: "off",
+          displayName: "Therapy notes",
+          nameDecrypting: false,
+        })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.getByText("Therapy notes")).toBeInTheDocument()
+  })
+
   it("deletes draft scratchpads directly and navigates away when the active draft is removed", async () => {
     renderWithRouter(
       <ScratchpadItem
