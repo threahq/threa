@@ -36,7 +36,6 @@ export function AvatarSection({ workspaceId, userName, avatarUrl }: AvatarSectio
     setUploading(true)
     try {
       await uploadAvatar.mutateAsync(file)
-      toast.success("Avatar uploaded")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to upload avatar")
     } finally {
@@ -47,7 +46,6 @@ export function AvatarSection({ workspaceId, userName, avatarUrl }: AvatarSectio
   const handleRemove = async () => {
     try {
       await removeAvatar.mutateAsync()
-      toast.success("Avatar removed")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to remove avatar")
     }

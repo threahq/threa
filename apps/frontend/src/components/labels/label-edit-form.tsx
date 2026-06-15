@@ -167,7 +167,6 @@ export function LabelEditForm({
       },
       {
         onSuccess: () => {
-          toast.success("Label updated")
           onDone()
         },
         onError: () => toast.error("Could not update label"),

@@ -74,7 +74,6 @@ export function ProfileSettings() {
     try {
       await updateProfile.mutateAsync({ name: currentName.trim() })
       setName(null)
-      toast.success("Name updated")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update name")
     }
@@ -92,7 +91,6 @@ export function ProfileSettings() {
     try {
       await updateProfile.mutateAsync({ description: currentDescription.trim() || null })
       setDescription(null)
-      toast.success("Description updated")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update description")
     }
@@ -117,7 +115,6 @@ export function ProfileSettings() {
       await updateProfile.mutateAsync({ pronouns: currentPronouns.trim() || null })
       setPronouns(null)
       setIsCustomPronouns(false)
-      toast.success("Pronouns updated")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update pronouns")
     }
@@ -128,7 +125,6 @@ export function ProfileSettings() {
     try {
       await updateProfile.mutateAsync({ phone: currentPhone.trim() || null })
       setPhone(null)
-      toast.success("Phone updated")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update phone")
     }
@@ -139,7 +135,6 @@ export function ProfileSettings() {
     try {
       await updateProfile.mutateAsync({ githubUsername: currentGithub.trim() || null })
       setGithubUsername(null)
-      toast.success("GitHub username updated")
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to update GitHub username")
     }

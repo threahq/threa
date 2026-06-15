@@ -106,11 +106,10 @@ function SavedList({ workspaceId, tab }: { workspaceId: string; tab: SavedStatus
   const updateMutation = useUpdateSaved(workspaceId)
   const deleteMutation = useDeleteSaved(workspaceId)
 
-  const handleUpdate = (savedId: string, status: SavedStatus, successLabel: string) => {
+  const handleUpdate = (savedId: string, status: SavedStatus) => {
     updateMutation.mutate(
       { savedId, input: { status } },
       {
-        onSuccess: () => toast.success(successLabel),
         onError: () => toast.error("Could not update saved item"),
       }
     )
@@ -118,7 +117,6 @@ function SavedList({ workspaceId, tab }: { workspaceId: string; tab: SavedStatus
 
   const handleDelete = (savedId: string) => {
     deleteMutation.mutate(savedId, {
-      onSuccess: () => toast.success("Saved item removed"),
       onError: () => toast.error("Could not remove saved item"),
     })
   }
@@ -133,9 +131,9 @@ function SavedList({ workspaceId, tab }: { workspaceId: string; tab: SavedStatus
           key={saved.id}
           saved={saved}
           workspaceId={workspaceId}
-          onMarkDone={tab === "saved" ? () => handleUpdate(saved.id, "done", "Marked done") : undefined}
-          onArchive={tab === "saved" ? () => handleUpdate(saved.id, "archived", "Archived") : undefined}
-          onRestore={tab !== "saved" ? () => handleUpdate(saved.id, "saved", "Restored") : undefined}
+          onMarkDone={tab === "saved" ? () => handleUpdate(saved.id, "done") : undefined}
+          onArchive={tab === "saved" ? () => handleUpdate(saved.id, "archived") : undefined}
+          onRestore={tab !== "saved" ? () => handleUpdate(saved.id, "saved") : undefined}
           onDelete={() => handleDelete(saved.id)}
         />
       ))}

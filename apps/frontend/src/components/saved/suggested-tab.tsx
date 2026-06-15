@@ -20,7 +20,6 @@ export function SuggestedTab({ workspaceId }: SuggestedTabProps) {
 
   const handleAccept = (id: string) => {
     acceptMutation.mutate(id, {
-      onSuccess: () => toast.success("Added to Saved"),
       onError: () => toast.error("Could not add to Saved"),
     })
   }

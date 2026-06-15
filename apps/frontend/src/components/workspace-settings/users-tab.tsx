@@ -200,7 +200,6 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                       changeRoleMutation.mutate(
                         { userId: user.id, roleSlug: value as WorkspaceRoleSlug },
                         {
-                          onSuccess: () => toast.success("Role updated"),
                           onError: (err) => toast.error(memberErrorMessage(err, "Failed to update role")),
                         }
                       )
@@ -380,7 +379,6 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                 removeMutation.mutate(
                   { userId: memberToRemove.id },
                   {
-                    onSuccess: () => toast.success("Member removed"),
                     onError: (err) => toast.error(memberErrorMessage(err, "Failed to remove member")),
                     onSettled: () => setMemberToRemove(null),
                   }

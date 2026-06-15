@@ -206,7 +206,7 @@ export interface MessageComposerProps {
    * Triggered when the user presses Cmd/Ctrl+S with focus inside the composer,
    * or when they click "Save current" in the stashed-drafts picker. The host
    * is responsible for snapshotting the current content/attachments, adding a
-   * row to the stash, clearing the active draft, and showing a toast. An
+   * row to the stash, and clearing the active draft. An
    * empty composer should no-op; the picker disables its own button when
    * `canStashCurrent` is false.
    */

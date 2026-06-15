@@ -140,7 +140,6 @@ export function PassphraseSetupModal({
     try {
       const registration = await registerDeviceBiometric(userId)
       setBiometric(registration)
-      toast.success("Biometric unlock ready")
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't set up biometric unlock")
     } finally {
@@ -166,8 +165,6 @@ export function PassphraseSetupModal({
         toast.warning(
           "Encryption enabled, but couldn't keep you unlocked on this device. You'll need your passphrase next time."
         )
-      } else {
-        toast.success("Encrypted scratchpads enabled")
       }
       reset()
       onSetupComplete?.()

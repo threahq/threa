@@ -108,12 +108,7 @@ export function useInviteActor(workspaceId: string, streamId: string) {
           session.status === "unlocked" && session.keyId && session.publicKey
             ? { keyId: session.keyId, publicKey: session.publicKey }
             : null
-        const result = await inviteActorToStream({ workspaceId, streamId, kind, actorId, queryClient, owner })
-        if (result === "invited-unwrapped") {
-          toast.success(`${E2E_ACTOR_LABELS[kind]} invited — unlock this scratchpad's encryption to grant it access.`)
-        } else {
-          toast.success(`${E2E_ACTOR_LABELS[kind]} invited to this scratchpad`)
-        }
+        await inviteActorToStream({ workspaceId, streamId, kind, actorId, queryClient, owner })
       } catch (err) {
         const message = err instanceof Error ? err.message : `Failed to invite ${E2E_ACTOR_LABELS[kind]}`
         toast.error(message)

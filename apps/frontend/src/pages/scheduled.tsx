@@ -57,7 +57,6 @@ function ScheduledPageInner({ workspaceId, tab }: InnerProps) {
 
   const handleCancel = (id: string) => {
     cancelMutation.mutate(id, {
-      onSuccess: () => toast.success("Scheduled message cancelled"),
       // Error.message is typed string, never null — `??` would let an empty
       // message slip through and render an invisible toast. `||` falls back
       // to the human label in both nullish and empty-string cases.
@@ -67,7 +66,6 @@ function ScheduledPageInner({ workspaceId, tab }: InnerProps) {
 
   const handleSendNow = (id: string) => {
     sendNowMutation.mutate(id, {
-      onSuccess: () => toast.success("Sent"),
       onError: (err: Error) => toast.error(err.message || "Could not send"),
     })
   }

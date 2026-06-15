@@ -57,7 +57,6 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
         old ? { ...old, workspaceSettings: settings } : old
       )
-      toast.success("Workspace statuses saved")
     },
     onError: () => toast.error("Failed to save workspace statuses"),
   })

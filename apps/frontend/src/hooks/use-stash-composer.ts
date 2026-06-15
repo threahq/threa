@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
-import { toast } from "sonner"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { restoreStashedDraftToComposer, stashLoadedDraft } from "./use-draft-message"
 import { useStashedDrafts, type CachedDraft } from "./use-stashed-drafts"
@@ -9,7 +8,7 @@ import type { DraftComposerState } from "./use-draft-composer"
 export interface UseStashComposerResult {
   /** Stashed drafts for the current scope, newest first. Empty when `scope` is undefined. */
   drafts: CachedDraft[]
-  /** Snapshot the current composer content into the stash, clear the editor, toast. Empty composer → silent no-op. */
+  /** Snapshot the current composer content into the stash, clear the editor. Empty composer → silent no-op. */
   handleStashDraft: () => Promise<void>
   /** Swap: stash current content first (if any), then load the chosen stashed row into the composer. */
   handleRestoreStashed: (id: string) => Promise<void>
@@ -55,7 +54,6 @@ export function useStashComposer(
     if (!stashedId) return
     // Re-init the (now draft-less) composer so the editor blanks out.
     composer.markNeedsRehydrate()
-    toast.success("Saved as draft")
   }, [composer, workspaceId, scope])
 
   const handleRestoreStashed = useCallback(
@@ -77,7 +75,6 @@ export function useStashComposer(
       await restoreStashedDraftToComposer(workspaceId, scope, id)
       // Re-read the newly-pointed draft into the editor (decrypting it for E2E).
       composer.markNeedsRehydrate()
-      toast.success("Draft restored")
     },
     [composer, workspaceId, scope]
   )

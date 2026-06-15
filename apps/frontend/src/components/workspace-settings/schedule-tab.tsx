@@ -38,7 +38,6 @@ export function ScheduleTab({ workspaceId }: ScheduleTabProps) {
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
         old ? { ...old, workspaceSettings: settings } : old
       )
-      toast.success("Workspace schedule saved")
     },
     onError: () => toast.error("Failed to save workspace schedule"),
   })

@@ -184,7 +184,6 @@ function AddLabelDialog({
       },
       {
         onSuccess: () => {
-          toast.success("Label created")
           handleOpenChange(false)
         },
         onError: () => toast.error("Could not create label"),
@@ -195,7 +194,6 @@ function AddLabelDialog({
   const handleJoin = (label: CachedLabel) => {
     joinMutation.mutate(label.id, {
       onSuccess: () => {
-        toast.success(`Joined ${label.name}`)
         handleOpenChange(false)
       },
       onError: () => toast.error("Could not join label"),
@@ -346,7 +344,6 @@ function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: Ca
   const handleDelete = () => {
     deleteMutation.mutate(label.id, {
       onSuccess: () => {
-        toast.success("Label deleted")
         setConfirmKind(null)
       },
       onError: () => toast.error("Could not delete label"),
@@ -356,7 +353,6 @@ function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: Ca
   const handlePromote = () => {
     promoteMutation.mutate(label.id, {
       onSuccess: () => {
-        toast.success("Label is now public")
         setConfirmKind(null)
       },
       onError: () => toast.error("Could not promote label"),
@@ -451,7 +447,6 @@ function JoinedLabelCard({ workspaceId, label, userId }: { workspaceId: string; 
     leaveMutation.mutate(
       { labelId: label.id, userId },
       {
-        onSuccess: () => toast.success(`Left ${label.name}`),
         onError: () => toast.error("Could not leave label"),
       }
     )
