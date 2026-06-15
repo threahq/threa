@@ -511,8 +511,15 @@ export async function executeDraftUpsert(
   const row = await db.drafts.get(draftId)
   if (!row) return // discarded locally after the op was enqueued — nothing to push
 
-  const attachmentIds = row.attachments.length > 0 ? row.attachments.map((a) => a.id) : (row.attachmentIds ?? [])
   const isE2e = row.ciphertext != null
+  // A sealed row never ships attachment linkage: v1 is body-only, and an E2E row
+  // must not push plaintext attachment ids alongside its ciphertext (E2EE-4) — no
+  // matter how the row acquired them (e.g. a pre-seal wire row). Enforced here at
+  // the push boundary, not just on the write paths.
+  let attachmentIds: string[] = []
+  if (!isE2e) {
+    attachmentIds = row.attachments.length > 0 ? row.attachments.map((a) => a.id) : (row.attachmentIds ?? [])
+  }
   const input: UpsertDraftInput = {
     scope: row.scope,
     // The server owns root_stream_id on thread re-pointing (it sets it when a

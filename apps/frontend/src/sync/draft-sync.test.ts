@@ -386,7 +386,7 @@ describe("executeDraftUpsert", () => {
     expect(row?.contentJson).toEqual(makeDoc("typed"))
   })
 
-  it("pushes the ciphertext triple (never plaintext) for an E2E draft", async () => {
+  it("pushes the ciphertext triple (never plaintext or attachment linkage) for an E2E draft", async () => {
     await db.drafts.put(
       localDraft({
         id: "draft_e2e",
@@ -395,6 +395,10 @@ describe("executeDraftUpsert", () => {
         ciphertext: "ct_sealed",
         envelope: { v: 2 },
         e2eVersion: 2,
+        // A stray attachment id (e.g. carried by a pre-seal wire row): it must NOT
+        // ship alongside the ciphertext — v1 is body-only and an E2E row leaks no
+        // plaintext attachment linkage (E2EE-4).
+        attachmentIds: ["a_leak"],
       })
     )
     const calls: UpsertDraftInput[] = []
@@ -408,8 +412,9 @@ describe("executeDraftUpsert", () => {
 
     await executeDraftUpsert(workspaceId, "draft_e2e", "write_a", service(upsert))
 
-    // The sealed body goes on the wire; plaintext does not (the upsert schema rejects both).
-    expect(calls[0]).toMatchObject({ ciphertext: "ct_sealed", e2eVersion: 2, contentJson: null })
+    // The sealed body goes on the wire; plaintext does not (the upsert schema rejects both),
+    // and the sealed push carries no attachment ids.
+    expect(calls[0]).toMatchObject({ ciphertext: "ct_sealed", e2eVersion: 2, contentJson: null, attachmentIds: [] })
     expect((await db.drafts.get("draft_e2e"))?.baseVersion).toBe(2)
   })
 
