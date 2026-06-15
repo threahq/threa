@@ -73,3 +73,25 @@ DM display names are computed per-viewer on the backend at bootstrap and are
 wire). Every surface that re-derived this by hand drifted: the Saved view showed
 "Unknown", scheduled rows skipped peer resolution, etc. Routing through the
 shared resolver is the fix — reach for it instead of writing the lookup again.
+
+## Renaming an E2E (sealed) stream
+
+An E2E stream's name is **sealed-only**: a rename persists only the
+tamper-evident ciphertext on `e2e_streams` and never the plaintext
+`streams.display_name` (the server scrubs it to null when a sealed name is set —
+INV-E1, no plaintext at rest). This matches the enclave auto-title, which has
+always written the sealed columns only.
+
+- **One sealing path.** Both rename surfaces — the open-stream header
+  (`useStreamOrDraft().rename`) and stream settings (`DisplayNameSection`) — go
+  through `sealStreamRename` in `lib/crypto/stream-rename.ts`. Don't re-derive
+  the seal; call it. It throws `StreamNameSealUnavailableError` rather than ever
+  falling back to plaintext.
+- **Renaming requires an unlocked session** (sealing needs the SSK). Gate the
+  rename affordance on `useE2eSession(...).status === "unlocked"`; it's hidden in
+  the header menu and read-only in settings while locked.
+- **Known residuals** (accepted, not bugs): server-side name search
+  (ILIKE/`similarity` on `display_name`) can't see E2E streams — their names are
+  searchable only client-side over the decrypted copy. Streams renamed _before_
+  this shipped still hold plaintext in `display_name`; the server can't re-seal
+  them, so they stay until the owner renames again while unlocked.

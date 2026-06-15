@@ -44,6 +44,8 @@ import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useE2eSession } from "@/stores/e2e-session-store"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
@@ -140,6 +142,11 @@ export function StreamPage() {
   // For an unlocked encrypted stream, the tamper-evident decrypted name; null
   // otherwise (plaintext stream, locked, or not yet decrypted) → plaintext label.
   const decryptedStreamName = useDecryptedStreamName(workspaceId ?? "", stream)
+  // Renaming an E2E stream seals the new name under its key, so it requires an
+  // unlocked session — the affordance is omitted while locked (the stream is in
+  // its locked/unlock state then anyway).
+  const currentUserId = useWorkspaceUserId(workspaceId ?? "")
+  const e2eUnlocked = useE2eSession(workspaceId ?? "", currentUserId ?? "").status === "unlocked"
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -254,13 +261,18 @@ export function StreamPage() {
     onSelect: () => openExplorer({ streamIds: [streamId] }),
   })
   if (isScratchpad) {
-    streamMenuActions.push({
-      id: "rename",
-      label: "Rename",
-      icon: Pencil,
-      onSelect: handleStartRename,
-      separatorBefore: streamMenuActions.length > 0,
-    })
+    // Renaming a sealed scratchpad needs an unlocked session to seal the new
+    // name; hide the affordance while locked rather than let it fall back to
+    // plaintext. Archive/unarchive stay available regardless of lock state.
+    if (!isEncryptedScratchpad || e2eUnlocked) {
+      streamMenuActions.push({
+        id: "rename",
+        label: "Rename",
+        icon: Pencil,
+        onSelect: handleStartRename,
+        separatorBefore: streamMenuActions.length > 0,
+      })
+    }
     streamMenuActions.push(
       isArchived
         ? {

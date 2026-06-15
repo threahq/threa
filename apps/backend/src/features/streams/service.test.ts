@@ -25,6 +25,8 @@ const mockInsertOutbox = spyOn(OutboxRepository, "insert")
 const mockFindMembersByIds = spyOn(UserRepository, "findByIds")
 const mockInsertStream = spyOn(StreamRepository, "insert")
 const mockMarkStreamE2e = spyOn(E2eStreamsRepository, "markStreamE2e")
+const mockUpdate = spyOn(StreamRepository, "update")
+const mockUpdateSealedName = spyOn(E2eStreamsRepository, "updateSealedName")
 
 spyOn(idModule, "eventId").mockReturnValue("evt_1")
 spyOn(idModule, "streamId").mockReturnValue("stream_new")
@@ -1279,5 +1281,56 @@ describe("StreamService.markAllAsRead", () => {
         { streamId: "stream_2", lastReadOrdinal: 3 },
       ],
     })
+  })
+})
+
+describe("StreamService.updateStream sealed-name handling", () => {
+  let service: StreamService
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockFindById.mockReset()
+    mockUpdate.mockReset()
+    mockUpdateSealedName.mockReset()
+    mockInsertOutbox.mockReset()
+  })
+
+  test("setting a sealed name scrubs the plaintext display_name to null (INV-E1)", async () => {
+    const stream = { id: "stream_1", workspaceId: "ws_1", displayName: null } as never
+    mockUpdate.mockResolvedValue(stream)
+    mockUpdateSealedName.mockResolvedValue(true)
+    mockFindById.mockResolvedValue(stream)
+
+    // Even if a client sends a plaintext displayName alongside the seal, the
+    // server must not persist it — the sealed ciphertext is the only name.
+    await service.updateStream("stream_1", {
+      displayName: "leak",
+      sealedName: { ciphertext: "Y3Q=", envelope: { v: 1 } },
+    })
+
+    expect(mockUpdate).toHaveBeenCalledWith({}, "stream_1", expect.objectContaining({ displayName: null }))
+    expect(mockUpdateSealedName).toHaveBeenCalledWith({}, "ws_1", "stream_1", {
+      ciphertext: "Y3Q=",
+      envelope: { v: 1 },
+    })
+  })
+
+  test("clearing a sealed name without a displayName is rejected", async () => {
+    await expect(service.updateStream("stream_1", { sealedName: null })).rejects.toMatchObject({
+      status: 400,
+      code: "SEALED_NAME_REQUIRES_DISPLAY_NAME",
+    })
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  test("a plain (non-sealed) rename writes the plaintext displayName unchanged", async () => {
+    const stream = { id: "stream_1", workspaceId: "ws_1", displayName: "New name" } as never
+    mockUpdate.mockResolvedValue(stream)
+    mockFindById.mockResolvedValue(stream)
+
+    await service.updateStream("stream_1", { displayName: "New name" })
+
+    expect(mockUpdate).toHaveBeenCalledWith({}, "stream_1", expect.objectContaining({ displayName: "New name" }))
+    expect(mockUpdateSealedName).not.toHaveBeenCalled()
   })
 })

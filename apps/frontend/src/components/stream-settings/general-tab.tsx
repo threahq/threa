@@ -19,6 +19,9 @@ import {
 import { ChannelSlugInput } from "./channel-slug-input"
 import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useE2eSession } from "@/stores/e2e-session-store"
+import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import {
   StreamTypes,
   Visibilities,
@@ -341,22 +344,42 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
   const updateMutation = useUpdateStream(workspaceId, stream.id)
   const hasChanged = name !== (stream.displayName ?? "")
 
-  const handleSave = () => {
-    if (!name.trim() || !hasChanged) return
-    updateMutation.mutate(
-      { displayName: name.trim() },
-      {
+  // An E2E scratchpad's name is sealed-only — renaming seals the new name under
+  // the stream key and never writes plaintext (INV-E1), so it needs an unlocked
+  // session. While locked the field is read-only and points the user at unlock.
+  const isEncrypted = !!stream.e2eEnabled
+  const currentUserId = useWorkspaceUserId(workspaceId)
+  const e2eUnlocked = useE2eSession(workspaceId, currentUserId ?? "").status === "unlocked"
+  const locked = isEncrypted && !e2eUnlocked
+
+  const handleSave = async () => {
+    const trimmed = name.trim()
+    if (!trimmed || !hasChanged || locked) return
+    try {
+      const data = isEncrypted
+        ? await sealStreamRename({ workspaceId, streamId: stream.id, userId: currentUserId ?? "", name: trimmed })
+        : { displayName: trimmed }
+      updateMutation.mutate(data, {
         onSuccess: () => toast.success("Name updated"),
         onError: () => toast.error("Failed to update name"),
-      }
-    )
+      })
+    } catch {
+      toast.error("Unlock this scratchpad to rename it")
+    }
   }
 
   return (
     <div className="space-y-3">
       <Label className="text-sm font-medium">Display name</Label>
-      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Scratchpad name" maxLength={100} />
-      {hasChanged && (
+      <Input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Scratchpad name"
+        maxLength={100}
+        disabled={locked}
+      />
+      {locked && <p className="text-xs text-muted-foreground">Unlock this scratchpad to rename it.</p>}
+      {hasChanged && !locked && (
         <Button size="sm" onClick={handleSave} disabled={!name.trim() || updateMutation.isPending}>
           {updateMutation.isPending ? "Saving..." : "Save"}
         </Button>
