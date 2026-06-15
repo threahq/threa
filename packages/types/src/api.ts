@@ -593,9 +593,11 @@ export interface EnclaveSealedName {
  * content, so it can't summarize an encrypted scratchpad — the enclave (which
  * sees plaintext) folds the messages that overflowed the verbatim window into the
  * prior summary, seals the result under the stream SSK bound by AAD to
- * `streamId|messageId|senderId` (the sealed-payload message AAD, with a fixed
- * per-stream `summaryMessageId` slot), and the backend stores the ciphertext on
- * `agent_conversation_summaries`. No real `messageId`: a summary is a single
+ * `streamId|summary|generation` (`buildSummaryAad` — a slot disjoint from the
+ * sealed name `…|name|…` and the message body `streamId|messageId|senderId`, so a
+ * malicious server can't relocate a summary onto another stream or swap it for a
+ * name/message), and the backend stores the ciphertext on
+ * `agent_conversation_summaries`. No `messageId`: a summary is a single
  * per-(stream, persona) slot, not a message. `lastSummarizedSequence` is the
  * advanced cursor as a base-10 string — non-secret metadata (a message sequence)
  * that gates the row's monotonic update so concurrent/redelivered folds can't

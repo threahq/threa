@@ -3,6 +3,7 @@ import {
   ATTACHMENT_AAD,
   ATTACHMENT_KEY_GENERATION,
   buildMessageAad,
+  buildSummaryAad,
   buildWrapAad,
   bytesToBase64,
   generateStreamKey,
@@ -71,6 +72,17 @@ async function sealUnder(ssk: Uint8Array, text: string, messageId: string, sende
     keyGeneration,
     payload: text,
     aad: buildMessageAad({ streamId: STREAM_ID, messageId, senderId }),
+  })
+  return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
+}
+
+/** Seal a prior rolling summary under the real summary slot (`buildSummaryAad`), as the enclave does. */
+async function sealSummaryUnder(ssk: Uint8Array, text: string, keyGeneration = GEN) {
+  const sealed = await sealMessage({
+    key: ssk,
+    keyGeneration,
+    payload: text,
+    aad: buildSummaryAad({ streamId: STREAM_ID, keyGeneration }),
   })
   return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
 }
@@ -335,9 +347,8 @@ describe("runEnclaveTurn", () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()
     const wrap = await wrapSskToEnclave(keyPair, ssk)
-    // The seal AAD rides the envelope, so a prior summary opens regardless of which
-    // slot sealed it — reuse the message sealer to mint the ciphertext.
-    const priorSummary = await sealUnder(ssk, "We decided to ship on Friday.", "msg_summary", "persona_ariadne")
+    // Sealed under the real summary slot (`buildSummaryAad`), exactly as the enclave seals it.
+    const priorSummary = await sealSummaryUnder(ssk, "We decided to ship on Friday.")
     const prompt = await sealUnder(ssk, "What did we decide?", "msg_user", "usr_owner")
     const chat = stubChat(textReply("Friday."))
     const { onMessage, onStepStarted, onStep, onSubstep } = collector()
@@ -429,6 +440,49 @@ describe("runEnclaveTurn", () => {
       baseRequest({ wraps: [wrap], prompt, history: [{ ...h1, role: "user", sequence: "1" }] })
     )
 
+    expect(summarized).toBe(false)
+  })
+
+  it("skips the fold when a prior summary was shipped but its generation can't be opened (no data loss on key roll)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    // A prior summary sealed under a generation this enclave holds NO wrap for
+    // (the key rolled and the wrap hasn't been revived yet): it ships, but the
+    // enclave can't open it. Folding a replacement would advance the cursor past
+    // the already-summarized messages 1..K and erase them, so the fold must skip.
+    const priorSummary = await sealSummaryUnder(generateStreamKey(), "Earlier memory the enclave can't open.", 99)
+    const h1 = await sealUnder(ssk, "Old one, plenty of content.", "msg_1", "usr_owner")
+    const h2 = await sealUnder(ssk, "Old two, also content.", "msg_2", "usr_owner")
+    const prompt = await sealUnder(ssk, "Continue.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Okay."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    let summarized = false
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        onSealedSummary: async () => void (summarized = true),
+      },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        priorSummary,
+        summaryCursor: "1",
+        maxChars: 1, // forces overflow that would otherwise fold
+        history: [
+          { ...h1, role: "user", sequence: "2" },
+          { ...h2, role: "user", sequence: "3" },
+        ],
+      })
+    )
+
+    // The unreadable prior summary is preserved by NOT writing a replacement.
     expect(summarized).toBe(false)
   })
 

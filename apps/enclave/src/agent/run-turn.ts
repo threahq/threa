@@ -253,9 +253,16 @@ export async function runEnclaveTurn(
   // Memory` block — the SAME formatter the in-process companion uses, so the two
   // surfaces read identical memory. An unopenable (no wrap for its generation) or
   // malformed prior summary degrades to no block, never fatal — parity with
-  // history/digests; the fold below then starts fresh from the cursor.
+  // history/digests. But unlike an append-only digest, the summary is a single
+  // overwritten row gated by a monotonic cursor: if we can't open the prior text
+  // we MUST NOT fold a replacement (the fold below is skipped), because the cursor
+  // already covers messages 1..K that are no longer in the shipped window —
+  // re-sealing from empty would advance the cursor past them and erase that memory
+  // for good. Skipping leaves the row intact for a later turn whose wraps can open
+  // it (the revive path re-wraps the generation, E2EE-7 / §2.8 Q6).
   const summaryCursor = request.summaryCursor ? BigInt(request.summaryCursor) : null
   let priorSummaryText: string | null = null
+  let priorSummaryUnreadable = false
   if (request.priorSummary) {
     const summarySsk = sskByGeneration.get(request.priorSummary.envelope.keyGeneration)
     if (summarySsk) {
@@ -267,7 +274,12 @@ export async function runEnclaveTurn(
         })
       } catch {
         priorSummaryText = null
+        priorSummaryUnreadable = true
       }
+    } else {
+      // A prior summary was shipped but this enclave holds no wrap for its
+      // generation — can't extend it without losing the pre-cursor memory.
+      priorSummaryUnreadable = true
     }
   }
   const memoryBlock = formatConversationMemoryForPrompt(priorSummaryText)
@@ -464,7 +476,7 @@ export async function runEnclaveTurn(
   // Best-effort and last: the replies are already delivered, so a summary
   // failure must never affect the turn. Usage accumulates into the same total.
   const toFold = summaryCursor === null ? overflow : overflow.filter((item) => item.sequence > summaryCursor)
-  if (toFold.length > 0 && onSealedSummary) {
+  if (toFold.length > 0 && onSealedSummary && !priorSummaryUnreadable) {
     try {
       let summary = priorSummaryText ?? ""
       let foldedThrough = summaryCursor ?? 0n
