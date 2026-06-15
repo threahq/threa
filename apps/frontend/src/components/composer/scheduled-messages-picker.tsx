@@ -3,7 +3,7 @@ import { Link } from "react-router-dom"
 import { ArrowLeft, CalendarClock, ChevronDown, ChevronRight } from "lucide-react"
 import type { ScheduledMessageView } from "@threa/types"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
@@ -22,6 +22,7 @@ import { ScheduledEditDialog } from "@/components/scheduled/scheduled-edit-dialo
 import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-drawer"
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
+import { useComposerAnchor } from "./use-composer-anchor"
 
 interface ScheduledMessagesPickerProps {
   workspaceId: string
@@ -80,6 +81,7 @@ export function ScheduledMessagesPicker({
   // bottom sheet). We instead close the popover when long-press fires and
   // render the drawer at the picker's top level, outside the popover tree.
   const [actionTarget, setActionTarget] = useState<ScheduledMessageView | null>(null)
+  const { setTriggerRef, anchor } = useComposerAnchor()
 
   const { items } = useScheduledList(workspaceId, "pending", streamId)
   const cancelMutation = useCancelScheduled(workspaceId)
@@ -177,10 +179,15 @@ export function ScheduledMessagesPicker({
   return (
     <>
       <Popover open={open} onOpenChange={handleOpenChange}>
+        {/* Anchor above the whole composer (not the trigger) so the popover
+            doesn't paint over the editor — null in the expanded FAB layout,
+            where the trigger anchors normally. */}
+        {anchor && <PopoverAnchor virtualRef={{ current: anchor }} />}
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
               <Button
+                ref={setTriggerRef}
                 type="button"
                 variant={size === "fab" ? "outline" : "ghost"}
                 size="icon"

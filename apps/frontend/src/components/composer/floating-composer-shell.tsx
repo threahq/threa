@@ -29,7 +29,14 @@ export function FloatingComposerShell({ hidden = false, children, ref, ...rest }
       {...rest}
       className={hidden ? "hidden" : "pointer-events-none absolute inset-x-0 bottom-0 z-20 will-change-transform"}
     >
-      <div className="pointer-events-auto pt-3 px-3 pb-3 sm:pt-6 sm:px-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0">
+      {/* `data-composer-pill` marks the composer's visual bounding box so the
+          toolbar pickers (drafts, scheduled) can anchor their popovers ABOVE
+          the whole composer instead of painting over the editor — see
+          `useComposerAnchor`. */}
+      <div
+        data-composer-pill
+        className="pointer-events-auto pt-3 px-3 pb-3 sm:pt-6 sm:px-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0"
+      >
         {children}
       </div>
     </div>
