@@ -3,7 +3,7 @@ import type { Job, JobHandler } from "../../lib/queue"
 import type { LinkPreviewExtractJobData } from "../../lib/queue/job-queue"
 import type { LinkPreviewService } from "./service"
 import type { LinkPreview, UpdateLinkPreviewParams } from "./repository"
-import { detectContentType, isBlockedUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
+import { detectContentType, isBlockedUrl, isRedditUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
 import { fetchGitHubPreview } from "./github-preview"
 import { fetchLinearPreview } from "./linear-preview"
 import {
@@ -13,6 +13,7 @@ import {
   MAX_HTML_BYTES,
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
+  REDDIT_FETCH_USER_AGENT,
 } from "./config"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
@@ -208,7 +209,7 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     const response = await fetch(url, {
       method: "GET",
       headers: {
-        "User-Agent": FETCH_USER_AGENT,
+        "User-Agent": isRedditUrl(url) ? REDDIT_FETCH_USER_AGENT : FETCH_USER_AGENT,
         Accept: "text/html, application/xhtml+xml, */*",
       },
       signal: controller.signal,
@@ -312,7 +313,18 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
 
     const bytes = concatChunks(chunks, totalBytes)
     const html = decodeHtmlBytes(bytes, contentTypeHeader)
-    return await parseHtmlMeta(html, url)
+    const metadata = await parseHtmlMeta(html, url)
+
+    // Reddit's anti-bot interstitial returns HTTP 200 with only a "Please wait for verification"
+    // <title> and no OpenGraph tags, whereas every real Reddit post/comment page carries og:image.
+    // Treating a missing image as the wall (rather than matching the English title literally) keeps
+    // this language-independent and stops the challenge page from being cached as a completed preview.
+    if (isRedditUrl(url) && !metadata.imageUrl) {
+      log.warn({ url }, "Reddit served anti-bot interstitial; marking preview failed for retry")
+      return { status: "failed", expiresAt: minutesFromNow(30) }
+    }
+
+    return metadata
   } catch (err) {
     log.warn({ err, url }, "Failed to fetch link preview metadata")
     return { status: "failed", expiresAt: minutesFromNow(1) }

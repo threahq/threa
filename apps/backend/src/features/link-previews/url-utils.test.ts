@@ -4,10 +4,27 @@ import {
   extractUrls,
   detectContentType,
   isBlockedUrl,
+  isRedditUrl,
   parseMessagePermalink,
   parseGitHubUrl,
   parseLinearUrl,
 } from "./url-utils"
+
+describe("isRedditUrl", () => {
+  test("matches reddit.com, its subdomains, and the redd.it shortener", () => {
+    expect(isRedditUrl("https://www.reddit.com/r/ClaudeAI/comments/abc/title/")).toBe(true)
+    expect(isRedditUrl("https://reddit.com/r/ClaudeAI")).toBe(true)
+    expect(isRedditUrl("https://old.reddit.com/r/ClaudeAI")).toBe(true)
+    expect(isRedditUrl("https://redd.it/abc123")).toBe(true)
+  })
+
+  test("does not match lookalike or unrelated hosts", () => {
+    expect(isRedditUrl("https://notreddit.com/r/ClaudeAI")).toBe(false)
+    expect(isRedditUrl("https://reddit.com.evil.example/r/x")).toBe(false)
+    expect(isRedditUrl("https://example.com")).toBe(false)
+    expect(isRedditUrl("not a url")).toBe(false)
+  })
+})
 
 describe("normalizeUrl", () => {
   test("lowercases hostname", () => {

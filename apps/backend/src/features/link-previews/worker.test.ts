@@ -978,4 +978,118 @@ describe("createLinkPreviewWorker", () => {
       { forcePublish: undefined }
     )
   })
+
+  /** Build the link-preview service mock for a single pending preview of `url`. */
+  function redditServiceMock(url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
+    return {
+      extractAndCreatePending: mock(async () => [{ id: "lp_reddit", url }]),
+      getPreviewById: mock(async () => ({
+        id: "lp_reddit",
+        workspaceId: "ws_123",
+        url,
+        normalizedUrl: url,
+        title: null,
+        description: null,
+        imageUrl: null,
+        faviconUrl: null,
+        siteName: null,
+        contentType: "website",
+        status: "pending",
+        previewType: null,
+        previewData: null,
+        targetWorkspaceId: null,
+        targetStreamId: null,
+        targetMessageId: null,
+        fetchedAt: null,
+        expiresAt: null,
+        createdAt: new Date("2026-06-15T10:00:00.000Z"),
+      })),
+      completePreviewsAndPublish,
+      replacePreviewsForMessage: mock(async () => []),
+      publishEmptyPreviews: mock(async () => {}),
+    } as any
+  }
+
+  test("fetches Reddit with a recognized crawler UA and completes when real OG tags are served", async () => {
+    const url = "https://www.reddit.com/r/ClaudeAI/comments/1u6tbhl/the_agent_sdk_credit/"
+    let capturedUserAgent: string | null = null
+    const fetchMock = mock(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUserAgent = new Headers(init?.headers).get("User-Agent")
+      return new Response(
+        `<html><head>` +
+          `<meta property="og:title" content="r/ClaudeAI on Reddit: The Agent SDK credit">` +
+          `<meta property="og:description" content="Posted in r/ClaudeAI">` +
+          `<meta property="og:image" content="https://b.thumbs.redditmedia.com/preview.jpg">` +
+          `</head></html>`,
+        { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: redditServiceMock(url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_reddit_ok",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_reddit", contentMarkdown: url },
+    })
+
+    expect(capturedUserAgent).toMatch(/^facebookexternalhit\/1\.1$/)
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_reddit",
+      [
+        expect.objectContaining({
+          id: "lp_reddit",
+          skipped: false,
+          metadata: expect.objectContaining({
+            title: "r/ClaudeAI on Reddit: The Agent SDK credit",
+            imageUrl: "https://b.thumbs.redditmedia.com/preview.jpg",
+            status: "completed",
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test("marks Reddit failed instead of caching the 'Please wait for verification' interstitial", async () => {
+    // The anti-bot wall returns HTTP 200 with only a <title> and no OpenGraph tags. Without this
+    // guard, the URL-derived/<title> fallback gets cached as a completed 24h preview showing
+    // "Reddit - Please wait for verification" — exactly the stuck-preview bug we're fixing.
+    const url = "https://www.reddit.com/r/ClaudeAI/comments/1u6tbhl/the_agent_sdk_credit/"
+    const fetchMock = mock(
+      async () =>
+        new Response("<html><head><title>Reddit - Please wait for verification</title></head></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        })
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: redditServiceMock(url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_reddit_wall",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_reddit", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_reddit",
+      [expect.objectContaining({ id: "lp_reddit", metadata: expect.objectContaining({ status: "failed" }) })],
+      { forcePublish: undefined }
+    )
+  })
 })
