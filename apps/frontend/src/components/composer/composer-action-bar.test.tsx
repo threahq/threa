@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { planActionOverflow } from "./composer-action-bar"
+import { planActionOverflow, planTriggerVisibility } from "./composer-action-bar"
 
 // Mirrors the real bar's secondary actions: array order is the left-to-right
 // display order; `collapsePriority` (lower folds first) is independent of it.
@@ -62,5 +62,42 @@ describe("planActionOverflow", () => {
     const withPickers = planActionOverflow(ACTIONS, 320, 5)
     const withoutPickers = planActionOverflow(ACTIONS, 320, 2)
     expect(withoutPickers.overflow.length).toBeLessThan(withPickers.overflow.length)
+  })
+})
+
+describe("planTriggerVisibility", () => {
+  it("keeps every trigger before the first measurement (width 0)", () => {
+    expect(planTriggerVisibility(0, 3)).toBe(3)
+  })
+
+  it("keeps every trigger at roomy and floored widths", () => {
+    expect(planTriggerVisibility(800, 3)).toBe(3)
+    // ~210px: "+" Aa Send (3 slots) + 3 triggers = 6 slots = 204px → all fit.
+    expect(planTriggerVisibility(210, 3)).toBe(3)
+  })
+
+  it("drops triggers from the tail only when squeezed past the all-folded minimum", () => {
+    // ~170px → 5 slots: 3 reserved (+ Aa Send) leaves room for 2 triggers.
+    expect(planTriggerVisibility(170, 3)).toBe(2)
+    // ~140px → 4 slots: room for 1 trigger.
+    expect(planTriggerVisibility(140, 3)).toBe(1)
+    // ~100px → 2 slots: nothing left for triggers, but never negative.
+    expect(planTriggerVisibility(100, 3)).toBe(0)
+    expect(planTriggerVisibility(40, 3)).toBe(0)
+  })
+
+  it("never reports more visible than exist", () => {
+    expect(planTriggerVisibility(800, 1)).toBe(1)
+    expect(planTriggerVisibility(800, 0)).toBe(0)
+  })
+
+  it("the all-folded bar plus visible triggers fits the width (no spill)", () => {
+    const CONTROL_PX = 34
+    for (const width of [120, 150, 180, 210, 240, 300]) {
+      const visible = planTriggerVisibility(width, 3)
+      // Worst case: every action folded, so inline = "+" + Aa + Send + visible triggers.
+      const inlineControls = 3 + visible
+      expect(inlineControls * CONTROL_PX).toBeLessThanOrEqual(width)
+    }
   })
 })

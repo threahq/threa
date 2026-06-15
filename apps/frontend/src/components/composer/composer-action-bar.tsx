@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from "react"
+import { Fragment, useMemo, useRef, type ReactNode } from "react"
 import { AtSign, Maximize2, Paperclip, Plus, Slash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -63,6 +63,23 @@ export function planActionOverflow<T extends { key: string; collapsePriority: nu
   }
 }
 
+/**
+ * How many of the un-foldable trigger buttons (dictation, stash, schedule) can
+ * stay inline at a given width. Unlike the insert actions, these can't fold
+ * into the "+" menu — their live overlays / popovers need a visible anchor — so
+ * once the bar is too narrow even for the all-folded minimum (`+`, Aa, Send,
+ * plus each trigger), the lowest-priority triggers are dropped. This is the
+ * last-resort guard that keeps the row from spilling its pill at any width; it
+ * only bites well below the panel and main-column floors, so in normal use
+ * every trigger stays inline.
+ */
+export function planTriggerVisibility(width: number, triggerCount: number): number {
+  if (width === 0) return triggerCount // unmeasured → assume roomy
+  // Irreducible inline minimum with every action folded: "+", Aa, Send = 3 slots.
+  const slots = Math.floor(width / CONTROL_PX)
+  return Math.max(0, Math.min(triggerCount, slots - 3))
+}
+
 export interface ComposerActionBarProps {
   disabled?: boolean
   formatOpen: boolean
@@ -74,14 +91,15 @@ export interface ComposerActionBarProps {
   /** Desktop fullscreen-expand entry point; omitted by hosts without one. */
   onExpandClick?: () => void
   /**
-   * Dictation button. Kept inline at every width — its live recording overlays
-   * (clock, polish toggle, error toast) anchor to the button, so it can't fold
-   * into the menu.
+   * Dictation button. Can't fold into the "+" menu (its live recording overlays
+   * — clock, polish toggle, error toast — anchor to the button), so it stays
+   * inline and is the last trigger dropped if the bar is squeezed past the
+   * all-folded minimum.
    */
   micButton?: ReactNode
-  /** Stashed-drafts picker trigger; kept inline (its popover needs an anchor). */
+  /** Stashed-drafts picker trigger; inline (its popover needs an anchor), dropped second under extreme squeeze. */
   stashedDraftsTrigger?: ReactNode
-  /** Scheduled-messages picker trigger; kept inline (its popover needs an anchor). */
+  /** Scheduled-messages picker trigger; inline (its popover needs an anchor), dropped first under extreme squeeze. */
   scheduledMessagesTrigger?: ReactNode
   sendButton: ReactNode
 }
@@ -90,8 +108,10 @@ export interface ComposerActionBarProps {
  * The desktop composer's bottom action row. Folds its secondary insert actions
  * (emoji, mention, command, attach, expand) into a left-anchored "+" menu as
  * the composer narrows — so the bar stays on one clean line in a side panel or
- * small window instead of overflowing. Formatting, dictation, stash, schedule
- * and Send are always reachable.
+ * small window instead of overflowing. Formatting and Send are always inline;
+ * the un-foldable triggers (dictation, stash, schedule) drop from the tail only
+ * if the bar is squeezed past the all-folded minimum (`+` Aa Send), so the row
+ * can never spill its pill at any width.
  *
  * Container-width driven (not viewport): a narrow composer collapses even on a
  * large screen, which viewport breakpoints can't express.
@@ -157,8 +177,23 @@ export function ComposerActionBar({
     return list
   }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick])
 
-  // Formatting (Aa) + Send are always present; the picker slots only when host-provided.
-  const pinnedCount = 2 + (micButton ? 1 : 0) + (stashedDraftsTrigger ? 1 : 0) + (scheduledMessagesTrigger ? 1 : 0)
+  // Un-foldable triggers in keep-priority order (dictation kept longest, schedule
+  // dropped first). Each present one stays inline until the bar is squeezed past
+  // the all-folded minimum, then drops from the tail.
+  const triggers = useMemo(
+    () =>
+      [
+        { key: "mic", node: micButton },
+        { key: "stash", node: stashedDraftsTrigger },
+        { key: "schedule", node: scheduledMessagesTrigger },
+      ].filter((t) => t.node != null),
+    [micButton, stashedDraftsTrigger, scheduledMessagesTrigger]
+  )
+  const visibleTriggerCount = planTriggerVisibility(width, triggers.length)
+  const visibleTriggers = triggers.slice(0, visibleTriggerCount)
+
+  // Formatting (Aa) + Send are always inline; folded actions reserve the "+" slot.
+  const pinnedCount = 2 + visibleTriggerCount
 
   const { inline: inlineActions, overflow: overflowActions } = useMemo(
     () => planActionOverflow(actions, width, pinnedCount),
@@ -252,9 +287,9 @@ export function ComposerActionBar({
         </Tooltip>
       ))}
 
-      {micButton}
-      {stashedDraftsTrigger}
-      {scheduledMessagesTrigger}
+      {visibleTriggers.map((t) => (
+        <Fragment key={t.key}>{t.node}</Fragment>
+      ))}
       {sendButton}
     </div>
   )
