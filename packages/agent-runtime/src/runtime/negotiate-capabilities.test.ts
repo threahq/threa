@@ -31,7 +31,7 @@ describe("negotiateCapabilities", () => {
   const searchMessages = makeTool("search_messages", ["workspace"])
   const githubGetIssue = makeTool("github_get_issue", ["github", "web"])
   const reply = makeTool("send_message", ["messaging"])
-  const conversationLocal = makeTool("load_attachment", [])
+  const conversationLocal = makeTool("read_attachment", [])
 
   test("no policy means no restriction", () => {
     const tools = [webSearch, searchMessages, githubGetIssue]

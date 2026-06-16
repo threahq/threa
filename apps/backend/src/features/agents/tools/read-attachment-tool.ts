@@ -231,15 +231,13 @@ async function readRows(
 }
 
 /**
- * The single attachment-reading tool. Replaces the former load_attachment
- * (image vision), get_attachment (extracted text/data), and the per-format
- * section loaders — one verb the model can't pick wrong, dispatched by intent
- * (whole vs. section) and file type.
+ * The one attachment-reading tool: a single verb the model can't pick wrong,
+ * dispatched by intent (whole file vs. a section) and file type — image vision,
+ * document text/data, or paged text/PDF/spreadsheet.
  *
- * Access is enforced once through `attachmentService.getAccessible` for every
- * path, including section reads — this honours `attachment_references` resends
- * and the sharing-safety status, which the old per-format section tools skipped
- * (they gated on raw stream membership only).
+ * Access is enforced once through `attachmentService.getAccessible` on every
+ * path, section reads included, so `attachment_references` resends and the
+ * sharing-safety status gate paged reads too, not just raw stream membership.
  */
 export function createReadAttachmentTool(deps: WorkspaceToolDeps, options: { supportsVision: boolean }) {
   const { db, workspaceId, accessibleStreamIds, attachmentService, storage } = deps
