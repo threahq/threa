@@ -167,7 +167,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
         onClick={handleCopy}
         className={cn(
           // Always visible (not hover-gated): touch devices have no hover, so a
-          // group-hover-only button would be unreachable there.
+          // hover-only button would be unreachable there.
           "flex h-5 w-5 items-center justify-center rounded transition-all duration-150 shrink-0",
           copied
             ? "bg-green-500/15 text-green-600 dark:text-green-400"
@@ -188,7 +188,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
 
   return (
     <div
-      className="group my-2 rounded-md overflow-hidden border border-border bg-muted/50 select-text [-webkit-touch-callout:default]"
+      className="my-2 rounded-md overflow-hidden border border-border bg-muted/50 select-text [-webkit-touch-callout:default]"
       data-native-context="true"
     >
       {header}
