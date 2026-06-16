@@ -198,6 +198,42 @@ describe("BotInvocationRepository.claimOne", () => {
     expect(captured.text).toContain("attempts = attempts + 1")
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
   })
+
+  it("gates sealed streams on the claiming instance's BIK covering both generations (§2.6)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeInvocationRow()])
+
+    await BotInvocationRepository.claimOne(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      runtimeKind: "pi-local",
+      claimToken: "tok_1",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+    })
+
+    // Plaintext streams (no e2e_streams row for the root) stay claimable as
+    // before; the BIK requirement is only the OR's second arm.
+    expect(captured.text).toContain("NOT EXISTS")
+    expect(captured.text).toContain("FROM e2e_streams e")
+    // Bot wraps, keyed to the claiming instance's registered BIK — not a passed
+    // key id (a keyless instance never matches, so it can't claim a sealed turn).
+    expect(captured.text).toContain("w.recipient_kind = 'bot'")
+    expect(captured.text).toContain("w.recipient_key_id = ri.public_key_id")
+    // Both generations must be covered: the reply's (current) and the prompt's
+    // (the trigger envelope's), mirroring the enclave's claimNext two-EXISTS.
+    expect(captured.text).toContain("w.key_generation = e.current_key_generation")
+    expect(captured.text).toContain("w.key_generation = (m.envelope ->> 'keyGeneration')::int")
+    // The trigger ciphertext is keyed off the invocation's own source message
+    // (messages has no workspace_id column — it is scoped by stream_id).
+    expect(captured.text).toContain("JOIN messages m ON m.id = i.source_message_id")
+    // Race-safe claim target: lock only the bot_invocations candidate row (INV-20).
+    expect(captured.text).toContain("FOR UPDATE OF i SKIP LOCKED")
+    // The claiming instance is bound twice (one per generation EXISTS).
+    expect(captured.values).toContain("inst_42")
+  })
 })
 
 describe("BotInvocationRepository.parkExhausted", () => {
@@ -249,10 +285,16 @@ describe("BotInvocationRepository.findBootstrapInvocations", () => {
 
     const availableQuery = texts.find((t) => t.includes("attempts < "))
     expect(availableQuery).toBeDefined()
+    // The available list mirrors claimOne's sealed-stream gate, so a row
+    // advertised here is one a follow-up claim can actually win (no keyless
+    // runtime is told sealed work is available it can't open).
+    expect(availableQuery).toContain("w.recipient_key_id = ri.public_key_id")
     // The owned-claims query must NOT be attempt-bounded: a runtime keeps its
-    // own in-flight claim regardless of how many times it's been re-dispatched.
+    // own in-flight claim regardless of how many times it's been re-dispatched,
+    // and it is never re-gated on wrap coverage (the claim already succeeded).
     const ownedClaimsQuery = texts.find((t) => t.includes("claimed_by_instance_id ="))
     expect(ownedClaimsQuery).toBeDefined()
     expect(ownedClaimsQuery).not.toContain("attempts < ")
+    expect(ownedClaimsQuery).not.toContain("w.recipient_key_id = ri.public_key_id")
   })
 })
