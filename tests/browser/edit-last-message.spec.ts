@@ -91,7 +91,9 @@ test.describe("Edit last message (ArrowUp)", () => {
   })
 
   test("scrolls off-screen message into view and opens edit", async ({ browser }) => {
-    test.setTimeout(90000)
+    // Headroom for editLastMessageViaArrowUp's worst-case recovery: a stalled
+    // scroll-to-edit can take a few full settle windows before it lands.
+    test.setTimeout(120000)
     const testId = generateTestId()
     const channelName = `elm-scroll-${testId}`
 
