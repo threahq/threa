@@ -317,6 +317,52 @@ const externalContextHandleSchema = z.object({
   messages: z.array(externalHistoryMessageSchema),
 })
 
+// Wire shape of `SealedTurnContext` (@threa/types): the sealed assignment handed
+// to an owner-granted external runner when the delivery verdict is `sealed`. The
+// backend never decrypts — it ships the SSK wraps addressed to the claiming bot's
+// BIK plus the sealed history/prompt ciphertext, and the bot opens them with its
+// identity private key. Mutually exclusive with `context` (a stream resolves to
+// one verdict). Present only on sealed claims; the whole path is dark until the
+// `externalSealedDelivery` policy switch flips.
+const sealedEnvelopeSchema = z.object({
+  v: z.number(),
+  keyGeneration: z.number().int().min(0),
+  iv: z.string(),
+  aad: z.string(),
+})
+
+const sealedMessageSchema = z.object({
+  ciphertext: z.string(),
+  envelope: sealedEnvelopeSchema,
+})
+
+const sealedTurnContextSchema = z.object({
+  callbackToken: z.string(),
+  wraps: z.array(
+    z.object({
+      keyGeneration: z.number().int().min(0),
+      wrapEnc: z.string(),
+      wrapCt: z.string(),
+    })
+  ),
+  history: z.array(
+    sealedMessageSchema.extend({
+      role: z.enum(["user", "assistant"]),
+      sequence: z.string(),
+    })
+  ),
+  prompt: sealedMessageSchema,
+  reply: z.object({ keyGeneration: z.number().int().min(0), senderId: z.string() }),
+  trigger: z
+    .object({
+      messageId: z.string(),
+      authorName: z.string(),
+      authorType: z.enum(AUTHOR_TYPES),
+      createdAt: z.string().datetime(),
+    })
+    .optional(),
+})
+
 const claimedInvocationSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -337,6 +383,9 @@ const claimedInvocationSchema = z.object({
   // Omitted when context is withheld (E2E or unresolvable stream); an empty
   // conversation is an explicit `{ kind: "inline", messages: [] }` instead.
   context: externalContextHandleSchema.optional(),
+  // Present instead of `context` on a sealed claim (the two are mutually
+  // exclusive — a stream resolves to one delivery verdict).
+  sealedContext: sealedTurnContextSchema.optional(),
 })
 
 const runtimeSessionLinkSchema = z.object({

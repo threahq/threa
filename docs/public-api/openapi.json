@@ -1411,6 +1411,98 @@
                               },
                               "required": ["kind", "messages"],
                               "additionalProperties": false
+                            },
+                            "sealedContext": {
+                              "type": "object",
+                              "properties": {
+                                "callbackToken": { "type": "string" },
+                                "wraps": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "wrapEnc": { "type": "string" },
+                                      "wrapCt": { "type": "string" }
+                                    },
+                                    "required": ["keyGeneration", "wrapEnc", "wrapCt"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "history": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "ciphertext": { "type": "string" },
+                                      "envelope": {
+                                        "type": "object",
+                                        "properties": {
+                                          "v": { "type": "number" },
+                                          "keyGeneration": {
+                                            "type": "integer",
+                                            "minimum": 0,
+                                            "maximum": 9007199254740991
+                                          },
+                                          "iv": { "type": "string" },
+                                          "aad": { "type": "string" }
+                                        },
+                                        "required": ["v", "keyGeneration", "iv", "aad"],
+                                        "additionalProperties": false
+                                      },
+                                      "role": { "type": "string", "enum": ["user", "assistant"] },
+                                      "sequence": { "type": "string" }
+                                    },
+                                    "required": ["ciphertext", "envelope", "role", "sequence"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "prompt": {
+                                  "type": "object",
+                                  "properties": {
+                                    "ciphertext": { "type": "string" },
+                                    "envelope": {
+                                      "type": "object",
+                                      "properties": {
+                                        "v": { "type": "number" },
+                                        "keyGeneration": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "iv": { "type": "string" },
+                                        "aad": { "type": "string" }
+                                      },
+                                      "required": ["v", "keyGeneration", "iv", "aad"],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": ["ciphertext", "envelope"],
+                                  "additionalProperties": false
+                                },
+                                "reply": {
+                                  "type": "object",
+                                  "properties": {
+                                    "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                    "senderId": { "type": "string" }
+                                  },
+                                  "required": ["keyGeneration", "senderId"],
+                                  "additionalProperties": false
+                                },
+                                "trigger": {
+                                  "type": "object",
+                                  "properties": {
+                                    "messageId": { "type": "string" },
+                                    "authorName": { "type": "string" },
+                                    "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                                    "createdAt": { "type": "string", "format": "date-time" }
+                                  },
+                                  "required": ["messageId", "authorName", "authorType", "createdAt"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "required": ["callbackToken", "wraps", "history", "prompt", "reply"],
+                              "additionalProperties": false
                             }
                           },
                           "required": [

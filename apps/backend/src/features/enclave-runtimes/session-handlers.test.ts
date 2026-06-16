@@ -11,6 +11,7 @@ import {
   ConversationSummaryRepository,
   PersonaRepository,
   SessionStatuses,
+  hashCallbackToken,
 } from "../agents"
 import { UserRepository } from "../workspaces"
 import { StreamRepository, StreamEventRepository } from "../streams"
@@ -19,7 +20,6 @@ import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
 import { createEnclaveSessionHandlers } from "./session-handlers"
-import { hashCallbackToken } from "./callback-token"
 import { EnclaveInvocationsRepository } from "./invocations-repository"
 
 // A bare stand-in, but with a `query` so the catch-up's wake-up NOTIFY (fired by

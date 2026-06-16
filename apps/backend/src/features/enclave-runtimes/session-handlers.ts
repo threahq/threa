@@ -26,6 +26,7 @@ import {
   SessionStatuses,
   ARIADNE_AGENT_ID,
   getBuiltInAgentConfig,
+  hashCallbackToken,
   failSessionWithLifecycle,
   type AgentSession,
 } from "../agents"
@@ -35,7 +36,6 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
 import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
-import { hashCallbackToken } from "./callback-token"
 import { enqueueEnclaveInvocation } from "./claim-service"
 import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
 import { parseModelId } from "@threa/agent-runtime"

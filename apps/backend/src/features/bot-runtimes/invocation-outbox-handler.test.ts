@@ -12,6 +12,7 @@ import { BotRepository } from "../public-api/bot-repository"
 import { PersonaRepository } from "../agents"
 import { EventService } from "../messaging"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
+import * as e2eStreams from "../e2e-streams"
 import * as outbox from "../../lib/outbox"
 import { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 
@@ -242,6 +243,24 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
         targetInstanceId: null,
         targetRuntimeSessionId: null,
       })
+    )
+  })
+
+  it("dispatches when the verdict is sealed — the gate's sealed arm enqueues the turn (Phase 2.4)", async () => {
+    const { createInvocation } = setupActiveScratchpad({ instance: { runtimeKind: "openclaw" } })
+    // Force the sealed verdict — the policy switch is off in production, so this
+    // is the only way to reach the gate's sealed arm. Without it (the gate
+    // allowing plaintext alone) this dispatch would be denied.
+    spyOn(e2eStreams, "resolveSealingContext").mockResolvedValue({
+      streamIsE2e: true,
+      actorHasGrant: true,
+      externalSealedDelivery: true,
+    })
+
+    await runProcessMessageCreated(plainUserMessage)
+
+    expect(createInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad" })
     )
   })
 })
