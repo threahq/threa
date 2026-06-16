@@ -1247,7 +1247,7 @@ export function StreamContent({
           return
         }
       }
-      const anchorId = await jumpToEventByDate(date.toISOString())
+      const anchorId = await jumpToEventByDate(new Date(targetDayMs).toISOString())
       if (anchorId) {
         pendingScrollTarget.current = anchorId
       } else {
