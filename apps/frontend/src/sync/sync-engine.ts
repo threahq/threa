@@ -22,6 +22,7 @@ import { applyDraftsBootstrap, type DraftsServiceLike } from "./draft-sync"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
+import { CounterCatchUpBatch } from "./counter-sink"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -133,6 +134,10 @@ export class SyncEngine {
   private catchUpCycle = 0
   private activeCatchUpCycle = 0
   private queuedCatchUp: Promise<void> | null = null
+  /** Set for the duration of a catch-up replay so the counter handlers fold
+   *  into it instead of writing per-entry; flushed once when the window closes
+   *  (see performActiveCatchUp). Null → live, write-immediately. */
+  private activeCounterBatch: CounterCatchUpBatch | null = null
 
   // Heartbeat (active mode): the highest workspace head observed in catch-up
   // responses. The cursor is per-user filtered and can sit permanently below
@@ -226,6 +231,7 @@ export class SyncEngine {
         getCurrentStreamId: () => this.currentStreamId,
         getCurrentUser: () => this.currentUser,
         subscribeStream: (streamId: string) => void this.subscribeStream(streamId),
+        getCounterSink: () => this.activeCounterBatch,
       }
     )
 
@@ -1119,6 +1125,14 @@ export class SyncEngine {
     // — live behavior.
     let appliedThrough: bigint | null = null
 
+    // Counter events replayed below fold into this batch (via the handlers'
+    // getCounterSink) instead of writing per-entry, so the unread/activity
+    // badges paint the final value once at flush rather than flickering through
+    // every intermediate read/activity in the log. runCatchUp single-flights, so
+    // at most one batch is active at a time.
+    const counterBatch = new CounterCatchUpBatch(this.deps.queryClient, this.workspaceId)
+    this.activeCounterBatch = counterBatch
+
     try {
       await cursorStore.load()
       const cursorBefore = cursorStore.get()
@@ -1218,6 +1232,16 @@ export class SyncEngine {
         })
       }
     } finally {
+      // Commit the coalesced counters once, BEFORE the resume splice, so the
+      // badges jump straight to the catch-up's final value and the buffered
+      // live events spliced next apply on top of it. Skipped on destroy (an
+      // account switch repoints the shared db — a post-destroy write could land
+      // in the wrong account's IDB). The cursor already advanced per entry, so a
+      // crash between the last apply and this flush self-heals from the next
+      // bootstrap snapshot (counters are derived, never authoritative).
+      if (this.activeCounterBatch === counterBatch) this.activeCounterBatch = null
+      if (!this.isDestroyed) await counterBatch.flush()
+
       // Reopen live flow, even on a failed fetch or early return (the buffer
       // must never strand) — but only when this run still belongs to the
       // CURRENT pause cycle. If a newer connect/resume paused the gate while

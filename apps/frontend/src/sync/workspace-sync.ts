@@ -55,9 +55,8 @@ import {
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamsReadAllOrdinals,
-  toCounterState,
-  withCounterState,
 } from "./unread-counters"
+import { commitCounterMutation, type CounterCatchUpBatch, type CounterMutator } from "./counter-sink"
 
 /** Workspace user shape from backend user repository. */
 interface WorkspaceUserPayload {
@@ -463,9 +462,27 @@ export function registerWorkspaceSocketHandlers(
     getCurrentStreamId: () => string | undefined
     getCurrentUser: () => { id: string } | null
     subscribeStream: (streamId: string) => void
+    /** Active only during a sync catch-up replay. When present, counter events
+     *  fold into the batch instead of writing per-entry; the engine flushes the
+     *  final state once when the window closes, so the badges never flicker
+     *  through intermediate replay values. Absent → live, write-immediately. */
+    getCounterSink?: () => CounterCatchUpBatch | null
   }
 ): () => void {
   const abortController = new AbortController()
+
+  // The single seam every counter handler routes its absolute/relative count
+  // math through: fold into the catch-up batch when one is active, else commit
+  // immediately (live). Non-counter side effects (previews, read-pointer
+  // mirrors, feed invalidations) stay on their own immediate paths below.
+  const commitCounter = (mutate: CounterMutator): void => {
+    const sink = refs.getCounterSink?.() ?? null
+    if (sink) {
+      sink.apply(mutate)
+      return
+    }
+    commitCounterMutation(queryClient, workspaceId, mutate)
+  }
 
   // The reconnect event gap for saved/scheduled rows (INV-53) is closed by the
   // workspace catch-up cursor, which replays the missed user-scoped sync-log
@@ -769,9 +786,11 @@ export function registerWorkspaceSocketHandlers(
     const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
     const hadActivity = (current?.activityCounts[payload.streamId] ?? 0) > 0
 
+    // Read-pointer mirror (non-counter) — applied immediately so the unread
+    // divider tracks even mid catch-up; the counter goes through commitCounter.
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
-      const withMembership = {
+      return {
         ...old,
         streamMemberships: old.streamMemberships.map((membership) =>
           membership.streamId === payload.streamId
@@ -779,11 +798,9 @@ export function registerWorkspaceSocketHandlers(
             : membership
         ),
       }
-      return withCounterState(
-        withMembership,
-        applyStreamReadOrdinal(toCounterState(old), payload.streamId, payload.lastReadOrdinal)
-      )
     })
+
+    commitCounter((state) => applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal))
 
     queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
       streamKeys.bootstrap(workspaceId, payload.streamId),
@@ -798,19 +815,8 @@ export function registerWorkspaceSocketHandlers(
 
     // Keep both stream and membership mirrors in sync so unread-divider state
     // updates immediately without waiting for a re-bootstrap/remount.
-    db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships], async () => {
+    db.transaction("rw", [db.streams, db.streamMemberships], async () => {
       const now = Date.now()
-      const state = await db.unreadState.get(workspaceId)
-      if (state) {
-        // Read-merge-write inside one transaction so concurrent tabs
-        // max-merge instead of clobbering each other (INV-20 analogue).
-        await db.unreadState.put({
-          ...state,
-          ...applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal),
-          _cachedAt: now,
-        })
-      }
-
       await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
 
       const membershipId = `${workspaceId}:${payload.streamId}`
@@ -841,20 +847,7 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamReadAll = (payload: StreamsReadAllPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      return withCounterState(old, applyStreamsReadAllOrdinals(toCounterState(old), payload.reads))
-    })
-
-    db.transaction("rw", [db.unreadState], async () => {
-      const state = await db.unreadState.get(workspaceId)
-      if (!state) return
-      await db.unreadState.put({
-        ...state,
-        ...applyStreamsReadAllOrdinals(state, payload.reads),
-        _cachedAt: Date.now(),
-      })
-    })
+    commitCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
 
     queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
 
@@ -955,74 +948,43 @@ export function registerWorkspaceSocketHandlers(
       })
     }
 
+    // Preview (cache + IDB) is non-counter and always applied so the sidebar
+    // shows the latest message and sorts scratchpads by activity, even mid
+    // catch-up.
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
-
-      const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
-      if (!isMember) return old
-
-      // Own messages never raise unread (authorId is a userId — match via
-      // user.workosUserId): the server auto-advances the author's read
-      // pointer in the send transaction without emitting stream:read.
-      const currentUser = refs.getCurrentUser()
-      const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
-      const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
-
-      // Always update stream's lastMessagePreview for sidebar display
-      const withPreview = {
+      return {
         ...old,
         streams: old.streams.map((stream) =>
           stream.id === payload.streamId ? { ...stream, lastMessagePreview: payload.lastMessagePreview } : stream
         ),
       }
-
-      return withCounterState(
-        withPreview,
-        applyStreamActivityOrdinal(toCounterState(old), payload.streamId, payload.messageOrdinal, {
-          isOwnMessage,
-          isViewing: isViewingStream,
-        })
-      )
     })
-
-    // Always persist lastMessagePreview to IDB so the cached sort order
-    // matches what the user last saw (sidebar sorts scratchpads by activity).
     db.streams.update(payload.streamId, {
       lastMessagePreview: payload.lastMessagePreview,
       _cachedAt: Date.now(),
     })
 
-    // Update IDB unread state. We check membership via IDB to avoid dependency
-    // on the TanStack closure. The absolute path always writes: own sends
-    // advance the implied read position and viewing pins it to latest.
-    void (async () => {
-      const membership = await db.streamMemberships.get(`${workspaceId}:${payload.streamId}`)
-      if (!membership) return
-      const currentUser = refs.getCurrentUser()
-      const currentMember = currentUser
-        ? await db.workspaceUsers
-            .where("workspaceId")
-            .equals(workspaceId)
-            .filter((u) => u.workosUserId === currentUser.id)
-            .first()
-        : null
-      const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
+    // Counter: membership and author identity resolve from the workspace
+    // bootstrap (the synchronous read model both reactive surfaces share), then
+    // the absolute ordinal apply folds through commitCounter. Own messages never
+    // raise unread (authorId is a userId — match via user.workosUserId): the
+    // server auto-advances the author's read pointer in the send transaction
+    // without emitting stream:read. Viewing pins the read position to latest.
+    const old = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    if (!old) return
+    const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
+    if (!isMember) return
+    const currentUser = refs.getCurrentUser()
+    const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
+    const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
 
-      await db.transaction("rw", [db.unreadState], async () => {
-        const state = await db.unreadState.get(workspaceId)
-        if (!state) return
-        // Read-merge-write inside one transaction so concurrent tabs
-        // max-merge instead of clobbering each other (INV-20 analogue).
-        await db.unreadState.put({
-          ...state,
-          ...applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
-            isOwnMessage,
-            isViewing: isViewingStream,
-          }),
-          _cachedAt: Date.now(),
-        })
+    commitCounter((state) =>
+      applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
+        isOwnMessage,
+        isViewing: isViewingStream,
       })
-    })()
+    )
   }
 
   // Handle stream display name updated (from auto-naming service)
@@ -1301,53 +1263,23 @@ export function registerWorkspaceSocketHandlers(
     if (counts) {
       // Absolute counts apply for self rows too — the backend inserts those
       // already read, so the counts simply restate the unchanged truth (LWW).
-      updateBootstrapOrInvalidate(queryClient, workspaceId, (old) =>
-        withCounterState(old, applyActivityCounts(toCounterState(old), streamId, counts))
-      )
-
-      db.transaction("rw", [db.unreadState], async () => {
-        const state = await db.unreadState.get(workspaceId)
-        if (!state) return
-        await db.unreadState.put({
-          ...state,
-          ...applyActivityCounts(state, streamId, counts),
-          _cachedAt: Date.now(),
-        })
-      })
+      commitCounter((state) => applyActivityCounts(state, streamId, counts))
     } else if (!isSelf) {
-      // Legacy payload. Self rows (the user's own message or reaction) show in
-      // the feed but must not inflate unread counts — the backend inserts them
-      // already read.
-      updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
-        ...old,
+      // Legacy payload (relative bump). Self rows (the user's own message or
+      // reaction) show in the feed but must not inflate unread counts — the
+      // backend inserts them already read.
+      commitCounter((state) => ({
+        ...state,
         mentionCounts:
           activityType === "mention"
-            ? { ...old.mentionCounts, [streamId]: (old.mentionCounts[streamId] ?? 0) + 1 }
-            : old.mentionCounts,
+            ? { ...state.mentionCounts, [streamId]: (state.mentionCounts[streamId] ?? 0) + 1 }
+            : state.mentionCounts,
         activityCounts: {
-          ...old.activityCounts,
-          [streamId]: (old.activityCounts[streamId] ?? 0) + 1,
+          ...state.activityCounts,
+          [streamId]: (state.activityCounts[streamId] ?? 0) + 1,
         },
-        unreadActivityCount: (old.unreadActivityCount ?? 0) + 1,
+        unreadActivityCount: (state.unreadActivityCount ?? 0) + 1,
       }))
-
-      db.transaction("rw", [db.unreadState], async () => {
-        const state = await db.unreadState.get(workspaceId)
-        if (!state) return
-        await db.unreadState.put({
-          ...state,
-          mentionCounts:
-            activityType === "mention"
-              ? { ...state.mentionCounts, [streamId]: (state.mentionCounts[streamId] ?? 0) + 1 }
-              : state.mentionCounts,
-          activityCounts: {
-            ...state.activityCounts,
-            [streamId]: (state.activityCounts[streamId] ?? 0) + 1,
-          },
-          unreadActivityCount: state.unreadActivityCount + 1,
-          _cachedAt: Date.now(),
-        })
-      })
     }
 
     // Invalidate activity feed so it refetches when the page is mounted
