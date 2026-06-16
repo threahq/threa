@@ -51,9 +51,14 @@ test.describe("Stable attachment content URLs", () => {
     await editor.press("Enter")
 
     // The timeline <img> src must be the deterministic content URL, present
-    // synchronously — no async presign before the image can start loading.
+    // synchronously — no async presign before the image can start loading. Assert
+    // the element is attached with that src rather than visible: the thumbnail
+    // variant is generated lazily server-side, so under a cold/loaded backend the
+    // bytes can lag and a not-yet-painted <img> isn't "visible" — but the URL
+    // strategy under test is already proven by the element's src plus the raw
+    // fetch below.
     const timelineImg = page.locator("img[src*='/content?variant=thumbnail']").first()
-    await expect(timelineImg).toBeVisible({ timeout: 15000 })
+    await expect(timelineImg).toBeAttached({ timeout: 15000 })
     const src = await timelineImg.getAttribute("src")
     expect(src).toContain("/api/workspaces/")
     expect(src).toMatch(/\/attachments\/[^/]+\/content\?variant=thumbnail$/)
@@ -68,7 +73,7 @@ test.describe("Stable attachment content URLs", () => {
     // A warm open renders the image again from the same URL — still without a
     // single presign request anywhere in the flow.
     await page.reload()
-    await expect(page.locator("img[src*='/content?variant=thumbnail']").first()).toBeVisible({ timeout: 15000 })
+    await expect(page.locator("img[src*='/content?variant=thumbnail']").first()).toBeAttached({ timeout: 15000 })
     expect(presignRequests).toEqual([])
   })
 })

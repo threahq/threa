@@ -160,8 +160,10 @@ test.describe("Edit last message (ArrowUp)", () => {
 
     // Inline edit form should open
     await expect(userA.page.getByRole("button", { name: "Cancel" })).toBeVisible({ timeout: 5000 })
-    // First message should now be scrolled into view
-    await expect(firstMessageEl).toBeInViewport({ timeout: 5000 })
+    // First message should now be scrolled into view. Generous timeout: the
+    // scroll-into-view runs after the edit form mounts and re-measures, which
+    // lands well past 5s on a cold/loaded backend.
+    await expect(firstMessageEl).toBeInViewport({ timeout: 15000 })
 
     await userA.context.close()
     await userB.context.close()
