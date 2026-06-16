@@ -49,7 +49,33 @@ strings. Not for code identifiers, log lines, or internal comments.
 8. **Naming competitors** — even when one motivated the product. Describe the gap,
    not the rival.
 9. **Aspirational claims stated as present fact** — see the honesty rule below.
-10. **Formulaic colorized highlights** — one accent-colored word in every heading
+10. **Throat-clearing openers** — "Here's the thing:", "Here's what X does", "It
+    turns out", "The truth is", "What you need to know:". Filler before the
+    point. Delete it and open on the point itself.
+11. **Self-posed rhetorical questions** — "Want faster builds?", "The result?
+    Faster builds." Question-then-answer is a setup, not information. State the
+    thing. A genuine question to the reader is fine; the manufactured one isn't.
+12. **The "serves as" dodge** — "serves as", "stands as", "acts as",
+    "represents"/"marks" when they just mean *is*. Use "is", or better, say what
+    the thing does. ("This endpoint serves as the entry point" → "Start here.")
+13. **False agency** — inanimate subjects doing human things to dodge the actor:
+    "errors surface themselves", "the config decides", "the data tells us". Name
+    who or what acts (the worker, the user, the query). Deliberate
+    personification as voice is fine; the tell is the reflexive dodge.
+14. **Listicle in prose** — "The first… The second… The third…": a list wearing
+    a sentence costume. Weave the points into real prose, or make it a real
+    list. A genuine enumerated list is fine.
+15. **Vague attributions** — "experts agree", "studies show", "it's widely
+    known", "many teams". No nameable source means no source: cut the claim or
+    name it.
+16. **Invented concept labels** — christening a plain idea to sound deep: "the
+    calibration paradox", "the X effect", a quoted neologism. Describe the
+    mechanic instead of naming it.
+17. **Bold-first bullets** — every bullet led by a `**bolded phrase** —` then a
+    gloss. One or two for genuine emphasis is fine; a whole list of them is a
+    template tell. Like the accent spans it's markup, so hunt it (`grep -rn
+    '^[[:space:]]*[-*] \*\*' <files>`), not the prose.
+18. **Formulaic colorized highlights** — one accent-colored word in every heading
     (and pull-quote), e.g. `<span class="accent">…</span>` on a word per `<h2>`.
     It reads as generated even when the words are fine, because the *placement* is
     mechanical: every heading, always one phrase. Reserve the accent for rare,
@@ -84,8 +110,10 @@ strings. Not for code identifiers, log lines, or internal comments.
    structural (cadence, contrast, triples), not a single word.
 3. **Rewrite in place**, one tell at a time, keeping voice and accuracy.
 4. **Re-scan mechanically.** At minimum `grep -rn '—' <files>` for stray
-   em-dashes; spot-check for the cliché list. Em-dashes hide in page `<title>`s
-   and alt text too.
+   em-dashes; `grep -rn 'class="accent"' <files>` for highlight tells and
+   `grep -rn '^[[:space:]]*[-*] \*\*' <files>` for bold-first bullets; spot-check
+   the cliché list and openers ("Here's", "It turns out"). Em-dashes hide in page
+   `<title>`s and alt text too.
 5. **Report** what changed: the notable before→after rewrites and anything you
    flagged as a possibly-false claim rather than edited.
 
@@ -103,6 +131,11 @@ strings. Not for code identifiers, log lines, or internal comments.
   ciphertext and produce no memos.`
 - Six headings each with `<span class="accent">one word</span>` → accent only the
   hero and the closing CTA; the rest plain. (Trim the highlight, keep the words.)
+- `Here's the thing: setup is one command.` → `Setup is one command.`
+- `This service serves as the entry point for auth.` → `Authenticate here.`
+- `Want faster builds? Here's how.` → (cut the question; lead with the steps.)
+- `The first benefit is speed; the second is caching.` → `It's faster, and it
+  caches results between runs.`
 
 ## Guardrails
 
@@ -111,3 +144,8 @@ strings. Not for code identifiers, log lines, or internal comments.
   a terse but vague one.
 - When the only honest fix is structural (the claim is wrong, not just sloppy),
   say so and propose the corrected claim rather than quietly rewording.
+
+## Credits
+
+Part of the tell catalog cross-pollinated from Stephen Turner's `skill-deslop`
+(github.com/stephenturner/skill-deslop, MIT) and tropes.fyi.
