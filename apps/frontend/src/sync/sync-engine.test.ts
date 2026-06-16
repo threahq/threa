@@ -895,6 +895,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
       db.syncCursors.clear(),
       db.workspaceUsers.clear(),
       db.unreadState.clear(),
+      db.streams.clear(),
     ])
   })
 
@@ -1039,7 +1040,11 @@ describe("SyncEngine sync cursor (active mode)", () => {
     return deps
   }
 
-  function streamActivityEntry(syncId: string, messageOrdinal: number): SyncCatchUpResponse["entries"][number] {
+  function streamActivityEntry(
+    syncId: string,
+    messageOrdinal: number,
+    content = "hi"
+  ): SyncCatchUpResponse["entries"][number] {
     return {
       syncId,
       eventType: "stream:activity",
@@ -1052,7 +1057,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
         lastMessagePreview: {
           authorId: "member_other",
           authorType: "user",
-          content: "hi",
+          content,
           createdAt: new Date().toISOString(),
         },
       },
@@ -1192,6 +1197,66 @@ describe("SyncEngine sync cursor (active mode)", () => {
     expect(observed).not.toContain(0)
 
     putSpy.mockRestore()
+    engine.destroy()
+  })
+
+  it("coalesces catch-up stream previews — the sidebar sees only the final message, not each replayed one", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [
+          streamActivityEntry("11", 6, "first"),
+          streamActivityEntry("12", 7, "second"),
+          streamActivityEntry("13", 8, "third"),
+        ],
+        head: "13",
+      })
+      .mockResolvedValue(emptyPage("13"))
+    const deps = makeCounterDeps(catchUp)
+    // stream_x must be in the bootstrap so it survives applyWorkspaceBootstrap's
+    // stale-entity cleanup; the catch-up replay then advances its preview.
+    const baseBootstrap = await deps.workspaceService.bootstrap()
+    deps.workspaceService.bootstrap = vi.fn(async () => ({
+      ...baseBootstrap,
+      streams: [
+        {
+          id: "stream_x",
+          workspaceId: "ws_1",
+          type: "scratchpad",
+          visibility: "private",
+          displayName: "X",
+          slug: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastMessagePreview: {
+            authorId: "member_other",
+            authorType: "user",
+            content: "seed",
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        } as unknown as (typeof baseBootstrap.streams)[number],
+      ],
+    }))
+    const engine = new SyncEngine(deps)
+    const updateSpy = vi.spyOn(db.streams, "update")
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => {
+      expect((await db.streams.get("stream_x"))?.lastMessagePreview?.content).toBe("third")
+    })
+
+    // The replay folds three previews but persists only the last — the sidebar
+    // re-sorts once on "third" instead of stepping through first/second.
+    const persisted = updateSpy.mock.calls
+      .filter((call) => call[0] === "stream_x")
+      .map((call) => (call[1] as { lastMessagePreview?: { content?: string } }).lastMessagePreview?.content)
+    expect(persisted).toContain("third")
+    expect(persisted).not.toContain("first")
+    expect(persisted).not.toContain("second")
+
+    updateSpy.mockRestore()
     engine.destroy()
   })
 

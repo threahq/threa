@@ -56,7 +56,7 @@ import {
   applyStreamReadOrdinal,
   applyStreamsReadAllOrdinals,
 } from "./unread-counters"
-import { commitCounterMutation, type CounterCatchUpBatch, type CounterMutator } from "./counter-sink"
+import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
 
 /** Workspace user shape from backend user repository. */
 interface WorkspaceUserPayload {
@@ -462,26 +462,36 @@ export function registerWorkspaceSocketHandlers(
     getCurrentStreamId: () => string | undefined
     getCurrentUser: () => { id: string } | null
     subscribeStream: (streamId: string) => void
-    /** Active only during a sync catch-up replay. When present, counter events
-     *  fold into the batch instead of writing per-entry; the engine flushes the
-     *  final state once when the window closes, so the badges never flicker
-     *  through intermediate replay values. Absent → live, write-immediately. */
-    getCounterSink?: () => CounterCatchUpBatch | null
+    /** Active only during a sync catch-up replay. When present, counter and
+     *  preview updates fold into the batch instead of writing per-entry; the
+     *  engine flushes the final state once when the window closes, so the badges
+     *  and sidebar order never flicker through intermediate replay values.
+     *  Absent → live, write-immediately. */
+    getCatchUpBatch?: () => CatchUpBatch | null
   }
 ): () => void {
   const abortController = new AbortController()
 
-  // The single seam every counter handler routes its absolute/relative count
-  // math through: fold into the catch-up batch when one is active, else commit
-  // immediately (live). Non-counter side effects (previews, read-pointer
-  // mirrors, feed invalidations) stay on their own immediate paths below.
+  // The seams every flickering write routes through: fold into the catch-up
+  // batch when one is active, else commit immediately (live). Read-pointer
+  // mirrors and feed invalidations are not coalesced — they stay on their own
+  // immediate paths in the handlers below.
   const commitCounter = (mutate: CounterMutator): void => {
-    const sink = refs.getCounterSink?.() ?? null
-    if (sink) {
-      sink.apply(mutate)
+    const batch = refs.getCatchUpBatch?.() ?? null
+    if (batch) {
+      batch.applyCounter(mutate)
       return
     }
     commitCounterMutation(queryClient, workspaceId, mutate)
+  }
+
+  const commitPreview = (streamId: string, preview: LastMessagePreview | null): void => {
+    const batch = refs.getCatchUpBatch?.() ?? null
+    if (batch) {
+      batch.setStreamPreview(streamId, preview)
+      return
+    }
+    commitStreamPreview(queryClient, workspaceId, streamId, preview)
   }
 
   // The reconnect event gap for saved/scheduled rows (INV-53) is closed by the
@@ -948,22 +958,10 @@ export function registerWorkspaceSocketHandlers(
       })
     }
 
-    // Preview (cache + IDB) is non-counter and always applied so the sidebar
-    // shows the latest message and sorts scratchpads by activity, even mid
-    // catch-up.
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      return {
-        ...old,
-        streams: old.streams.map((stream) =>
-          stream.id === payload.streamId ? { ...stream, lastMessagePreview: payload.lastMessagePreview } : stream
-        ),
-      }
-    })
-    db.streams.update(payload.streamId, {
-      lastMessagePreview: payload.lastMessagePreview,
-      _cachedAt: Date.now(),
-    })
+    // Preview (cache + IDB) drives the activity-ordered sidebar. Coalesced
+    // during catch-up so the list re-sorts once on the final order instead of
+    // jumping as every replayed message advances a stream's preview time.
+    commitPreview(payload.streamId, payload.lastMessagePreview)
 
     // Counter: membership and author identity resolve from the workspace
     // bootstrap (the synchronous read model both reactive surfaces share), then
