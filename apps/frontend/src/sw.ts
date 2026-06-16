@@ -634,10 +634,11 @@ self.addEventListener("push", (event) => {
   if (data.kind === "rewrap_needed") {
     event.waitUntil(
       self.registration.showNotification("Your assistant is waiting", {
-        body: "Open Threa to let your assistant reply in your encrypted scratchpad.",
+        body: "Unlock Threa to let your assistant reply in your encrypted scratchpad.",
         icon: "/threa-logo-192.png",
         badge: "/threa-logo-192.png",
         tag: data.streamId ? `rewrap:${data.streamId}` : "rewrap",
+        renotify: true, // Re-alert (vibrate/sound) when a later nudge replaces an earlier same-tag one
         vibrate: THREA_VIBRATION_PATTERN,
         data: { ...data, kind: "rewrap_needed" },
       } as ExtendedNotificationOptions)
@@ -774,8 +775,9 @@ self.addEventListener("message", (event) => {
     Promise.all([
       self.registration.getNotifications({ tag: streamId }),
       self.registration.getNotifications({ tag: `${streamId}:mention` }),
-    ]).then(([streamNotifs, mentionNotifs]) => {
-      for (const n of [...streamNotifs, ...mentionNotifs]) n.close()
+      self.registration.getNotifications({ tag: `rewrap:${streamId}` }),
+    ]).then((groups) => {
+      for (const n of groups.flat()) n.close()
     })
   )
 })
