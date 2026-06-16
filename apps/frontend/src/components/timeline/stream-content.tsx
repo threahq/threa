@@ -57,6 +57,7 @@ import {
   annotateAuthorGroups,
   annotateConversationRows,
   injectGapItems,
+  injectDayDividers,
   findFirstMessageId,
   findMessageItemIndex,
   getTimelineItemKey,
@@ -907,7 +908,10 @@ export function StreamContent({
   // passes `shift` to virtua for that render, holding the viewport exactly
   // like a real older-page prepend (INV-21).
   const visibleItems = useMemo(() => {
-    const base = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+    const filtered = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+    // Day dividers go on the post-filter list so a boundary lands above the
+    // first *visible* row of a day (INV-42), then skeletons prepend above all.
+    const base = injectDayDividers(filtered)
     return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
   }, [timelineItems, useVirtualized, isChannel, showOlderSkeletons])
 
