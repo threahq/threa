@@ -149,7 +149,7 @@ export function StashedDraftsPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
+        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <p className="text-sm font-medium">
               Drafts

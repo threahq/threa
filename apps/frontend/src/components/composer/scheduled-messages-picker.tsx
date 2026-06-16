@@ -211,7 +211,7 @@ export function ScheduledMessagesPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
+        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
           {mode === "list" ? (
             <ListMode
               workspaceId={workspaceId}
