@@ -1,7 +1,9 @@
 import { serializeToMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
-import type { CachedDraft } from "@/db"
+import type { AttachmentRef } from "@threa/crypto"
+import type { CachedDraft, DraftAttachment } from "@/db"
 import { getCachedDecryption, requestDecryption, type DecryptCacheEntry } from "@/lib/crypto/decrypt-cache"
+import { rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import type { useE2eSession } from "@/stores/e2e-session-store"
@@ -21,6 +23,19 @@ export interface DraftDecryption {
   status: DraftDecryptionStatus
   /** The plaintext body for plaintext/decrypted; null while none/locked/pending/failed. */
   contentJson: JSONContent | null
+  /**
+   * The draft's attachments (Stage 4d): a plaintext draft's `attachments` as-is,
+   * or — for a sealed draft — the display metadata recovered from the decrypted
+   * `attachmentRefs`. Empty while none/locked/pending/failed, so the composer
+   * shows attachment chips only once the body is readable (E2EE-4: the real
+   * filename rides sealed, never at rest).
+   */
+  attachments: DraftAttachment[]
+}
+
+/** Project a decrypted attachment ref onto the composer's display shape. */
+function attachmentFromRef(ref: AttachmentRef): DraftAttachment {
+  return { id: ref.attachmentId, filename: ref.filename, mimeType: ref.mimeType, sizeBytes: ref.sizeBytes }
 }
 
 /** A session that can actually open sealed content (unlocked, keys present). */
@@ -38,19 +53,31 @@ export function resolveDraftDecryption(
   unlocked: boolean,
   cached: DecryptCacheEntry | undefined
 ): DraftDecryption {
-  if (!draft) return { status: "none", contentJson: null }
-  if (draft.ciphertext == null) return { status: "plaintext", contentJson: draft.contentJson ?? null }
-  if (!unlocked) return { status: "locked", contentJson: null }
+  if (!draft) return { status: "none", contentJson: null, attachments: [] }
+  if (draft.ciphertext == null)
+    return { status: "plaintext", contentJson: draft.contentJson ?? null, attachments: draft.attachments }
+  if (!unlocked) return { status: "locked", contentJson: null, attachments: [] }
   if (cached?.status === "decrypted" && cached.content)
-    return { status: "decrypted", contentJson: cached.content.contentJson }
-  if (cached?.status === "failed") return { status: "failed", contentJson: null }
-  return { status: "pending", contentJson: null }
+    return {
+      status: "decrypted",
+      contentJson: cached.content.contentJson,
+      attachments: (cached.content.attachmentRefs ?? []).map(attachmentFromRef),
+    }
+  if (cached?.status === "failed") return { status: "failed", contentJson: null, attachments: [] }
+  return { status: "pending", contentJson: null, attachments: [] }
 }
 
 /**
  * Fire a decrypt for a sealed draft when possible and not already cached/in-flight
  * — a no-op otherwise (so callers can invoke it unconditionally). The plaintext
  * only ever lands in the in-memory cache (E2EE-4).
+ *
+ * Stage 4d: when the decrypt lands, re-register the recovered `attachmentRefs`
+ * in the in-memory ref cache (`rememberAttachmentRef`). On a fresh device the
+ * per-file key/iv were minted on the authoring device, so without this a roamed
+ * draft could neither decrypt its attachments for view nor re-seal them on send
+ * (the seal path resolves refs by id). Idempotent — a re-seal of the same id
+ * overwrites with identical material.
  */
 export function requestDraftDecryption(
   draft: CachedDraft,
@@ -60,7 +87,10 @@ export function requestDraftDecryption(
 ): void {
   if (draft.ciphertext == null || !rootStreamId || !keys.privateKey || !keys.recipientKeyId) return
   const cached = getCachedDecryption(draft.id)
-  if (cached && cached.status !== "pending") return
+  if (cached && cached.status !== "pending") {
+    if (cached.status === "decrypted") rememberDecryptedRefs(cached)
+    return
+  }
   void requestDecryption(
     draft.id,
     { contentMarkdown: "", ciphertext: draft.ciphertext, envelope: draft.envelope },
@@ -71,7 +101,38 @@ export function requestDraftDecryption(
       streamId: rootStreamId,
       rootStreamId,
     }
-  )
+  ).then((entry) => {
+    if (entry.status === "decrypted") rememberDecryptedRefs(entry)
+  })
+}
+
+/** Re-register a decrypted entry's attachment refs so a roamed draft is sendable. */
+function rememberDecryptedRefs(entry: DecryptCacheEntry): void {
+  for (const ref of entry.content?.attachmentRefs ?? []) rememberAttachmentRef(ref)
+}
+
+/**
+ * The decrypted body currently cached for a sealed draft id, or null when it
+ * isn't decrypted. The in-memory cache is the plaintext authority for a sealed
+ * draft (E2EE-4: the row at rest holds only the empty placeholder), so the write
+ * path reads the body back from it to re-seal across an attachment change.
+ */
+export function cachedDraftBody(draftId: string): JSONContent | null {
+  const cached = getCachedDecryption(draftId)
+  if (cached?.status !== "decrypted") return null
+  return cached.content?.contentJson ?? null
+}
+
+/**
+ * The decrypted attachments currently cached for a sealed draft id (Stage 4d),
+ * or [] when it isn't decrypted. Same rationale as `cachedDraftBody`: a
+ * content-only re-seal must preserve the attachments that were sealed alongside
+ * the body, and those live only in the in-memory decrypt cache.
+ */
+export function cachedDraftAttachments(draftId: string): DraftAttachment[] {
+  const cached = getCachedDecryption(draftId)
+  if (cached?.status !== "decrypted") return []
+  return (cached.content?.attachmentRefs ?? []).map(attachmentFromRef)
 }
 
 // --- List-preview presentation (stash picker, /drafts explorer) ---

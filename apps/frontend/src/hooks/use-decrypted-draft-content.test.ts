@@ -75,7 +75,7 @@ describe("useDecryptedDraftContent", () => {
 
   it("reports plaintext (with the body) for a non-E2E draft", () => {
     const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, plaintextDraft("hi"), undefined))
-    expect(result.current).toEqual({ status: "plaintext", contentJson: makeDoc("hi") })
+    expect(result.current).toEqual({ status: "plaintext", contentJson: makeDoc("hi"), attachments: [] })
   })
 
   it("reports locked for a sealed draft while the session is locked", () => {
@@ -87,7 +87,22 @@ describe("useDecryptedDraftContent", () => {
   it("reports decrypted (with the body) when the shared cache already holds the plaintext", () => {
     seedDecryption("draft_e", { contentMarkdown: "secret", contentJson: makeDoc("secret") })
     const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, sealedDraft(), rootStreamId))
-    expect(result.current).toEqual({ status: "decrypted", contentJson: makeDoc("secret") })
+    expect(result.current).toEqual({ status: "decrypted", contentJson: makeDoc("secret"), attachments: [] })
+  })
+
+  it("surfaces attachments recovered from the decrypted refs (Stage 4d)", () => {
+    seedDecryption("draft_e", {
+      contentMarkdown: "secret",
+      contentJson: makeDoc("secret"),
+      attachmentRefs: [
+        { attachmentId: "att_1", key: "k", iv: "i", filename: "doc.pdf", mimeType: "application/pdf", sizeBytes: 42 },
+      ],
+      sources: [],
+    })
+    const { result } = renderHook(() => useDecryptedDraftContent(workspaceId, sealedDraft(), rootStreamId))
+    expect(result.current.attachments).toEqual([
+      { id: "att_1", filename: "doc.pdf", mimeType: "application/pdf", sizeBytes: 42 },
+    ])
   })
 
   it("reports pending while unlocked but the encrypted root isn't known yet (no decrypt fired)", () => {

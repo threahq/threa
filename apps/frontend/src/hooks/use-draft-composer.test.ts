@@ -751,6 +751,24 @@ describe("useDraftComposer", () => {
       expect(result.current.content).toEqual(EMPTY_DOC)
     })
 
+    it("hydrates an attachment-only sealed draft's chips when they decrypt after unlock (Stage 4d)", () => {
+      // Locked at mount: an E2E draft with files but an empty body resolves no body
+      // and no attachments. On unlock its attachments decrypt and must late-hydrate
+      // even though there is no body to fill into the editor.
+      mockDraftIsLoaded = true
+      mockDraftContentJson = EMPTY_DOC
+      mockDraftAttachments = []
+      const { rerender } = renderHook(() => useDraftComposer({ workspaceId, draftKey, scopeId }))
+      expect(mockRestoreAttachments).not.toHaveBeenCalled()
+
+      // Unlock + decrypt: the attachment metadata becomes available (still no body).
+      const attachment = { id: "att_1", filename: "secret.pdf", mimeType: "application/pdf", sizeBytes: 1234 }
+      mockDraftAttachments = [attachment]
+      rerender()
+
+      expect(mockRestoreAttachments).toHaveBeenCalledWith([attachment])
+    })
+
     it("does not clobber typed content when a deferred (decrypting) draft body lands after the user types", () => {
       // Repro of the staging data-loss bug: restore an E2E draft whose sealed body
       // is still decrypting. `isDraftLoaded` stays false, so the one-shot init is

@@ -454,6 +454,7 @@ describe("useDraftMessage", () => {
         envelope: { v: 2 },
         e2eVersion: 2,
         contentMarkdown: "top secret",
+        attachmentRefs: [],
       })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
@@ -512,6 +513,7 @@ describe("useDraftMessage", () => {
         envelope: { v: 2 },
         e2eVersion: 2,
         contentMarkdown: "x",
+        attachmentRefs: [],
       })
       await seedDraftCacheFromIdb(workspaceId)
 
@@ -545,6 +547,156 @@ describe("useDraftMessage", () => {
 
       expect(sealSpy).not.toHaveBeenCalled()
       expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0)
+    })
+
+    // Stage 4d — attachments roam sealed inside the body's ciphertext.
+    describe("attachments (Stage 4d)", () => {
+      const ref = (id: string, filename: string, sizeBytes: number) => ({
+        attachmentId: id,
+        key: "AAAA",
+        iv: "BBBB",
+        filename,
+        mimeType: "text/plain",
+        sizeBytes,
+      })
+      const sealMock = (attachmentRefs: ReturnType<typeof ref>[] = []) =>
+        vi.spyOn(sealDraft, "sealDraftContent").mockResolvedValue({
+          ciphertext: "ct",
+          envelope: { v: 2 },
+          e2eVersion: 2,
+          contentMarkdown: "body",
+          attachmentRefs,
+        })
+
+      it("seals the attachment ids into the body (passes attachmentIds to the seal, never at rest)", async () => {
+        const sealSpy = sealMock()
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+        const attachment = { id: "att_1", filename: "f.txt", mimeType: "text/plain", sizeBytes: 10 }
+
+        await act(async () => {
+          await result.current.saveDraft(makeDoc("body"), [attachment])
+        })
+
+        expect(sealSpy).toHaveBeenCalledWith(expect.objectContaining({ attachmentIds: ["att_1"] }))
+        // E2EE-4: the plaintext attachment linkage never lands on disk.
+        const persisted = await loadedDraft(draftKey)
+        expect(persisted?.attachments).toEqual([])
+      })
+
+      it("surfaces decrypted attachments recovered from the refs, not the empty at-rest row", async () => {
+        await putSealedLoaded("draft_sealed")
+        seedDecryption("draft_sealed", {
+          contentMarkdown: "hi",
+          contentJson: makeDoc("hi"),
+          attachmentRefs: [ref("att_7", "p.pdf", 99)],
+          sources: [],
+        })
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+
+        await waitFor(() => expect(result.current.isLoaded).toBe(true))
+        expect(result.current.attachments).toEqual([
+          { id: "att_7", filename: "p.pdf", mimeType: "text/plain", sizeBytes: 99 },
+        ])
+      })
+
+      it("addAttachment re-seals with the new attachment, reading the body from the decrypt cache", async () => {
+        await putSealedLoaded("draft_sealed")
+        seedDecryption("draft_sealed", {
+          contentMarkdown: "hi",
+          contentJson: makeDoc("hi"),
+          attachmentRefs: [],
+          sources: [],
+        })
+        const sealSpy = sealMock([ref("att_9", "a.png", 5)])
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+        await waitFor(() => expect(result.current.isLoaded).toBe(true))
+
+        await act(async () => {
+          await result.current.addAttachment({ id: "att_9", filename: "a.png", mimeType: "image/png", sizeBytes: 5 })
+        })
+
+        expect(sealSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ contentJson: makeDoc("hi"), attachmentIds: ["att_9"] })
+        )
+      })
+
+      it("a content-only save preserves the draft's already-sealed attachments", async () => {
+        await putSealedLoaded("draft_sealed")
+        seedDecryption("draft_sealed", {
+          contentMarkdown: "old",
+          contentJson: makeDoc("old"),
+          attachmentRefs: [ref("att_3", "x.txt", 3)],
+          sources: [],
+        })
+        const sealSpy = sealMock([ref("att_3", "x.txt", 3)])
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+        await waitFor(() => expect(result.current.isLoaded).toBe(true))
+
+        // A keystroke save carries no attachments arg — the sealed set must survive.
+        await act(async () => {
+          await result.current.saveDraft(makeDoc("new"))
+        })
+
+        expect(sealSpy).toHaveBeenCalledWith(expect.objectContaining({ attachmentIds: ["att_3"] }))
+      })
+
+      it("removeAttachment re-seals without the removed id", async () => {
+        await putSealedLoaded("draft_sealed")
+        seedDecryption("draft_sealed", {
+          contentMarkdown: "body",
+          contentJson: makeDoc("body"),
+          attachmentRefs: [ref("att_a", "a", 1), ref("att_b", "b", 1)],
+          sources: [],
+        })
+        const sealSpy = sealMock([ref("att_b", "b", 1)])
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+        await waitFor(() => expect(result.current.isLoaded).toBe(true))
+
+        await act(async () => {
+          await result.current.removeAttachment("att_a")
+        })
+
+        expect(sealSpy).toHaveBeenCalledWith(expect.objectContaining({ attachmentIds: ["att_b"] }))
+      })
+
+      it("removeAttachment clears the draft when it leaves no body and no attachments", async () => {
+        await putSealedLoaded("draft_sealed")
+        seedDecryption("draft_sealed", {
+          contentMarkdown: "",
+          contentJson: EMPTY_DOC,
+          attachmentRefs: [ref("att_only", "only", 1)],
+          sources: [],
+        })
+        const sealSpy = sealMock()
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+        await waitFor(() => expect(result.current.isLoaded).toBe(true))
+
+        await act(async () => {
+          await result.current.removeAttachment("att_only")
+        })
+
+        expect(sealSpy).not.toHaveBeenCalled()
+        expect(await loadedDraft(draftKey)).toBeUndefined()
+      })
+
+      it("does not persist an attachment while the session is locked (E2EE-4)", async () => {
+        vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+        const sealSpy = vi.spyOn(sealDraft, "sealDraftContent")
+
+        const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, e2eStreamId))
+
+        await act(async () => {
+          await result.current.addAttachment({ id: "att_x", filename: "x", mimeType: "text/plain", sizeBytes: 1 })
+        })
+
+        expect(sealSpy).not.toHaveBeenCalled()
+        expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0)
+      })
     })
   })
 })

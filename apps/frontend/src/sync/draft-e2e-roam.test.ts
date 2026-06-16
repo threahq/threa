@@ -5,6 +5,9 @@ import { db } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { sealDraftContent } from "@/lib/crypto/seal-draft"
 import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
+import { clearAttachmentRefCache, getAttachmentRef, rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { clearDecryptCache } from "@/lib/crypto/decrypt-cache"
+import { requestDraftDecryption } from "@/lib/drafts/decryption"
 import { applyDraftUpserted } from "./draft-sync"
 import * as sessionStore from "@/stores/e2e-session-store"
 import * as streamKeyCache from "@/lib/crypto/stream-key-cache"
@@ -41,6 +44,8 @@ const session = {
 beforeEach(async () => {
   vi.restoreAllMocks()
   resetDraftStoreCache()
+  clearDecryptCache()
+  clearAttachmentRefCache()
   await db.drafts.clear()
   await db.composerLoaded.clear()
   await db.pendingOperations.clear()
@@ -107,5 +112,76 @@ describe("E2E draft roam (seal → wire → apply → decrypt)", () => {
       }
     )
     expect(opened?.contentJson).toEqual(parseMarkdown("roaming secret"))
+  })
+
+  it("a sealed draft's attachments roam and their keys re-register on the receiving device (Stage 4d)", async () => {
+    // Device A: the per-file key/iv were minted at upload and held in memory.
+    rememberAttachmentRef({
+      attachmentId: "att_1",
+      key: "a2V5",
+      iv: "aXY=",
+      filename: "secret.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+    })
+    const sealed = await sealDraftContent({
+      workspaceId,
+      senderId: userId,
+      streamId,
+      draftId: "draft_att",
+      contentJson: makeDoc("see attached"),
+      attachmentIds: ["att_1"],
+    })
+
+    const wire: Draft = {
+      id: "draft_att",
+      workspaceId,
+      userId,
+      scope,
+      rootStreamId: streamId,
+      contentJson: null,
+      contentMarkdown: null,
+      // No plaintext attachment linkage on the wire — it rides sealed in the body.
+      attachmentIds: [],
+      command: null,
+      contextRefs: null,
+      ciphertext: sealed.ciphertext,
+      envelope: sealed.envelope,
+      e2eVersion: sealed.e2eVersion,
+      version: 1,
+      clientUpdatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    // Device B: fresh — the in-memory ref cache is empty, so the file can't be
+    // fetched or re-sealed until the draft decrypts and re-registers its key.
+    clearAttachmentRefCache()
+    expect(getAttachmentRef("att_1")).toBeNull()
+
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wire }, workspaceId)
+    const stored = await db.drafts.get("draft_att")
+    // At rest the row carries no plaintext attachment metadata (E2EE-4).
+    expect(stored?.attachments).toEqual([])
+
+    // The composer's decrypt-on-read recovers the refs and re-registers them so a
+    // later send on THIS device can re-seal the attachment by id.
+    requestDraftDecryption(
+      stored!,
+      { privateKey: session.privateKey!, recipientKeyId: session.keyId! },
+      workspaceId,
+      streamId
+    )
+    await vi.waitFor(() => expect(getAttachmentRef("att_1")).not.toBeNull())
+    // The re-registered ref must carry the crypto material (key/iv), not just
+    // display metadata — otherwise B couldn't view or re-seal the attachment.
+    expect(getAttachmentRef("att_1")).toEqual({
+      attachmentId: "att_1",
+      key: "a2V5",
+      iv: "aXY=",
+      filename: "secret.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+    })
   })
 })
