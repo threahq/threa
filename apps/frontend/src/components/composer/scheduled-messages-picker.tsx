@@ -81,7 +81,7 @@ export function ScheduledMessagesPicker({
   // bottom sheet). We instead close the popover when long-press fires and
   // render the drawer at the picker's top level, outside the popover tree.
   const [actionTarget, setActionTarget] = useState<ScheduledMessageView | null>(null)
-  const { setTriggerRef, anchor } = useComposerAnchor()
+  const { setTriggerRef, anchor } = useComposerAnchor(open)
 
   const { items } = useScheduledList(workspaceId, "pending", streamId)
   const cancelMutation = useCancelScheduled(workspaceId)

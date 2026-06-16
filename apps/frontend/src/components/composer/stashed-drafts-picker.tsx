@@ -74,7 +74,7 @@ export function StashedDraftsPicker({
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
-  const { setTriggerRef, anchor } = useComposerAnchor()
+  const { setTriggerRef, anchor } = useComposerAnchor(open)
   const isMobile = useIsMobile()
   const count = drafts.length
   const now = useMemo(() => new Date(), [open])
