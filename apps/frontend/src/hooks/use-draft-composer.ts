@@ -257,37 +257,48 @@ export function useDraftComposer({
     restoreAttachments(attachments)
   }, [restoreAttachments])
 
-  // Late hydrate: the loaded draft's body can become available AFTER the one-shot
-  // init above already ran — an E2E draft that was locked or still decrypting at
-  // mount (unlock/decrypt lands later), or a stash/restore pointer move that swaps
-  // in a different draft whose body decrypts on a later tick. When that body lands
-  // and the user hasn't engaged with the editor, drop it in.
+  // Late hydrate: the loaded draft's body/attachments can become available AFTER
+  // the one-shot init above already ran — an E2E draft that was locked or still
+  // decrypting at mount (unlock/decrypt lands later), or a stash/restore pointer
+  // move that swaps in a different draft whose body decrypts on a later tick. When
+  // it lands and the user hasn't engaged with the editor, drop it in.
   //
   // `userEngagedRef` is the real guard: it flips true on the first keystroke, so
   // this never overwrites typed content. The two apply paths are deliberately
   // narrow so a SEND/clear (which empties the editor) can't trigger a re-fill:
   //  - explicit rehydrate (scope change / stash-restore): override transient
   //    content once, even across a pending decrypt (`awaitingRehydrateRef`).
-  //  - unlock/late-decrypt: apply only on the RISING edge of body-availability
-  //    (the body just became available) into a still-empty editor. A send clears
-  //    the editor while `savedDraft` briefly lags non-empty — that's a falling
-  //    edge / no edge, so it never re-fills the just-sent content.
+  //  - unlock/late-decrypt: apply only on the RISING edge of availability (body or
+  //    attachments just became available) into a still-empty editor. A send clears
+  //    the editor AND empties the decrypted attachments, so that's a falling edge /
+  //    no edge and it never re-fills the just-sent content.
+  //
+  // Availability tracks body OR attachments so an attachment-only sealed draft
+  // (empty body, files attached) hydrates its chips on unlock too; `setContent` is
+  // still gated on the body being present so an empty body never blanks the editor.
+  // A stable key over the loaded draft's attachment ids: it only changes when the
+  // set does, so it can drive the effect below (the `savedAttachments` array itself
+  // is a fresh identity every render and would re-run it constantly). This is what
+  // lets an attachment-only sealed draft — whose body never changes from empty —
+  // re-run the effect when its attachments decrypt in.
+  const savedAttachmentIds = savedAttachments.map((a) => a.id).join(",")
   useEffect(() => {
-    const savedAvailable = hasDocContent(savedDraft)
+    const savedBodyAvailable = hasDocContent(savedDraft)
+    const savedAvailable = savedBodyAvailable || savedAttachmentsRef.current.length > 0
     const becameAvailable = savedAvailable && !prevSavedAvailableRef.current
     prevSavedAvailableRef.current = savedAvailable
     if (!isDraftLoaded || userEngagedRef.current || !savedAvailable) return
     if (awaitingRehydrateRef.current) {
-      setContent(savedDraft)
+      if (savedBodyAvailable) setContent(savedDraft)
       hydrateAttachments()
       awaitingRehydrateRef.current = false
       return
     }
     if (becameAvailable && !hasDocContent(content)) {
-      setContent(savedDraft)
+      if (savedBodyAvailable) setContent(savedDraft)
       hydrateAttachments()
     }
-  }, [isDraftLoaded, savedDraft, content, hydrateAttachments])
+  }, [isDraftLoaded, savedDraft, savedAttachmentIds, content, hydrateAttachments])
 
   // Blank the editor the moment the loaded draft is removed underneath the
   // composer: sent/resolved here, or discarded/resolved on another device (its

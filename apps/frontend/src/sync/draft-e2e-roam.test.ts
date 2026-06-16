@@ -173,6 +173,15 @@ describe("E2E draft roam (seal → wire → apply → decrypt)", () => {
       streamId
     )
     await vi.waitFor(() => expect(getAttachmentRef("att_1")).not.toBeNull())
-    expect(getAttachmentRef("att_1")).toMatchObject({ attachmentId: "att_1", filename: "secret.pdf", sizeBytes: 1234 })
+    // The re-registered ref must carry the crypto material (key/iv), not just
+    // display metadata — otherwise B couldn't view or re-seal the attachment.
+    expect(getAttachmentRef("att_1")).toEqual({
+      attachmentId: "att_1",
+      key: "a2V5",
+      iv: "aXY=",
+      filename: "secret.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+    })
   })
 })

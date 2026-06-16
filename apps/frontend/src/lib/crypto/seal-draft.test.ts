@@ -106,11 +106,18 @@ describe("seal-draft", () => {
       }
     )
     expect(opened?.contentJson).toEqual(parseMarkdown("body with a file"))
-    expect(opened?.attachmentRefs?.[0]).toMatchObject({
-      attachmentId: "att_1",
-      filename: "secret.pdf",
-      sizeBytes: 1234,
-    })
+    // The full ref must round-trip — display metadata AND the per-file crypto
+    // material (key/iv), which is what makes a roamed attachment viewable/sendable.
+    expect(opened?.attachmentRefs).toEqual([
+      {
+        attachmentId: "att_1",
+        key: "a2V5",
+        iv: "aXY=",
+        filename: "secret.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1234,
+      },
+    ])
   })
 
   it("throws when the session is locked (the caller keeps content in the composer)", async () => {
