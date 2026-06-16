@@ -33,7 +33,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
 import { SnippetEditorDialog } from "./snippet-editor-dialog"
-import { shouldConvertPasteToSnippet, defaultSnippetFilename } from "./snippet-paste"
+import { shouldConvertPasteToSnippet, defaultSnippetFilename, SNIPPET_FALLBACK_FILENAME } from "./snippet-paste"
 import type { GiphyGif } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
@@ -460,7 +460,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       const uploadFn = onFileUploadRef.current
       if (!editorInstance || editorInstance.isDestroyed || !uploadFn) return
 
-      const safeName = filename.trim() || "snippet.txt"
+      const safeName = filename.trim() || SNIPPET_FALLBACK_FILENAME
       const file = new File([text], safeName, { type: "text/plain" })
 
       // Restore the caret to where the paste landed (the dialog stole focus).
@@ -1056,7 +1056,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             }
           }}
           initialText={snippetDraft?.text ?? ""}
-          defaultFilename={snippetDraft?.filename ?? "snippet.txt"}
+          defaultFilename={snippetDraft?.filename ?? SNIPPET_FALLBACK_FILENAME}
           onSave={handleSnippetSave}
         />
       ) : null}

@@ -30,3 +30,6 @@ export function shouldConvertPasteToSnippet(text: string): boolean {
 export function defaultSnippetFilename(index: number): string {
   return `snippet-${index}.txt`
 }
+
+/** Filename used when the snippet's name field is left blank on save. */
+export const SNIPPET_FALLBACK_FILENAME = "snippet.txt"

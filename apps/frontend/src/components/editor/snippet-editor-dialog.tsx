@@ -10,6 +10,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { SNIPPET_FALLBACK_FILENAME } from "./snippet-paste"
 
 interface SnippetEditorDialogProps {
   open: boolean
@@ -44,14 +45,23 @@ export function SnippetEditorDialog({
   const [text, setText] = useState(initialText)
   const [filename, setFilename] = useState(defaultFilename)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const wasOpenRef = useRef(false)
 
-  // Re-seed from the incoming paste each time the dialog opens so a previously
-  // cancelled snippet can't leak into the next one.
+  // Re-seed from the incoming paste only on the closed→open transition, then
+  // focus the body so the user lands on their pasted content (Radix would
+  // otherwise focus the filename input, the first tabbable element). Keying on
+  // the transition rather than the prop values means a re-render while the
+  // dialog is open can't clobber in-progress edits.
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpenRef.current) {
       setText(initialText)
       setFilename(defaultFilename)
+      // Defer past Radix's open-focus so the move to the textarea wins.
+      const raf = requestAnimationFrame(() => textareaRef.current?.focus())
+      wasOpenRef.current = true
+      return () => cancelAnimationFrame(raf)
     }
+    if (!open) wasOpenRef.current = false
   }, [open, initialText, defaultFilename])
 
   const trimmedFilename = filename.trim()
@@ -79,7 +89,6 @@ export function SnippetEditorDialog({
       <ResponsiveDialogContent
         desktopClassName="max-w-[760px] gap-0 p-0 overflow-hidden"
         drawerClassName="flex max-h-[92dvh] flex-col gap-0 p-0 overflow-hidden"
-        aria-describedby={undefined}
       >
         <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
           <ResponsiveDialogHeader>
@@ -99,12 +108,15 @@ export function SnippetEditorDialog({
 
         <div className="border-t border-border" />
 
-        <div className="flex-1 min-h-0 flex flex-col gap-3 px-4 sm:px-6 py-4">
+        {/* overflow-y-auto so a shrunken visual viewport (mobile keyboard) can
+            scroll the fields into reach instead of clipping them off-screen,
+            per the ResponsiveDialog disableSnapPoints contract. */}
+        <div className="flex-1 min-h-0 flex flex-col gap-3 px-4 sm:px-6 py-4 overflow-y-auto">
           <Input
             aria-label="Snippet filename"
             value={filename}
             onChange={(e) => setFilename(e.target.value)}
-            placeholder="snippet.txt"
+            placeholder={SNIPPET_FALLBACK_FILENAME}
             className="text-sm font-mono"
           />
           {/* wrap="off": long lines scroll horizontally so code keeps its
