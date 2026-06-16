@@ -212,6 +212,26 @@ describe("CodeBlock collapse behavior", () => {
     await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
   })
 
+  it("always renders a copy button (not hover-gated) that copies the code", async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } })
+
+    renderCodeBlock("const x = 1\nconst y = 2")
+
+    const copyButton = screen.getByRole("button", { name: /copy code/i })
+    // The button must be visible at rest — no `opacity-0` gate that would hide
+    // it on touch devices where there's no hover.
+    expect(copyButton.className).not.toContain("opacity-0")
+
+    await user.click(copyButton)
+    expect(writeText).toHaveBeenCalledWith("const x = 1\nconst y = 2")
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument())
+
+    vi.unstubAllGlobals()
+  })
+
   it("scopes collapse state per messageId", async () => {
     const user = userEvent.setup()
     measure = { lineCount: 15, lineHeightPx: 20 }
