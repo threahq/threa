@@ -12,6 +12,13 @@ interface StreamDateHeaderProps {
   visible: boolean
   /** Jump the timeline to the first message on or after the chosen date. */
   onJumpToDate: (date: Date) => void
+  /**
+   * The timeline scroller. The pill is an overlay sibling of the scroller (not a
+   * descendant), so a wheel landing on its `pointer-events-auto` button would
+   * otherwise scroll the wrong ancestor and leave the timeline stuck. Forward
+   * the wheel to the scroller so wheeling over the pill scrolls the messages.
+   */
+  scrollerRef?: React.RefObject<HTMLElement | null>
 }
 
 /**
@@ -20,7 +27,7 @@ interface StreamDateHeaderProps {
  * scroll area (absolute, pointer-events only on the control) so it never shifts
  * timeline layout (INV-21). Labels render in the device's local time (INV-42).
  */
-export function StreamDateHeader({ dayStartMs, visible, onJumpToDate }: StreamDateHeaderProps) {
+export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRef }: StreamDateHeaderProps) {
   const [open, setOpen] = useState(false)
   const [showCalendar, setShowCalendar] = useState(false)
 
@@ -51,8 +58,17 @@ export function StreamDateHeader({ dayStartMs, visible, onJumpToDate }: StreamDa
           <button
             type="button"
             aria-label={`Jump to date — showing ${label}`}
+            // Forward wheel to the scroller (see scrollerRef doc): without this,
+            // wheeling over the pill leaves the timeline stuck. Skipped while the
+            // jump menu is open so the popover handles its own scroll.
+            onWheel={(e) => {
+              if (!open) scrollerRef?.current?.scrollBy({ top: e.deltaY })
+            }}
             className={cn(
-              "pointer-events-auto inline-flex items-center gap-1 rounded-full border bg-background/95 px-3 py-1",
+              // A faded-out pill must not capture clicks or wheel — drop pointer
+              // events so they reach the scroller beneath it.
+              visible ? "pointer-events-auto" : "pointer-events-none",
+              "inline-flex items-center gap-1 rounded-full border bg-background/95 px-3 py-1",
               "text-xs font-medium text-muted-foreground shadow-sm backdrop-blur",
               "transition-colors hover:bg-accent hover:text-foreground",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"

@@ -2279,7 +2279,12 @@ function TimelineMessageList({
           <ComposerFooterSpacer />
         </div>
       </div>
-      <StreamDateHeader dayStartMs={topDayMs} visible={datePillVisible} onJumpToDate={onJumpToDate} />
+      <StreamDateHeader
+        dayStartMs={topDayMs}
+        visible={datePillVisible}
+        onJumpToDate={onJumpToDate}
+        scrollerRef={scrollerRef}
+      />
       {isInitialSettling && (
         <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
           {skeleton}
