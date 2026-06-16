@@ -4,11 +4,11 @@ import { planActionOverflow, planTriggerVisibility } from "./composer-action-bar
 // Mirrors the real bar's secondary actions: array order is the left-to-right
 // display order; `collapsePriority` (lower folds first) is independent of it.
 const ACTIONS = [
+  { key: "expand", collapsePriority: 1 },
   { key: "emoji", collapsePriority: 2 },
   { key: "mention", collapsePriority: 3 },
   { key: "command", collapsePriority: 0 },
   { key: "attach", collapsePriority: 4 },
-  { key: "expand", collapsePriority: 1 },
 ]
 
 const keys = (list: { key: string }[]) => list.map((a) => a.key)
@@ -33,7 +33,7 @@ describe("planActionOverflow", () => {
     // ~360px: room for 4 inline → only the single lowest priority (command) folds.
     const narrow = planActionOverflow(ACTIONS, 360, PINNED)
     expect(keys(narrow.overflow)).toEqual(["command"])
-    expect(keys(narrow.inline)).toEqual(["emoji", "mention", "attach", "expand"])
+    expect(keys(narrow.inline)).toEqual(["expand", "emoji", "mention", "attach"])
 
     // ~300px: room for 2 inline → the three lowest priorities fold.
     const narrower = planActionOverflow(ACTIONS, 300, PINNED)

@@ -134,7 +134,18 @@ export function ComposerActionBar({
   const width = useElementWidth(barRef)
 
   const actions = useMemo<CollapsibleAction[]>(() => {
-    const list: CollapsibleAction[] = [
+    const list: CollapsibleAction[] = []
+    if (onExpandClick) {
+      list.push({
+        key: "expand",
+        label: "Expand editor",
+        ariaLabel: "Expand to fullscreen editor",
+        icon: <Maximize2 className="h-3.5 w-3.5" />,
+        onSelect: onExpandClick,
+        collapsePriority: 1,
+      })
+    }
+    list.push(
       {
         key: "emoji",
         label: "Emoji",
@@ -162,18 +173,8 @@ export function ComposerActionBar({
         icon: <Paperclip className="h-4 w-4" />,
         onSelect: onAttachClick,
         collapsePriority: 4,
-      },
-    ]
-    if (onExpandClick) {
-      list.push({
-        key: "expand",
-        label: "Expand editor",
-        ariaLabel: "Expand to fullscreen editor",
-        icon: <Maximize2 className="h-3.5 w-3.5" />,
-        onSelect: onExpandClick,
-        collapsePriority: 1,
-      })
-    }
+      }
+    )
     return list
   }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick])
 
@@ -199,6 +200,11 @@ export function ComposerActionBar({
     () => planActionOverflow(actions, width, pinnedCount),
     [actions, width, pinnedCount]
   )
+
+  // Expand sits immediately before Formatting (Aa) to match the pre-overflow
+  // toolbar order; the rest of the collapsible actions render after Aa.
+  const expandAction = inlineActions.find((a) => a.key === "expand")
+  const mainInlineActions = inlineActions.filter((a) => a.key !== "expand")
 
   return (
     <div ref={barRef} className="flex items-center gap-1">
@@ -228,7 +234,10 @@ export function ComposerActionBar({
               className="min-w-[168px]"
               onCloseAutoFocus={(e) => e.preventDefault()}
             >
-              {overflowActions.map((action) => (
+              {/* Render collapsed actions bottom-up so the leftmost toolbar item
+                  sits closest to the "+" trigger and the rightmost item is
+                  farthest away — matching the spatial order of the bar. */}
+              {[...overflowActions].reverse().map((action) => (
                 <DropdownMenuItem key={action.key} className="gap-2 cursor-pointer" onSelect={action.onSelect}>
                   <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">{action.icon}</span>
                   {action.label}
@@ -244,6 +253,27 @@ export function ComposerActionBar({
         <span className="text-[11px] text-muted-foreground flex-1 truncate select-none pointer-events-none">
           Select text to format
         </span>
+      )}
+
+      {expandAction && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={expandAction.ariaLabel ?? expandAction.label}
+              className="h-7 w-7 shrink-0"
+              onClick={expandAction.onSelect}
+              disabled={disabled}
+            >
+              {expandAction.icon}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">
+            {expandAction.label}
+          </TooltipContent>
+        </Tooltip>
       )}
 
       <Tooltip>
@@ -266,7 +296,7 @@ export function ComposerActionBar({
         </TooltipContent>
       </Tooltip>
 
-      {inlineActions.map((action) => (
+      {mainInlineActions.map((action) => (
         <Tooltip key={action.key}>
           <TooltipTrigger asChild>
             <Button
