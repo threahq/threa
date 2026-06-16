@@ -70,7 +70,8 @@ strings. Not for code identifiers, log lines, or internal comments.
     name it.
 16. **Invented concept labels** — christening a plain idea to sound deep: "the
     calibration paradox", "the X effect", a quoted neologism. Describe the
-    mechanic instead of naming it.
+    mechanic instead of naming it. An established term of art is fine; the tell is
+    coining a new one for effect.
 17. **Bold-first bullets** — every bullet led by a `**bolded phrase** —` then a
     gloss. One or two for genuine emphasis is fine; a whole list of them is a
     template tell. Like the accent spans it's markup, so hunt it (`grep -rn
