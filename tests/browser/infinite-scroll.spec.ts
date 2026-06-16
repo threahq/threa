@@ -313,9 +313,12 @@ test.describe("Infinite Scroll", () => {
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(messageLocator(page, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
 
-    // "Jump to latest" button should not be visible when at the bottom
+    // "Jump to latest" button should not be visible when at the bottom. Allow a
+    // settle window: under CI contention the initial auto-scroll-to-bottom can
+    // still be in flight when the last message first paints, leaving the button
+    // transiently visible (it keys off Virtuoso's distFromEnd).
     const jumpButton = page.getByRole("button", { name: "Jump to latest" })
-    await expect(jumpButton).not.toBeVisible()
+    await expect(jumpButton).not.toBeVisible({ timeout: 15000 })
 
     // Scroll to the top
     await expect

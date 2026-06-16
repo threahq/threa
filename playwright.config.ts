@@ -122,7 +122,12 @@ export default defineConfig({
   // Local: auto (half CPU cores).
   workers: process.env.CI ? 3 : undefined,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
-  timeout: 30000, // 30s per test
+  // 30s locally for fast feedback. CI gets 60s: the shared 4-vCPU runner makes
+  // setup + interaction-heavy flows (send-then-edit, hover-reveal menus) take
+  // markedly longer under contention, and several tests were timing out mid-flow
+  // only to pass on the isolated retry. A higher ceiling absorbs that without
+  // masking a genuinely stuck test — the 25-min job timeout still bounds it.
+  timeout: process.env.CI ? 60000 : 30000,
 
   use: {
     baseURL: `http://localhost:${frontendPort}`,
