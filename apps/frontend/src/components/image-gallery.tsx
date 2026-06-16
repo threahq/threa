@@ -8,6 +8,7 @@ import {
   X,
   Download,
   Copy,
+  Check,
   ChevronLeft,
   ChevronRight,
   PanelRightClose,
@@ -475,9 +476,36 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   const goPrev = useCallback(() => goTo(currentIndex - 1), [goTo, currentIndex])
   const goNext = useCallback(() => goTo(currentIndex + 1), [goTo, currentIndex])
 
-  const handleDownload = useCallback(() => {
+  // In-place confirmation for the copy/download buttons: the icon swaps to a
+  // checkmark for a beat instead of popping a toast. Same h-5 w-5 footprint, so
+  // nothing shifts (INV-21). Timers are cleared on unmount and on re-trigger.
+  const [copyDone, setCopyDone] = useState(false)
+  const [downloadDone, setDownloadDone] = useState(false)
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const downloadResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (copyResetRef.current) clearTimeout(copyResetRef.current)
+      if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
+    },
+    []
+  )
+  // Clear any in-flight confirmation when the viewed item changes or the gallery
+  // reopens, so a checkmark from item A never lingers onto item B's button.
+  useEffect(() => {
+    setCopyDone(false)
+    setDownloadDone(false)
+    if (copyResetRef.current) clearTimeout(copyResetRef.current)
+    if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
+  }, [isOpen, current?.attachmentId])
+
+  const handleDownload = useCallback(async () => {
     if (!current) return
-    downloadImage(workspaceId, current.attachmentId, current.filename)
+    const ok = await downloadImage(workspaceId, current.attachmentId, current.filename)
+    if (!ok) return
+    setDownloadDone(true)
+    if (downloadResetRef.current) clearTimeout(downloadResetRef.current)
+    downloadResetRef.current = setTimeout(() => setDownloadDone(false), 1200)
   }, [workspaceId, current])
 
   const handleDownloadRaw = useCallback(async () => {
@@ -508,21 +536,26 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const handleCopy = useCallback(async () => {
     if (!current?.url) return
+    let ok = false
     if (current.type === "image") {
-      copyImage(current.url)
-      return
-    }
-    if (current.type === "markdown" || current.type === "html") {
+      ok = await copyImage(current.url)
+    } else if (current.type === "markdown" || current.type === "html") {
       try {
         const text = await fetchTextContent(current.url)
         await navigator.clipboard.writeText(text)
+        ok = true
       } catch {
         // Clipboard or fetch failed; nothing actionable for the user here.
       }
     }
+    if (!ok) return
+    setCopyDone(true)
+    if (copyResetRef.current) clearTimeout(copyResetRef.current)
+    copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
   }, [current])
 
   const canCopy = current?.type === "image" || current?.type === "markdown" || current?.type === "html"
+  const copyLabel = current?.type === "image" ? "Copy image" : "Copy source"
   const canToggleRaw = current?.type === "markdown" || current?.type === "html"
 
   // Keyboard navigation
@@ -772,8 +805,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
             className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
             onClick={handleDownload}
           >
-            <Download className="h-5 w-5" />
-            <span className="sr-only">Download</span>
+            {downloadDone ? <Check className="h-5 w-5" /> : <Download className="h-5 w-5" />}
+            <span className="sr-only">{downloadDone ? "Download started" : "Download"}</span>
           </Button>
           {canCopy && (
             <Button
@@ -782,8 +815,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
               className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
               onClick={handleCopy}
             >
-              <Copy className="h-5 w-5" />
-              <span className="sr-only">{current?.type === "image" ? "Copy image" : "Copy source"}</span>
+              {copyDone ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
+              <span className="sr-only">{copyDone ? "Copied" : copyLabel}</span>
             </Button>
           )}
         </>

@@ -50,7 +50,6 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
       saveMutation.mutate(
         { messageId, remindAt: date?.toISOString() ?? null },
         {
-          onSuccess: () => toast.success(date ? "Reminder set" : "Saved"),
           onError: () => toast.error("Could not save"),
         }
       )
@@ -59,18 +58,16 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
     updateMutation.mutate(
       { savedId: saved.id, input: { remindAt: date?.toISOString() ?? null } },
       {
-        onSuccess: () => toast.success(date ? "Reminder set" : "Reminder cleared"),
         onError: () => toast.error("Could not update reminder"),
       }
     )
   }
 
-  const setStatus = (status: SavedStatus, successLabel: string) => {
+  const setStatus = (status: SavedStatus) => {
     if (!saved) return
     updateMutation.mutate(
       { savedId: saved.id, input: { status } },
       {
-        onSuccess: () => toast.success(successLabel),
         onError: () => toast.error("Could not update"),
       }
     )
@@ -79,7 +76,6 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
   const remove = () => {
     if (!saved) return
     deleteMutation.mutate(saved.id, {
-      onSuccess: () => toast.success("Removed from saved"),
       onError: () => toast.error("Could not remove"),
     })
   }
@@ -159,18 +155,18 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
         <div className="p-1">
           {status === "saved" && (
             <>
-              <PopoverMenuButton onClick={() => setStatus("done", "Marked done")}>
+              <PopoverMenuButton onClick={() => setStatus("done")}>
                 <Check className="h-3.5 w-3.5" />
                 Mark done
               </PopoverMenuButton>
-              <PopoverMenuButton onClick={() => setStatus("archived", "Archived")}>
+              <PopoverMenuButton onClick={() => setStatus("archived")}>
                 <Archive className="h-3.5 w-3.5" />
                 Archive
               </PopoverMenuButton>
             </>
           )}
           {status !== "saved" && (
-            <PopoverMenuButton onClick={() => setStatus("saved", "Restored")}>
+            <PopoverMenuButton onClick={() => setStatus("saved")}>
               <Undo2 className="h-3.5 w-3.5" />
               Move back to Saved
             </PopoverMenuButton>

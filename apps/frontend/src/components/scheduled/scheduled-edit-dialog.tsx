@@ -168,7 +168,6 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
     if (isPastNow && scheduled && !isLocalRow) {
       try {
         await sendNowMutation.mutateAsync(scheduled.id)
-        toast.success("Sent")
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Could not send"
         toast.error(message)
@@ -226,7 +225,6 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
           expectedVersion,
         },
       })
-      toast.success(isPast ? "Sent" : "Updated")
       handleClose()
     } catch (err: unknown) {
       const isStaleVersion =
@@ -239,17 +237,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       const message = err instanceof Error ? err.message : "Could not save"
       setError(message)
     }
-  }, [
-    scheduled,
-    contentJson,
-    sendAtDate,
-    expectedVersion,
-    isLocalRow,
-    isPast,
-    updateMutation,
-    handleClose,
-    attachmentsHook,
-  ])
+  }, [scheduled, contentJson, sendAtDate, expectedVersion, isLocalRow, updateMutation, handleClose, attachmentsHook])
 
   const isSaving = updateMutation.isPending
 

@@ -423,10 +423,8 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
         await deleteDraft(streamId)
         // Drafts are fully deleted — leave the (now-gone) stream if viewing it.
         if (currentStreamId === streamId) navigate(`/w/${workspaceId}`)
-        toast.success("Draft deleted")
       } else {
         await archiveStream.mutateAsync(streamId)
-        toast.success("Stream archived")
       }
     } catch {
       toast.error(isDraft ? "Failed to delete draft" : "Failed to archive stream")

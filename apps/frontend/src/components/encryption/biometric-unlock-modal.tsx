@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { toast } from "sonner"
 import { Fingerprint } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -45,7 +44,6 @@ export function BiometricUnlockModal({
     setSubmitting(true)
     try {
       await unlockWithBiometric(workspaceId, userId)
-      toast.success("Encrypted scratchpads unlocked")
       // The modal stays mounted under the provider, so clear the busy flag or a
       // reopen would render a stuck "Waiting for biometrics…" button.
       setSubmitting(false)

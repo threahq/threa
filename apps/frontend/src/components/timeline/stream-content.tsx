@@ -701,7 +701,6 @@ export function StreamContent({
         messageIds,
         leaseKey,
       })
-      toast.success(`Moved ${messageIds.length} message${messageIds.length === 1 ? "" : "s"} to thread`)
       cancelBatchMode()
     } catch (error) {
       console.error("moveToThread failed", { error, streamId, moveAttempt })

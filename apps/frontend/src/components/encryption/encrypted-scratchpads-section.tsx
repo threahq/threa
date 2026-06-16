@@ -98,7 +98,6 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
     setMethodPending(true)
     try {
       await enrollDevicePin(workspaceId, userId, pin)
-      toast.success("PIN set for this device")
       setPin("")
       setPinEditorOpen(false)
       await refreshUnlockMethod()
@@ -115,7 +114,6 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
     try {
       const registration = await registerDeviceBiometric(userId)
       await enrollDeviceBiometric(workspaceId, userId, registration)
-      toast.success("Biometric unlock enabled for this device")
       setPinEditorOpen(false)
       await refreshUnlockMethod()
     } catch (err) {
@@ -132,7 +130,6 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
     setMethodPending(true)
     try {
       await setDeviceTrust(workspaceId, userId, true)
-      toast.success("This device will unlock automatically")
       setPinEditorOpen(false)
       await refreshUnlockMethod()
     } catch (err) {
@@ -146,7 +143,6 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
     setRevoking(true)
     try {
       await revokeKeyForUser(workspaceId, userId)
-      toast.success("Encryption key revoked")
       setRevokeOpen(false)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to revoke key"

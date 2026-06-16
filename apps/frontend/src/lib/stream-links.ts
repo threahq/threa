@@ -18,7 +18,7 @@ export function buildStreamLink(workspaceId: string, streamId: string): string {
 export async function copyStreamLink(workspaceId: string, streamId: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(buildStreamLink(workspaceId, streamId))
-    toast.success("Link copied")
+    toast.success("Link copied") // INV-63-allow: clipboard copy from a menu/shortcut has no inline anchor
   } catch {
     toast.error("Failed to copy link")
   }

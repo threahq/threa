@@ -71,7 +71,6 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
       },
       {
         onSuccess: () => {
-          toast.success("Saved item updated")
           onOpenChange(false)
         },
         onError: () => toast.error("Could not update saved item"),

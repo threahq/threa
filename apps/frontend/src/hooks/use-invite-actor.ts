@@ -109,10 +109,11 @@ export function useInviteActor(workspaceId: string, streamId: string) {
             ? { keyId: session.keyId, publicKey: session.publicKey }
             : null
         const result = await inviteActorToStream({ workspaceId, streamId, kind, actorId, queryClient, owner })
+        // The plain "invited" path is silent — the member list updates in place.
+        // `invited-unwrapped` is a degraded outcome the user must act on: the actor
+        // has no access until this scratchpad is unlocked and its key is wrapped.
         if (result === "invited-unwrapped") {
-          toast.success(`${E2E_ACTOR_LABELS[kind]} invited — unlock this scratchpad's encryption to grant it access.`)
-        } else {
-          toast.success(`${E2E_ACTOR_LABELS[kind]} invited to this scratchpad`)
+          toast.warning(`${E2E_ACTOR_LABELS[kind]} invited — unlock this scratchpad's encryption to grant it access.`)
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : `Failed to invite ${E2E_ACTOR_LABELS[kind]}`

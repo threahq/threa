@@ -184,7 +184,6 @@ export const commands: Command[] = [
           try {
             await createSavedTodo(title)
             closeDialog()
-            toast.success("To-do added to Saved")
           } catch (error) {
             console.error("Failed to add to-do:", error)
             toast.error("Could not add to-do")

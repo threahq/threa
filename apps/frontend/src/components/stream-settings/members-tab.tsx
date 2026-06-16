@@ -94,7 +94,6 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
     (user: (typeof workspaceUsers)[number]) => {
       if (!canManageMembers) return
       addMutation.mutate(user.id, {
-        onSuccess: () => toast.success("Member added"),
         onError: () => toast.error("Failed to add member"),
       })
     },
@@ -109,7 +108,6 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
   const handleRemove = () => {
     if (!removeMemberId) return
     removeMutation.mutate(removeMemberId, {
-      onSuccess: () => toast.success("Member removed"),
       onError: () => toast.error("Failed to remove member"),
     })
     setRemoveMemberId(null)

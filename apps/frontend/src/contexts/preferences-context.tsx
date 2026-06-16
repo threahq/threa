@@ -164,7 +164,6 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
         if (!old) return old
         return { ...old, userPreferences: newPreferences }
       })
-      toast.success("Settings saved")
     },
   })
 

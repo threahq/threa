@@ -1009,7 +1009,6 @@ function SentMessageEvent({
       saveMessageMutation.mutate(
         { messageId: payload.messageId },
         {
-          onSuccess: () => toast.success("Saved for later"),
           onError: () => toast.error("Could not save message"),
         }
       )
@@ -1019,14 +1018,12 @@ function SentMessageEvent({
       saveMessageMutation.mutate(
         { messageId: payload.messageId },
         {
-          onSuccess: () => toast.success("Moved back to Saved"),
           onError: () => toast.error("Could not restore saved item"),
         }
       )
       return
     }
     unsaveMessageMutation.mutate(savedForMessage.id, {
-      onSuccess: () => toast.success("Removed from saved"),
       onError: () => toast.error("Could not remove saved item"),
     })
   }, [savedForMessage, saveMessageMutation, unsaveMessageMutation, payload.messageId])

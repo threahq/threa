@@ -185,7 +185,6 @@ function NotificationSection({
   const handleChange = (value: string) => {
     const level = value === "default" ? null : (value as NotificationLevel)
     mutation.mutate(level, {
-      onSuccess: () => toast.success("Notification preference updated"),
       onError: () => toast.error("Failed to update notification preference"),
     })
   }
@@ -236,7 +235,6 @@ function VisibilitySection({ workspaceId, stream }: { workspaceId: string; strea
     updateMutation.mutate(
       { visibility: pendingVisibility },
       {
-        onSuccess: () => toast.success("Visibility updated"),
         onError: () => toast.error("Failed to update visibility"),
       }
     )
@@ -313,7 +311,6 @@ function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Str
     updateMutation.mutate(
       { slug },
       {
-        onSuccess: () => toast.success("Channel slug updated"),
         onError: () => toast.error("Failed to update slug"),
       }
     )
@@ -360,7 +357,6 @@ function DisplayNameSection({ workspaceId, stream }: { workspaceId: string; stre
         ? await sealStreamRename({ workspaceId, streamId: stream.id, userId: currentUserId ?? "", name: trimmed })
         : { displayName: trimmed }
       updateMutation.mutate(data, {
-        onSuccess: () => toast.success("Name updated"),
         onError: () => toast.error("Failed to update name"),
       })
     } catch {
@@ -419,7 +415,6 @@ function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stre
     updateMutation.mutate(
       { description },
       {
-        onSuccess: () => toast.success("Description updated"),
         onError: () => toast.error("Failed to update description"),
       }
     )
@@ -485,12 +480,10 @@ function ArchiveSection({
   const handleAction = () => {
     if (isArchived) {
       unarchiveMutation.mutate(stream.id, {
-        onSuccess: () => toast.success(`${capitalize(streamTypeLabel)} unarchived`),
         onError: () => toast.error("Failed to unarchive"),
       })
     } else {
       archiveMutation.mutate(stream.id, {
-        onSuccess: () => toast.success(`${capitalize(streamTypeLabel)} archived`),
         onError: () => toast.error("Failed to archive"),
       })
     }
@@ -547,8 +540,4 @@ function ArchiveSection({
       </ResponsiveAlertDialog>
     </div>
   )
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }

@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect, useMemo } from "react"
-import { Download, FileText, File, Loader2, Copy, Play, Globe } from "lucide-react"
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
+import { Download, FileText, File, Loader2, Copy, Play, Globe, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
@@ -74,19 +74,47 @@ function ImageActionDrawer({
   workspaceId: string
   attachmentId: string
 }) {
-  const handleDownload = useCallback(() => {
-    onOpenChange(false)
-    downloadImage(workspaceId, attachmentId, filename)
+  // Confirm in place: the row's icon swaps to a checkmark for a beat, then the
+  // drawer dismisses itself — no toast (the source field stays visible on
+  // mobile). Failures fall back to closing; copyImage/downloadImage surface
+  // their own error toast.
+  const [downloadDone, setDownloadDone] = useState(false)
+  const [copyDone, setCopyDone] = useState(false)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (open) {
+      setDownloadDone(false)
+      setCopyDone(false)
+    }
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    }
+  }, [open])
+
+  const handleDownload = useCallback(async () => {
+    const ok = await downloadImage(workspaceId, attachmentId, filename)
+    if (!ok) {
+      onOpenChange(false)
+      return
+    }
+    setDownloadDone(true)
+    closeTimerRef.current = setTimeout(() => onOpenChange(false), 700)
   }, [workspaceId, attachmentId, filename, onOpenChange])
 
   // Copy the full-resolution original, not the inline thumbnail.
   const handleCopy = useCallback(async () => {
-    onOpenChange(false)
     try {
       const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId)
-      await copyImage(url)
+      const ok = await copyImage(url)
+      if (!ok) {
+        onOpenChange(false)
+        return
+      }
+      setCopyDone(true)
+      closeTimerRef.current = setTimeout(() => onOpenChange(false), 700)
     } catch {
-      // copyImage surfaces its own failure toast; this guards the URL fetch.
+      // Guards the URL fetch; copyImage surfaces its own failure toast.
+      onOpenChange(false)
     }
   }, [workspaceId, attachmentId, onOpenChange])
 
@@ -105,16 +133,24 @@ function ImageActionDrawer({
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm active:bg-muted/80 transition-colors"
             onClick={handleDownload}
           >
-            <Download className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
-            <span>Save image</span>
+            {downloadDone ? (
+              <Check className="h-[18px] w-[18px] text-primary shrink-0" />
+            ) : (
+              <Download className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
+            )}
+            <span>{downloadDone ? "Download started" : "Save image"}</span>
           </button>
           <button
             type="button"
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm active:bg-muted/80 transition-colors"
             onClick={handleCopy}
           >
-            <Copy className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
-            <span>Copy image</span>
+            {copyDone ? (
+              <Check className="h-[18px] w-[18px] text-primary shrink-0" />
+            ) : (
+              <Copy className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
+            )}
+            <span>{copyDone ? "Copied" : "Copy image"}</span>
           </button>
         </div>
       </DrawerContent>

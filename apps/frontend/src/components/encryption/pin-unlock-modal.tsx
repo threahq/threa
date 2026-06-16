@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
   ResponsiveDialog,
@@ -31,7 +30,14 @@ interface PinUnlockModalProps {
  * inline error comes straight off the session so attempt-count messaging stays
  * in one place. Submits automatically once all digits are entered.
  */
-export function PinUnlockModal({ open, workspaceId, userId, onOpenChange, onUnlocked, onUsePassphrase }: PinUnlockModalProps) {
+export function PinUnlockModal({
+  open,
+  workspaceId,
+  userId,
+  onOpenChange,
+  onUnlocked,
+  onUsePassphrase,
+}: PinUnlockModalProps) {
   const session = useE2eSession(workspaceId, userId)
   const [pin, setPin] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -52,7 +58,6 @@ export function PinUnlockModal({ open, workspaceId, userId, onOpenChange, onUnlo
     setSubmitting(true)
     try {
       await unlockWithPin(workspaceId, userId, candidate)
-      toast.success("Encrypted scratchpads unlocked")
       reset()
       onUnlocked?.()
       onOpenChange(false)

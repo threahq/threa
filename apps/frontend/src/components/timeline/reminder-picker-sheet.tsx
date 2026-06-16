@@ -70,7 +70,6 @@ export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId
         { messageId, remindAt: date?.toISOString() ?? null },
         {
           onSuccess: () => {
-            toast.success(date ? "Reminder set" : "Saved")
             resetAndClose()
           },
           onError: () => toast.error("Could not save"),
@@ -82,7 +81,6 @@ export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId
       { savedId: saved.id, input: { remindAt: date?.toISOString() ?? null } },
       {
         onSuccess: () => {
-          toast.success(date ? "Reminder set" : "Reminder cleared")
           resetAndClose()
         },
         onError: () => toast.error("Could not update reminder"),

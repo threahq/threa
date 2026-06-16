@@ -21,7 +21,6 @@ import {
 } from "@/components/composer"
 import type { ComposerControlHandle } from "@/components/composer"
 import { useScheduleMessage } from "@/hooks"
-import { toast } from "sonner"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractCommandNode } from "@/lib/commands"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
@@ -600,7 +599,6 @@ function MessageInputComponent({
         })
         composer.resolveDraft()
         composer.clearAttachments()
-        toast.success("Scheduled")
       } catch (err) {
         composer.setContent(liveContent)
         const message = err instanceof Error ? err.message : "Could not schedule message"
