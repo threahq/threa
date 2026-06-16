@@ -117,7 +117,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     tavilyApiKey && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
       ? createWebSearchTool({ tavilyApiKey, currentTime, timezone })
       : null,
-    isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool() : null,
+    isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision }) : null,
 
     // Workspace search tools
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_MESSAGES)

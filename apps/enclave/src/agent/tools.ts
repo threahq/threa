@@ -68,7 +68,10 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
         createWebSearchTool({ tavilyApiKey: deps.tavilyApiKey, currentTime: deps.currentTime, timezone: deps.timezone })
       )
     }
-    tools.push(createReadUrlTool())
+    // The enclave only serves e2e-capable personas, which run vision-capable
+    // models — and it already feeds images to the model via the ungated
+    // load_attachment tool above — so read_url may return images here too.
+    tools.push(createReadUrlTool({ supportsVision: true }))
     return tools
   }
 
