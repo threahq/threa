@@ -196,8 +196,8 @@ describe("AttachmentList", () => {
   })
 
   describe("file download", () => {
-    it("should trigger download when file attachment clicked", async () => {
-      const attachment = createAttachment({ mimeType: "text/plain", filename: "notes.txt" })
+    it("should trigger download when a non-previewable file is clicked", async () => {
+      const attachment = createAttachment({ mimeType: "application/zip", filename: "bundle.zip" })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
       // Set up download mocks after render to avoid interfering with React
@@ -225,6 +225,19 @@ describe("AttachmentList", () => {
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
       const button = screen.getByRole("button", { name: /report\.pdf/i })
+      await user.click(button)
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog")).toBeInTheDocument()
+      })
+    })
+
+    it("should open a text file in the media gallery instead of downloading it", async () => {
+      const user = userEvent.setup()
+      const attachment = createAttachment({ mimeType: "text/plain", filename: "notes.txt" })
+      render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
+
+      const button = screen.getByRole("button", { name: /notes\.txt/i })
       await user.click(button)
 
       await waitFor(() => {

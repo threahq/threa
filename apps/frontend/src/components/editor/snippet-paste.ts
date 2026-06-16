@@ -1,31 +1,30 @@
 /**
- * Heuristics for deciding when a pasted blob is "too large to reasonably live
- * inside a message" and should become a snippet attachment instead of inline
- * text, plus conservative format sniffing so the attachment gets a meaningful
- * extension/mime rather than always `.txt`. Kept as a pure module (no React) so
- * the rich-editor paste handler, the dialog, and the unit tests share one
+ * Heuristics and format sniffing for snippet attachments. Auto-conversion on
+ * paste is deliberately a last-resort safety net: only a paste too large to
+ * reasonably live in a message at all is diverted to the snippet editor.
+ * Everything smaller pastes inline; users create a snippet on purpose via the
+ * `/snippet` command or the command palette. Kept as a pure module (no React)
+ * so the rich-editor paste handler, the dialog, and the unit tests share one
  * source of truth (INV-33).
  */
 
-/** A paste this long (characters) converts to a snippet, regardless of shape. */
-export const SNIPPET_PASTE_CHAR_THRESHOLD = 1500
-
-/** ...or a paste with at least this many lines, whichever trips first. */
-export const SNIPPET_PASTE_LINE_THRESHOLD = 12
+/**
+ * A paste whose UTF-8 size is at least this many bytes auto-converts to a
+ * snippet. Set high (4 MiB) on purpose — at that size the text is unusable
+ * inline and would choke the editor, so diverting it is a safety net, not a
+ * formatting opinion. Anything smaller stays inline; manual snippet creation
+ * covers the rest.
+ */
+export const SNIPPET_PASTE_BYTE_THRESHOLD = 4 * 1024 * 1024
 
 /**
- * True when a pasted plain-text blob should open the snippet editor rather than
- * being inserted inline. Either a long single blob (char count) or a tall one
- * (line count) qualifies, so both a 2000-char paragraph and a 20-line script
- * are caught.
+ * True when a pasted plain-text blob is large enough that it should open the
+ * snippet editor instead of being inserted inline. Measures UTF-8 byte size so
+ * the bound tracks the "data over 4 MB" intent regardless of multi-byte chars.
  */
 export function shouldConvertPasteToSnippet(text: string): boolean {
   if (!text) return false
-  if (text.length >= SNIPPET_PASTE_CHAR_THRESHOLD) return true
-  // `\n` is present in both LF and CRLF, so counting it covers either newline
-  // style; a lone trailing `\r` (classic Mac) is rare enough to ignore.
-  const lineCount = (text.match(/\n/g)?.length ?? 0) + 1
-  return lineCount >= SNIPPET_PASTE_LINE_THRESHOLD
+  return new Blob([text]).size >= SNIPPET_PASTE_BYTE_THRESHOLD
 }
 
 export type SnippetFormatKey = "text" | "json" | "xml" | "html" | "csv" | "markdown" | "yaml"

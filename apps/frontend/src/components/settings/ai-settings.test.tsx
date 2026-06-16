@@ -56,6 +56,7 @@ describe("AISettings", () => {
         insertMention: () => void
         insertSlash: () => void
         insertEmoji: () => void
+        openSnippetEditor: () => void
         getEditor: () => null
       },
       {
@@ -70,6 +71,7 @@ describe("AISettings", () => {
         insertMention: () => undefined,
         insertSlash: () => undefined,
         insertEmoji: () => undefined,
+        openSnippetEditor: () => undefined,
         getEditor: () => null,
       }))
 

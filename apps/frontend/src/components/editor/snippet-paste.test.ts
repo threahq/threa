@@ -6,33 +6,30 @@ import {
   detectSnippetFormat,
   snippetFormatForFilename,
   snippetMimeForFilename,
-  SNIPPET_PASTE_CHAR_THRESHOLD,
-  SNIPPET_PASTE_LINE_THRESHOLD,
+  SNIPPET_PASTE_BYTE_THRESHOLD,
 } from "./snippet-paste"
 
 describe("shouldConvertPasteToSnippet", () => {
-  it("leaves ordinary short pastes inline", () => {
-    expect(shouldConvertPasteToSnippet("just a normal sentence")).toBe(false)
+  it("leaves ordinary and even moderately tall pastes inline", () => {
     expect(shouldConvertPasteToSnippet("")).toBe(false)
+    expect(shouldConvertPasteToSnippet("just a normal sentence")).toBe(false)
     expect(shouldConvertPasteToSnippet("line one\nline two\nline three")).toBe(false)
+    // A 36-line VCS log — the shape that used to convert far too eagerly — now
+    // stays inline; only truly oversized pastes are diverted.
+    const log = Array.from({ length: 36 }, (_, i) => `commit ${i}: did a thing`).join("\n")
+    expect(shouldConvertPasteToSnippet(log)).toBe(false)
   })
 
-  it("converts a long single-blob paste on character count", () => {
-    const blob = "x".repeat(SNIPPET_PASTE_CHAR_THRESHOLD)
-    expect(shouldConvertPasteToSnippet(blob)).toBe(true)
-    expect(shouldConvertPasteToSnippet("x".repeat(SNIPPET_PASTE_CHAR_THRESHOLD - 1))).toBe(false)
+  it("only converts a paste at or above the byte threshold", () => {
+    expect(shouldConvertPasteToSnippet("x".repeat(SNIPPET_PASTE_BYTE_THRESHOLD))).toBe(true)
+    expect(shouldConvertPasteToSnippet("x".repeat(SNIPPET_PASTE_BYTE_THRESHOLD - 1))).toBe(false)
   })
 
-  it("converts a tall paste on line count even when short", () => {
-    const tall = Array.from({ length: SNIPPET_PASTE_LINE_THRESHOLD }, (_, i) => `l${i}`).join("\n")
-    expect(shouldConvertPasteToSnippet(tall)).toBe(true)
-    const justUnder = Array.from({ length: SNIPPET_PASTE_LINE_THRESHOLD - 1 }, (_, i) => `l${i}`).join("\n")
-    expect(shouldConvertPasteToSnippet(justUnder)).toBe(false)
-  })
-
-  it("counts CRLF newlines the same as LF", () => {
-    const tall = Array.from({ length: SNIPPET_PASTE_LINE_THRESHOLD }, (_, i) => `l${i}`).join("\r\n")
-    expect(shouldConvertPasteToSnippet(tall)).toBe(true)
+  it("measures UTF-8 bytes, not character count", () => {
+    // U+1D356 is 4 UTF-8 bytes but 2 UTF-16 code units, so a blob that clears
+    // the byte threshold is well under it by `.length` — proving we size bytes.
+    const fourByteChar = "𝍖"
+    expect(shouldConvertPasteToSnippet(fourByteChar.repeat(SNIPPET_PASTE_BYTE_THRESHOLD / 4))).toBe(true)
   })
 })
 

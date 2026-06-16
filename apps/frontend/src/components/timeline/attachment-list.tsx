@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
-import { Download, FileText, File, Loader2, Copy, Play, Globe, Check } from "lucide-react"
+import { Download, FileText, FileCode2, File, Loader2, Copy, Play, Globe, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
@@ -12,8 +12,13 @@ import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
-import { isHtmlAttachment, isMarkdownAttachment, isPdfAttachment } from "@/lib/attachment-kind"
-import type { AttachmentSummary } from "@threa/types"
+import {
+  isHtmlAttachment,
+  isMarkdownAttachment,
+  isPdfAttachment,
+  isTextPreviewableAttachment,
+} from "@/lib/attachment-kind"
+import { categoryFromMime, type AttachmentSummary } from "@threa/types"
 
 interface AttachmentListProps {
   attachments: AttachmentSummary[]
@@ -508,6 +513,10 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     () => (attachments ?? []).filter((a) => !a.processingStatus && isPdfAttachment(a)),
     [attachments]
   )
+  const textAttachments = useMemo(
+    () => (attachments ?? []).filter((a) => !a.processingStatus && isTextPreviewableAttachment(a)),
+    [attachments]
+  )
   const fileAttachments = useMemo(
     () =>
       (attachments ?? []).filter(
@@ -516,7 +525,8 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
           !a.processingStatus &&
           !isMarkdownAttachment(a) &&
           !isHtmlAttachment(a) &&
-          !isPdfAttachment(a)
+          !isPdfAttachment(a) &&
+          !isTextPreviewableAttachment(a)
       ),
     [attachments]
   )
@@ -574,7 +584,14 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
       attachmentId: a.id,
     }))
 
-    return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems, ...pdfItems]
+    const textItems: GalleryItem[] = textAttachments.map((a) => ({
+      type: "text" as const,
+      url: loadedTextUrls.get(a.id) ?? "",
+      filename: a.filename,
+      attachmentId: a.id,
+    }))
+
+    return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems, ...pdfItems, ...textItems]
   }, [
     workspaceId,
     imageAttachments,
@@ -582,6 +599,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     markdownAttachments,
     htmlAttachments,
     pdfAttachments,
+    textAttachments,
     loadedVideoUrls,
     loadedTextUrls,
   ])
@@ -658,7 +676,8 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     const needsUrl =
       markdownAttachments.some((a) => a.id === selectedAttachmentId) ||
       htmlAttachments.some((a) => a.id === selectedAttachmentId) ||
-      pdfAttachments.some((a) => a.id === selectedAttachmentId)
+      pdfAttachments.some((a) => a.id === selectedAttachmentId) ||
+      textAttachments.some((a) => a.id === selectedAttachmentId)
     if (!needsUrl || loadedTextUrls.has(selectedAttachmentId)) return
 
     let mounted = true
@@ -680,7 +699,15 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     return () => {
       mounted = false
     }
-  }, [selectedAttachmentId, markdownAttachments, htmlAttachments, pdfAttachments, loadedTextUrls, workspaceId])
+  }, [
+    selectedAttachmentId,
+    markdownAttachments,
+    htmlAttachments,
+    pdfAttachments,
+    textAttachments,
+    loadedTextUrls,
+    workspaceId,
+  ])
 
   if (!attachments || attachments.length === 0) {
     return null
@@ -718,7 +745,8 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
         {(allFileAttachments.length > 0 ||
           markdownAttachments.length > 0 ||
           htmlAttachments.length > 0 ||
-          pdfAttachments.length > 0) && (
+          pdfAttachments.length > 0 ||
+          textAttachments.length > 0) && (
           <div className="flex flex-wrap gap-2">
             {markdownAttachments.map((attachment) => (
               <OpenableFileChip
@@ -744,6 +772,15 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
                 attachment={attachment}
                 isHighlighted={attachment.id === hoveredAttachmentId}
                 icon={FileText}
+                onOpen={handleTextOpen}
+              />
+            ))}
+            {textAttachments.map((attachment) => (
+              <OpenableFileChip
+                key={attachment.id}
+                attachment={attachment}
+                isHighlighted={attachment.id === hoveredAttachmentId}
+                icon={categoryFromMime(attachment.mimeType) === "code" ? FileCode2 : FileText}
                 onOpen={handleTextOpen}
               />
             ))}
