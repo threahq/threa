@@ -25,6 +25,22 @@ describe("SnippetEditorDialog", () => {
     expect((screen.getByLabelText("Snippet filename") as HTMLInputElement).value).toBe("snippet-1.txt")
   })
 
+  it("shows a format badge that tracks the filename extension", () => {
+    render(
+      <SnippetEditorDialog
+        open
+        onOpenChange={() => {}}
+        initialText={`{ "a": 1 }`}
+        defaultFilename="snippet-1.json"
+        onSave={() => {}}
+      />
+    )
+
+    expect(screen.getByLabelText("Detected format: JSON")).toBeTruthy()
+    fireEvent.change(screen.getByLabelText("Snippet filename"), { target: { value: "data.csv" } })
+    expect(screen.getByLabelText("Detected format: CSV")).toBeTruthy()
+  })
+
   it("saves the edited text and filename", () => {
     const onSave = vi.fn()
     render(

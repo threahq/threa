@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { FileCode2 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -10,16 +11,16 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { SNIPPET_FALLBACK_FILENAME } from "./snippet-paste"
+import { SNIPPET_FALLBACK_FILENAME, snippetFormatForFilename } from "./snippet-paste"
 
 interface SnippetEditorDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Pasted text the editor is seeded with each time it opens. */
   initialText: string
-  /** Suggested filename (e.g. `snippet-1.txt`); the user can rename it. */
+  /** Suggested filename (e.g. `snippet-1.json`); the user can rename it. */
   defaultFilename: string
-  /** Save the (possibly edited) snippet as a `.txt` attachment. */
+  /** Save the (possibly edited) snippet; its mime follows the filename. */
   onSave: (args: { text: string; filename: string }) => void
 }
 
@@ -66,6 +67,9 @@ export function SnippetEditorDialog({
 
   const trimmedFilename = filename.trim()
   const canSave = text.length > 0 && trimmedFilename.length > 0
+  // Reads off the live filename (not the original sniff) so the badge always
+  // matches the extension that will actually be attached.
+  const format = snippetFormatForFilename(trimmedFilename || SNIPPET_FALLBACK_FILENAME)
 
   const handleSave = () => {
     if (!canSave) return
@@ -112,13 +116,18 @@ export function SnippetEditorDialog({
             scroll the fields into reach instead of clipping them off-screen,
             per the ResponsiveDialog disableSnapPoints contract. */}
         <div className="flex-1 min-h-0 flex flex-col gap-3 px-4 sm:px-6 py-4 overflow-y-auto">
-          <Input
-            aria-label="Snippet filename"
-            value={filename}
-            onChange={(e) => setFilename(e.target.value)}
-            placeholder={SNIPPET_FALLBACK_FILENAME}
-            className="text-sm font-mono"
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label="Snippet filename"
+              value={filename}
+              onChange={(e) => setFilename(e.target.value)}
+              placeholder={SNIPPET_FALLBACK_FILENAME}
+              className="flex-1 text-sm font-mono"
+            />
+            <Badge variant="secondary" className="shrink-0 font-normal" aria-label={`Detected format: ${format.label}`}>
+              {format.label}
+            </Badge>
+          </div>
           {/* wrap="off": long lines scroll horizontally so code keeps its
               column layout rather than reflowing. */}
           <Textarea
