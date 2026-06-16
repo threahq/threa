@@ -985,6 +985,7 @@ export function MessageComposer({
       {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
       <div
         ref={mobileRootRef}
+        data-composer-expanded={mobileExpanded ? true : undefined}
         className={cn(
           // No transition on max/min-height: animating the shell's layout box
           // re-runs layout every frame, and the timeline scroller above resizes
