@@ -829,7 +829,7 @@ describe("runEnclaveTurn", () => {
     // ride here, inside the SSK ciphertext — never on the wire).
     const prompt = await sealUnder(
       ssk,
-      serializeSealedPayload("review these", [img.ref, pdf.ref]),
+      serializeSealedPayload("review these", { attachmentRefs: [img.ref, pdf.ref] }),
       "msg_user",
       "usr_owner"
     )
@@ -889,7 +889,12 @@ describe("runEnclaveTurn", () => {
       sizeBytes: 16,
     }
     const history = [
-      await sealUnder(ssk, serializeSealedPayload("here's the plan", [ref]), "msg_old", "usr_owner"),
+      await sealUnder(
+        ssk,
+        serializeSealedPayload("here's the plan", { attachmentRefs: [ref] }),
+        "msg_old",
+        "usr_owner"
+      ),
     ].map((m, i) => ({ ...m, role: "user" as const, sequence: String(i + 1) }))
     const prompt = await sealUnder(ssk, "what does the plan file say?", "msg_user", "usr_owner")
 
@@ -968,7 +973,7 @@ describe("runEnclaveTurn", () => {
 
     const prompt = await sealUnder(
       ssk,
-      serializeSealedPayload("read these", [md.ref, bin.ref]),
+      serializeSealedPayload("read these", { attachmentRefs: [md.ref, bin.ref] }),
       "msg_user",
       "usr_owner"
     )
@@ -1007,7 +1012,12 @@ describe("runEnclaveTurn", () => {
       mimeType: "application/pdf",
       sizeBytes: 10,
     }
-    const prompt = await sealUnder(ssk, serializeSealedPayload("see file", [ref]), "msg_user", "usr_owner")
+    const prompt = await sealUnder(
+      ssk,
+      serializeSealedPayload("see file", { attachmentRefs: [ref] }),
+      "msg_user",
+      "usr_owner"
+    )
     const chat = stubChat(textReply("ok"))
     const { onMessage, onStepStarted, onStep, onSubstep } = collector()
 

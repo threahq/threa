@@ -87,7 +87,7 @@ class EnclaveSealingSink implements TraceStepSink<EnclaveOpenStep> {
     // open trace dialog sees the content (and sources) the moment the step opens.
     const stepId = mintStepId()
     const sealed = await this.seal(
-      serializeSealedPayload(step.content, undefined, toSealedSources(step.sources)),
+      serializeSealedPayload(step.content, { sources: toSealedSources(step.sources) }),
       stepId
     )
     await this.openStep({ stepId, stepType: step.stepType, ...sealed })
@@ -110,7 +110,7 @@ class EnclaveSealingSink implements TraceStepSink<EnclaveOpenStep> {
 
   async complete(step: EnclaveOpenStep, final: TraceStepFinalize): Promise<void> {
     const sealed = await this.seal(
-      serializeSealedPayload(final.content, undefined, toSealedSources(final.sources)),
+      serializeSealedPayload(final.content, { sources: toSealedSources(final.sources) }),
       step.stepId
     )
     await this.deps.sendStep({
