@@ -67,7 +67,14 @@ const frontendPort = getOrAllocatePort("PLAYWRIGHT_FRONTEND_PORT")
 const dbName = deriveTestDatabaseName()
 const cpDbName = `${dbName}_cp`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
-const webServerTimeout = 60000
+// In CI the backend, control-plane and router boot concurrently with the
+// CPU-heavy frontend prod build (`vite build`) on a 4-vCPU runner, so their
+// `/readyz` can lag well past a dev-machine cold start. A too-tight ceiling here
+// fails the whole shard before a single test runs (no `.last-run.json` → the
+// isolation-retry step bails → the shard is marked failed), which is a recurring
+// source of red runs on otherwise-green commits. Give the boot real headroom in
+// CI; locally these servers start fast (and are reused across runs).
+const webServerTimeout = isCI ? 120000 : 60000
 
 // In CI the frontend is served as a production build via `vite preview` rather
 // than the Vite dev server: dev-mode on-demand transform competes for CPU with

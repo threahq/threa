@@ -370,6 +370,64 @@ export async function clickReplyInThread(messageContainer: Locator, timeout = 45
   await replyLink.click({ timeout: 10000 })
 }
 
+/**
+ * Press ArrowUp in the empty main composer to open the last own message in
+ * inline edit mode, re-issuing the keypress until the edit form appears.
+ *
+ * A single ArrowUp can lose the race under CI contention: the in-app trigger
+ * gives up its short (~1.2s) "scroll the off-screen target into view, then
+ * retry" window before the registry mounts the row. A real user just presses
+ * ArrowUp again, which re-runs the trigger against the now-mounted row, so the
+ * test does the same. The "does nothing" guard tests still assert Cancel never
+ * appears, so this cannot mask a genuinely broken trigger.
+ *
+ * Pass `scrollTarget` for the off-screen case to also require that message to
+ * land in the viewport. The scroll runs on a virtualized list still measuring
+ * under load and can stall outright; each attempt gets a full undisturbed
+ * settle window before a re-trigger, never an interrupt mid-scroll.
+ */
+export async function editLastMessageViaArrowUp(page: Page, options?: { scrollTarget?: Locator }): Promise<void> {
+  const cancelButton = page.getByRole("button", { name: "Cancel" })
+  // When edit is closed there is exactly one editor in the main zone (the
+  // composer); when it is open the composer is still the last one in DOM order
+  // (the inline edit form renders earlier, up in the timeline).
+  const composer = page.locator("[data-editor-zone='main'] [contenteditable='true']").last()
+  const scrollTarget = options?.scrollTarget
+
+  const pressArrowUp = async () => {
+    await composer.click().catch(() => {})
+    await page.keyboard.press("ArrowUp").catch(() => {})
+  }
+
+  // Open the inline edit form, re-issuing ArrowUp until it appears.
+  await expect(async () => {
+    if (!(await cancelButton.isVisible().catch(() => false))) await pressArrowUp()
+    await expect(cancelButton).toBeVisible({ timeout: 2000 })
+  }).toPass({ timeout: 30000, intervals: [250, 500, 1000] })
+
+  if (!scrollTarget) return
+
+  // Give the in-app scroll-to-edit a full, undisturbed window to settle. Only if
+  // it stalls outright (edit open, row never lands in view) do we re-run it by
+  // closing + reopening the edit — never mid-scroll, which would abort a scroll
+  // that was about to land (the mistake that makes the obvious poll oscillate).
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) {
+      await page.keyboard.press("Escape").catch(() => {})
+      await pressArrowUp()
+      await expect(cancelButton)
+        .toBeVisible({ timeout: 5000 })
+        .catch(() => {})
+    }
+    try {
+      await expect(scrollTarget).toBeInViewport({ timeout: 12000 })
+      return
+    } catch (err) {
+      if (attempt === 3) throw err
+    }
+  }
+}
+
 interface EditorShortcutOptions {
   shift?: boolean
   alt?: boolean
