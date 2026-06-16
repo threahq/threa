@@ -577,8 +577,10 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
       )
       AND EXISTS (
         SELECT 1 FROM stream_e2e_key_wraps w
-        JOIN messages m
-          ON m.workspace_id = i.workspace_id AND m.id = i.source_message_id
+        -- messages has no workspace_id column (it is scoped by stream_id); the
+        -- join on the globally-unique source message id is the invocation's own
+        -- trigger, so it stays tenant-safe without one (as enclave claimNext does).
+        JOIN messages m ON m.id = i.source_message_id
         JOIN bot_runtime_instances ri
           ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${instanceId}
         WHERE w.workspace_id = i.workspace_id

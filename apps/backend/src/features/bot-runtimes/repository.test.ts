@@ -226,9 +226,9 @@ describe("BotInvocationRepository.claimOne", () => {
     // (the trigger envelope's), mirroring the enclave's claimNext two-EXISTS.
     expect(captured.text).toContain("w.key_generation = e.current_key_generation")
     expect(captured.text).toContain("w.key_generation = (m.envelope ->> 'keyGeneration')::int")
-    // The trigger ciphertext is keyed off the invocation's source message,
-    // workspace-scoped like every other table the gate touches (INV-8).
-    expect(captured.text).toContain("m.workspace_id = i.workspace_id AND m.id = i.source_message_id")
+    // The trigger ciphertext is keyed off the invocation's own source message
+    // (messages has no workspace_id column — it is scoped by stream_id).
+    expect(captured.text).toContain("JOIN messages m ON m.id = i.source_message_id")
     // Race-safe claim target: lock only the bot_invocations candidate row (INV-20).
     expect(captured.text).toContain("FOR UPDATE OF i SKIP LOCKED")
     // The claiming instance is bound twice (one per generation EXISTS).
