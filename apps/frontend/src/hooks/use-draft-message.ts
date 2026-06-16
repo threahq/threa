@@ -11,12 +11,7 @@ import {
   useDraftsFromStore,
 } from "@/stores/draft-store"
 import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
-import {
-  clearScopeResolved,
-  isScopeRecentlyResolved,
-  markDraftResolved,
-  markScopeResolved,
-} from "@/sync/draft-resolution-guard"
+import { getScopeResolveSeq, markDraftResolved, recordScopeResolved } from "@/sync/draft-resolution-guard"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
 import { serializeToMarkdown } from "@threa/prosemirror"
@@ -88,7 +83,15 @@ export async function upsertLoadedDraft(
   workspaceId: string,
   scope: string,
   fields: DraftFields,
-  seal?: DraftSealContext
+  seal?: DraftSealContext,
+  /**
+   * The scope's resolve sequence observed when this save began. Passed only by
+   * the debounced typing save: if a resolve-on-send advanced the sequence while
+   * the save was in flight, creating a draft here would resurrect the just-sent
+   * content into the composer, so the create is dropped. Other create paths pass
+   * nothing and are never affected.
+   */
+  opts?: { observedResolveSeq?: number }
 ): Promise<CachedDraft> {
   const loadedId = await getLoadedDraftId(scope)
   const existing = loadedId ? await db.drafts.get(loadedId) : undefined
@@ -152,15 +155,17 @@ export async function upsertLoadedDraft(
     upsertDraftInCache(workspaceId, row)
   } else {
     // No loaded draft for this scope → this save would CREATE one and check it
-    // into the composer. If the scope was just resolved-on-send and the user
-    // hasn't engaged since, this is a debounced save from the last keystroke
-    // racing the (fire-and-forget) resolve: creating a draft here resurrects the
-    // just-sent content into the composer (the "it came back, so I sent it
-    // twice" race). `markScopeResolved` runs before the resolve clears the
-    // pointer, so by the time the cleared pointer routes us here the flag is set.
-    // The guard is lifted the instant the user types or attaches again, so a new
-    // message still starts a fresh draft.
-    if (isScopeRecentlyResolved(scope)) return row
+    // into the composer. If a resolve-on-send advanced the scope's resolve
+    // sequence since this (debounced) save began, the save is stale — a keystroke
+    // that predates the send — and creating a draft here would resurrect the
+    // just-sent content into the composer (the "it came back, so I sent it twice"
+    // race). `recordScopeResolved` runs before the resolve clears the pointer, so
+    // by the time the cleared pointer routes us here the bumped seq is visible.
+    // Only the debounced save passes `observedResolveSeq`; every other create
+    // path (share-target, attachments, fresh first keystroke) is unaffected.
+    if (opts?.observedResolveSeq !== undefined && getScopeResolveSeq(scope) > opts.observedResolveSeq) {
+      return row
+    }
     // A brand-new loaded draft: write the row and its loaded pointer together so
     // a live reader never observes the draft before the pointer lands — otherwise
     // the just-created draft flashes into its own stash list for a tick (it isn't
@@ -244,12 +249,13 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
  * entry instead of being collaterally deleted (plan §resolve-on-send).
  */
 export async function resolveLoadedDraft(workspaceId: string, scope: string): Promise<void> {
-  // Mark the scope resolved BEFORE the async teardown so a debounced save already
-  // in flight can't re-create the draft once the pointer is cleared (see the
-  // guard in `upsertLoadedDraft`). Ordering matters: this synchronous mark
-  // happens-before the pointer delete, which happens-before any later read that
-  // would route a racing save into the create path.
-  markScopeResolved(scope)
+  // Bump the scope's resolve sequence BEFORE the async teardown so a debounced
+  // save already in flight can't re-create the draft once the pointer is cleared
+  // (see the guard in `upsertLoadedDraft`). Ordering matters: this synchronous
+  // bump happens-before the pointer delete, which happens-before any later read
+  // that would route a racing save into the create path — so the save sees the
+  // advanced seq and drops its create.
+  recordScopeResolved(scope)
   const { loadedId, baseVersion } = await removeLoadedDraftLocally(workspaceId, scope)
   if (loadedId) {
     // Remember this draft's (id, version) so an inbound echo of our own push, or a
@@ -431,6 +437,11 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         debounceRef.current = null
       }
 
+      // The scope's resolve sequence as this save begins. If a resolve-on-send
+      // advances it before the create below runs, this save is a stale echo of
+      // the just-sent content and `upsertLoadedDraft` drops its create.
+      const observedResolveSeq = getScopeResolveSeq(draftKey)
+
       const gate = e2eGateRef.current
       if (gate.enabled) {
         // E2EE-4: seal before disk, and only while unlocked. Locked → keep the
@@ -453,7 +464,8 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
             workspaceId,
             draftKey,
             { contentJson, attachments: finalAttachments },
-            { senderId: gate.senderId, streamId: gate.streamId }
+            { senderId: gate.senderId, streamId: gate.streamId },
+            { observedResolveSeq }
           )
           syncEngine?.kickOperationQueue()
         } catch (err) {
@@ -480,11 +492,13 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         return
       }
 
-      await upsertLoadedDraft(workspaceId, draftKey, {
-        contentJson,
-        attachments: finalAttachments,
-        contextRefs: finalContextRefs,
-      })
+      await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        { contentJson, attachments: finalAttachments, contextRefs: finalContextRefs },
+        undefined,
+        { observedResolveSeq }
+      )
       syncEngine?.kickOperationQueue()
     },
     [draftKey, workspaceId, syncEngine]
@@ -492,9 +506,6 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
 
   const saveDraftDebounced = useCallback(
     (contentJson: JSONContent) => {
-      // The user is engaging the composer again — lift any post-send guard so this
-      // (genuinely new) draft is allowed to be created.
-      clearScopeResolved(draftKey)
       // Clear any pending debounced save
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
@@ -507,7 +518,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         void saveDraft(contentJson)
       }, DEBOUNCE_MS)
     },
-    [saveDraft, draftKey]
+    [saveDraft]
   )
 
   /**
@@ -515,9 +526,6 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
    */
   const addAttachment = useCallback(
     async (attachment: DraftAttachment) => {
-      // Attaching is composer engagement — lift any post-send guard so a file
-      // added right after sending still starts a fresh draft.
-      clearScopeResolved(draftKey)
       if (e2eEnabled) {
         // E2EE-4: re-seal the draft with the added attachment. The body + current
         // attachments are the decrypted copy in memory (the row holds only

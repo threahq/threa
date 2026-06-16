@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import {
-  clearScopeResolved,
+  getScopeResolveSeq,
   isResolvedDraftEcho,
-  isScopeRecentlyResolved,
   markDraftResolved,
-  markScopeResolved,
+  recordScopeResolved,
   resetDraftResolutionGuard,
 } from "./draft-resolution-guard"
 
@@ -15,22 +14,30 @@ beforeEach(() => {
   resetDraftResolutionGuard()
 })
 
-describe("scope guard (local stale-save race)", () => {
-  it("marks a scope resolved and reports it within the window", () => {
-    expect(isScopeRecentlyResolved(scope)).toBe(false)
-    markScopeResolved(scope)
-    expect(isScopeRecentlyResolved(scope)).toBe(true)
+describe("scope resolve sequence (local stale-save race)", () => {
+  it("starts at 0 and increments per resolve", () => {
+    expect(getScopeResolveSeq(scope)).toBe(0)
+    recordScopeResolved(scope)
+    expect(getScopeResolveSeq(scope)).toBe(1)
+    recordScopeResolved(scope)
+    expect(getScopeResolveSeq(scope)).toBe(2)
   })
 
-  it("lifts the guard when the user engages again", () => {
-    markScopeResolved(scope)
-    clearScopeResolved(scope)
-    expect(isScopeRecentlyResolved(scope)).toBe(false)
+  it("is independent per scope", () => {
+    recordScopeResolved(scope)
+    expect(getScopeResolveSeq("stream:stream_2")).toBe(0)
   })
 
-  it("is scoped per key — resolving one scope does not guard another", () => {
-    markScopeResolved(scope)
-    expect(isScopeRecentlyResolved("stream:stream_2")).toBe(false)
+  it("models the stale-save check: a save started before a resolve sees an advanced seq", () => {
+    const observed = getScopeResolveSeq(scope) // captured when the save began
+    recordScopeResolved(scope) // a send resolved the scope mid-save
+    expect(getScopeResolveSeq(scope) > observed).toBe(true) // → stale, drop the create
+  })
+
+  it("models the fresh-save check: a save started after a resolve sees no advance", () => {
+    recordScopeResolved(scope)
+    const observed = getScopeResolveSeq(scope) // captured after the resolve
+    expect(getScopeResolveSeq(scope) > observed).toBe(false) // → not stale, allowed
   })
 })
 
@@ -51,7 +58,7 @@ describe("draft echo guard (id + version)", () => {
   })
 })
 
-describe("TTL expiry", () => {
+describe("echo guard TTL expiry", () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -59,15 +66,12 @@ describe("TTL expiry", () => {
     vi.useRealTimers()
   })
 
-  it("expires the scope and echo guards after the window", () => {
-    markScopeResolved(scope)
+  it("expires the echo guard after the window", () => {
     markDraftResolved(draftId, 1)
-    expect(isScopeRecentlyResolved(scope)).toBe(true)
     expect(isResolvedDraftEcho(draftId, 1)).toBe(true)
 
     vi.advanceTimersByTime(61_000)
 
-    expect(isScopeRecentlyResolved(scope)).toBe(false)
     expect(isResolvedDraftEcho(draftId, 1)).toBe(false)
   })
 })

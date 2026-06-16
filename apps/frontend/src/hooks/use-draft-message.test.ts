@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { useDraftMessage, getDraftMessageKey, upsertLoadedDraft, resolveLoadedDraft } from "./use-draft-message"
-import { clearScopeResolved, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
+import { getScopeResolveSeq, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { ContextRefKinds, type JSONContent } from "@threa/types"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { db } from "@/db"
@@ -414,11 +414,12 @@ describe("useDraftMessage", () => {
       expect(await db.pendingOperations.where("type").equals("resolve_draft").count()).toBe(0)
     })
 
-    it("a stale debounced save firing after resolve-on-send does NOT resurrect the draft", async () => {
+    it("a stale debounced save (started before resolve-on-send) does NOT resurrect the draft", async () => {
       // The exact production race: the user's last keystroke armed a debounced
-      // save; the send tears the draft down (resolveLoadedDraft), then the stale
-      // save fires with the just-sent content. Without the guard it re-creates the
-      // draft + composer pointer and the editor refills — so the user sends twice.
+      // save which captured the scope's resolve seq; the send tears the draft down
+      // (resolveLoadedDraft bumps the seq), then the stale save fires with the
+      // just-sent content. The create branch sees the advanced seq and drops it —
+      // without that, it re-creates the draft + pointer and the editor refills.
       await db.drafts.put({
         id: "draft_confirmed",
         workspaceId,
@@ -430,17 +431,24 @@ describe("useDraftMessage", () => {
       })
       await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
 
+      const observedResolveSeq = getScopeResolveSeq(draftKey) // captured when the save began
       await resolveLoadedDraft(workspaceId, draftKey)
       // Stale save fires (its keystroke predates the send): no loaded pointer now,
       // so this takes the create path — which the guard must refuse.
-      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("sent message"), attachments: [] })
+      await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        { contentJson: makeDoc("sent message"), attachments: [] },
+        undefined,
+        { observedResolveSeq }
+      )
 
       expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
       const scoped = (await db.drafts.toArray()).filter((d) => d.scope === draftKey)
       expect(scoped).toHaveLength(0)
     })
 
-    it("allows a brand-new draft once the user engages the composer again after send", async () => {
+    it("allows a fresh save started AFTER the send to create a new draft", async () => {
       await db.drafts.put({
         id: "draft_confirmed",
         workspaceId,
@@ -453,10 +461,37 @@ describe("useDraftMessage", () => {
       await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
 
       await resolveLoadedDraft(workspaceId, draftKey)
-      // The user types again — engagement lifts the post-send guard (this is what
-      // saveDraftDebounced / addAttachment do on real input).
-      clearScopeResolved(draftKey)
-      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("a different message"), attachments: [] })
+      // The user types a new message: this save begins AFTER the resolve, so it
+      // observes the already-advanced seq and is not treated as stale.
+      const observedResolveSeq = getScopeResolveSeq(draftKey)
+      await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        { contentJson: makeDoc("a different message"), attachments: [] },
+        undefined,
+        { observedResolveSeq }
+      )
+
+      expect(await db.composerLoaded.get(draftKey)).toBeDefined()
+    })
+
+    it("a create from a non-debounce path (no observed seq) is never blocked post-send", async () => {
+      // share-target, attachments, DM-scope migration, etc. call upsertLoadedDraft
+      // without an observed seq, so a just-resolved scope must not silently drop
+      // their content (the data-loss regression the UX review caught).
+      await db.drafts.put({
+        id: "draft_confirmed",
+        workspaceId,
+        scope: draftKey,
+        contentJson: makeDoc("sent message"),
+        attachments: [],
+        baseVersion: 2,
+        clientUpdatedAt: Date.now(),
+      })
+      await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
+
+      await resolveLoadedDraft(workspaceId, draftKey)
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("shared content"), attachments: [] })
 
       expect(await db.composerLoaded.get(draftKey)).toBeDefined()
     })

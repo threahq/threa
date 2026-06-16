@@ -1,62 +1,50 @@
 /**
- * Short-lived, device-local record of drafts this device just resolved-on-send,
- * so neither an in-flight local save nor an inbound echo/bootstrap can resurrect
- * a just-sent draft — the "I sent a message and it came back into the composer,
- * so I sent it again" race.
+ * Device-local guards that stop a just-sent draft from being resurrected, by
+ * either of the two paths that can do it after a resolve-on-send.
  *
- * Two keys, because the two resurrection paths reach for different identifiers:
+ * 1. **Local stale-save race — a monotonic per-scope resolve sequence.** When a
+ *    message is sent, the editor is cleared and the draft + composer pointer are
+ *    torn down asynchronously (`resolveLoadedDraft`, fire-and-forget). A debounced
+ *    `saveDraft` armed by the last keystroke can fire around that teardown;
+ *    `upsertLoadedDraft` re-reads the loaded pointer and, finding none, would
+ *    create a fresh draft with the just-sent content and re-point the composer at
+ *    it. The save records the scope's resolve seq when it starts and threads it
+ *    into the create branch; if a resolve advanced the seq in between, the save is
+ *    stale and its create is dropped. Only the debounced save opts in — every
+ *    other create path (share-target, attachments, DM-scope migration, a fresh
+ *    first keystroke) passes no seq and is never affected. The seq is a plain
+ *    counter (no TTL): it only has to outlive an in-flight save, and comparing two
+ *    integers needs no expiry.
  *
- *  - **by scope** — guards the LOCAL stale-save race. A debounced `saveDraft`
- *    scheduled by the last keystroke can fire around the send teardown; if it
- *    runs after the loaded pointer is cleared it would create a brand-new draft
- *    (fresh id) holding the just-sent content and re-point the composer at it.
- *    A re-created draft has a new id, so only the scope is stable here.
- *
- *  - **by draft id + version** — guards the INBOUND echo/bootstrap race. The
+ * 2. **Inbound echo race — a short-lived `(draftId, version)` tombstone.** The
  *    `draft:upserted` echo of our own last push, or a reconnect bootstrap that
  *    re-seeds the still-present server row before the `resolve_draft` op drains,
- *    carries the resolved id. We drop it at or below the version we resolved at;
- *    a genuinely newer version from another device is `>` that and still survives
- *    as a stash entry (the no-loss rule — INV: drafts roam, only duplicates lost).
- *
- * In-memory (module-local, mirroring the draft-store cache pattern) with a short
- * TTL: the window only needs to cover the debounce + send round-trip and an
- * in-flight echo / reconnect bootstrap, not a full page reload (a rarer case).
+ *    would re-create the draft as a stash entry. We remember the resolved
+ *    `(id, version)` and drop inbound rows at or below it; a strictly newer
+ *    version is a real edit from another device and still applies (no loss). This
+ *    one is TTL'd because its window is "how long until the echo/reconnect lands",
+ *    not tied to the debounce.
  */
 
-const TTL_MS = 60_000
+const scopeResolveSeq = new Map<string, number>()
 
-const scopeResolvedUntil = new Map<string, number>()
+/** Bump a scope's resolve sequence — called when a draft is resolved-on-send. */
+export function recordScopeResolved(scope: string): void {
+  scopeResolveSeq.set(scope, (scopeResolveSeq.get(scope) ?? 0) + 1)
+}
+
+/** Current resolve sequence for a scope (0 if never resolved). */
+export function getScopeResolveSeq(scope: string): number {
+  return scopeResolveSeq.get(scope) ?? 0
+}
+
+const ECHO_TTL_MS = 60_000
+
 const draftResolvedVersion = new Map<string, { version: number; expiresAt: number }>()
-
-function expired(expiresAt: number): boolean {
-  return expiresAt <= Date.now()
-}
-
-/** Mark a scope as just resolved-on-send (drops a stale local save's re-create). */
-export function markScopeResolved(scope: string): void {
-  scopeResolvedUntil.set(scope, Date.now() + TTL_MS)
-}
-
-/** True while a scope is within its post-send window (and the user hasn't typed since). */
-export function isScopeRecentlyResolved(scope: string): boolean {
-  const until = scopeResolvedUntil.get(scope)
-  if (until === undefined) return false
-  if (expired(until)) {
-    scopeResolvedUntil.delete(scope)
-    return false
-  }
-  return true
-}
-
-/** Lift the scope guard — the user engaged the composer again, so a save is real. */
-export function clearScopeResolved(scope: string): void {
-  scopeResolvedUntil.delete(scope)
-}
 
 /** Remember a resolved draft's (id, version) so its inbound echo can be dropped. */
 export function markDraftResolved(draftId: string, version: number): void {
-  draftResolvedVersion.set(draftId, { version, expiresAt: Date.now() + TTL_MS })
+  draftResolvedVersion.set(draftId, { version, expiresAt: Date.now() + ECHO_TTL_MS })
 }
 
 /**
@@ -67,15 +55,15 @@ export function markDraftResolved(draftId: string, version: number): void {
 export function isResolvedDraftEcho(draftId: string, version: number): boolean {
   const rec = draftResolvedVersion.get(draftId)
   if (rec === undefined) return false
-  if (expired(rec.expiresAt)) {
+  if (rec.expiresAt <= Date.now()) {
     draftResolvedVersion.delete(draftId)
     return false
   }
   return version <= rec.version
 }
 
-/** Test-only reset of the in-memory guard between cases. */
+/** Test-only reset of the in-memory guards between cases. */
 export function resetDraftResolutionGuard(): void {
-  scopeResolvedUntil.clear()
+  scopeResolveSeq.clear()
   draftResolvedVersion.clear()
 }
