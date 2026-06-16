@@ -20,16 +20,17 @@ import {
   StashedDraftsPicker,
 } from "@/components/composer"
 import type { ComposerControlHandle } from "@/components/composer"
-import { useScheduleMessage } from "@/hooks"
+import { useScheduleMessage, useStreamBootstrap } from "@/hooks"
+import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { extractCommandNode } from "@/lib/commands"
+import { extractCommandNode, extractCommandFromRawText } from "@/lib/commands"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, type QuoteReplyData } from "./quote-reply-context"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
-import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent } from "@threa/types"
+import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent, type CommandInfo } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 
@@ -220,6 +221,22 @@ function MessageInputComponent({
   const scheduleMessageMutation = useScheduleMessage(workspaceId)
   const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId)
   const draftKey = getDraftMessageKey({ type: "stream", streamId })
+
+  // Resolve the effective command list for this stream so raw-text slash
+  // commands (e.g. `/model ` with a trailing space) can be dispatched even
+  // when the editor did not materialize a `slashCommand` node.
+  const metadata = useWorkspaceMetadata(workspaceId)
+  const { data: streamBootstrap } = useStreamBootstrap(workspaceId, streamId, { enabled: false })
+  const availableCommands = useMemo<CommandInfo[]>(() => {
+    return streamBootstrap?.commands ?? metadata?.commands ?? []
+  }, [streamBootstrap?.commands, metadata?.commands])
+  const availableCommandByName = useMemo(() => {
+    const map = new Map<string, CommandInfo>()
+    for (const cmd of availableCommands) {
+      map.set(cmd.name.toLowerCase(), cmd)
+    }
+    return map
+  }, [availableCommands])
 
   // Broadcast/mention filtering, member/bot allow-lists, and the admin gate
   // for bot invites all live in `useMentionStreamContext`. Threads route
@@ -487,11 +504,17 @@ function MessageInputComponent({
       const liveContent = editorContent ?? composer.content
       const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
 
-      // Dispatch as a command only when the editor produced a slashCommand node.
-      // Plain text starting with "/" (e.g. "/s") should send as a regular message.
+      // Dispatch as a command when the editor produced a slashCommand node,
+      // or when the message is raw text that matches an available slash command
+      // (e.g. `/model ` with a trailing space that never became a node). Plain
+      // text like "/s" that does not match a known command still sends normally.
       const commandNode = extractCommandNode(normalizedContent)
-      if (commandNode !== null) {
-        const { clientActionId } = commandNode
+      const rawTextCommand = commandNode === null ? extractCommandFromRawText(normalizedContent) : null
+      const resolvedCommand =
+        commandNode ?? (rawTextCommand ? (availableCommandByName.get(rawTextCommand.name) ?? null) : null)
+      if (resolvedCommand !== null) {
+        const commandName = commandNode?.name ?? rawTextCommand!.name
+        const clientActionId = commandNode?.clientActionId ?? resolvedCommand.clientActionId ?? null
 
         // Clear input immediately for responsiveness — same reset the server
         // path does. Either branch below consumes the command, so the user
@@ -518,9 +541,11 @@ function MessageInputComponent({
           return
         }
 
-        const commandMarkdown = serializeToMarkdown(normalizedContent).trim()
+        const commandMarkdown = rawTextCommand
+          ? `/${commandName}${rawTextCommand.args ? ` ${rawTextCommand.args}` : ""}`
+          : serializeToMarkdown(normalizedContent).trim()
         try {
-          await queueCommand({ commandMarkdown, commandName: commandNode.name })
+          await queueCommand({ commandMarkdown, commandName })
         } catch {
           setError("Failed to queue command. Please try again.")
         } finally {
@@ -563,7 +588,16 @@ function MessageInputComponent({
         composer.setIsSending(false)
       }
     },
-    [composer, sendMessage, navigate, workspaceId, streamId, startDiscussWithAriadne, queueCommand]
+    [
+      composer,
+      sendMessage,
+      navigate,
+      workspaceId,
+      streamId,
+      startDiscussWithAriadne,
+      queueCommand,
+      availableCommandByName,
+    ]
   )
 
   /**

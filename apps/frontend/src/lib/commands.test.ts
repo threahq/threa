@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { JSONContent } from "@threa/types"
-import { extractCommandNode } from "./commands"
+import { extractCommandNode, extractCommandFromRawText } from "./commands"
 
 describe("extractCommandNode", () => {
   it("extracts name + clientActionId from the first slashCommand node", () => {
@@ -51,6 +51,22 @@ describe("extractCommandNode", () => {
       content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }],
     }
     expect(extractCommandNode(doc)).toBeNull()
+  })
+
+  it("extracts a slashCommand node even when followed by trailing whitespace", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "slashCommand", attrs: { name: "model", clientActionId: null } },
+            { type: "text", text: " " },
+          ],
+        },
+      ],
+    }
+    expect(extractCommandNode(doc)).toEqual({ name: "model", clientActionId: null })
   })
 
   it("returns null for plain text that starts with a slash (no materialized node)", () => {
@@ -110,5 +126,66 @@ describe("extractCommandNode", () => {
       ],
     }
     expect(extractCommandNode(doc)?.name).toBe("help")
+  })
+})
+
+describe("extractCommandFromRawText", () => {
+  it("extracts a command with trailing whitespace", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "/model " }] }],
+    }
+    expect(extractCommandFromRawText(doc)).toEqual({ name: "model", args: "" })
+  })
+
+  it("extracts a command with arguments", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "  /thinking high  " }] }],
+    }
+    expect(extractCommandFromRawText(doc)).toEqual({ name: "thinking", args: "high" })
+  })
+
+  it("is case-insensitive", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "/MODEL" }] }],
+    }
+    expect(extractCommandFromRawText(doc)).toEqual({ name: "model", args: "" })
+  })
+
+  it("returns null for multi-paragraph messages", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "/model" }] },
+        { type: "paragraph", content: [{ type: "text", text: "more" }] },
+      ],
+    }
+    expect(extractCommandFromRawText(doc)).toBeNull()
+  })
+
+  it("returns null when other nodes are present", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "/model" },
+            { type: "mention", attrs: { slug: "alice" } },
+          ],
+        },
+      ],
+    }
+    expect(extractCommandFromRawText(doc)).toBeNull()
+  })
+
+  it("returns null for plain text that does not start with a slash", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "I tried /model" }] }],
+    }
+    expect(extractCommandFromRawText(doc)).toBeNull()
   })
 })
