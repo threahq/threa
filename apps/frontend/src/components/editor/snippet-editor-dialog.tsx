@@ -124,7 +124,11 @@ export function SnippetEditorDialog({
               placeholder={SNIPPET_FALLBACK_FILENAME}
               className="flex-1 text-sm font-mono"
             />
-            <Badge variant="secondary" className="shrink-0 font-normal" aria-label={`Detected format: ${format.label}`}>
+            <Badge
+              variant="secondary"
+              className="shrink-0 justify-center min-w-24 font-normal pointer-events-none select-none"
+            >
+              <span className="sr-only">Detected format: </span>
               {format.label}
             </Badge>
           </div>

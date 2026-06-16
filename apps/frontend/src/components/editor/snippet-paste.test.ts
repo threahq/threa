@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { categoryFromMime } from "@threa/types"
 import {
   shouldConvertPasteToSnippet,
   defaultSnippetFilename,
@@ -109,5 +110,19 @@ describe("snippetFormatForFilename", () => {
     expect(snippetMimeForFilename("mydata")).toBe("text/plain")
     expect(snippetMimeForFilename("archive.unknownext")).toBe("text/plain")
     expect(snippetMimeForFilename(".bashrc")).toBe("text/plain")
+  })
+
+  // Guards the "mimes align with categoryFromMime" design claim so a future mime
+  // edit can't silently land a snippet in the wrong attachment category.
+  it.each([
+    ["snippet.json", "code"],
+    ["snippet.xml", "code"],
+    ["snippet.html", "code"],
+    ["snippet.md", "code"],
+    ["snippet.yaml", "code"],
+    ["snippet.csv", "sheet"],
+    ["snippet.txt", "doc"],
+  ])("%s mime buckets as %s via categoryFromMime", (filename, category) => {
+    expect(categoryFromMime(snippetMimeForFilename(filename))).toBe(category)
   })
 })

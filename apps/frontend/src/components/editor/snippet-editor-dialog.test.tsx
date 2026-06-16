@@ -36,9 +36,10 @@ describe("SnippetEditorDialog", () => {
       />
     )
 
-    expect(screen.getByLabelText("Detected format: JSON")).toBeTruthy()
+    expect(screen.getByText("JSON")).toBeTruthy()
     fireEvent.change(screen.getByLabelText("Snippet filename"), { target: { value: "data.csv" } })
-    expect(screen.getByLabelText("Detected format: CSV")).toBeTruthy()
+    expect(screen.getByText("CSV")).toBeTruthy()
+    expect(screen.queryByText("JSON")).toBeNull()
   })
 
   it("saves the edited text and filename", () => {

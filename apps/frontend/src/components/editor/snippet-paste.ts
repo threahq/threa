@@ -50,9 +50,6 @@ const SNIPPET_FORMATS: Record<SnippetFormatKey, SnippetFormat> = {
   yaml: { key: "yaml", extension: "yaml", mimeType: "application/x-yaml", label: "YAML" },
 }
 
-/** The conservative fallback: anything not confidently recognised stays text. */
-export const SNIPPET_TEXT_FORMAT = SNIPPET_FORMATS.text
-
 const EXTENSION_TO_FORMAT: Record<string, SnippetFormat> = {
   txt: SNIPPET_FORMATS.text,
   json: SNIPPET_FORMATS.json,
