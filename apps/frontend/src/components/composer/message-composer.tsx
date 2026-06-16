@@ -970,6 +970,7 @@ export function MessageComposer({
       {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
       <div
         ref={mobileRootRef}
+        data-composer-expanded={mobileExpanded ? true : undefined}
         className={cn(
           // No transition on max/min-height: animating the shell's layout box
           // re-runs layout every frame, and the timeline scroller above resizes
@@ -1009,6 +1010,7 @@ export function MessageComposer({
 
         <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
           <div
+            data-composer-card
             className={cn(
               "rounded-[16px] border border-input bg-card flex flex-col flex-1 min-h-0",
               // Subtle drop shadow on the resting inline composer (not when expanded into a sheet)

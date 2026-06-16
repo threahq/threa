@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react"
 import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
@@ -9,6 +9,7 @@ import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
+import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
 /** Keystroke hint for the "Save current" action. Rendered only on non-mobile (no hardware keyboard). */
@@ -73,6 +74,7 @@ export function StashedDraftsPicker({
 }: StashedDraftsPickerProps) {
   const [open, setOpen] = useState(false)
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
+  const { setTriggerRef, anchor } = useComposerAnchor(open)
   const isMobile = useIsMobile()
   const count = drafts.length
   const now = useMemo(() => new Date(), [open])
@@ -112,10 +114,15 @@ export function StashedDraftsPicker({
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
+        {/* Anchor above the whole composer (not the trigger) so the popover
+            doesn't paint over the editor — null in the expanded FAB layout,
+            where the trigger anchors normally. */}
+        {anchor && <PopoverAnchor virtualRef={{ current: anchor }} />}
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
               <Button
+                ref={setTriggerRef}
                 type="button"
                 variant={size === "fab" ? "outline" : "ghost"}
                 size="icon"
@@ -142,7 +149,7 @@ export function StashedDraftsPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
+        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <p className="text-sm font-medium">
               Drafts
