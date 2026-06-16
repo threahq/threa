@@ -363,11 +363,12 @@ export function injectGapItems(
 }
 
 /**
- * Representative local-day key (start-of-day ms) for a row, or null for rows
- * that carry no timestamp (gaps, skeletons, dividers). Command/session groups
- * key off their first event so a card that opens a new day draws a boundary.
+ * Local-day key (start-of-day ms) the row belongs to, or null for rows that
+ * carry no day (gaps, skeletons). A `day_divider` reports the day it opens, so
+ * the floating date header can read the topmost visible day off either a
+ * message row or a divider. Command/session groups key off their first event.
  */
-function itemDayStartMs(item: TimelineItem): number | null {
+export function itemDayStartMs(item: TimelineItem): number | null {
   switch (item.type) {
     case "event":
       return localStartOfDayMs(new Date(item.event.createdAt))
@@ -376,6 +377,8 @@ function itemDayStartMs(item: TimelineItem): number | null {
       const first = item.events[0]
       return first ? localStartOfDayMs(new Date(first.createdAt)) : null
     }
+    case "day_divider":
+      return item.dayStartMs
     default:
       return null
   }

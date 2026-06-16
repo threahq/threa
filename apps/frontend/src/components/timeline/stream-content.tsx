@@ -58,6 +58,7 @@ import {
   annotateConversationRows,
   injectGapItems,
   injectDayDividers,
+  itemDayStartMs,
   findFirstMessageId,
   findMessageItemIndex,
   getTimelineItemKey,
@@ -71,6 +72,7 @@ import { ConversationOverlayPanel } from "./conversation-overlay/conversation-ov
 import { useConversationOverlay } from "./conversation-overlay/use-conversation-overlay"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageInput } from "./message-input"
+import { StreamDateHeader } from "./stream-date-header"
 import { ActiveBotStatusStrip } from "./active-bot-status-strip"
 import { JoinChannelBar } from "./join-channel-bar"
 import { ThreadParentMessage } from "../thread/thread-parent-message"
@@ -82,6 +84,7 @@ import { StreamSearchBar } from "./stream-search-bar"
 import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { localStartOfDayMs } from "@/lib/dates"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
@@ -421,6 +424,7 @@ export function StreamContent({
     hasNewerEvents,
     isFetchingNewer,
     jumpToEvent,
+    jumpToEventByDate,
     exitJumpMode,
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
@@ -1222,6 +1226,37 @@ export function StreamContent({
     [events, jumpToEvent, disableAutoScroll, scrollToMessage]
   )
 
+  // Jump to a calendar date from the floating date header. Scrolls to the first
+  // message on or after the local day: in-window targets scroll directly (no
+  // round-trip, no jump mode); older targets load a window then scroll to the
+  // server-resolved anchor via the existing pendingScrollTarget driver.
+  const handleJumpToDate = useCallback(
+    async (date: Date) => {
+      userInteractedAtRef.current = 0
+      const targetDayMs = localStartOfDayMs(date)
+      const loaded = events.find((event) => {
+        if (event.eventType !== "message_created" && event.eventType !== "companion_response") return false
+        return localStartOfDayMs(new Date(event.createdAt)) >= targetDayMs
+      })
+      disableAutoScroll()
+      if (loaded) {
+        const messageId = (loaded.payload as { messageId?: string })?.messageId
+        if (messageId) {
+          pendingScrollTarget.current = null
+          scrollToMessage(messageId)
+          return
+        }
+      }
+      const anchorId = await jumpToEventByDate(date.toISOString())
+      if (anchorId) {
+        pendingScrollTarget.current = anchorId
+      } else {
+        toast.info("No messages on or after that date")
+      }
+    },
+    [events, disableAutoScroll, scrollToMessage, jumpToEventByDate]
+  )
+
   // Highlight search matches in the DOM via CSS Custom Highlight API
   useSearchHighlight(
     scrollContainerRef,
@@ -1607,6 +1642,7 @@ export function StreamContent({
                     batch={batchState}
                     batchPointerHandlers={batchPointerHandlers}
                     conversationOverlay={activeConversationOverlay}
+                    onJumpToDate={handleJumpToDate}
                   />
                   {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -1835,6 +1871,7 @@ function TimelineMessageList({
   batch,
   batchPointerHandlers,
   conversationOverlay,
+  onJumpToDate,
 }: {
   visibleItems: TimelineItem[]
   isLoading: boolean
@@ -1885,6 +1922,8 @@ function TimelineMessageList({
   batch?: BatchTimelineState
   batchPointerHandlers?: React.HTMLAttributes<HTMLElement>
   conversationOverlay?: ConversationOverlayContext
+  /** Jump to the first message on or after a date (floating date header). */
+  onJumpToDate: (date: Date) => void
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -1897,6 +1936,14 @@ function TimelineMessageList({
   // regression. Sticky across stream switches so fast switches keep the
   // existing blank behaviour (no skeleton flash on top of prior chrome).
   const hasRenderedContentRef = useRef(false)
+
+  // Floating date header (INV-42): the local day of the topmost visible row,
+  // and whether the pill is shown. Updated from the scroll handler so it tracks
+  // the day as the user scrolls, like Slack's sticky date.
+  const [topDayMs, setTopDayMs] = useState<number | null>(null)
+  const [datePillVisible, setDatePillVisible] = useState(false)
+  const visibleItemsRef = useRef(visibleItems)
+  visibleItemsRef.current = visibleItems
 
   const { sessionLiveCounts, sessionLiveSubsteps, sessionCanAbort } = useMemo(() => {
     const counts = new Map<string, { stepCount: number; messageCount: number }>()
@@ -2024,12 +2071,37 @@ function TimelineMessageList({
     }
   }, [hasNewerEvents, isFetchingNewer, fetchNewerEvents])
 
+  // Refresh the floating date header: the topmost visible day (nearest item to
+  // the scroll offset, scanning for the first row that carries a day) and the
+  // pill's visibility. Reads visibleItems off a ref so it stays stable across
+  // data ticks and doesn't churn the scroll handler it's called from.
+  const updateDatePill = useCallback(() => {
+    const list = listRef.current
+    const el = scrollerRef.current
+    if (!list || !el) return
+    let idx: number
+    try {
+      idx = list.findItemIndex(list.scrollOffset)
+    } catch {
+      return
+    }
+    const items = visibleItemsRef.current
+    let day: number | null = null
+    for (let i = Math.max(0, idx); i < items.length && day == null; i++) day = itemDayStartMs(items[i])
+    if (day == null)
+      for (let i = Math.min(idx, items.length - 1); i >= 0 && day == null; i--) day = itemDayStartMs(items[i])
+    setTopDayMs((prev) => (prev === day ? prev : day))
+    const show = el.scrollTop > 40 && !isSearchOpen && !batch?.enabled && !isFetchingOlder && !isInitialSettling
+    setDatePillVisible((prev) => (prev === show ? prev : show))
+  }, [listRef, scrollerRef, isSearchOpen, batch?.enabled, isFetchingOlder, isInitialSettling])
+
   // Pagination is driven off the owned scroller's native scroll. virtua has no
   // rangeChanged, so we measure distance from each edge in px and prefetch when
   // within a lead distance. Gated so a programmatic deep-link scroll never
   // kicks off pagination (its reflow would fight the refine loop).
   const handleScroll = useCallback(() => {
     onTimelineScroll()
+    updateDatePill()
     if (scrollAbortRef.current !== null) return
     const el = scrollerRef.current
     if (!el) return
@@ -2041,7 +2113,7 @@ function TimelineMessageList({
     })
     if (reachedStart) handleStartReached()
     if (reachedEnd) handleEndReached()
-  }, [onTimelineScroll, scrollAbortRef, scrollerRef, handleStartReached, handleEndReached])
+  }, [onTimelineScroll, updateDatePill, scrollAbortRef, scrollerRef, handleStartReached, handleEndReached])
 
   // virtua has no rangeChanged, so a window that fits the viewport (not
   // scrollable) would never fire a scroll to page in older history the user
@@ -2207,6 +2279,7 @@ function TimelineMessageList({
           <ComposerFooterSpacer />
         </div>
       </div>
+      <StreamDateHeader dayStartMs={topDayMs} visible={datePillVisible} onJumpToDate={onJumpToDate} />
       {isInitialSettling && (
         <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
           {skeleton}
