@@ -795,6 +795,62 @@ export interface EnclaveSessionAssignment {
 }
 
 /**
+ * The sealed work handed to an owner-granted *external* sealed runner (a
+ * third-party / self-hosted bot harness) as the body of a winning claim, when
+ * the delivery verdict resolves to `sealed` (`resolveDeliveryVerdict`). It is the
+ * external sibling of {@link EnclaveSessionAssignment} and §2.6's `SealedTurnContext`:
+ * the shared shape any sealed-capable driver consumes, deliberately NOT
+ * enclave-named so the bot path reuses it without re-prefixing the vocabulary.
+ *
+ * It is **leaner than the enclave assignment on purpose**: an external harness
+ * runs its OWN agent loop (its own model, system prompt, sampling), so the
+ * server ships only the material the bot can't derive — the SSK `wraps` addressed
+ * to the claiming bot's BIK, the sealed `history`/`prompt` ciphertext, the
+ * `reply` generation + sender id each seal binds to, and the per-claim
+ * `callbackToken` (model A) that authorizes the sealed callbacks. It omits the
+ * enclave's `system`/`model`/`temperature`/`maxTokens` (the bot owns those) and,
+ * for now, the C-1/C-2 continuity fields (`recentDigests`, `priorSummary`, …) and
+ * attachments — additive later, kept out per INV-36 until the harness consumes them.
+ *
+ * The backend never decrypts: it ships ciphertext the owner sealed under the
+ * stream SSK and the wraps for the claiming BIK. The bot unwraps the SSK with its
+ * identity private key, opens history/prompt, runs its turn, and seals each
+ * reply/step back under the same SSK — exactly as the enclave does.
+ */
+export interface SealedTurnContext {
+  /**
+   * Per-claim secret binding this turn's sealed callbacks to the bot instance
+   * that won the claim (model A, mirroring {@link EnclaveSessionAssignment.callbackToken}).
+   * Delivered only inside this claim response and echoed on every sealed
+   * `/steps`/`/complete` callback; the backend rejects a mismatch or absent
+   * token. A sealed turn carries the owner's plaintext, so this is what stops a
+   * leaked workspace bot key alone from hijacking another in-flight session's
+   * callbacks (the E2EE-21/22 class).
+   */
+  callbackToken: string
+  /**
+   * SSK wraps addressed to the claiming bot's BIK, covering the reply (current)
+   * and trigger generations — the same pair the claim predicate verified, so the
+   * bot can open both the history it's handed and seal its reply under the
+   * current generation.
+   */
+  wraps: EnclaveSskWrap[]
+  /** Prior turns, oldest→newest; `role` tells the model who spoke, `sequence` is clear metadata. */
+  history: (EnclaveSealedMessage & { role: "user" | "assistant"; sequence: string })[]
+  /** The sealed trigger message — the bot opens it to get its instructions. */
+  prompt: EnclaveSealedMessage
+  /** The generation every reply/step must seal under, plus the bot's sender id (bound into the seal AAD). */
+  reply: { keyGeneration: number; senderId: string }
+  /**
+   * Non-secret trigger metadata, so the bot can emit the same "Triggered by"
+   * context step the enclave does. The body (decrypted prompt) is sealed
+   * separately as the step content; only id/author/time travel in clear.
+   * Omitted when there is no resolvable trigger author.
+   */
+  trigger?: { messageId: string; authorName: string; authorType: AuthorType; createdAt: string }
+}
+
+/**
  * The completion ack, posted to `POST .../sessions/:id/complete` after the loop
  * finishes. The replies themselves were already streamed via `.../messages`, so
  * this carries only the ids the enclave sent (oldest→newest, for the session's

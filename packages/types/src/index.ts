@@ -388,6 +388,7 @@ export type {
   SealedStepStart,
   EnclaveSealedSubstep,
   EnclaveSessionAssignment,
+  SealedTurnContext,
   EnclaveSessionResult,
   EnclaveSessionFailure,
   EnclaveClaimResponse,
