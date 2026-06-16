@@ -1240,7 +1240,17 @@ export class SyncEngine {
       // entry, so a crash between the last apply and this flush self-heals from
       // the next bootstrap snapshot (this state is derived, never authoritative).
       if (this.activeCatchUpBatch === catchUpBatch) this.activeCatchUpBatch = null
-      if (!this.isDestroyed) await catchUpBatch.flush()
+      if (!this.isDestroyed) {
+        try {
+          await catchUpBatch.flush()
+        } catch (error) {
+          // A flush failure (e.g. an IDB error) must never strand the gate: the
+          // resume below is the only path that reopens live delivery and drains
+          // the buffer. Log and fall through; the next bootstrap reseeds the
+          // (derived) counter/preview state the flush dropped.
+          console.error("Sync catch-up batch flush failed", { workspaceId: this.workspaceId, error })
+        }
+      }
 
       // Reopen live flow, even on a failed fetch or early return (the buffer
       // must never strand) — but only when this run still belongs to the

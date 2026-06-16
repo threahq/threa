@@ -1260,6 +1260,42 @@ describe("SyncEngine sync cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("resumes the gate (drains the buffer) even when the batch flush throws", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("11"))
+    const engine = new SyncEngine(makeCounterDeps(catchUp))
+    const socket = new MockSocket()
+    // Force the flush's preview write to reject → the whole flush rejects.
+    const updateSpy = vi.spyOn(db.streams, "update").mockRejectedValue(new Error("idb boom"))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+
+    // A live event buffered during the pause must still be drained once catch-up
+    // resumes the gate — even though the flush below throws.
+    socket.trigger("workspace_user:added", userAddedLivePayload("12", "user_resumed"))
+
+    // The replayed stream:activity folds a preview; flush's db.streams.update rejects.
+    resolveFirstPage!({ entries: [streamActivityEntry("11", 6)], head: "11" })
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_resumed")).toBeDefined()
+    })
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Sync catch-up batch flush failed",
+      expect.objectContaining({ workspaceId: "ws_1" })
+    )
+
+    updateSpy.mockRestore()
+    errorSpy.mockRestore()
+    engine.destroy()
+  })
+
   it("does not re-apply a buffered ABSOLUTE counter duplicate at or below the catch-up position", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined

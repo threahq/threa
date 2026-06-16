@@ -494,6 +494,22 @@ export function registerWorkspaceSocketHandlers(
     commitStreamPreview(queryClient, workspaceId, streamId, preview)
   }
 
+  // Activity-feed invalidation seam. During catch-up it marks the feed stale on
+  // the batch (one invalidation at flush) instead of refetching per replayed
+  // entry; the batch path ignores `live` because the per-entry `hadActivity`
+  // gate reads the not-yet-committed cache and is unreliable mid-replay — the
+  // single flush settles it. Live path keeps the gate to avoid needless fetches.
+  const invalidateActivityFeed = (live: boolean): void => {
+    const batch = refs.getCatchUpBatch?.() ?? null
+    if (batch) {
+      batch.markActivityFeedStale()
+      return
+    }
+    if (live) {
+      queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
+    }
+  }
+
   // The reconnect event gap for saved/scheduled rows (INV-53) is closed by the
   // workspace catch-up cursor, which replays the missed user-scoped sync-log
   // entries through these same handlers — so no blanket `savedKeys`/
@@ -842,9 +858,7 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    if (hadActivity) {
-      queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
-    }
+    invalidateActivityFeed(hadActivity)
 
     // Dismiss push notification for this stream (fast path when the app is open)
     navigator.serviceWorker?.controller?.postMessage({
@@ -859,7 +873,7 @@ export function registerWorkspaceSocketHandlers(
 
     commitCounter((state) => applyStreamsReadAllOrdinals(state, payload.reads))
 
-    queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
+    invalidateActivityFeed(true)
 
     // Dismiss push notifications for all read streams (fast path when the app is open)
     for (const streamId of payload.streamIds) {
@@ -1281,7 +1295,8 @@ export function registerWorkspaceSocketHandlers(
     }
 
     // Invalidate activity feed so it refetches when the page is mounted
-    queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
+    // (coalesced to one invalidation at flush during catch-up).
+    invalidateActivityFeed(true)
   }
 
   // GAM memo extraction: surface new memos in the memory explorer without a
