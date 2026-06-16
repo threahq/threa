@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
-import { Download, FileText, FileCode2, File, Loader2, Copy, Play, Globe, Check } from "lucide-react"
+import { Download, FileText, File, Loader2, Copy, Play, Globe, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
@@ -18,7 +18,7 @@ import {
   isPdfAttachment,
   isTextPreviewableAttachment,
 } from "@/lib/attachment-kind"
-import { categoryFromMime, type AttachmentSummary } from "@threa/types"
+import type { AttachmentSummary } from "@threa/types"
 
 interface AttachmentListProps {
   attachments: AttachmentSummary[]
@@ -780,7 +780,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
                 key={attachment.id}
                 attachment={attachment}
                 isHighlighted={attachment.id === hoveredAttachmentId}
-                icon={categoryFromMime(attachment.mimeType) === "code" ? FileCode2 : FileText}
+                icon={FileText}
                 onOpen={handleTextOpen}
               />
             ))}

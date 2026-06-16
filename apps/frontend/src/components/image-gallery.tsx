@@ -51,6 +51,14 @@ const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   text: "Text document",
 }
 
+// Copy means different things per slide: the rendered image bytes vs. the
+// underlying text. Plain text isn't "source" the way markdown/html are.
+function copyLabelForType(type: GalleryItem["type"] | undefined): string {
+  if (type === "image") return "Copy image"
+  if (type === "text") return "Copy text"
+  return "Copy source"
+}
+
 // Sidebar thumbnails are 124px wide — long filenames (URLs, slugs with the
 // extension at the tail) get unrecognizable when chopped from the end. Cut
 // from the middle instead so both the leading word and the extension survive.
@@ -569,7 +577,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const canCopy =
     current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text"
-  const copyLabel = current?.type === "image" ? "Copy image" : "Copy source"
+  const copyLabel = copyLabelForType(current?.type)
   const canToggleRaw = current?.type === "markdown" || current?.type === "html"
 
   useEffect(() => {
