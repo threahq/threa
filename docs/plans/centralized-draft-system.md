@@ -325,118 +325,128 @@ surfaced from refs). `bun run test`.
 
 **Verification:** Backend test: resolve declines on drift, deletes on match; thread-conversion re-points drafts. Frontend/E2E (`test:e2e`): send clears draft; drifted draft survives send; reply draft follows a message into its new thread; E2E draft round-trips without plaintext at rest. `bun run test` + `bun run test:e2e`.
 
-#### Stage 4e — E2E draft context refs + slash-command routing — PROPOSED
+#### Stage 4e — E2E drafts seal `contentJson` (lossless) + context refs — PROPOSED
 
-4d closed attachments. Two pieces of composer state still stay session-local on
-E2E drafts, and this stage seals both into the same SSK ciphertext so they roam.
+4d closed attachments. Two pieces of composer state still don't roam on E2E
+drafts, and the root cause of one of them is a body-seal choice 4c made that's
+worth correcting first.
 
-**What's actually missing (verified against the code, not assumed):**
+**Root cause: E2E drafts seal markdown, not `contentJson`.** `seal-draft.ts`
+serializes the body to markdown (`serializeToMarkdown(contentJson)`) before
+sealing, and the decrypt rebuilds it with `parseMarkdown(contentMarkdown)`
+(`message-envelope.ts`). So an E2E draft body does a `contentJson → markdown →
+contentJson` round-trip. 4c chose this purely to reuse the message seal path
+(INV-35), and it's correct **for messages** — a sent message genuinely crosses
+the system boundary (server, enclave-for-agents, public API, other recipients
+all consume the markdown wire form). But a **draft** is the author's own internal
+composer state synced to their own devices; no external consumer reads its
+plaintext. Per INV-58, internal state is canonically `contentJson` — and
+plaintext drafts already honor this (they store/roam `contentJson` verbatim end
+to end; the backend derives `content_markdown` server-side but never round-trips
+it back). The E2E path is the lone exception, and the round-trip is lossy: it
+drops any node attr markdown can't represent.
 
-- **Context refs are a true gap.** `seedDraftWithContextRef`
-  (`lib/context-bag/seed-draft.ts`) is the _only_ producer of a draft's
-  `contextRefs` sidecar — every other reference is a pass-through read — and it's
-  called only by `useDiscussWithAriadne`, which mints a `companionMode: "on"`
-  scratchpad. Those scratchpads can be E2E, so a "Discuss with Ariadne" chip
-  genuinely lands on an E2E draft today. The seal branch in
-  `use-draft-message.ts` writes neither `contextRefs` at rest nor into the
-  ciphertext, so the chip vanishes when the draft roams.
-- **Slash commands are _mostly_ already covered — the gap is one field.** The
-  `slashCommand` node serializes to `/${name}` (`packages/prosemirror/markdown.ts`
-  `serializeNode`) and re-parses to a `slashCommand` node on decrypt
-  (`parseInline`, the `/[\w-]+` match), so 4d's body seal already roams the
-  _visible_ command. What the markdown round-trip drops is `clientActionId` — the
-  opaque routing discriminator. A roamed `/discuss-with-ariadne` decrypts to a
-  node with `name` but `clientActionId: null`, and `message-input.tsx` routes on
-  `clientActionId === DISCUSS_WITH_ARIADNE_COMMAND`, so the recovered draft
-  misroutes to server dispatch (`queueCommand`) instead of the local
-  `startDiscussWithAriadne`. The frontend never writes the backend `command`
-  draft column — commands live only as the node in `contentJson` — so this is the
-  whole of the slash-command work: recover `clientActionId` across the seal.
+**What that lossiness costs, concretely — slash commands.** The `slashCommand`
+node serializes to `/${name}` (`packages/prosemirror/markdown.ts`) and re-parses
+to `{ name }` on decrypt, dropping `clientActionId`. A roamed
+`/discuss-with-ariadne` decrypts with `clientActionId: null`, and
+`message-input.tsx` routes on `clientActionId === DISCUSS_WITH_ARIADNE_COMMAND`,
+so it misroutes to server dispatch (`queueCommand`) instead of the local
+`startDiscussWithAriadne`. **Sealing `contentJson` fixes this for free** — the
+whole node, `clientActionId` and all, round-trips losslessly. No command sidecar,
+no re-injection. (The frontend never writes the backend `command` column anyway;
+commands live only as the node in `contentJson`.)
 
-**Design — markdown body + structured sidecars (the 4d pattern, extended).**
-Markdown is the lossy external boundary: it carries `/name` but not
-`clientActionId`, and has no representation for a context ref at all. The
-established shape (INV-35, INV-58) is to seal the markdown body for the
-human-readable content and ride everything markdown can't represent losslessly as
-**structured sidecars inside the same SSK ciphertext** — exactly how
-`attachmentRefs` already work. Context refs and the command join `attachmentRefs`
-as sidecars; nothing new lands on the wire or at rest.
+**What `contentJson` does NOT cover — context refs.** A draft's `contextRefs` is
+a separate `DraftContextRef[]` sidecar, never part of `contentJson`.
+`seedDraftWithContextRef` (`lib/context-bag/seed-draft.ts`) is its _only_ producer
+(every other reference is a pass-through read), called only by
+`useDiscussWithAriadne`, which mints a `companionMode: "on"` scratchpad that can
+be E2E. So a "Discuss with Ariadne" chip lands on an E2E draft today and vanishes
+on roam — the E2E seal branch writes `contextRefs` neither at rest nor sealed.
+Context refs remain a genuine sidecar regardless of body format.
+
+**Design.** Seal the draft body as `contentJson` (authoritative, lossless,
+INV-58-aligned) and the context refs as a structured sidecar — both inside the
+same SSK ciphertext, alongside the attachment refs 4d already seals. This brings
+E2E drafts into line with plaintext drafts (both lossless `contentJson`); the
+markdown odd-one-out goes away. The message seal/decrypt path stays markdown,
+untouched.
 
 **`@threa/crypto` payload change (`sealed-payload.ts`).** Extend `E2eSealedPayload`
 / `ParsedSealedPayload` with one optional **draft-scoped** namespace:
 
 ```ts
 draft?: {
+  contentJson?: JSONContent      // typed `unknown` in the dependency-free crypto pkg; cast on the FE
   contextRefs?: SealedDraftContextRef[]
-  command?: SealedDraftCommand
 }
 ```
 
-- **Why namespaced under `draft`, not two new top-level fields:** context refs and
-  the command are draft-only — they never appear in a message or an agent reply,
-  and the enclave reader must never confuse them with content. A single `draft`
-  key signals "ignore unless you are the authoring composer," keeps the
-  message/enclave mental model clean (the enclave keeps destructuring only
-  `{ contentMarkdown, attachmentRefs }` and is forward-compatible by ignoring
-  the field), and groups the two adjuncts that always travel together.
+- **Why namespaced under `draft`, not top-level fields:** these are draft-only —
+  they never appear in a message or an agent reply, and the enclave reader must
+  never confuse them with content. A single `draft` key signals "ignore unless
+  you are the authoring composer," keeps the message/enclave mental model clean
+  (the enclave keeps destructuring only `{ contentMarkdown, attachmentRefs }` and
+  is forward-compatible by ignoring the field), and groups the two adjuncts that
+  always travel together.
+- `contentMarkdown` stays populated for drafts too (derived from `contentJson`),
+  so the payload remains shaped like a message and old/preview readers keep a
+  fallback. The draft decrypt **prefers `draft.contentJson`**, falling back to
+  `parseMarkdown(contentMarkdown)` — so 4c/4d-era sealed drafts still open
+  (lossily, as today) with no migration.
 - `SealedDraftContextRef` mirrors `DraftContextRef` structurally (the crypto
-  package stays dependency-free — the same mirror-and-bridge discipline as
+  package stays dependency-free — same mirror-and-bridge discipline as
   `SealedSourceItem` ↔ `SourceItem`). **Only the durable identity fields ride
   sealed** — `refKind`, `streamId`, `fromMessageId`, `toMessageId`,
   `originMessageId`. The transient resolution fields (`status`, `fingerprint`,
   `errorMessage`) are device-local / re-derivable and are NOT sealed: the
   receiving device re-resolves against the shared server bag, so the recovered
   ref reconstructs `status: "ready"` (the bag is server-side and shared; a roamed
-  device resolves it the same way the authoring device did) with the other
-  transient fields null.
-- `SealedDraftCommand = { name: string; clientActionId: string | null }` —
-  structural twin of `@threa/types`' `DraftCommand` / `commands.ts`'
-  `ExtractedCommand`.
-- `isSealedDraftContextRef` / `isSealedDraftCommand` validators mirror
-  `isAttachmentRef` — drop malformed elements (decrypted ≠ trusted). No
+  device resolves it the same way the authoring device did) with the rest null.
+- `isSealedDraftContextRef` (and a light `isDocLike` check for `contentJson`)
+  mirror `isAttachmentRef` — drop malformed elements (decrypted ≠ trusted). No
   `E2E_PAYLOAD_VERSION` bump: the discrimination is structural and additive (old
-  payloads simply lack `draft`), exactly as `sources?` was added — old
-  drafts/messages decrypt unchanged with an empty `draft`.
-- **Serializer signature (decision):** `serializeSealedPayload` is
-  `(contentMarkdown, attachmentRefs?, sources?)` today; a 4th optional positional
-  pushes it to four. **Recommended:** refactor the extras into an options bag —
+  payloads simply lack `draft`), exactly as `sources?` was added.
+- **Serializer signature:** `serializeSealedPayload` is
+  `(contentMarkdown, attachmentRefs?, sources?)` today; a structured `draft`
+  object would make it a 4th positional. Refactor the extras into an options bag —
   `serializeSealedPayload(contentMarkdown, extras?: { attachmentRefs?; sources?; draft? })`
   — touching the ~4 call sites (`message-envelope.ts`, enclave `run-turn.ts`,
-  `trace-observer.ts`); it's mechanical, additive, well-tested, and the named
-  shape stops the positional sprawl (INV-12 spirit). **Fallback** (smaller blast
-  radius, keeps the enclave/message paths byte-untouched): append `draft?` as a
-  4th positional and have only the draft seal path pass it.
+  `trace-observer.ts`); mechanical, additive, well-tested, and the named shape
+  stops the positional sprawl (INV-12 spirit). The enclave/message call sites
+  keep passing only what they pass today.
 
 **Frontend wiring (no backend / types / wire / migration change).**
 
-- `seal-draft.ts` `sealDraftContent`: accept `contextRefs: DraftContextRef[]` and
-  `command: { name; clientActionId } | null`; map context refs to their identity
-  fields and forward both into the serialize path. `SealedDraftFields` gains
-  `contextRefs` + `command` (the recovered plaintext, to seed the decrypt cache,
-  same contract as `attachmentRefs`).
-- `decryption.ts`: `DraftDecryption` gains `contextRefs: DraftContextRef[]`.
-  `resolveDraftDecryption` maps the decrypted `draft.contextRefs` →
-  `DraftContextRef[]` (status reconstructed). Context refs carry **no secret
-  material**, so — unlike attachment keys — they need no `rememberAttachmentRef`
-  re-registration on a fresh device. New `cachedDraftContextRefs(draftId)` mirrors
-  `cachedDraftBody` / `cachedDraftAttachments` as the in-memory plaintext authority
-  the write path re-seals from. **Command recovery (decision):** on decrypt,
-  re-inject `clientActionId` onto the hydrated `slashCommand` node in `contentJson`
-  (a small content walk) so `extractCommandNode` at send recovers it and the node
-  stays the single source of truth — preferred over surfacing a separate decrypted
-  command the send path must consult.
+- `seal-draft.ts` `sealDraftContent`: forward `contentJson` (unchanged input) and
+  `contextRefs: DraftContextRef[]` into the `draft` namespace; still derive
+  `contentMarkdown` for the payload's markdown slot. `SealedDraftFields` gains
+  `contextRefs` (the recovered plaintext, to seed the decrypt cache, same contract
+  as `attachmentRefs`). No `command` field.
+- `message-envelope.ts` decrypt: `tryOpenStreamMessage` reads
+  `contentJson = parsed.draft?.contentJson ?? parseMarkdown(contentMarkdown)`, so
+  the **message path is byte-identical** (messages never set `draft`) while a draft
+  gets its lossless `contentJson`. `DecryptedMessageContent` gains an optional
+  `draftContextRefs?` (same optionality contract as `attachmentRefs?` / `sources?`;
+  messages leave it empty).
+- `decryption.ts`: `DraftDecryption` gains `contextRefs: DraftContextRef[]`, mapped
+  from `cached.content.draftContextRefs` (status reconstructed). Context refs carry
+  **no secret material**, so — unlike attachment keys — they need no
+  `rememberAttachmentRef` re-registration on a fresh device. New
+  `cachedDraftContextRefs(draftId)` mirrors `cachedDraftBody` /
+  `cachedDraftAttachments` as the in-memory plaintext authority the write path
+  re-seals from. **No command handling at all** — it rides inside `contentJson`.
 - `use-draft-message.ts` seal branches (`upsertLoadedDraft` seal branch +
   `saveDraft` / `addAttachment` / `removeAttachment` re-seal): read current context
-  refs from `cachedDraftContextRefs` (so a keystroke or attachment change preserves
-  them, exactly as 4d does for attachments) and extract the command from
-  `contentJson` via `extractCommandNode` at seal time. Keep the at-rest row's
-  `contextRefs` undefined (E2EE-4 — never plaintext at rest); seed the decrypt
-  cache with the sealed refs + command.
+  refs from `cachedDraftContextRefs` so a keystroke or attachment change preserves
+  them (exactly as 4d does for attachments). Keep the at-rest row's `contextRefs`
+  undefined (E2EE-4 — never plaintext at rest); seed the decrypt cache with the
+  sealed refs.
 - `use-draft-composer.ts`: extend the 4d late-hydrate effect (unlock-after-open) to
   carry context refs alongside body + attachments, so a sealed discuss-with-ariadne
   draft's `<ContextRefStrip>` chip re-appears on unlock. The command rides inside
-  `contentJson`, so it hydrates with the body once `clientActionId` is re-injected
-  on decrypt.
+  `contentJson`, so it hydrates with the body — no extra handling.
 - **Wire/sync: unchanged.** `executeDraftUpsert` (`draft-sync.ts`) already forces
   `attachmentIds: []` for E2E and sends `contextRefs: row.contextRefs ?? null`; an
   E2E row's at-rest `contextRefs` stays undefined → wire `null`, while the sealed
@@ -444,32 +454,36 @@ draft?: {
   `command` / `context_refs` columns stay for the plaintext path and are simply
   null for E2E.
 
-**Scope boundary (4e):** only the producers that exist today — discuss-with-ariadne
-context refs and the `/discuss-with-ariadne` `clientActionId`. No speculative
-support for future context-ref kinds (INV-36): the seal carries the whole
-`DraftContextRef` identity, so new kinds ride free. `status` / `fingerprint` /
-`errorMessage` are deliberately not sealed (transient, re-resolved). Command
-dispatch is unchanged — only `clientActionId` recovery across roam is added.
+**Scope boundary (4e):** the body-format fix makes slash commands (and any other
+node attr markdown can't represent) roam losslessly; the only explicit sidecar is
+context refs, for the producers that exist today (discuss-with-ariadne). No
+speculative support for future context-ref kinds (INV-36): the seal carries the
+whole `DraftContextRef` identity, so new kinds ride free. `status` / `fingerprint`
+/ `errorMessage` are deliberately not sealed (transient, re-resolved). Command
+dispatch is unchanged. Pre-4e sealed drafts keep opening via the markdown
+fallback (no backfill).
 
 **Reuse:** `serializeSealedPayload` / `parseSealedPayload` attachment-ref + sources
 pattern (validators, structural-mirror discipline); the 4c/4d decrypt-cache + draft
-decrypt core; `extractCommandNode`; the 4d late-hydrate effect.
+decrypt core; the 4d late-hydrate effect.
 
-**Verification:** `sealed-payload.test.ts` (round-trip `draft.contextRefs` +
-`draft.command`; malformed elements dropped; pre-4e payloads parse with empty
-`draft`; message/enclave destructuring unaffected). `seal-draft.test.ts` (seal
-carries context refs + command; full `toEqual` recovery on decrypt, INV-24).
-`draft-e2e-roam.test.ts` (a discuss-with-ariadne E2E draft's context ref survives
-the wire and re-renders; `/discuss-with-ariadne` recovers `clientActionId` on the
-receiving device and routes locally). `use-draft-message.test.ts` (seal carries
-context refs/command, never at rest; content-only save and add/remove attachment
-preserve them; locked is a no-op). `use-decrypted-draft-content.test.ts` (context
-refs surfaced from the decrypted payload). `bun run test` + `bun run test:e2e`.
+**Verification:** `sealed-payload.test.ts` (round-trip `draft.contentJson` +
+`draft.contextRefs`; malformed elements dropped; pre-4e payloads — no `draft` —
+parse and fall back to markdown; message/enclave destructuring unaffected).
+`seal-draft.test.ts` (seal carries `contentJson` + context refs; full `toEqual`
+recovery on decrypt, INV-24; a `slashCommand` node's `clientActionId` survives the
+round-trip). `draft-e2e-roam.test.ts` (a discuss-with-ariadne E2E draft's context
+ref survives the wire and re-renders; `/discuss-with-ariadne` keeps its
+`clientActionId` on the receiving device and routes locally). `use-draft-message.test.ts`
+(seal carries context refs, never at rest; content-only save and add/remove
+attachment preserve them; locked is a no-op). `use-decrypted-draft-content.test.ts`
+(context refs surfaced from the decrypted payload). `bun run test` +
+`bun run test:e2e`.
 
-**Invariant notes (4e):** INV-35 (reuse the seal/parse/decrypt path), INV-36 (no
-speculative ref kinds), INV-58 (markdown body + structured sidecars), INV-24
-(full-object asserts), E2EE-4 (context refs / command undefined at rest, sealed
-only).
+**Invariant notes (4e):** INV-58 (`contentJson` is the canonical internal body;
+markdown is the boundary form — drafts are internal, so they seal `contentJson`),
+INV-35 (reuse the seal/parse/decrypt path), INV-36 (no speculative ref kinds),
+INV-24 (full-object asserts), E2EE-4 (context refs undefined at rest, sealed only).
 
 ## Invariant Notes
 
