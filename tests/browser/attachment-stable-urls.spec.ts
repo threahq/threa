@@ -48,15 +48,19 @@ test.describe("Stable attachment content URLs", () => {
       )
     }, Array.from(TEST_PNG))
     await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10000 })
-    await editor.press("Enter")
 
-    // The timeline <img> src must be the deterministic content URL, present
-    // synchronously — no async presign before the image can start loading. Assert
-    // the element is attached with that src rather than visible: the thumbnail
-    // variant is generated lazily server-side, so under a cold/loaded backend the
-    // bytes can lag and a not-yet-painted <img> isn't "visible" — but the URL
-    // strategy under test is already proven by the element's src plus the raw
-    // fetch below.
+    // Send via the Send button, not Enter: Enter races the async paste insertion
+    // (the prod build loses that race and the keystroke no-ops, so nothing sends)
+    // — the same reason the encrypted-attachment test uses the button. Wait for
+    // the reference to clear so the send has fired before asserting the timeline.
+    await page.getByRole("button", { name: "Send", exact: true }).first().click()
+    await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15000 })
+
+    // The timeline <img> src must be the deterministic content URL — no async
+    // presign before the image can start loading. Assert the element is attached
+    // with that src rather than visible: the thumbnail variant is generated
+    // lazily, so a not-yet-painted <img> isn't "visible" while the URL strategy
+    // under test is already proven by its src plus the raw fetch below.
     const timelineImg = page.locator("img[src*='/content?variant=thumbnail']").first()
     await expect(timelineImg).toBeAttached({ timeout: 15000 })
     const src = await timelineImg.getAttribute("src")
