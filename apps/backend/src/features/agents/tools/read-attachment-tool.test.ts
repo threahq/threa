@@ -63,7 +63,12 @@ describe("read_attachment — whole-file read", () => {
     const parsed = JSON.parse(result.output)
 
     expect(result.multimodal).toBeUndefined()
-    expect(parsed).toMatchObject({ id: "attach_1", filename: "snippet.txt", mimeType: "text/plain" })
+    expect(parsed).toMatchObject({
+      id: "attach_1",
+      filename: "snippet.txt",
+      mimeType: "text/plain",
+      createdAt: "2026-02-03T10:00:00.000Z",
+    })
     expect(parsed.extraction).toMatchObject({
       summary: "A Cargo.lock merge conflict snippet",
       fullText: "<<<<<<< conflict ... =======",
@@ -217,6 +222,15 @@ describe("read_attachment — input schema", () => {
         message: `Cannot read more than ${EXCEL_MAX_ROWS_PER_REQUEST} rows at once`,
       })
     )
+  })
+
+  it("rejects an open-ended Excel read above the maximum (startRow defaults to 0)", () => {
+    const result = schema.safeParse({
+      attachmentId: "attach_1",
+      section: { kind: "rows", sheetName: "Sheet1", endRow: EXCEL_MAX_ROWS_PER_REQUEST + 1 },
+    })
+
+    expect(result.success).toBe(false)
   })
 
   it("accepts a whole-file read with no section", () => {

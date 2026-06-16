@@ -77,10 +77,14 @@ const ReadAttachmentSchema = z
           message: `Cannot read more than ${MAX_PAGES_PER_REQUEST} pages at once`,
         })
       }
-    } else if (section.startRow !== undefined && section.endRow !== undefined) {
-      if (section.startRow >= section.endRow) {
+    } else if (section.endRow !== undefined) {
+      // rows: startRow defaults to 0 when omitted, so an open-ended endRow is a
+      // request for [0, endRow). Validate that effective span — without this an
+      // omitted startRow would skip the bound and execute would silently clamp.
+      const startRow = section.startRow ?? 0
+      if (startRow >= section.endRow) {
         ctx.addIssue({ code: "custom", path: ["section", "startRow"], message: "startRow must be less than endRow" })
-      } else if (section.endRow - section.startRow > EXCEL_MAX_ROWS_PER_REQUEST) {
+      } else if (section.endRow - startRow > EXCEL_MAX_ROWS_PER_REQUEST) {
         ctx.addIssue({
           code: "custom",
           path: ["section", "endRow"],
@@ -109,6 +113,7 @@ async function readWhole(
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
     processingStatus: attachment.processingStatus,
+    createdAt: attachment.createdAt.toISOString(),
     extraction: extraction
       ? {
           contentType: extraction.contentType,
