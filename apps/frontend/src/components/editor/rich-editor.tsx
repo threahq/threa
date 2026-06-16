@@ -32,6 +32,8 @@ import { useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
+import { SnippetEditorDialog } from "./snippet-editor-dialog"
+import { shouldConvertPasteToSnippet, defaultSnippetFilename } from "./snippet-paste"
 import type { GiphyGif } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
@@ -244,6 +246,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const giphyEnabled = useGiphyEnabled(workspaceId) && enableCommands
   const [giphyOpen, setGiphyOpen] = useState(false)
 
+  // A large paste opens the snippet editor instead of inserting inline; on save
+  // it becomes a `.txt` attachment chip at the original paste position. The
+  // draft holds the pasted text + suggested filename; the caret position and a
+  // per-session counter live in refs so they don't re-render the editor.
+  const [snippetDraft, setSnippetDraft] = useState<{ text: string; filename: string } | null>(null)
+  const snippetInsertPosRef = useRef<number | null>(null)
+  const snippetCountRef = useRef(0)
+
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
   // Filtered for autocomplete dropdown only
@@ -437,6 +447,35 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     }
   }, [])
 
+  // Save the snippet editor's contents as a text attachment, inserting the chip
+  // back at the caret position the paste happened at. Reuses the same
+  // upload-and-insert path as pasted images/files (handleFileInsert), so E2E
+  // encryption, scope-drift guarding, and the inline chip all come for free.
+  const handleSnippetSave = useCallback(
+    ({ text, filename }: { text: string; filename: string }) => {
+      const editorInstance = editorRef.current
+      const insertPos = snippetInsertPosRef.current
+      setSnippetDraft(null)
+      snippetInsertPosRef.current = null
+      const uploadFn = onFileUploadRef.current
+      if (!editorInstance || editorInstance.isDestroyed || !uploadFn) return
+
+      const safeName = filename.trim() || "snippet.txt"
+      const file = new File([text], safeName, { type: "text/plain" })
+
+      // Restore the caret to where the paste landed (the dialog stole focus).
+      const chain = editorInstance.chain().focus()
+      if (insertPos != null) {
+        const clamped = Math.min(insertPos, editorInstance.state.doc.content.size)
+        chain.setTextSelection(clamped)
+      }
+      chain.run()
+
+      void handleFileInsert(file, editorInstance)
+    },
+    [handleFileInsert]
+  )
+
   // Insert the chosen GIF as an inline embed rendered straight from Giphy's CDN
   // (no download/upload — that's how Giphy intends embeds to work). Synchronous,
   // so there's no scope-drift window to guard against.
@@ -530,6 +569,17 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             event.preventDefault()
             return true
           }
+        }
+
+        // Text too large to read inline becomes a snippet attachment: open the
+        // editor seeded with the paste, remembering the caret so the chip lands
+        // where the paste did. Needs an upload handler to attach through.
+        if (onFileUploadRef.current && shouldConvertPasteToSnippet(text)) {
+          event.preventDefault()
+          snippetInsertPosRef.current = editorRef.current.state.selection.from
+          snippetCountRef.current += 1
+          setSnippetDraft({ text, filename: defaultSnippetFilename(snippetCountRef.current) })
+          return true
         }
 
         const handled = insertPastedText(
@@ -994,6 +1044,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           onOpenChange={setGiphyOpen}
           workspaceId={workspaceId}
           onSelect={handleGifSelect}
+        />
+      ) : null}
+      {onFileUpload ? (
+        <SnippetEditorDialog
+          open={snippetDraft !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSnippetDraft(null)
+              snippetInsertPosRef.current = null
+            }
+          }}
+          initialText={snippetDraft?.text ?? ""}
+          defaultFilename={snippetDraft?.filename ?? "snippet.txt"}
+          onSave={handleSnippetSave}
         />
       ) : null}
     </div>
