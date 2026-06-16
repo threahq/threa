@@ -33,7 +33,13 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
 import { SnippetEditorDialog } from "./snippet-editor-dialog"
-import { shouldConvertPasteToSnippet, defaultSnippetFilename, SNIPPET_FALLBACK_FILENAME } from "./snippet-paste"
+import {
+  shouldConvertPasteToSnippet,
+  defaultSnippetFilename,
+  detectSnippetFormat,
+  snippetMimeForFilename,
+  SNIPPET_FALLBACK_FILENAME,
+} from "./snippet-paste"
 import type { GiphyGif } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
@@ -461,7 +467,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       if (!editorInstance || editorInstance.isDestroyed || !uploadFn) return
 
       const safeName = filename.trim() || SNIPPET_FALLBACK_FILENAME
-      const file = new File([text], safeName, { type: "text/plain" })
+      // Mime follows the final (possibly renamed) extension, not the original
+      // sniff, so the filename stays the single source of truth.
+      const file = new File([text], safeName, { type: snippetMimeForFilename(safeName) })
 
       // Restore the caret to where the paste landed (the dialog stole focus).
       const chain = editorInstance.chain().focus()
@@ -578,7 +586,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           event.preventDefault()
           snippetInsertPosRef.current = editorRef.current.state.selection.from
           snippetCountRef.current += 1
-          setSnippetDraft({ text, filename: defaultSnippetFilename(snippetCountRef.current) })
+          const detected = detectSnippetFormat(text)
+          setSnippetDraft({ text, filename: defaultSnippetFilename(snippetCountRef.current, detected.extension) })
           return true
         }
 
