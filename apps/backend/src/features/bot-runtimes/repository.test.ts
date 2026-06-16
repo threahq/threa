@@ -226,8 +226,13 @@ describe("BotInvocationRepository.claimOne", () => {
     // (the trigger envelope's), mirroring the enclave's claimNext two-EXISTS.
     expect(captured.text).toContain("w.key_generation = e.current_key_generation")
     expect(captured.text).toContain("w.key_generation = (m.envelope ->> 'keyGeneration')::int")
-    // The trigger ciphertext is keyed off the invocation's source message.
-    expect(captured.text).toContain("JOIN messages m ON m.id = i.source_message_id")
+    // The trigger ciphertext is keyed off the invocation's source message,
+    // workspace-scoped like every other table the gate touches (INV-8).
+    expect(captured.text).toContain("m.workspace_id = i.workspace_id AND m.id = i.source_message_id")
+    // Race-safe claim target: lock only the bot_invocations candidate row (INV-20).
+    expect(captured.text).toContain("FOR UPDATE OF i SKIP LOCKED")
+    // The claiming instance is bound twice (one per generation EXISTS).
+    expect(captured.values).toContain("inst_42")
   })
 })
 
@@ -280,10 +285,16 @@ describe("BotInvocationRepository.findBootstrapInvocations", () => {
 
     const availableQuery = texts.find((t) => t.includes("attempts < "))
     expect(availableQuery).toBeDefined()
+    // The available list mirrors claimOne's sealed-stream gate, so a row
+    // advertised here is one a follow-up claim can actually win (no keyless
+    // runtime is told sealed work is available it can't open).
+    expect(availableQuery).toContain("w.recipient_key_id = ri.public_key_id")
     // The owned-claims query must NOT be attempt-bounded: a runtime keeps its
-    // own in-flight claim regardless of how many times it's been re-dispatched.
+    // own in-flight claim regardless of how many times it's been re-dispatched,
+    // and it is never re-gated on wrap coverage (the claim already succeeded).
     const ownedClaimsQuery = texts.find((t) => t.includes("claimed_by_instance_id ="))
     expect(ownedClaimsQuery).toBeDefined()
     expect(ownedClaimsQuery).not.toContain("attempts < ")
+    expect(ownedClaimsQuery).not.toContain("w.recipient_key_id = ri.public_key_id")
   })
 })
