@@ -22,6 +22,7 @@ import { applyDraftsBootstrap, type DraftsServiceLike } from "./draft-sync"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
+import { CatchUpBatch } from "./catch-up-batch"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -133,6 +134,10 @@ export class SyncEngine {
   private catchUpCycle = 0
   private activeCatchUpCycle = 0
   private queuedCatchUp: Promise<void> | null = null
+  /** Set for the duration of a catch-up replay so the counter/preview handlers
+   *  fold into it instead of writing per-entry; flushed once when the window
+   *  closes (see performActiveCatchUp). Null → live, write-immediately. */
+  private activeCatchUpBatch: CatchUpBatch | null = null
 
   // Heartbeat (active mode): the highest workspace head observed in catch-up
   // responses. The cursor is per-user filtered and can sit permanently below
@@ -226,6 +231,7 @@ export class SyncEngine {
         getCurrentStreamId: () => this.currentStreamId,
         getCurrentUser: () => this.currentUser,
         subscribeStream: (streamId: string) => void this.subscribeStream(streamId),
+        getCatchUpBatch: () => this.activeCatchUpBatch,
       }
     )
 
@@ -1119,6 +1125,14 @@ export class SyncEngine {
     // — live behavior.
     let appliedThrough: bigint | null = null
 
+    // Counter and preview updates replayed below fold into this batch (via the
+    // handlers' getCatchUpBatch) instead of writing per-entry, so the
+    // unread/activity badges and the activity-sorted sidebar paint the final
+    // state once at flush rather than flickering through every replayed entry.
+    // runCatchUp single-flights, so at most one batch is active at a time.
+    const catchUpBatch = new CatchUpBatch(this.deps.queryClient, this.workspaceId)
+    this.activeCatchUpBatch = catchUpBatch
+
     try {
       await cursorStore.load()
       const cursorBefore = cursorStore.get()
@@ -1218,6 +1232,30 @@ export class SyncEngine {
         })
       }
     } finally {
+      // Commit the coalesced counters + previews once, BEFORE the resume splice,
+      // so the badges and sidebar jump straight to the catch-up's final state
+      // and the buffered live events spliced next apply on top of it. Skipped on
+      // destroy (an account switch repoints the shared db — a post-destroy write
+      // could land in the wrong account's IDB). The cursor already advanced per
+      // entry, so a crash between the last apply and this flush self-heals from
+      // the next bootstrap snapshot (this state is derived, never authoritative).
+      if (this.activeCatchUpBatch === catchUpBatch) this.activeCatchUpBatch = null
+      if (!this.isDestroyed) {
+        try {
+          await catchUpBatch.flush()
+        } catch (error) {
+          // A flush failure (e.g. an IDB error) must never strand the gate: the
+          // resume below is the only path that reopens live delivery and drains
+          // the buffer. Log, then force a full snapshot reseed — a slim reconnect
+          // does NOT re-fetch the workspace counters, so without this the dropped
+          // counter/preview state could stay stale until a full bootstrap happens
+          // to run. forceFull re-fetches the authoritative snapshot. Fire-and-
+          // forget; it owns its own error handling.
+          console.error("Sync catch-up batch flush failed", { workspaceId: this.workspaceId, error })
+          void this.runBootstrap(true, { forceFull: true })
+        }
+      }
+
       // Reopen live flow, even on a failed fetch or early return (the buffer
       // must never strand) — but only when this run still belongs to the
       // CURRENT pause cycle. If a newer connect/resume paused the gate while

@@ -895,6 +895,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
       db.syncCursors.clear(),
       db.workspaceUsers.clear(),
       db.unreadState.clear(),
+      db.streams.clear(),
     ])
   })
 
@@ -1039,7 +1040,11 @@ describe("SyncEngine sync cursor (active mode)", () => {
     return deps
   }
 
-  function streamActivityEntry(syncId: string, messageOrdinal: number): SyncCatchUpResponse["entries"][number] {
+  function streamActivityEntry(
+    syncId: string,
+    messageOrdinal: number,
+    content = "hi"
+  ): SyncCatchUpResponse["entries"][number] {
     return {
       syncId,
       eventType: "stream:activity",
@@ -1052,7 +1057,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
         lastMessagePreview: {
           authorId: "member_other",
           authorType: "user",
-          content: "hi",
+          content,
           createdAt: new Date().toISOString(),
         },
       },
@@ -1137,6 +1142,164 @@ describe("SyncEngine sync cursor (active mode)", () => {
       expect(unread?.unreadCounts["stream_x"]).toBe(0)
     })
     expect(engine.getSyncCursor()).toBe("13")
+    engine.destroy()
+  })
+
+  function streamReadEntry(syncId: string, lastReadOrdinal: number): SyncCatchUpResponse["entries"][number] {
+    return {
+      syncId,
+      eventType: "stream:read",
+      payload: {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamId: "stream_x",
+        lastReadEventId: `evt_${lastReadOrdinal}`,
+        lastReadSequence: String(lastReadOrdinal),
+        lastReadOrdinal,
+      },
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  it("commits catch-up counters atomically — the badge never paints the intermediate bounce", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // A run of activity→read→activity→read→activity that, applied per entry,
+    // bounces the stream's activity count 1, 0, 1, 0, 2. The user must only ever
+    // see the final 2; the zeroes and the early 1 are replay noise.
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [
+          activityCountsEntry("11", { mentionCount: 0, activityCount: 1 }),
+          streamReadEntry("12", 5),
+          activityCountsEntry("13", { mentionCount: 0, activityCount: 1 }),
+          streamReadEntry("14", 5),
+          activityCountsEntry("15", { mentionCount: 0, activityCount: 2 }),
+        ],
+        head: "15",
+      })
+      .mockResolvedValue(emptyPage("15"))
+    const engine = new SyncEngine(makeCounterDeps(catchUp))
+    const putSpy = vi.spyOn(db.unreadState, "put")
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(2)
+    })
+
+    // Every value the IDB-backed badge could have observed. The read entries
+    // would zero the count mid-replay; an atomic commit never persists that 0.
+    const observed = putSpy.mock.calls
+      .map((call) => (call[0] as { activityCounts?: Record<string, number> }).activityCounts?.["stream_x"])
+      .filter((value): value is number => value !== undefined)
+    expect(observed).toContain(2)
+    expect(observed).not.toContain(0)
+
+    putSpy.mockRestore()
+    engine.destroy()
+  })
+
+  it("coalesces catch-up stream previews — the sidebar sees only the final message, not each replayed one", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [
+          streamActivityEntry("11", 6, "first"),
+          streamActivityEntry("12", 7, "second"),
+          streamActivityEntry("13", 8, "third"),
+        ],
+        head: "13",
+      })
+      .mockResolvedValue(emptyPage("13"))
+    const deps = makeCounterDeps(catchUp)
+    // stream_x must be in the bootstrap so it survives applyWorkspaceBootstrap's
+    // stale-entity cleanup; the catch-up replay then advances its preview.
+    const baseBootstrap = await deps.workspaceService.bootstrap()
+    deps.workspaceService.bootstrap = vi.fn(async () => ({
+      ...baseBootstrap,
+      streams: [
+        {
+          id: "stream_x",
+          workspaceId: "ws_1",
+          type: "scratchpad",
+          visibility: "private",
+          displayName: "X",
+          slug: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastMessagePreview: {
+            authorId: "member_other",
+            authorType: "user",
+            content: "seed",
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        } as unknown as (typeof baseBootstrap.streams)[number],
+      ],
+    }))
+    const engine = new SyncEngine(deps)
+    const updateSpy = vi.spyOn(db.streams, "update")
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => {
+      expect((await db.streams.get("stream_x"))?.lastMessagePreview?.content).toBe("third")
+    })
+
+    // The replay folds three previews but persists only the last — the sidebar
+    // re-sorts once on "third" instead of stepping through first/second.
+    const persisted = updateSpy.mock.calls
+      .filter((call) => call[0] === "stream_x")
+      .map((call) => (call[1] as { lastMessagePreview?: { content?: string } }).lastMessagePreview?.content)
+    expect(persisted).toContain("third")
+    expect(persisted).not.toContain("first")
+    expect(persisted).not.toContain("second")
+
+    updateSpy.mockRestore()
+    engine.destroy()
+  })
+
+  it("resumes the gate (drains the buffer) even when the batch flush throws", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("11"))
+    const deps = makeCounterDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    // Force the flush's preview write to reject → the whole flush rejects.
+    const updateSpy = vi.spyOn(db.streams, "update").mockRejectedValue(new Error("idb boom"))
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+
+    // A live event buffered during the pause must still be drained once catch-up
+    // resumes the gate — even though the flush below throws.
+    socket.trigger("workspace_user:added", userAddedLivePayload("12", "user_resumed"))
+
+    // The replayed stream:activity folds a preview; flush's db.streams.update rejects.
+    resolveFirstPage!({ entries: [streamActivityEntry("11", 6)], head: "11" })
+
+    // The flush failure forces a full snapshot reseed (bootstrap called a 2nd time)
+    // so the dropped counter state can't sit stale across slim reconnects.
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
+    })
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_resumed")).toBeDefined()
+    })
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Sync catch-up batch flush failed",
+      expect.objectContaining({ workspaceId: "ws_1" })
+    )
+
+    updateSpy.mockRestore()
+    errorSpy.mockRestore()
     engine.destroy()
   })
 
