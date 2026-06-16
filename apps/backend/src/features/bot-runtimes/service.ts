@@ -247,24 +247,8 @@ export class BotRuntimeService {
       metadata?: Record<string, unknown>
     }
   ): Promise<BotRuntimeSessionLink> {
-    await BotRuntimeInstanceRepository.upsertPresence(db, {
-      id: botRuntimeInstanceId(),
-      workspaceId: params.workspaceId,
-      botId: params.botId,
-      runtimeKind: "pi-local",
-      instanceId: params.instanceId,
-      status: "available",
-      acceptingInvocations: true,
-      capabilities: {
-        supportsActiveScratchpad: true,
-        supportsPersistentSessions: true,
-        supportsSessionControlCommands: true,
-        sessionControlCommands: ["compact", "model", "thinking", "skill"],
-      },
-      // Session-link write doesn't carry the runtime's BIK; keep the key the
-      // live session registered via bot:hello rather than nulling it.
-      retainBik: true,
-    })
+    await this.upsertPiRemoteSessionPresenceInTransaction(db, params)
+
     await this.setActiveActorInTransaction(db, {
       workspaceId: params.workspaceId,
       rootStreamId: params.rootStreamId,
@@ -283,6 +267,60 @@ export class BotRuntimeService {
       activeStreamId: params.activeStreamId,
       linkedBy: params.linkedBy,
       metadata: params.metadata,
+    })
+  }
+
+  async rebindPiRemoteSessionInstance(params: {
+    workspaceId: string
+    botId: string
+    linkId: string
+    instanceId: string
+    runtimeSessionId: string
+    newInstanceId: string
+  }): Promise<BotRuntimeSessionLink | null> {
+    return withTransaction(this.pool, async (db) => {
+      const link = await BotRuntimeSessionLinkRepository.rebindInstance(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        linkId: params.linkId,
+        runtimeKind: "pi-local",
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId,
+        newInstanceId: params.newInstanceId,
+      })
+      if (!link) return null
+      await this.upsertPiRemoteSessionPresenceInTransaction(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        instanceId: params.newInstanceId,
+        runtimeSessionId: params.runtimeSessionId,
+      })
+      return link
+    })
+  }
+
+  private async upsertPiRemoteSessionPresenceInTransaction(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
+  ): Promise<void> {
+    await BotRuntimeInstanceRepository.upsertPresence(db, {
+      id: botRuntimeInstanceId(),
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      runtimeKind: "pi-local",
+      instanceId: params.instanceId,
+      status: "available",
+      acceptingInvocations: true,
+      capabilities: {
+        runtimeSessionId: params.runtimeSessionId,
+        supportsActiveScratchpad: true,
+        supportsPersistentSessions: true,
+        supportsSessionControlCommands: true,
+        sessionControlCommands: ["compact", "model", "thinking", "skill"],
+      },
+      // Session-link writes don't carry the runtime's BIK; keep the key the
+      // live session registered via bot:hello rather than nulling it.
+      retainBik: true,
     })
   }
 

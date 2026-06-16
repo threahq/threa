@@ -406,6 +406,12 @@ describe("sanitizeInstanceIdSegment", () => {
     expect(__testing.sanitizeInstanceIdSegment("UPPER_lower-09")).toBe("UPPER_lower-09")
   })
 
+  test("creates websocket-safe instance ids", () => {
+    const id = __testing.createInstanceId()
+    expect(id).toMatch(/^[A-Za-z0-9_-]+$/)
+    expect(id.length).toBeLessThanOrEqual(64)
+  })
+
   test("collapses to empty when the input contains no safe characters at all", () => {
     expect(__testing.sanitizeInstanceIdSegment("...")).toBe("")
     expect(__testing.sanitizeInstanceIdSegment("")).toBe("")

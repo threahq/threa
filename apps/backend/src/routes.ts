@@ -836,6 +836,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.renameBotRuntimeSession
   )
   app.post(
+    "/api/v1/workspaces/:workspaceId/bot-runtime/sessions/rebind",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
+    publicApi.rebindBotRuntimeSession
+  )
+  app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/claim",
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),

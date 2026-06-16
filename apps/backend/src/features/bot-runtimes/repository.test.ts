@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
-import { BOT_CLAIM_MAX_ATTEMPTS, BotInvocationRepository, BotRuntimeInstanceRepository } from "./repository"
+import {
+  BOT_CLAIM_MAX_ATTEMPTS,
+  BotInvocationRepository,
+  BotRuntimeInstanceRepository,
+  BotRuntimeSessionLinkRepository,
+} from "./repository"
 
 interface Captured {
   text: string | null
@@ -25,6 +30,26 @@ function makeRow(overrides: Record<string, unknown> = {}) {
     status_text: null,
     public_key: null,
     public_key_id: null,
+    last_seen_at: new Date(),
+    created_at: new Date(),
+    updated_at: new Date(),
+    ...overrides,
+  }
+}
+
+function makeSessionLinkRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "brsl_1",
+    workspace_id: "ws_1",
+    bot_id: "bot_alice",
+    runtime_kind: "pi-local",
+    instance_id: "inst_99",
+    runtime_session_id: "sess_1",
+    root_stream_id: "stream_root",
+    active_stream_id: "stream_active",
+    status: "active",
+    linked_by: "usr_owner",
+    metadata: {},
     last_seen_at: new Date(),
     created_at: new Date(),
     updated_at: new Date(),
@@ -174,6 +199,33 @@ function makeInvocationRow(overrides: Record<string, unknown> = {}) {
     ...overrides,
   }
 }
+
+describe("BotRuntimeSessionLinkRepository.rebindInstance", () => {
+  afterEach(() => mock.restore())
+
+  it("updates only the authenticated active runtime session link", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeSessionLinkRow({ instance_id: "inst_new" })])
+
+    const result = await BotRuntimeSessionLinkRepository.rebindInstance(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      linkId: "brsl_1",
+      runtimeKind: "pi-local",
+      instanceId: "inst_old",
+      runtimeSessionId: "sess_1",
+      newInstanceId: "inst_new",
+    })
+
+    expect(captured.text).toContain("UPDATE bot_runtime_session_links")
+    expect(captured.text).toContain("id = ")
+    expect(captured.text).toContain("instance_id = ")
+    expect(captured.text).toContain("runtime_session_id = ")
+    expect(captured.text).toContain("status = 'active'")
+    expect(captured.values).toEqual(expect.arrayContaining(["brsl_1", "inst_old", "sess_1", "inst_new"]))
+    expect(result?.instanceId).toBe("inst_new")
+  })
+})
 
 describe("BotInvocationRepository.claimOne", () => {
   afterEach(() => mock.restore())
