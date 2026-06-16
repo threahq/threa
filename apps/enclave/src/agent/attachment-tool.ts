@@ -14,12 +14,12 @@ export interface EnclaveAttachmentStore {
   ciphertextById: Map<string, string>
 }
 
-const LoadAttachmentSchema = z.object({
+const ReadAttachmentSchema = z.object({
   attachmentId: z.string().describe("The attachment id from an [Attached: …] note in the conversation"),
 })
 
 /**
- * The enclave's `load_attachment`: same tool name the main-app agent has, but
+ * The enclave's `read_attachment`: same tool name the main-app agent has, but
  * sourced entirely in-process — ref + ciphertext travel with the turn, and the
  * decrypt happens next to the model call, so plaintext never leaves the
  * enclave. History messages carry `[Attached: "name" (id)]` notes instead of
@@ -30,25 +30,25 @@ const LoadAttachmentSchema = z.object({
  * the conversation's own content (their refs already ride the messages the
  * model reads), not workspace reads or web egress.
  */
-export function createEnclaveLoadAttachmentTool(store: EnclaveAttachmentStore): AgentTool {
+export function createEnclaveReadAttachmentTool(store: EnclaveAttachmentStore): AgentTool {
   return defineAgentTool({
-    name: "load_attachment",
-    description: `Load a file attached to this conversation so you can read it. Use the attachment id from the [Attached: "filename" (attachment id)] note on the message that shared it.
+    name: "read_attachment",
+    description: `Read a file attached to this conversation. Use the attachment id from the [Attached: "filename" (attachment id)] note on the message that shared it.
 
 Works for any attached file: images and PDFs are loaded for direct viewing; text files (markdown, code, CSV, logs) return their contents.`,
     // Empty = conversation-local (see the doc comment above): the per-stream
     // tool-privacy filter in buildEnclaveTools never drops this tool.
     categories: [],
-    promptBlock: `## Loading Attachments
+    promptBlock: `## Reading Attachments
 
-You have a \`load_attachment\` tool to load a file shared in this conversation for direct analysis.
+You have a \`read_attachment\` tool to read a file shared in this conversation.
 
-When to use load_attachment:
+When to use read_attachment:
 - When the user asks you to look at or analyze an attached file
 - When a message carries an \`[Attached: "filename" (attachment id)]\` note and you need the file's actual content
 
 Images and PDFs are returned for direct viewing; text-readable files return their contents.`,
-    inputSchema: LoadAttachmentSchema,
+    inputSchema: ReadAttachmentSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
       const ref = store.refsById.get(input.attachmentId)

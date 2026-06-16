@@ -866,7 +866,7 @@ describe("runEnclaveTurn", () => {
     ])
   })
 
-  it("loads a HISTORY attachment on demand via load_attachment (note → tool call → contents)", async () => {
+  it("loads a HISTORY attachment on demand via read_attachment (note → tool call → contents)", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()
     const wrap = await wrapSskToEnclave(keyPair, ssk)
@@ -900,7 +900,7 @@ describe("runEnclaveTurn", () => {
 
     // Turn script: the model asks for the file, then replies.
     const chat = stubChat([
-      toolCallReply("load_attachment", { attachmentId: "attach_hist" }),
+      toolCallReply("read_attachment", { attachmentId: "attach_hist" }),
       textReply("It says: ship it."),
     ])
     const { onMessage, onStepStarted, onStep, onSubstep } = collector()
@@ -916,13 +916,13 @@ describe("runEnclaveTurn", () => {
     )
 
     // First call: the history message carries the id-bearing note (not the bytes),
-    // and load_attachment is offered even with no web tools configured.
+    // and read_attachment is offered even with no web tools configured.
     const first = chat.seen[0]!
     const historyMsg = first.messages.find(
       (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("plan")
     )
     expect(historyMsg?.content).toBe('here\'s the plan\n\n[Attached: "plan.md" (attach_hist)]')
-    expect(first.tools?.map((t) => t.function.name)).toEqual(expect.arrayContaining(["load_attachment"]))
+    expect(first.tools?.map((t) => t.function.name)).toEqual(expect.arrayContaining(["read_attachment"]))
 
     // Second call: the tool result carries the decrypted contents (inside the
     // runtime's untrusted-output trust boundary wrapper).

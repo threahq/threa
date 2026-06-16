@@ -39,7 +39,7 @@ describe("buildEnclaveTools", () => {
     expect(toolNames("tvly-test", ["workspace"])).toEqual([])
   })
 
-  it("keeps the conversation-local load_attachment under a no-web policy (empty categories)", () => {
+  it("keeps the conversation-local read_attachment under a no-web policy (empty categories)", () => {
     const tools = buildEnclaveTools({
       ai,
       model,
@@ -48,7 +48,7 @@ describe("buildEnclaveTools", () => {
       allowedCategories: [],
       attachments: { refsById: new Map(), ciphertextById: new Map() },
     })
-    expect(tools.map((t) => t.name)).toEqual(["load_attachment"])
+    expect(tools.map((t) => t.name)).toEqual(["read_attachment"])
   })
 
   it("advertises web-only research reach — never workspace or integrations", () => {

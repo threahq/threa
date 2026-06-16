@@ -9,7 +9,7 @@ import {
 import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
 import type { ToolPrivacyCategory } from "@threa/types"
 import type { LanguageModel } from "ai"
-import { createEnclaveLoadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
+import { createEnclaveReadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
 
 /**
  * The enclave-safe tool surface for an E2E turn.
@@ -44,7 +44,7 @@ export interface EnclaveToolDeps {
    */
   allowedCategories?: ToolPrivacyCategory[]
   /**
-   * This turn's attachment refs + inline ciphertext, powering `load_attachment`.
+   * This turn's attachment refs + inline ciphertext, powering `read_attachment`.
    * The tool is NOT behind the privacy gate: the files are the conversation's
    * own content (their refs already ride the messages the model reads), not
    * workspace reads or web egress.
@@ -55,7 +55,7 @@ export interface EnclaveToolDeps {
 export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
   // Conversation-local tools carry empty `categories` (see `attachments`), so
   // the policy filter below never drops them.
-  const localTools: AgentTool[] = deps.attachments ? [createEnclaveLoadAttachmentTool(deps.attachments)] : []
+  const localTools: AgentTool[] = deps.attachments ? [createEnclaveReadAttachmentTool(deps.attachments)] : []
 
   // The web primitives, built fresh on demand. The top-level loop and the
   // research sub-loop each get their OWN instances (the sub-loop runs the same
@@ -70,7 +70,7 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
     }
     // The enclave only serves e2e-capable personas, which run vision-capable
     // models — and it already feeds images to the model via the ungated
-    // load_attachment tool above — so read_url may return images here too.
+    // read_attachment tool above — so read_url may return images here too.
     tools.push(createReadUrlTool({ supportsVision: true }))
     return tools
   }

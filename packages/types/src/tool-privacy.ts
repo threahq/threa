@@ -111,7 +111,7 @@ export function isToolCategoryAllowed(
  *
  * An EMPTY category set is also always allowed: it marks a conversation-local
  * tool that reads nothing beyond what the model already sees (e.g. the
- * enclave's in-process `load_attachment`, whose files ride the messages
+ * enclave's in-process `read_attachment`, whose files ride the messages
  * themselves) — there is no egress or workspace read for a policy to gate.
  * Registered `AgentToolName`s never carry an empty set (the table below is
  * non-empty by test), so this case only arises for per-definition categories

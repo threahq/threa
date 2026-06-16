@@ -104,15 +104,15 @@ known-missing tally, kept current as gaps close:
   text-ish files (markdown, code, CSV — anything valid UTF-8) are inlined as
   text. The message you send feeds its files eagerly; files from earlier turns
   surface as `[Attached: …]` notes the model pulls on demand through its
-  in-enclave `load_attachment` tool (same name as the main app's, but sourced
+  in-enclave `read_attachment` tool (same name as the main app's, but sourced
   from the inline-shipped ciphertext — never S3, never a backend callback).
   Server-side processing (image captioning, PDF text, transcoding) stays off by
-  design — the *server* still can't read the content.
+  design — the _server_ still can't read the content.
 - **Interjections are picked up after the current turn, not folded into it.** If you
   send a message while Ariadne is mid-turn, it isn't ignored: when the running turn
   finishes, a follow-up turn automatically runs for the message(s) that arrived
   during it — the same finish-then-catch-up behavior the non-encrypted Ariadne uses.
-  What's still missing is *mid-turn* adaptation (folding the new message into the
+  What's still missing is _mid-turn_ adaptation (folding the new message into the
   in-flight turn) and edit-to-reconsider. The mid-turn control today is the graceful
   "Stop research" abort.
 - **Ariadne is web-only in the enclave.** Inside an encrypted stream, Ariadne has

@@ -173,7 +173,7 @@ export async function runEnclaveTurn(
   // lives in the decrypted payloads, not here.
   const ciphertextById = new Map((request.attachmentCiphertexts ?? []).map((a) => [a.attachmentId, a.ciphertext]))
   // Every ref the conversation mentions, decrypted out of the sealed payloads —
-  // together with `ciphertextById` this powers the `load_attachment` tool.
+  // together with `ciphertextById` this powers the `read_attachment` tool.
   const refsById = new Map<string, AttachmentRef>()
 
   // Open the history this enclave is entitled to. Generations predating our
@@ -181,7 +181,7 @@ export async function runEnclaveTurn(
   // sealed-payload wrapper so the model sees clean markdown (not the JSON
   // envelope) for any message that carried attachments; an `[Attached: …]`
   // note (with the attachment id) tells the model what's there, and it pulls
-  // the actual bytes on demand via `load_attachment` — only the trigger's
+  // the actual bytes on demand via `read_attachment` — only the trigger's
   // files are fed eagerly. Keep each item's clear `sequence` and clean markdown
   // alongside its model message so the rolling summary (C-2) can fold the
   // overflow and advance its cursor.
@@ -326,7 +326,7 @@ export async function runEnclaveTurn(
     // Per-stream policy travels on the assignment, not in `deps.tools` (which
     // is the enclave's own capability config, e.g. whether it has a Tavily key).
     allowedCategories: request.allowedToolCategories,
-    // Conversation-local file access for `load_attachment` (carries empty
+    // Conversation-local file access for `read_attachment` (carries empty
     // categories, so the policy filter never drops it; the refs already ride
     // the messages the model reads).
     attachments: { refsById, ciphertextById },
@@ -636,7 +636,7 @@ async function buildUserContent(
 
 /**
  * History attachments aren't auto-fed — the model should know a file is there
- * and pull it on demand: note each filename with the id `load_attachment` takes.
+ * and pull it on demand: note each filename with the id `read_attachment` takes.
  */
 function withAttachmentNote(contentMarkdown: string, refs: AttachmentRef[]): string {
   if (refs.length === 0) return contentMarkdown
