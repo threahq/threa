@@ -45,6 +45,13 @@ export interface SealStreamMessageInput {
    * wire — the server only holds opaque bytes and a placeholder row.
    */
   attachmentRefs?: AttachmentRef[]
+  /**
+   * A draft's authoritative ProseMirror body, sealed losslessly alongside the
+   * markdown (E2E draft seal only — messages never set it). See
+   * `E2eSealedPayload.draftContentJson`: drafts are internal state, so per INV-58
+   * they seal `contentJson` rather than relying on the lossy markdown round-trip.
+   */
+  draftContentJson?: unknown
 }
 
 export interface SealStreamMessageResult {
@@ -70,7 +77,10 @@ export async function sealStreamMessage(input: SealStreamMessageInput): Promise<
   const { envelope, ciphertext } = await sealMessage({
     key: input.ssk,
     keyGeneration: input.keyGeneration,
-    payload: serializeSealedPayload(input.contentMarkdown, input.attachmentRefs),
+    payload: serializeSealedPayload(input.contentMarkdown, {
+      attachmentRefs: input.attachmentRefs,
+      draftContentJson: input.draftContentJson,
+    }),
     aad,
   })
   return { ciphertext: bytesToBase64(ciphertext), envelope, e2eVersion: STREAM_ENVELOPE_VERSION }
@@ -219,8 +229,12 @@ async function tryOpenStreamMessage(
     // the markdown for the body, the refs (key/iv/filename/mime) so the viewer
     // can fetch + decrypt the opaque S3 ciphertext on view, and the sources so
     // an agent reply renders its citations (E2EE-9).
-    const { contentMarkdown, attachmentRefs, sources } = parseSealedPayload(raw)
-    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown), attachmentRefs, sources }
+    const { contentMarkdown, attachmentRefs, sources, draftContentJson } = parseSealedPayload(raw)
+    // A draft seals its lossless `contentJson` (INV-58); prefer it so node attrs
+    // markdown can't carry — e.g. a slash command's `clientActionId` — survive the
+    // roam. Messages never set it, so they reconstruct from markdown exactly as before.
+    const contentJson = draftContentJson != null ? (draftContentJson as JSONContent) : parseMarkdown(contentMarkdown)
+    return { contentMarkdown, contentJson, attachmentRefs, sources }
   } catch {
     return null
   }

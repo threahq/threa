@@ -19,6 +19,12 @@ export interface SealOutgoingMessageInput {
   messageId: string
   contentMarkdown: string
   attachmentIds?: string[]
+  /**
+   * A draft's authoritative ProseMirror body, sealed losslessly into the payload
+   * alongside the markdown (E2E draft seal only — the live message send path never
+   * sets it). See `E2eSealedPayload.draftContentJson`.
+   */
+  draftContentJson?: unknown
 }
 
 export interface SealOutgoingMessageResult {
@@ -76,6 +82,7 @@ export async function sealOutgoingMessage(input: SealOutgoingMessageInput): Prom
     ssk: streamKey.key,
     keyGeneration: streamKey.keyGeneration,
     attachmentRefs,
+    draftContentJson: input.draftContentJson,
   })
   return { e2eFields, attachmentRefs, owner: { keyId: session.keyId, privateKey: session.privateKey } }
 }

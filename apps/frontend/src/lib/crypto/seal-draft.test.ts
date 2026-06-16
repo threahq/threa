@@ -67,6 +67,38 @@ describe("seal-draft", () => {
     expect(opened?.contentJson).toEqual(parseMarkdown("hello e2e world"))
   })
 
+  it("seals the lossless contentJson so a slash command's clientActionId survives the roam (Stage 4e)", async () => {
+    vi.spyOn(sessionStore, "getE2eSessionState").mockReturnValue(unlockedSession)
+    vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({ keyGeneration: 1, key: ssk })
+    vi.spyOn(streamKeyCache, "resolveStreamKey").mockResolvedValue(ssk)
+
+    // A slashCommand node's clientActionId has no markdown representation — the
+    // markdown round-trip drops it (only `/name` survives). Sealing contentJson
+    // carries it whole, so a roamed `/discuss-with-ariadne` still routes locally.
+    const commandDoc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "slashCommand", attrs: { name: "discuss-with-ariadne", clientActionId: "discuss-with-ariadne" } },
+      ],
+    }
+
+    const sealed = await sealDraftContent({ workspaceId, senderId, streamId, draftId, contentJson: commandDoc })
+
+    const opened = await tryDecryptMessagePayload(
+      { contentMarkdown: "", ciphertext: sealed.ciphertext, envelope: sealed.envelope, e2eVersion: sealed.e2eVersion },
+      {
+        privateKey: unlockedSession.privateKey!,
+        recipientKeyId: unlockedSession.keyId!,
+        workspaceId,
+        streamId,
+        rootStreamId: streamId,
+      }
+    )
+    // The whole node round-trips — not the lossy markdown reconstruction, which
+    // would surface `{ name }` with no clientActionId.
+    expect(opened?.contentJson).toEqual(commandDoc)
+  })
+
   it("seals attachment refs into the body and recovers them on decrypt (Stage 4d)", async () => {
     vi.spyOn(sessionStore, "getE2eSessionState").mockReturnValue(unlockedSession)
     vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({ keyGeneration: 1, key: ssk })

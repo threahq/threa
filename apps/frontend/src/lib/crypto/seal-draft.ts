@@ -29,8 +29,14 @@ export interface SealedDraftFields {
  * ride inside the SSK ciphertext (as `attachmentRefs`) exactly as a message's
  * do, so a roamed draft's attachments decrypt + send on the receiving device.
  * The plaintext attachment linkage never lands on disk or the wire — only the
- * opaque ciphertext does. (Context refs / slash commands remain session-local —
- * their own design, deferred.)
+ * opaque ciphertext does.
+ *
+ * Stage 4e seals the body as `contentJson`, not just markdown. A draft is the
+ * author's own internal composer state, so per INV-58 the canonical form is
+ * `contentJson` — and the markdown round-trip messages use is lossy for node
+ * attrs markdown can't represent (a slash command's `clientActionId`, etc.). The
+ * lossless `contentJson` rides in `draftContentJson` (the markdown stays as the
+ * readable mirror), so a roamed draft re-hydrates byte-for-byte.
  *
  * Throws (locked session, missing SSK, an attachment key lost on reload) the
  * same way `sealOutgoingMessage` does; the caller treats a throw as "can't
@@ -55,6 +61,7 @@ export async function sealDraftContent(input: {
     messageId: input.draftId,
     contentMarkdown,
     attachmentIds: input.attachmentIds,
+    draftContentJson: input.contentJson,
   })
   return {
     ciphertext: e2eFields.ciphertext,

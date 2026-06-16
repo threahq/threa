@@ -54,7 +54,9 @@ export {
   parseSealedPayload,
   isAttachmentRef,
   isSealedSourceItem,
+  isDocLike,
   type E2eSealedPayload,
   type ParsedSealedPayload,
   type SealedSourceItem,
+  type SealedPayloadExtras,
 } from "./sealed-payload"

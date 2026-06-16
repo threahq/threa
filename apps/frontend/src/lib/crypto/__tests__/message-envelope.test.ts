@@ -323,6 +323,7 @@ describe("parseSealedPayload", () => {
       contentMarkdown: "hello **world**",
       attachmentRefs: [],
       sources: [],
+      draftContentJson: null,
     })
   })
 
@@ -331,32 +332,45 @@ describe("parseSealedPayload", () => {
       contentMarkdown: "{not json at all",
       attachmentRefs: [],
       sources: [],
+      draftContentJson: null,
     })
     const jsonButNotOurs = JSON.stringify({ foo: "bar" })
     expect(parseSealedPayload(jsonButNotOurs)).toEqual({
       contentMarkdown: jsonButNotOurs,
       attachmentRefs: [],
       sources: [],
+      draftContentJson: null,
     })
   })
 
   it("extracts contentMarkdown and refs from the versioned wrapper", () => {
     const wrapper = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "see attached", attachmentRefs: refs })
-    expect(parseSealedPayload(wrapper)).toEqual({ contentMarkdown: "see attached", attachmentRefs: refs, sources: [] })
+    expect(parseSealedPayload(wrapper)).toEqual({
+      contentMarkdown: "see attached",
+      attachmentRefs: refs,
+      sources: [],
+      draftContentJson: null,
+    })
   })
 
   it("falls back to no refs when a wrapper's attachmentRefs is not an array", () => {
     const malformed = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "body", attachmentRefs: "oops" })
-    expect(parseSealedPayload(malformed)).toEqual({ contentMarkdown: "body", attachmentRefs: [], sources: [] })
+    expect(parseSealedPayload(malformed)).toEqual({
+      contentMarkdown: "body",
+      attachmentRefs: [],
+      sources: [],
+      draftContentJson: null,
+    })
   })
 
   it("extracts citation sources sealed into the wrapper (agent replies, E2EE-9)", () => {
     const sources = [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }]
-    const wrapper = serializeSealedPayload("Tides come from the moon.", undefined, sources)
+    const wrapper = serializeSealedPayload("Tides come from the moon.", { sources })
     expect(parseSealedPayload(wrapper)).toEqual({
       contentMarkdown: "Tides come from the moon.",
       attachmentRefs: [],
       sources,
+      draftContentJson: null,
     })
   })
 
@@ -371,11 +385,36 @@ describe("parseSealedPayload", () => {
       contentMarkdown: "body",
       attachmentRefs: [],
       sources: [{ title: "Valid", url: "https://example.com" }],
+      draftContentJson: null,
     })
   })
 
-  it("seals bare markdown (no wrapper) when there are no refs and no sources", () => {
+  it("round-trips a draft's lossless contentJson and drops a non-doc one (Stage 4e)", () => {
+    const contentJson = {
+      type: "doc",
+      content: [
+        { type: "slashCommand", attrs: { name: "discuss-with-ariadne", clientActionId: "discuss-with-ariadne" } },
+      ],
+    }
+    const wrapper = serializeSealedPayload("/discuss-with-ariadne", { draftContentJson: contentJson })
+    expect(parseSealedPayload(wrapper)).toEqual({
+      contentMarkdown: "/discuss-with-ariadne",
+      attachmentRefs: [],
+      sources: [],
+      draftContentJson: contentJson,
+    })
+    // A malformed (non-doc) draft body falls back to null — the reader reconstructs from markdown.
+    const bad = JSON.stringify({
+      __e2ePayload: 1,
+      contentMarkdown: "x",
+      attachmentRefs: [],
+      draftContentJson: { type: "paragraph" },
+    })
+    expect(parseSealedPayload(bad).draftContentJson).toBeNull()
+  })
+
+  it("seals bare markdown (no wrapper) when there are no refs, sources, or a draft body", () => {
     expect(serializeSealedPayload("plain body")).toBe("plain body")
-    expect(serializeSealedPayload("plain body", [], [])).toBe("plain body")
+    expect(serializeSealedPayload("plain body", { attachmentRefs: [], sources: [] })).toBe("plain body")
   })
 })

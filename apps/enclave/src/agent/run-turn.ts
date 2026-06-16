@@ -380,7 +380,7 @@ export async function runEnclaveTurn(
       const sealed = await sealMessage({
         key: replySsk,
         keyGeneration: request.reply.keyGeneration,
-        payload: serializeSealedPayload(content, undefined, sources),
+        payload: serializeSealedPayload(content, { sources }),
         aad: buildMessageAad({
           streamId: request.streamId,
           messageId,
