@@ -154,14 +154,14 @@ test.describe("E2E encrypted scratchpads", () => {
     await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15_000 })
 
     // The sender's own row must render the image from a *decrypted blob* — not
-    // the server's opaque ciphertext. The `<img>` element only mounts once the
-    // ciphertext has been fetched and decrypted into an object URL, so its mere
-    // presence (with a `blob:` src) proves the local decrypt round-trip. Cold
-    // first paint walks the full pipeline (echo → seed → S3 GET → AES-GCM open),
-    // so allow generous headroom.
+    // the server's opaque ciphertext. The `<img>` first mounts pointing at the
+    // server content URL, then swaps its src to a decrypted object URL once the
+    // ciphertext has been fetched and opened (echo → seed → S3 GET → AES-GCM).
+    // Poll for that swap — reading src once races the decrypt and catches the
+    // pre-swap content URL. The blob: src is what proves the local round-trip.
     const image = page.locator('img[alt="pasted-image-1.png"]')
     await expect(image).toBeVisible({ timeout: 30_000 })
-    expect(await image.getAttribute("src")).toMatch(/^blob:/)
+    await expect(image).toHaveAttribute("src", /^blob:/, { timeout: 30_000 })
   })
 
   test("in-stream search matches the DECRYPTED body of an unlocked encrypted message (E2EE-15)", async ({ page }) => {

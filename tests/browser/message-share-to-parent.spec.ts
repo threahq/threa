@@ -103,6 +103,10 @@ async function setUpSharedPointer(
   // edit / delete via the API and watch propagate to the channel pointer.
   const threadRow = panelMessageRow(page, opts.threadText)
   await expect(threadRow).toBeVisible()
+  // The row first mounts with an optimistic `temp_` id; the edit/delete tests
+  // mutate the source through the messages API, which only knows the reconciled
+  // server id, so wait for the optimistic→server swap before capturing it.
+  await expect(threadRow).not.toHaveAttribute("data-message-id", /^temp_/)
   const threadMessageId = (await threadRow.getAttribute("data-message-id")) ?? ""
   expect(threadMessageId, "thread reply should expose data-message-id").not.toBe("")
 
