@@ -403,6 +403,7 @@ export type {
   StreamContextRef,
   StreamContextRefSource,
   EventsAroundResponse,
+  EventsAroundDateResponse,
   SharedMessageHydration,
   // Sync log catch-up
   SyncCatchUpEntry,

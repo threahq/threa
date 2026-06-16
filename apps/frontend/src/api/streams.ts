@@ -6,6 +6,7 @@ import type {
   StreamType,
   StreamBootstrap,
   EventsAroundResponse,
+  EventsAroundDateResponse,
   CreateStreamInput,
   UpdateStreamInput,
   NotificationLevel,
@@ -131,6 +132,24 @@ export const streamsApi = {
     const searchParams = new URLSearchParams({ messageId: targetId })
     if (limit) searchParams.set("limit", limit.toString())
     return api.get<EventsAroundResponse>(
+      `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?${searchParams.toString()}`
+    )
+  },
+
+  /**
+   * Jump-to-date: events around the first message on or after `isoDate`, plus
+   * the `anchorMessageId` to scroll to (null when the date is past the last
+   * message). Shares the `/events/around` endpoint with the id-based jump.
+   */
+  async getEventsAroundDate(
+    workspaceId: string,
+    streamId: string,
+    isoDate: string,
+    limit?: number
+  ): Promise<EventsAroundDateResponse> {
+    const searchParams = new URLSearchParams({ date: isoDate })
+    if (limit) searchParams.set("limit", limit.toString())
+    return api.get<EventsAroundDateResponse>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?${searchParams.toString()}`
     )
   },

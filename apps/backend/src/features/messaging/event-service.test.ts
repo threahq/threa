@@ -4,7 +4,7 @@ import { EventService } from "./event-service"
 import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
 import { MessageVersionRepository } from "./version-repository"
-import { StreamEventRepository, StreamMemberRepository, StreamRepository } from "../streams"
+import { StreamEventRepository, StreamMemberRepository, StreamRepository, type StreamEvent } from "../streams"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import * as db from "../../db"
@@ -843,5 +843,53 @@ describe("EventService INV-E1 sink guard", () => {
     ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_EDIT_UNSUPPORTED" })
     // Refused before loading or mutating the message.
     expect(findForUpdate).not.toHaveBeenCalled()
+  })
+})
+
+describe("EventService.listEventsAroundDate", () => {
+  beforeEach(() => {
+    spyOn(db, "withClient").mockImplementation(((_pool: unknown, cb: (client: any) => Promise<unknown>) =>
+      cb({})) as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("returns an empty window with a null anchor when no message lands on or after the date", async () => {
+    spyOn(StreamEventRepository, "findFirstMessageOnOrAfter").mockResolvedValue(null)
+    const listAround = spyOn(StreamEventRepository, "listAround")
+
+    const service = new EventService({} as any)
+    const result = await service.listEventsAroundDate("stream_1", new Date("2026-06-16T00:00:00.000Z"))
+
+    expect(result).toEqual({ events: [], hasOlder: false, hasNewer: false, anchorMessageId: null })
+    expect(listAround).not.toHaveBeenCalled()
+  })
+
+  it("centers the window on the first message and returns its messageId as the anchor", async () => {
+    const anchor: StreamEvent = {
+      id: "evt_anchor",
+      streamId: "stream_1",
+      sequence: 42n,
+      broadcastSequence: 10n,
+      eventType: "message_created",
+      payload: { messageId: "msg_anchor" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date("2026-06-16T09:00:00.000Z"),
+    }
+    spyOn(StreamEventRepository, "findFirstMessageOnOrAfter").mockResolvedValue(anchor)
+    const around = { events: [anchor], hasOlder: true, hasNewer: true }
+    const listAround = spyOn(StreamEventRepository, "listAround").mockResolvedValue(around)
+
+    const service = new EventService({} as any)
+    const result = await service.listEventsAroundDate("stream_1", new Date("2026-06-16T00:00:00.000Z"), {
+      limit: 20,
+      viewerId: "usr_1",
+    })
+
+    expect(listAround).toHaveBeenCalledWith(expect.anything(), "stream_1", 42n, { limit: 20, viewerId: "usr_1" })
+    expect(result).toEqual({ ...around, anchorMessageId: "msg_anchor" })
   })
 })

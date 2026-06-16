@@ -1496,6 +1496,28 @@ export class EventService {
     })
   }
 
+  /**
+   * Fetch events surrounding the first message at or after a calendar instant
+   * (jump-to-date). `anchorMessageId` is the message the client scrolls to —
+   * null when the date is past the stream's last message, in which case the
+   * window is empty and the client falls back to the live tail.
+   */
+  async listEventsAroundDate(
+    streamId: string,
+    date: Date,
+    options?: { limit?: number; viewerId?: string }
+  ): Promise<{ events: StreamEvent[]; hasOlder: boolean; hasNewer: boolean; anchorMessageId: string | null }> {
+    return withClient(this.pool, async (client) => {
+      const anchor = await StreamEventRepository.findFirstMessageOnOrAfter(client, streamId, date)
+      if (!anchor) {
+        return { events: [], hasOlder: false, hasNewer: false, anchorMessageId: null }
+      }
+      const around = await StreamEventRepository.listAround(client, streamId, anchor.sequence, options)
+      const anchorMessageId = (anchor.payload as { messageId?: string })?.messageId ?? null
+      return { ...around, anchorMessageId }
+    })
+  }
+
   async getReplyCountsBatch(messageIds: string[]): Promise<Map<string, number>> {
     return MessageRepository.getReplyCountsBatch(this.pool, messageIds)
   }
