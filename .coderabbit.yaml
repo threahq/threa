@@ -104,6 +104,13 @@ reviews:
       instructions: |
         Do not define React components inside other React components. Extract to separate
         functions or files. (INV-18)
+    - path: "apps/frontend/src/**/*.{ts,tsx}"
+      instructions: |
+        Success is silent: do not confirm a happy-path action with a success toast — the
+        UI already reflects saves, renames, archives, sends, etc. Reserve toasts for
+        errors, warnings the user must resolve, and deferred/offline state; confirm
+        clipboard/download in place (icon to checkmark). A toast.success(...) is allowed
+        only with an "INV-63-allow:" justification on the same or preceding line. (INV-63)
     - path: "apps/backoffice/src/**/*.tsx"
       instructions: |
         Do not define React components inside other React components. Extract to separate

@@ -371,7 +371,7 @@ export const messageActions: MessageAction[] = [
     action: async (ctx) => {
       try {
         await copyToClipboard(ctx.contentMarkdown)
-        toast.success("Copied as Markdown")
+        toast.success("Copied as Markdown") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
       } catch {
         toast.error("Failed to copy")
       }
@@ -386,7 +386,7 @@ export const messageActions: MessageAction[] = [
     action: async (ctx) => {
       try {
         await copyToClipboard(stripMarkdown(ctx.contentMarkdown))
-        toast.success("Copied as plain text")
+        toast.success("Copied as plain text") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
       } catch {
         toast.error("Failed to copy")
       }
@@ -403,7 +403,7 @@ export const messageActions: MessageAction[] = [
         // builder so the route shape lives in one place (stream-links.ts).
         const url = `${buildStreamLink(ctx.workspaceId!, ctx.streamId!)}?m=${ctx.messageId}`
         await copyToClipboard(url)
-        toast.success("Link copied")
+        toast.success("Link copied") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
       } catch {
         toast.error("Failed to copy link")
       }
