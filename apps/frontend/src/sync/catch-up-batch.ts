@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query"
 import type { LastMessagePreview, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import { activityKeys } from "@/hooks/use-activity"
 import { toCounterState, withCounterState, type UnreadCounterState } from "./unread-counters"
 
 /** One absolute (or relative) counter mutation, expressed as pure state math. */
@@ -156,7 +157,7 @@ export class CatchUpBatch {
     }
 
     if (this.activityFeedStale) {
-      this.queryClient.invalidateQueries({ queryKey: ["activity", this.workspaceId] })
+      this.queryClient.invalidateQueries({ queryKey: activityKeys.list(this.workspaceId) })
     }
   }
 }

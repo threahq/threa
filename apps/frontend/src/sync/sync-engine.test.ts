@@ -1267,7 +1267,8 @@ describe("SyncEngine sync cursor (active mode)", () => {
       .fn()
       .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
       .mockResolvedValue(emptyPage("11"))
-    const engine = new SyncEngine(makeCounterDeps(catchUp))
+    const deps = makeCounterDeps(catchUp)
+    const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     // Force the flush's preview write to reject → the whole flush rejects.
     const updateSpy = vi.spyOn(db.streams, "update").mockRejectedValue(new Error("idb boom"))
@@ -1282,6 +1283,12 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     // The replayed stream:activity folds a preview; flush's db.streams.update rejects.
     resolveFirstPage!({ entries: [streamActivityEntry("11", 6)], head: "11" })
+
+    // The flush failure forces a full snapshot reseed (bootstrap called a 2nd time)
+    // so the dropped counter state can't sit stale across slim reconnects.
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
+    })
 
     await vi.waitFor(async () => {
       expect(await db.workspaceUsers.get("user_resumed")).toBeDefined()

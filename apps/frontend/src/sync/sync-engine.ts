@@ -1246,9 +1246,13 @@ export class SyncEngine {
         } catch (error) {
           // A flush failure (e.g. an IDB error) must never strand the gate: the
           // resume below is the only path that reopens live delivery and drains
-          // the buffer. Log and fall through; the next bootstrap reseeds the
-          // (derived) counter/preview state the flush dropped.
+          // the buffer. Log, then force a full snapshot reseed — a slim reconnect
+          // does NOT re-fetch the workspace counters, so without this the dropped
+          // counter/preview state could stay stale until a full bootstrap happens
+          // to run. forceFull re-fetches the authoritative snapshot. Fire-and-
+          // forget; it owns its own error handling.
           console.error("Sync catch-up batch flush failed", { workspaceId: this.workspaceId, error })
+          void this.runBootstrap(true, { forceFull: true })
         }
       }
 

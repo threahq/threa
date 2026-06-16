@@ -36,6 +36,7 @@ import type {
   DraftDeletedPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
+import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
 import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
@@ -506,7 +507,7 @@ export function registerWorkspaceSocketHandlers(
       return
     }
     if (live) {
-      queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
+      queryClient.invalidateQueries({ queryKey: activityKeys.list(workspaceId) })
     }
   }
 
