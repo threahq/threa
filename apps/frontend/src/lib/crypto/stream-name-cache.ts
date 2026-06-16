@@ -1,81 +1,71 @@
 import { tryOpenStreamName, type DecryptMessageOpts } from "./message-envelope"
+import { createDecryptedCache, type DecryptStatus } from "./decrypted-cache"
 
 /**
- * In-memory cache for decrypted E2E stream names.
+ * In-memory cache for decrypted E2E stream names — a global-subscription instance
+ * of the shared {@link createDecryptedCache} primitive (which owns the
+ * inflight-dedup, lock-epoch guard, version signal, and lock-clear registration).
  *
  * The enclave seals a scratchpad's auto-title (and a manual rename re-seals it)
  * under the stream's SSK, AAD-bound to the stream. The ciphertext lives at rest
  * in `db.streams` (`sealedNameCiphertext`/`sealedNameEnvelope`); the decrypted
- * plaintext is held ONLY here and is never persisted, mirroring `decrypt-cache`
- * for message bodies. This keeps a single decrypt authority for names so every
- * surface that resolves a label (sidebar, search, breadcrumbs, …) reflects the
- * tamper-evident name without each re-implementing the decrypt.
+ * plaintext is held ONLY here and is never persisted. A single global version
+ * counter drives re-renders: the store-read overlay (`useWorkspaceStreams`) and
+ * the open-stream header subscribe once and re-read when any name lands. Keyed by
+ * `${workspaceId}:${streamId}:${ciphertext}` so a rename (fresh ciphertext)
+ * supersedes the prior plaintext without a manual purge, and a never-decrypted key
+ * reads `null` rather than a stale value.
  *
- * A single global version counter drives re-renders: the store-read overlay
- * (`useWorkspaceStreams`) and the open-stream header subscribe once and re-read
- * when any name lands. Keyed by `${workspaceId}:${streamId}:${ciphertext}` so a
- * rename (fresh ciphertext) supersedes the prior plaintext without a manual
- * purge, and a never-decrypted key reads `null` rather than a stale value.
- *
- * Lifecycle: `clearStreamNameCache()` drops everything and bumps the lock epoch
- * so an in-flight decrypt that resolves after a lock refuses to write plaintext
- * back — call it on session lock / account switch, the same boundary
- * `clearDecryptCache` / `clearStreamKeyCache` enforce.
+ * Unlike message bodies, a null open is transient (locked / not a recipient yet /
+ * wrap not resolvable), so the instance uses `retryFailed` — a later request
+ * retries instead of pinning the placeholder. `clearStreamNameCache()` (also
+ * fired by `clearAllDecrypted` on lock) drops everything.
  */
 
-/** Decrypted plaintext names keyed by `${workspaceId}:${streamId}:${ciphertext}`. */
-const names = new Map<string, string>()
-const inflight = new Map<string, Promise<void>>()
-// Keys whose decrypt has settled at least once (success or failure). Lets the UI
-// tell "still decrypting on cold load" (show a loader, not the placeholder) from
-// "decrypt finished with no name" (a non-recipient / forged AAD — show the
-// placeholder). Cleared with the cache on lock.
-const attempted = new Set<string>()
-const listeners = new Set<() => void>()
+interface NameEntry {
+  status: DecryptStatus
+  /** The decrypted name; null while pending or after a failed/locked open. */
+  value: string | null
+}
 
-// Monotonic snapshot for useSyncExternalStore — bumped on every cache change so
-// subscribers (the overlay, the open-stream header) re-read.
-let version = 0
-// Bumped by clearStreamNameCache so an in-flight decrypt that resolves after a
-// lock detects it's stale and refuses to write plaintext back into the cache.
-let generation = 0
+const cache = createDecryptedCache<NameEntry>({
+  subscription: "global",
+  // A null open is transient (locked, or a wrap that becomes resolvable later),
+  // so a later request must retry rather than pin the placeholder forever.
+  retryFailed: true,
+  pending: () => ({ status: "pending", value: null }),
+  // Keys are content-addressed by ciphertext, so a primed name is idempotent;
+  // skip the redundant emit when the cached value already matches.
+  skipPrime: (existing, next) => existing?.status === "decrypted" && existing.value === next.value,
+})
 
 export function streamNameCacheKey(workspaceId: string, streamId: string, ciphertext: string): string {
   return `${workspaceId}:${streamId}:${ciphertext}`
 }
 
-function emit(): void {
-  version++
-  for (const listener of listeners) listener()
-}
-
 export function subscribeStreamNameCache(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => {
-    listeners.delete(listener)
-  }
+  return cache.subscribe(null, listener)
 }
 
 export function getStreamNameCacheVersion(): number {
-  return version
+  return cache.getVersion()
 }
 
 /** The decrypted name for a key, or `null` if not yet decrypted / decrypt failed. */
 export function getCachedStreamName(key: string): string | null {
-  return names.get(key) ?? null
+  return cache.peek(key)?.value ?? null
 }
 
 /**
- * Whether a sealed name is still resolving: no plaintext cached yet, and either
- * a decrypt is in flight or none has been attempted (so one is imminent). Once a
- * decrypt settles without a name (non-recipient / forged AAD) this returns false,
- * so the UI can stop showing a loader and fall back to the placeholder rather
- * than spinning forever. A surface uses this to avoid flashing the placeholder
- * during the cold-load decrypt window.
+ * Whether a sealed name is still resolving: no entry yet (a decrypt is imminent)
+ * or one is in flight. Once a decrypt settles — with a name, or without one
+ * (non-recipient / forged AAD) — this returns false, so the UI can stop showing a
+ * loader and fall back to the placeholder rather than spinning forever. A surface
+ * uses this to avoid flashing the placeholder during the cold-load decrypt window.
  */
 export function isStreamNamePending(key: string): boolean {
-  if (names.has(key)) return false
-  return inflight.has(key) || !attempted.has(key)
+  const entry = cache.peek(key)
+  return entry === undefined || entry.status === "pending"
 }
 
 export interface RequestStreamNameInput {
@@ -88,39 +78,22 @@ export interface RequestStreamNameInput {
 /**
  * Decrypt a sealed stream name and cache the plaintext, deduped per key. A
  * no-op when the key is already decrypted or in flight. A decrypt that returns
- * null (locked, not a recipient, forged AAD) is not cached, so a later unlock
- * (or a wrap that becomes resolvable) retries instead of pinning the
- * placeholder — callers fall back to the plaintext label meanwhile.
+ * null (locked, not a recipient, forged AAD) records a `failed` entry but does
+ * not pin it: because the instance is `retryFailed`, a later unlock (or a wrap
+ * that becomes resolvable) retries instead of pinning the placeholder — callers
+ * fall back to the plaintext label meanwhile.
  */
 export function requestStreamName(
   key: string,
   payload: RequestStreamNameInput,
   opts: DecryptMessageOpts
 ): Promise<void> {
-  const existing = inflight.get(key)
-  if (existing) return existing
-  if (names.has(key)) return Promise.resolve()
-
-  const startGeneration = generation
-  const promise = (async () => {
-    const decrypted = await tryOpenStreamName({ ciphertext: payload.ciphertext, envelope: payload.envelope }, opts)
-    // Dropped if the cache was cleared (lock / account switch) mid-flight —
-    // writing plaintext back would leak it past the lock boundary.
-    if (startGeneration !== generation) return
-    inflight.delete(key)
-    attempted.add(key)
-    // Emit on both outcomes: success lands the name; a null result still flips
-    // the pending state so a loader can fall back to the placeholder.
-    if (decrypted == null) {
-      emit()
-      return
-    }
-    names.set(key, decrypted)
-    emit()
-  })()
-
-  inflight.set(key, promise)
-  return promise
+  return cache
+    .request(key, async () => {
+      const decrypted = await tryOpenStreamName({ ciphertext: payload.ciphertext, envelope: payload.envelope }, opts)
+      return decrypted == null ? { status: "failed", value: null } : { status: "decrypted", value: decrypted }
+    })
+    .then(() => {})
 }
 
 /**
@@ -152,11 +125,7 @@ export function applyDecryptedNameOverlay<
 }
 
 export function clearStreamNameCache(): void {
-  generation++
-  names.clear()
-  inflight.clear()
-  attempted.clear()
-  emit()
+  cache.clear()
 }
 
 /**
@@ -168,7 +137,5 @@ export function clearStreamNameCache(): void {
  * round-trips. Memory-only and cleared on lock like every other entry.
  */
 export function primeStreamName(key: string, name: string): void {
-  if (names.get(key) === name) return
-  names.set(key, name)
-  emit()
+  cache.prime(key, { status: "decrypted", value: name })
 }

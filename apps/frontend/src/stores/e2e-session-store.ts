@@ -1,9 +1,6 @@
 import { useSyncExternalStore } from "react"
 import { e2eKeysApi } from "@/api/e2e-keys"
-import { clearDecryptCache } from "@/lib/crypto/decrypt-cache"
-import { clearStreamKeyCache } from "@/lib/crypto/stream-key-cache"
-import { clearStreamNameCache } from "@/lib/crypto/stream-name-cache"
-import { clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
+import { clearAllDecrypted } from "@/lib/crypto/decrypted-cache"
 import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
 import { unwrapPrivateKeyFromDevice, wrapPrivateKeyForDevice } from "@/lib/crypto/device-wrap-key"
@@ -908,12 +905,10 @@ export async function revokeKeyForUser(workspaceId: string, userId: string): Pro
 export async function lock(workspaceId: string, userId: string): Promise<void> {
   const scope = getOrCreateScope(workspaceId, userId)
   // Drop every decrypted payload from memory — Phase 3.5 keeps ciphertext at
-  // rest in IDB and decrypts at render time, so the in-memory cache is the
-  // only surface holding plaintext for this session.
-  clearDecryptCache()
-  clearStreamKeyCache()
-  clearStreamNameCache()
-  clearAttachmentRefCache()
+  // rest in IDB and decrypts at render time, so the in-memory caches are the
+  // only surfaces holding plaintext for this session. The registry clears every
+  // registered decrypt/key cache, so a new encrypted field can't be forgotten here.
+  clearAllDecrypted()
   // Bump the generation so a concurrent loadE2eKeyForUser can't restore the
   // device key we're about to delete back into an unlocked state.
   scope.loadGeneration++
@@ -1077,8 +1072,5 @@ export function useE2eSession(workspaceId: string, userId: string): E2eSessionSt
 export function resetE2eSessionStoreCache(): void {
   scopes.clear()
   listeners.clear()
-  clearDecryptCache()
-  clearStreamKeyCache()
-  clearStreamNameCache()
-  clearAttachmentRefCache()
+  clearAllDecrypted()
 }
