@@ -12,13 +12,9 @@ import {
   createSearchUsersTool,
   createGetStreamMessagesTool,
   createSearchAttachmentsTool,
-  createGetAttachmentTool,
+  createReadAttachmentTool,
   createDescribeMemoTool,
   createReactToMessageTool,
-  createLoadAttachmentTool,
-  createLoadPdfSectionTool,
-  createLoadFileSectionTool,
-  createLoadExcelSectionTool,
   createWorkspaceResearchTool,
   createGithubListReposTool,
   createGithubListBranchesTool,
@@ -130,22 +126,15 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_ATTACHMENTS)
       ? createSearchAttachmentsTool(workspace)
       : null,
-    workspace && isToolEnabled(enabledTools, AgentToolNames.GET_ATTACHMENT) ? createGetAttachmentTool(workspace) : null,
+    // One reader for every file type. Image bytes ride along only on a
+    // vision-capable model; text/PDF/Excel reads (and large-file paging) work
+    // regardless, so this is gated on workspace access, not vision.
+    workspace && isToolEnabled(enabledTools, AgentToolNames.READ_ATTACHMENT)
+      ? createReadAttachmentTool(workspace, { supportsVision: Boolean(supportsVision) })
+      : null,
     workspace && isToolEnabled(enabledTools, AgentToolNames.DESCRIBE_MEMO) ? createDescribeMemoTool(workspace) : null,
     workspace && reactions && isToolEnabled(enabledTools, AgentToolNames.REACT_TO_MESSAGE)
       ? createReactToMessageTool(workspace, reactions)
-      : null,
-    workspace && supportsVision && isToolEnabled(enabledTools, AgentToolNames.LOAD_ATTACHMENT)
-      ? createLoadAttachmentTool(workspace)
-      : null,
-    workspace && isToolEnabled(enabledTools, AgentToolNames.LOAD_PDF_SECTION)
-      ? createLoadPdfSectionTool(workspace)
-      : null,
-    workspace && isToolEnabled(enabledTools, AgentToolNames.LOAD_FILE_SECTION)
-      ? createLoadFileSectionTool(workspace)
-      : null,
-    workspace && isToolEnabled(enabledTools, AgentToolNames.LOAD_EXCEL_SECTION)
-      ? createLoadExcelSectionTool(workspace)
       : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)

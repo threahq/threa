@@ -23,7 +23,7 @@ export const PDF_SIZE_THRESHOLDS = {
   small: 8,
   /** Medium PDFs (8-25 pages): full content + size note */
   medium: 25,
-  /** Large PDFs (>25 pages): summary + sections + load_pdf_section tool */
+  /** Large PDFs (>25 pages): summary + sections + read_attachment tool */
 } as const
 
 export const PDF_TEXT_THRESHOLDS = {

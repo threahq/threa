@@ -58,11 +58,7 @@ export const TOOL_CATEGORIES_BY_NAME = {
   search_users: ["workspace"],
   get_stream_messages: ["workspace"],
   search_attachments: ["workspace"],
-  get_attachment: ["workspace"],
-  load_attachment: ["workspace"],
-  load_pdf_section: ["workspace"],
-  load_file_section: ["workspace"],
-  load_excel_section: ["workspace"],
+  read_attachment: ["workspace"],
   describe_memo: ["workspace"],
 
   // GitHub reads are public-web-class egress (a structured read_url), so they

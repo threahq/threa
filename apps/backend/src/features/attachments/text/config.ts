@@ -14,7 +14,7 @@ export const TEXT_SIZE_THRESHOLDS = {
   smallBytes: 8 * 1024,
   /** Medium files (2K-8K tokens, ~32KB): inject with size note */
   mediumBytes: 32 * 1024,
-  /** Large files (>8K tokens, >32KB): summary + sections + load_file_section tool */
+  /** Large files (>8K tokens, >32KB): summary + sections + read_attachment tool */
 } as const
 
 export const BINARY_DETECTION = {

@@ -3,23 +3,15 @@ import { AgentToolNames } from "@threa/types"
 import { BUILT_IN_AGENTS, ARIADNE_AGENT_ID, EMPTY_AGENT_ID, isE2eCapablePersona } from "./built-in-agents"
 
 describe("Ariadne built-in config", () => {
-  it("can load attachments for visual analysis (vision-capable model)", () => {
-    // load_attachment is what lets Ariadne actually SEE an uploaded image, not
-    // just read its caption — keep it enabled so that capability can't regress.
-    expect(BUILT_IN_AGENTS[ARIADNE_AGENT_ID].enabledTools).toContain(AgentToolNames.LOAD_ATTACHMENT)
-  })
-
-  it("can find and read non-image document attachments", () => {
-    // load_attachment is image-only; without these, Ariadne could see images
-    // but had no way to read a text/PDF/Excel file's content — she'd find a
-    // snippet via search and then ask the user to paste it back. Keep the full
-    // find -> read -> page loop enabled.
+  it("can find and read attachments of any type", () => {
+    // read_attachment is the one reader for images, PDFs, text, and
+    // spreadsheets; search_attachments is how Ariadne finds a file she doesn't
+    // already have an id for. Without read_attachment she could see an image
+    // but had no way to read a text/PDF/Excel file — she'd find a snippet and
+    // then ask the user to paste it back. Keep the find -> read loop enabled.
     const { enabledTools } = BUILT_IN_AGENTS[ARIADNE_AGENT_ID]
     expect(enabledTools).toContain(AgentToolNames.SEARCH_ATTACHMENTS)
-    expect(enabledTools).toContain(AgentToolNames.GET_ATTACHMENT)
-    expect(enabledTools).toContain(AgentToolNames.LOAD_FILE_SECTION)
-    expect(enabledTools).toContain(AgentToolNames.LOAD_PDF_SECTION)
-    expect(enabledTools).toContain(AgentToolNames.LOAD_EXCEL_SECTION)
+    expect(enabledTools).toContain(AgentToolNames.READ_ATTACHMENT)
   })
 })
 
