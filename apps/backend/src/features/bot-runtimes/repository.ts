@@ -582,11 +582,11 @@ export const BotInvocationRepository = {
     }
   ): Promise<BotInvocation | null> {
     const result = await db.query<BotInvocationRow>(sql`WITH candidate AS (
-        SELECT id FROM bot_invocations
-        WHERE workspace_id = ${params.workspaceId}
-          AND actor_type = 'bot'
-          AND actor_id = ${params.botId}
-          AND required_capability = ANY(${params.supportedCapabilities})
+        SELECT i.id FROM bot_invocations i
+        WHERE i.workspace_id = ${params.workspaceId}
+          AND i.actor_type = 'bot'
+          AND i.actor_id = ${params.botId}
+          AND i.required_capability = ANY(${params.supportedCapabilities})
           AND EXISTS (
             SELECT 1 FROM bot_runtime_instances r
             WHERE r.workspace_id = ${params.workspaceId}
@@ -594,12 +594,50 @@ export const BotInvocationRepository = {
               AND r.instance_id = ${params.instanceId}
               AND r.runtime_kind = ${params.runtimeKind}
           )
-          AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
-          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId ?? null})
-          AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
-          AND attempts < ${params.maxAttempts}
-        ORDER BY created_at ASC, id ASC
-        FOR UPDATE SKIP LOCKED
+          AND (i.target_instance_id IS NULL OR i.target_instance_id = ${params.instanceId})
+          AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
+          AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+          AND i.attempts < ${params.maxAttempts}
+          -- Sealed-stream gate (§2.6): a plaintext invocation (no e2e_streams row
+          -- for the root) is claimable by any instance, as today; an E2E one only
+          -- by the claiming instance's BIK when the stream's wraps cover BOTH the
+          -- reply generation (current) and the prompt's (the trigger envelope's),
+          -- mirroring the enclave's claimNext two-EXISTS. A keyless instance
+          -- (public_key_id NULL) never matches, so it can't claim a sealed turn it
+          -- can't open. Conditional because this same claimOne serves plaintext.
+          AND (
+            NOT EXISTS (
+              SELECT 1 FROM e2e_streams e
+              WHERE e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
+            )
+            OR (
+              EXISTS (
+                SELECT 1 FROM stream_e2e_key_wraps w
+                JOIN e2e_streams e
+                  ON e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
+                JOIN bot_runtime_instances ri
+                  ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${params.instanceId}
+                WHERE w.workspace_id = i.workspace_id
+                  AND w.stream_id = i.root_stream_id
+                  AND w.recipient_kind = 'bot'
+                  AND w.recipient_key_id = ri.public_key_id
+                  AND w.key_generation = e.current_key_generation
+              )
+              AND EXISTS (
+                SELECT 1 FROM stream_e2e_key_wraps w
+                JOIN messages m ON m.id = i.source_message_id
+                JOIN bot_runtime_instances ri
+                  ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${params.instanceId}
+                WHERE w.workspace_id = i.workspace_id
+                  AND w.stream_id = i.root_stream_id
+                  AND w.recipient_kind = 'bot'
+                  AND w.recipient_key_id = ri.public_key_id
+                  AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+              )
+            )
+          )
+        ORDER BY i.created_at ASC, i.id ASC
+        FOR UPDATE OF i SKIP LOCKED
         LIMIT 1
       )
       UPDATE bot_invocations i

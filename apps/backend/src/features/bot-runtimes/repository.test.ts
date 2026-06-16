@@ -198,6 +198,37 @@ describe("BotInvocationRepository.claimOne", () => {
     expect(captured.text).toContain("attempts = attempts + 1")
     expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
   })
+
+  it("gates sealed streams on the claiming instance's BIK covering both generations (§2.6)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeInvocationRow()])
+
+    await BotInvocationRepository.claimOne(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      runtimeKind: "pi-local",
+      claimToken: "tok_1",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+    })
+
+    // Plaintext streams (no e2e_streams row for the root) stay claimable as
+    // before; the BIK requirement is only the OR's second arm.
+    expect(captured.text).toContain("NOT EXISTS")
+    expect(captured.text).toContain("FROM e2e_streams e")
+    // Bot wraps, keyed to the claiming instance's registered BIK — not a passed
+    // key id (a keyless instance never matches, so it can't claim a sealed turn).
+    expect(captured.text).toContain("w.recipient_kind = 'bot'")
+    expect(captured.text).toContain("w.recipient_key_id = ri.public_key_id")
+    // Both generations must be covered: the reply's (current) and the prompt's
+    // (the trigger envelope's), mirroring the enclave's claimNext two-EXISTS.
+    expect(captured.text).toContain("w.key_generation = e.current_key_generation")
+    expect(captured.text).toContain("w.key_generation = (m.envelope ->> 'keyGeneration')::int")
+    // The trigger ciphertext is keyed off the invocation's source message.
+    expect(captured.text).toContain("JOIN messages m ON m.id = i.source_message_id")
+  })
 })
 
 describe("BotInvocationRepository.parkExhausted", () => {
