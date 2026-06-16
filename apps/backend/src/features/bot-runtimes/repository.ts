@@ -501,6 +501,31 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  async rebindInstance(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      linkId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+      newInstanceId: string
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(sql`UPDATE bot_runtime_session_links
+      SET instance_id = ${params.newInstanceId}, last_seen_at = NOW(), updated_at = NOW()
+      WHERE id = ${params.linkId}
+        AND workspace_id = ${params.workspaceId}
+        AND bot_id = ${params.botId}
+        AND runtime_kind = ${params.runtimeKind}
+        AND instance_id = ${params.instanceId}
+        AND runtime_session_id = ${params.runtimeSessionId}
+        AND status = 'active'
+      RETURNING *`)
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
   async findActiveByStreams(
     db: Querier,
     params: { workspaceId: string; botId: string; activeStreamIds: string[] }

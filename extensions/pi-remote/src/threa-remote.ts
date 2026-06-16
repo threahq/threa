@@ -80,6 +80,7 @@ type RuntimeSessionLink = {
   activeStreamId: string
   runtimeSessionId: string
   streamUrlPath: string
+  instanceId?: string
   enabled?: boolean
   debugPolling?: boolean
   streamCursors?: Record<string, string>
@@ -112,6 +113,7 @@ type ClaimedInvocation = {
   sourceMessageId: string
   promptMarkdown: string
   claimToken: string
+  claimedInstanceId?: string
   claimExpiresAt: string | null
   trigger?: string
   requiredCapability?: string
@@ -243,21 +245,32 @@ function saveConfig(): void {
 // poll. Sanitize at the boundary and migrate previously-persisted bad ids.
 const INSTANCE_ID_REGEX = /^[A-Za-z0-9_-]+$/
 const INSTANCE_ID_UNSAFE_CHARS = /[^A-Za-z0-9_-]+/g
+const INSTANCE_ID_MAX_CHARS = 64
 
 function sanitizeInstanceIdSegment(raw: string): string {
   return raw.replace(INSTANCE_ID_UNSAFE_CHARS, "-").replace(/^-+|-+$/g, "")
+}
+
+function createRandomInstanceId(): string {
+  return `pi-${crypto.randomUUID().slice(0, 8)}`
+}
+
+function createInstanceId(): string {
+  const suffix = crypto.randomUUID().slice(0, 8)
+  const host = sanitizeInstanceIdSegment(hostname())
+  const maxHostChars = INSTANCE_ID_MAX_CHARS - "pi--".length - suffix.length
+  const trimmedHost = host.slice(0, Math.max(0, maxHostChars)).replace(/-+$/g, "")
+  return trimmedHost.length > 0 ? `pi-${trimmedHost}-${suffix}` : `pi-${suffix}`
 }
 
 function migrateInstanceId(stored: unknown): string {
   // `config.instanceId` is loaded via `JSON.parse` and `readConfig` only
   // type-checks the three required fields. A hand-edited config could put
   // anything here, so accept `unknown` and treat non-strings as missing.
-  if (typeof stored !== "string" || stored.length === 0) {
-    return `pi-${crypto.randomUUID().slice(0, 8)}`
-  }
-  if (INSTANCE_ID_REGEX.test(stored)) return stored
-  const cleaned = sanitizeInstanceIdSegment(stored)
-  return cleaned.length > 0 ? cleaned : `pi-${crypto.randomUUID().slice(0, 8)}`
+  if (typeof stored !== "string" || stored.length === 0) return createRandomInstanceId()
+  const cleaned = INSTANCE_ID_REGEX.test(stored) ? stored : sanitizeInstanceIdSegment(stored)
+  if (cleaned.length === 0) return createRandomInstanceId()
+  return cleaned.length <= INSTANCE_ID_MAX_CHARS ? cleaned : cleaned.slice(0, INSTANCE_ID_MAX_CHARS).replace(/-+$/g, "")
 }
 
 function ensureInstanceId(): string {
@@ -270,11 +283,24 @@ function ensureInstanceId(): string {
     }
     return config.instanceId
   }
-  const host = sanitizeInstanceIdSegment(hostname())
-  const prefix = host.length > 0 ? `pi-${host}` : "pi"
-  config.instanceId = `${prefix}-${crypto.randomUUID().slice(0, 8)}`
+  config.instanceId = createInstanceId()
   saveConfig()
   return config.instanceId
+}
+
+function getSessionInstanceId(ctx: ExtensionContext): string {
+  const link = getCurrentSessionLink(ctx)
+  if (!link?.instanceId) return ensureInstanceId()
+  const migrated = migrateInstanceId(link.instanceId)
+  if (migrated !== link.instanceId) {
+    link.instanceId = migrated
+    saveConfig()
+  }
+  return link.instanceId
+}
+
+function getInvocationInstanceId(invocation: ClaimedInvocation): string {
+  return invocation.claimedInstanceId ?? ensureInstanceId()
 }
 
 // Tildified cwd for the bot presence pill. The scratchpad UI shows this as
@@ -442,7 +468,7 @@ async function heartbeat(
     method: "POST",
     body: JSON.stringify({
       runtimeKind: "pi-local",
-      instanceId: ensureInstanceId(),
+      instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
       runtimeSessionId,
       displayName: presenceDisplayNameFromCwd(ctx?.cwd) ?? config.defaultDisplayName,
       status,
@@ -515,7 +541,7 @@ function parseWsHint(value: unknown): WsHint | undefined {
 
 function buildBotHelloPayload(ctx: ExtensionContext, sinceCursor: string | undefined): Record<string, unknown> {
   return {
-    instanceId: ensureInstanceId(),
+    instanceId: getSessionInstanceId(ctx),
     runtimeKind: "pi-local",
     runtimeSessionId: getRuntimeSessionId(ctx),
     displayName: presenceDisplayNameFromCwd(ctx.cwd) ?? config?.defaultDisplayName,
@@ -682,7 +708,7 @@ async function recordInvocationTraceStep(
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/steps`, {
     method: "POST",
     body: JSON.stringify({
-      instanceId: ensureInstanceId(),
+      instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
       stepType,
       content: trimmed,
@@ -932,6 +958,7 @@ function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
   const runtimeSessionId = getRuntimeSessionId(ctx)
+  const instanceId = createInstanceId()
   const displayName = args.trim() || defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName)
 
   const body = await request<{ data: RuntimeSessionLink }>(
@@ -940,7 +967,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
       method: "POST",
       body: JSON.stringify({
         runtimeKind: "pi-local",
-        instanceId: ensureInstanceId(),
+        instanceId,
         runtimeSessionId,
         displayName,
         localCwd: ctx.cwd,
@@ -954,6 +981,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   config.linkedSessions ??= {}
   config.linkedSessions[runtimeSessionId] = {
     ...body.data,
+    instanceId,
     enabled: true,
     streamCursors: existing?.streamCursors ?? (legacyCursor ? { [body.data.activeStreamId]: legacyCursor } : undefined),
   }
@@ -974,13 +1002,44 @@ async function renameRemoteSession(ctx: ExtensionCommandContext, displayName: st
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions/rename`, {
     method: "POST",
     body: JSON.stringify({
-      instanceId: ensureInstanceId(),
+      instanceId: getSessionInstanceId(ctx),
       runtimeSessionId: getRuntimeSessionId(ctx),
       displayName,
     }),
   })
   ctx.ui.notify(`Threa remote renamed to "${displayName}"`, "info")
   setRemoteStatus(ctx, `Threa remote: ${displayName}`)
+}
+
+async function rebindLegacySessionInstance(ctx: ExtensionContext): Promise<void> {
+  if (!config) return
+  const link = getCurrentSessionLink(ctx)
+  if (!link || link.instanceId) return
+  const oldInstanceId = ensureInstanceId()
+  const newInstanceId = createInstanceId()
+  await request<{ data: RuntimeSessionLink }>(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions/rebind`, {
+    method: "POST",
+    body: JSON.stringify({
+      linkId: link.linkId,
+      instanceId: oldInstanceId,
+      runtimeSessionId: getRuntimeSessionId(ctx),
+      newInstanceId,
+    }),
+  })
+  link.instanceId = newInstanceId
+  saveConfig()
+}
+
+async function tryRebindLegacySessionInstance(ctx: ExtensionContext): Promise<void> {
+  try {
+    await rebindLegacySessionInstance(ctx)
+  } catch (error) {
+    emitPollDebug(ctx, `legacy session rebind failed: ${summarizeError(error)}`)
+    ctx.ui.notify(
+      `Threa remote is using a legacy shared instance id; connected status can be wrong when multiple Pi sessions run. ${summarizeError(error)}`,
+      "warning"
+    )
+  }
 }
 
 async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void> {
@@ -990,7 +1049,7 @@ async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void
     {
       method: "POST",
       body: JSON.stringify({
-        instanceId: ensureInstanceId(),
+        instanceId: getInvocationInstanceId(invocation),
         claimToken: invocation.claimToken,
         claimTtlSeconds: 120,
       }),
@@ -1154,6 +1213,7 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
     ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
     return
   }
+  await tryRebindLegacySessionInstance(ctx)
   lastBusyHeartbeatAt = 0
   await resolveBotWsHint(ctx, { force: true })
   await heartbeat("available", undefined, ctx)
@@ -1274,7 +1334,7 @@ function buildClaimInvocationPayload(
 }
 
 function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown> {
-  return buildClaimInvocationPayload(ensureInstanceId(), getRuntimeSessionId(ctx), {
+  return buildClaimInvocationPayload(getSessionInstanceId(ctx), getRuntimeSessionId(ctx), {
     includeSessionControl: !pending && ctx.isIdle(),
   })
 }
@@ -1296,7 +1356,7 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
         ? `claimed ${body.data.id} in ${Date.now() - startedAt}ms`
         : `no invocation in ${Date.now() - startedAt}ms`
     )
-    return body.data
+    return body.data ? { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) } : null
   } catch (error) {
     emitPollDebug(ctx, `failed after ${Date.now() - startedAt}ms: ${summarizeError(error)}`)
     throw error
@@ -1338,12 +1398,12 @@ async function completeInvocationWithMarkdown(
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
-      instanceId: ensureInstanceId(),
+      instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
       finalMessageMarkdown,
       metadata: {
         "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": ensureInstanceId(),
+        "pi.remote.instanceId": getInvocationInstanceId(invocation),
         "pi.remote.sessionControl": "true",
       },
     }),
@@ -2155,12 +2215,12 @@ async function completeInvocationNoResponse(invocation: ClaimedInvocation): Prom
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
-      instanceId: ensureInstanceId(),
+      instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
       noResponse: true,
       metadata: {
         "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": ensureInstanceId(),
+        "pi.remote.instanceId": getInvocationInstanceId(invocation),
         "pi.remote.noResponse": "true",
         "pi.remote.steered": "true",
       },
@@ -2173,7 +2233,7 @@ async function failInvocation(invocation: ClaimedInvocation, error: unknown): Pr
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
     body: JSON.stringify({
-      instanceId: ensureInstanceId(),
+      instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
       errorMessage: String(error).slice(0, 1000),
     }),
@@ -2189,12 +2249,12 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
-      instanceId: ensureInstanceId(),
+      instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
       ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
       metadata: {
         "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": ensureInstanceId(),
+        "pi.remote.instanceId": getInvocationInstanceId(invocation),
         ...(noResponse && { "pi.remote.noResponse": "true" }),
         ...(uploadedAttachments.length > 0 && {
           "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
@@ -2270,6 +2330,7 @@ export const __testing = {
   buildBotSocketUrl,
   fetchWsHintFromConfig,
   sanitizeInstanceIdSegment,
+  createInstanceId,
   migrateInstanceId,
   formatHelloAckDetails,
   appendCapped,
@@ -2343,7 +2404,8 @@ export default function (pi: ExtensionAPI): void {
           command === "debug" && config
             ? [
                 `session=${getRuntimeSessionId(ctx)}`,
-                `instance=${config.instanceId ?? "<unset>"}`,
+                `instance=${link ? getSessionInstanceId(ctx) : (config.instanceId ?? "<unset>")}`,
+                `legacyInstance=${config.instanceId ?? "<unset>"}`,
                 `workspace=${config.workspaceId}`,
                 `stream=${link?.activeStreamId ?? "<none>"}`,
                 ...botTraitDiagnostics(principal),
@@ -2413,6 +2475,7 @@ export default function (pi: ExtensionAPI): void {
       setRemoteStatus(ctx, getCurrentSessionLink(ctx) ? "Threa remote: off" : "Threa remote: not linked")
       return
     }
+    await tryRebindLegacySessionInstance(ctx)
     lastBusyHeartbeatAt = 0
     await resolveBotWsHint(ctx, { force: true })
     await heartbeat("available", undefined, ctx)

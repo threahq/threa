@@ -99,6 +99,7 @@ import {
   upsertPresenceSchema,
   createRuntimeSessionSchema,
   renameRuntimeSessionSchema,
+  rebindRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -914,6 +915,31 @@ export function createPublicApiHandlers({
           runtimeSessionId: link.runtimeSessionId,
           streamUrlPath: `/w/${req.workspaceId!}/s/${link.activeStreamId}`,
           displayName: updated.displayName ?? data.displayName,
+        },
+      })
+    },
+
+    async rebindBotRuntimeSession(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(rebindRuntimeSessionSchema, req.body)
+      const link = await botRuntimeService.rebindPiRemoteSessionInstance({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        linkId: data.linkId,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
+        newInstanceId: data.newInstanceId,
+      })
+      if (!link) {
+        throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json({
+        data: {
+          linkId: link.id,
+          rootStreamId: link.rootStreamId,
+          activeStreamId: link.activeStreamId,
+          runtimeSessionId: link.runtimeSessionId,
+          streamUrlPath: `/w/${req.workspaceId!}/s/${link.activeStreamId}`,
         },
       })
     },

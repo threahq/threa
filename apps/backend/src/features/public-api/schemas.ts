@@ -97,6 +97,13 @@ export const renameRuntimeSessionSchema = z.object({
   displayName: z.string().min(1).max(100),
 })
 
+export const rebindRuntimeSessionSchema = z.object({
+  linkId: z.string().min(1).max(128),
+  instanceId: z.string().min(1).max(128),
+  runtimeSessionId: z.string().min(1).max(256),
+  newInstanceId: z.string().min(1).max(128),
+})
+
 export const claimInvocationSchema = z.object({
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
   instanceId: z.string().min(1).max(128),
