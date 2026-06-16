@@ -179,10 +179,7 @@ export class BotRuntimeService {
     instanceId: string
     runtimeSessionId: string
   }): Promise<BotRuntimeSessionLink | null> {
-    return BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(this.pool, {
-      ...params,
-      runtimeKind: "pi-local",
-    })
+    return BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(this.pool, params)
   }
 
   async findActivePiRemoteSessionsForStreams(params: {
@@ -224,6 +221,7 @@ export class BotRuntimeService {
   async createOrLinkPiRemoteSession(params: {
     workspaceId: string
     botId: string
+    runtimeKind: BotRuntimeKind
     instanceId: string
     runtimeSessionId: string
     rootStreamId: string
@@ -239,6 +237,7 @@ export class BotRuntimeService {
     params: {
       workspaceId: string
       botId: string
+      runtimeKind: BotRuntimeKind
       instanceId: string
       runtimeSessionId: string
       rootStreamId: string
@@ -260,7 +259,7 @@ export class BotRuntimeService {
       id: botRuntimeSessionLinkId(),
       workspaceId: params.workspaceId,
       botId: params.botId,
-      runtimeKind: "pi-local",
+      runtimeKind: params.runtimeKind,
       instanceId: params.instanceId,
       runtimeSessionId: params.runtimeSessionId,
       rootStreamId: params.rootStreamId,
@@ -292,6 +291,7 @@ export class BotRuntimeService {
       await this.upsertPiRemoteSessionPresenceInTransaction(db, {
         workspaceId: params.workspaceId,
         botId: params.botId,
+        runtimeKind: "pi-local",
         instanceId: params.newInstanceId,
         runtimeSessionId: params.runtimeSessionId,
       })
@@ -301,22 +301,26 @@ export class BotRuntimeService {
 
   private async upsertPiRemoteSessionPresenceInTransaction(
     db: Querier,
-    params: { workspaceId: string; botId: string; instanceId: string; runtimeSessionId: string }
+    params: { workspaceId: string; botId: string; runtimeKind: BotRuntimeKind; instanceId: string; runtimeSessionId: string }
   ): Promise<void> {
     await BotRuntimeInstanceRepository.upsertPresence(db, {
       id: botRuntimeInstanceId(),
       workspaceId: params.workspaceId,
       botId: params.botId,
-      runtimeKind: "pi-local",
+      runtimeKind: params.runtimeKind,
       instanceId: params.instanceId,
       status: "available",
       acceptingInvocations: true,
+      // Bootstrap capabilities until the runtime's own heartbeat lands. Only Pi
+      // advertises session-control commands; the Claude Code channel can't drive
+      // the host session, so it must not offer /compact, /model, etc.
       capabilities: {
         runtimeSessionId: params.runtimeSessionId,
         supportsActiveScratchpad: true,
         supportsPersistentSessions: true,
-        supportsSessionControlCommands: true,
-        sessionControlCommands: ["compact", "model", "thinking", "skill"],
+        ...(params.runtimeKind === "pi-local"
+          ? { supportsSessionControlCommands: true, sessionControlCommands: ["compact", "model", "thinking", "skill"] }
+          : {}),
       },
       // Session-link writes don't carry the runtime's BIK; keep the key the
       // live session registered via bot:hello rather than nulling it.

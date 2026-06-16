@@ -486,18 +486,22 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  // A runtime client is identified by (instanceId, runtimeSessionId) — that pair is
+  // unique per client regardless of runtimeKind. The lookup must NOT filter on kind:
+  // doing so made session reuse miss a non-pi-local link and re-run the create path,
+  // which then violated the (…, runtime_kind, instance_id, runtime_session_id) unique
+  // constraint on the runtime's second launch.
   async findActiveByRuntimeSession(
     db: Querier,
     params: {
       workspaceId: string
       botId: string
-      runtimeKind: BotRuntimeKind
       instanceId: string
       runtimeSessionId: string
     }
   ): Promise<BotRuntimeSessionLink | null> {
     const result = await db.query<BotRuntimeSessionLinkRow>(
-      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND runtime_kind = ${params.runtimeKind} AND instance_id = ${params.instanceId} AND runtime_session_id = ${params.runtimeSessionId} AND status = 'active'`
+      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId} AND runtime_session_id = ${params.runtimeSessionId} AND status = 'active'`
     )
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
