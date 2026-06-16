@@ -232,7 +232,13 @@ jobs:
 
           # Derive shards from downloaded artifact directories so this stays
           # correct if TOTAL_SHARDS changes without touching evaluate-results.
-          for result_file in shard-results/shard-result-*/shard-result.txt; do
+          # nullglob so a missing artifact dir expands to zero iterations rather
+          # than the literal pattern — otherwise `cat` would abort the step under
+          # `set -e` before the no-markers guard below could report it cleanly.
+          shopt -s nullglob
+          result_files=(shard-results/shard-result-*/shard-result.txt)
+
+          for result_file in "${result_files[@]}"; do
             shard_num=$(basename "$(dirname "$result_file")" | sed 's/shard-result-//')
             result=$(cat "$result_file")
 
@@ -249,7 +255,7 @@ jobs:
 
           # No markers at all means the matrix never reported — treat as a
           # failure so a job that dies before writing results can't pass silently.
-          if [[ $passed_count -eq 0 && $flaky_count -eq 0 && $failed_count -eq 0 ]]; then
+          if [[ ${#result_files[@]} -eq 0 ]]; then
             echo "⛔ No shard results were reported — the test job did not run to completion." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
