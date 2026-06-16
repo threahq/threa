@@ -15,6 +15,7 @@ import type { Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
 import { EnclaveInvocationsRepository, type EnclaveInvocation } from "./invocations-repository"
+import { EnclaveRewrapNotificationsRepository } from "./rewrap-notifications-repository"
 import { EnclaveClaimService, enqueueEnclaveInvocation } from "./claim-service"
 import { ENCLAVE_INVOCATION_CHANNEL } from "./claim-nudge"
 
@@ -470,5 +471,72 @@ describe("enqueueEnclaveInvocation wake-up nudge", () => {
     await enqueueEnclaveInvocation(db, { ...enqueueParams, reopen: true })
 
     expect(query).not.toHaveBeenCalled()
+  })
+})
+
+describe("EnclaveClaimService re-wrap nudge sweep", () => {
+  /** Stub the claim poll so it does nothing but run the nudge sweep, with one unservable stream. */
+  function arrangeNudge(createdAt: Date) {
+    spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
+    spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(null)
+    spyOn(EnclaveInvocationsRepository, "findUnservablePending").mockResolvedValue([
+      { id: "einv_stuck", workspaceId: "ws_1", rootStreamId: "stream_root", ownerUserId: "usr_owner", createdAt },
+    ])
+    const tx = { __tx: true } as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    return { insertOutbox }
+  }
+
+  it("nudges the owner of a stuck stream over the socket immediately, holding web-push for the grace window", async () => {
+    spyOn(EnclaveRewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(true)
+    const webpush = spyOn(EnclaveRewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(true)
+    // Just enqueued — inside the web-push grace window.
+    const { insertOutbox } = arrangeNudge(new Date())
+
+    await service().claimTurn("eik_fresh")
+
+    const types = insertOutbox.mock.calls.map((c) => c[1])
+    expect(types).toContain("enclave:rewrap_needed")
+    // Grace not yet elapsed → the web-push slot is never even claimed.
+    expect(webpush).not.toHaveBeenCalled()
+    expect(types).not.toContain("enclave:rewrap_nudge")
+    // The signal carries the owner + the root the heal targets — never plaintext.
+    const socketCall = insertOutbox.mock.calls.find((c) => c[1] === "enclave:rewrap_needed")!
+    expect(socketCall[2]).toEqual({ workspaceId: "ws_1", targetUserId: "usr_owner", rootStreamId: "stream_root" })
+  })
+
+  it("escalates to a web-push once the stuck turn has outlived the grace window", async () => {
+    spyOn(EnclaveRewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(true)
+    spyOn(EnclaveRewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(true)
+    // Stuck for five minutes — past the two-minute grace.
+    const { insertOutbox } = arrangeNudge(new Date(Date.now() - 5 * 60 * 1000))
+
+    await service().claimTurn("eik_fresh")
+
+    const types = insertOutbox.mock.calls.map((c) => c[1])
+    expect(types).toContain("enclave:rewrap_needed")
+    expect(types).toContain("enclave:rewrap_nudge")
+  })
+
+  it("stays silent on a channel another poller already claimed within its window (dedup)", async () => {
+    spyOn(EnclaveRewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(false)
+    spyOn(EnclaveRewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(false)
+    const { insertOutbox } = arrangeNudge(new Date(Date.now() - 5 * 60 * 1000))
+
+    await service().claimTurn("eik_fresh")
+
+    expect(insertOutbox).not.toHaveBeenCalled()
+  })
+
+  it("never lets a nudge failure break the claim poll", async () => {
+    spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
+    spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(null)
+    spyOn(EnclaveInvocationsRepository, "findUnservablePending").mockRejectedValue(new Error("db down"))
+
+    const result = await service().claimTurn("eik_fresh")
+
+    expect(result).toBeNull()
   })
 })

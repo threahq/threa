@@ -68,6 +68,8 @@ export {
   type SavedUpsertedOutboxPayload,
   type SavedDeletedOutboxPayload,
   type SavedReminderFiredOutboxPayload,
+  type EnclaveRewrapNeededOutboxPayload,
+  type EnclaveRewrapNudgeOutboxPayload,
   type LinkPreviewReadyOutboxPayload,
   type UserScopedEventType,
   isUserScopedEvent,

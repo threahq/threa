@@ -167,6 +167,47 @@ describe("EnclaveInvocationsRepository claim lifecycle by session", () => {
   })
 })
 
+describe("EnclaveInvocationsRepository.findUnservablePending", () => {
+  it("finds pending turns a live fleet exists for but no live EIK can serve, paired with the owner", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [
+      { id: "einv_1", workspace_id: "ws_1", root_stream_id: "stream_1", owner_user_id: "usr_owner", created_at: NOW },
+    ])
+
+    const rows = await EnclaveInvocationsRepository.findUnservablePending(db, { stalenessMs: 120_000 })
+
+    // Only pending rows are candidates.
+    expect(captured.text).toContain("i.status = 'pending'")
+    // The owner who can re-wrap comes from the stream join.
+    expect(captured.text).toContain("e.owner_user_id")
+    expect(captured.text).toContain("JOIN e2e_streams e")
+    // A live EIK must exist (a zero-instance gap is ops, not an owner re-wrap)…
+    expect(captured.text).toContain("AND EXISTS (")
+    expect(captured.text).toContain("FROM enclave_runtimes r")
+    expect(captured.text).toContain("r.last_seen_at > NOW()")
+    // …but none of them may cover BOTH the reply generation (current)…
+    expect(captured.text).toContain("AND NOT EXISTS (")
+    expect(captured.text).toContain("w.key_generation = e.current_key_generation")
+    // …and the prompt generation (the trigger envelope's).
+    expect(captured.text).toContain("(m.envelope ->> 'keyGeneration')::int")
+    expect(captured.text).toContain("recipient_kind = 'enclave'")
+    // Staleness window is parameterised, oldest-first so the grace gate sees the oldest age.
+    expect(captured.values).toContain(120_000)
+    expect(captured.text).toContain("ORDER BY i.created_at ASC")
+    expect(rows).toEqual([
+      { id: "einv_1", workspaceId: "ws_1", rootStreamId: "stream_1", ownerUserId: "usr_owner", createdAt: NOW },
+    ])
+  })
+
+  it("returns nothing when every pending turn is servable", async () => {
+    const rows = await EnclaveInvocationsRepository.findUnservablePending(
+      createQuerier({ text: null, values: null }, []),
+      { stalenessMs: 120_000 }
+    )
+    expect(rows).toEqual([])
+  })
+})
+
 describe("EnclaveInvocationsRepository.parkExhausted", () => {
   it("dead-letters lapsed exhausted claims AND aged-out pending rows, preserving existing errors", async () => {
     const captured: Captured = { text: null, values: null }

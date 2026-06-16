@@ -101,6 +101,8 @@ export type OutboxEventType =
   | "label:member_left"
   | "label:assigned"
   | "label:unassigned"
+  | "enclave:rewrap_needed"
+  | "enclave:rewrap_nudge"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -609,6 +611,23 @@ export interface DraftDeletedOutboxPayload extends WorkspaceScopedPayload {
   draftId: string
 }
 
+// Proactive owner re-wrap nudges. When an enclave turn can't be served because
+// no live EIK holds the stream's SSK wrap, only the owner's unlocked device can
+// re-wrap (INV-E7). `enclave:rewrap_needed` is user-scoped — it reaches the
+// owner's online tab, which heals in place. `enclave:rewrap_nudge` is push-only
+// (delivery-groups returns null, never broadcast): the push handler turns it
+// into a web-push that pulls an offline owner back to the app. Both carry the
+// root stream the heal targets — never any plaintext.
+export interface EnclaveRewrapNeededOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  rootStreamId: string
+}
+
+export interface EnclaveRewrapNudgeOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  rootStreamId: string
+}
+
 // Bot event payloads
 export interface BotCreatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
@@ -808,6 +827,8 @@ export interface OutboxEventPayloadMap {
   "label:member_left": LabelMemberLeftOutboxPayload
   "label:assigned": LabelAssignedOutboxPayload
   "label:unassigned": LabelUnassignedOutboxPayload
+  "enclave:rewrap_needed": EnclaveRewrapNeededOutboxPayload
+  "enclave:rewrap_nudge": EnclaveRewrapNudgeOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]
@@ -913,6 +934,7 @@ export type UserScopedEventType =
   | "draft:upserted"
   | "draft:deleted"
   | "feature_flags:updated"
+  | "enclave:rewrap_needed"
 
 const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "activity:created",
@@ -926,6 +948,7 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "draft:upserted",
   "draft:deleted",
   "feature_flags:updated",
+  "enclave:rewrap_needed",
 ]
 
 /**
