@@ -144,8 +144,9 @@ describe("read-url-tool", () => {
       globalThis.fetch = imageResponse("image/svg+xml")
 
       const tool = createReadUrlTool({ supportsVision: true })
-      const { output } = await tool.config.execute({ url: "https://example.com/logo.svg" }, toolOpts)
+      const { output, multimodal } = await tool.config.execute({ url: "https://example.com/logo.svg" }, toolOpts)
 
+      expect(multimodal).toBeUndefined()
       expect(JSON.parse(output).error).toContain("Unsupported image type")
     })
 
@@ -154,6 +155,26 @@ describe("read-url-tool", () => {
 
       const tool = createReadUrlTool({ supportsVision: true })
       const { output, multimodal } = await tool.config.execute({ url: "https://example.com/huge.png" }, toolOpts)
+
+      expect(multimodal).toBeUndefined()
+      expect(JSON.parse(output).error).toContain("too large")
+    })
+
+    it("refuses an image whose actual bytes exceed the cap when content-length is absent", async () => {
+      // 5 MB + 1 byte; MAX_IMAGE_BYTES is 5 MB. No content-length header, so the
+      // second (post-download) size guard is the one that must fire.
+      const oversized = new ArrayBuffer(5 * 1024 * 1024 + 1)
+      globalThis.fetch = mock(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "image/png" }),
+          arrayBuffer: () => Promise.resolve(oversized),
+        } as unknown as Response)
+      ) as unknown as typeof fetch
+
+      const tool = createReadUrlTool({ supportsVision: true })
+      const { output, multimodal } = await tool.config.execute({ url: "https://example.com/sneaky.png" }, toolOpts)
 
       expect(multimodal).toBeUndefined()
       expect(JSON.parse(output).error).toContain("too large")
@@ -179,6 +200,45 @@ describe("read-url-tool", () => {
       const parsed = JSON.parse(output)
 
       expect(parsed.images).toEqual(["https://example.com/img/a.png", "https://cdn.example.com/b.jpg"])
+    })
+
+    it("omits obviously-internal image URLs from the list", async () => {
+      // A page embedding a metadata-endpoint <img> must not surface that URL into
+      // model context, even though read_url would later block the fetch itself.
+      const html = `<html><head><title>Gallery</title></head><body>
+        <img src="http://169.254.169.254/latest/meta-data/">
+        <img src="https://cdn.example.com/ok.png">
+      </body></html>`
+      globalThis.fetch = mock(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/html" }),
+          text: () => Promise.resolve(html),
+        } as Response)
+      ) as unknown as typeof fetch
+
+      const tool = createReadUrlTool({ supportsVision: true })
+      const { output } = await tool.config.execute({ url: "https://example.com/gallery" }, toolOpts)
+
+      expect(JSON.parse(output).images).toEqual(["https://cdn.example.com/ok.png"])
+    })
+
+    it("keeps a src value containing the opposite quote intact", async () => {
+      const html = `<html><head><title>T</title></head><body><img src="https://cdn.example.com/O'Reilly.png"></body></html>`
+      globalThis.fetch = mock(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/html" }),
+          text: () => Promise.resolve(html),
+        } as Response)
+      ) as unknown as typeof fetch
+
+      const tool = createReadUrlTool({ supportsVision: true })
+      const { output } = await tool.config.execute({ url: "https://example.com/p" }, toolOpts)
+
+      expect(JSON.parse(output).images).toEqual(["https://cdn.example.com/O'Reilly.png"])
     })
 
     it("omits the image list when the caller has no vision", async () => {

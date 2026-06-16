@@ -103,6 +103,37 @@ function isPrivateOrReservedIP(ip: string): boolean {
 }
 
 /**
+ * Synchronous host checks shared by the SSRF validator and the image-URL lister:
+ * literal internal hostnames and bare private/reserved IPs. Returns a block
+ * reason, or null when nothing obviously internal is detected (a DNS-based check
+ * still runs in validateUrlWithDns). Takes the raw URL hostname.
+ */
+function staticInternalHostReason(rawHostname: string): string | null {
+  // Normalize trailing dot for FQDN.
+  const hostname = rawHostname.toLowerCase().replace(/\.$/, "")
+  if (hostname === "localhost") {
+    return "Access to private or reserved IP addresses is not allowed."
+  }
+  if (
+    hostname.endsWith(".local") ||
+    hostname.endsWith(".internal") ||
+    hostname.endsWith(".localhost") ||
+    hostname.endsWith(".corp") ||
+    hostname.endsWith(".lan")
+  ) {
+    return "Access to internal hostnames is not allowed."
+  }
+
+  // Remove IPv6 brackets if present, then block bare private/reserved IPs.
+  const cleanHostname = hostname.replace(/^\[|\]$/g, "")
+  if (ipaddr.isValid(cleanHostname) && isPrivateOrReservedIP(cleanHostname)) {
+    return "Access to private or reserved IP addresses is not allowed."
+  }
+
+  return null
+}
+
+/**
  * Validate a URL for SSRF protection.
  * Returns error message if blocked, null if allowed.
  */
@@ -119,29 +150,16 @@ async function validateUrlWithDns(urlString: string): Promise<string | null> {
     return `Unsupported protocol: ${url.protocol}. Only HTTP and HTTPS are allowed.`
   }
 
-  // Block internal hostname patterns (normalize trailing dot for FQDN)
-  const hostname = url.hostname.toLowerCase().replace(/\.$/, "")
-  if (hostname === "localhost") {
-    return "Access to private or reserved IP addresses is not allowed."
-  }
-  if (
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal") ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".corp") ||
-    hostname.endsWith(".lan")
-  ) {
-    return "Access to internal hostnames is not allowed."
-  }
+  // Literal internal hostnames and bare private/reserved IPs (synchronous).
+  const staticReason = staticInternalHostReason(url.hostname)
+  if (staticReason) return staticReason
 
-  // Remove IPv6 brackets if present
-  const cleanHostname = hostname.replace(/^\[|\]$/g, "")
-
-  // Check if hostname is already an IP address
+  // A bare public IP needs no DNS resolution (and resolve4 would fail on it).
+  const cleanHostname = url.hostname
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .replace(/^\[|\]$/g, "")
   if (ipaddr.isValid(cleanHostname)) {
-    if (isPrivateOrReservedIP(cleanHostname)) {
-      return "Access to private or reserved IP addresses is not allowed."
-    }
     return null
   }
 
@@ -454,10 +472,13 @@ async function readImageContent(
   const dataUrl = `data:${mimeType};base64,${bytes.toString("base64")}`
   logger.debug({ url, mimeType, byteSize: bytes.length }, "Image read for vision analysis")
 
+  // Prefer the filename for the source title; fall back to the full URL.
+  const title = new URL(url).pathname.split("/").pop() || url
+
   return {
     output: JSON.stringify({ url, kind: "image", mimeType, byteSize: bytes.length }),
     multimodal: [{ type: "image", url: dataUrl }],
-    sources: [{ type: "web", title: url, url }],
+    sources: [{ type: "web", title, url }],
   }
 }
 
@@ -469,18 +490,25 @@ async function readImageContent(
 function extractImageUrls(html: string, baseUrl: string): string[] {
   const urls: string[] = []
   const seen = new Set<string>()
-  const re = /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi
+  // Match double- or single-quoted src separately so the delimiters are
+  // enforced and a value may contain the opposite quote (e.g. O'Reilly.png).
+  const re = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gi
   let match: RegExpExecArray | null
   while ((match = re.exec(html)) !== null) {
-    const raw = match[1]?.trim()
+    const raw = (match[1] ?? match[2])?.trim()
     if (!raw || raw.startsWith("data:")) continue
-    let resolved: string
+    let parsed: URL
     try {
-      resolved = new URL(raw, baseUrl).toString()
+      parsed = new URL(raw, baseUrl)
     } catch {
       continue
     }
-    if (!resolved.startsWith("http://") && !resolved.startsWith("https://")) continue
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") continue
+    // Don't surface obviously-internal URLs into model context — a follow-up
+    // read_url would reject them anyway (defense in depth against SSRF probes
+    // embedded in a page's <img> tags).
+    if (staticInternalHostReason(parsed.hostname)) continue
+    const resolved = parsed.toString()
     if (seen.has(resolved)) continue
     seen.add(resolved)
     urls.push(resolved)
