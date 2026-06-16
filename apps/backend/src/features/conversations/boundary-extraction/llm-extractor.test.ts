@@ -1,15 +1,3 @@
-/**
- * LLM Boundary Extractor Unit Tests
- *
- * Tests verify:
- * 1. Thread cold-start (no active/parent convs) deterministically creates a new conversation
- * 2. Structured output parsing extracts assignments + reassignments
- * 3. LLM errors fall back to safe defaults
- * 4. Invalid conversation IDs in assignments are dropped
- * 5. Reassignments are validated against the candidate set
- * 6. Topic extraction from message content
- */
-
 import { describe, test, expect, mock, beforeEach } from "bun:test"
 import { LLMBoundaryExtractor } from "./llm-extractor"
 import type { ExtractionContext, ConversationSummary } from "./types"

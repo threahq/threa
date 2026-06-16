@@ -29,7 +29,6 @@ export function createInternalHandlers(deps: InternalHandlersDeps) {
 
   return {
     /**
-     * POST /internal/workspaces
      * Called by the control-plane to create a workspace in this region.
      * Accepts a pre-generated workspace ID and slug.
      */
@@ -53,10 +52,7 @@ export function createInternalHandlers(deps: InternalHandlersDeps) {
       res.status(201).json({ workspace })
     },
 
-    /**
-     * POST /internal/invitations/:id/accept
-     * Called by the control-plane to accept a specific invitation in this region.
-     */
+    /** Called by the control-plane to accept a specific invitation in this region. */
     async acceptInvitation(req: Request, res: Response) {
       const invitationId = req.params.id
       if (!invitationId) {

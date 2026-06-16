@@ -46,7 +46,6 @@ function findActiveRangeIndex(
 ): number {
   if (!activeMessageId || ranges.length === 0) return -1
 
-  // Find the container element for the active message
   const msgEl = root.querySelector(`[data-message-id="${CSS.escape(activeMessageId)}"]`)
   if (!msgEl) return -1
 
@@ -125,10 +124,9 @@ export function useSearchHighlight(
       return
     }
 
-    // All matches (yellow) — replaces any existing Highlight atomically
+    // set() replaces any existing Highlight atomically.
     highlights.set(HIGHLIGHT_NAME, new Highlight(...ranges))
 
-    // Active match (orange)
     const activeIdx = findActiveRangeIndex(root, ranges, activeMessageId, activeOccurrence)
     if (activeIdx >= 0) {
       highlights.set(ACTIVE_HIGHLIGHT_NAME, new Highlight(ranges[activeIdx]))
@@ -137,7 +135,6 @@ export function useSearchHighlight(
     }
   }, [containerRef, query, activeMessageId, activeOccurrence, domTick])
 
-  // Clear on unmount
   useEffect(() => {
     return () => {
       if (typeof CSS === "undefined" || !("highlights" in CSS)) return

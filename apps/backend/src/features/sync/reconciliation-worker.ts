@@ -72,7 +72,6 @@ export class SyncLogReconciliationWorker {
     logger.info("SyncLogReconciliationWorker stopped")
   }
 
-  /** One sweep pass; the ticker calls this on its interval. */
   async sweepOnce(): Promise<void> {
     try {
       const sweptUntil = await SyncLogRepository.getSweptUntil(this.pool)

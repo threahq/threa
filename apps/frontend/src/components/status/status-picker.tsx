@@ -77,7 +77,7 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const setStatus = useSetStatus(workspaceId)
   const clearStatus = useClearStatus(workspaceId)
 
-  // Editor state — `emoji` is a shortcode (no colons), matching storage.
+  // `emoji` is a shortcode (no colons), matching storage.
   const [emoji, setEmoji] = useState<string | null>(null)
   const [text, setText] = useState("")
   const [durationId, setDurationId] = useState<string>("never")
@@ -86,7 +86,6 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const [durationTouched, setDurationTouched] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
-  // Whether this status should also silence notifications for its lifetime.
   const [pausesNotifications, setPausesNotifications] = useState(false)
 
   // Seed the editor from the user's current status each time the dialog opens.

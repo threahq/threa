@@ -1,10 +1,3 @@
-/**
- * Image Caption Service
- *
- * Processes image attachments to extract structured information
- * that can be used by AI agents to understand visual content.
- */
-
 import type { Pool } from "pg"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { AI } from "@threa/agent-runtime"
@@ -43,14 +36,11 @@ export class ImageCaptionService implements ImageCaptionServiceLike {
       log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing image attachment")
 
       try {
-        // Download image from S3
         const imageBuffer = await this.storage.getObject(attachment.storagePath)
         const base64Image = imageBuffer.toString("base64")
 
-        // Determine media type for the AI SDK
         const mediaType = attachment.mimeType.startsWith("image/") ? attachment.mimeType : "image/png" // Fallback for octet-stream
 
-        // Call AI to analyze the image
         const { value: analysis } = await this.ai.generateObject({
           model: IMAGE_CAPTION_MODEL_ID,
           schema: imageAnalysisSchema,
@@ -91,7 +81,6 @@ export class ImageCaptionService implements ImageCaptionServiceLike {
           "Image analysis completed"
         )
 
-        // Build fullText from extracted text components
         const textParts: string[] = []
         if (analysis.extractedText?.headings?.length) {
           textParts.push(...analysis.extractedText.headings)

@@ -1,14 +1,3 @@
-/**
- * Excel Processing Service
- *
- * Extracts structured content from Excel workbooks using SheetJS.
- *
- * Size strategy by total cells:
- * - Small (<5K cells): inject all sheets in full as markdown
- * - Medium (5K-20K cells): inject all sheets, sample large ones (>100 rows)
- * - Large (>20K cells): sheet summaries + sample, load_excel_section tool for detail
- */
-
 import type { Pool } from "pg"
 import type { ExcelMetadata, TextSizeTier, InjectionStrategy, ExcelSheetInfo, ExcelChartInfo } from "@threa/types"
 import type { AI } from "@threa/agent-runtime"
@@ -53,25 +42,19 @@ export class ExcelProcessingService implements ExcelProcessingServiceLike {
       log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing Excel workbook")
 
       try {
-        // Download the file
         const fileBuffer = await this.storage.getObject(attachment.storagePath)
 
-        // Validate format using magic bytes
         const format = validateExcelFormat(fileBuffer)
         log.info({ format }, "Excel format detected")
 
-        // Extract content
         const extracted = extractExcel(fileBuffer, format)
 
-        // Calculate total cells across sheets
         const totalRows = extracted.sheets.reduce((sum, s) => sum + s.rows, 0)
         const totalCells = extracted.sheets.reduce((sum, s) => sum + s.rows * s.columns, 0)
 
-        // Determine size tier and injection strategy
         const sizeTier = determineSizeTier(totalCells)
         const injectionStrategy = determineInjectionStrategy(sizeTier)
 
-        // Build sheet info for metadata
         const sheetInfos: ExcelSheetInfo[] = extracted.sheets.map((s) => ({
           name: s.name,
           rows: s.rows,
@@ -81,7 +64,6 @@ export class ExcelProcessingService implements ExcelProcessingServiceLike {
           sampleRows: s.sampleRows,
         }))
 
-        // Build chart info
         const chartInfos: ExcelChartInfo[] = extracted.charts.map((c) => ({
           sheetName: c.sheetName,
           type: c.type,
@@ -89,7 +71,6 @@ export class ExcelProcessingService implements ExcelProcessingServiceLike {
           description: c.description,
         }))
 
-        // Build metadata
         const excelMetadata: ExcelMetadata = {
           format,
           sizeTier,
@@ -104,7 +85,6 @@ export class ExcelProcessingService implements ExcelProcessingServiceLike {
           charts: chartInfos,
         }
 
-        // Build markdown representation and determine what to store
         let summary: string
         let fullTextToStore: string | null
 
@@ -195,9 +175,6 @@ function determineInjectionStrategy(sizeTier: TextSizeTier): InjectionStrategy {
   }
 }
 
-/**
- * Build a brief overview of each sheet (for AI summary input).
- */
 function buildSheetOverview(sheets: ExtractedSheet[]): string {
   return sheets
     .map((s) => {
@@ -207,13 +184,10 @@ function buildSheetOverview(sheets: ExtractedSheet[]): string {
     .join("\n")
 }
 
-/**
- * Build a sample data preview for AI summary input.
- */
 function buildSampleDataPreview(sheets: ExtractedSheet[]): string {
   return sheets
     .filter((s) => s.sampleRows.length > 0)
-    .slice(0, 3) // Max 3 sheets in preview
+    .slice(0, 3)
     .map((s) => {
       const headerRow = `| ${s.headers.join(" | ")} |`
       const separator = `| ${s.headers.map(() => "---").join(" | ")} |`
@@ -224,8 +198,7 @@ function buildSampleDataPreview(sheets: ExtractedSheet[]): string {
 }
 
 /**
- * Build full markdown representation of all sheets.
- * For medium workbooks, sheets >100 rows are sampled.
+ * For medium workbooks, sheets >100 rows are sampled rather than included in full.
  */
 function buildFullMarkdown(sheets: ExtractedSheet[], sizeTier: TextSizeTier): string {
   const parts: string[] = []
@@ -240,21 +213,18 @@ function buildFullMarkdown(sheets: ExtractedSheet[], sizeTier: TextSizeTier): st
       continue
     }
 
-    // Decide whether to include full data or just sample
     const shouldSample = sizeTier === TextSizeTiers.MEDIUM && sheet.rows > EXCEL_SHEET_THRESHOLDS.alwaysFullRows
 
     const headerRow = `| ${sheet.headers.join(" | ")} |`
     const separator = `| ${sheet.headers.map(() => "---").join(" | ")} |`
 
     if (shouldSample || sheet.rows > EXCEL_SHEET_THRESHOLDS.alwaysSampleRows) {
-      // Sample: headers + first N rows + note
       const sampleRows = sheet.sampleRows.map((row) => `| ${row.join(" | ")} |`).join("\n")
       parts.push(headerRow)
       parts.push(separator)
       parts.push(sampleRows)
       parts.push(`\n... (${sheet.rows - sheet.sampleRows.length} more rows)`)
     } else {
-      // Full: all rows
       const allRows = sheet.data.map((row) => `| ${row.join(" | ")} |`).join("\n")
       parts.push(headerRow)
       parts.push(separator)

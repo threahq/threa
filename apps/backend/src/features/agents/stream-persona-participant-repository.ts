@@ -1,14 +1,12 @@
 import { PoolClient } from "pg"
 import { sql } from "../../db"
 
-// Internal row type (snake_case, not exported)
 interface StreamPersonaParticipantRow {
   stream_id: string
   persona_id: string
   first_participated_at: Date
 }
 
-// Domain type (camelCase, exported)
 export interface StreamPersonaParticipant {
   streamId: string
   personaId: string
@@ -36,9 +34,6 @@ export const StreamPersonaParticipantRepository = {
     `)
   },
 
-  /**
-   * Check if a persona has participated in a stream.
-   */
   async hasParticipated(client: PoolClient, streamId: string, personaId: string): Promise<boolean> {
     const result = await client.query(sql`
       SELECT 1 FROM stream_persona_participants
@@ -47,9 +42,6 @@ export const StreamPersonaParticipantRepository = {
     return result.rows.length > 0
   },
 
-  /**
-   * Find all streams where a persona has participated.
-   */
   async findStreamsByPersona(client: PoolClient, personaId: string): Promise<string[]> {
     const result = await client.query<{ stream_id: string }>(sql`
       SELECT stream_id FROM stream_persona_participants
@@ -58,9 +50,6 @@ export const StreamPersonaParticipantRepository = {
     return result.rows.map((r) => r.stream_id)
   },
 
-  /**
-   * Find all personas that have participated in a stream.
-   */
   async findPersonasByStream(client: PoolClient, streamId: string): Promise<StreamPersonaParticipant[]> {
     const result = await client.query<StreamPersonaParticipantRow>(sql`
       SELECT stream_id, persona_id, first_participated_at

@@ -177,7 +177,6 @@ describe("MessageEvent", () => {
 
       render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
 
-      // Verify content is visible to user
       expect(screen.getByText("Hello, world!")).toBeInTheDocument()
     })
 
@@ -215,7 +214,6 @@ describe("MessageEvent", () => {
 
       render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
 
-      // Reaction pills show count
       const buttons = screen.getAllByRole("button")
       const reactionButtons = buttons.filter((b) => b.textContent?.match(/\d$/))
       expect(reactionButtons.length).toBeGreaterThanOrEqual(2)
@@ -234,7 +232,6 @@ describe("MessageEvent", () => {
         wrapper: Wrapper,
       })
 
-      // Real AriadneIcon renders an SVG with aria-label
       const ariadneIcon = container.querySelector('svg[aria-label="Ariadne"]')
       expect(ariadneIcon).toBeInTheDocument()
     })
@@ -244,7 +241,6 @@ describe("MessageEvent", () => {
 
       render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
 
-      // User avatar shows initials from getActorAvatar
       expect(screen.getByText("TU")).toBeInTheDocument()
     })
 
@@ -259,7 +255,6 @@ describe("MessageEvent", () => {
       })
 
       const messageContainer = container.querySelector(".message-item")
-      // Persona messages have gradient background and gold left accent
       expect(messageContainer).toHaveClass("bg-gradient-to-r")
       expect(messageContainer).toHaveClass("from-primary/[0.06]")
     })
@@ -357,13 +352,10 @@ describe("MessageEvent", () => {
         </MemoryRouter>
       )
 
-      // Handler should be registered for this message
       expect(registerMessage).toHaveBeenCalledWith("msg_edit", expect.any(Function))
 
-      // No edit form yet
       expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
 
-      // Calling the registered handler opens the inline edit form
       await act(async () => {
         capturedHandler?.()
       })

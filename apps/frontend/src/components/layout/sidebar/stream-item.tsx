@@ -216,7 +216,6 @@ export function StreamItem({
 
   useUrgencyTracking(itemRef, stream.id, stream.urgency, scrollContainerRef)
 
-  // Determine avatar content based on stream type
   const getAvatar = () => {
     if (stream.type === StreamTypes.CHANNEL) {
       return {
@@ -323,7 +322,6 @@ export function StreamItem({
 
   const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
 
-  // For scratchpads, support renaming
   if (stream.type === StreamTypes.SCRATCHPAD) {
     return (
       <ScratchpadItem

@@ -19,9 +19,7 @@ interface AuthenticatedUser {
 declare global {
   namespace Express {
     interface Request {
-      /** WorkOS user ID from authenticated session */
       workosUserId?: string
-      /** Full WorkOS identity from authenticated session */
       authUser?: AuthenticatedUser
       /**
        * Latest valid sealed session for the active account. Equals the rotated

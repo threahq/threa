@@ -119,7 +119,7 @@ describe("registerVoiceGateway voice:start", () => {
 
     upstream.fireDelta({ text: "hi", isFinal: true })
     upstream.fireError({ code: "INPUT_ERROR", message: "bad audio" })
-    // The error emit now awaits the polish drain (microtask) before propagating,
+    // The error emit awaits the polish drain (microtask) before propagating,
     // even when polish is off, so wait one tick before asserting.
     await new Promise((r) => setTimeout(r, 0))
 

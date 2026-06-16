@@ -154,7 +154,7 @@ function serializeMessage(
     ...(opts?.threadStreamId != null && { threadStreamId: opts.threadStreamId }),
     ...(message.clientMessageId != null && { clientMessageId: message.clientMessageId }),
     ...(message.sentVia != null && { sentVia: message.sentVia }),
-    // Always return metadata (possibly empty) so consumers can rely on the shape.
+    // Always present (possibly empty) so consumers can rely on the shape.
     metadata: message.metadata ?? {},
     ...(opts?.attachments && opts.attachments.length > 0 && { attachments: opts.attachments.map(toAttachmentSummary) }),
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
@@ -312,9 +312,6 @@ async function resolveParentStreams(pool: Pool, streams: Stream[]): Promise<Map<
   return new Map(parents.map((p) => [p.id, p]))
 }
 
-/**
- * Batch-resolve display names for message authors across all author types.
- */
 async function resolveAuthorDisplayNames(
   pool: Pool,
   workspaceId: string,
@@ -327,7 +324,7 @@ async function resolveAuthorDisplayNames(
     if (m.authorType === "user") byType.user.add(m.authorId)
     else if (m.authorType === "bot") byType.bot.add(m.authorId)
     else if (m.authorType === "persona") byType.persona.add(m.authorId)
-    // System messages: authorDisplayName stays null — clients use authorType to format
+    // System messages have no display name; clients format from authorType.
   }
 
   const fetches: Promise<void>[] = []
@@ -1289,11 +1286,6 @@ export function createPublicApiHandlers({
       res.json({ data: { invocationId: failed.id, status: failed.status } })
     },
 
-    /**
-     * Search messages via public API.
-     *
-     * POST /api/v1/workspaces/:workspaceId/messages/search
-     */
     async searchMessages(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -1324,7 +1316,6 @@ export function createPublicApiHandlers({
         skipEmbedding: !semantic,
       })
 
-      // Resolve author display names for search results
       const authorNames = await resolveAuthorDisplayNames(pool, workspaceId, results)
       const serialized: WireSearchResult[] = results.map((r) => {
         const name = authorNames.get(r.authorId)
@@ -1337,11 +1328,6 @@ export function createPublicApiHandlers({
       res.json({ data: serialized })
     },
 
-    /**
-     * Search memos via public API.
-     *
-     * POST /api/v1/workspaces/:workspaceId/memos/search
-     */
     async searchMemos(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -1377,11 +1363,6 @@ export function createPublicApiHandlers({
       res.json({ data: results.map(serializeMemoSearchResult) })
     },
 
-    /**
-     * Get a memo via public API.
-     *
-     * GET /api/v1/workspaces/:workspaceId/memos/:memoId
-     */
     async getMemo(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const memoId = req.params.memoId
@@ -1397,11 +1378,6 @@ export function createPublicApiHandlers({
       res.json({ data: serializeMemoDetail(memo) })
     },
 
-    /**
-     * Search attachments via public API.
-     *
-     * POST /api/v1/workspaces/:workspaceId/attachments/search
-     */
     async searchAttachments(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -1431,11 +1407,6 @@ export function createPublicApiHandlers({
       res.json({ data: attachments.map(serializeAttachmentSearchResult) })
     },
 
-    /**
-     * Get an attachment via public API.
-     *
-     * GET /api/v1/workspaces/:workspaceId/attachments/:attachmentId
-     */
     async getAttachment(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachment.id)
@@ -1443,11 +1414,6 @@ export function createPublicApiHandlers({
       res.json({ data: serializeAttachmentDetail(attachment, extraction) })
     },
 
-    /**
-     * Get a signed attachment download URL via public API.
-     *
-     * GET /api/v1/workspaces/:workspaceId/attachments/:attachmentId/url
-     */
     async getAttachmentDownloadUrl(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const data: WireAttachmentUrl = {
@@ -1458,11 +1424,6 @@ export function createPublicApiHandlers({
       res.json({ data })
     },
 
-    /**
-     * List accessible streams.
-     *
-     * GET /api/v1/workspaces/:workspaceId/streams
-     */
     async listStreams(req: Request, res: Response) {
       const { type, query, after: afterCursor, limit } = validateRequest(listStreamsSchema, req.query)
       const accessibleStreamIds = await getAccessibleStreamIds(req)
@@ -1485,7 +1446,6 @@ export function createPublicApiHandlers({
       const hasMore = streams.length > limit
       const page = hasMore ? streams.slice(0, limit) : streams
 
-      // Batch-fetch parent streams for unnamed threads to compute display names
       const parentStreamMap = await resolveParentStreams(pool, page)
 
       const lastStream = page[page.length - 1]
@@ -1499,11 +1459,6 @@ export function createPublicApiHandlers({
       })
     },
 
-    /**
-     * Get a single stream by ID.
-     *
-     * GET /api/v1/workspaces/:workspaceId/streams/:streamId
-     */
     async getStream(req: Request, res: Response) {
       const streamId = req.params.streamId
 
@@ -1514,7 +1469,6 @@ export function createPublicApiHandlers({
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 
-      // Resolve parent stream for unnamed thread display names
       let context: DisplayNameContext | undefined
       if (stream.type === "thread" && stream.displayName === null && stream.parentStreamId) {
         const parent = await StreamRepository.findById(pool, stream.parentStreamId)
@@ -1524,11 +1478,6 @@ export function createPublicApiHandlers({
       res.json({ data: serializeStream(stream, context) })
     },
 
-    /**
-     * List members of a stream.
-     *
-     * GET /api/v1/workspaces/:workspaceId/streams/:streamId/members
-     */
     async listMembers(req: Request, res: Response) {
       const streamId = req.params.streamId
       const workspaceId = req.workspaceId!
@@ -1573,11 +1522,6 @@ export function createPublicApiHandlers({
       })
     },
 
-    /**
-     * List messages in a stream.
-     *
-     * GET /api/v1/workspaces/:workspaceId/streams/:streamId/messages
-     */
     async listMessages(req: Request, res: Response) {
       const streamId = req.params.streamId
 
@@ -1592,11 +1536,10 @@ export function createPublicApiHandlers({
 
       const { before, after, limit } = result.data
 
-      // Verify stream access
       await assertStreamAccessible(req, streamId)
 
       const messages = await eventService.getMessages(streamId, {
-        limit: limit + 1, // Fetch one extra to determine hasMore
+        limit: limit + 1,
         beforeSequence: before ? BigInt(before) : undefined,
         afterSequence: after ? BigInt(after) : undefined,
       })
@@ -1609,7 +1552,6 @@ export function createPublicApiHandlers({
         page = after ? messages.slice(0, limit) : messages.slice(-limit)
       }
 
-      // Resolve author display names and thread stream IDs
       const pageMessageIds = page.map((m) => m.id)
       const [authorNames, threadMap, attachmentsByMessage] = await Promise.all([
         resolveAuthorDisplayNames(pool, req.workspaceId!, page),
@@ -1630,12 +1572,9 @@ export function createPublicApiHandlers({
     },
 
     /**
-     * Find messages by metadata (AND-containment).
-     *
-     * Scoped to streams accessible to this API key. Intended for dedup flows —
-     * e.g. "has a message already been posted for this GitHub PR event?".
-     *
-     * POST /api/v1/workspaces/:workspaceId/messages/find-by-metadata
+     * Find messages by metadata (AND-containment), scoped to streams accessible
+     * to this API key. Intended for dedup flows — e.g. "has a message already
+     * been posted for this GitHub PR event?".
      */
     async findMessagesByMetadata(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -1668,8 +1607,6 @@ export function createPublicApiHandlers({
     /**
      * Send a message. User-scoped keys send as the user (with sentVia indicator);
      * workspace-scoped keys send as a bot entity.
-     *
-     * POST /api/v1/workspaces/:workspaceId/streams/:streamId/messages
      */
     async sendMessage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -1677,11 +1614,9 @@ export function createPublicApiHandlers({
 
       const { content, clientMessageId, metadata } = validateRequest(sendMessageSchema, req.body)
 
-      // Verify stream access
       await assertStreamAccessible(req, streamId)
       await assertNotE2eStream(workspaceId, streamId)
 
-      // Normalize and parse content
       const contentMarkdown = normalizeMessage(content)
       const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
       // Derive inline `attachment:` ids from the parsed contentJson so the
@@ -1693,7 +1628,6 @@ export function createPublicApiHandlers({
       // full set.
       const attachmentIds = collectAttachmentReferenceIds(contentJson)
 
-      // User-scoped key: send as the user with "api" indicator
       if (req.userApiKey) {
         const user = req.user!
 
@@ -1714,7 +1648,6 @@ export function createPublicApiHandlers({
         return
       }
 
-      // Bot-scoped key: send as the bot directly (no upsert needed)
       if (req.botApiKey) {
         const bot = await BotRepository.findById(pool, workspaceId, req.botApiKey.botId)
         if (!bot || bot.archivedAt) {
@@ -1740,11 +1673,6 @@ export function createPublicApiHandlers({
       throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
     },
 
-    /**
-     * Update an API-created message.
-     *
-     * PATCH /api/v1/workspaces/:workspaceId/messages/:messageId
-     */
     async updateMessage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const messageId = req.params.messageId
@@ -1761,7 +1689,6 @@ export function createPublicApiHandlers({
       const { message: existing, actorId, actorType, displayName } = await resolveOwnedMessage(messageId, req)
       await assertNotE2eStream(workspaceId, existing.streamId)
 
-      // Normalize and parse content
       const contentMarkdown = normalizeMessage(content)
       const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
       // Refresh attachment_references projection to match the new contentJson
@@ -1783,7 +1710,6 @@ export function createPublicApiHandlers({
         throw new HttpError("Message not found or was deleted", { status: 404, code: "NOT_FOUND" })
       }
 
-      // Look up thread for this message
       const thread = await StreamRepository.findByParentMessage(pool, existing.streamId, messageId)
       res.json({
         data: serializeMessage(updated, {
@@ -1793,11 +1719,6 @@ export function createPublicApiHandlers({
       })
     },
 
-    /**
-     * Delete an API-created message.
-     *
-     * DELETE /api/v1/workspaces/:workspaceId/messages/:messageId
-     */
     async deleteMessage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const messageId = req.params.messageId
@@ -1819,11 +1740,6 @@ export function createPublicApiHandlers({
       res.status(204).send()
     },
 
-    /**
-     * List workspace users.
-     *
-     * GET /api/v1/workspaces/:workspaceId/users
-     */
     async listUsers(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -1851,8 +1767,6 @@ export function createPublicApiHandlers({
     },
 
     /**
-     * GET /api/v1/workspaces/:workspaceId/me
-     *
      * Returns the authenticated principal. Used by clients (e.g. the OpenClaw
      * channel plugin) to verify their key and discover their identity after
      * pairing. No scope required — being authenticated is sufficient.
@@ -1894,8 +1808,6 @@ export function createPublicApiHandlers({
     },
 
     /**
-     * GET /api/v1/workspaces/:workspaceId/me/bots
-     *
      * For user-scoped keys: returns the authenticated user's personal bots,
      * optionally filtered by trait. Frontend uses this to enumerate
      * "New scratchpad with <bot>" quick-switcher commands.

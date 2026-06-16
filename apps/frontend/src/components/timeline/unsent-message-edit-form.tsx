@@ -43,7 +43,6 @@ export function UnsentMessageEditForm({
   const [docEditorOpen, setDocEditorOpen] = useState(false)
   const [initialMarkdown] = useState(() => serializeToMarkdown(initialContentJson ?? EMPTY_DOC).trim())
 
-  // Mobile drawer state
   const [formatOpen, setFormatOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
@@ -82,7 +81,6 @@ export function UnsentMessageEditForm({
       onDone()
       return
     }
-    // No change — just cancel
     if (contentMarkdown === initialMarkdown) {
       await cancelEditing(messageId)
       onDone()
@@ -248,7 +246,6 @@ export function UnsentMessageEditForm({
     )
   }
 
-  // Desktop layout
   return (
     <>
       <p id={instructionsId} className="sr-only">

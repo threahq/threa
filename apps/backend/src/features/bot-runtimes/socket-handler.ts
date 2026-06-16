@@ -359,5 +359,4 @@ function serializeInvocation(inv: BotInvocation): SerializedBotInvocation {
   }
 }
 
-// Re-export for convenience.
 export { BotSocketRegistry } from "./bot-socket-registry"

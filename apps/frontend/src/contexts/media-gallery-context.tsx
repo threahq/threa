@@ -4,9 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 interface MediaGalleryContextValue {
   /** Attachment ID from the ?media= search param, or null */
   mediaAttachmentId: string | null
-  /** Open the media gallery for a given attachment */
   openMedia: (attachmentId: string) => void
-  /** Close the media gallery */
   closeMedia: () => void
 }
 

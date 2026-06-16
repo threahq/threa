@@ -106,7 +106,6 @@ export function MemoDetailContent({
     // strings collapse in min-content calculations. Without this, the Radix
     // ScrollArea / Drawer viewport can be forced wider than the screen on mobile.
     <div className="min-w-0 space-y-8 [overflow-wrap:anywhere]">
-      {/* Title section */}
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <KnowledgeTypeBadge type={data.memo.knowledgeType} size="sm" />
@@ -136,7 +135,6 @@ export function MemoDetailContent({
         )}
       </div>
 
-      {/* Key points */}
       {data.memo.keyPoints.length > 0 && (
         <DetailSection title="Key points">
           <ul className="space-y-2">
@@ -152,7 +150,6 @@ export function MemoDetailContent({
         </DetailSection>
       )}
 
-      {/* Provenance */}
       <DetailSection title="Provenance">
         <div className="flex min-w-0 flex-wrap gap-2">
           {data.sourceStream && (
@@ -183,7 +180,6 @@ export function MemoDetailContent({
         </div>
       </DetailSection>
 
-      {/* Source messages */}
       <DetailSection title="Source messages">
         {data.sourceMessages.length === 0 ? (
           <p className="text-sm text-muted-foreground/50">No accessible source messages were retained for this memo.</p>

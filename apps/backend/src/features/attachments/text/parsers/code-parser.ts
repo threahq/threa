@@ -1,9 +1,3 @@
-/**
- * Code Parser
- *
- * Detects programming language and extracts imports/exports.
- */
-
 import type { TextSection, CodeStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
 import { EXTENSION_LANGUAGE_MAP, getFileExtension } from "../config"
@@ -16,15 +10,12 @@ export const codeParser: TextParser = {
     const lines = content.split("\n")
     const totalLines = lines.length
 
-    // Detect language from extension
     const ext = getFileExtension(filename.toLowerCase())
     const language = (ext && EXTENSION_LANGUAGE_MAP[ext]) || "unknown"
 
-    // Extract imports and exports based on language
     const imports = extractImports(content, language)
     const exports = extractExports(content, language)
 
-    // Create line-based sections
     const sections: TextSection[] = []
     if (totalLines > LINES_PER_SECTION) {
       let sectionStart = 0
@@ -119,7 +110,7 @@ function extractImports(content: string, language: string): string[] {
     }
   }
 
-  return [...new Set(imports)].slice(0, 20) // Dedupe and limit
+  return [...new Set(imports)].slice(0, 20)
 }
 
 function extractExports(content: string, language: string): string[] {
@@ -190,5 +181,5 @@ function extractExports(content: string, language: string): string[] {
     }
   }
 
-  return [...new Set(exports)].slice(0, 20) // Dedupe and limit
+  return [...new Set(exports)].slice(0, 20)
 }

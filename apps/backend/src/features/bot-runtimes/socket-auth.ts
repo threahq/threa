@@ -74,10 +74,7 @@ export function readSocketToken(socket: Socket): string | null {
   const fromAuth = auth?.token
   if (typeof fromAuth === "string" && fromAuth.length > 0) return fromAuth
 
-  // Allow `Authorization: Bearer ...` for clients that can't set custom auth
-  // payloads (rare — most Socket.IO clients use `auth`, but some embedded
-  // runtimes only expose extraHeaders). RFC 7235 says the scheme is
-  // case-insensitive, so we match `Bearer`, `bearer`, `BEARER`, etc.
+  // RFC 7235 makes the auth scheme case-insensitive, so match `Bearer` in any case.
   const header = socket.handshake.headers.authorization
   if (typeof header === "string") {
     const match = header.match(/^Bearer\s+(.+)$/i)

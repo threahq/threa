@@ -43,11 +43,9 @@ import {
   recordInvocationStepSchema,
 } from "./schemas"
 
-// ---------------------------------------------------------------------------
 // Response schemas — the single source of truth for public API wire shapes.
 // Serializer return types are derived from these schemas (see WireStream etc.)
 // so any drift between docs and runtime is a compile-time error.
-// ---------------------------------------------------------------------------
 
 const streamSchema = z.object({
   id: z.string(),
@@ -360,7 +358,6 @@ const errorSchema = z.object({
   details: z.record(z.string(), z.array(z.string())).optional(),
 })
 
-// Paginated wrappers
 function paginated(itemSchema: z.ZodType) {
   return z.object({
     data: z.array(itemSchema),
@@ -377,9 +374,6 @@ function dataArrayEnvelope(itemSchema: z.ZodType) {
   return z.object({ data: z.array(itemSchema) })
 }
 
-// ---------------------------------------------------------------------------
-// Common path parameters
-// ---------------------------------------------------------------------------
 const workspaceIdParam = {
   name: "workspaceId",
   in: "path" as const,
@@ -420,10 +414,6 @@ const attachmentIdParam = {
   description: "Attachment ID (prefixed ULID)",
 }
 
-// ---------------------------------------------------------------------------
-// Route definitions
-// ---------------------------------------------------------------------------
-
 export interface PublicApiRoute {
   method: "get" | "post" | "patch" | "delete"
   path: string
@@ -452,7 +442,6 @@ export interface PublicApiRoute {
 }
 
 export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
-  // --- Search ---
   {
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/messages/search",
@@ -543,7 +532,6 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     canReturn404: true,
   },
 
-  // --- Bot runtimes ---
   {
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/bot-runtime/presence",
@@ -658,7 +646,6 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     canReturn404: true,
   },
 
-  // --- Streams ---
   {
     method: "get",
     path: "/api/v1/workspaces/{workspaceId}/streams",
@@ -696,7 +683,6 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: paginated(memberSchema),
   },
 
-  // --- Messages ---
   {
     method: "get",
     path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/messages",
@@ -771,7 +757,6 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     canReturn404: true,
   },
 
-  // --- Users ---
   {
     method: "get",
     path: "/api/v1/workspaces/{workspaceId}/users",
@@ -786,7 +771,6 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: paginated(userSchema),
   },
 
-  // --- Identity ---
   {
     method: "get",
     path: "/api/v1/workspaces/{workspaceId}/me",

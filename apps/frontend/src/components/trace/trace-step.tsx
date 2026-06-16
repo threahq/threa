@@ -327,7 +327,6 @@ function renderStepContent(
 
             {rerunContext && <RerunContextSummary rerunContext={rerunContext} />}
 
-            {/* Trigger message - highlighted */}
             {triggerMessage && (
               <div>
                 <div className="text-muted-foreground text-[11px] mb-1.5 font-medium">Triggered by:</div>
@@ -342,7 +341,6 @@ function renderStepContent(
               <AttachedContextSection attachedContext={attachedContext} workspaceId={workspaceId} />
             )}
 
-            {/* Context messages */}
             {contextMessages.length > 0 && (
               <div>
                 <div className="text-muted-foreground text-[11px] mb-1.5">Recent context:</div>
@@ -392,7 +390,6 @@ function renderStepContent(
         )
         return (
           <div className="space-y-3">
-            {/* New messages that arrived */}
             {newMessages.length > 0 && (
               <div>
                 <div className="text-muted-foreground text-[11px] mb-1.5 font-medium">
@@ -408,7 +405,6 @@ function renderStepContent(
               </div>
             )}
 
-            {/* Draft response that's being reconsidered */}
             <div>
               <div className="text-muted-foreground text-[11px] mb-1.5">Draft being reconsidered:</div>
               <div className="rounded bg-muted/50 px-3 py-2 text-xs italic">
@@ -856,7 +852,6 @@ function SubstepTimeline({
                 animationDuration: "260ms",
               }}
             >
-              {/* Phase dot sitting on the rail */}
               <span
                 aria-hidden
                 className="absolute -left-[18px] top-[5px] inline-flex h-[9px] w-[9px] items-center justify-center"
@@ -1091,7 +1086,6 @@ function SourceTitle({ source, internalLink }: { source: TraceSource; internalLi
 function MessagePreview({ message, highlight }: { message: MessageInfo; highlight?: boolean }) {
   const isPersona = message.authorType === "persona"
   const messageChangeLabel = getMessageChangeLabel(message.changeType)
-  // Truncate long content but preserve markdown structure
   const preview = message.content.length > 150 ? message.content.slice(0, 150) + "..." : message.content
 
   return (

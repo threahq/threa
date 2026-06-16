@@ -530,7 +530,6 @@ describe("useVisualViewport", () => {
       fakeVV.height = 500
       fakeVV.emitResize()
     })
-    // Still untouched.
     expect(document.documentElement.style.getPropertyValue("--viewport-height")).toBe("")
   })
 })

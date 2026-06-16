@@ -13,17 +13,12 @@ import {
 import { formatDate } from "../../lib/temporal"
 import { memoRepair } from "./repair"
 
-/** Context for cost tracking */
 export interface ClassifierContext {
   workspaceId: string
   /** Author's timezone for rendering memo timestamps (IANA identifier, e.g., "America/New_York") */
   authorTimezone?: string
 }
 
-/**
- * Classification result for conversations.
- * Determines if a conversation is knowledge-worthy and needs revision.
- */
 export interface ConversationClassification {
   isKnowledgeWorthy: boolean
   shouldReviseExisting: boolean

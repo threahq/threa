@@ -49,20 +49,12 @@ interface FooterStatus {
 interface SidebarFooterProps {
   workspaceId: string
   currentUser: User | null
-  /** Create a default scratchpad — the New button's primary click. */
   onCreateScratchpad: () => void | Promise<void>
-  /** Open the create-channel flow — the New menu's "New Channel" entry. */
   onCreateChannel: () => void | Promise<void>
-  /**
-   * Scratchpad creators (Scratchpad / Quick Note / Encrypted) for the New menu;
-   * merged with a "New Channel" entry so every stream flavor is reachable from
-   * the always-visible footer button.
-   */
   scratchpadAddMenuActions?: SidebarActionItem[]
   /**
    * Restores the dismissed getting-started checklist. Only provided while the
-   * checklist is dismissed with tasks remaining — undefined hides the menu row,
-   * so a finished checklist never leaves a dead entry behind.
+   * checklist is dismissed with tasks remaining — undefined hides the menu row.
    */
   onShowGettingStarted?: () => void
 }
@@ -183,8 +175,7 @@ function SidebarStatusHeader({
             status={status}
             className="h-9 w-9"
             badgeClassName="text-xs"
-            // The status emoji shows in the text line below, so don't badge the
-            // avatar too — one indicator per surface.
+            // Status emoji shows in the text line below; one indicator per surface.
             showBadge={false}
           />
           <div className="min-w-0 flex-1">
@@ -285,8 +276,6 @@ export function SidebarFooter({
   // idle page until its next render.
   useNotificationPauseAutoExpiry(workspaceId, currentUser)
 
-  // Every stream flavor reachable from one always-visible control: the scratchpad
-  // creators (Scratchpad / Quick Note / Encrypted) plus channels.
   const createActions = useMemo<SidebarActionItem[]>(() => {
     const scratchpadActions: SidebarActionItem[] = scratchpadAddMenuActions ?? [
       { id: "new-scratchpad", label: "New Scratchpad", icon: FileText, onSelect: onCreateScratchpad },
@@ -297,9 +286,6 @@ export function SidebarFooter({
     ]
   }, [scratchpadAddMenuActions, onCreateScratchpad, onCreateChannel])
 
-  // One Settings entry; it opens on the default (profile) tab. Profile no
-  // longer has its own menu row — two entries into the same dialog read as
-  // two different surfaces.
   const handleOpenSettings = useCallback(() => {
     collapseOnMobile()
     openSettings("profile")
@@ -363,8 +349,8 @@ export function SidebarFooter({
   const avatarSrc = currentUser ? getAvatarUrl(workspaceId, currentUser.avatarUrl, 64) : null
   const menuActions = useMemo<SidebarActionItem[]>(
     () => [
-      // Manual do-not-disturb, one tap from the account menu (independent of
-      // status). Flips to a one-tap resume while a manual pause is active.
+      // Manual do-not-disturb is independent of status; flips to resume while a
+      // manual pause is active.
       manualPaused
         ? {
             id: "resume-notifications",
@@ -382,8 +368,7 @@ export function SidebarFooter({
             onSelect: openPause,
             separatorBefore: true,
           },
-      // Re-entry point for the dismissed checklist — restoring shows the card
-      // in the sidebar itself, so no collapseOnMobile here.
+      // Restoring shows the card in the sidebar itself, so no collapseOnMobile here.
       ...(onShowGettingStarted
         ? [
             {
@@ -520,9 +505,6 @@ export function SidebarFooter({
   )
 }
 
-// Shared face for the create control. Same anatomy as the account row beneath
-// it (left-aligned label, trailing chevron) so the footer reads as one stack;
-// the gold plus chip is the only accent and carries the create affordance.
 // The chevron flips while the menu is open — the face reacts to the trigger's
 // `data-state`, which both the Radix desktop trigger and the manual mobile
 // button expose.
@@ -538,10 +520,7 @@ function SidebarCreateButtonFace() {
   )
 }
 
-// No resting wash — the row sits flush like its neighbors until interaction.
-// Hover/open use the account row's own bg-muted/50 so the two footer rows
-// behave identically; the chip warming is the only gold response (INV-21:
-// constant sizing, nothing shifts).
+// Constant sizing, nothing shifts (INV-21).
 const CREATE_BUTTON_CLASS = cn(
   "group/new w-full justify-start gap-2.5 px-3",
   "hover:bg-muted/50 hover:text-foreground",

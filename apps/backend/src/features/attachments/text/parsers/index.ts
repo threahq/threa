@@ -1,9 +1,3 @@
-/**
- * Parser Registry
- *
- * Returns the appropriate parser for a given text format.
- */
-
 import type { TextFormat } from "@threa/types"
 import type { TextParser } from "./types"
 import { plainTextParser } from "./plain-text-parser"
@@ -24,9 +18,6 @@ const PARSERS: Record<TextFormat, TextParser> = {
   code: codeParser,
 }
 
-/**
- * Get the parser for a given text format.
- */
 export function getParser(format: TextFormat): TextParser {
   return PARSERS[format]
 }

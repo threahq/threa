@@ -40,10 +40,6 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     this.s3Config = deps.s3Config
   }
 
-  /**
-   * Submit a video for transcoding.
-   * Claims the attachment, creates a tracking job, and submits to MediaConvert.
-   */
   async submit(attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
@@ -112,7 +108,6 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
   }
 
   /**
-   * Check the status of a video transcode job.
    * Returns true when the job is terminal (completed or failed), false if still in progress.
    */
   async checkStatus(attachmentId: string): Promise<boolean> {
@@ -147,7 +142,6 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     // Phase 2: Poll MediaConvert (no DB connection held — INV-41)
     const status = await this.mediaConvertClient.getJobStatus(job.mediaconvertJobId)
 
-    // Phase 3: Update based on result
     if (status.status === "COMPLETE") {
       const processedPath = `${job.workspaceId}/${attachmentId}/processed.mp4`
       const thumbnailPath = `${job.workspaceId}/${attachmentId}/thumbnail.0000000.jpg`
@@ -176,7 +170,6 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
       return true
     }
 
-    // Still in progress
     log.debug({ mediaconvertStatus: status.status }, "Transcode still in progress")
     return false
   }

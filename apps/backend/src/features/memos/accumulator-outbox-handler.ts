@@ -11,18 +11,10 @@ import { E2eStreamsRepository } from "../e2e-streams"
 export type MemoAccumulatorHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
- * Handler that queues conversations for batch memo processing.
+ * Queues conversations for batch memo processing, which the batch worker drains
+ * on per-stream debouncing: at most every 5 minutes per stream, or after 30s quiet.
  *
- * Flow:
- * 1. Conversation event arrives (conversation:created, conversation:updated)
- * 2. Queue item to memo_pending_items table
- * 3. Update stream state activity for debounce tracking
- *
- * The batch worker will process queued items based on per-stream debouncing:
- * - Cap: process at most every 5 minutes per stream
- * - Quick: process after 30s quiet per stream
- *
- * Note: message:created events are NOT handled here. Boundary extraction
+ * message:created events are NOT handled here. Boundary extraction
  * creates/updates conversations on every message, and the conversation events
  * trigger memo processing via the conversation path only.
  */

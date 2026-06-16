@@ -5,8 +5,8 @@ import { StreamStateRepository } from "../streams"
 import type { MemoServiceLike } from "./service"
 import { logger } from "../../lib/logger"
 
-const BATCH_CAP_INTERVAL_SECONDS = 300 // 5 minutes
-const BATCH_QUIET_INTERVAL_SECONDS = 30 // 30 seconds
+const BATCH_CAP_INTERVAL_SECONDS = 300
+const BATCH_QUIET_INTERVAL_SECONDS = 30
 
 export interface MemoBatchWorkerDeps {
   pool: Pool
@@ -15,14 +15,8 @@ export interface MemoBatchWorkerDeps {
 }
 
 /**
- * Create the memo batch check job handler.
- *
- * This runs on a schedule (every 30s) and checks which streams have
- * pending items ready to process based on debounce logic:
- * - Cap: process at most every 5 minutes per stream
- * - Quick: process after 30s quiet per stream
- *
- * For each stream ready, it dispatches a batch process job.
+ * Per-stream debounce: process at most every cap interval, or after a quiet
+ * interval of no new items. Dispatches a batch process job per ready stream.
  */
 export function createMemoBatchCheckWorker(deps: MemoBatchWorkerDeps): JobHandler<MemoBatchCheckJobData> {
   const { pool, jobQueue } = deps
@@ -30,7 +24,6 @@ export function createMemoBatchCheckWorker(deps: MemoBatchWorkerDeps): JobHandle
   return async (job) => {
     logger.debug({ jobId: job.id }, "Checking for streams ready for memo processing")
 
-    // Single query, INV-30
     const streamsToProcess = await StreamStateRepository.findStreamsReadyToProcess(pool, {
       capIntervalSeconds: BATCH_CAP_INTERVAL_SECONDS,
       quietIntervalSeconds: BATCH_QUIET_INTERVAL_SECONDS,
@@ -49,11 +42,6 @@ export function createMemoBatchCheckWorker(deps: MemoBatchWorkerDeps): JobHandle
   }
 }
 
-/**
- * Create the memo batch process job handler.
- *
- * This processes all pending items for a specific stream.
- */
 export function createMemoBatchProcessWorker(deps: MemoBatchWorkerDeps): JobHandler<MemoBatchProcessJobData> {
   const { memoService } = deps
 
@@ -76,5 +64,3 @@ export function createMemoBatchProcessWorker(deps: MemoBatchWorkerDeps): JobHand
     )
   }
 }
-
-// scheduleMemoBatchCheck moved to server.ts - uses QueueManager.schedule()

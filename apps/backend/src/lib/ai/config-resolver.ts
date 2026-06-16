@@ -1,26 +1,12 @@
 /**
- * ConfigResolver - Unified AI Component Configuration
- *
- * Provides a consistent interface for resolving AI component configurations.
- * Production code uses StaticConfigResolver; evals can swap in EvalConfigResolver
- * for programmatic overrides.
- *
- * Design:
- * - Async to support future DB/Langfuse/remote config sources
- * - Generic resolve<T> allows type-safe component-specific configs
- * - Paths use convention: "component" or "component:subcomponent"
+ * Unified AI component configuration. Production uses StaticConfigResolver;
+ * evals swap in EvalConfigResolver for programmatic overrides. Async to
+ * support future DB/Langfuse/remote config sources.
  */
 
-// -----------------------------------------------------------------------------
-// Component Config Types
-// -----------------------------------------------------------------------------
-
 /**
- * Base config shape shared by all AI components.
- * Components extend this with additional fields as needed.
- *
- * The index signature allows components to add custom properties
- * while maintaining type safety for the core fields.
+ * Base config shape shared by all AI components. The index signature allows
+ * components to add custom properties while keeping core fields type-safe.
  */
 export interface ComponentConfig {
   /** Model ID in provider:modelPath format */
@@ -29,63 +15,43 @@ export interface ComponentConfig {
   temperature?: number
   /** System prompt (optional, some components build dynamically) */
   systemPrompt?: string
-  /** Allow additional component-specific properties */
   [key: string]: unknown
 }
 
-// -----------------------------------------------------------------------------
-// Component-Specific Configs
-// -----------------------------------------------------------------------------
-
-/** Config for boundary extraction */
 export interface BoundaryExtractionConfig extends ComponentConfig {
   systemPrompt: string
 }
 
-/** Config for stream naming */
 export interface StreamNamingConfig extends ComponentConfig {
   temperature: number
 }
 
-/** Config for memo classifier */
 export interface MemoClassifierConfig extends ComponentConfig {
   temperature: number
 }
 
-/** Config for memo memorizer */
 export interface MemoMemorizerConfig extends ComponentConfig {
   temperature: number
 }
 
-/** Config for the saved-suggestion (to-do) extractor */
 export interface SuggestionExtractorConfig extends ComponentConfig {
   temperature: number
 }
 
-/** Config for researcher agent */
 export interface ResearcherConfig extends ComponentConfig {
   maxIterations?: number
   maxResultsPerSearch?: number
 }
 
-/** Config for the general (multi-surface) researcher agent */
 export interface GeneralResearcherConfig extends ComponentConfig {
   maxIterations?: number
 }
 
-/** Config for companion agent */
 export interface CompanionAgentConfig extends ComponentConfig {
   temperature: number
 }
 
-// -----------------------------------------------------------------------------
-// Component Paths
-// -----------------------------------------------------------------------------
-
-/**
- * Known component paths.
- * Convention: "component" or "component:subcomponent"
- */
+/** Convention: "component" or "component:subcomponent" */
 export const COMPONENT_PATHS = {
   BOUNDARY_EXTRACTION: "boundary-extraction",
   STREAM_NAMING: "stream-naming",
@@ -100,14 +66,7 @@ export const COMPONENT_PATHS = {
 
 export type ComponentPath = (typeof COMPONENT_PATHS)[keyof typeof COMPONENT_PATHS]
 
-// -----------------------------------------------------------------------------
-// Path to Config Type Mapping
-// -----------------------------------------------------------------------------
-
-/**
- * Maps component paths to their config types.
- * Used for type inference with resolve<T>().
- */
+/** Maps component paths to their config types for resolve<T>() inference. */
 export interface PathConfigMap {
   "boundary-extraction": BoundaryExtractionConfig
   "stream-naming": StreamNamingConfig
@@ -120,36 +79,10 @@ export interface PathConfigMap {
   embedding: ComponentConfig
 }
 
-// -----------------------------------------------------------------------------
-// ConfigResolver Interface
-// -----------------------------------------------------------------------------
-
-/**
- * Async config resolver interface.
- *
- * Implementations:
- * - StaticConfigResolver: Production defaults with optional overrides
- * - EvalConfigResolver: Wraps base resolver with eval-specific overrides
- *
- * Future extensions:
- * - DB-backed resolver for persona configs
- * - Langfuse prompt resolver
- * - A/B testing resolver
- */
 export interface ConfigResolver {
   /**
    * Resolve config for a component path.
-   *
-   * @param path Component path like "companion:agent", "stream-naming"
-   * @returns Promise resolving to the component's config
-   * @throws Error if path is unknown (fail loudly, no silent defaults)
-   *
-   * @example
-   * const config = await resolver.resolve("boundary-extraction")
-   * // config.modelId, config.temperature, config.systemPrompt
-   *
-   * @example Type-safe with known paths
-   * const config = await resolver.resolve<BoundaryExtractionConfig>("boundary-extraction")
+   * @throws Error if path is unknown (fail loudly, no silent defaults; INV-11)
    */
   resolve<T extends ComponentConfig = ComponentConfig>(path: string): Promise<T>
 }

@@ -746,8 +746,7 @@ describe("@threa/prosemirror table round-trip", () => {
   })
 
   it("treats a paragraph that just contains pipes as plain text, not a table", () => {
-    // No separator row → not a table; previously this was a regression risk
-    // because the table detector saw a pipe-laden line and tried to parse it.
+    // No separator row → not a table, even though the line is pipe-laden.
     const parsed = parseMarkdown("foo | bar")
     expect(parsed.content?.[0]?.type).toBe("paragraph")
   })

@@ -55,10 +55,7 @@ function serializeKey(key: {
 
 export function createUserE2eKeysHandlers({ userE2eKeysService }: Dependencies) {
   return {
-    /**
-     * GET /api/workspaces/:workspaceId/users/me/e2e-key
-     * Returns the active key for the calling user, or 404 if not set up.
-     */
+    /** Returns the active key for the calling user, or 404 if not set up. */
     async get(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
@@ -72,7 +69,6 @@ export function createUserE2eKeysHandlers({ userE2eKeysService }: Dependencies) 
     },
 
     /**
-     * POST /api/workspaces/:workspaceId/users/me/e2e-key
      * Set or rotate the user's active key. Body holds only ciphertext +
      * public key — the server never sees the passphrase or unwrapped private
      * material.
@@ -105,7 +101,6 @@ export function createUserE2eKeysHandlers({ userE2eKeysService }: Dependencies) 
     },
 
     /**
-     * DELETE /api/workspaces/:workspaceId/users/me/e2e-key
      * Revoke the active key. This is destructive — any existing E2E content
      * encrypted to this key becomes permanently unreadable on this account.
      * The frontend gates this behind an explicit confirmation.

@@ -67,9 +67,7 @@ export function attachmentContentUrl(
 
 export const attachmentsApi = {
   /**
-   * Upload a file to the workspace.
-   * File is uploaded to workspace-level; streamId is set when attached to a message.
-   * Uses multipart form data instead of JSON.
+   * Upload a file at workspace level; streamId is set when attached to a message.
    */
   async upload(workspaceId: string, file: File, options?: { e2e?: boolean }): Promise<Attachment> {
     const formData = new FormData()
@@ -83,7 +81,7 @@ export const attachmentsApi = {
       method: "POST",
       body: formData,
       credentials: "include",
-      // Note: Don't set Content-Type header - browser sets it with boundary
+      // No Content-Type header — browser sets it with the multipart boundary.
     })
 
     if (!response.ok) {

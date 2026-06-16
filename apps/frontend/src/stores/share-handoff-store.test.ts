@@ -38,7 +38,6 @@ describe("share handoff store", () => {
     // The pointer channel is untouched by a plaintext queue.
     expect(consumeShareHandoff("stream_a")).toBeNull()
     expect(consumePlaintextShareHandoff("stream_a")).toMatchObject({ markdown: "the secret plan", attrs: sampleAttrs })
-    // Cleared after consume.
     expect(consumePlaintextShareHandoff("stream_a")).toBeNull()
   })
 

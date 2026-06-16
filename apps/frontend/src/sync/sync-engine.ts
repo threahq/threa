@@ -202,7 +202,6 @@ export class SyncEngine {
 
     if (isReconnect) {
       this.deps.syncStatus.setAllStale()
-      // Clean up old handlers before re-registering
       this.cleanupWorkspaceHandlers()
       this.cleanupStreamHandlers()
     }
@@ -1275,7 +1274,6 @@ export function isSyncEngineCurrent(engine: SyncEngine, workspaceId: string): bo
   return engine.workspaceId === workspaceId && !engine.isDestroyed
 }
 
-// React context for accessing the SyncEngine from any component
 export const SyncEngineContext = createContext<SyncEngine | null>(null)
 
 export function useSyncEngine(): SyncEngine {

@@ -12,13 +12,11 @@ if (fastShutdown) {
   logger.info("Fast shutdown enabled - graceful shutdown disabled")
 }
 
-// Prevent multiple shutdown attempts
 let isShuttingDown = false
 async function shutdown(code: number) {
   if (isShuttingDown) return
   isShuttingDown = true
 
-  // In fast shutdown mode, skip graceful shutdown for immediate termination
   if (fastShutdown) {
     logger.info("Fast shutdown - skipping graceful shutdown")
     process.exit(code)
@@ -29,12 +27,10 @@ async function shutdown(code: number) {
   process.exit(code)
 }
 
-// Handle graceful shutdown
 process.on("SIGTERM", () => shutdown(0))
 process.on("SIGINT", () => shutdown(0))
 process.on("SIGHUP", () => shutdown(0))
 
-// Last-ditch cleanup on crashes
 process.on("uncaughtException", (err) => {
   const decision = classifyGlobalCrash("uncaughtException", err)
   if (!decision.isFatal) {

@@ -781,7 +781,6 @@ export function createStreamHandlers({
         return res.status(404).json({ error: "Not a member of this stream" })
       }
 
-      // Clear mention badges for this stream
       await activityService?.markStreamActivityAsRead(userId, streamId)
 
       res.json({ membership })

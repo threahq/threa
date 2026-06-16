@@ -1,4 +1,3 @@
-// Stream types
 export const STREAM_TYPES = ["scratchpad", "channel", "dm", "thread", "system"] as const
 export type StreamType = (typeof STREAM_TYPES)[number]
 
@@ -12,7 +11,6 @@ export const StreamTypes = {
 
 export const DM_PARTICIPANT_COUNT = 2
 
-// Visibility
 export const VISIBILITY_OPTIONS = ["public", "private"] as const
 export type Visibility = (typeof VISIBILITY_OPTIONS)[number]
 
@@ -33,7 +31,6 @@ export const LabelableResourceTypes = {
   STREAM: "stream",
 } as const satisfies Record<string, LabelableResourceType>
 
-// Companion modes
 export const COMPANION_MODES = ["off", "on"] as const
 export type CompanionMode = (typeof COMPANION_MODES)[number]
 
@@ -42,11 +39,9 @@ export const CompanionModes = {
   ON: "on",
 } as const satisfies Record<string, CompanionMode>
 
-// Content formats
 export const CONTENT_FORMATS = ["plaintext", "markdown"] as const
 export type ContentFormat = (typeof CONTENT_FORMATS)[number]
 
-// Author types
 export const AUTHOR_TYPES = ["user", "persona", "system", "bot"] as const
 export type AuthorType = (typeof AUTHOR_TYPES)[number]
 
@@ -57,7 +52,6 @@ export const AuthorTypes = {
   BOT: "bot",
 } as const satisfies Record<string, AuthorType>
 
-// Event types
 export const EVENT_TYPES = [
   "message_created",
   "message_edited",
@@ -150,7 +144,6 @@ export const NOTIFICATION_CONFIG: Record<StreamType, NotificationConfig> = {
   thread: { defaultLevel: "activity", allowedLevels: ["everything", "activity", "mentions", "muted"] },
 }
 
-// Activity types
 export const ACTIVITY_TYPES = ["mention", "message", "reaction", "saved_reminder", "member_added"] as const
 export type ActivityType = (typeof ACTIVITY_TYPES)[number]
 
@@ -162,7 +155,6 @@ export const ActivityTypes = {
   MEMBER_ADDED: "member_added",
 } as const satisfies Record<string, ActivityType>
 
-// Saved message statuses
 export const SAVED_STATUSES = ["saved", "done", "archived"] as const
 export type SavedStatus = (typeof SAVED_STATUSES)[number]
 
@@ -185,7 +177,6 @@ export const SavedSuggestionStatuses = {
   DISMISSED: "dismissed",
 } as const satisfies Record<string, SavedSuggestionStatus>
 
-// Scheduled message statuses
 export const SCHEDULED_MESSAGE_STATUSES = ["pending", "sending", "sent", "cancelled", "failed"] as const
 export type ScheduledMessageStatus = (typeof SCHEDULED_MESSAGE_STATUSES)[number]
 
@@ -197,7 +188,6 @@ export const ScheduledMessageStatuses = {
   FAILED: "failed",
 } as const satisfies Record<string, ScheduledMessageStatus>
 
-// Invitation statuses
 export const INVITATION_STATUSES = ["pending", "accepted", "expired", "revoked"] as const
 export type InvitationStatus = (typeof INVITATION_STATUSES)[number]
 
@@ -208,19 +198,15 @@ export const InvitationStatuses = {
   REVOKED: "revoked",
 } as const satisfies Record<string, InvitationStatus>
 
-// Persona managed by
 export const PERSONA_MANAGED_BY = ["system", "workspace"] as const
 export type PersonaManagedBy = (typeof PERSONA_MANAGED_BY)[number]
 
-// Persona status
 export const PERSONA_STATUSES = ["pending", "active", "disabled", "archived"] as const
 export type PersonaStatus = (typeof PERSONA_STATUSES)[number]
 
-// Attachment storage providers
 export const STORAGE_PROVIDERS = ["s3"] as const
 export type StorageProvider = (typeof STORAGE_PROVIDERS)[number]
 
-// Attachment processing status
 export const PROCESSING_STATUSES = ["pending", "processing", "completed", "failed", "skipped"] as const
 export type ProcessingStatus = (typeof PROCESSING_STATUSES)[number]
 
@@ -292,7 +278,6 @@ export const ExtractionContentTypes = {
   OTHER: "other",
 } as const satisfies Record<string, ExtractionContentType>
 
-// Conversation status
 export const CONVERSATION_STATUSES = ["active", "stalled", "resolved"] as const
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number]
 
@@ -338,7 +323,6 @@ export const MemoStatuses = {
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]
 
-// Agent tool names
 export const AGENT_TOOL_NAMES = [
   "send_message",
   "web_search",
@@ -416,7 +400,6 @@ export const AgentToolNames = {
   LINEAR_GET_PROJECT: "linear_get_project",
 } as const satisfies Record<string, AgentToolName>
 
-// Source types for message citations
 export const SOURCE_TYPES = ["web", "workspace", "github"] as const
 export type SourceType = (typeof SOURCE_TYPES)[number]
 
@@ -426,7 +409,6 @@ export const SourceTypes = {
   GITHUB: "github",
 } as const satisfies Record<string, SourceType>
 
-// Agent invocation triggers
 export const AGENT_TRIGGERS = ["mention", "companion"] as const
 export type AgentTrigger = (typeof AGENT_TRIGGERS)[number]
 
@@ -486,7 +468,6 @@ export const AgentStepTypes = {
   TURN_DIGEST: "turn_digest",
 } as const satisfies Record<string, AgentStepType>
 
-// Agent reconsideration decision values
 export const AGENT_RECONSIDERATION_DECISIONS = ["kept_previous_response"] as const
 export type AgentReconsiderationDecision = (typeof AGENT_RECONSIDERATION_DECISIONS)[number]
 
@@ -494,7 +475,6 @@ export const AgentReconsiderationDecisions = {
   KEPT_PREVIOUS_RESPONSE: "kept_previous_response",
 } as const satisfies Record<string, AgentReconsiderationDecision>
 
-// Agent session statuses
 export const AGENT_SESSION_STATUSES = ["pending", "running", "completed", "failed", "deleted", "superseded"] as const
 export type AgentSessionStatus = (typeof AGENT_SESSION_STATUSES)[number]
 
@@ -586,7 +566,6 @@ export const InjectionStrategies = {
   SUMMARY: "summary",
 } as const satisfies Record<string, InjectionStrategy>
 
-// Workspace integration providers
 export const WORKSPACE_INTEGRATION_PROVIDERS = ["github", "linear"] as const
 export type WorkspaceIntegrationProvider = (typeof WORKSPACE_INTEGRATION_PROVIDERS)[number]
 
@@ -595,7 +574,6 @@ export const WorkspaceIntegrationProviders = {
   LINEAR: "linear",
 } as const satisfies Record<string, WorkspaceIntegrationProvider>
 
-// Workspace integration lifecycle statuses
 export const WORKSPACE_INTEGRATION_STATUSES = ["active", "inactive", "error"] as const
 export type WorkspaceIntegrationStatus = (typeof WORKSPACE_INTEGRATION_STATUSES)[number]
 
@@ -605,7 +583,6 @@ export const WorkspaceIntegrationStatuses = {
   ERROR: "error",
 } as const satisfies Record<string, WorkspaceIntegrationStatus>
 
-// Link preview content types
 export const LINK_PREVIEW_CONTENT_TYPES = ["website", "pdf", "image", "message_link"] as const
 export type LinkPreviewContentType = (typeof LINK_PREVIEW_CONTENT_TYPES)[number]
 
@@ -616,7 +593,6 @@ export const LinkPreviewContentTypes = {
   MESSAGE_LINK: "message_link",
 } as const satisfies Record<string, LinkPreviewContentType>
 
-// Link preview fetch statuses
 export const LINK_PREVIEW_STATUSES = ["pending", "completed", "failed"] as const
 export type LinkPreviewStatus = (typeof LINK_PREVIEW_STATUSES)[number]
 
@@ -657,7 +633,6 @@ export const LinearPreviewTypes = {
   DOCUMENT: "linear_document",
 } as const satisfies Record<string, LinearPreviewType>
 
-// Share flavors (cross-stream message sharing)
 export const SHARE_FLAVORS = ["pointer", "quote"] as const
 export type ShareFlavor = (typeof SHARE_FLAVORS)[number]
 

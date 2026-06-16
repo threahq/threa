@@ -2,10 +2,7 @@ import { useMemo } from "react"
 import { usePreferences } from "@/contexts"
 import { formatDisplayDate, formatTime, formatRelativeTime, formatFullDateTime } from "@/lib/dates"
 
-/**
- * Hook that provides preference-aware date formatting functions.
- * Uses the current user's preferences from PreferencesContext.
- */
+/** Date formatting functions bound to the current user's preferences. */
 export function useFormattedDate() {
   const { preferences } = usePreferences()
 
@@ -31,10 +28,7 @@ export function useFormattedDate() {
       formatRelative: (date: Date, now?: Date, options?: { terse?: boolean }) =>
         formatRelativeTime(date, now, preferences ?? undefined, options),
 
-      /**
-       * Format a full date-time for tooltips using user preferences.
-       * @returns Full date-time string
-       */
+      /** Format a full date-time for tooltips using user preferences. */
       formatFull: (date: Date) => formatFullDateTime(date, preferences ?? undefined),
     }),
     [preferences]

@@ -47,9 +47,6 @@ export class PoolMonitor {
     }
   }
 
-  /**
-   * Get current stats for a specific pool.
-   */
   getPoolStats(poolName: string): PoolStats | null {
     const pool = this.pools.get(poolName)
     if (!pool) return null
@@ -57,9 +54,6 @@ export class PoolMonitor {
     return this.collectStats(poolName, pool)
   }
 
-  /**
-   * Get current stats for all monitored pools.
-   */
   getAllPoolStats(): PoolStats[] {
     const stats: PoolStats[] = []
     for (const [name, pool] of this.pools) {
@@ -68,9 +62,6 @@ export class PoolMonitor {
     return stats
   }
 
-  /**
-   * Start periodic logging of pool stats.
-   */
   start(): void {
     if (this.intervalId) {
       logger.warn("PoolMonitor already started")
@@ -85,18 +76,13 @@ export class PoolMonitor {
       "Starting pool monitor"
     )
 
-    // Log immediately on start
     this.logAllPoolStats()
 
-    // Then log periodically
     this.intervalId = setInterval(() => {
       this.logAllPoolStats()
     }, this.options.logIntervalMs)
   }
 
-  /**
-   * Stop periodic logging.
-   */
   stop(): void {
     if (this.intervalId) {
       clearInterval(this.intervalId)
@@ -110,8 +96,6 @@ export class PoolMonitor {
     const idleCount = pool.idleCount
     const waitingCount = pool.waitingCount
 
-    // Calculate utilization as percentage of max pool size
-    // Note: pool.options.max is the configured max size
     const maxSize = (pool.options as { max?: number }).max ?? 10
     const activeCount = totalCount - idleCount
     const utilizationPercent = Math.round((activeCount / maxSize) * 100)
@@ -141,7 +125,6 @@ export class PoolMonitor {
         utilizationPercent: stats.utilizationPercent,
       }
 
-      // Export metrics to Prometheus
       poolConnectionsTotal.set({ pool: stats.poolName }, stats.totalCount)
       poolConnectionsIdle.set({ pool: stats.poolName }, stats.idleCount)
       poolConnectionsWaiting.set({ pool: stats.poolName }, stats.waitingCount)
@@ -171,7 +154,6 @@ export class PoolMonitor {
       } else if (isHighUtilization) {
         logger.warn(logData, `Pool '${stats.poolName}' utilization at ${stats.utilizationPercent}%`)
       } else if (!this.options.disableLogging) {
-        // Only log normal stats if logging is enabled
         logger[this.options.logLevel](logData, `Pool stats for '${stats.poolName}'`)
       }
     }

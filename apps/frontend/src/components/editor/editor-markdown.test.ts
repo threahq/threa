@@ -1068,7 +1068,6 @@ const x = 1
 
   describe("edge cases", () => {
     it("should handle asterisk in middle of word (not italic)", () => {
-      // This tests a common edge case where * appears mid-word
       const result = parseMarkdown("file*name")
       // Should remain as plain text, not parsed as italic
       const content = result.content?.[0]?.content

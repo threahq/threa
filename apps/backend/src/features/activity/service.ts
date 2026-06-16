@@ -49,7 +49,6 @@ export class ActivityService {
     const mentionSlugs = contentJson ? Array.from(new Set(collectMentionSlugs(contentJson))) : []
     if (mentionSlugs.length === 0) return []
 
-    // Partition into broadcast (@channel, @here) and user slugs
     const broadcastSlugs = mentionSlugs.filter(isBroadcastSlug)
     const userSlugs = mentionSlugs.filter((s) => !isBroadcastSlug(s))
 
@@ -57,14 +56,11 @@ export class ActivityService {
       const stream = await StreamRepository.findById(client, streamId)
       if (!stream || stream.workspaceId !== workspaceId) return []
 
-      // Fetch root stream once — reused by access checks, broadcast resolution, and context
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
 
-      // Resolve the effective stream type for broadcast validation:
-      // threads inherit their root stream's type for @channel/@here eligibility
+      // Threads inherit their root stream's type for @channel/@here eligibility.
       const effectiveType = rootStream?.type ?? stream.type
 
-      // 1. Resolve direct @user mentions
       const userIds = new Set<string>()
       if (userSlugs.length > 0) {
         const users = await UserRepository.findBySlugs(client, workspaceId, userSlugs)
@@ -82,7 +78,6 @@ export class ActivityService {
         }
       }
 
-      // 2. Resolve broadcast mentions to member lists
       if (broadcastSlugs.length > 0) {
         const broadcastUserIds = await this.resolveBroadcastTargets(
           client,
@@ -96,7 +91,6 @@ export class ActivityService {
         }
       }
 
-      // Exclude the actor
       userIds.delete(actorId)
       if (userIds.size === 0) return []
 
@@ -187,18 +181,15 @@ export class ActivityService {
 
     for (const slug of broadcastSlugs) {
       if (slug === "channel") {
-        // @channel only valid in channel-tree streams
         if (effectiveType !== StreamTypes.CHANNEL) continue
 
-        // Target: all members of the root channel (walk up from thread if needed)
+        // Walk up from a thread to the root channel; @channel targets its members.
         const channelId = rootStream?.id ?? stream.id
         const members = await getMembers(channelId)
         for (const m of members) targetIds.add(m.memberId)
       } else if (slug === "here") {
-        // @here valid in channel-tree and DM-tree streams
         if (effectiveType !== StreamTypes.CHANNEL && effectiveType !== StreamTypes.DM) continue
 
-        // Target: direct members of the current stream
         const members = await getMembers(stream.id)
         for (const m of members) targetIds.add(m.memberId)
       }
@@ -229,7 +220,6 @@ export class ActivityService {
       // non-muted members (more permissive than channels which require ACTIVITY/EVERYTHING).
       const isDirectStream = stream.type === StreamTypes.DM || stream.type === StreamTypes.SCRATCHPAD
 
-      // Fetch root stream once for context
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
 
       const streamContext = resolveStreamContext(stream, rootStream)

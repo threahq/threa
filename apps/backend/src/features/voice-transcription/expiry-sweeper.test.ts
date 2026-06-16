@@ -39,7 +39,6 @@ describe("createVoiceSessionSweeper", () => {
     await Promise.resolve()
     sweeper.stop()
 
-    // Only the first start's immediate sweep ran; the second was a no-op.
     expect(service.expireStaleSessions).toHaveBeenCalledTimes(1)
   })
 })

@@ -12,10 +12,8 @@ interface CommandEventProps {
 type CommandStatus = "running" | "completed" | "failed"
 
 /**
- * Renders grouped command events as a collapsible timeline.
- *
- * Shows current status in header, expands to show lifecycle timeline.
- * Command events are author-only - filtering happens in EventItem.
+ * Renders grouped command events as a collapsible lifecycle timeline.
+ * Command events are author-only — filtering happens in EventItem.
  */
 export function CommandEvent({ events }: CommandEventProps) {
   const [isOpen, setIsOpen] = useState(false)

@@ -45,12 +45,10 @@ function SuggestionListInner<T>(
   const [selectedIndex, setSelectedIndex] = useState(0)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
-  // Reset selection when items change
   useEffect(() => {
     setSelectedIndex(0)
   }, [items])
 
-  // Scroll selected item into view
   useEffect(() => {
     const selectedRef = itemRefs.current[selectedIndex]
     selectedRef?.scrollIntoView({ block: "nearest" })
@@ -62,7 +60,6 @@ function SuggestionListInner<T>(
     whileElementsMounted: autoUpdate,
   })
 
-  // Update reference element based on cursor position
   useEffect(() => {
     if (clientRect) {
       refs.setReference({
@@ -71,7 +68,6 @@ function SuggestionListInner<T>(
     }
   }, [clientRect, refs])
 
-  // Handle keyboard navigation
   useImperativeHandle(ref, () => ({
     onKeyDown: (event: KeyboardEvent) => {
       if (items.length === 0) return false

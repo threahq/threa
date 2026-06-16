@@ -335,7 +335,6 @@ describe("QuickSwitcher Integration Tests", () => {
       await user.type(input, "test query")
       expect(input).toHaveTextContent("test query")
 
-      // Close dialog
       rerender(
         <QueryClientProvider client={queryClient}>
           <ProvidersWrapper>
@@ -344,7 +343,6 @@ describe("QuickSwitcher Integration Tests", () => {
         </QueryClientProvider>
       )
 
-      // Reopen dialog
       rerender(
         <QueryClientProvider client={queryClient}>
           <ProvidersWrapper>
@@ -972,10 +970,7 @@ describe("QuickSwitcher Integration Tests", () => {
     })
   })
 
-  // =============================================================================
-  // DIAGNOSTIC TESTS - Understanding test environment vs browser behavior
-  // These tests help us understand WHY integration tests might pass when bugs exist
-  // =============================================================================
+  // These tests help us understand why integration tests might pass when bugs exist.
   describe("DIAGNOSTIC: test environment behavior", () => {
     describe("pointer-events behavior", () => {
       it("should show body has pointer-events:none when dialog is open", async () => {
@@ -1006,10 +1001,7 @@ describe("QuickSwitcher Integration Tests", () => {
     })
   })
 
-  // =============================================================================
-  // Bug regression tests - these tests should FAIL before the fix is applied
-  // Each test documents a specific bug and verifies the correct behavior
-  // =============================================================================
+  // Each test documents a specific bug and verifies the correct behavior.
   describe("bug regressions", () => {
     describe("BUG: Escape should close dialog when popover is closed", () => {
       // Bug: Pressing Escape doesn't close the quick switcher dialog

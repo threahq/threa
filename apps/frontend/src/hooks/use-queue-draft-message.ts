@@ -40,11 +40,8 @@ export interface QueueDraftMessageParams {
 }
 
 /**
- * Hook that provides a function to queue a draft message for background
- * processing. Writes an optimistic event to IDB and enqueues the message
- * + stream creation for the background queue.
- *
- * This abstracts the IDB writes so components don't need to import @/db directly.
+ * Writes an optimistic event to IDB and enqueues the message + stream creation
+ * for the background queue, so components don't import @/db directly.
  */
 export function useQueueDraftMessage(workspaceId: string) {
   const user = useUser()

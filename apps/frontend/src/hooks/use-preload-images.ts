@@ -4,17 +4,15 @@ const PRELOAD_TIMEOUT_MS = 2000
 const MAX_CONCURRENT = 6
 
 /**
- * Preload a list of image URLs into the browser cache.
- * Returns true when all images are loaded (or timeout expires).
- * Loads at most MAX_CONCURRENT images in parallel to avoid saturating
- * browser connections. Empty URL list resolves immediately.
+ * Preload image URLs into the browser cache; returns true once all are loaded
+ * or the timeout expires. Loads at most MAX_CONCURRENT in parallel to avoid
+ * saturating browser connections.
  */
 export function usePreloadImages(urls: string[]): boolean {
   const [ready, setReady] = useState(urls.length === 0)
   const resolvedRef = useRef(false)
   const urlKeyRef = useRef("")
 
-  // Stable key for dependency tracking — avoids re-triggering on same URL set
   const urlKey = urls.join(",")
 
   useEffect(() => {
@@ -23,13 +21,11 @@ export function usePreloadImages(urls: string[]): boolean {
       return
     }
 
-    // If URLs haven't changed, skip
     if (urlKey === urlKeyRef.current) return
     urlKeyRef.current = urlKey
 
-    // Once resolved on initial load, don't block again for URL changes.
-    // New images still preloaded in background (no concurrency limit needed
-    // since browser HTTP cache serves most of these instantly).
+    // Once resolved on initial load, don't block again; preload new URLs in the
+    // background.
     if (resolvedRef.current) {
       urls.forEach((url) => {
         const img = new Image()
@@ -65,7 +61,6 @@ export function usePreloadImages(urls: string[]): boolean {
       img.src = url
     }
 
-    // Start up to MAX_CONCURRENT loads in parallel
     const initialBatch = Math.min(MAX_CONCURRENT, total)
     for (let i = 0; i < initialBatch; i++) {
       loadNext()

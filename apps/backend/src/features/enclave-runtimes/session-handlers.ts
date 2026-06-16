@@ -174,12 +174,6 @@ interface Dependencies {
 }
 
 /**
- * The session must be the live target of a callback. A missing row is 404; any
- * terminal status (COMPLETED/DELETED/SUPERSEDED/FAILED) is 409 — the turn was
- * finished, cancelled, or reclaimed, so the enclave should stop and discard.
- * Callers that special-case COMPLETED (idempotent acks) check it before this.
- */
-/**
  * Phase 2.4b (E2EE-21): bind callbacks to the session's assigned runner. The
  * cleartext token was minted at dispatch and delivered only inside the sealed
  * assignment to the pinned EIK's instance — possession proves the caller is

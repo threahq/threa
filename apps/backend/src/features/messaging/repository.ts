@@ -3,7 +3,6 @@ import { sql } from "../../db"
 import type { AuthorType, JSONContent } from "@threa/types"
 import type { MoveEventSequenceUpdate } from "../streams"
 
-// Internal row type (snake_case, not exported)
 interface MessageRow {
   id: string
   stream_id: string
@@ -30,7 +29,6 @@ interface ReactionRow {
   emoji: string
 }
 
-// Domain type (camelCase, exported)
 export interface Message {
   id: string
   streamId: string
@@ -76,10 +74,8 @@ export interface InsertMessageParams {
   e2eVersion?: number
 }
 
-// Alias for the canonical move-by-messageId+sequence shape defined alongside
-// `moveMessageCreatedEvents` in the streams feature. Keeping the local name
-// preserved so message-side callers (`MessageRepository.moveByIds`) read in
-// the messaging vocabulary while the underlying type stays canonical.
+// Local alias so message-side callers read in messaging vocabulary while the
+// underlying type stays canonical with the streams feature.
 export type MoveMessageSequenceUpdate = MoveEventSequenceUpdate
 
 function mapRowToMessage(row: MessageRow, reactions: Record<string, string[]> = {}): Message {
@@ -699,10 +695,6 @@ export const MessageRepository = {
     `)
   },
 
-  /**
-   * Get reply counts for multiple messages.
-   * Returns a map of messageId -> replyCount
-   */
   async getReplyCountsBatch(db: Querier, messageIds: string[]): Promise<Map<string, number>> {
     if (messageIds.length === 0) return new Map()
 
@@ -772,10 +764,6 @@ export const MessageRepository = {
     return result.rows[0] ? BigInt(result.rows[0].sequence) : null
   },
 
-  /**
-   * Update the embedding for a message.
-   * Used by the embedding worker after generating embeddings.
-   */
   async updateEmbedding(db: Querier, id: string, embedding: number[]): Promise<void> {
     const embeddingLiteral = `[${embedding.join(",")}]`
     await db.query(sql`
@@ -786,13 +774,12 @@ export const MessageRepository = {
   },
 
   /**
-   * Find messages from threads rooted at the given parent messages.
-   * Returns a map of parentMessageId -> thread messages (in chronological order).
+   * Find messages from threads rooted at the given parent messages, keyed by
+   * parentMessageId in chronological order.
    */
   async findThreadMessages(db: Querier, parentMessageIds: string[]): Promise<Map<string, Message[]>> {
     if (parentMessageIds.length === 0) return new Map()
 
-    // Find thread streams for these parent messages and get their messages
     const result = await db.query<MessageRow & { parent_message_id: string }>(sql`
       SELECT
         ${sql.raw(QUALIFIED_SELECT_FIELDS)},
@@ -807,7 +794,6 @@ export const MessageRepository = {
 
     if (result.rows.length === 0) return new Map()
 
-    // Fetch reactions for all messages
     const messageIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
@@ -815,7 +801,6 @@ export const MessageRepository = {
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
-    // Group by parent message ID
     const byParent = new Map<string, Message[]>()
     for (const row of result.rows) {
       const parentId = row.parent_message_id
@@ -828,10 +813,9 @@ export const MessageRepository = {
   },
 
   /**
-   * Find messages surrounding a target message in the same stream.
-   * Returns up to `messagesBefore` messages before and `messagesAfter` messages after the target.
-   * The target message itself is always included.
-   * Messages are returned in chronological order (ascending sequence).
+   * Find messages surrounding a target in the same stream: up to `messagesBefore`
+   * before and `messagesAfter` after, always including the target, in ascending
+   * sequence order.
    */
   async findSurrounding(
     db: Querier,
@@ -840,14 +824,12 @@ export const MessageRepository = {
     messagesBefore: number,
     messagesAfter: number
   ): Promise<Message[]> {
-    // Get the target message's sequence number
     const targetResult = await db.query<{ sequence: string }>(
       sql`SELECT sequence FROM messages WHERE id = ${messageId} AND stream_id = ${streamId}`
     )
     if (!targetResult.rows[0]) return []
     const targetSequence = targetResult.rows[0].sequence
 
-    // Get messages before and after (including the target)
     const result = await db.query<MessageRow>(sql`
       (
         SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
@@ -882,8 +864,8 @@ export const MessageRepository = {
   },
 
   /**
-   * List messages since a given sequence number.
-   * Used by agents to check for new messages during their loop.
+   * List messages after a given sequence number. Used by agents to check for
+   * new messages during their loop.
    */
   async listSince(
     db: Querier,
@@ -930,10 +912,7 @@ export const MessageRepository = {
     return messageRows.map((row) => mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
   },
 
-  /**
-   * List messages in an inclusive sequence range.
-   * Returns messages in chronological order.
-   */
+  /** List messages in an inclusive sequence range, in chronological order. */
   async listBySequenceRange(
     db: Querier,
     streamId: string,

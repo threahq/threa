@@ -19,12 +19,10 @@ export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBar
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const prevActiveResultIdRef = useRef<string | null>(null)
 
-  // Auto-focus the input when the bar mounts
   useEffect(() => {
     search.inputRef.current?.focus()
   }, [search.inputRef])
 
-  // Navigate when active message changes
   useEffect(() => {
     const msgId = search.activeMessageId
     if (msgId && msgId !== prevActiveResultIdRef.current) {
@@ -33,7 +31,6 @@ export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBar
     prevActiveResultIdRef.current = msgId
   }, [search.activeMessageId, onNavigate])
 
-  // Debounced search on query change
   const handleQueryChange = useCallback(
     (value: string) => {
       search.setQuery(value)
@@ -51,7 +48,6 @@ export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBar
     [search]
   )
 
-  // Clean up debounce on unmount
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current)
@@ -106,7 +102,6 @@ export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBar
         />
       </div>
 
-      {/* Result count / loading indicator */}
       <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0 min-w-[60px] justify-center">
         {search.hasSearched && search.matchCount > 0 && (
           <span>
@@ -141,7 +136,6 @@ export function StreamSearchBar({ search, onClose, onNavigate }: StreamSearchBar
         </Button>
       </div>
 
-      {/* Close button */}
       <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onClose} aria-label="Close search">
         <X className="h-3.5 w-3.5" />
       </Button>

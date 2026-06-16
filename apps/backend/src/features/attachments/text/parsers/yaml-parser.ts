@@ -1,10 +1,4 @@
-/**
- * YAML Parser
- *
- * Extracts top-level keys and structure from YAML files.
- * Reuses JSON structure types since YAML maps to JSON.
- */
-
+// Reuses JSON structure types since YAML maps to the JSON data model.
 import yaml from "js-yaml"
 import type { TextSection, JsonStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
@@ -42,7 +36,6 @@ export const yamlParser: TextParser = {
       arrayLength = parsed.length
       schemaDescription = describeArraySchema(parsed)
 
-      // Create sections for array ranges
       if (parsed.length > 10) {
         const chunkSize = Math.ceil(parsed.length / 10)
         for (let i = 0; i < parsed.length; i += chunkSize) {
@@ -61,7 +54,6 @@ export const yamlParser: TextParser = {
       topLevelKeys = Object.keys(parsed).slice(0, MAX_KEYS_TO_SHOW)
       schemaDescription = describeObjectSchema(parsed as Record<string, unknown>)
 
-      // Find line numbers for top-level keys
       for (const key of topLevelKeys) {
         const keyPattern = new RegExp(`^${escapeRegex(key)}:`, "m")
         const lineIndex = lines.findIndex((line) => keyPattern.test(line))

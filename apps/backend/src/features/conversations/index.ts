@@ -1,14 +1,10 @@
-// Handlers
 export { createConversationHandlers } from "./handlers"
 
-// Service
 export { ConversationService } from "./service"
 export type { ConversationWithStaleness, ListConversationsOptions } from "./service"
 
-// Boundary Extraction Service
 export { BoundaryExtractionService } from "./boundary-extraction-service"
 
-// Boundary Extraction
 export { LLMBoundaryExtractor } from "./boundary-extraction/llm-extractor"
 export { StubBoundaryExtractor } from "./boundary-extraction/stub-extractor"
 export type {
@@ -29,18 +25,14 @@ export {
 } from "./boundary-extraction/config"
 export type { ExtractionResponse } from "./boundary-extraction/config"
 
-// Outbox Handler
 export { BoundaryExtractionHandler } from "./boundary-extraction-outbox-handler"
 export type { BoundaryExtractionHandlerConfig } from "./boundary-extraction-outbox-handler"
 
-// Worker
 export { createBoundaryExtractionWorker } from "./boundary-extraction-worker"
 export type { BoundaryExtractionWorkerDeps } from "./boundary-extraction-worker"
 
-// Repository
 export { ConversationRepository } from "./repository"
 export { ConversationFeedbackRepository } from "./feedback-repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
 
-// Staleness
 export { addStalenessFields, computeTemporalStaleness, computeEffectiveCompleteness } from "./staleness"

@@ -32,16 +32,9 @@ interface ServiceLike {
 }
 
 /**
- * Fetch a rich Linear preview for a `linear.app` URL.
- *
- * Returns null when:
- * - The URL is not a Linear URL or uses a different workspace slug than the
- *   connected Linear org
- * - The workspace has no active Linear integration or is near its rate limit
- * - The underlying entity was not found, or any Linear API error occurred
- *
- * A null return causes the worker to fall back to the generic HTML metadata
- * fetcher (which will see Linear's login wall and correctly yield no preview).
+ * Returns null for non-Linear URLs, a workspace-slug mismatch against the connected org, no active
+ * integration, or any not-found/API error. A null return makes the worker fall back to the generic
+ * HTML fetcher, which hits Linear's login wall and correctly yields no preview.
  */
 export async function fetchLinearPreview(
   workspaceId: string,
@@ -83,8 +76,6 @@ export async function fetchLinearPreview(
     return null
   }
 }
-
-// ── Issue ───────────────────────────────────────────────────────────────
 
 const ISSUE_QUERY = /* GraphQL */ `
   query ThreaIssuePreview($id: String!) {
@@ -162,8 +153,6 @@ async function fetchIssuePreview(
     expiresAt: isOpen ? minutesFromNow(5) : hoursFromNow(1),
   }
 }
-
-// ── Comment ─────────────────────────────────────────────────────────────
 
 const COMMENT_BY_ID_QUERY = /* GraphQL */ `
   query ThreaCommentByIdPreview($id: String!) {
@@ -274,8 +263,6 @@ async function fetchCommentPreview(
   }
 }
 
-// ── Project ─────────────────────────────────────────────────────────────
-
 const PROJECT_QUERY = /* GraphQL */ `
   query ThreaProjectPreview($id: String!) {
     project(id: $id) {
@@ -345,8 +332,6 @@ async function fetchProjectPreview(
     expiresAt: minutesFromNow(15),
   }
 }
-
-// ── Document ────────────────────────────────────────────────────────────
 
 const DOCUMENT_QUERY = /* GraphQL */ `
   query ThreaDocumentPreview($slugId: String!) {
@@ -420,8 +405,6 @@ async function fetchDocumentPreview(
     expiresAt: hoursFromNow(1),
   }
 }
-
-// ── Shared node→domain converters ──────────────────────────────────────
 
 interface LinearUserNode {
   id?: unknown

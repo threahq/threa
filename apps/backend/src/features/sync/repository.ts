@@ -130,9 +130,8 @@ export const SyncLogRepository = {
    *
    * `visible_streams` resolves the same access rule as the canonical per-id
    * predicate (INV-62), reusing its `rootReadableConditionSql` leaf so the two
-   * cannot drift — the previous version replicated the thread→root leg but
-   * dropped the public-root leg, silently starving non-members of public-channel
-   * catch-up. It has two arms:
+   * cannot drift — replicating the thread→root leg without the public-root leg
+   * silently starves non-members of public-channel catch-up. It has two arms:
    *
    *   1. Direct memberships — every stream with a `stream_members` row for the
    *      user, bounded by that stream's own join position. This honours direct

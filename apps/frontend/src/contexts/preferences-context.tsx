@@ -98,17 +98,13 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
     return () => mediaQuery.removeEventListener("change", handleChange)
   }, [preferences])
 
-  // Mutation for updating preferences
   const mutation = useMutation({
     mutationFn: (input: UpdateUserPreferencesInput) => preferencesApi.update(workspaceId, input),
     onMutate: async (input) => {
-      // Cancel any outgoing refetches
       await queryClient.cancelQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
 
-      // Snapshot the previous value
       const previousBootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
 
-      // Optimistically update to the new value
       if (previousBootstrap?.userPreferences) {
         const newPreferences: UserPreferences = {
           ...previousBootstrap.userPreferences,
@@ -159,7 +155,6 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
       toast.error("Failed to save settings")
     },
     onSuccess: (newPreferences) => {
-      // Update cache with server response
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         return { ...old, userPreferences: newPreferences }

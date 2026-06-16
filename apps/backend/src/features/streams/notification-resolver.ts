@@ -6,9 +6,8 @@ import type { StreamMember } from "./member-repository"
 import { getDefaultLevel } from "./notification-config"
 
 /**
- * Determines what a parent's explicit notification level means for child streams.
- * "everything" cascades as "activity", "muted" cascades as "muted",
- * "mentions" and "activity" don't cascade (returns null to stop walk).
+ * What a parent's explicit notification level means for child streams.
+ * "mentions" and "activity" don't cascade (null stops the ancestor walk).
  */
 function cascadeLevel(parentLevel: NotificationLevel): NotificationLevel | null {
   if (parentLevel === "everything") return "activity"
@@ -24,7 +23,6 @@ export interface ResolvedNotification {
 
 /**
  * Batch-resolve notification levels for all members of a stream.
- * Optimized: fetches ancestry chain once, batch-fetches ancestor memberships.
  */
 export async function resolveNotificationLevelsForStream(
   db: Querier,
@@ -33,7 +31,6 @@ export async function resolveNotificationLevelsForStream(
 ): Promise<ResolvedNotification[]> {
   if (members.length === 0) return []
 
-  // Collect members with explicit levels vs those needing resolution
   const resolved: ResolvedNotification[] = []
   const needsResolution: StreamMember[] = []
 
@@ -47,7 +44,6 @@ export async function resolveNotificationLevelsForStream(
 
   if (needsResolution.length === 0) return resolved
 
-  // Fetch ancestor stream IDs in one recursive CTE (max 2 hops)
   const ancestorIds = await getAncestorIds(db, stream.parentStreamId, 2)
   if (ancestorIds.length === 0) {
     for (const member of needsResolution) {
@@ -56,11 +52,9 @@ export async function resolveNotificationLevelsForStream(
     return resolved
   }
 
-  // Batch-fetch all ancestor memberships for unresolved members in one query
   const memberIds = needsResolution.map((m) => m.memberId)
   const ancestorMemberships = await getAncestorMemberships(db, ancestorIds, memberIds)
 
-  // Resolve each unresolved member by walking ancestors in order
   for (const member of needsResolution) {
     let inherited: NotificationLevel | null = null
 
@@ -86,9 +80,7 @@ export async function resolveNotificationLevelsForStream(
   return resolved
 }
 
-/**
- * Get ordered ancestor stream IDs via recursive CTE. Single query replaces N sequential findById calls.
- */
+/** Ordered ancestor stream IDs (nearest first) via one recursive CTE. */
 async function getAncestorIds(db: Querier, parentStreamId: string | null, maxHops: number): Promise<string[]> {
   if (!parentStreamId) return []
 
@@ -110,10 +102,7 @@ async function getAncestorIds(db: Querier, parentStreamId: string | null, maxHop
   return result.rows.map((r) => r.id)
 }
 
-/**
- * Batch-fetch notification levels for specific members across multiple ancestor streams.
- * Returns Map<ancestorId, Map<memberId, notificationLevel>>.
- */
+/** Returns Map<ancestorId, Map<memberId, notificationLevel>> for the given members. */
 async function getAncestorMemberships(
   db: Querier,
   ancestorIds: string[],

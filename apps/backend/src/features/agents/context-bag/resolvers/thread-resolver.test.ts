@@ -7,9 +7,8 @@ import { StreamRepository, StreamMemberRepository } from "../../../streams"
 import { UserRepository } from "../../../workspaces"
 import { PersonaRepository } from "../../persona-repository"
 
-// All ThreadResolver.fetch paths now batch-fetch attachments for the windowed
-// message ids. Default to an empty map so individual tests don't have to
-// re-stub it; tests that care about attachment rendering override locally.
+// Default to an empty map so individual tests don't have to re-stub it;
+// tests that care about attachment rendering override locally.
 beforeEach(() => {
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
 })
@@ -602,8 +601,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
     // `surrounding.length > 0, targetIdx < 0`. Slicing the surrounding
     // result here would give a window skewed around the deletion point;
     // the user's anchor is unrecoverable so we return the recent-tail
-    // (slash-command shape) instead. CodeRabbit caught this — the comment
-    // said "no-focal fallback" but the code was lying to us.
+    // (slash-command shape) instead.
     spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])

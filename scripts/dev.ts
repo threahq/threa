@@ -21,7 +21,6 @@ function loadEnvFile(filePath: string): Record<string, string> {
     if (eqIndex === -1) continue
     const key = trimmed.slice(0, eqIndex)
     let value = trimmed.slice(eqIndex + 1)
-    // Remove surrounding quotes if present
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1)
     }
@@ -64,23 +63,19 @@ async function getWorktrees(): Promise<WorktreeInfo[]> {
 }
 
 function getMainWorktree(worktrees: WorktreeInfo[]): WorktreeInfo | undefined {
-  // First try to find the bare repo
   const bare = worktrees.find((w) => w.isMain)
   if (bare) return bare
-  // Try the one on main/master branch
   const mainBranch = worktrees.find((w) => w.branch.endsWith("/main") || w.branch.endsWith("/master"))
   if (mainBranch) return mainBranch
-  // Otherwise, the main worktree is the one without a dot suffix (e.g., "threa" vs "threa.feature")
-  // This is a common convention for git worktrees
+  // Worktrees are conventionally named "threa.feature"; the main one has no dot suffix.
   const primary = worktrees.find((w) => !path.basename(w.path).includes("."))
   if (primary) return primary
-  // Last resort: first worktree (usually the original)
   return worktrees[0]
 }
 
 function deriveDatabaseName(dirPath: string): string {
   const dirName = path.basename(dirPath)
-  // Convert to valid postgres identifier
+  // Sanitize to a valid postgres identifier.
   const sanitized = dirName
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "_")
@@ -137,7 +132,6 @@ async function ensureWorktreeEnv(): Promise<void> {
   const cwd = process.cwd()
   const backendEnvPath = path.join(cwd, "apps/backend/.env")
 
-  // If .env exists, nothing to do
   if (fs.existsSync(backendEnvPath)) return
 
   const worktrees = await getWorktrees()
@@ -148,7 +142,6 @@ async function ensureWorktreeEnv(): Promise<void> {
     return
   }
 
-  // Check if we're in the main worktree
   if (mainWorktree.path === cwd) return
 
   const sourceEnvPath = path.join(mainWorktree.path, "apps/backend/.env")
@@ -157,7 +150,6 @@ async function ensureWorktreeEnv(): Promise<void> {
     return
   }
 
-  // Copy and modify .env
   const dbName = deriveDatabaseName(cwd)
   console.log(`Setting up worktree .env with database: ${dbName}`)
 
@@ -165,7 +157,6 @@ async function ensureWorktreeEnv(): Promise<void> {
   content = content.replace(/(DATABASE_URL=postgresql:\/\/[^/]+\/)([^?\n]+)/, `$1${dbName}`)
   fs.writeFileSync(backendEnvPath, content)
 
-  // Create database and copy data if postgres is reachable
   if (await isPostgresReachable()) {
     const checkResult =
       await $`docker exec threa-postgres-1 psql -U threa -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${dbName}'"`
@@ -175,8 +166,7 @@ async function ensureWorktreeEnv(): Promise<void> {
       console.log(`Creating database '${dbName}'...`)
       await $`docker exec threa-postgres-1 psql -U threa -d postgres -c "CREATE DATABASE ${dbName}"`.quiet()
 
-      // Copy schema + data from main database (threa) to worktree database
-      // Duplicate schema errors are expected and harmless (migrations will reconcile)
+      // Duplicate schema errors are expected and harmless (migrations will reconcile).
       console.log(`Copying data from main database...`)
       const lockWaitTimeout = "10s"
       const copyResult =
@@ -205,7 +195,6 @@ async function ensureWorktreeEnv(): Promise<void> {
 
 async function isPostgresReachable(): Promise<boolean> {
   try {
-    // Try TCP connection to postgres port
     const socket = await Bun.connect({
       hostname: POSTGRES_HOST,
       port: POSTGRES_PORT,
@@ -255,7 +244,6 @@ async function waitForMinio(maxAttempts = 30): Promise<boolean> {
 }
 
 async function ensureMinioBucket(): Promise<void> {
-  // Create bucket via mc CLI in container
   const aliasResult = await $`docker exec threa-minio-1 mc alias set local http://localhost:9000 minioadmin minioadmin`
     .quiet()
     .nothrow()
@@ -265,11 +253,9 @@ async function ensureMinioBucket(): Promise<void> {
     return
   }
 
-  // Check if bucket exists
   const lsResult = await $`docker exec threa-minio-1 mc ls local/${MINIO_BUCKET}`.quiet().nothrow()
 
   if (lsResult.exitCode !== 0) {
-    // Bucket doesn't exist, create it
     const mbResult = await $`docker exec threa-minio-1 mc mb local/${MINIO_BUCKET}`.quiet().nothrow()
     if (mbResult.exitCode === 0) {
       console.log(`Created MinIO bucket: ${MINIO_BUCKET}`)
@@ -350,7 +336,6 @@ async function main() {
   // Derive control-plane DB URL from the backend's DATABASE_URL by appending _cp
   const cpDbUrl = dbBase.replace(/\/([^/?]+)(\?.*)?$/, "/$1_cp$2")
 
-  // Ensure control-plane database exists
   if (await isPostgresReachable()) {
     const cpDbName = cpDbUrl.match(/\/([^/?]+?)(?:\?.*)?$/)?.[1] ?? "threa_cp"
     const checkResult =
@@ -521,7 +506,6 @@ async function main() {
     },
   })
 
-  // Track if we're shutting down to avoid double-kill
   let isShuttingDown = false
 
   const shutdown = async () => {
@@ -540,7 +524,6 @@ async function main() {
     enclaveBuilder.kill("SIGKILL")
     enclave.kill("SIGKILL")
 
-    // Wait for processes to fully terminate
     await Promise.all([
       controlPlane.exited,
       backend.exited,

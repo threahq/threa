@@ -98,9 +98,9 @@ export async function checkStreamAccess(
  * the single rule that both the per-id predicate ({@link streamAccessPredicateSql})
  * and the workspace catch-up CTE (`features/sync/repository.ts`) reduce a
  * stream's effective root down to — extracted so the public-without-membership
- * branch cannot live in one and be silently dropped from the other (the exact
- * drift that previously shipped: catch-up replicated the thread→root leg but
- * omitted the public-root leg). The caller resolves the effective root
+ * branch cannot live in one and be silently dropped from the other (catch-up
+ * replicating the thread→root leg while omitting the public-root leg is the
+ * drift this guards against). The caller resolves the effective root
  * (top-level stream → itself, thread → its root) and passes its alias; this
  * fragment only decides readability of that resolved root.
  *

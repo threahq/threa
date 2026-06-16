@@ -29,7 +29,6 @@ export function BudgetHealthHero({ metrics, isLoading }: { metrics: BudgetMetric
   return (
     <Card>
       <div className="space-y-6 p-6 sm:p-8">
-        {/* Headline — neutral, factual */}
         <div className="space-y-1">
           <div className="flex items-baseline gap-2">
             <span className={cn("h-1.5 w-1.5 flex-none translate-y-[-3px] rounded-full", styles.dot)} aria-hidden />
@@ -41,7 +40,6 @@ export function BudgetHealthHero({ metrics, isLoading }: { metrics: BudgetMetric
           </p>
         </div>
 
-        {/* Key stats */}
         <div className="grid gap-6 border-y border-border/60 py-5 sm:grid-cols-4">
           <Stat
             label="Spent"
@@ -84,7 +82,6 @@ export function BudgetHealthHero({ metrics, isLoading }: { metrics: BudgetMetric
           />
         </div>
 
-        {/* Trajectory chart */}
         <TrajectoryChart metrics={metrics} />
       </div>
     </Card>

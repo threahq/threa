@@ -13,18 +13,16 @@ interface DateFilterState {
 }
 
 /**
- * Filters date options by query string.
- * Also allows typing a custom date in ISO format.
+ * Filters date options by query, surfacing a custom option when the query is a
+ * partial ISO date (YYYY-MM-DD).
  */
 export function filterDateOptions(items: DateFilterItem[], query: string): DateFilterItem[] {
   if (!query) return items
 
   const lowerQuery = query.toLowerCase()
 
-  // Check if query looks like a date (YYYY-MM-DD format)
   const isDateLike = /^\d{4}(-\d{0,2})?(-\d{0,2})?$/.test(query)
   if (isDateLike) {
-    // Add a custom date option at the top
     const filterType = items[0]?.filterType ?? "after"
     const customOption: DateFilterItem = {
       id: "custom",
@@ -39,9 +37,6 @@ export function filterDateOptions(items: DateFilterItem[], query: string): DateF
   return items.filter((item) => item.label.toLowerCase().includes(lowerQuery) || item.value.includes(query))
 }
 
-/**
- * Detects the filter type from the suggestion text.
- */
 function detectFilterType(text: string): DateFilterType {
   if (text.startsWith("before:")) return "before"
   return "after"
@@ -61,11 +56,9 @@ export function useDateFilterSuggestion() {
   }, [])
 
   const onStart = useCallback((props: SuggestionProps<DateFilterItem>) => {
-    // Detect filter type from the matched text
     const filterType = detectFilterType(props.text || "after:")
     currentFilterTypeRef.current = filterType
 
-    // Get items for this filter type
     const items = filterDateOptions(getDateFilterOptions(filterType), props.query)
 
     setState({

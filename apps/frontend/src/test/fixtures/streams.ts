@@ -1,10 +1,7 @@
 import type { Stream, StreamType } from "@threa/types"
 import { StreamTypes } from "@threa/types"
 
-/**
- * Factory for creating mock Stream objects with sensible defaults.
- * Only id and type are required - everything else has defaults.
- */
+/** Only id and type are required; everything else has defaults. */
 export function createMockStream(overrides: Partial<Stream> & { id: string; type: StreamType }): Stream {
   return {
     workspaceId: "workspace_1",
@@ -25,9 +22,6 @@ export function createMockStream(overrides: Partial<Stream> & { id: string; type
   }
 }
 
-/**
- * Pre-built mock streams for common test scenarios.
- */
 export const mockStreams = {
   scratchpad: createMockStream({
     id: "stream_scratchpad1",
@@ -56,7 +50,4 @@ export const mockStreams = {
   }),
 }
 
-/**
- * Array of all mock streams for bootstrap data.
- */
 export const mockStreamsList: Stream[] = Object.values(mockStreams)

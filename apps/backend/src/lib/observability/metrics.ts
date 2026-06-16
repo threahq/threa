@@ -1,19 +1,8 @@
 import { Registry, Gauge, Counter, Histogram } from "prom-client"
 
-/**
- * Prometheus metrics registry for application observability.
- *
- * Provides metrics for:
- * - Database connection pools
- * - Job queue system
- * - Cron schedules
- * - HTTP requests
- */
-
-// Create a dedicated registry (don't use default registry)
+// Dedicated registry, not prom-client's default.
 export const registry = new Registry()
 
-// Connection Pool Metrics
 export const poolConnectionsTotal = new Gauge({
   name: "pool_connections_total",
   help: "Total number of connections in the pool",
@@ -42,7 +31,6 @@ export const poolUtilizationPercent = new Gauge({
   registers: [registry],
 })
 
-// Queue Metrics
 export const queueHandlersConcurrent = new Gauge({
   name: "queue_handlers_concurrent",
   help: "Number of concurrently executing queue handlers",
@@ -85,7 +73,6 @@ export const queueTokensStuck = new Counter({
   registers: [registry],
 })
 
-// Cron Schedule Metrics
 export const cronSchedulesTotal = new Gauge({
   name: "cron_schedules_total",
   help: "Total number of active cron schedules",
@@ -107,7 +94,6 @@ export const cronTicksExecuted = new Counter({
   registers: [registry],
 })
 
-// HTTP Metrics
 // Labels: method, normalized_path, status_code, error_type, workspace_id
 // error_type: "-" | "not_authenticated" | "forbidden" | "not_found" | "client_error" | "server_error"
 export const httpRequestsTotal = new Counter({
@@ -131,7 +117,6 @@ export const httpActiveConnections = new Gauge({
   registers: [registry],
 })
 
-// WebSocket Metrics
 // Room pattern normalization: ws:{workspaceId}, ws:{workspaceId}:stream:{streamId}
 export const wsConnectionsActive = new Gauge({
   name: "ws_connections_active",
@@ -155,7 +140,6 @@ export const wsConnectionDuration = new Histogram({
   registers: [registry],
 })
 
-// Message Metrics
 export const messagesTotal = new Counter({
   name: "messages_total",
   help: "Total number of messages created",
@@ -163,7 +147,6 @@ export const messagesTotal = new Counter({
   registers: [registry],
 })
 
-// Memo Processing Metrics
 export const memoProcessingDuration = new Histogram({
   name: "memo_processing_duration_seconds",
   help: "Duration of memo batch processing in seconds",
@@ -183,7 +166,6 @@ export const memoRevised = new Counter({
   registers: [registry],
 })
 
-// Agent Session Metrics
 export const agentSessionsActive = new Gauge({
   name: "agent_sessions_active",
   help: "Number of agent sessions by workspace and status",
@@ -199,7 +181,6 @@ export const agentSessionDuration = new Histogram({
   registers: [registry],
 })
 
-// AI Usage Metrics
 export const aiCallsTotal = new Counter({
   name: "ai_calls_total",
   help: "Total number of AI API calls",
@@ -222,9 +203,7 @@ export const aiTokensUsed = new Counter({
   registers: [registry],
 })
 
-/**
- * Collect default metrics (process stats, memory, etc.)
- */
+/** Collect prom-client default metrics (process stats, memory, etc.). */
 export function collectDefaultMetrics() {
   const promClient = require("prom-client")
   promClient.collectDefaultMetrics({ register: registry })

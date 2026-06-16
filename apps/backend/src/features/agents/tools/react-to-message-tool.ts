@@ -62,7 +62,6 @@ This is a side-effect tool: it applies immediately and does not end your turn, s
           return { output: JSON.stringify({ ok: false, error: "Unrecognized emoji", emoji: input.emoji }) }
         }
 
-        // Resolve the target message within the workspace and gate on access.
         const byId = await MessageRepository.findByIdsInWorkspace(db, workspaceId, [input.messageId])
         const message = byId.get(input.messageId)
         if (!message || message.deletedAt) {

@@ -83,13 +83,11 @@ export function useStreamItems(context: ModeContext): ModeResult {
     return ids
   }, [streamMemberships])
 
-  // Local state for the "Add filter" flow
   const [addingFilter, setAddingFilter] = useState<FilterType | null>(null)
 
-  // Parse filters from query string (single source of truth)
+  // Query string is the single source of truth for active filters.
   const { filters: parsedFilters, text: searchText } = useMemo(() => parseSearchQuery(query), [query])
 
-  // Extract status and type filters
   const statusFilters = useMemo(
     () => parsedFilters.filter((f) => f.type === "status").map((f) => f.value as "active" | "archived"),
     [parsedFilters]
@@ -100,11 +98,9 @@ export function useStreamItems(context: ModeContext): ModeResult {
     [parsedFilters]
   )
 
-  // Determine what to show
   const showArchived = statusFilters.includes("archived")
   const showActive = statusFilters.length === 0 || statusFilters.includes("active")
 
-  // Fetch archived streams when needed
   const { data: archivedStreams, isLoading: isLoadingArchived } = useQuery({
     queryKey: ["streams", workspaceId, "archived"],
     queryFn: () => streamsApi.list(workspaceId, { status: ["archived"] }),
@@ -143,8 +139,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const usersById = new Map((users ?? []).map((workspaceUser) => [workspaceUser.id, workspaceUser]))
     const dmPeerByStreamId = new Map((dmPeers ?? []).map((peer) => [peer.streamId, peer.userId]))
 
-    // Combine streams based on filters
-    // Active streams are CachedStream (with lastMessagePreview), archived come from API as Stream
+    // Active streams are CachedStream (with lastMessagePreview), archived come from API as Stream.
     const allStreams: StreamLike[] = [
       ...(showActive ? activeStreams : []),
       ...(showArchived && archivedStreams ? archivedStreams : []),
@@ -158,7 +153,6 @@ export function useStreamItems(context: ModeContext): ModeResult {
         s.type === StreamTypes.SYSTEM
     )
 
-    // Apply type filters
     if (typeFilters.length > 0) {
       filteredStreams = filteredStreams.filter((s) => typeFilters.includes(s.type))
     }

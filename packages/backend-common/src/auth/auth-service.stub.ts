@@ -33,19 +33,13 @@ export class StubAuthService implements AuthService {
    */
   magicCodeForTests = "123456"
 
-  /**
-   * Dev login endpoint - creates/ensures in-memory auth user and registers session.
-   * Returns user data and session token for cookie.
-   */
   async devLogin(options: { email?: string; name?: string } = {}): Promise<DevLoginResult> {
     const email = options.email || "test@example.com"
     const name = options.name || "Test User"
 
-    // Generate a fake WorkOS user ID — base64url-encode the email so it's safely reversible
+    // base64url-encode the email so authenticateSession can reverse it back
     const fakeWorkosUserId = `workos_test_${Buffer.from(email).toString("base64url")}`
 
-    // Register with the fake WorkOS ID - this is what authenticateSession will return
-    // and what socket.ts will use to look up the user
     const session = this.registerTestUser({
       id: fakeWorkosUserId,
       email,
@@ -58,10 +52,6 @@ export class StubAuthService implements AuthService {
     }
   }
 
-  /**
-   * Register a test user that can authenticate.
-   * Returns the session token to use in cookies.
-   */
   registerTestUser(user: { id: string; email: string; firstName?: string | null; lastName?: string | null }): string {
     this.users.set(user.id, {
       id: user.id,

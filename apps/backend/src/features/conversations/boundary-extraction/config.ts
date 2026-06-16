@@ -1,17 +1,11 @@
-/**
- * Boundary Extraction Configuration
- *
- * Co-located config following INV-43 - both production code and evals
- * import from here to ensure consistency.
- */
+// Co-located config (INV-43): production code and evals import from here.
 
 import { z } from "zod"
 import { CONVERSATION_STATUSES } from "@threa/types"
 
-/** Default model for boundary extraction */
 export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
 
-/** Temperature for classification - low for consistency */
+/** Low temperature for classification consistency. */
 export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
 
 /**
@@ -23,10 +17,8 @@ export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
 export const NEW_MESSAGE_ATTACHMENT_CHARS = 2000
 export const RECENT_ATTACHMENT_CHARS = 400
 
-/** System prompt for boundary extraction */
 export const BOUNDARY_EXTRACTION_SYSTEM_PROMPT = `You are a conversation boundary classifier. You analyze messages and output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose - just the JSON object.`
 
-/** User prompt template for boundary extraction */
 export const BOUNDARY_EXTRACTION_PROMPT = `Analyze this new message and decide which conversation(s) it belongs to. You may also move recent messages that were placed in the wrong conversation, now that this new message clarifies what was happening.
 
 ## Active Conversations
@@ -78,9 +70,6 @@ When you set newConversationTopic, write a short title of 2-5 words that names t
 
 Respond with ONLY the JSON object. No explanation, no markdown code blocks.`
 
-/**
- * Schema for LLM extraction response using structured outputs.
- */
 export const messageAssignmentSchema = z
   .object({
     conversationId: z.string().nullable().describe("Existing conversation ID, or null to create a new one"),

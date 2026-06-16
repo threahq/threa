@@ -149,7 +149,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         )}
       </div>
 
-      {/* Key reveal banner */}
       {createdKeyValue && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div className="flex items-start gap-2">
@@ -200,7 +199,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </div>
       )}
 
-      {/* Create key form */}
       {showKeyForm && (
         <div className="rounded-lg border bg-card p-4 space-y-4">
           <div className="space-y-1.5">
@@ -258,7 +256,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </div>
       )}
 
-      {/* Active keys */}
       {isLoading && <Skeleton className="h-16 w-full" />}
 
       {!isLoading && activeKeys.length > 0 && (
@@ -328,7 +325,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </div>
       )}
 
-      {/* Revoked keys */}
       {revokedKeys.length > 0 && (
         <Collapsible open={revokedOpen} onOpenChange={setRevokedOpen}>
           <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer py-1 group">
@@ -356,7 +352,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
       )}
       {revokeKeyMutation.error && <p className="text-sm text-destructive">Failed to revoke key. Please try again.</p>}
 
-      {/* Edit scopes */}
       <AlertDialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -385,7 +380,6 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Revoke confirmation */}
       <AlertDialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

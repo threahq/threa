@@ -164,7 +164,7 @@ export class StreamService {
     return stream
   }
 
-  /** Check if user has access to a stream without throwing. Returns the stream or null. */
+  /** Like {@link validateStreamAccess} but returns null instead of throwing. */
   async tryAccess(streamId: string, workspaceId: string, userId: string): Promise<Stream | null> {
     return this.checkAccess(streamId, workspaceId, userId)
   }
@@ -416,7 +416,6 @@ export class StreamService {
         createdBy: params.createdBy,
       })
 
-      // Add creator as member
       await StreamMemberRepository.insert(client, id, params.createdBy)
 
       // Attach optional context bag in the same transaction as the stream +
@@ -462,7 +461,6 @@ export class StreamService {
         )
       }
 
-      // Publish to outbox for real-time delivery
       await OutboxRepository.insert(client, "stream:created", {
         workspaceId: params.workspaceId,
         streamId: stream.id,
@@ -477,7 +475,6 @@ export class StreamService {
     return withTransaction(this.pool, async (client) => {
       const id = streamId()
 
-      // Check if slug already exists
       const slugExists = await StreamRepository.slugExistsInWorkspace(client, params.workspaceId, params.slug)
       if (slugExists) {
         throw new DuplicateSlugError(params.slug)
@@ -487,24 +484,20 @@ export class StreamService {
         id,
         workspaceId: params.workspaceId,
         type: StreamTypes.CHANNEL,
-        // Channels use slug as display name, no separate displayName field
         slug: params.slug,
         description: params.description,
         visibility: params.visibility ?? Visibilities.PUBLIC,
         createdBy: params.createdBy,
       })
 
-      // Add creator as member
       await StreamMemberRepository.insert(client, id, params.createdBy)
 
-      // Publish to outbox for real-time delivery
       await OutboxRepository.insert(client, "stream:created", {
         workspaceId: params.workspaceId,
         streamId: stream.id,
         stream,
       })
 
-      // Add initial members (excluding the creator who was already added)
       const additionalMemberIds = (params.memberIds ?? []).filter((mid) => mid !== params.createdBy)
       if (additionalMemberIds.length > 0) {
         // Validate members belong to this workspace (INV-20: batch lookup)
@@ -561,13 +554,11 @@ export class StreamService {
 
   async createThread(params: CreateThreadParams): Promise<Stream> {
     return withTransaction(this.pool, async (client) => {
-      // Get parent stream to determine root (needed for insert)
       const parentStream = await StreamRepository.findById(client, params.parentStreamId)
       if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
         throw new StreamNotFoundError()
       }
 
-      // Validate that parentMessageId exists in the parent stream
       const parentMessage = await MessageRepository.findById(client, params.parentMessageId)
       if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
         throw new MessageNotFoundError()
@@ -578,8 +569,6 @@ export class StreamService {
 
       const id = streamId()
 
-      // Atomically insert or find existing thread
-      // Uses ON CONFLICT DO NOTHING to handle race conditions
       // Inherit visibility from the root stream — threads in public channels
       // are public, threads in private DMs/scratchpads stay private.
       const rootStream =
@@ -643,7 +632,6 @@ export class StreamService {
         if (sealed) Object.assign(stream, sealed)
       }
 
-      // Add creator as member (idempotent - handles existing membership)
       const isMember = await StreamMemberRepository.isMember(client, stream.id, params.createdBy)
       if (!isMember) {
         await StreamMemberRepository.insert(client, stream.id, params.createdBy)
@@ -656,7 +644,6 @@ export class StreamService {
         await this.addToStream(client, stream, parentMessage.authorId, params.createdBy)
       }
 
-      // Only broadcast if we created a new thread
       if (created) {
         // Broadcast stream:created to PARENT stream's room (not the new thread's room)
         // This lets watchers of the parent see the thread indicator appear
@@ -723,7 +710,6 @@ export class StreamService {
     return withTransaction(this.pool, async (client) => {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })
       if (stream) {
-        // Emit stream_archived event to the timeline
         const evtId = eventId()
         await StreamEventRepository.insert(client, {
           id: evtId,
@@ -736,7 +722,6 @@ export class StreamService {
           actorType: "user",
         })
 
-        // Notify real-time subscribers
         await OutboxRepository.insert(client, "stream:archived", {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
@@ -751,7 +736,6 @@ export class StreamService {
     return withTransaction(this.pool, async (client) => {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: null })
       if (stream) {
-        // Emit stream_unarchived event to the timeline
         const evtId = eventId()
         await StreamEventRepository.insert(client, {
           id: evtId,
@@ -762,7 +746,6 @@ export class StreamService {
           actorType: "user",
         })
 
-        // Notify real-time subscribers
         await OutboxRepository.insert(client, "stream:unarchived", {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
@@ -812,7 +795,6 @@ export class StreamService {
     }
     try {
       return await withTransaction(this.pool, async (client) => {
-        // Slug uniqueness check (exclude current stream)
         if (streamData.slug) {
           const current = await StreamRepository.findById(client, streamId)
           if (current && streamData.slug !== current.slug) {
@@ -1340,16 +1322,12 @@ export class StreamService {
     })
   }
 
-  // Member operations
-
   private async addToStream(client: Querier, stream: Stream, memberId: string, actorId: string): Promise<StreamMember> {
-    // Check if already a member to avoid spurious events on duplicate calls
     const existing = await StreamMemberRepository.findByStreamAndMember(client, stream.id, memberId)
     if (existing) return existing
 
     const membership = await StreamMemberRepository.insert(client, stream.id, memberId)
 
-    // Create timeline event so "X was added" appears in the stream
     const evtId = eventId()
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
@@ -1388,7 +1366,6 @@ export class StreamService {
         })
       }
 
-      // Verify the target member belongs to this workspace
       const member = await UserRepository.findById(client, workspaceId, memberId)
       if (!member) {
         throw new HttpError("Member not found in this workspace", { status: 404, code: "MEMBER_NOT_FOUND" })
@@ -1715,23 +1692,18 @@ export class StreamService {
 
   async markAllAsRead(workspaceId: string, memberId: string): Promise<string[]> {
     return withTransaction(this.pool, async (client) => {
-      // Get all memberships for this member in this workspace
       const memberships = await StreamMemberRepository.list(client, { memberId })
 
-      // Get all streams in this workspace to filter memberships
       const streams = await StreamRepository.list(client, workspaceId)
       const workspaceStreamIds = new Set(streams.map((s) => s.id))
 
-      // Filter to only memberships in this workspace
       const workspaceMemberships = memberships.filter((m) => workspaceStreamIds.has(m.streamId))
       if (workspaceMemberships.length === 0) return []
 
       const streamIds = workspaceMemberships.map((m) => m.streamId)
 
-      // Get latest event ID for each stream
       const latestEventIds = await StreamEventRepository.getLatestEventIdByStreamBatch(client, streamIds)
 
-      // Build batch update map for streams that need updating
       const updatesToApply = new Map<string, string>()
       for (const [streamId, latestEventId] of latestEventIds.entries()) {
         const membership = workspaceMemberships.find((m) => m.streamId === streamId)
@@ -1740,7 +1712,6 @@ export class StreamService {
         }
       }
 
-      // Batch update all memberships in a single query
       if (updatesToApply.size > 0) {
         await StreamMemberRepository.batchUpdateLastReadEventId(client, memberId, updatesToApply)
       }
@@ -1778,16 +1749,12 @@ export class StreamService {
     return unreadCounts.get(streamId)?.unreadCount ?? 0
   }
 
-  /**
-   * Get a map of messageId -> threadStreamId for all messages in a stream that have threads
-   */
   async getThreadsForMessages(streamId: string): Promise<Map<string, string>> {
     return StreamRepository.findThreadsForMessages(this.pool, streamId)
   }
 
   /**
-   * Get a map of messageId -> { threadId, replyCount } for messages in a stream that have threads.
-   * This is an optimized version that fetches threads and counts in a single query.
+   * Fetches threads and reply counts in a single query.
    * Pass `parentMessageIds` to scope the scan to a specific bootstrap window.
    */
   async getThreadsWithReplyCounts(

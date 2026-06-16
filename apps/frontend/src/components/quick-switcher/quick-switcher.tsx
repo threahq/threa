@@ -137,7 +137,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   const inputRef = useRef<HTMLInputElement>(null)
   const richInputRef = useRef<RichInputRef>(null)
 
-  // Update ref when popover state changes (for synchronous access in event handlers)
   const handlePopoverActiveChange = useCallback((active: boolean) => {
     isSuggestionPopoverActiveRef.current = active
   }, [])
@@ -301,7 +300,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     ]
   )
 
-  // Get items based on current mode
   const streamResult = useStreamItems({
     workspaceId,
     query: displayQuery,
@@ -320,7 +318,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     commandContext,
   })
 
-  // Select the current mode's result
   const resultByMode = { stream: streamResult, command: commandResult }
   const currentResult = resultByMode[mode]
   const items = currentResult.items
@@ -334,12 +331,10 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     }
   }, [])
 
-  // Reset selection when items change
   useEffect(() => {
     setSelectedIndex(0)
   }, [items.length, mode])
 
-  // Reset query and focus input when dialog opens
   useEffect(() => {
     if (open) {
       const prefix = initialMode ? MODE_PREFIXES[initialMode] : ""
@@ -355,7 +350,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     }
   }, [open, initialMode, isMobile])
 
-  // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
       setQuery("")
@@ -526,7 +520,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
             />
           )}
 
-          {/* Input area */}
           <div className="p-4 border-b border-border">
             <div className="flex items-center gap-3 px-4 py-3 rounded-[10px] border border-border bg-background transition-all focus-within:border-primary/60 focus-within:shadow-[0_0_0_2px_hsl(var(--primary)/0.06)]">
               <ModeIcon className="h-4 w-4 shrink-0 opacity-50" />
@@ -543,7 +536,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
                   aria-label="Command input"
                 />
               ) : (
-                // RichInput for both modes
                 <RichInput
                   ref={richInputRef}
                   value={query}
@@ -584,15 +576,12 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
             />
           )}
 
-          {/* Hint from input request */}
           {inputRequest && (
             <div className="px-4 py-3 text-xs text-muted-foreground border-b border-border">{inputRequest.hint}</div>
           )}
 
-          {/* Mode-specific header (e.g., search filters) */}
           {!inputRequest && currentResult.header}
 
-          {/* Item list */}
           {!inputRequest && (
             <ItemList
               items={items}

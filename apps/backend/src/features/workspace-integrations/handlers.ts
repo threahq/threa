@@ -16,24 +16,15 @@ const linearCallbackSchema = z.object({
 
 interface Dependencies {
   workspaceIntegrationService: WorkspaceIntegrationService
-  /**
-   * Allowlist of frontend origins (e.g. CORS allowed origins) the GitHub install
-   * callback is permitted to redirect to. Forwarded host headers that resolve to
-   * an origin outside this list fall back to a relative redirect, which prevents
-   * an attacker-controlled `x-forwarded-host` from turning the callback into an
-   * open redirect if the backend is ever reached without going through the
-   * trusted Cloudflare → control-plane proxy chain.
-   */
+  /** Origins the install callback may redirect to; anything else falls back to a relative redirect. */
   allowedFrontendOrigins: string[]
 }
 
 /**
- * Build a post-callback redirect to the frontend settings page for `provider`.
- *
- * Forwarded host validation prevents an attacker-controlled `x-forwarded-host`
- * from turning the callback into an open redirect if the backend is ever
- * reached without going through the trusted Cloudflare → control-plane proxy
- * chain. Outside the allowlist we fall back to a relative redirect.
+ * Forwarded-host validation prevents an attacker-controlled `x-forwarded-host`
+ * from turning the callback into an open redirect if the backend is reached
+ * outside the trusted proxy chain; outside the allowlist we fall back to a
+ * relative redirect.
  */
 export function buildProviderCallbackRedirectUrl(
   req: Pick<Request, "headers" | "protocol">,

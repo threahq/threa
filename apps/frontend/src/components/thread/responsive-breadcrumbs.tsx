@@ -104,7 +104,6 @@ export function ResponsiveBreadcrumbs({
   const renderAncestors = () => {
     if (ancestors.length === 0) return null
 
-    // Smallest breakpoint: collapse all ancestors into ellipsis dropdown
     if (maxVisibleAncestors === 0) {
       return (
         <BreadcrumbEllipsisDropdown

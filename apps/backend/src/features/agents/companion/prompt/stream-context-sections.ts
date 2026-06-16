@@ -1,10 +1,6 @@
 import { StreamTypes } from "@threa/types"
 import type { StreamContext } from "../../context-builder"
 
-/**
- * Build prompt section for scratchpads.
- * Personal, solo-first context. Conversation history is primary.
- */
 export function buildScratchpadPrompt(context: StreamContext, workspaceResearchEnabled: boolean): string {
   let section = "\n\n## Context\n\n"
   section += "You are in a personal scratchpad"
@@ -25,10 +21,6 @@ export function buildScratchpadPrompt(context: StreamContext, workspaceResearchE
   return section
 }
 
-/**
- * Build prompt section for channels.
- * Collaborative context with member awareness.
- */
 export function buildChannelPrompt(context: StreamContext): string {
   let section = "\n\n## Context\n\n"
   section += "You are in a channel"
@@ -55,10 +47,6 @@ export function buildChannelPrompt(context: StreamContext): string {
   return section
 }
 
-/**
- * Build prompt section for threads.
- * Nested discussion with hierarchy awareness.
- */
 export function buildThreadPrompt(context: StreamContext): string {
   let section = "\n\n## Context\n\n"
   section += "You are in a thread"
@@ -72,7 +60,6 @@ export function buildThreadPrompt(context: StreamContext): string {
     section += `\n\nThread description: ${context.streamInfo.description}`
   }
 
-  // Add thread hierarchy context
   if (context.threadContext && context.threadContext.path.length > 1) {
     section += `\n\nThread hierarchy (${context.threadContext.depth} levels deep):\n`
 
@@ -98,10 +85,6 @@ export function buildThreadPrompt(context: StreamContext): string {
   return section
 }
 
-/**
- * Build prompt section for DMs.
- * Two-party context, more focused than channels.
- */
 export function buildDmPrompt(context: StreamContext): string {
   let section = "\n\n## Context\n\n"
   section += "You are in a direct message conversation"

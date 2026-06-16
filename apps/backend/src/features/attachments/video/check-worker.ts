@@ -26,7 +26,6 @@ export function createVideoTranscodeCheckWorker(
     const done = await videoTranscodingService.checkStatus(attachmentId)
 
     if (!done) {
-      // Re-enqueue with delay for next poll
       await jobQueue.send(
         JobQueues.VIDEO_TRANSCODE_CHECK,
         { attachmentId, workspaceId },

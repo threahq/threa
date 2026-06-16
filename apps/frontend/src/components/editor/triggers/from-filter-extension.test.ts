@@ -33,13 +33,11 @@ describe("from: filter trigger - current behavior (with @)", () => {
   })
 
   it("should NOT match from: without @", () => {
-    // This is the current (broken?) behavior
     const match = findFromFilterMatch("from:")
     expect(match).toBeNull()
   })
 
   it("should NOT match from:martin without @", () => {
-    // This is the current (broken?) behavior
     const match = findFromFilterMatch("from:martin")
     expect(match).toBeNull()
   })

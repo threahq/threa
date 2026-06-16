@@ -1,11 +1,3 @@
-/**
- * PDF Processing Config Unit Tests
- *
- * Tests verify:
- * 1. isPdfAttachment correctly identifies PDF files
- * 2. Size tier thresholds are correctly defined
- */
-
 import { describe, test, expect } from "bun:test"
 import { isPdfAttachment, PDF_SIZE_THRESHOLDS, PDF_TEXT_THRESHOLDS } from "./config"
 

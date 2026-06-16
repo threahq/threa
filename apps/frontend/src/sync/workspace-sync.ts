@@ -59,10 +59,6 @@ import {
   withCounterState,
 } from "./unread-counters"
 
-// ============================================================================
-// Workspace socket handler payload types
-// ============================================================================
-
 /** Workspace user shape from backend user repository. */
 interface WorkspaceUserPayload {
   id: string
@@ -183,10 +179,6 @@ interface FeatureFlagsUpdatedPayload {
   targetUserId: string
   featureFlags: FeatureFlags
 }
-
-// ============================================================================
-// Workspace socket handler helpers
-// ============================================================================
 
 /**
  * Update the workspace bootstrap cache, or invalidate if it's not cached yet.
@@ -456,10 +448,6 @@ function resolveDmPeerUserId(dmUserIds: [string, string] | undefined, currentUse
   return dmUserIds.find((userId) => userId !== currentUserId) ?? null
 }
 
-// ============================================================================
-// Register workspace-level socket handlers
-// ============================================================================
-
 /**
  * Registers all workspace-level socket event handlers and returns a cleanup
  * function that unregisters them.
@@ -484,7 +472,6 @@ export function registerWorkspaceSocketHandlers(
   // entries through these same handlers — so no blanket `savedKeys`/
   // `scheduledKeys` invalidation is needed here.
 
-  // Handle stream created
   const handleStreamCreated = (payload: StreamPayload) => {
     let shouldJoinStreamRoom = false
     let shouldCacheStream = payload.stream.visibility !== Visibilities.PRIVATE
@@ -494,7 +481,6 @@ export function registerWorkspaceSocketHandlers(
     let dmPeerUserId: string | null = null
     let cachedStream: Stream & { lastMessagePreview?: LastMessagePreview | null } = payload.stream
 
-    // Add to workspace bootstrap cache (sidebar)
     const applied = updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
       const streamExists = old.streams.some((s) => s.id === payload.stream.id)
       const currentUser = refs.getCurrentUser()
@@ -605,13 +591,11 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
-  // Handle stream updated
   const handleStreamUpdated = (payload: StreamPayload) => {
     // For DMs the backend sends displayName: null (the name is derived from
     // the peer user on the frontend). Preserve whatever name is already cached.
     const isDmWithNullName = payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
 
-    // Update stream detail cache
     queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, payload.stream.id), (old) => {
       if (isDmWithNullName && old?.displayName) {
         return { ...payload.stream, displayName: old.displayName }
@@ -676,9 +660,7 @@ export function registerWorkspaceSocketHandlers(
     db.streams.update(payload.stream.id, idbUpdate)
   }
 
-  // Handle stream archived
   const handleStreamArchived = (payload: StreamPayload) => {
-    // Update stream bootstrap cache with archived stream
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       return { ...old, stream: payload.stream }
@@ -699,22 +681,18 @@ export function registerWorkspaceSocketHandlers(
     db.streams.update(payload.stream.id, { ...payload.stream, _cachedAt: Date.now() })
   }
 
-  // Handle stream unarchived
   const handleStreamUnarchived = (payload: StreamPayload) => {
-    // Update stream bootstrap cache with unarchived stream
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       return { ...old, stream: payload.stream }
     })
 
-    // Add back to workspace bootstrap cache (sidebar)
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as { streams?: Stream[] }
       if (!bootstrap.streams) return old
-      // Only add if not already present
       if (bootstrap.streams.some((s) => s.id === payload.stream.id)) {
-        // Update existing entry - merge to preserve lastMessagePreview
+        // Merge to preserve lastMessagePreview.
         return {
           ...bootstrap,
           streams: bootstrap.streams.map((s) => (s.id === payload.stream.id ? { ...s, ...payload.stream } : s)),
@@ -730,12 +708,10 @@ export function registerWorkspaceSocketHandlers(
     db.streams.update(payload.stream.id, { ...payload.stream, _cachedAt: Date.now() })
   }
 
-  // Handle workspace user added
   const handleWorkspaceUserAdded = (payload: WorkspaceUserAddedPayload) => {
     const now = Date.now()
     const { user } = payload
 
-    // Update workspace bootstrap cache with user if not already present.
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
       const users = getWorkspaceUsers(old)
       const incomingUser = toWorkspaceUser(user)
@@ -744,16 +720,13 @@ export function registerWorkspaceSocketHandlers(
       return withWorkspaceUsers(old, updatedUsers)
     })
 
-    // Cache user to IndexedDB
     db.workspaceUsers.put({
       ...toWorkspaceUser(user),
       _cachedAt: now,
     })
   }
 
-  // Handle workspace user removed
   const handleWorkspaceUserRemoved = (payload: WorkspaceUserRemovedPayload) => {
-    // Update workspace bootstrap cache
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as WorkspaceBootstrap
@@ -764,16 +737,13 @@ export function registerWorkspaceSocketHandlers(
       )
     })
 
-    // Remove from IndexedDB workspace users
     db.workspaceUsers.delete(payload.removedUserId)
   }
 
-  // Handle workspace user updated
   const handleWorkspaceUserUpdated = (payload: WorkspaceUserUpdatedPayload) => {
     const now = Date.now()
     const { user } = payload
 
-    // Update workspace bootstrap cache.
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as WorkspaceBootstrap
@@ -876,7 +846,6 @@ export function registerWorkspaceSocketHandlers(
       return withCounterState(old, applyStreamsReadAllOrdinals(toCounterState(old), payload.reads))
     })
 
-    // Update IDB unread state
     db.transaction("rw", [db.unreadState], async () => {
       const state = await db.unreadState.get(workspaceId)
       if (!state) return
@@ -971,7 +940,6 @@ export function registerWorkspaceSocketHandlers(
   // Always updates the preview; sets unread from the absolute message ordinal
   // (own messages and viewing advance the read position instead of raising it).
   const handleStreamActivity = (payload: StreamActivityPayload) => {
-    // Only update if it's for this workspace
     if (payload.workspaceId !== workspaceId) return
 
     const isViewingStream = refs.getCurrentStreamId() === payload.streamId
@@ -990,7 +958,6 @@ export function registerWorkspaceSocketHandlers(
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
 
-      // Only update if user is a member of this stream
       const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
       if (!isMember) return old
 
@@ -1060,13 +1027,11 @@ export function registerWorkspaceSocketHandlers(
 
   // Handle stream display name updated (from auto-naming service)
   const handleStreamDisplayNameUpdated = (payload: StreamDisplayNameUpdatedPayload) => {
-    // Update stream detail cache
     queryClient.setQueryData(streamKeys.detail(workspaceId, payload.streamId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       return { ...old, displayName: payload.displayName }
     })
 
-    // Update stream bootstrap cache
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.streamId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as { stream?: Stream }
@@ -1074,7 +1039,6 @@ export function registerWorkspaceSocketHandlers(
       return { ...old, stream: { ...bootstrap.stream, displayName: payload.displayName } }
     })
 
-    // Update workspace bootstrap cache (sidebar)
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as { streams?: Stream[] }
@@ -1087,11 +1051,9 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    // Update IndexedDB
     db.streams.update(payload.streamId, { displayName: payload.displayName, _cachedAt: Date.now() })
   }
 
-  // Handle stream member added
   const handleStreamMemberAdded = (payload: {
     workspaceId: string
     streamId: string
@@ -1142,7 +1104,6 @@ export function registerWorkspaceSocketHandlers(
       const membershipExists = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
       const streamExists = old.streams?.some((s) => s.id === payload.streamId)
 
-      // Write membership to IDB
       if (!membershipExists) {
         const now = Date.now()
         db.streamMemberships.put({
@@ -1185,7 +1146,6 @@ export function registerWorkspaceSocketHandlers(
     }
   }
 
-  // Handle stream member removed
   const handleStreamMemberRemoved = (payload: { workspaceId: string; streamId: string; memberId: string }) => {
     if (payload.workspaceId !== workspaceId) return
 
@@ -1224,7 +1184,6 @@ export function registerWorkspaceSocketHandlers(
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
       if (!currentMember || payload.memberId !== currentMember.id) return old
 
-      // Remove membership from IDB
       db.streamMemberships.delete(`${workspaceId}:${payload.streamId}`)
 
       const removedStream = old.streams?.find((s) => s.id === payload.streamId)
@@ -1243,7 +1202,6 @@ export function registerWorkspaceSocketHandlers(
 
   // Handle user preferences updated (from other sessions of the same user)
   const handleUserPreferencesUpdated = (payload: UserPreferencesUpdatedPayload) => {
-    // Only update if it's for this workspace
     if (payload.workspaceId !== workspaceId) return
 
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
@@ -1254,7 +1212,6 @@ export function registerWorkspaceSocketHandlers(
       }
     })
 
-    // Write to IDB
     db.userPreferences.put({
       ...payload.preferences,
       id: workspaceId,
@@ -1306,7 +1263,6 @@ export function registerWorkspaceSocketHandlers(
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, featureFlags: payload.featureFlags }))
   }
 
-  // Handle bot created
   const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
 
@@ -1319,7 +1275,6 @@ export function registerWorkspaceSocketHandlers(
     db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
   }
 
-  // Handle bot updated
   const handleBotUpdated = (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
 
@@ -1376,7 +1331,6 @@ export function registerWorkspaceSocketHandlers(
         unreadActivityCount: (old.unreadActivityCount ?? 0) + 1,
       }))
 
-      // Update IDB unread state
       db.transaction("rw", [db.unreadState], async () => {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return
@@ -1758,7 +1712,6 @@ export function registerWorkspaceSocketHandlers(
     void applyDraftDeleted(payload, workspaceId)
   }
 
-  // Register all handlers
   socket.on("stream:created", handleStreamCreated)
   socket.on("stream:updated", handleStreamUpdated)
   socket.on("stream:archived", handleStreamArchived)
@@ -1856,10 +1809,6 @@ export function registerWorkspaceSocketHandlers(
     socket.off("draft:deleted", handleDraftDeleted)
   }
 }
-
-// ============================================================================
-// Bootstrap application — writes workspace bootstrap data to IndexedDB
-// ============================================================================
 
 /**
  * Shred a WorkspaceBootstrap response into individual IDB tables.

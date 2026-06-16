@@ -1,9 +1,3 @@
-/**
- * Word Document Format Detection
- *
- * Detects Word document format using magic bytes rather than file extension.
- */
-
 import { WORD_MAGIC_BYTES } from "./config"
 
 export type WordFormat = "docx" | "doc"
@@ -19,12 +13,10 @@ export function detectWordFormat(buffer: Buffer): WordFormat | null {
     return null
   }
 
-  // Check for DOCX (ZIP archive starting with PK)
   if (matchesMagicBytes(buffer, WORD_MAGIC_BYTES.docx)) {
     return "docx"
   }
 
-  // Check for DOC (OLE compound document)
   if (matchesMagicBytes(buffer, WORD_MAGIC_BYTES.doc)) {
     return "doc"
   }
@@ -32,9 +24,6 @@ export function detectWordFormat(buffer: Buffer): WordFormat | null {
   return null
 }
 
-/**
- * Check if buffer starts with the given magic bytes.
- */
 function matchesMagicBytes(buffer: Buffer, magicBytes: readonly number[]): boolean {
   for (let i = 0; i < magicBytes.length; i++) {
     if (buffer[i] !== magicBytes[i]) {

@@ -1,8 +1,5 @@
 /**
- * Integration tests for the sidebar search panel — the desktop search surface
- * that replaced the quick switcher's in-palette search mode. The suggestion
- * popover and filter-syntax tests that used to live in
- * quick-switcher.integration.test.tsx moved here with the feature.
+ * Integration tests for the sidebar search panel — the desktop search surface.
  */
 import type React from "react"
 import { useState } from "react"
@@ -405,8 +402,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
     })
 
-    // Moved from quick-switcher.integration.test.tsx (BUG: in: filter should
-    // show #slug, not @stream_id) — the autocomplete now lives in this panel.
+    // Guards a regression: the in: filter must insert #slug, not @stream_id.
     it("inserts in:#slug when selecting a channel from the in: filter autocomplete", async () => {
       const user = userEvent.setup()
       renderPanel()
@@ -625,8 +621,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
     })
   })
 
-  // Moved from quick-switcher.integration.test.tsx — the mention suggestion
-  // popover behaviors ride with SEARCH_TRIGGERS, which now render here.
+  // The mention suggestion popover behaviors ride with SEARCH_TRIGGERS.
   describe("suggestion popover", () => {
     async function openMentionPopover(user: ReturnType<typeof userEvent.setup>) {
       const editor = screen.getByLabelText("Search messages")

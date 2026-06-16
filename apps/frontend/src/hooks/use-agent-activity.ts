@@ -34,7 +34,6 @@ export interface MessageAgentActivity {
   threadStreamId?: string
 }
 
-// Re-export from consolidated config for backward compatibility
 export { getStepInlineLabel as getStepLabel }
 
 interface ProgressEntry {
@@ -69,7 +68,6 @@ export function useAgentActivity(
   workspaceId: string,
   userId: string | null
 ): Map<string, MessageAgentActivity> {
-  // Track live activity from socket: sessionId → { triggerMessageId, personaName, currentStepType }
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
 
   // Mirror of `progressBySession` for synchronous reads inside event handlers —
@@ -126,7 +124,6 @@ export function useAgentActivity(
       }
     }
 
-    // Running = started minus terminated
     for (const id of terminated) {
       started.delete(id)
     }

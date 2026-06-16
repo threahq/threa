@@ -6,12 +6,7 @@ export interface PdfPrepareWorkerDeps {
   pdfProcessingService: PdfProcessingServiceLike
 }
 
-/**
- * Create the PDF prepare job handler.
- *
- * Thin wrapper delegating to the service.
- * Extracts text/images, classifies pages, fans out page jobs.
- */
+/** Phase 1: extract text/images, classify pages, fan out per-page jobs. */
 export function createPdfPrepareWorker(deps: PdfPrepareWorkerDeps): JobHandler<PdfPrepareJobData> {
   const { pdfProcessingService } = deps
 

@@ -7,7 +7,6 @@ import type { PersonaAgentInput, PersonaAgentResult } from "./persona-agent"
 import { StreamEventRepository } from "../streams"
 import { logger } from "../../lib/logger"
 
-/** Interface for any agent that can handle persona agent jobs */
 export interface PersonaAgentLike {
   run(input: PersonaAgentInput): Promise<PersonaAgentResult>
 }
@@ -105,7 +104,6 @@ export async function checkForUnseenMessages(params: {
   // Only check for USER messages - ignore persona responses to avoid infinite loops (single query, INV-30)
   const latestUserMessageSequence = await StreamEventRepository.getLatestUserMessageSequence(pool, streamId)
 
-  // No user messages at all, or no new user messages since we last checked
   if (!latestUserMessageSequence || latestUserMessageSequence <= lastSeenSequence) {
     return
   }
@@ -120,14 +118,13 @@ export async function checkForUnseenMessages(params: {
     "Found unseen user messages after session completion, dispatching follow-up job"
   )
 
-  // Dispatch a follow-up job to process the unseen messages
-  // We use a synthetic messageId since we're catching up on multiple messages
+  // Synthetic messageId: this catches up on multiple messages, not one.
   await jobQueue.send(JobQueues.PERSONA_AGENT, {
     workspaceId,
     streamId,
     messageId: `followup_${previousJobId}`,
     personaId,
-    triggeredBy: "system", // Follow-up jobs are system-triggered
+    triggeredBy: "system",
     trigger,
   })
 }

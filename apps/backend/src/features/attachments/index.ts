@@ -1,4 +1,3 @@
-// Repositories
 export { AttachmentRepository } from "./repository"
 export type { Attachment, InsertAttachmentParams, AttachmentWithExtraction } from "./repository"
 
@@ -10,7 +9,6 @@ export type { AttachmentReference, InsertAttachmentReferenceParams } from "./ref
 // path fails. See `access.ts`.
 export { isAttachmentReadableViaShareOrReference } from "./access"
 
-// Wire-shape mappers
 export { toAttachmentSummary } from "./summary"
 
 export { AttachmentExtractionRepository } from "./extraction-repository"
@@ -32,28 +30,22 @@ export type {
 export { PdfProcessingJobRepository } from "./pdf/job-repository"
 export type { PdfProcessingJob, InsertPdfProcessingJobParams } from "./pdf/job-repository"
 
-// Service
 export { AttachmentService, buildUploadParams, parseE2eUploadFlag } from "./service"
 export type { CreateAttachmentParams, UploadedFileFacts } from "./service"
 
-// Handlers
 export { createAttachmentHandlers } from "./handlers"
 
-// Outbox handlers
 export { AttachmentUploadedHandler } from "./uploaded-outbox-handler"
 export { AttachmentEmbeddingHandler } from "./embedding-outbox-handler"
 export type { AttachmentEmbeddingHandlerConfig } from "./embedding-outbox-handler"
 
-// Embedding worker
 export { createAttachmentEmbeddingWorker } from "./embedding-worker"
 export type { AttachmentEmbeddingWorkerDeps } from "./embedding-worker"
 export { isContentTypeEmbeddable, MIN_SUMMARY_LENGTH } from "./embedding-config"
 
-// Await processing
 export { awaitAttachmentProcessing, hasPendingAttachmentProcessing } from "./await-processing"
 export type { AwaitAttachmentProcessingResult } from "./await-processing"
 
-// Upload safety policy
 export { createMalwareScanner, isAttachmentSafeForSharing, safetyStatusBlockReason } from "./upload-safety-policy"
 export type {
   AttachmentSafetyPolicy,
@@ -62,7 +54,6 @@ export type {
   MalwareScanResult,
 } from "./upload-safety-policy"
 
-// Sub-feature re-exports
 export { ImageCaptionService, StubImageCaptionService, isImageAttachment } from "./image-caption"
 export type { ImageCaptionServiceDeps, ImageCaptionServiceLike } from "./image-caption"
 
@@ -95,7 +86,6 @@ export {
 } from "./video"
 export type { VideoTranscodingServiceDeps, VideoTranscodingServiceLike } from "./video"
 
-// Workers
 export { createImageCaptionWorker } from "./image-caption/worker"
 export { createImageThumbnailWorker } from "./image/worker"
 export { createPdfPrepareWorker } from "./pdf/prepare-worker"

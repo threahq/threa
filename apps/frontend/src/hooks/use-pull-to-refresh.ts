@@ -75,14 +75,11 @@ export function usePullToRefresh({ enabled, onRefresh }: PullToRefreshOptions) {
         return
       }
 
-      // Let the scroll container handle it if not at the top
       if (scrollEl && scrollEl.scrollTop > 1) return
 
-      // Never activate pull-to-refresh inside stream scroll containers —
-      // they use infinite scroll instead.
+      // Stream scroll containers use infinite scroll, not pull-to-refresh.
       if (scrollEl && scrollEl.dataset.suppressPullRefresh) return
 
-      // Own the gesture — prevent native scroll
       e.preventDefault()
 
       const d = Math.min(dy * RESISTANCE, MAX_PULL)
@@ -91,7 +88,6 @@ export function usePullToRefresh({ enabled, onRefresh }: PullToRefreshOptions) {
         dist = d
         setDistance(d)
 
-        // Haptic feedback at threshold crossings (both directions)
         if (d >= HARD_THRESHOLD && !crossedHard) {
           crossedHard = true
           navigator.vibrate?.([15, 30, 15])

@@ -7,15 +7,12 @@ import type { UserPreferences } from "@threa/types"
 export function applyPreferencesToDOM(prefs: UserPreferences) {
   const root = document.documentElement
 
-  // Theme
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches
   const dark = prefs.theme === "dark" || (prefs.theme === "system" && prefersDark)
   root.classList.toggle("dark", dark)
 
-  // Message display
   root.dataset.messageDisplay = prefs.messageDisplay
 
-  // Accessibility
   root.classList.toggle("reduced-motion", prefs.accessibility.reducedMotion)
   root.classList.toggle("high-contrast", prefs.accessibility.highContrast)
   root.dataset.fontSize = prefs.accessibility.fontSize

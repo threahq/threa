@@ -1,9 +1,7 @@
 import { BUILT_IN_AGENTS, ARIADNE_AGENT_ID } from "../built-in-agents"
 
-// Default model for companion responses
 export const COMPANION_MODEL_ID = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].model
 
-// Temperature for response generation
 const ariadneTemperature = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].temperature
 if (ariadneTemperature == null) {
   throw new Error("Built-in Ariadne configuration is missing temperature (expected a number).")

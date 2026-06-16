@@ -11,7 +11,6 @@ import type {
   ExcelMetadata,
 } from "@threa/types"
 
-// Internal row type (snake_case)
 interface AttachmentExtractionRow {
   id: string
   attachment_id: string
@@ -25,15 +24,12 @@ interface AttachmentExtractionRow {
   text_metadata: unknown | null
   word_metadata: unknown | null
   excel_metadata: unknown | null
-  // SELECT paths project `(summary_embedding IS NOT NULL)` to avoid shipping
-  // the 30KB-ish vector literal on every read; callers only ever need a
-  // presence check.
+  // Projected as `(summary_embedding IS NOT NULL)`, not the vector itself — see SELECT_FIELDS.
   summary_embedding: boolean
   created_at: Date
   updated_at: Date
 }
 
-// PDF-specific metadata
 export interface PdfMetadata {
   totalPages: number
   sizeTier: PdfSizeTier
@@ -46,7 +42,6 @@ export interface PdfSection {
   title: string
 }
 
-// Domain type (camelCase)
 export interface AttachmentExtraction {
   id: string
   attachmentId: string

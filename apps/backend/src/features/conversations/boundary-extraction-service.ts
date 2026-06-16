@@ -39,28 +39,19 @@ export class BoundaryExtractionService {
   ) {}
 
   /**
-   * Process a message for boundary extraction.
-   *
    * Three-phase pattern (INV-41) so the AI call holds no DB connection:
-   *   Phase 1: fetch all context (withClient, ~100-200ms)
-   *   Phase 2: AI extraction (no connection held, 1-5+ seconds for channels/threads)
-   *   Phase 3: persist all assignments + reassignments + completeness updates in one
+   *   Phase 1: fetch all context (withClient)
+   *   Phase 2: AI extraction (no connection held)
+   *   Phase 3: persist assignments + reassignments + completeness updates in one
    *            transaction; emit outbox events.
    *
-   * For scratchpads: no AI call. The message joins the active conversation if one
+   * Scratchpads take no AI call: the message joins the active conversation if one
    * exists, otherwise creates a new one.
-   *
-   * For channels/threads: the extractor returns multi-assignment + reassignment
-   * decisions in a single call. Threads no longer take a deterministic shortcut —
-   * the LLM sees the parent message's conversation alongside the thread's active
-   * conversation and decides.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
-    // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms).
-    // Includes the new message's attachment IDs so we can await their processing
-    // once the connection is released (INV-41) — extractions for the full
-    // new+context set are fetched on the pool after the await, mirroring the
-    // pattern in streams/naming-service.ts.
+    // Phase 1: fetch context; collect new-message attachment IDs so their
+    // processing can be awaited after the connection is released (INV-41), then
+    // fetch extractions on the pool — mirrors streams/naming-service.ts.
     const fetchedData = await withClient(this.pool, async (client) => {
       const message = await MessageRepository.findById(client, messageId)
       if (!message) {
@@ -72,7 +63,6 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContextBase: null }
       }
 
-      // For scratchpads: just fetch existing conversations (no AI needed)
       if (stream.type === StreamTypes.SCRATCHPAD) {
         const existingConversations = await ConversationRepository.findByStream(client, stream.id)
         return {
@@ -125,10 +115,9 @@ export class BoundaryExtractionService {
           ? this.buildConversationSummaries(parentMessageConversations, [], contextMessageIdSet)
           : undefined
 
-      // New-message attachment IDs only — we await *just* these because they
-      // are the payload most likely to change the classification decision.
-      // Surrounding-context attachments were almost always processed by their
-      // own earlier boundary-extract runs.
+      // Await only new-message attachments: they're the payload most likely to
+      // change classification. Context attachments were processed by their own
+      // earlier boundary-extract runs.
       const newMessageAttachments = await AttachmentRepository.findByMessageId(client, message.id)
       const newMessageAttachmentIds = newMessageAttachments.map((a) => a.id)
 
@@ -173,9 +162,8 @@ export class BoundaryExtractionService {
       validReassignmentMessageIds,
     } = fetchedData
 
-    // Phase 1.5 (channels/threads only): await new-message attachment processing
-    // with no DB connection held (INV-41), then fetch extractions for new +
-    // context messages on the pool (INV-30).
+    // Phase 1.5 (channels/threads only): await attachment processing with no DB
+    // connection held (INV-41), then fetch extractions on the pool (INV-30).
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
@@ -206,7 +194,7 @@ export class BoundaryExtractionService {
       extractionContext = { ...extractionContextBase, attachmentsByMessageId }
     }
 
-    // Phase 2: Determine conversation (AI call only for channels/threads, 1-5+ seconds!)
+    // Phase 2: determine conversation (AI call only for channels/threads).
     let decision: ConversationDecision
 
     if (stream.type === StreamTypes.SCRATCHPAD) {
@@ -253,7 +241,7 @@ export class BoundaryExtractionService {
       }
     }
 
-    // Phase 3: Save result in ONE transaction (fast, ~100ms)
+    // Phase 3: persist everything in one transaction.
     return withTransaction(this.pool, async (client) => {
       // For scratchpads: race-safe re-check that the active conversation still
       // exists / doesn't exist (another process may have created it).
@@ -274,7 +262,6 @@ export class BoundaryExtractionService {
         }
       }
 
-      // Resolve any null assignments to a freshly created conversation.
       let newConversation: Conversation | null = null
       const resolvedAssignments: { conversationId: string; isPrimary: boolean }[] = []
       for (const a of decision.assignments) {
@@ -296,7 +283,6 @@ export class BoundaryExtractionService {
         }
       }
 
-      // Track which conversations were touched, for outbox event fan-out.
       const touchedConversationIds = new Set<string>()
       const reassignmentEvents: {
         messageId: string
@@ -344,7 +330,6 @@ export class BoundaryExtractionService {
         candidateReassignments.map((r) => r.messageId)
       )
 
-      // Cache message lookups (need authorId for participant_ids bookkeeping).
       const messagesById = new Map<string, Message>([[message.id, message]])
 
       for (const r of candidateReassignments) {
@@ -374,7 +359,6 @@ export class BoundaryExtractionService {
           continue
         }
         if (existingPrimary.id === toConvId) {
-          // No-op move; the LLM is asking us to move the message to where it already lives.
           continue
         }
 
@@ -409,7 +393,6 @@ export class BoundaryExtractionService {
         })
       }
 
-      // Now assign the new message — primary + any secondaries.
       for (const a of resolvedAssignments) {
         if (a.isPrimary) {
           await ConversationRepository.addPrimaryMessage(
@@ -425,7 +408,6 @@ export class BoundaryExtractionService {
         touchedConversationIds.add(a.conversationId)
       }
 
-      // Apply completeness updates.
       if (decision.completenessUpdates) {
         for (const update of decision.completenessUpdates) {
           if (!decision.validUpdateTargets.has(update.conversationId)) {
@@ -444,9 +426,8 @@ export class BoundaryExtractionService {
         }
       }
 
-      // Bump last_activity_at on every touched conversation so its sort position
-      // and staleness reflect the activity (assignments/reassignments don't bump
-      // it implicitly — that lived in the array UPDATE before).
+      // Bump last_activity_at on every touched conversation so sort position and
+      // staleness reflect the activity; assignments/reassignments don't bump it.
       const touchedIds = Array.from(touchedConversationIds)
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
@@ -457,9 +438,6 @@ export class BoundaryExtractionService {
         parentStreamId = parentMessage?.streamId
       }
 
-      // Emit outbox events for every touched conversation.
-      // The conversation that received the new message as primary is reported
-      // first (as conversation:created if it's new, conversation:updated otherwise).
       const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
       const primaryConvId = primaryAssignment?.conversationId ?? null
 
@@ -583,5 +561,4 @@ function buildAttachmentContextMap(
   return result
 }
 
-// Re-export type for service consumers
 export type { PoolClient }

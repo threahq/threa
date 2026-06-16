@@ -1,4 +1,3 @@
-// LangGraph PostgreSQL checkpointer (backend-only)
 export { createPostgresCheckpointer } from "./postgresql-checkpointer"
 
 // Shared helpers live in @threa/agent-runtime; re-exported here so this barrel

@@ -328,7 +328,6 @@ export function MemoryPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
-      {/* Header */}
       <header className="border-b bg-card/50">
         <div className="flex h-12 items-center gap-2 px-4">
           <SidebarToggle location="page" />
@@ -369,7 +368,6 @@ export function MemoryPage() {
           </Button>
         </div>
 
-        {/* Filter bar */}
         <div className="flex items-center gap-2 overflow-x-auto border-t border-border/40 px-4 py-2 scrollbar-none">
           <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wide mr-1 shrink-0">
             Filters
@@ -508,7 +506,6 @@ export function MemoryPage() {
         )}
       </div>
 
-      {/* Mobile detail drawer */}
       {isMobile && (
         <Drawer
           open={!!selectedMemoId}

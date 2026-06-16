@@ -372,10 +372,10 @@ describe("EventService.editMessage version capture", () => {
     // editMessage refuses edits in E2E streams at the sink (INV-E1); default to
     // non-E2E so the plaintext edit path runs.
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    // editMessage now looks up the stream post-edit to decide whether to
-    // publish a thread-summary update to the parent (for reply edits). Default
-    // to a non-thread stream so the publishParentThreadUpdate branch short-
-    // circuits — tests that care about the thread path can override per case.
+    // editMessage looks up the stream post-edit to decide whether to publish a
+    // thread-summary update to the parent (for reply edits). Default to a
+    // non-thread stream so the publishParentThreadUpdate branch short-circuits
+    // — tests that care about the thread path can override per case.
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_1",
       type: "scratchpad",
@@ -411,9 +411,9 @@ describe("EventService.editMessage version capture", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
-    // Edit path now also refreshes the attachment_references projection in
-    // the same transaction; default mocks let the version-capture tests run
-    // without exercising the projection. Tests that care override these.
+    // Edit path also refreshes the attachment_references projection in the same
+    // transaction; default mocks let the version-capture tests run without
+    // exercising the projection. Tests that care override these.
     spyOn(AttachmentReferenceRepository, "deleteByMessageId").mockResolvedValue(0)
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
   })

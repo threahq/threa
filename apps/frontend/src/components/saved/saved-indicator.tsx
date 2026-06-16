@@ -9,11 +9,9 @@ interface SavedIndicatorProps {
 }
 
 /**
- * Compact inline chip rendered next to a message's timestamp when the viewer
- * has saved it. Renders a different variant per status so users don't
- * accidentally "re-save" a message that's already in their done/archived
- * lists. For status=saved, `ReminderBadge` renders beside the chip using its
- * existing future/reminded logic so the visual language matches the Saved view.
+ * Inline chip next to a message timestamp when the viewer has saved it. A
+ * distinct variant per status keeps users from "re-saving" a message already
+ * in their done/archived lists.
  */
 export function SavedIndicator({ saved, className }: SavedIndicatorProps) {
   if (!saved) return null

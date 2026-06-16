@@ -125,8 +125,7 @@ function TokenReadyView({
 }) {
   return (
     <div className="space-y-6 px-4 sm:px-6">
-      {/* Hero: halo'd key icon + "REVEAL ONCE" stamp. Communicates that this
-          moment is ceremonial — the plaintext token only exists right now. */}
+      {/* The plaintext token only exists right now — this view is gone once the dialog closes. */}
       <div className="flex flex-col items-center gap-3 pt-1">
         <div className="relative flex h-14 w-14 items-center justify-center">
           <div aria-hidden className="absolute inset-0 rounded-full bg-primary/20 blur-xl" />
@@ -137,9 +136,6 @@ function TokenReadyView({
         <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Reveal once</span>
       </div>
 
-      {/* Spotlight card: warm primary-tinted border, monospace url, inline copy.
-          The card feels like a small vault — when the dialog closes, this view
-          is gone forever. */}
       <div className="overflow-hidden rounded-lg border border-primary/30 bg-gradient-to-b from-primary/5 to-transparent">
         <div className="flex items-center gap-2 px-3 py-2">
           <LinkIcon className="h-3.5 w-3.5 shrink-0 text-primary" />

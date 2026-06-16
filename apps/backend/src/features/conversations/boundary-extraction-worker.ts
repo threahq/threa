@@ -6,10 +6,6 @@ export interface BoundaryExtractionWorkerDeps {
   service: BoundaryExtractionService
 }
 
-/**
- * Create the boundary extraction job handler for queue system.
- * Thin wrapper that delegates to the service.
- */
 export function createBoundaryExtractionWorker(
   deps: BoundaryExtractionWorkerDeps
 ): JobHandler<BoundaryExtractionJobData> {

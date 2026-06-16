@@ -287,7 +287,6 @@ describe("extractOEmbedDescription", () => {
   })
 })
 
-/** Build a streaming text/html Response that yields the given chunks in order. */
 function streamingHtmlResponse(chunks: string[]): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({

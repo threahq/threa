@@ -38,7 +38,6 @@ export function ModeTabs({
     }
   }, [])
 
-  // Focus the tab when focusedTabIndex changes
   useEffect(() => {
     if (focusedTabIndex !== null && tabRefs.current[focusedTabIndex]) {
       tabRefs.current[focusedTabIndex]?.focus()

@@ -30,9 +30,6 @@ function normalizeRoomPattern(room: string): string {
     .replace(/user:[\w]+/, "user:{userId}")
 }
 
-/**
- * Extract workspaceId from room string.
- */
 function extractWorkspaceId(room: string): string {
   const match = room.match(/^ws:([^:]+)/)
   return match ? match[1] : "-"
@@ -42,9 +39,6 @@ function isJoinAccessError(error: unknown): boolean {
   return error instanceof HttpError && (error.status === 403 || error.status === 404)
 }
 
-/**
- * Track per-socket state for metrics.
- */
 interface SocketMetricsState {
   connectTime: bigint
   joinedRooms: Map<string, { workspaceId: string; roomPattern: string }>
@@ -73,20 +67,14 @@ function deriveDeviceKey(userAgent: string | undefined): string {
 export function registerSocketHandlers(io: Server, deps: Dependencies) {
   const { pool, authService, streamService, pushService, userSocketRegistry, sessionAbortRegistry } = deps
 
-  // ===========================================================================
-  // Authentication middleware (shared with the voice namespace — see lib/socket-auth)
-  // ===========================================================================
+  // Auth middleware is shared with the voice namespace — see lib/socket-auth
   io.use(createSocketAuthMiddleware(authService))
 
-  // ===========================================================================
-  // Connection handlers
-  // ===========================================================================
   io.on("connection", (socket) => {
     const workosUserId = socket.data.workosUserId
     userSocketRegistry.register(workosUserId, socket)
     logger.debug({ workosUserId, socketId: socket.id }, "Socket connected")
 
-    // Initialize metrics state for this socket
     const metricsState: SocketMetricsState = {
       connectTime: process.hrtime.bigint(),
       joinedRooms: new Map(),
@@ -95,9 +83,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     // Track user + permission rooms per workspace for auto-leave on workspace leave
     const userRooms = new Map<string, { userId: string; userRoom: string; permissionRooms: string[] }>()
 
-    // =========================================================================
-    // Room management
-    // =========================================================================
     socket.on("join", async (room: string, callback?: (result: { ok: boolean; error?: string }) => void) => {
       const workspaceId = extractWorkspaceId(room)
       const roomPattern = normalizeRoomPattern(room)
@@ -153,7 +138,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           })
         }
 
-        // Track metrics
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
         metricsState.joinedRooms.set(room, { workspaceId: wsId, roomPattern })
 
@@ -166,7 +150,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const streamMatch = room.match(/^ws:([^:]+):stream:(.+)$/)
       if (streamMatch) {
         const [, wsId, streamId] = streamMatch
-        // Resolve user for stream access validation
         const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
         if (!workspaceUser) {
           socket.emit("error", { message: "Not authorized to join this stream" })
@@ -187,7 +170,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         }
         socket.join(room)
 
-        // Track metrics
         wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
         metricsState.joinedRooms.set(room, { workspaceId: wsId, roomPattern })
 
@@ -215,7 +197,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const sessionMatch = room.match(/^ws:([^:]+):agent_session:(.+)$/)
       if (sessionMatch) {
         const [, wsId, agentSessionId] = sessionMatch
-        // Verify user has access to the session's stream
         const session = await AgentSessionRepository.findById(pool, agentSessionId)
         if (!session) {
           socket.emit("error", { message: "Session not found" })
@@ -223,7 +204,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           callback?.({ ok: false, error: "Session not found" })
           return
         }
-        // Resolve user for stream access validation
         const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
         if (!workspaceUser) {
           socket.emit("error", { message: "Not authorized to join this session" })
@@ -253,7 +233,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         return
       }
 
-      // Unknown room format
       socket.emit("error", { message: "Invalid room format" })
       wsMessagesTotal.inc({
         workspace_id: workspaceId,
@@ -300,12 +279,10 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       logger.debug({ workosUserId, room }, "Left room")
     })
 
-    // =========================================================================
     // Graceful research abort: tells the workspace_research tool to stop at the
     // next safe checkpoint and return whatever partial results were collected.
     // The session continues running normally with the partial context — this is
     // NOT the same as deleting/superseding the session, which uses shouldAbort.
-    // =========================================================================
     socket.on(
       "agent_session:research:abort",
       async (
@@ -371,9 +348,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       }
     )
 
-    // =========================================================================
-    // Heartbeat for push notification session tracking
-    // =========================================================================
     let lastHeartbeatAt = 0
     // Interaction-driven heartbeats bypass the throttle: the client only emits
     // them on the first interaction after a quiet stretch, and we want the
@@ -407,7 +381,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     socket.on("disconnect", () => {
       userSocketRegistry.unregister(workosUserId, socket)
 
-      // Clean up metrics for all joined rooms
       const connectionDurationSeconds = Number(process.hrtime.bigint() - metricsState.connectTime) / 1e9
       const workspaceIds = new Set<string>()
 
@@ -416,7 +389,6 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         workspaceIds.add(roomInfo.workspaceId)
       }
 
-      // Observe duration per unique workspace
       for (const workspaceId of workspaceIds) {
         wsConnectionDuration.observe({ workspace_id: workspaceId }, connectionDurationSeconds)
       }

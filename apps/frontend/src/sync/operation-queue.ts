@@ -190,9 +190,8 @@ async function executeOperation(
       // Updates carry an `expectedVersion` snapshot — once that version is
       // stale (the user finished a session and another save landed), the
       // server returns STALE_VERSION which is not a transient failure. We
-      // deliberately do NOT enqueue updates today; the editor surfaces the
-      // conflict synchronously and the user re-saves with the latest
-      // version. This case is reserved for a future opt-in.
+      // deliberately do NOT enqueue updates; the editor surfaces the conflict
+      // synchronously and the user re-saves with the latest version.
       throw new Error("update_scheduled_message replay is not implemented")
 
     case "dispatch_command": {

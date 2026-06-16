@@ -132,7 +132,6 @@ export const DateFilterExtension = Extension.create<DateFilterOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as DateFilterItem
-          // Insert plain text: "after:2025-01-15 " or "before:2025-01-15 "
           editor.chain().focus().deleteRange(range).insertContent(`${item.filterType}:${item.value} `).run()
         },
       }),

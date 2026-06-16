@@ -168,7 +168,7 @@ export class PersonaAgent {
   /**
    * The plaintext TurnDriver of the turn contract. Long-lived (INV-13): each
    * turn passes its own TurnRequest + TurnSink; the driver runs AgentRuntime
-   * in-process exactly as before.
+   * in-process.
    */
   private readonly turnDriver: InProcessTurnDriver
 
@@ -213,7 +213,6 @@ export class PersonaAgent {
       currentTime,
     } = input
 
-    // Step 1: Load and validate persona + stream
     const precheck = await withClient(pool, async (client) => {
       const persona = await PersonaRepository.findById(client, personaId, workspaceId)
       if (!persona || persona.status !== "active") {
@@ -257,7 +256,7 @@ export class PersonaAgent {
 
     const { persona, stream, initialSequence, triggerMessageRevision, streamToolPolicy } = precheck
 
-    // Step 2: For channel mentions, create thread eagerly so session events go there
+    // Create the thread eagerly so session events go there for channel mentions.
     const isChannelMention = trigger === AgentTriggers.MENTION && stream.type === StreamTypes.CHANNEL
     let sessionStreamId = streamId
     let channelStreamId: string | undefined
@@ -273,7 +272,6 @@ export class PersonaAgent {
       logger.info({ threadId: thread.id, streamId, messageId }, "Created thread for channel mention (eager)")
     }
 
-    // Step 3: Run with session lifecycle
     const result = await withCompanionSession(
       {
         pool,
@@ -309,7 +307,6 @@ export class PersonaAgent {
         // AI call (INV-41).
         const policy = await withClient(pool, (client) => resolveContextWindowPolicy(client, { stream }))
 
-        // Build all context the agent needs
         const agentContext = await buildAgentContext(
           { db: pool, userPreferencesService, conversationSummaryService },
           { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime }
@@ -387,11 +384,10 @@ export class PersonaAgent {
           }
         }
 
-        // Build workspace agent callback for on-demand workspace research.
-        // The callback now accepts a signal, substep callback, and deadline sourced from
-        // the tool layer via AgentRuntime.toolSignalProvider + AgentToolConfig.execute.onProgress.
-        // Signal comes from SessionAbortRegistry — cancelling aborts gracefully (partial results)
-        // rather than failing the whole session.
+        // Build workspace agent callback for on-demand workspace research. The
+        // signal comes from SessionAbortRegistry via AgentRuntime.toolSignalProvider —
+        // cancelling aborts gracefully (partial results) rather than failing the
+        // whole session.
         let runWorkspaceAgent:
           | ((
               query: string,
@@ -603,7 +599,6 @@ export class PersonaAgent {
           }),
         })
 
-        // Stub mode: send canned response, skip AI loop
         if (stubResponse) {
           const msg = await doSendMessage({ content: stubResponse, sources: [] })
           return {
@@ -613,7 +608,6 @@ export class PersonaAgent {
           }
         }
 
-        // Get model
         const model = ai.getLanguageModel(persona.model)
         const parsed = ai.parseModel(persona.model)
 

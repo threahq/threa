@@ -12,10 +12,6 @@ import { toVercelToolDefs } from "./agent-tool"
 import type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
 const DEFAULT_MAX_ITERATIONS = 20
 const KEEP_RESPONSE_TOOL_NAME = "keep_response"
 const MAX_REPEATED_INVALID_DRAFTS = 3
@@ -122,10 +118,6 @@ export interface AgentRuntimeResult {
   noMessageReason?: string
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 interface PendingMessage {
   content: string
   sources?: SourceItem[]
@@ -170,10 +162,6 @@ function makeToolResult(tc: { toolCallId: string; toolName: string }, value: str
   }
 }
 
-// ---------------------------------------------------------------------------
-// AgentRuntime
-// ---------------------------------------------------------------------------
-
 export class AgentRuntime {
   private readonly maxIterations: number
   private readonly observers: AgentObserver[]
@@ -203,7 +191,6 @@ export class AgentRuntime {
   async run(): Promise<AgentRuntimeResult> {
     const nm = this.config.newMessages
 
-    // Emit session start
     const inputSummary = this.extractInputSummary()
     await this.emit({ type: "session:start", sessionId: nm?.sessionId ?? "", inputSummary })
 
@@ -286,7 +273,6 @@ export class AgentRuntime {
       )
       const durationMs = Date.now() - startTime
 
-      // Record thinking
       if (result.text.trim() || result.toolCalls.length > 0) {
         const thinkingContent = result.text.trim()
           ? result.text
@@ -298,11 +284,9 @@ export class AgentRuntime {
         lastContentStep = result.text.trim()
       }
 
-      // Add assistant message to conversation
       const assistantMsg = result.response.messages[0]
       if (assistantMsg) conversation.push(assistantMsg)
 
-      // ── Text-only response (no tool calls) ──
       if (result.toolCalls.length === 0) {
         const currentText = extractAssistantText(result)
         if (currentText) {
@@ -383,7 +367,6 @@ export class AgentRuntime {
         break
       }
 
-      // ── Tool calls present ──
       const execResult = await this.executeToolCalls(
         result.toolCalls.map((tc: { toolCallId: string; toolName: string; input: unknown }) => ({
           toolCallId: tc.toolCallId,
@@ -401,7 +384,6 @@ export class AgentRuntime {
       }
       conversation.push(...execResult.extraMessages)
 
-      // --- Finalize or reconsider ---
       if (nm) {
         const newMessages = await nm.check(nm.streamId, lastProcessedSequence, nm.personaId)
 
@@ -560,10 +542,6 @@ export class AgentRuntime {
     return { messagesSent, sentMessageIds: sent.ids, sentContents: sent.contents, lastProcessedSequence, sources }
   }
 
-  // ---------------------------------------------------------------------------
-  // Tool execution
-  // ---------------------------------------------------------------------------
-
   private async executeToolCalls(
     toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>,
     currentSources: SourceItem[],
@@ -646,18 +624,15 @@ export class AgentRuntime {
         )
         const durationMs = Date.now() - startTime
 
-        // Accumulate sources
         if (toolResult.sources && toolResult.sources.length > 0) {
           sources = mergeSourceItems(sources, toolResult.sources)
         }
 
-        // Accumulate system context
         if (toolResult.systemContext?.trim()) {
           const newCtx = toolResult.systemContext.trim()
           retrievedContext = retrievedContext ? `${retrievedContext}\n\n${newCtx}` : newCtx
         }
 
-        // Build trace
         const traceContent = agentTool.config.trace.formatContent(tc.input, toolResult)
         const traceSources = agentTool.config.trace.extractSources?.(tc.input, toolResult)
 
@@ -671,7 +646,6 @@ export class AgentRuntime {
           trace: { stepType: agentTool.config.trace.stepType, content: traceContent, sources: traceSources },
         })
 
-        // Tool result → LLM
         resultParts.push(makeToolResult(tc, protectToolOutputText(toolResult.output)))
 
         // Multimodal media → injected as user messages (tool results are
@@ -739,10 +713,6 @@ export class AgentRuntime {
     return { resultParts, extraMessages, pendingMessages, keepResponseReason, sources, retrievedContext }
   }
 
-  // ---------------------------------------------------------------------------
-  // Message commit
-  // ---------------------------------------------------------------------------
-
   private async commitMessage(
     pending: { content: string; sources: SourceItem[] },
     sent: { ids: string[]; contents: string[] }
@@ -806,10 +776,6 @@ export class AgentRuntime {
     conversation.push({ role: "user", content })
   }
 
-  // ---------------------------------------------------------------------------
-  // New message injection
-  // ---------------------------------------------------------------------------
-
   private async injectNewMessages(
     newMessages: NewMessageInfo[],
     lastProcessedSequence: bigint,
@@ -828,10 +794,6 @@ export class AgentRuntime {
 
     return maxSequence
   }
-
-  // ---------------------------------------------------------------------------
-  // Event emission
-  // ---------------------------------------------------------------------------
 
   private async emit(event: AgentEvent): Promise<void> {
     for (const observer of this.observers) {
@@ -881,10 +843,6 @@ export class AgentRuntime {
     }
     return wrapped()
   }
-
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
 
   private extractInputSummary(): string | undefined {
     const lastUserMsg = [...this.config.messages].reverse().find((m) => m.role === "user")

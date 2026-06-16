@@ -196,14 +196,11 @@ export const AIBudgetRepository = {
   },
 
   /**
-   * Upsert with partial update semantics.
-   * - On INSERT: uses defaults for unprovided fields
-   * - On UPDATE (conflict): preserves existing values for unprovided fields
-   *
-   * This is atomic and avoids race conditions from find-then-update patterns.
+   * Atomic upsert with partial update semantics: INSERT applies defaults for
+   * unprovided fields, UPDATE preserves existing values for them. Avoids
+   * find-then-update races (INV-20).
    */
   async upsertPartial(db: Querier, params: UpsertAIBudgetParams): Promise<AIBudget> {
-    // Use null-or-value to distinguish "not provided" from explicit values
     const monthlyBudgetUsd = params.monthlyBudgetUsd ?? null
     const alertThreshold50 = params.alertThreshold50 ?? null
     const alertThreshold80 = params.alertThreshold80 ?? null
@@ -296,7 +293,6 @@ export const AIBudgetRepository = {
     return mapRowToBudget(result.rows[0])
   },
 
-  // User quotas
   async findUserQuota(db: Querier, workspaceId: string, userId: string): Promise<AIUserQuota | null> {
     const result = await db.query<AIUserQuotaRow>(sql`
       SELECT ${sql.raw(QUOTA_FIELDS)} FROM ai_user_quotas
@@ -335,7 +331,6 @@ export const AIBudgetRepository = {
     return result.rowCount !== null && result.rowCount > 0
   },
 
-  // Alerts
   async findAlert(
     db: Querier,
     workspaceId: string,

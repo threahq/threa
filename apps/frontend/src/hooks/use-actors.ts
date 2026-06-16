@@ -61,12 +61,10 @@ export interface ActorLookup {
 export function useActors(workspaceId: string): ActorLookup {
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
 
-  // Reactive data from IDB — updates automatically when IDB changes
   const users = useWorkspaceUsers(workspaceId)
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
 
-  // Build lookup maps for O(1) access in callbacks
   const userMap = useMemo(() => new Map(users.map((u) => [u.id, u])), [users])
   const personaMap = useMemo(() => new Map(personas.map((p) => [p.id, p])), [personas])
   const botMap = useMemo(() => new Map(bots.map((b) => [b.id, b])), [bots])
@@ -93,7 +91,6 @@ export function useActors(workspaceId: string): ActorLookup {
         return botMap.get(actorId)?.name ?? "Bot"
       }
 
-      // actorType === "user" — resolve workspace-scoped name
       return userMap.get(actorId)?.name || actorId.substring(0, 8)
     },
     [userMap, personaMap, botMap]

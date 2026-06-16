@@ -27,7 +27,6 @@ const FILTER_TYPES: FilterType[] = ["from", "with", "in", "type", "status", "aft
  * - Multiple consecutive spaces are collapsed
  */
 export function parse(input: string): QueryNode[] {
-  // Normalize: strip leading ? and trim
   let normalized = input.trim()
   if (normalized.startsWith("?")) {
     normalized = normalized.slice(1).trimStart()
@@ -64,7 +63,6 @@ function tokenize(input: string): string[] {
 
     if (char === '"') {
       if (inQuotes) {
-        // End of quoted string
         tokens.push(`"${current}"`)
         current = ""
         inQuotes = false
@@ -77,7 +75,6 @@ function tokenize(input: string): string[] {
         inQuotes = true
       }
     } else if (char === " " && !inQuotes) {
-      // Space outside quotes - push current token
       if (current.trim()) {
         tokens.push(current.trim())
       }
@@ -87,7 +84,6 @@ function tokenize(input: string): string[] {
     }
   }
 
-  // Don't forget the last token
   if (current.trim()) {
     if (inQuotes) {
       // Unclosed quote - treat as regular tokens
@@ -108,13 +104,11 @@ function parseToken(token: string): QueryNode | null {
     return null
   }
 
-  // Check for quoted string
   if (token.startsWith('"') && token.endsWith('"')) {
     const text = token.slice(1, -1)
     return { type: "text", text, isQuoted: true } as TextNode
   }
 
-  // Check for filter pattern: filterType:value
   for (const filterType of FILTER_TYPES) {
     const prefix = `${filterType}:`
     if (token.startsWith(prefix)) {

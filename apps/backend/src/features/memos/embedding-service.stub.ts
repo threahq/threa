@@ -3,10 +3,6 @@ import { logger } from "../../lib/logger"
 
 const STUB_EMBEDDING_DIMENSION = 1536
 
-/**
- * Stub implementation of EmbeddingService for testing.
- * Returns zero vectors instead of calling the embedding API.
- */
 export class StubEmbeddingService implements EmbeddingServiceLike {
   async embed(_text: string, _context?: EmbeddingContext): Promise<number[]> {
     logger.debug("Stub embedding service - returning zero vector")

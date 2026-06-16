@@ -86,7 +86,6 @@ export function DraftsPage() {
     })
   }, [drafts, handleSelectDraft, handleDeleteClick])
 
-  // Handle item selection (navigate or open in new tab)
   const handleSelectItem = useCallback((item: QuickSwitcherItem, withModifier: boolean) => {
     if (withModifier && item.href) {
       window.open(item.href, "_blank")
@@ -152,7 +151,6 @@ export function DraftsPage() {
         </main>
       </div>
 
-      {/* Delete confirmation dialog */}
       <DeleteDraftConfirmDialog
         open={!!draftToDelete}
         onOpenChange={(open) => !open && handleCancelDelete()}

@@ -4,13 +4,9 @@ import { cn } from "@/lib/utils"
 import { useLinkPreviewCollapse } from "@/hooks/use-link-preview-collapse"
 
 /**
- * Shared cap on every card-style link preview's body height. Tall content
- * (GitHub diffs, long READMEs, chatty PR/issue/comment bodies) clips to this
- * ceiling so it can't dominate a message; short content keeps its natural
- * height so cards never render awkward trailing whitespace.
- *
- * Expressed in pixels because overflow detection compares `scrollHeight`
- * against this value. Keep in sync with `BODY_HEIGHT_CLASS`.
+ * Shared cap on every card-style link preview's body height. In pixels because
+ * overflow detection compares `scrollHeight` against this value. Keep in sync
+ * with `BODY_HEIGHT_CLASS`.
  */
 export const LINK_PREVIEW_BODY_HEIGHT_PX = 128
 const BODY_HEIGHT_CLASS = "max-h-32"
@@ -18,20 +14,17 @@ const BODY_HEIGHT_CLASS = "max-h-32"
 interface LinkPreviewBodyProps {
   children: ReactNode
   /**
-   * Scopes the expand/collapse persistence key. When absent (tests or
-   * transient contexts), toggling is disabled and state stays in IDB-free
-   * memory — the clamp still applies so layout is consistent.
+   * Scopes the expand/collapse persistence key. When absent (tests or transient
+   * contexts), toggling is disabled and state stays in memory; the clamp still applies.
    */
   messageId: string | undefined
   previewId: string
 }
 
 /**
- * Clamps arbitrary preview content to a shared fixed height and reveals a
- * "Show more" / "Show less" toggle when the natural content overflows. The
- * expansion choice is persisted via `useLinkPreviewCollapse` so reloads
- * restore the user's selection, mirroring the collapsible markdown block
- * pattern used elsewhere in the timeline.
+ * Clamps preview content to a shared fixed height and reveals a "Show more" /
+ * "Show less" toggle when the content overflows. The expansion choice persists
+ * via `useLinkPreviewCollapse` so reloads restore the user's selection.
  */
 export function LinkPreviewBody({ children, messageId, previewId }: LinkPreviewBodyProps) {
   const { expanded, toggle } = useLinkPreviewCollapse(messageId, previewId)

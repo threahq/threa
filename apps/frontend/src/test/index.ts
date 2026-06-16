@@ -8,10 +8,8 @@
  * ```
  */
 
-// Re-export render utilities
 export * from "./render"
 
-// Spy helper for replacing const-like module exports in tests
 export { spyOnExport } from "./spy"
 
 // Fixtures live in "@/test/fixtures" for data factories.

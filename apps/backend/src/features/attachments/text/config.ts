@@ -1,32 +1,9 @@
-/**
- * Text Processing Configuration
- *
- * Central configuration for text file analysis and extraction.
- * Used by TextProcessingService and future evals.
- */
-
 import { z } from "zod"
 import { TEXT_FORMATS, TEXT_SIZE_TIERS, INJECTION_STRATEGIES } from "@threa/types"
 
-// ============================================================================
-// Model Configuration
-// ============================================================================
-
-/**
- * Model for text summarization (large files only).
- * Gemini 2.5 Flash is fast and cheap for text summarization.
- */
 export const TEXT_SUMMARY_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 
-/**
- * Temperature for text summarization.
- * Slightly higher for creative summarization.
- */
 export const TEXT_SUMMARY_TEMPERATURE = 0.3
-
-// ============================================================================
-// Size Thresholds
-// ============================================================================
 
 /**
  * Size thresholds for determining injection strategy.
@@ -40,19 +17,11 @@ export const TEXT_SIZE_THRESHOLDS = {
   /** Large files (>8K tokens, >32KB): summary + sections + load_file_section tool */
 } as const
 
-/**
- * Binary detection settings.
- */
 export const BINARY_DETECTION = {
-  /** Number of bytes to check for binary detection */
   checkSize: 8 * 1024,
   /** Maximum ratio of null bytes to consider file as text */
   nullByteThreshold: 0.01,
 } as const
-
-// ============================================================================
-// File Type Detection
-// ============================================================================
 
 /**
  * File extension to format mapping.
@@ -139,9 +108,7 @@ export const EXTENSION_FORMAT_MAP: Record<string, (typeof TEXT_FORMATS)[number]>
   ".rkt": "code",
 }
 
-/**
- * Extension to language name mapping for code files.
- */
+/** Extension to language name mapping for code files. */
 export const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   ".js": "javascript",
   ".mjs": "javascript",
@@ -196,9 +163,6 @@ export const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   ".rkt": "racket",
 }
 
-/**
- * Get file extension from filename.
- */
 export function getFileExtension(filename: string): string | null {
   const lastDot = filename.lastIndexOf(".")
   if (lastDot === -1 || lastDot === filename.length - 1) {
@@ -207,28 +171,12 @@ export function getFileExtension(filename: string): string | null {
   return filename.slice(lastDot).toLowerCase()
 }
 
-// ============================================================================
-// Schemas
-// ============================================================================
-
-/**
- * Schema for text format.
- */
 export const textFormatSchema = z.enum(TEXT_FORMATS)
 
-/**
- * Schema for text size tier.
- */
 export const textSizeTierSchema = z.enum(TEXT_SIZE_TIERS)
 
-/**
- * Schema for injection strategy.
- */
 export const injectionStrategySchema = z.enum(INJECTION_STRATEGIES)
 
-/**
- * Schema for text section.
- */
 export const textSectionSchema = z.object({
   type: z.enum(["heading", "key", "rows", "lines"]),
   path: z.string(),
@@ -237,18 +185,12 @@ export const textSectionSchema = z.object({
   endLine: z.number(),
 })
 
-/**
- * Schema for markdown structure.
- */
 export const markdownStructureSchema = z.object({
   toc: z.array(z.string()),
   hasCodeBlocks: z.boolean(),
   hasTables: z.boolean(),
 })
 
-/**
- * Schema for JSON structure.
- */
 export const jsonStructureSchema = z.object({
   rootType: z.enum(["object", "array", "primitive"]),
   topLevelKeys: z.array(z.string()).nullable(),
@@ -256,27 +198,18 @@ export const jsonStructureSchema = z.object({
   schemaDescription: z.string().nullable(),
 })
 
-/**
- * Schema for CSV structure.
- */
 export const csvStructureSchema = z.object({
   headers: z.array(z.string()),
   rowCount: z.number(),
   sampleRows: z.array(z.array(z.string())),
 })
 
-/**
- * Schema for code structure.
- */
 export const codeStructureSchema = z.object({
   language: z.string(),
   exports: z.array(z.string()).nullable(),
   imports: z.array(z.string()).nullable(),
 })
 
-/**
- * Schema for text metadata.
- */
 export const textMetadataSchema = z.object({
   format: textFormatSchema,
   sizeTier: textSizeTierSchema,
@@ -292,19 +225,12 @@ export const textMetadataSchema = z.object({
 
 export type TextMetadataOutput = z.infer<typeof textMetadataSchema>
 
-/**
- * Schema for text summary output.
- */
 export const textSummarySchema = z.object({
   summary: z.string().describe("2-3 sentence summary of the file content"),
   keyTopics: z.array(z.string()).describe("Main topics or concepts covered"),
 })
 
 export type TextSummaryOutput = z.infer<typeof textSummarySchema>
-
-// ============================================================================
-// Prompts
-// ============================================================================
 
 export const TEXT_SUMMARY_SYSTEM_PROMPT = `You are a document summarization specialist. Analyze the provided text content and create a structured summary.
 

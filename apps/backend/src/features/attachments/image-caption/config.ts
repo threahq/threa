@@ -1,45 +1,16 @@
-/**
- * Image Caption Configuration
- *
- * Central configuration for image analysis and captioning.
- * Used by ImageCaptionService and future evals.
- */
-
 import { z } from "zod"
 import { EXTRACTION_CONTENT_TYPES } from "@threa/types"
 
-// ============================================================================
-// Model Configuration
-// ============================================================================
-
-/**
- * Model for image analysis and captioning.
- * Gemini 2.5 Flash has excellent vision capabilities and fast inference.
- */
 export const IMAGE_CAPTION_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 
-/**
- * Temperature for image analysis.
- * Low temperature for consistent, factual descriptions.
- */
 export const IMAGE_CAPTION_TEMPERATURE = 0.1
 
-// ============================================================================
-// Supported Image Types
-// ============================================================================
-
-/**
- * File extensions that indicate an image file.
- * Used when mime_type is application/octet-stream.
- */
+/** Used to recognise images when mime_type is application/octet-stream. */
 export const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".heif"] as const
 
 /**
- * Check if an attachment is an image based on mime type and filename.
- *
- * - If mimeType starts with "image/", return true
- * - If mimeType is "application/octet-stream", check file extension
- * - Otherwise return false
+ * Treats "application/octet-stream" as an image when the extension matches, since
+ * some clients upload images with a generic MIME type.
  */
 export function isImageAttachment(mimeType: string, filename: string): boolean {
   if (mimeType.startsWith("image/")) {
@@ -54,13 +25,6 @@ export function isImageAttachment(mimeType: string, filename: string): boolean {
   return false
 }
 
-// ============================================================================
-// Schemas
-// ============================================================================
-
-/**
- * Schema for chart-specific structured data.
- */
 export const chartDataSchema = z.object({
   chartType: z.string().describe("Type of chart (bar, line, pie, scatter, etc.)"),
   title: z.string().nullable().describe("Chart title if visible"),
@@ -83,18 +47,12 @@ export const chartDataSchema = z.object({
   trends: z.array(z.string()).nullable().describe("Notable trends or patterns observed"),
 })
 
-/**
- * Schema for table-specific structured data.
- */
 export const tableDataSchema = z.object({
   headers: z.array(z.string()).describe("Column headers"),
   rows: z.array(z.array(z.string())).describe("Table rows as arrays of cell values"),
   summary: z.string().nullable().describe("Brief summary of what the table shows"),
 })
 
-/**
- * Schema for diagram-specific structured data.
- */
 export const diagramDataSchema = z.object({
   diagramType: z.string().describe("Type of diagram (flowchart, sequence, entity-relationship, etc.)"),
   nodes: z
@@ -119,9 +77,6 @@ export const diagramDataSchema = z.object({
   description: z.string().nullable().describe("What the diagram illustrates"),
 })
 
-/**
- * Schema for image analysis output.
- */
 export const imageAnalysisSchema = z.object({
   contentType: z.enum(EXTRACTION_CONTENT_TYPES).describe("Primary content type of the image"),
   summary: z.string().describe("1-2 sentence description of what the image shows"),
@@ -140,10 +95,6 @@ export const imageAnalysisSchema = z.object({
 })
 
 export type ImageAnalysisOutput = z.infer<typeof imageAnalysisSchema>
-
-// ============================================================================
-// System Prompt
-// ============================================================================
 
 export const IMAGE_CAPTION_SYSTEM_PROMPT = `You are an image analysis specialist for a team collaboration application. Your role is to extract structured information from images to help AI assistants understand visual content in conversations.
 

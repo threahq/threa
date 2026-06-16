@@ -78,10 +78,6 @@ export const suggestionSetSchema = z.object({
 
 export type SuggestionSetOutput = z.infer<typeof suggestionSetSchema>
 
-// ============================================================================
-// Prompts
-// ============================================================================
-
 const EXTRACTOR_SYSTEM_PROMPT_TEMPLATE = `You are a to-do extractor for a team chat application. From a conversation, you pull out concrete action items — things a specific person committed to do or was directly asked to do.
 
 What counts as an action item:

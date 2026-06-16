@@ -7,8 +7,7 @@ export interface PushSessionCleanup {
 }
 
 /**
- * Periodically cleans up stale push notification user sessions.
- * Sessions older than `maxAgeMs` are deleted to prevent unbounded table growth.
+ * Periodically deletes stale push user sessions to bound table growth.
  * Only runs when push is enabled — no sessions are written when disabled.
  */
 export function createPushSessionCleanup(

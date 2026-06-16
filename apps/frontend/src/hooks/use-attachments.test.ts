@@ -3,7 +3,6 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import { useAttachments } from "./use-attachments"
 import { attachmentsApi } from "@/api"
 
-// Mock the attachments API
 const mockUpload = vi.fn()
 const mockDelete = vi.fn()
 
@@ -28,7 +27,6 @@ describe("useAttachments", () => {
   }
 
   function createChangeEvent(files: File[]): React.ChangeEvent<HTMLInputElement> {
-    // Create a mock FileList
     const fileList = {
       length: files.length,
       item: (index: number) => files[index] ?? null,
@@ -65,7 +63,6 @@ describe("useAttachments", () => {
         await result.current.handleFileSelect(createChangeEvent([file]))
       })
 
-      // Should have the uploaded attachment
       await waitFor(() => {
         expect(result.current.pendingAttachments).toHaveLength(1)
         expect(result.current.pendingAttachments[0]).toMatchObject({
@@ -145,7 +142,6 @@ describe("useAttachments", () => {
 
       const { result } = renderHook(() => useAttachments(workspaceId))
 
-      // Upload a file first
       await act(async () => {
         await result.current.handleFileSelect(createChangeEvent([createFile("test.txt", "text/plain")]))
       })
@@ -154,7 +150,6 @@ describe("useAttachments", () => {
         expect(result.current.pendingAttachments).toHaveLength(1)
       })
 
-      // Remove it
       await act(async () => {
         await result.current.removeAttachment("attach_123")
       })
@@ -287,7 +282,6 @@ describe("useAttachments", () => {
       })
       expect(uploadResult!.imageIndex).toBe(1) // First image
 
-      // Attachment should be in pending list
       expect(result.current.pendingAttachments).toHaveLength(1)
       expect(result.current.pendingAttachments[0].id).toBe("attach_456")
       expect(result.current.getPendingAttachmentsSnapshot()).toEqual(result.current.pendingAttachments)

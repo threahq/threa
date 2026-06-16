@@ -74,13 +74,11 @@ export class CostTrackingCallback extends BaseCallbackHandler {
       "CostTrackingCallback handleLLMEnd fired"
     )
 
-    // Only record if there's actual cost or usage
     if (usage.cost === 0 && usage.totalTokens === 0) {
       logger.debug({ functionId: this.params.functionId }, "Skipping cost recording - no usage")
       return
     }
 
-    // Extract model from LLM output if available
     const model = (output.llmOutput?.model as string) ?? (output.llmOutput?.modelName as string) ?? "unknown"
 
     try {
@@ -142,7 +140,6 @@ export class CostTrackingCallback extends BaseCallbackHandler {
 export function getCostTrackingCallbacks(
   params: Partial<CostTrackingCallbackParams> & { workspaceId?: string }
 ): CostTrackingCallback[] {
-  // Return empty array if essential params are missing
   if (!params.costRecorder || !params.workspaceId || !params.functionId || !params.getCapturedUsage) {
     return []
   }

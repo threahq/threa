@@ -54,8 +54,7 @@ export class OtelObserver implements AgentObserver {
         const parentContext = this.rootContext ?? context.active()
         const toolSpan = tracer.startSpan(`tool:${event.toolName}`, {}, parentContext)
         // Langfuse reads `langfuse.observation.input/output` for the UI's
-        // input/output panels. The previous `input.value`/`output.value`
-        // attributes were never picked up, so tool spans showed as empty.
+        // input/output panels; `input.value`/`output.value` are not picked up.
         toolSpan.setAttribute("langfuse.observation.input", JSON.stringify(event.input))
         this.toolSpans.set(event.toolCallId, toolSpan)
         // Build a Context with the tool span set as active so child spans
@@ -136,7 +135,6 @@ export class OtelObserver implements AgentObserver {
   }
 
   async cleanup(): Promise<void> {
-    // End any orphaned tool spans
     for (const [, span] of this.toolSpans) {
       span.setStatus({ code: SpanStatusCode.ERROR, message: "Orphaned tool span" })
       span.end()

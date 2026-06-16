@@ -1,9 +1,3 @@
-/**
- * JSON Parser
- *
- * Extracts schema information, top-level keys, and array structure.
- */
-
 import type { TextSection, JsonStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
 
@@ -40,7 +34,6 @@ export const jsonParser: TextParser = {
       arrayLength = parsed.length
       schemaDescription = describeArraySchema(parsed)
 
-      // Create sections for array ranges
       if (parsed.length > 10) {
         const chunkSize = Math.ceil(parsed.length / 10)
         for (let i = 0; i < parsed.length; i += chunkSize) {
@@ -59,7 +52,6 @@ export const jsonParser: TextParser = {
       topLevelKeys = Object.keys(parsed).slice(0, MAX_KEYS_TO_SHOW)
       schemaDescription = describeObjectSchema(parsed as Record<string, unknown>)
 
-      // Create sections for top-level keys
       for (const key of topLevelKeys) {
         sections.push({
           type: "key",

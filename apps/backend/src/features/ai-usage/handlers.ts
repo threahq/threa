@@ -21,9 +21,6 @@ interface Dependencies {
   pool: Pool
 }
 
-/**
- * Get the current month's date range.
- */
 function getCurrentMonthRange(): { start: Date; end: Date } {
   const now = new Date()
   const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
@@ -31,9 +28,7 @@ function getCurrentMonthRange(): { start: Date; end: Date } {
   return { start, end }
 }
 
-/**
- * Get the next budget reset date (first of next month).
- */
+/** First of next month. */
 function getNextResetDate(): Date {
   const now = new Date()
   return new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0)
@@ -41,16 +36,6 @@ function getNextResetDate(): Date {
 
 export function createAIUsageHandlers({ pool }: Dependencies) {
   return {
-    /**
-     * Get AI usage summary for the workspace.
-     *
-     * GET /api/workspaces/:workspaceId/ai-usage
-     *
-     * Response includes:
-     * - total: overall usage summary
-     * - byOrigin: breakdown by origin (system vs user)
-     * - byUser: breakdown by user (for user-origin calls)
-     */
     async getUsage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -75,14 +60,6 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       })
     },
 
-    /**
-     * Get recent AI usage records.
-     *
-     * GET /api/workspaces/:workspaceId/ai-usage/recent
-     *
-     * Query params:
-     * - limit: max records to return (1-100, default 50)
-     */
     async getRecentUsage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 50), 100)
@@ -106,11 +83,6 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       })
     },
 
-    /**
-     * Get workspace AI budget configuration and current status.
-     *
-     * GET /api/workspaces/:workspaceId/ai-budget
-     */
     async getBudget(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -150,20 +122,6 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       })
     },
 
-    /**
-     * Update workspace AI budget configuration.
-     *
-     * PUT /api/workspaces/:workspaceId/ai-budget
-     *
-     * Body:
-     * - monthlyBudgetUsd: number (optional)
-     * - alertThreshold50: boolean (optional)
-     * - alertThreshold80: boolean (optional)
-     * - alertThreshold100: boolean (optional)
-     * - degradationEnabled: boolean (optional)
-     * - hardLimitEnabled: boolean (optional)
-     * - hardLimitPercent: number (optional, 100-500)
-     */
     async updateBudget(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
@@ -171,9 +129,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       const { start, end } = getCurrentMonthRange()
 
       const [budget, usage] = await withClient(pool, async (client) => {
-        // Atomic upsert with partial update semantics:
-        // - Creates with defaults if budget doesn't exist
-        // - Only updates provided fields if budget exists
+        // Creates with defaults if absent; otherwise updates only provided fields.
         const updatedBudget = await AIBudgetRepository.upsertPartial(client, {
           id: aiBudgetId(),
           workspaceId,

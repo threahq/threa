@@ -21,8 +21,6 @@ import { useAuth } from "@/auth"
 import { toast } from "sonner"
 import type { Visibility } from "@threa/types"
 
-// ── Header ──────────────────────────────────────────────────────────────
-
 function ChannelDialogHeader() {
   return (
     <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
@@ -42,8 +40,6 @@ function ChannelDialogHeader() {
     </div>
   )
 }
-
-// ── Form fields ─────────────────────────────────────────────────────────
 
 function SlugField({
   workspaceId,
@@ -96,8 +92,6 @@ function DescriptionField({ value, onChange }: { value: string; onChange: (v: st
   )
 }
 
-// ── Footer ──────────────────────────────────────────────────────────────
-
 function DialogActions({
   onCancel,
   onSubmit,
@@ -127,8 +121,6 @@ function DialogActions({
     </div>
   )
 }
-
-// ── Main dialog ─────────────────────────────────────────────────────────
 
 interface CreateChannelDialogProps {
   workspaceId: string

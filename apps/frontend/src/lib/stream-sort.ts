@@ -92,7 +92,7 @@ export function writeStoredStreamSortMode(mode: StreamSortMode): void {
   try {
     localStorage.setItem(SORT_PREFERENCE_KEY, mode)
   } catch {
-    // Storage unavailable
+    // localStorage can throw (private mode, quota); the preference is best-effort
   }
 }
 

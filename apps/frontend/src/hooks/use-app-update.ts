@@ -126,21 +126,18 @@ export function useAppUpdate(): void {
     }
   }, [])
 
-  // Periodic polling
   useEffect(() => {
     if (IS_DEV) return
     const id = setInterval(checkForUpdate, POLL_INTERVAL)
     return () => clearInterval(id)
   }, [checkForUpdate])
 
-  // Check when tab becomes visible
   useEffect(() => {
     if (isVisible && !IS_DEV) {
       checkForUpdate()
     }
   }, [isVisible, checkForUpdate])
 
-  // Check on socket reconnect
   useEffect(() => {
     if (reconnectCount > 0 && !IS_DEV) {
       checkForUpdate()

@@ -53,7 +53,6 @@ export function useLastStream(workspaceId: string): UseLastStreamResult {
     return { redirectStreamId: null, shouldOpenSidebar: true, staleStoredId: false }
   }, [user, workspaceId, streams])
 
-  // Evict stale localStorage entry as a proper side effect
   useEffect(() => {
     if (result.staleStoredId && user) {
       clearLastStreamId(user.id, workspaceId)
@@ -75,7 +74,6 @@ export function usePersistLastStream(workspaceId: string | undefined, streamId: 
 }
 
 function getMostRecentStreamId(streams: CachedStream[]): string {
-  // Sort by updatedAt descending to find the most recently active stream
   const sorted = [...streams].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   return sorted[0]?.id ?? streams[0].id
 }

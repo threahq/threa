@@ -43,7 +43,6 @@ export function isDebugEnabled(): boolean {
 export class DebugCallback extends BaseCallbackHandler {
   name = "debug-timing"
 
-  // LLM Events
   async handleLLMStart(llm: Serialized, prompts: string[], runId: string): Promise<void> {
     startTimes.set(`llm:${runId}`, Date.now())
     const model = llm.id?.[llm.id.length - 1] ?? "unknown"
@@ -88,7 +87,6 @@ export class DebugCallback extends BaseCallbackHandler {
     )
   }
 
-  // Tool Events
   async handleToolStart(tool: Serialized, input: string, runId: string): Promise<void> {
     startTimes.set(`tool:${runId}`, Date.now())
     const toolName = tool.id?.[tool.id.length - 1] ?? "unknown"

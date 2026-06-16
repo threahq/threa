@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 interface ErrorDetailsProps {
-  /** The error text to display */
   text: string
   className?: string
 }

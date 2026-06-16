@@ -20,7 +20,6 @@ export class StubApiKeyService implements ApiKeyService {
     const explicit = this.keys.get(value)
     if (explicit) return explicit
 
-    // Auto-accept test keys: test__<orgId>__<permissions>
     const parts = value.split("__")
     if (parts.length === 3 && parts[0] === "test") {
       return {

@@ -23,7 +23,6 @@ export function RelativeTime({ date, className, terse }: RelativeTimeProps) {
     return () => clearInterval(interval)
   }, [])
 
-  // Handle null, undefined, or invalid values
   if (!date) {
     return <span className={className}>--</span>
   }

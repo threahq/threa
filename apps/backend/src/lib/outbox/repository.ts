@@ -26,10 +26,6 @@ import type {
   NotificationLevel,
 } from "@threa/types"
 
-/**
- * Outbox event types and their payloads.
- * Use the OutboxEventPayload type to get type-safe payload access.
- */
 export type OutboxEventType =
   | "message:created"
   | "message:edited"
@@ -150,22 +146,15 @@ export type WorkspaceScopedEventType =
   | "attachment:transcoded"
   | "attachment:thumbnailed"
 
-/**
- * Base fields for stream-scoped events.
- */
 interface StreamScopedPayload {
   workspaceId: string
   streamId: string
 }
 
-/**
- * Base fields for workspace-scoped events.
- */
 interface WorkspaceScopedPayload {
   workspaceId: string
 }
 
-// Stream-scoped event payloads
 export interface MessageCreatedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
@@ -269,8 +258,7 @@ export interface StreamMemosCapturedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
-// Workspace-scoped event payloads (no streamId)
-// Note: StreamCreatedOutboxPayload includes streamId for routing:
+// StreamCreatedOutboxPayload includes streamId for routing:
 // - For threads: streamId = parentStreamId (broadcast to parent stream room)
 // - For non-threads: streamId = stream.id (broadcast to workspace room)
 export interface StreamCreatedOutboxPayload extends WorkspaceScopedPayload {
@@ -363,7 +351,6 @@ export interface StreamActivityOutboxPayload extends StreamScopedPayload {
   lastMessagePreview: LastMessagePreview
 }
 
-// Conversation event payloads
 export interface ConversationCreatedOutboxPayload extends StreamScopedPayload {
   conversationId: string
   conversation: ConversationWithStaleness
@@ -405,7 +392,6 @@ export interface ConversationMessageReassignedOutboxPayload extends StreamScoped
   reason: string
 }
 
-// Memo event payloads
 export interface MemoCreatedOutboxPayload extends WorkspaceScopedPayload {
   memoId: string
   memo: WireMemo
@@ -504,7 +490,6 @@ export interface FeatureFlagsUpdatedOutboxPayload extends WorkspaceScopedPayload
   featureFlags: FeatureFlags
 }
 
-// Invitation event payloads
 export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
   invitationId: string
   email: string
@@ -594,7 +579,6 @@ export interface SavedSuggestionUpsertedOutboxPayload extends WorkspaceScopedPay
   suggestion: SavedSuggestionView
 }
 
-// Scheduled message event payloads
 export interface ScheduledMessageUpsertedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   scheduled: ScheduledMessageView

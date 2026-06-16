@@ -13,7 +13,6 @@ import {
 } from "./dates"
 
 describe("dates", () => {
-  // Use a fixed reference date for tests that need "now"
   const fixedNow = new Date("2025-06-15T12:00:00Z")
 
   describe("formatISODate", () => {
@@ -88,9 +87,7 @@ describe("dates", () => {
     it("should show just time for same day", () => {
       const date = new Date("2025-06-15T10:00:00Z")
       const result = formatRelativeTime(date, fixedNow)
-      // Should contain time format
       expect(result).toMatch(/\d{1,2}:\d{2}/)
-      // Should not contain 'yesterday' or day name
       expect(result.toLowerCase()).not.toContain("yesterday")
     })
 

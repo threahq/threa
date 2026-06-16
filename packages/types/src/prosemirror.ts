@@ -10,10 +10,6 @@
 
 import { z } from "zod/v4"
 
-// ============================================================================
-// Loose Input Type (compatible with TipTap's JSONContent)
-// ============================================================================
-
 /**
  * Loose JSON content type, compatible with TipTap's JSONContent.
  * Use this for accepting input - validate at boundary before processing.
@@ -35,10 +31,6 @@ export interface JSONContentMark {
   type: string
   attrs?: Record<string, unknown>
 }
-
-// ============================================================================
-// Strict Types for Threa's ProseMirror Schema
-// ============================================================================
 
 /**
  * Root document node - the top-level container for all content.
@@ -340,11 +332,6 @@ export interface ThreaLinkMark {
   }
 }
 
-// ============================================================================
-// Zod Schemas for Runtime Validation
-// ============================================================================
-
-// Marks
 const boldMarkSchema = z.object({
   type: z.literal("bold"),
 })
@@ -574,10 +561,6 @@ export const threaDocumentSchema: z.ZodType<ThreaDocument> = z.object({
   content: z.array(blockNodeSchema),
 })
 
-// ============================================================================
-// Type Guards and Validators
-// ============================================================================
-
 /**
  * Custom error for content validation failures.
  */
@@ -614,10 +597,6 @@ export function tryValidateContent(content: JSONContent): ThreaDocument | null {
   const result = threaDocumentSchema.safeParse(content)
   return result.success ? result.data : null
 }
-
-// ============================================================================
-// Utility Types
-// ============================================================================
 
 /**
  * Extract all node types from a ThreaDocument.

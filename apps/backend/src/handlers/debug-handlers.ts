@@ -9,11 +9,6 @@ interface Dependencies {
 
 export function createDebugHandlers({ pool, poolMonitor }: Dependencies) {
   return {
-    /**
-     * Readiness check endpoint with current pool stats.
-     *
-     * GET /readyz
-     */
     readiness(_req: Request, res: Response) {
       const poolStats = poolMonitor.getAllPoolStats()
       res.json({
@@ -23,11 +18,6 @@ export function createDebugHandlers({ pool, poolMonitor }: Dependencies) {
       })
     },
 
-    /**
-     * Inspect pool internal state for debugging connection issues.
-     *
-     * GET /debug/pool
-     */
     poolState(_req: Request, res: Response) {
       const mainPool = pool as any
 
@@ -61,11 +51,6 @@ export function createDebugHandlers({ pool, poolMonitor }: Dependencies) {
       })
     },
 
-    /**
-     * Prometheus metrics endpoint.
-     *
-     * GET /metrics
-     */
     async metrics(_req: Request, res: Response) {
       const { registry } = await import("../lib/observability")
       res.set("Content-Type", registry.contentType)

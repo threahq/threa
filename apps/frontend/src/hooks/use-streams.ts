@@ -20,7 +20,6 @@ import type { CreateStreamInput, UpdateStreamInput } from "@/api"
 import { workspaceKeys } from "./use-workspaces"
 import { useSyncEngine } from "@/sync/sync-engine"
 
-// Query keys for cache management
 export const streamKeys = {
   all: ["streams"] as const,
   lists: () => [...streamKeys.all, "list"] as const,
@@ -41,7 +40,6 @@ export function useStreams(workspaceId: string, filters?: { type?: StreamType })
     queryFn: async () => {
       const streams = await streamService.list(workspaceId, filters)
 
-      // Cache to IndexedDB
       const now = Date.now()
       await db.streams.bulkPut(streams.map((s) => ({ ...s, _cachedAt: now })))
 
@@ -59,7 +57,6 @@ export function useStream(workspaceId: string, streamId: string) {
     queryFn: async () => {
       const stream = await streamService.get(workspaceId, streamId)
 
-      // Cache to IndexedDB
       await db.streams.put({ ...stream, _cachedAt: Date.now() })
 
       return stream
@@ -163,7 +160,6 @@ export function useCreateStream(workspaceId: string) {
         }
       })
 
-      // Invalidate stream lists to refetch
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
       const now = Date.now()
@@ -192,7 +188,6 @@ export function useUpdateStream(workspaceId: string, streamId: string) {
   return useMutation({
     mutationFn: (data: UpdateStreamInput) => streamService.update(workspaceId, streamId, data),
     onSuccess: (updatedStream) => {
-      // Update detail cache
       queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), updatedStream)
 
       // Update stream-specific bootstrap cache (preserving events, members, etc.)
@@ -215,7 +210,6 @@ export function useUpdateStream(workspaceId: string, streamId: string) {
       // Invalidate lists as fallback
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
-      // Cache to IndexedDB
       db.streams.put({ ...updatedStream, _cachedAt: Date.now() })
     },
   })
@@ -280,7 +274,6 @@ export function useArchiveStream(workspaceId: string) {
   return useMutation({
     mutationFn: (streamId: string) => streamService.archive(workspaceId, streamId),
     onSuccess: (_, streamId) => {
-      // Remove from stream-specific caches
       queryClient.removeQueries({ queryKey: streamKeys.detail(workspaceId, streamId) })
       queryClient.removeQueries({ queryKey: streamKeys.bootstrap(workspaceId, streamId) })
 
@@ -298,7 +291,6 @@ export function useArchiveStream(workspaceId: string) {
       // Invalidate lists as fallback
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
-      // Remove from IndexedDB
       db.streams.delete(streamId)
     },
   })
@@ -328,13 +320,11 @@ export function useSetNotificationLevel(workspaceId: string, streamId: string) {
     mutationFn: (notificationLevel: NotificationLevel | null) =>
       streamService.setNotificationLevel(workspaceId, streamId, notificationLevel),
     onSuccess: (membership) => {
-      // Update stream bootstrap membership
       queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
         if (!old) return old
         return { ...old, membership }
       })
 
-      // Update workspace bootstrap streamMemberships
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         return {

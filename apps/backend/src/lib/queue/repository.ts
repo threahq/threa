@@ -1,7 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
-// Internal row type (snake_case)
 interface QueueMessageRow {
   id: string
   queue_name: string
@@ -20,7 +19,6 @@ interface QueueMessageRow {
   cancelled_at: Date | null
 }
 
-// Domain type (camelCase)
 export interface QueueMessage {
   id: string
   queueName: string
@@ -39,7 +37,6 @@ export interface QueueMessage {
   cancelledAt: Date | null
 }
 
-// Insert params
 export interface InsertQueueMessageParams {
   id: string
   queueName: string
@@ -49,7 +46,6 @@ export interface InsertQueueMessageParams {
   insertedAt: Date
 }
 
-// Claim params
 export interface ClaimNextParams {
   queueName: string
   workspaceId: string
@@ -59,21 +55,18 @@ export interface ClaimNextParams {
   now: Date
 }
 
-// Batch renew claims params
 export interface BatchRenewClaimsParams {
   messageIds: string[]
   claimedBy: string
   claimedUntil: Date
 }
 
-// Complete params
 export interface CompleteParams {
   messageId: string
   claimedBy: string
   completedAt: Date
 }
 
-// Fail params (retry with backoff)
 export interface FailParams {
   messageId: string
   claimedBy: string
@@ -82,7 +75,6 @@ export interface FailParams {
   now: Date
 }
 
-// Fail to DLQ params
 export interface FailDlqParams {
   messageId: string
   claimedBy: string
@@ -90,20 +82,17 @@ export interface FailDlqParams {
   dlqAt: Date
 }
 
-// UnDlq params
 export interface UnDlqParams {
   messageId: string
   processAfter: Date
 }
 
-// Delete old messages params
 export interface DeleteOldMessagesParams {
   completedBeforeDate: Date
   dlqBeforeDate: Date
   cancelledBeforeDate: Date
 }
 
-// Mapper
 function mapRowToMessage(row: QueueMessageRow): QueueMessage {
   return {
     id: row.id,
@@ -133,9 +122,6 @@ const SELECT_FIELDS = sql.raw(`
 `)
 
 export const QueueRepository = {
-  /**
-   * Insert a new message.
-   */
   async insert(db: Querier, params: InsertQueueMessageParams): Promise<QueueMessage> {
     const result = await db.query<QueueMessageRow>(
       sql`
@@ -156,16 +142,11 @@ export const QueueRepository = {
     return mapRowToMessage(result.rows[0])
   },
 
-  /**
-   * Batch insert multiple messages.
-   * More efficient than calling insert() multiple times.
-   */
   async batchInsert(db: Querier, messages: InsertQueueMessageParams[]): Promise<QueueMessage[]> {
     if (messages.length === 0) {
       return []
     }
 
-    // Build placeholders and values array for batch insert
     const placeholders: string[] = []
     const values: unknown[] = []
     let idx = 1
@@ -192,13 +173,7 @@ export const QueueRepository = {
     return result.rows.map(mapRowToMessage)
   },
 
-  /**
-   * Batch claim multiple messages for (queue, workspace) pair.
-   * Returns array of claimed messages (may be fewer than limit if not enough available).
-   *
-   * CRITICAL: Uses FOR UPDATE SKIP LOCKED for concurrency.
-   * Only one worker can claim the same message.
-   */
+  /** FOR UPDATE SKIP LOCKED ensures only one worker claims a given message. */
   async batchClaimMessages(db: Querier, params: ClaimNextParams & { limit: number }): Promise<QueueMessage[]> {
     const result = await db.query<QueueMessageRow>(
       sql`
@@ -243,7 +218,6 @@ export const QueueRepository = {
       `
     )
 
-    // Sort by process_after for consistent ordering (though parallel processing means completion order varies)
     const messages = result.rows.map(mapRowToMessage)
     messages.sort((a, b) => {
       // processAfter should never be null for claimed messages (only completed/DLQ have null)
@@ -257,11 +231,8 @@ export const QueueRepository = {
   },
 
   /**
-   * Batch renew claims for multiple messages.
-   * Returns count of successfully renewed claims.
-   *
-   * Messages that have been completed or moved to DLQ will not be renewed.
-   * This supports partial success - some messages may complete while others are still processing.
+   * Completed/cancelled/DLQ'd messages are skipped, so a renewal can partially
+   * succeed while some messages in the batch finish independently.
    */
   async batchRenewClaims(db: Querier, params: BatchRenewClaimsParams): Promise<number> {
     const result = await db.query(
@@ -279,10 +250,7 @@ export const QueueRepository = {
     return result.rowCount ?? 0
   },
 
-  /**
-   * Mark message as completed.
-   * Verifies claimedBy to prevent race conditions.
-   */
+  /** Verifies claimedBy so only the claiming worker completes the message. */
   async complete(db: Querier, params: CompleteParams): Promise<void> {
     const result = await db.query(
       sql`
@@ -334,11 +302,8 @@ export const QueueRepository = {
   },
 
   /**
-   * Record failure and set retry backoff.
-   * Increments failed_count, sets process_after for retry.
-   * Does NOT move to DLQ.
-   *
-   * Verifies claimedBy to prevent race conditions.
+   * Record failure and set retry backoff (does NOT move to DLQ). Verifies
+   * claimedBy so only the claiming worker records the failure.
    */
   async fail(db: Querier, params: FailParams): Promise<void> {
     const result = await db.query(
@@ -362,12 +327,7 @@ export const QueueRepository = {
     }
   },
 
-  /**
-   * Move message to DLQ.
-   * Sets dlq_at, releases claim.
-   *
-   * Verifies claimedBy to prevent race conditions.
-   */
+  /** Verifies claimedBy so only the claiming worker moves the message to DLQ. */
   async failDlq(db: Querier, params: FailDlqParams): Promise<void> {
     const result = await db.query(
       sql`
@@ -390,10 +350,6 @@ export const QueueRepository = {
     }
   },
 
-  /**
-   * Un-DLQ a message.
-   * Clears dlq_at, resets failed_count, sets process_after for immediate retry.
-   */
   async unDlq(db: Querier, params: UnDlqParams): Promise<void> {
     const result = await db.query(
       sql`
@@ -413,12 +369,7 @@ export const QueueRepository = {
     }
   },
 
-  /**
-   * Delete old messages for retention.
-   * - Completed messages older than completedBeforeDate
-   * - Cancelled messages older than cancelledBeforeDate
-   * - DLQ messages older than dlqBeforeDate
-   */
+  /** Delete completed/cancelled/DLQ messages past their per-category retention cutoff. */
   async deleteOldMessages(
     db: Querier,
     params: DeleteOldMessagesParams
@@ -454,9 +405,7 @@ export const QueueRepository = {
     }
   },
 
-  /**
-   * Get message by ID (for testing/debugging)
-   */
+  /** For testing/debugging. */
   async getById(db: Querier, id: string): Promise<QueueMessage | null> {
     const result = await db.query<QueueMessageRow>(
       sql`

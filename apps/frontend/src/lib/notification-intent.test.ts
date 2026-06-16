@@ -6,16 +6,13 @@ describe("notification-intent", () => {
     setNotificationIntent("ws_1", "user_recipient")
 
     expect(takeNotificationIntent("ws_1")).toBe("user_recipient")
-    // Consumed — a second take for the same workspace yields nothing
     expect(takeNotificationIntent("ws_1")).toBeNull()
   })
 
   it("take returns null when the workspace does not match the stashed intent", () => {
     setNotificationIntent("ws_a", "user_recipient")
 
-    // Mismatched workspace must not consume the pending intent
     expect(takeNotificationIntent("ws_b")).toBeNull()
-    // The original workspace can still claim it
     expect(takeNotificationIntent("ws_a")).toBe("user_recipient")
   })
 

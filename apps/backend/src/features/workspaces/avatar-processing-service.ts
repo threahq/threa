@@ -17,7 +17,6 @@ export class AvatarProcessingService {
   }
 
   async processUpload(avatarUploadId: string): Promise<void> {
-    // Phase 1: Read upload row (fast)
     const upload = await AvatarUploadRepository.findById(this.pool, avatarUploadId)
     if (!upload) {
       logger.info({ avatarUploadId }, "Upload row gone (removed or superseded), skipping")
@@ -28,15 +27,14 @@ export class AvatarProcessingService {
 
     logger.info({ avatarUploadId, userId }, "Processing avatar")
 
-    // Phase 2: Download raw from S3 (no DB connection — INV-41)
+    // S3 download + image processing run with no DB connection held (INV-41).
     const buffer = await this.avatarService.downloadRaw(rawS3Key)
 
-    // Phase 3: Process images + upload variants (no DB connection)
     const basePath = this.avatarService.rawKeyToBasePath(rawS3Key)
     const images = await this.avatarService.processImages(buffer)
     await this.avatarService.uploadImages(basePath, images)
 
-    // Phase 4: Transaction — atomically update user if this is still the latest upload (INV-20)
+    // Update the user only if this is still the latest upload (INV-20).
     let variantsUsed = false
     await withTransaction(this.pool, async (client) => {
       const updated = await UserRepository.updateAvatarIfLatestUpload(
@@ -60,11 +58,10 @@ export class AvatarProcessingService {
         logger.info({ avatarUploadId, userId }, "Upload gone or superseded, skipping user update")
       }
 
-      // Delete our upload row regardless (no-op if already gone)
       await AvatarUploadRepository.deleteById(client, avatarUploadId)
     })
 
-    // Fire-and-forget cleanup: raw file always, variants + old avatar only if we used them
+    // Cleanup is fire-and-forget: raw file always; variants + old avatar only if we used them.
     this.avatarService.deleteRawFile(rawS3Key)
     if (variantsUsed && replacesAvatarUrl) {
       this.avatarService.deleteAvatarFiles(replacesAvatarUrl)

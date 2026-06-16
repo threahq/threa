@@ -140,7 +140,6 @@ const createPlaintextMessageSchema = z.union([
   createMessageMarkdownToDmSchema,
 ])
 
-// Union schema - accepts plaintext or E2E variants
 const createMessageSchema = z.union([
   createMessageJsonToStreamSchema,
   createMessageMarkdownToStreamSchema,
@@ -233,10 +232,7 @@ interface DetectedCommand {
   args: string
 }
 
-/**
- * Detect if the first inline node is a command.
- * Currently only checks the very first element - function name allows future expansion.
- */
+/** Detect whether the first inline node of the first paragraph is a command. */
 function detectCommand(contentJson: JSONContent): DetectedCommand | null {
   const firstBlock = contentJson.content?.[0]
   if (firstBlock?.type !== "paragraph") return null
@@ -328,7 +324,6 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const detectedCommand = originalContentJson ? detectCommand(originalContentJson) : null
 
       if (detectedCommand && commandRegistry.has(detectedCommand.name)) {
-        // Route to command dispatch instead of message creation
         const cmdId = generateCommandId()
         const evtId = eventId()
 
@@ -368,7 +363,6 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         })
       }
 
-      // Normalize to both JSON and markdown formats for normal message creation
       const { contentJson, contentMarkdown } = normalizeContent(data)
       // Union of explicit fresh-upload ids and inline references parsed from
       // the canonical contentJson. Without this, a markdown POST containing
@@ -377,7 +371,6 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const inlineRefIds = collectAttachmentReferenceIds(contentJson)
       const attachmentIds = [...new Set([...explicitAttachmentIds, ...inlineRefIds])]
 
-      // Normal message creation
       const message = await eventService.createMessage({
         workspaceId,
         streamId,
@@ -419,7 +412,6 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         throw new HttpError("Can only edit your own messages", { status: 403, code: "FORBIDDEN" })
       }
 
-      // Normalize to both JSON and markdown formats
       const { contentJson, contentMarkdown } = normalizeContent(data)
 
       // Derive inline attachment ids from the new contentJson so event-service

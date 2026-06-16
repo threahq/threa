@@ -1,8 +1,4 @@
 /**
- * Video attachment detection and configuration.
- */
-
-/**
  * File extensions supported by AWS MediaConvert as input.
  */
 export const VIDEO_EXTENSIONS = [
@@ -23,12 +19,8 @@ export const VIDEO_EXTENSIONS = [
 ] as const
 
 /**
- * Check if an attachment is a video based on MIME type and filename.
- *
- * - If mimeType starts with "video/", return true
- * - Otherwise, check known video file extensions because browser/upload
- *   MIME detection is inconsistent across formats.
- * - Otherwise return false
+ * Falls back to extension matching when the MIME type isn't video/*, since
+ * browser/upload MIME detection is inconsistent across video formats.
  */
 export function isVideoAttachment(mimeType: string, filename: string): boolean {
   if (mimeType.startsWith("video/")) {

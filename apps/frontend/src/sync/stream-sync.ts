@@ -644,7 +644,6 @@ export function registerStreamSocketHandlers(
     let gapAfterSequence: string | null = null
 
     await db.transaction("rw", [db.events, db.pendingMessages], async () => {
-      // Dedupe by event ID
       const existing = await db.events.get(newEvent.id)
       if (existing) return
 
@@ -896,7 +895,6 @@ export function registerStreamSocketHandlers(
     // put must be atomic, or a concurrent append can land between the gap read
     // and this write and make the cursor lie in either direction.
     await db.transaction("rw", [db.events], async () => {
-      // Dedupe by event ID
       const existing = await db.events.get(payload.event.id)
       if (existing) return
       // Tail-gap check must read the latest BEFORE this write advances it.

@@ -5,11 +5,9 @@ import type { AttachmentSummary, StreamType, Visibility } from "@threa/types"
  * Hydrated payload for a pointer message. Kept structurally aligned with
  * the backend's `HydratedSharedMessage` discriminated union.
  *
- * - `ok`/`deleted`/`missing`: same as Slice 1.
- * - `private`: viewer has no read path to the source. Reveals only the
- *   source stream's kind + visibility. Plan D8.
- * - `truncated`: hydration stopped at the depth cap; viewer has access and
- *   can navigate to `streamId`.
+ * - `private`: viewer has no read path to the source; reveals only the
+ *   source stream's kind + visibility.
+ * - `truncated`: hydration stopped at the depth cap; viewer has access.
  */
 export type HydratedSharedMessage =
   | {
@@ -44,9 +42,8 @@ const SharedMessagesCtx = createContext<SharedMessagesContextValue | null>(null)
 /**
  * Provides the timeline's `sharedMessages` hydration map to any descendant
  * `SharedMessageView` NodeView. The map lives in the stream bootstrap / event
- * list response and is plumbed in by the timeline container. Consumers read
- * per-messageId; a miss returns `null` so the view can render the pre-hydration
- * skeleton rather than crash.
+ * list response and is plumbed in by the timeline container. A miss returns
+ * `null` so the view renders the pre-hydration skeleton rather than crash.
  */
 export function SharedMessagesProvider({
   map,

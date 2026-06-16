@@ -121,7 +121,6 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
   const isInternalUpdate = useRef(false)
   const isPopoverActiveRef = useRef(false)
 
-  // Helper to check if a trigger is enabled
   const hasTrigger = useCallback((type: TriggerType) => triggers.includes(type), [triggers])
 
   // Trigger suggestions - always call hooks (React rules), but only use when enabled
@@ -207,7 +206,6 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
   // We control visibility via hasTrigger() for popover state and rendering.
   const extensions = useMemo(
     () => [
-      // StarterKit with most features disabled - just basic text editing
       StarterKit.configure({
         heading: false,
         codeBlock: false,
@@ -233,7 +231,6 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
         placeholder,
         emptyEditorClass: "is-editor-empty",
       }),
-      // All trigger extensions - always loaded, visibility controlled by hasTrigger()
       SearchMentionExtension.configure({ suggestion: mentionConfig }),
       SearchChannelExtension.configure({ suggestion: channelConfig }),
       FilterTypeExtension.configure({ suggestion: filterTypeConfig }),
@@ -291,7 +288,6 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     },
   })
 
-  // Sync external value changes
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
 
@@ -306,14 +302,12 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     }
   }, [value, editor])
 
-  // Auto-focus on mount
   useEffect(() => {
     if (autoFocus && editor && !editor.isDestroyed) {
       editor.commands.focus("end")
     }
   }, [autoFocus, editor])
 
-  // Expose focus/blur methods
   const focus = useCallback(() => {
     if (editor && !editor.isDestroyed) {
       editor.commands.focus("end")

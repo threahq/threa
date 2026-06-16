@@ -517,7 +517,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       })
       triggerDownload(url, current.filename)
     } catch {
-      // Download failed silently
+      // Nothing actionable for the user here.
     }
   }, [workspaceId, current])
 
@@ -530,7 +530,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       })
       triggerDownload(url, current.filename.replace(/\.[^.]+$/, ".mp4"))
     } catch {
-      // Download failed silently
+      // Nothing actionable for the user here.
     }
   }, [workspaceId, current])
 
@@ -558,7 +558,6 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   const copyLabel = current?.type === "image" ? "Copy image" : "Copy source"
   const canToggleRaw = current?.type === "markdown" || current?.type === "html"
 
-  // Keyboard navigation
   useEffect(() => {
     if (!isOpen) return
     function onKeyDown(e: KeyboardEvent) {
@@ -574,10 +573,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [isOpen, currentIndex, goTo])
 
-  // ─── Mobile touch handlers ──────────────────────────────────────────────────
-  // All handlers manipulate the DOM directly (no setState) so the gesture stays
-  // at 60fps without React rendering in the hot path.
-
+  // All touch handlers manipulate the DOM directly (no setState) so the gesture
+  // stays at 60fps without React rendering in the hot path.
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     // The gallery owns every touch inside its Dialog. Stop React-tree bubbling
     // before any early return — React events propagate up the React tree (not
@@ -750,8 +747,8 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   const handleZoomOut = useCallback(() => zoomableRef.current?.zoomOut(), [])
   const handleZoomReset = useCallback(() => zoomableRef.current?.reset(), [])
 
-  // ─── Action bar (shared between mobile/desktop) ─────────────────────────────
-  // Sits in a translucent dark pill so it stays readable against any backdrop
+  // Action bar (shared between mobile/desktop). Sits in a translucent dark pill
+  // so it stays readable against any backdrop
   // (image, video poster, markdown panel, sandboxed iframe). The text viewers
   // reserve their top inset (pt-14 / pt-16) so the pill never overlaps the
   // panel chrome; `top-3 right-3` gives the pill visible breathing room from
@@ -863,7 +860,6 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
           <div className="relative flex h-full overflow-hidden">
             {isMobile ? (
-              // ── Mobile: seamless horizontal strip carousel ────────────────
               // dismissWrapperRef handles the vertical "drag down to close" gesture.
               // containerRef clips the strip; stripRef holds all slides side-by-side
               // and moves as one unit so the entering image slides in simultaneously
@@ -906,7 +902,6 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                 </div>
               </div>
             ) : (
-              // ── Desktop: single-image view with hover arrows ──────────────
               <div
                 className="relative flex-1 min-w-0 min-h-0 flex items-center justify-center"
                 onMouseEnter={() => setShowArrows(true)}
@@ -963,7 +958,6 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
               </div>
             )}
 
-            {/* Desktop: thumbnail preview panel */}
             {!isMobile && isMultiple && panelOpen && (
               <div className="w-[140px] shrink-0 border-l border-white/10 bg-black/80 flex flex-col">
                 <ScrollArea className="flex-1">

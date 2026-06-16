@@ -244,7 +244,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const giphyEnabled = useGiphyEnabled(workspaceId) && enableCommands
   const [giphyOpen, setGiphyOpen] = useState(false)
 
-  // Mention, channel, command, and emoji autocomplete
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
   // Filtered for autocomplete dropdown only
@@ -257,16 +256,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 
-  // Emoji autocomplete
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
-  // Create lookup for mention types from mentionables
-  // Current user's slug maps to "me" for special highlighting
+  // Current user's slug maps to "me" for special highlighting.
   const getMentionType = useMemo<MentionTypeLookup>(() => {
     const slugToType = new Map<string, "user" | "persona" | "bot" | "broadcast" | "me">()
     for (const m of mentionables) {
-      // Map current user to "me" type for special highlighting
       slugToType.set(m.slug, m.isCurrentUser ? "me" : m.type)
     }
     return (slug: string) => slugToType.get(slug) ?? "user"
@@ -403,7 +399,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     const isImage = file.type.startsWith("image/")
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
-    // Insert placeholder node
     const placeholderAttrs: AttachmentReferenceAttrs = {
       id: tempId,
       filename: file.name,
@@ -501,7 +496,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         ),
       },
       handlePaste: (_view, event) => {
-        // Check for files first (images, documents, etc.)
         const files = event.clipboardData?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
@@ -591,7 +585,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         // Internal drag-and-drop (reordering) - let TipTap handle it
         if (moved) return false
 
-        // Check for dropped files
         const files = event.dataTransfer?.files
         if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
           event.preventDefault()
@@ -682,7 +675,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
 
-    // Compare JSON content - use string comparison for simplicity
     const currentJson = JSON.stringify(editor.getJSON())
     const newJson = JSON.stringify(editableValue)
     if (newJson !== currentJson) {
@@ -794,7 +786,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     }
   }, [editor])
 
-  // Expose focus method
   const focus = useCallback(() => {
     if (editor && !editor.isDestroyed) {
       editor.commands.focus("end")
@@ -945,7 +936,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     [editor]
   )
 
-  // Expose imperative handle for parent to trigger insert actions
   useImperativeHandle(
     ref,
     () => ({

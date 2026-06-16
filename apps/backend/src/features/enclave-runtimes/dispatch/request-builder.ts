@@ -143,7 +143,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
     ...(persona.maxTokens !== null ? { maxTokens: persona.maxTokens } : {}),
     // Per-stream tool-privacy policy: ship it so the enclave gates its tools.
     // NULL = unrestricted → omit the field (the enclave then builds its full
-    // web surface, today's behavior).
+    // web surface).
     ...(inputs.allowedToolCategories ? { allowedToolCategories: inputs.allowedToolCategories } : {}),
     // Attachment ciphertext (trigger + recent history), shipped inline so the
     // enclave reads files without an S3 egress. Omitted when there are none.

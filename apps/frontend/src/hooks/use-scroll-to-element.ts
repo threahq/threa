@@ -28,7 +28,6 @@ export function useScrollToElement(options: UseScrollToElementOptions = {}) {
   const hasScrolled = useRef(false)
   const elementRef = useRef<HTMLElement>(null)
 
-  // Reset scroll flag when resetKey changes
   useEffect(() => {
     hasScrolled.current = false
   }, [resetKey])
@@ -36,7 +35,6 @@ export function useScrollToElement(options: UseScrollToElementOptions = {}) {
   useEffect(() => {
     if (!enabled || hasScrolled.current) return
 
-    // Find element by selector or use ref
     const element = selector ? document.querySelector(selector) : elementRef.current
 
     if (element) {

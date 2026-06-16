@@ -12,17 +12,13 @@ interface LangfuseConfig {
   baseUrl: string
 }
 
-/**
- * Check if Langfuse is configured and available.
- */
 export function isLangfuseEnabled(): boolean {
   return !!(process.env.LANGFUSE_SECRET_KEY && process.env.LANGFUSE_PUBLIC_KEY)
 }
 
 /**
- * Initialize Langfuse OpenTelemetry tracing.
- * Must be called early in application startup, before any LangChain usage.
- * Fails gracefully - if initialization fails, continues without tracing.
+ * Must be called early in startup, before any LangChain usage. Fails
+ * gracefully — on init failure, continues without tracing.
  */
 export function initLangfuse(): void {
   overrideFetchForLangfuseMinio()
@@ -62,10 +58,6 @@ export function initLangfuse(): void {
   }
 }
 
-/**
- * Shutdown Langfuse and OpenTelemetry SDK.
- * Call this before application shutdown.
- */
 export async function shutdownLangfuse(): Promise<void> {
   if (otelSdk) {
     await otelSdk.shutdown()
@@ -75,7 +67,6 @@ export async function shutdownLangfuse(): Promise<void> {
 }
 
 /**
- * Create LangChain callbacks for Langfuse tracing.
  * Returns an empty array if Langfuse is not enabled, so callers don't need to check.
  *
  * @example

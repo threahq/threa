@@ -254,7 +254,6 @@ async function resolveRegion(workspaceId: string, env: Env): Promise<string | nu
   if (!res.ok) return null
 
   const { region } = (await res.json()) as { region: string }
-  // Cache in KV so subsequent requests are fast
   await env.WORKSPACE_REGIONS.put(workspaceId, region)
   return region
 }
@@ -358,7 +357,6 @@ async function proxyRequest(request: Request, targetBaseUrl: string): Promise<Re
  */
 function buildPrStagingRe(stagingDomain: string | undefined): RegExp | null {
   if (!stagingDomain) return null
-  // staging.threa.io → pr-(\d+)-staging.threa.io
   // Drop the leading subdomain label ("staging") and keep the base domain
   const escapedDomain = stagingDomain.replace(/\./g, "\\.")
   return new RegExp(`^pr-(\\d+)-${escapedDomain}$`)

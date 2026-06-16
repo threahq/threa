@@ -147,7 +147,6 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           allow: ({ state, range }) => {
             const $from = state.doc.resolve(range.from)
 
-            // Check if inside a code block
             for (let depth = $from.depth; depth >= 0; depth--) {
               const node = $from.node(depth)
               if (node.type.name === "codeBlock") {
@@ -155,14 +154,13 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
               }
             }
 
-            // Check if cursor position has code mark
             const marks = $from.marks()
             if (marks.some((mark) => mark.type.name === "code")) {
               return false
             }
 
-            // Also check if the trigger character itself would be inside code
-            // by looking at stored marks
+            // The trigger character itself can land inside a code mark via
+            // stored marks even when the resolved position carries none.
             const storedMarks = state.storedMarks || $from.marks()
             if (storedMarks.some((mark) => mark.type.name === "code")) {
               return false
@@ -181,7 +179,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
             if (onSelectItem?.({ editor, range, item })) return
             const attrs = mapPropsToAttrs(item)
 
-            // Get marks at the current position to preserve styling (bold, italic, etc.)
+            // Preserve marks at the caret so a chip inserted mid-styled-run keeps the formatting.
             const { $from } = editor.state.selection
             const { storedMarks } = editor.state
             const currentMarks = storedMarks || $from.marks()

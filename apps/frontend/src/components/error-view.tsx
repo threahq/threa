@@ -4,15 +4,10 @@ import { AlertTriangle } from "lucide-react"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty"
 
 interface ErrorViewProps {
-  /** Icon to display. Defaults to AlertTriangle */
   icon?: LucideIcon
-  /** Error title */
   title?: string
-  /** Error description */
   description?: string
-  /** Optional actions (buttons, links) */
   children?: ReactNode
-  /** Additional class names for the container */
   className?: string
 }
 

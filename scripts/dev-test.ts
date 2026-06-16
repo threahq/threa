@@ -6,9 +6,6 @@ import * as net from "net"
 const TEST_DB_NAME = "threa_test"
 const TEST_CP_DB_NAME = "threa_test_cp"
 
-/**
- * Find an available port by attempting to bind to port 0 (OS assigns random available port)
- */
 async function findAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -42,7 +39,6 @@ async function createTestDatabase(): Promise<void> {
 
   console.log(`Using postgres container: ${container}`)
 
-  // Check if database exists
   const checkResult =
     await $`docker exec ${container} psql -U threa -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${TEST_DB_NAME}'"`
       .quiet()
@@ -59,10 +55,8 @@ async function createTestDatabase(): Promise<void> {
 
 async function main() {
   try {
-    // Create test database if it doesn't exist
     await createTestDatabase()
 
-    // Create control-plane test database if needed
     const cpContainer = await findPostgresContainer()
     if (cpContainer) {
       const cpCheck =
@@ -120,10 +114,9 @@ async function main() {
       `http://localhost:${routerPort}`,
     ].join(",")
 
-    // Set environment variables for test mode (backend)
     const backendEnvVars = {
-      ...backendEnv, // Load from apps/backend/.env
-      ...process.env, // Override with process env
+      ...backendEnv,
+      ...process.env,
       DATABASE_URL: `postgresql://threa:threa@localhost:5454/${TEST_DB_NAME}`,
       USE_STUB_AUTH: "true",
       WORKSPACE_CREATION_SKIP_INVITE: "true",
@@ -142,7 +135,6 @@ async function main() {
     const devPlatformAdminEmail = "admin@threa.io"
     const devPlatformAdminId = `workos_test_${Buffer.from(devPlatformAdminEmail).toString("base64url")}`
 
-    // Set environment variables for control-plane
     const controlPlaneEnvVars = {
       ...process.env,
       FAST_SHUTDOWN: "true",
@@ -159,7 +151,6 @@ async function main() {
       FRONTEND_URL: `http://localhost:${frontendPort}`,
     }
 
-    // Set environment variables for frontend (proxies API calls through the router)
     const frontendEnvVars = {
       ...process.env,
       VITE_PORT: String(frontendPort),
@@ -174,7 +165,6 @@ async function main() {
       VITE_API_PROXY_PORT: String(backofficeRouterPort),
     }
 
-    // Build the REGIONS config pointing to the dynamic backend port
     const regionsJson = JSON.stringify({
       local: {
         apiUrl: `http://localhost:${backendPort}`,
@@ -275,7 +265,6 @@ async function main() {
       env: backofficeEnvVars,
     })
 
-    // Handle shutdown
     let isShuttingDown = false
     const shutdown = async () => {
       if (isShuttingDown) return

@@ -209,7 +209,6 @@ export class DraftsService {
     return { draft: view, split }
   }
 
-  /** Write a `draft:upserted` outbox row scoped to the draft's owner. */
   private publishUpsert(client: PoolClient, view: DraftView): Promise<unknown> {
     return OutboxRepository.insert(client, "draft:upserted", {
       workspaceId: view.workspaceId,
@@ -218,7 +217,6 @@ export class DraftsService {
     })
   }
 
-  /** Write a `draft:deleted` tombstone outbox row scoped to the draft's owner. */
   private publishDelete(
     client: PoolClient,
     workspaceId: string,

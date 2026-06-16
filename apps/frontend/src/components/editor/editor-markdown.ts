@@ -6,8 +6,8 @@
  * wire format. This file re-exports those entry points under the names the
  * editor's internals already use, plus the `ParseMarkdownOptions` flags
  * the composer toggles per-call (e.g. `enableMentions: false` while
- * dispatching a slash command). Keeping the parsers unified killed ~700
- * lines of drifting copy-paste between the two implementations.
+ * dispatching a slash command). The parsers stay unified so the two sides
+ * can't drift.
  */
 export {
   serializeToMarkdown,

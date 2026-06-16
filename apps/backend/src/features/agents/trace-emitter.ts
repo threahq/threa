@@ -68,7 +68,6 @@ export class SessionTrace {
     if (params.stepType === "message_sent" || params.stepType === "message_edited") this.messageCount++
     const now = new Date()
 
-    // Persist step row (started, not yet completed)
     const step = await AgentSessionRepository.upsertStep(this.deps.pool, {
       id: generateStepId(),
       sessionId: this.params.sessionId,
@@ -262,8 +261,8 @@ export class ActiveStep {
     /** If provided, completedAt is computed as startedAt + durationMs */
     durationMs?: number
   }): Promise<void> {
-    // If durationMs is provided, compute completedAt relative to startedAt
-    // This allows recording accurate durations when step is recorded after operation completes
+    // Compute completedAt as startedAt + durationMs to record accurate
+    // durations when a step is logged after the operation already completed.
     const completedAt =
       params?.durationMs !== undefined ? new Date(this.params.startedAt.getTime() + params.durationMs) : new Date()
 

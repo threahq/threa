@@ -25,10 +25,9 @@ import type { MarkdownBlockKind } from "./markdown-block-context"
  * of this code, localStorage is the only path that matters.
  *
  * Cross-tab note: this cache does not subscribe to a change feed, so toggling
- * collapse state in tab A does not propagate to tab B without a reload. Same
- * trade-off as before — collapse state is a per-tab UX preference, and the
- * live-query subscription that previously enabled cross-tab sync was itself
- * the original cause of the first-paint instability.
+ * collapse state in tab A does not propagate to tab B without a reload. Collapse
+ * state is a per-tab UX preference, and a live-query subscription for cross-tab
+ * sync was itself the cause of the first-paint instability this design avoids.
  *
  * INV-9 exception: module-level singletons are intentional here. The cache
  * is a synchronous source of truth that must be readable from any component

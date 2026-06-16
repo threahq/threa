@@ -12,7 +12,6 @@ import {
   type AttachmentCategory,
 } from "@threa/types"
 
-// Internal row type (snake_case, not exported)
 interface AttachmentRow {
   id: string
   workspace_id: string
@@ -33,7 +32,6 @@ interface AttachmentRow {
   created_at: Date
 }
 
-// Domain type (camelCase, exported)
 export interface Attachment {
   id: string
   workspaceId: string
@@ -76,14 +74,12 @@ export interface InsertAttachmentParams {
   e2eOnly?: boolean
 }
 
-// Row type for attachments with extraction joined
 interface AttachmentWithExtractionRow extends AttachmentRow {
   extraction_content_type: string | null
   extraction_summary: string | null
   extraction_full_text: string | null
 }
 
-// Domain type for attachment with extraction
 export interface AttachmentWithExtraction extends Attachment {
   extraction: {
     contentType: ExtractionContentType
@@ -181,10 +177,6 @@ export const AttachmentRepository = {
     return result.rows[0] ? mapRowToAttachment(result.rows[0]) : null
   },
 
-  /**
-   * Find attachments with their extractions for a list of message IDs.
-   * Returns a map from message ID to attachments with extraction data.
-   */
   async findByMessageIdsWithExtractions(
     client: Querier,
     messageIds: string[]
@@ -270,11 +262,8 @@ export const AttachmentRepository = {
   },
 
   /**
-   * Update the processing status of an attachment.
-   * Returns true if the update was applied, false otherwise.
-   *
-   * @param onlyIfStatus - If provided, only update if current status matches this value (atomic transition)
-   * @param onlyIfStatusIn - If provided, only update if current status is in this array (for retries)
+   * @param onlyIfStatus - guards an atomic transition: only update if current status matches
+   * @param onlyIfStatusIn - guards a retry: only update if current status is in this array
    */
   async updateProcessingStatus(
     client: Querier,
@@ -384,10 +373,6 @@ export const AttachmentRepository = {
     return result.rows.map((row) => row.id)
   },
 
-  /**
-   * Search attachments with their extractions joined.
-   * Searches by filename and extraction content (summary, full_text).
-   */
   async searchWithExtractions(
     client: Querier,
     opts: {

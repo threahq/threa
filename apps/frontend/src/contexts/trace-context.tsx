@@ -2,16 +2,11 @@ import { createContext, useContext, useCallback, useMemo, type ReactNode } from 
 import { useSearchParams, useLocation } from "react-router-dom"
 
 interface TraceContextValue {
-  /** Whether the trace modal is currently open */
   isOpen: boolean
-  /** ID of the agent session being viewed */
   sessionId: string | null
-  /** ID of the message to highlight in the trace */
   highlightMessageId: string | null
 
-  /** Generate URL for opening the trace modal */
   getTraceUrl: (sessionId: string, highlightMessageId?: string) => string
-  /** Close the trace modal */
   closeTraceModal: () => void
 }
 

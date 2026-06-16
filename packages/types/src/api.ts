@@ -43,10 +43,6 @@ import type { SidebarConfig } from "./sidebar"
 import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
 
-// ============================================================================
-// Streams API
-// ============================================================================
-
 interface CreateStreamInputBase {
   type: StreamType
   displayName?: string
@@ -251,9 +247,7 @@ export interface EventsAroundResponse {
   sharedMessages?: Record<string, SharedMessageHydration>
 }
 
-// ============================================================================
-// Sync log catch-up (GET /api/workspaces/:workspaceId/sync)
-// ============================================================================
+// Sync log catch-up — GET /api/workspaces/:workspaceId/sync
 
 /**
  * One sync-log entry. `payload` is the exact outbox payload the live socket
@@ -300,10 +294,6 @@ export interface SyncHeartbeatPayload {
   workspaceId: string
   head: string
 }
-
-// ============================================================================
-// Messages API
-// ============================================================================
 
 /**
  * JSON input format - used by rich clients sending ProseMirror JSON directly.
@@ -1083,10 +1073,6 @@ export interface ValidateMoveMessagesToThreadResponse {
   messageCount: number
 }
 
-// ============================================================================
-// Workspaces API
-// ============================================================================
-
 export interface CreateWorkspaceInput {
   name: string
   slug?: string
@@ -1138,7 +1124,7 @@ export interface CommandArgumentInfo {
 export interface CommandInfo {
   name: string
   description: string
-  /** Omitted for backwards compat = "server" (previous behaviour). */
+  /** Omitted defaults to "server" (backwards compat). */
   kind?: CommandKind
   /** Workspace commands are globally known; stream commands depend on active stream context. */
   scope?: CommandScope
@@ -1252,10 +1238,6 @@ export interface WorkspaceBootstrap {
   configuredToolCategories?: ToolPrivacyCategory[]
 }
 
-// ============================================================================
-// Invitations API
-// ============================================================================
-
 export interface PendingInvitation {
   id: string
   workspaceId: string
@@ -1312,10 +1294,6 @@ export interface CompleteUserSetupInput {
   locale: string
 }
 
-// ============================================================================
-// Activity API
-// ============================================================================
-
 /** Wire format for activity items (dates as ISO strings) */
 export interface Activity {
   id: string
@@ -1368,10 +1346,6 @@ export interface ActivityCreatedPayload {
   }
 }
 
-// ============================================================================
-// Read State API
-// ============================================================================
-
 export interface MarkAsReadInput {
   lastEventId: string
 }
@@ -1383,10 +1357,6 @@ export interface MarkAsReadResponse {
 export interface MarkAllAsReadResponse {
   updatedStreamIds: string[]
 }
-
-// ============================================================================
-// Commands API
-// ============================================================================
 
 export interface DispatchCommandInput {
   command: string
@@ -1425,10 +1395,6 @@ export interface CommandFailedPayload {
   commandId: string
   error: string
 }
-
-// ============================================================================
-// AI Usage API
-// ============================================================================
 
 export interface AIUsageSummary {
   totalCostUsd: number
@@ -1509,10 +1475,6 @@ export interface UpdateAIBudgetInput {
   hardLimitPercent?: number
 }
 
-// ============================================================================
-// Push Notifications API
-// ============================================================================
-
 /**
  * Length of the hex-encoded device key prefix used to correlate push subscriptions with sessions.
  *
@@ -1525,10 +1487,6 @@ export interface UpdateAIBudgetInput {
  * Implementations: frontend `getDeviceKey` (use-push-notifications.ts), backend `deriveDeviceKey` (socket.ts).
  */
 export const DEVICE_KEY_LENGTH = 16
-
-// ============================================================================
-// Saved Messages API
-// ============================================================================
 
 /**
  * Wire shape for a saved-item row. Items are either anchored to a message
@@ -1623,10 +1581,6 @@ export interface SavedReminderFiredPayload {
   saved: SavedMessageView
 }
 
-// ============================================================================
-// Saved Suggestions API
-// ============================================================================
-
 /**
  * Wire shape for a passively-collected to-do suggestion. Suggestions are
  * per-user (the resolved assignee) and never enter the saved list on their
@@ -1669,10 +1623,6 @@ export interface SavedSuggestionUpsertedPayload {
   targetUserId: string
   suggestion: SavedSuggestionView
 }
-
-// ============================================================================
-// Scheduled Messages API
-// ============================================================================
 
 /**
  * Wire shape for a scheduled-message row. Mirrors the table columns minus the
@@ -1786,10 +1736,6 @@ export interface ScheduledMessageCancelledPayload {
   targetUserId: string
   scheduledId: string
 }
-
-// ============================================================================
-// Drafts API
-// ============================================================================
 
 /**
  * Where a draft belongs. Either a stream (`stream:{streamId}`) or a not-yet-
@@ -1934,10 +1880,6 @@ export interface DraftDeletedPayload {
   targetUserId: string
   draftId: string
 }
-
-// ============================================================================
-// Labels API
-// ============================================================================
 
 /**
  * Wire body for `POST /labels`. Slug is server-derived from `name` (validated

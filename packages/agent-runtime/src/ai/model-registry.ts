@@ -2,14 +2,8 @@ import { readFileSync } from "fs"
 import { join } from "path"
 import * as yaml from "yaml"
 
-/**
- * Input modality types supported by models.
- */
 export type InputModality = "text" | "image" | "audio"
 
-/**
- * Output modality types supported by models.
- */
 export type OutputModality = "text" | "embedding"
 
 /**
@@ -18,9 +12,6 @@ export type OutputModality = "text" | "embedding"
  */
 export type StreamingCapability = "realtime"
 
-/**
- * Model capabilities definition.
- */
 export interface ModelCapabilities {
   name: string
   inputModalities: InputModality[]
@@ -31,16 +22,10 @@ export interface ModelCapabilities {
   audioPricePerHour?: number
 }
 
-/**
- * YAML file structure.
- */
 interface ModelsYaml {
   models: Record<string, ModelCapabilities>
 }
 
-/**
- * Registry for looking up model capabilities.
- */
 export interface ModelRegistry {
   /**
    * Get capabilities for a model by its ID.
@@ -84,9 +69,6 @@ export interface ModelRegistry {
   getModelIds(): string[]
 }
 
-/**
- * Create a model registry by loading from models.yaml.
- */
 export function createModelRegistry(): ModelRegistry {
   const yamlPath = join(__dirname, "models.yaml")
   const content = readFileSync(yamlPath, "utf-8")

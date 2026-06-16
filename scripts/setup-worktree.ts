@@ -50,29 +50,25 @@ async function getWorktrees(): Promise<WorktreeInfo[]> {
 }
 
 function getMainWorktree(worktrees: WorktreeInfo[]): WorktreeInfo | undefined {
-  // First try to find the bare repo (true main)
   const bare = worktrees.find((w) => w.isMain)
   if (bare) return bare
 
-  // Try to find one on main/master branch
   const mainBranch = worktrees.find((w) => w.branch.endsWith("/main") || w.branch.endsWith("/master"))
   if (mainBranch) return mainBranch
 
-  // Heuristic: worktrees are typically named <project>.<branch> while the main is just <project>
-  // So the main worktree path doesn't contain a dot in the directory name
+  // Worktrees are conventionally named <project>.<branch>; the main has no dot in its dir name.
   const mainByNaming = worktrees.find((w) => {
     const dirName = path.basename(w.path)
     return !dirName.includes(".")
   })
   if (mainByNaming) return mainByNaming
 
-  // Fallback: first worktree listed is usually the original
   return worktrees[0]
 }
 
 function deriveDatabaseName(dirPath: string): string {
   const dirName = path.basename(dirPath)
-  // Convert to valid postgres identifier: lowercase, underscores for special chars
+  // Sanitize to a valid postgres identifier.
   const sanitized = dirName
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "_")
@@ -83,13 +79,11 @@ function deriveDatabaseName(dirPath: string): string {
 }
 
 function updateDatabaseUrl(envContent: string, newDbName: string): string {
-  // Replace database name in DATABASE_URL
   // Format: postgresql://user:pass@host:port/dbname
   return envContent.replace(/(DATABASE_URL=postgresql:\/\/[^/]+\/)([^?\n]+)/, `$1${newDbName}`)
 }
 
 function extractDatabaseName(envContent: string): string | null {
-  // Extract database name from DATABASE_URL
   // Format: postgresql://user:pass@host:port/dbname
   const match = envContent.match(/DATABASE_URL=postgresql:\/\/[^/]+\/([^?\n]+)/)
   return match ? match[1] : null
@@ -235,12 +229,10 @@ function copyMcpServers(mainWorktreePath: string, targetWorktreePath: string): v
     return
   }
 
-  // Initialize target project config if it doesn't exist
   if (!config.projects[targetWorktreePath]) {
     config.projects[targetWorktreePath] = {}
   }
 
-  // Copy MCP server configuration
   config.projects[targetWorktreePath].mcpServers = { ...mainProjectConfig.mcpServers }
   config.projects[targetWorktreePath].enabledMcpjsonServers = mainProjectConfig.enabledMcpjsonServers || []
   config.projects[targetWorktreePath].disabledMcpjsonServers = mainProjectConfig.disabledMcpjsonServers || []
@@ -257,7 +249,6 @@ async function main() {
   const cwd = process.cwd()
   console.log(`Setting up worktree at: ${cwd}`)
 
-  // Step 1: Get worktree info
   const worktrees = await getWorktrees()
   const currentWorktree = worktrees.find((w) => w.path === cwd)
   const mainWorktree = getMainWorktree(worktrees)
@@ -278,11 +269,9 @@ async function main() {
 
   console.log(`Main worktree: ${mainWorktree.path}`)
 
-  // Step 2: Run bun install
   console.log("Installing dependencies...")
   await $`bun install`
 
-  // Step 3: Copy .env files from main worktree
   const sourceEnvPath = path.join(mainWorktree.path, "apps/backend/.env")
   const targetEnvPath = path.join(cwd, "apps/backend/.env")
 
@@ -295,19 +284,16 @@ async function main() {
   console.log(`Copying .env from ${sourceEnvPath}...`)
   const originalEnvContent = fs.readFileSync(sourceEnvPath, "utf-8")
 
-  // Extract source database name before modifying
   const sourceDbName = extractDatabaseName(originalEnvContent)
   if (!sourceDbName) {
     console.error("Could not extract database name from main worktree's .env")
     process.exit(1)
   }
 
-  // Step 4: Derive database name from directory
   const dbName = deriveDatabaseName(cwd)
   console.log(`Database name for this worktree: ${dbName}`)
   console.log(`Source database to clone: ${sourceDbName}`)
 
-  // Step 5: Update DATABASE_URL in backend .env
   const envContent = updateDatabaseUrl(originalEnvContent, dbName)
   fs.writeFileSync(targetEnvPath, envContent)
   console.log(`Created ${targetEnvPath}`)
@@ -319,7 +305,6 @@ async function main() {
     process.exit(1)
   }
 
-  // Step 5b: Copy control-plane .env and set its DATABASE_URL
   // CP database is always {backend_db_name}_cp — same derivation as dev.ts
   const cpSourceEnvPath = path.join(mainWorktree.path, "apps/control-plane/.env")
   const cpTargetEnvPath = path.join(cwd, "apps/control-plane/.env")
@@ -327,7 +312,6 @@ async function main() {
   if (fs.existsSync(cpSourceEnvPath)) {
     console.log(`Copying control-plane .env from ${cpSourceEnvPath}...`)
     let cpEnvContent = fs.readFileSync(cpSourceEnvPath, "utf-8")
-    // Replace existing DATABASE_URL or append it
     if (cpEnvContent.includes("DATABASE_URL=")) {
       cpEnvContent = cpEnvContent.replace(/DATABASE_URL=.*/, `DATABASE_URL=${cpDbUrl}`)
     } else {
@@ -335,12 +319,10 @@ async function main() {
     }
     fs.writeFileSync(cpTargetEnvPath, cpEnvContent)
   } else {
-    // No source .env — create a minimal one with DATABASE_URL
     fs.writeFileSync(cpTargetEnvPath, `DATABASE_URL=${cpDbUrl}\nFAST_SHUTDOWN=true\n`)
   }
   console.log(`Control-plane DATABASE_URL: ${cpDbUrl}`)
 
-  // Step 6: Create database and clone data from main worktree
   try {
     const container = await findPostgresContainer()
     if (!container) {
@@ -393,7 +375,6 @@ async function main() {
     console.warn("Run 'bun run db:start' from the main worktree, then run this script again")
   }
 
-  // Step 7: Copy MCP server configuration from main worktree
   try {
     copyMcpServers(mainWorktree.path, cwd)
   } catch (err) {

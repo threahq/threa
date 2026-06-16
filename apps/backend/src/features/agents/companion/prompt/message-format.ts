@@ -64,7 +64,6 @@ export function formatMessagesWithTemporal(
   }
 
   if (!temporal) {
-    // No temporal context - return messages with original content + attachment context
     return messages.map((m) => ({
       role: m.authorType === AuthorTypes.USER ? ("user" as const) : ("assistant" as const),
       content: formatMessageContent(m, `${idTag(m)} `, imageIndexById, names),
@@ -80,7 +79,7 @@ export function formatMessagesWithTemporal(
     const role = msg.authorType === AuthorTypes.USER ? ("user" as const) : ("assistant" as const)
 
     if (msg.authorType === AuthorTypes.USER) {
-      // Check for date boundary - only on user messages to avoid model mimicking the format
+      // Date boundary only on user messages to avoid the model mimicking the format.
       const msgDateKey = getDateKey(msg.createdAt, temporal.timezone)
       let dateBoundaryPrefix = ""
       if (msgDateKey !== currentDateKey) {
@@ -89,7 +88,6 @@ export function formatMessagesWithTemporal(
         currentDateKey = msgDateKey
       }
 
-      // Format with timestamp and optional author name for multi-user contexts
       const time = formatTime(msg.createdAt, temporal.timezone, temporal.timeFormat)
       const authorName = authorNames.get(msg.authorId) ?? "Unknown"
       const hasMultipleUsers = context.streamType === StreamTypes.CHANNEL || context.streamType === StreamTypes.DM

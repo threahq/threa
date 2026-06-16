@@ -22,7 +22,6 @@ interface AtomAwareMarkInputRuleConfig {
 /**
  * Create an input rule for marks that correctly handles atom nodes (like mentions).
  *
- * This uses a simpler approach than the previous implementation:
  * 1. Match the full pattern (opening + content + closing) using a regex
  * 2. Use TipTap's standard transaction modifications
  * 3. Only add atom-specific handling when needed
@@ -57,7 +56,6 @@ export function atomAwareMarkInputRule(config: AtomAwareMarkInputRuleConfig): In
     handler: ({ state, range, match }) => {
       const { tr } = state
 
-      // match[1] is the content between markers
       const content = match[1]
 
       if (!content) return null
@@ -201,7 +199,6 @@ export function atomAwareMarkInputRule(config: AtomAwareMarkInputRuleConfig): In
           // IMPORTANT: isAtom is true for ALL leaf nodes including text!
           // Must check !node.isText to only match actual atom nodes like mentions
           if (node.isAtom && node.isInline && !node.isText && isInContentRange) {
-            // Get text representation from the node
             const attrs = node.attrs as { slug?: string }
             let text = ""
 

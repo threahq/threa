@@ -12,7 +12,6 @@ interface CodeBlockProps {
   children: string
 }
 
-/** Format language name for display */
 function formatLanguage(lang: string): string {
   const displayNames: Record<string, string> = {
     javascript: "JavaScript",
@@ -70,10 +69,10 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
 
   const measured = useMeasuredLineCount(bodyRef, [trimmedCode, html])
   const lineCount = measured.lineCount
-  // Same "more than threshold" semantic as before, but measured by rendered
-  // line-height (not "\n" count). The extra half line keeps a barely-over
-  // block from sprouting a toggle that would only hide a sliver — and it is
-  // exactly the half line the collapsed view shows as the "there's more" hint.
+  // "More than threshold" measured by rendered line-height (not "\n" count).
+  // The extra half line keeps a barely-over block from sprouting a toggle that
+  // would only hide a sliver — and it is exactly the half line the collapsed
+  // view shows as the "there's more" hint.
   const collapsible = lineCount !== null && lineCount > threshold + 0.5
   const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 

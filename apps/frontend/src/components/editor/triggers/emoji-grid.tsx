@@ -113,7 +113,6 @@ function EmojiGridInner(
     whileElementsMounted: autoUpdate,
   })
 
-  // Update reference element based on cursor position
   useEffect(() => {
     if (clientRect) {
       refs.setReference({
@@ -122,7 +121,6 @@ function EmojiGridInner(
     }
   }, [clientRect, refs])
 
-  // Handle grid keyboard navigation
   useImperativeHandle(ref, () => ({
     onKeyDown: (event: KeyboardEvent) => {
       if (total === 0) return false
@@ -268,7 +266,6 @@ function EmojiGridInner(
           }}
         />
       )}
-      {/* Footer showing selected emoji shortcode */}
       {selectedEmoji && (
         <div className="border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
           <span className="mr-1.5">{selectedEmoji.emoji}</span>

@@ -36,15 +36,11 @@ export interface TierConfig {
   maxActiveTokens: number
 }
 
-/**
- * Configuration for QueueManager
- */
 export interface QueueManagerConfig {
   pool: Pool
   queueRepository: typeof QueueRepository
   tokenPoolRepository: typeof TokenPoolRepository
 
-  // Queue processing config
   lockDurationMs?: number // Default 10000 (10s)
   refreshIntervalMs?: number // Default 5000 (5s)
   maxRetries?: number // Default 5
@@ -53,7 +49,6 @@ export interface QueueManagerConfig {
   claimBatchSize?: number // Default 20 (messages to claim per token)
   processingConcurrency?: number // Default 5 (parallel message processing per worker)
 
-  // Adaptive polling config
   pollIntervalMs?: number // Default 500 (sleep between cycles when idle)
   refillDebounceMs?: number // Default 100 (debounce before fetching more tokens)
   stuckTokenWarnMs?: number // Default 60000 (warn once when token runs suspiciously long)
@@ -180,9 +175,6 @@ export class QueueManager {
     this.refillDebounceMs = refillDebounceMs
     this.stuckTokenWarnMs = stuckTokenWarnMs
 
-    // Build tier budget map. If caller supplied `tiers`, use that. Otherwise
-    // fall back to legacy single-budget behaviour, represented as one synthetic
-    // tier absorbing all registered handlers.
     this.tierBudgets = {}
     if (tiers) {
       for (const [tier, cfg] of Object.entries(tiers) as [QueueTier, TierConfig | undefined][]) {
@@ -268,14 +260,9 @@ export class QueueManager {
   }
 
   /**
-   * Schedule a recurring job (idempotent, atomic).
-   * Creates new schedule or updates interval if exists.
-   * Uses INSERT ... ON CONFLICT to avoid race conditions.
-   *
-   * @param queueName - Queue to send messages to
-   * @param intervalSeconds - Interval in seconds between job runs
-   * @param data - Job data to send
-   * @param workspaceId - Optional workspace ID (null = system-wide)
+   * Schedule a recurring job. Idempotent via INSERT ... ON CONFLICT (INV-20):
+   * creates the schedule or updates its interval if it already exists.
+   * `workspaceId` null means system-wide.
    */
   async schedule<T extends JobQueueName>(
     queueName: T,
@@ -299,16 +286,11 @@ export class QueueManager {
     }
   }
 
-  /**
-   * Send message to queue.
-   * Returns message ID.
-   */
   async send<T extends JobQueueName>(
     queueName: T,
     data: JobDataMap[T],
     options?: { processAfter?: Date; messageId?: string }
   ): Promise<string> {
-    // Extract workspaceId from job data
     const workspaceId = this.extractWorkspaceId(queueName, data)
 
     const messageId = options?.messageId ?? queueId()
@@ -338,9 +320,6 @@ export class QueueManager {
     return messageId
   }
 
-  /**
-   * Start processing with adaptive polling.
-   */
   start(): void {
     if (this.isStarted) {
       throw new Error("QueueManager already started")
@@ -363,13 +342,6 @@ export class QueueManager {
     )
   }
 
-  /**
-   * Graceful shutdown.
-   * 1. Stop polling (no new cycles)
-   * 2. Clear per-tier refill timers
-   * 3. Wait for in-flight tokens with timeout
-   * 4. Wait for cron workers
-   */
   async stop(): Promise<void> {
     if (this.isStopping) {
       return
@@ -378,13 +350,11 @@ export class QueueManager {
     this.isStopping = true
     logger.info("QueueManager stopping...")
 
-    // Stop polling (no new cycles)
     if (this.pollTimer) {
       clearTimeout(this.pollTimer)
       this.pollTimer = null
     }
 
-    // Stop per-tier refill timers
     for (const state of this.tierState.values()) {
       if (state.refillTimer) {
         clearTimeout(state.refillTimer)
@@ -392,7 +362,6 @@ export class QueueManager {
       }
     }
 
-    // Wait for active tokens (across all tiers) with timeout
     const allActiveTokens: Promise<void>[] = []
     let activeTokenCount = 0
     for (const state of this.tierState.values()) {
@@ -428,18 +397,10 @@ export class QueueManager {
   /**
    * Run a single polling cycle.
    *
-   * Algorithm:
-   * 1. Record cycle start time
-   * 2. Reset per-tier exhausted flags
-   * 3. Fetch initial tokens for every tier in parallel (each capped at its budget)
-   * 4. Process tokens, refilling each tier's slots as they complete (debounced)
-   * 5. Process cron ticks
-   * 6. Sleep remaining time to reach pollIntervalMs
-   *
-   * Important: do NOT wait for active tokens to drain before scheduling the
-   * next cycle. A single hung handler would otherwise freeze the current cycle
-   * forever, preventing later-arriving work from ever being leased even when
-   * the tier still has spare budget.
+   * Do NOT wait for active tokens to drain before scheduling the next cycle.
+   * A single hung handler would otherwise freeze the current cycle forever,
+   * preventing later-arriving work from ever being leased even when the tier
+   * still has spare budget.
    */
   private async runCycle(): Promise<void> {
     if (this.isStopping) {
@@ -454,16 +415,14 @@ export class QueueManager {
       return
     }
 
-    // Reset per-tier exhausted flag at the start of each cycle so a tier that
-    // found nothing last cycle gets another chance.
+    // A tier that found nothing last cycle gets another chance.
     for (const state of this.tierState.values()) {
       state.cycleExhausted = false
     }
 
-    // Fetch initial tokens and start processing for each tier in parallel.
-    // Use allSettled so a transient lease failure in one tier doesn't abort
-    // the cycle for other tiers — interactive work should keep draining even
-    // if the heavy tier's lease query hiccups.
+    // allSettled so a transient lease failure in one tier doesn't abort the
+    // cycle for others — interactive work should keep draining even if the
+    // heavy tier's lease query hiccups.
     const fillResults = await Promise.allSettled(
       Array.from(this.tierState.values()).map((state) => this.fillSlots(state))
     )
@@ -473,18 +432,15 @@ export class QueueManager {
       }
     }
 
-    // Process cron ticks (runs in parallel with token processing)
     await this.processCronTicks()
 
-    // Schedule next cycle after sleeping remaining time
     const elapsed = Date.now() - this.cycleStart
     this.scheduleNextCycle(elapsed)
   }
 
   /**
-   * Fill available token slots for a single tier.
-   * Fetches tokens up to (tier.budget - tier.activeTokens.size).
-   * Sets tier.cycleExhausted=true when no more tokens available.
+   * Fill available token slots for a single tier, up to its remaining budget.
+   * Sets cycleExhausted when no more tokens are available.
    */
   private async fillSlots(state: TierRuntimeState): Promise<void> {
     if (this.isStopping || state.cycleExhausted || state.fillInProgress) {
@@ -522,7 +478,6 @@ export class QueueManager {
         "Leased tokens"
       )
 
-      // Start processing each token
       for (const token of tokens) {
         const promise = this.processToken(token).finally(() => {
           state.activeTokens.delete(token.id)
@@ -536,20 +491,18 @@ export class QueueManager {
   }
 
   /**
-   * Debounced fill slots - waits refillDebounceMs before fetching more tokens.
-   * Prevents hammering the database when multiple tokens complete quickly.
+   * Refill slots after refillDebounceMs, so the DB isn't hammered when many
+   * tokens complete in quick succession.
    */
   private debouncedFillSlots(state: TierRuntimeState): void {
     if (this.isStopping || state.cycleExhausted) {
       return
     }
 
-    // Clear existing timer
     if (state.refillTimer) {
       clearTimeout(state.refillTimer)
     }
 
-    // Schedule refill after debounce delay
     state.refillTimer = setTimeout(() => {
       state.refillTimer = null
       this.fillSlots(state).catch((err) => {
@@ -560,10 +513,7 @@ export class QueueManager {
     }, this.refillDebounceMs)
   }
 
-  /**
-   * Schedule the next polling cycle.
-   * Sleeps remaining time to reach pollIntervalMs.
-   */
+  /** Schedule the next polling cycle, sleeping the remainder of pollIntervalMs. */
   private scheduleNextCycle(elapsedMs: number): void {
     if (this.isStopping) {
       return
@@ -582,9 +532,6 @@ export class QueueManager {
     }, sleepMs)
   }
 
-  /**
-   * Process cron ticks in the current cycle.
-   */
   private async processCronTicks(): Promise<void> {
     if (this.isStopping) {
       return
@@ -606,18 +553,7 @@ export class QueueManager {
     }
   }
 
-  /**
-   * Process messages for a token.
-   *
-   * Manages token lifecycle:
-   * 1. Sets up background token renewal timer
-   * 2. Delegates message processing to processMessagesForToken()
-   * 3. Cleans up timer and releases token
-   *
-   * Note: Tracking is handled by fillSlots() via activeTokens Map.
-   */
   private async processToken(token: { id: string; queueName: string; workspaceId: string }): Promise<void> {
-    // Set up token renewal timer (runs for entire worker lifetime)
     let tokenRenewalInProgress = false
     let isShuttingDown = false
     const startedAt = Date.now()
@@ -662,7 +598,6 @@ export class QueueManager {
     try {
       await this.processMessagesForToken(token)
     } finally {
-      // Signal shutdown and clear timer immediately to prevent new renewals
       isShuttingDown = true
       clearInterval(tokenRenewTimer)
       clearTimeout(stuckWarnTimer)
@@ -676,20 +611,10 @@ export class QueueManager {
     }
   }
 
-  /**
-   * Process all messages for a token.
-   *
-   * Optimized for throughput:
-   * 1. Batch claim messages upfront (1 query instead of N)
-   * 2. Set up background renewal for ALL claimed messages
-   * 3. Process with controlled concurrency (processingConcurrency at a time)
-   * 4. Complete messages immediately (no batching - good for observability)
-   */
   private async processMessagesForToken(token: { id: string; queueName: string; workspaceId: string }): Promise<void> {
     const workerIdValue = workerId()
     const now = new Date()
 
-    // 1. Batch claim messages upfront
     const messages = await this.queueRepo.batchClaimMessages(this.pool, {
       queueName: token.queueName,
       workspaceId: token.workspaceId,
@@ -701,7 +626,7 @@ export class QueueManager {
     })
 
     if (messages.length === 0) {
-      return // No work for this token
+      return
     }
 
     logger.debug(
@@ -709,7 +634,6 @@ export class QueueManager {
       "Batch claimed messages"
     )
 
-    // 2. Set up message renewal timer for ALL messages
     const messageIds = messages.map((m) => m.id)
     const completedMessageIds = new Set<string>()
     let messageRenewalInProgress = false
@@ -738,7 +662,6 @@ export class QueueManager {
     }, this.refreshIntervalMs)
 
     try {
-      // 3. Process with controlled concurrency (processingConcurrency at a time)
       const limit = pLimit(this.processingConcurrency)
 
       await Promise.all(
@@ -748,7 +671,6 @@ export class QueueManager {
               await this.processMessage(message, workerIdValue, completedMessageIds)
             } catch (err) {
               // Error already logged and handled in processMessage
-              // Continue processing other messages
             }
           })
         )
@@ -758,10 +680,7 @@ export class QueueManager {
     }
   }
 
-  /**
-   * Renew token lease.
-   * Returns false if lease lost.
-   */
+  /** Returns false if the lease was lost. */
   private async renewTokenLease(tokenId: string): Promise<boolean> {
     const now = new Date()
 
@@ -772,9 +691,6 @@ export class QueueManager {
     })
   }
 
-  /**
-   * Batch renew claims for multiple messages.
-   */
   private async batchRenewClaims(messageIds: string[], workerId: string): Promise<number> {
     const now = new Date()
 
@@ -785,12 +701,6 @@ export class QueueManager {
     })
   }
 
-  /**
-   * Process a single message.
-   *
-   * Note: Renewal is handled at the batch level by processToken(),
-   * not per-message, to reduce database queries.
-   */
   private async processMessage(
     message: {
       id: string
@@ -811,14 +721,12 @@ export class QueueManager {
     queueMessagesInFlight.inc({ queue: message.queueName })
 
     try {
-      // Execute handler
       await handler({
         id: message.id,
         name: message.queueName,
         data: message.payload,
       })
 
-      // Success - complete message
       await this.completeMessage(message.id, workerId)
       completedMessageIds.add(message.id)
 
@@ -837,12 +745,10 @@ export class QueueManager {
 
       logger.warn({ messageId: message.id, queueName: message.queueName, err: error }, "Message processing failed")
 
-      // Calculate new failed_count
       const newFailedCount = message.failedCount + 1
       const maxRetries = this.handlerMaxRetries.get(message.queueName) ?? this.maxRetries
 
       if (newFailedCount >= maxRetries) {
-        // Move to DLQ
         await this.moveMessageToDlq(message, workerId, error)
         completedMessageIds.add(message.id)
 
@@ -852,7 +758,6 @@ export class QueueManager {
           "Message moved to DLQ after exhausting retries"
         )
       } else {
-        // Retry with backoff
         await this.retryMessage(message.id, workerId, error.message, newFailedCount)
 
         queueMessagesProcessed.inc({ queue: message.queueName, status: "failed", workspace_id: workspaceId })
@@ -864,9 +769,6 @@ export class QueueManager {
     }
   }
 
-  /**
-   * Complete a message.
-   */
   private async completeMessage(messageId: string, workerId: string): Promise<void> {
     const now = new Date()
 
@@ -877,9 +779,6 @@ export class QueueManager {
     })
   }
 
-  /**
-   * Retry a message with backoff.
-   */
   private async retryMessage(
     messageId: string,
     workerId: string,
@@ -902,8 +801,6 @@ export class QueueManager {
   }
 
   /**
-   * Move message to DLQ.
-   *
    * If an onDLQ hook is registered, it runs in a savepoint:
    * - Hook writes only persist if the DLQ move commits
    * - Hook failure is logged but doesn't prevent the DLQ move
@@ -959,9 +856,6 @@ export class QueueManager {
     }
   }
 
-  /**
-   * Release a token.
-   */
   private async releaseToken(tokenId: string): Promise<void> {
     await this.tokenPoolRepo.deleteToken(this.pool, {
       tokenId,
@@ -969,15 +863,10 @@ export class QueueManager {
     })
   }
 
-  /**
-   * Execute a cron tick.
-   * Sends message to queue and deletes tick.
-   * Runs in background - does not block the polling cycle.
-   */
+  /** Runs in the background - does not block the polling cycle. */
   private executeTick(tick: CronTick): void {
     const workerPromise = (async () => {
       try {
-        // Send message to queue (tick payload already denormalized)
         await this.queueRepo.insert(this.pool, {
           id: queueId(),
           queueName: tick.queueName,
@@ -994,7 +883,6 @@ export class QueueManager {
       } catch (err) {
         logger.error({ scheduleId: tick.scheduleId, err }, "Failed to execute cron tick")
       } finally {
-        // Always delete tick (release schedule)
         try {
           await CronRepository.deleteTick(this.pool, {
             tickId: tick.id,
@@ -1011,10 +899,7 @@ export class QueueManager {
     workerPromise.finally(() => this.activeCronWorkers.delete(workerPromise))
   }
 
-  /**
-   * Extract workspaceId from job data.
-   * All job types must include workspaceId.
-   */
+  /** All job types must include workspaceId. */
   private extractWorkspaceId(queueName: string, data: unknown): string {
     const isObject = data !== null && typeof data === "object"
     const workspaceId = isObject ? (data as Record<string, unknown>).workspaceId : undefined

@@ -34,12 +34,10 @@ function addMemoDefaults(obj: Record<string, unknown>): Record<string, unknown> 
     obj.reasoning = null
   }
 
-  // Default confidence if missing
   if (!("confidence" in obj)) {
     obj.confidence = 0.5
   }
 
-  // For conversation classification: add defaults for boolean fields
   if ("isKnowledgeWorthy" in obj) {
     if (!("shouldReviseExisting" in obj)) {
       obj.shouldReviseExisting = false

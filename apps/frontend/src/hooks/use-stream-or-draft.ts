@@ -189,7 +189,6 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
     navigate(`/w/${workspaceId}`)
   }, [deleteDraft, streamId, workspaceId, navigate])
 
-  // Listen for draft promotion and navigate to the real stream
   useEffect(() => {
     return onDraftPromoted((promotion) => {
       if (promotion.draftId === streamId && promotion.workspaceId === workspaceId) {
@@ -563,7 +562,6 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       }
     })
 
-    // Add back to workspace sidebar
     queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
   }, [streamId, workspaceId, streamService, queryClient, bootstrap?.stream, idbStream])
 
@@ -648,8 +646,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       markPending(clientId)
 
-      // Persist to IndexedDB — this is the durable enqueue step.
-      // The background message queue (useMessageQueue) will pick it up and send it.
+      // Durable enqueue: the background message queue (useMessageQueue) picks
+      // this up and sends it.
       await db.pendingMessages.add({
         clientId,
         workspaceId,
@@ -672,7 +670,6 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         _cachedAt: Date.now(),
       })
 
-      // Kick the background queue to start sending
       notifyQueue()
 
       return {}

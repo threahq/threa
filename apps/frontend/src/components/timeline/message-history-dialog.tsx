@@ -71,7 +71,6 @@ export function MessageHistoryDialog({
         </ResponsiveDialogHeader>
 
         {isMobile ? (
-          /* Mobile: stacked layout — revision selector on top, content below */
           <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
             <div className="flex gap-2 px-4 pb-3 overflow-x-auto">
               {revisions.map((rev, i) => (
@@ -103,7 +102,6 @@ export function MessageHistoryDialog({
             </div>
           </div>
         ) : (
-          /* Desktop: side-by-side layout */
           <div className="flex gap-4 flex-1 min-h-0 overflow-hidden px-6 pb-6">
             <div className="w-48 shrink-0 border-r pr-4 overflow-y-auto">
               {revisions.map((rev, i) => (
@@ -150,7 +148,6 @@ export function buildRevisionList(
 
   const revisions: RevisionEntry[] = []
 
-  // Current version at top
   revisions.push({
     revisionNumber: currentRevisionNumber,
     isCurrent: true,

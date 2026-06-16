@@ -1,61 +1,21 @@
-/**
- * Word Processing Configuration
- *
- * Central configuration for Word document analysis and extraction.
- * Used by WordProcessingService and future evals.
- */
-
 import { z } from "zod"
 import { TEXT_SIZE_TIERS, INJECTION_STRATEGIES } from "@threa/types"
 
-// ============================================================================
-// Model Configuration
-// ============================================================================
-
-/**
- * Model for document summarization (large files only).
- * Gemini 2.5 Flash is fast and cheap for text summarization.
- */
 export const WORD_SUMMARY_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 
-/**
- * Temperature for document summarization.
- * Slightly higher for creative summarization.
- */
 export const WORD_SUMMARY_TEMPERATURE = 0.3
 
-/**
- * Model for embedded image captioning.
- * Gemini 2.5 Flash has excellent vision capabilities.
- */
 export const WORD_IMAGE_CAPTION_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 
-/**
- * Temperature for image captioning.
- * Low temperature for consistent descriptions.
- */
 export const WORD_IMAGE_CAPTION_TEMPERATURE = 0.1
 
-// ============================================================================
-// MIME Types and Extensions
-// ============================================================================
-
-/**
- * MIME types for Word documents.
- */
 export const WORD_MIME_TYPES = [
   "application/msword", // .doc
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
 ] as const
 
-/**
- * File extensions for Word documents.
- */
 export const WORD_EXTENSIONS = [".doc", ".docx"] as const
 
-/**
- * Magic bytes for format detection.
- */
 export const WORD_MAGIC_BYTES = {
   /** DOCX: ZIP archive starting with PK (0x50 0x4B) */
   docx: [0x50, 0x4b, 0x03, 0x04] as const,
@@ -63,33 +23,18 @@ export const WORD_MAGIC_BYTES = {
   doc: [0xd0, 0xcf, 0x11, 0xe0] as const,
 } as const
 
-// ============================================================================
-// Size Thresholds
-// ============================================================================
-
 /**
- * Size thresholds for determining injection strategy.
- * Based on approximate token counts (1 token ~= 4 chars).
- * Same as text processing for consistency.
+ * Byte thresholds approximate token counts (1 token ~= 4 chars); kept in sync
+ * with text processing for consistent injection strategy across file types.
  */
 export const WORD_SIZE_THRESHOLDS = {
-  /** Small files (<2K tokens, ~8KB): inject complete content */
   smallBytes: 8 * 1024,
-  /** Medium files (2K-8K tokens, ~32KB): inject with size note */
   mediumBytes: 32 * 1024,
-  /** Large files (>8K tokens, >32KB): summary + sections + load_file_section tool */
 } as const
 
-// ============================================================================
-// Format Detection
-// ============================================================================
-
 /**
- * Check if a file is a Word document based on MIME type and filename.
- *
- * - If mimeType matches Word MIME types, return true
- * - If mimeType is "application/octet-stream", check file extension
- * - Otherwise return false
+ * Treats "application/octet-stream" as Word when the extension matches, since
+ * some clients upload documents with a generic MIME type.
  */
 export function isWordAttachment(mimeType: string, filename: string): boolean {
   if (WORD_MIME_TYPES.includes(mimeType as (typeof WORD_MIME_TYPES)[number])) {
@@ -104,9 +49,6 @@ export function isWordAttachment(mimeType: string, filename: string): boolean {
   return false
 }
 
-/**
- * Get file extension from filename.
- */
 export function getFileExtension(filename: string): string | null {
   const lastDot = filename.lastIndexOf(".")
   if (lastDot === -1 || lastDot === filename.length - 1) {
@@ -115,27 +57,14 @@ export function getFileExtension(filename: string): string | null {
   return filename.slice(lastDot).toLowerCase()
 }
 
-// ============================================================================
-// Schemas
-// ============================================================================
-
-/**
- * Schema for Word format.
- */
 export const wordFormatSchema = z.enum(["docx", "doc"])
 
-/**
- * Schema for size tier.
- */
 export const sizeTierSchema = z.enum(TEXT_SIZE_TIERS)
 
-/**
- * Schema for injection strategy.
- */
 export const injectionStrategySchema = z.enum(INJECTION_STRATEGIES)
 
 /**
- * Schema for text section (reused from text processing).
+ * Reused from text processing.
  */
 export const textSectionSchema = z.object({
   type: z.enum(["heading", "key", "rows", "lines"]),
@@ -145,9 +74,6 @@ export const textSectionSchema = z.object({
   endLine: z.number(),
 })
 
-/**
- * Schema for Word metadata.
- */
 export const wordMetadataSchema = z.object({
   format: wordFormatSchema,
   sizeTier: sizeTierSchema,
@@ -164,9 +90,6 @@ export const wordMetadataSchema = z.object({
 
 export type WordMetadataOutput = z.infer<typeof wordMetadataSchema>
 
-/**
- * Schema for document summary output.
- */
 export const wordSummarySchema = z.object({
   summary: z.string().describe("2-3 sentence summary of the document content"),
   keyTopics: z.array(z.string()).describe("Main topics or concepts covered"),
@@ -174,18 +97,11 @@ export const wordSummarySchema = z.object({
 
 export type WordSummaryOutput = z.infer<typeof wordSummarySchema>
 
-/**
- * Schema for embedded image caption output.
- */
 export const embeddedImageCaptionSchema = z.object({
   caption: z.string().describe("Brief description of the image content"),
 })
 
 export type EmbeddedImageCaptionOutput = z.infer<typeof embeddedImageCaptionSchema>
-
-// ============================================================================
-// Prompts
-// ============================================================================
 
 export const WORD_SUMMARY_SYSTEM_PROMPT = `You are a document summarization specialist. Analyze the provided Word document content and create a structured summary.
 

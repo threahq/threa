@@ -46,40 +46,13 @@ interface Dependencies {
 
 export function createSearchHandlers({ pool, searchService }: Dependencies) {
   return {
-    /**
-     * Search messages across accessible streams.
-     *
-     * POST /api/workspaces/:workspaceId/search
-     *
-     * Body:
-     * - query: string (optional) - text search terms
-     * - from: string (optional) - filter by author ID
-     * - with: string[] (optional) - filter to streams where these users/personas participated
-     * - in: string[] (optional) - filter to specific stream IDs
-     * - type: StreamType[] (optional) - filter by stream type
-     * - status: ("active" | "archived")[] (optional) - filter by archive status
-     * - before: ISO datetime (optional) - messages before date
-     * - after: ISO datetime (optional) - messages after date
-     * - limit: number (optional) - max results (1-100)
-     */
     async search(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
       const data = validateRequest(searchQuerySchema, req.body)
 
-      const {
-        query,
-        from,
-        with: withParticipants,
-        in: inStreams,
-        type,
-        status,
-        before,
-        after,
-        exact,
-        limit,
-      } = data
+      const { query, from, with: withParticipants, in: inStreams, type, status, before, after, exact, limit } = data
 
       const filters = {
         authorId: from,

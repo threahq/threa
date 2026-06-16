@@ -30,8 +30,7 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
     joinRoomFireAndForget(socket, room, abortController.signal, "StreamSocket")
 
     // Register all stream-level socket handlers — they write to IDB only.
-    // queryClient is passed for transitional workspace bootstrap preview updates
-    // (will be removed in Phase 3).
+    // queryClient is passed for transitional workspace bootstrap preview updates.
     //
     // In active sync mode, register through the engine's event gate so
     // these handlers receive catch-up entries and respect buffer-and-splice

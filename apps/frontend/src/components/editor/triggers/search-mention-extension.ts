@@ -25,10 +25,6 @@ export interface SearchMentionOptions {
   }
 }
 
-/**
- * Extension for @mentions in search mode.
- * Triggers on @ and inserts "@slug " as plain text.
- */
 export const SearchMentionExtension = Extension.create<SearchMentionOptions>({
   name: "searchMention",
 
@@ -56,7 +52,6 @@ export const SearchMentionExtension = Extension.create<SearchMentionOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as Mentionable
-          // Insert plain text: "@slug "
           editor.chain().focus().deleteRange(range).insertContent(`@${item.slug} `).run()
         },
       }),

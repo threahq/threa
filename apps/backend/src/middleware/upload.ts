@@ -7,7 +7,6 @@ import { attachmentId } from "../lib/id"
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB
 
-// Extend Express.Multer.File to include multer-s3 properties
 declare global {
   namespace Express {
     namespace Multer {
@@ -21,7 +20,6 @@ declare global {
   }
 }
 
-// Extend Request to include the generated attachment ID
 declare module "express" {
   interface Request {
     attachmentId?: string
@@ -60,7 +58,6 @@ export function createUploadMiddleware({ s3Config }: UploadMiddlewareConfig): Re
     key: (req: Request, file: Express.Multer.File, cb) => {
       const { workspaceId } = req.params
       const id = attachmentId()
-      // Store the generated ID on the request for the handler to use
       req.attachmentId = id
       // Workspace-scoped path (no streamId - set when attached to message)
       const key = `${workspaceId}/${id}/${file.originalname}`
@@ -83,8 +80,7 @@ const AVATAR_MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 
 /**
- * Creates an avatar upload middleware using memory storage.
- * Memory storage is correct here: 5MB cap keeps memory bounded,
+ * Memory storage is correct here: the size cap keeps memory bounded,
  * and we need the buffer for sharp processing before uploading to S3.
  */
 export function createAvatarUploadMiddleware(): RequestHandler {

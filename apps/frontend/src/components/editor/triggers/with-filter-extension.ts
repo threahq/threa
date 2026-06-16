@@ -1,6 +1,5 @@
 /**
  * TipTap extension for `with:@` filter trigger in search mode.
- * Shows user/persona suggestions when user types `with:@`.
  * Filters for messages in streams where the selected user is a member.
  * Inserts plain text: `with:@slug `
  */

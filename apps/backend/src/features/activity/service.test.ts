@@ -61,7 +61,6 @@ function fakeActivity(context: Record<string, unknown>): Activity[] {
 }
 
 function setupService() {
-  // Mock withClient to just call the callback directly with a fake client
   spyOn(dbModule, "withClient").mockImplementation(async (_pool: any, fn: any) => fn({} as any))
 
   return new ActivityService({ pool: {} as any })

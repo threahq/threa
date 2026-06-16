@@ -1,31 +1,10 @@
-/**
- * PDF Processing Configuration
- *
- * Central configuration for PDF extraction and analysis.
- * Used by PDFProcessingService and future evals.
- */
-
 import { z } from "zod"
 import { PDF_PAGE_CLASSIFICATIONS, PDF_SIZE_TIERS } from "@threa/types"
 
-// ============================================================================
-// Model Configuration
-// ============================================================================
-
-/**
- * Model for complex layout analysis (tables, multi-column, etc.)
- * Gemini 2.5 Flash handles document understanding well.
- */
 export const PDF_LAYOUT_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 
-/**
- * Model for document summarization.
- */
 export const PDF_SUMMARY_MODEL_ID = "openrouter:google/gemini-2.5-flash"
 
-/**
- * Temperature settings for PDF processing.
- */
 export const PDF_TEMPERATURES = {
   layout: 0.1, // Low for consistent extraction
   summary: 0.3, // Slightly higher for creative summarization
@@ -47,9 +26,6 @@ export const PDF_SIZE_THRESHOLDS = {
   /** Large PDFs (>25 pages): summary + sections + load_pdf_section tool */
 } as const
 
-/**
- * Text extraction thresholds for page classification.
- */
 export const PDF_TEXT_THRESHOLDS = {
   /** Minimum chars for text_rich classification */
   textRich: 100,
@@ -57,24 +33,11 @@ export const PDF_TEXT_THRESHOLDS = {
   scanned: 50,
 } as const
 
-// ============================================================================
-// Supported PDF Types
-// ============================================================================
-
-/**
- * MIME types that indicate a PDF file.
- */
 export const PDF_MIME_TYPES = ["application/pdf"] as const
 
-/**
- * File extensions that indicate a PDF file.
- * Used when mime_type is application/octet-stream.
- */
+/** PDF file extensions, checked when mime_type is application/octet-stream. */
 export const PDF_EXTENSIONS = [".pdf"] as const
 
-/**
- * Check if an attachment is a PDF based on mime type and filename.
- */
 export function isPdfAttachment(mimeType: string, filename: string): boolean {
   if (PDF_MIME_TYPES.includes(mimeType as (typeof PDF_MIME_TYPES)[number])) {
     return true
@@ -88,13 +51,6 @@ export function isPdfAttachment(mimeType: string, filename: string): boolean {
   return false
 }
 
-// ============================================================================
-// Schemas
-// ============================================================================
-
-/**
- * Schema for page classification output.
- */
 export const pageClassificationSchema = z.object({
   classification: z.enum(PDF_PAGE_CLASSIFICATIONS).describe("Page content classification"),
   confidence: z.number().min(0).max(1).describe("Classification confidence 0-1"),
@@ -104,9 +60,6 @@ export const pageClassificationSchema = z.object({
 
 export type PageClassificationOutput = z.infer<typeof pageClassificationSchema>
 
-/**
- * Schema for complex layout extraction output.
- */
 export const layoutExtractionSchema = z.object({
   markdown: z.string().describe("Page content as markdown"),
   tables: z
@@ -132,9 +85,6 @@ export const layoutExtractionSchema = z.object({
 
 export type LayoutExtractionOutput = z.infer<typeof layoutExtractionSchema>
 
-/**
- * Schema for document summary output.
- */
 export const documentSummarySchema = z.object({
   title: z.string().nullable().describe("Document title if identifiable"),
   summary: z.string().describe("2-3 sentence summary of the entire document"),
@@ -152,14 +102,7 @@ export const documentSummarySchema = z.object({
 
 export type DocumentSummaryOutput = z.infer<typeof documentSummarySchema>
 
-/**
- * Schema for size tier output.
- */
 export const sizeTierSchema = z.enum(PDF_SIZE_TIERS)
-
-// ============================================================================
-// Prompts
-// ============================================================================
 
 export const PDF_LAYOUT_SYSTEM_PROMPT = `You are a document extraction specialist. Your task is to convert PDF page images into clean, structured markdown.
 

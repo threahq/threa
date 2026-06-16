@@ -73,8 +73,8 @@ export const StreamStateRepository = {
     db: Querier,
     options?: { capIntervalSeconds?: number; quietIntervalSeconds?: number }
   ): Promise<StreamReadyToProcess[]> {
-    const capInterval = options?.capIntervalSeconds ?? 300 // 5 minutes
-    const quietInterval = options?.quietIntervalSeconds ?? 30 // 30 seconds
+    const capInterval = options?.capIntervalSeconds ?? 300
+    const quietInterval = options?.quietIntervalSeconds ?? 30
 
     const result = await db.query<{ workspace_id: string; stream_id: string }>(sql`
       SELECT DISTINCT p.workspace_id, p.stream_id

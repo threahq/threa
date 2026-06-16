@@ -1,8 +1,5 @@
 import type { User } from "@threa/types"
 
-/**
- * Factory for creating mock User objects.
- */
 export function createMockUser(overrides: Partial<User> & { id: string; workosUserId: string }): User {
   return {
     workspaceId: "workspace_1",
@@ -29,9 +26,6 @@ export function createMockUser(overrides: Partial<User> & { id: string; workosUs
   }
 }
 
-/**
- * Pre-built mock workspace users.
- */
 export const mockUsers = {
   martin: createMockUser({
     id: "member_1",
@@ -59,7 +53,4 @@ export const mockUsers = {
   }),
 }
 
-/**
- * Array of all mock users.
- */
 export const mockUsersList: User[] = Object.values(mockUsers)

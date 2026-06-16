@@ -78,7 +78,6 @@ export class InvitationService {
     // (the control-plane uses this to send the WorkOS email)
     const inviterWorkosUserId = (await this.getInviterWorkosUserId(workspaceId, invitedBy)) ?? undefined
 
-    // Batch-fetch: existing members + pending invitations
     const existingUserEmails = await UserRepository.findEmails(this.pool, workspaceId, emails)
 
     const pendingInvitations = await InvitationRepository.findPendingByEmailsAndWorkspace(
@@ -88,7 +87,6 @@ export class InvitationService {
     )
     const pendingEmails = new Set(pendingInvitations.map((inv) => inv.email))
 
-    // Build list of emails to send (filter skipped)
     const emailsToSend: string[] = []
     for (const email of emails) {
       if (existingUserEmails.has(email)) {
@@ -266,7 +264,6 @@ export class InvitationService {
       return null
     }
 
-    // Revoke old and create new
     await this.revokeInvitation(invitationId, workspaceId)
 
     const result = await this.sendInvitations({

@@ -70,7 +70,6 @@ export const DateFilterList = forwardRef<SuggestionListRef, DateFilterListProps>
     [command, filterType]
   )
 
-  // Handle keyboard navigation
   useImperativeHandle(ref, () => ({
     onKeyDown: (event: KeyboardEvent) => {
       if (showCalendar) {

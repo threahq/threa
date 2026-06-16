@@ -1,21 +1,11 @@
-/**
- * Job queue types for the custom queue system.
- *
- * These types are used by QueueManager (queue-manager.ts) and all job workers.
- */
-
 import { AgentTriggers, type AgentSessionRerunContext } from "@threa/types"
 
-/**
- * Job object passed to handlers.
- */
 export interface Job<T = unknown> {
   id: string
   name: string
   data: T
 }
 
-// Job type definitions
 export const JobQueues = {
   PERSONA_AGENT: "persona.agent",
   NAMING_GENERATE: "naming.generate",
@@ -241,7 +231,6 @@ export interface ContextBagPrecomputeJobData {
   bagId: string
 }
 
-// Map queue names to their data types
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.NAMING_GENERATE]: NamingJobData
@@ -268,14 +257,10 @@ export interface JobDataMap {
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
 }
 
-/**
- * Handler for a single job. Returns void on success, throws on error.
- */
+/** Returns void on success, throws on error. */
 export type JobHandler<T> = (job: Job<T>) => Promise<void>
 
-/**
- * Metadata about the queue message, available to DLQ hooks.
- */
+/** Metadata about the queue message, available to DLQ hooks. */
 export interface QueueMessageMeta {
   /** How many times the message failed before going to DLQ */
   failedCount: number
@@ -302,9 +287,6 @@ export type OnDLQHook<T> = (
   meta: QueueMessageMeta
 ) => Promise<void>
 
-/**
- * Lifecycle hooks for job handlers.
- */
 export interface HandlerHooks<T> {
   /** Called when message is moved to DLQ after exhausting retries */
   onDLQ?: OnDLQHook<T>
@@ -346,9 +328,6 @@ export const QueueFairness = {
 
 export type QueueFairnessMode = (typeof QueueFairness)[keyof typeof QueueFairness]
 
-/**
- * Options for registering a job handler.
- */
 export interface HandlerOptions<T> {
   hooks?: HandlerHooks<T>
   /** Tier controlling which concurrency budget this queue draws from. */

@@ -93,7 +93,6 @@ async function promoteDraft(
     })
   }
 
-  // Update the pending message's streamId and clear streamCreation
   type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
   await (db.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
     streamId: realStreamId,

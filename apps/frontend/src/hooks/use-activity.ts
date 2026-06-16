@@ -23,9 +23,8 @@ export function useActivityFeed(
   return useQuery({
     queryKey: activityKeys.listFiltered(workspaceId, { unreadOnly, mineOnly, othersOnly }),
     queryFn: () => activityService.list(workspaceId, { limit: 50, unreadOnly, mineOnly, othersOnly }),
-    // Subscribe-then-bootstrap pattern:
-    // staleTime: Infinity prevents auto-refetch; socket events invalidate when needed.
-    // refetchOnMount: true triggers refetch when data is stale (after invalidation).
+    // Subscribe-then-bootstrap: socket events invalidate; refetchOnMount picks up
+    // the invalidation, staleTime: Infinity suppresses other auto-refetches.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
@@ -41,7 +40,6 @@ export function useMarkActivityRead(workspaceId: string) {
   return useMutation({
     mutationFn: (activityId: string) => activityService.markAsRead(workspaceId, activityId),
     onMutate: async (activityId: string) => {
-      // Optimistic update: mark as read in cache
       await queryClient.cancelQueries({ queryKey: activityKeys.list(workspaceId) })
 
       let target: Activity | undefined
@@ -110,7 +108,6 @@ export function useMarkActivityRead(workspaceId: string) {
       return { previousUnreadState }
     },
     onError: (_error, _activityId, context) => {
-      // Rollback: refetch on error
       queryClient.invalidateQueries({ queryKey: activityKeys.list(workspaceId) })
       queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
 
@@ -128,7 +125,6 @@ export function useMarkAllActivityRead(workspaceId: string) {
   return useMutation({
     mutationFn: () => activityService.markAllAsRead(workspaceId),
     onSuccess: () => {
-      // Clear all activity data and counts
       queryClient.invalidateQueries({ queryKey: activityKeys.list(workspaceId) })
 
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {

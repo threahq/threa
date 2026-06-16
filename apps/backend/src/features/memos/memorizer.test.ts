@@ -10,10 +10,8 @@ describe("getMemorizerSystemPrompt", () => {
   })
 
   it("should use author timezone for date formatting", () => {
-    // Use a timezone where the date might differ from UTC
     const prompt = getMemorizerSystemPrompt("Pacific/Auckland")
 
-    // Should contain a valid YYYY-MM-DD date
     expect(prompt).toMatch(/today's date: \d{4}-\d{2}-\d{2}/)
   })
 

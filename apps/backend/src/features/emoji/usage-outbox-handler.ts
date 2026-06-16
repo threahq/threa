@@ -12,9 +12,8 @@ import { E2eStreamsRepository } from "../e2e-streams"
 export type EmojiUsageHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
- * Extract shortcodes from normalized message content.
- * Content is already normalized (raw emoji converted to :shortcode:).
- * Returns a map of shortcode (without colons) -> count.
+ * Count shortcodes in already-normalized content (raw emoji already converted
+ * to :shortcode:), keyed by shortcode without colons.
  */
 function extractEmojiFromContent(content: string): Map<string, number> {
   const counts = new Map<string, number>()
@@ -31,9 +30,6 @@ function extractEmojiFromContent(content: string): Map<string, number> {
   return counts
 }
 
-/**
- * Strip colons from a shortcode if present.
- */
 function stripColons(shortcode: string): string {
   if (shortcode.startsWith(":") && shortcode.endsWith(":")) {
     return shortcode.slice(1, -1)
@@ -41,14 +37,7 @@ function stripColons(shortcode: string): string {
   return shortcode
 }
 
-/**
- * Handler that tracks emoji usage from messages and reactions.
- *
- * Flow:
- * 1. Message/reaction event arrives (via outbox)
- * 2. Extract emoji shortcodes from content or reaction
- * 3. Insert usage records for personalized emoji ordering
- */
+/** Tracks emoji usage from message/reaction outbox events for personalized ordering. */
 export class EmojiUsageHandler extends DebouncedOutboxHandler {
   constructor(db: Pool, config?: EmojiUsageHandlerConfig) {
     super(db, { listenerId: "emoji-usage", ...config })

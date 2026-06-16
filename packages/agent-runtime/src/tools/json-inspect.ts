@@ -41,8 +41,6 @@ export function typeName(value: unknown): string {
   return typeof value
 }
 
-// --- Shape summary -------------------------------------------------------
-
 /** One-line compact descriptor of a value's structure. */
 function inlineShape(value: unknown, depth = 0): string {
   if (Array.isArray(value)) {
@@ -82,8 +80,6 @@ export function describeShape(value: unknown, depth = 0): unknown {
   return typeName(value)
 }
 
-// --- Structural preview --------------------------------------------------
-
 /**
  * A sampled copy of the data that stays valid JSON: keeps the first few array
  * items, caps object keys, and truncates long strings. Conveys real example
@@ -118,8 +114,6 @@ export function structuralPreview(value: unknown, depth = 0): unknown {
 
   return value
 }
-
-// --- Path selector (minimal jq-like) -------------------------------------
 
 type PathSegment =
   | { kind: "key"; key: string }

@@ -7,9 +7,6 @@ import type { Memo } from "../../memos"
 import { PersonaRepository } from "../persona-repository"
 import { formatRelativeDate } from "../../../lib/temporal"
 
-/**
- * Enriched memo result with source stream info.
- */
 export interface EnrichedMemoResult {
   memo: Memo
   distance: number
@@ -20,9 +17,6 @@ export interface EnrichedMemoResult {
   } | null
 }
 
-/**
- * Enriched message result with author and stream info.
- */
 export interface EnrichedMessageResult {
   id: string
   streamId: string
@@ -42,9 +36,6 @@ export interface EnrichedMessageResult {
   quoteContext?: string
 }
 
-/**
- * Enriched attachment result with extraction info.
- */
 export interface EnrichedAttachmentResult {
   id: string
   filename: string
@@ -154,9 +145,6 @@ ${attachmentEntries}
 `
 }
 
-/**
- * Raw message search result from the search service.
- */
 export interface RawMessageSearchResult {
   id: string
   streamId: string
@@ -177,7 +165,6 @@ export async function enrichMessageSearchResults(
 ): Promise<EnrichedMessageResult[]> {
   if (results.length === 0) return []
 
-  // Collect unique IDs for batch lookup
   const userIds = new Set<string>()
   const personaIds = new Set<string>()
   const streamIds = new Set<string>()
@@ -191,19 +178,16 @@ export async function enrichMessageSearchResults(
     streamIds.add(r.streamId)
   }
 
-  // Batch fetch users, personas, streams
   const [members, personas, streams] = await Promise.all([
     userIds.size > 0 ? UserRepository.findByIds(db, workspaceId, [...userIds]) : Promise.resolve([]),
     personaIds.size > 0 ? PersonaRepository.findByIds(db, [...personaIds], workspaceId) : Promise.resolve([]),
     StreamRepository.findByIds(db, [...streamIds]),
   ])
 
-  // Build lookup maps
   const memberMap = new Map(members.map((m) => [m.id, m]))
   const personaMap = new Map(personas.map((p) => [p.id, p]))
   const streamMap = new Map(streams.map((s) => [s.id, s]))
 
-  // Enrich results
   return results.map((r) => {
     const authorName =
       r.authorType === "user"

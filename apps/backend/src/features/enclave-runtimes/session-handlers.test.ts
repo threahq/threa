@@ -118,7 +118,7 @@ function makeHandlers(createMessage = mock(async (_input: Record<string, unknown
   const eventService = { createMessage } as unknown as EventService
   const { io, emit } = fakeIo()
   const { costService, recordUsage } = fakeCostService()
-  // The claim-lifecycle writes ride the session callbacks now (§2.7); stub the
+  // The claim-lifecycle writes ride the session callbacks (§2.7); stub the
   // repository seam so handler tests stay DB-free and can assert the flips.
   const renewClaim = spyOn(EnclaveInvocationsRepository, "renewBySession").mockResolvedValue(undefined)
   const completeClaim = spyOn(EnclaveInvocationsRepository, "completeBySession").mockResolvedValue(undefined)

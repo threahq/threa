@@ -6,12 +6,6 @@ export interface WordProcessingWorkerDeps {
   wordProcessingService: WordProcessingServiceLike
 }
 
-/**
- * Create the Word processing job handler for the queue system.
- *
- * This is a thin wrapper that extracts job data and delegates to the service.
- * All business logic lives in the service for reusability and testability.
- */
 export function createWordProcessingWorker(deps: WordProcessingWorkerDeps): JobHandler<WordProcessJobData> {
   const { wordProcessingService } = deps
 

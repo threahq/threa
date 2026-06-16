@@ -16,17 +16,12 @@ interface MentionProviderProps {
   children: ReactNode
 }
 
-/**
- * Provider that supplies mention type lookup for rendering.
- * Wraps markdown content to enable correct styling of @mentions.
- */
 export function MentionProvider({ mentionables, onMentionClick, children }: MentionProviderProps) {
   const value = useMemo<MentionContextValue>(() => {
     const slugToType = new Map<string, MentionType>()
     for (const m of mentionables) {
       slugToType.set(m.slug, m.isCurrentUser ? "me" : m.type)
     }
-    // Add broadcast slugs as fallback
     slugToType.set("here", "broadcast")
     slugToType.set("channel", "broadcast")
 
@@ -39,14 +34,10 @@ export function MentionProvider({ mentionables, onMentionClick, children }: Ment
   return <MentionContext.Provider value={value}>{children}</MentionContext.Provider>
 }
 
-/**
- * Hook to get mention type lookup function.
- * Falls back to basic lookup if not within MentionProvider.
- */
+/** Falls back to broadcast-only lookup when used outside a MentionProvider. */
 export function useMentionType(): (slug: string) => MentionType {
   const context = useContext(MentionContext)
   if (!context) {
-    // Fallback: only knows broadcast slugs
     return (slug: string) => {
       if (slug === "here" || slug === "channel") return "broadcast"
       return "user"
@@ -55,9 +46,6 @@ export function useMentionType(): (slug: string) => MentionType {
   return context.getMentionType
 }
 
-/**
- * Hook to get the optional mention click handler.
- */
 export function useMentionClick(): ((slug: string, type: MentionType) => void) | undefined {
   const context = useContext(MentionContext)
   return context?.onMentionClick

@@ -1,10 +1,7 @@
 /**
- * Linear GraphQL client wrapper.
- *
- * Handles token refresh (5-min skew + single 401-retry) and per-response
- * rate-limit capture, mirroring the shape of `GitHubPreviewClient` in
- * `service.ts`. Hand-rolled against Linear's GraphQL endpoint so we can keep
- * each query tight (avoiding the `@linear/sdk`'s over-fetching auto-gen).
+ * Linear GraphQL client wrapper. Handles token refresh (single 401-retry) and
+ * per-response rate-limit capture. Hand-rolled rather than `@linear/sdk` so each
+ * query stays tight instead of over-fetching from the auto-gen.
  *
  * Docs:
  * - https://linear.app/developers/graphql
@@ -17,11 +14,8 @@ import type { WorkspaceIntegrationRecord } from "./repository"
 
 const LINEAR_GRAPHQL_ENDPOINT = "https://api.linear.app/graphql"
 
-/**
- * Exposed so the callback flow (which runs before any integration record exists)
- * can share the same endpoint constant as `LinearClient`. Not part of the public
- * `workspace-integrations/index.ts` surface — internal to the feature.
- */
+// Exposed so the callback flow (which runs before any integration record exists)
+// can share the endpoint constant. Feature-internal; not on the index.ts surface.
 export { LINEAR_GRAPHQL_ENDPOINT as LinearGraphQLEndpoint }
 
 export interface LinearIntegrationCredentials {
@@ -141,10 +135,8 @@ export class LinearClient {
     const complexityRemaining = parseIntegerHeader(headers.get("x-ratelimit-complexity-remaining"))
     const complexityResetSeconds = parseIntegerHeader(headers.get("x-ratelimit-complexity-reset"))
 
-    // Responses without rate-limit headers (401 auth failures, CORS preflights, etc.) parse
-    // to all-null; persisting that would wipe a previously-captured near-limit state and
-    // temporarily neuter `isNearLinearRateLimit`. Skip the write when there is nothing
-    // fresh to record.
+    // Responses without rate-limit headers parse to all-null; persisting that would
+    // wipe a previously-captured near-limit state and neuter `isNearLinearRateLimit`.
     if (
       requestsRemaining === null &&
       requestsResetSeconds === null &&

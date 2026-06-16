@@ -52,8 +52,8 @@ describe("StreamE2eKeyWrapsRepository.insertMany", () => {
     expect(captured.text).toContain("decode(wrap_ct_b64, 'base64')")
     expect(captured.text).toContain("ON CONFLICT (workspace_id, stream_id, key_generation, recipient_key_id)")
     expect(captured.text).toContain("DO NOTHING")
-    // Each column is bound as a UNNEST array param; ids are server-minted so we
-    // assert the caller-supplied slot values flow through as their own arrays.
+    // ids are server-minted, so assert only that caller-supplied slot values
+    // flow through as their own UNNEST array params.
     expect(captured.values).toContainEqual(["ws_1"])
     expect(captured.values).toContainEqual(["stream_01"])
     expect(captured.values).toContainEqual([0])

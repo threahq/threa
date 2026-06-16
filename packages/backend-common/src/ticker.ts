@@ -77,16 +77,10 @@ export class Ticker {
     await Promise.all(Array.from(this.inFlightPromises))
   }
 
-  /**
-   * Get current in-flight count (for testing/observability)
-   */
   getInFlightCount(): number {
     return this.inFlightCount
   }
 
-  /**
-   * Check if ticker is running
-   */
   isRunning(): boolean {
     return this.timer !== null
   }

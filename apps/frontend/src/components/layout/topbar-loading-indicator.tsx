@@ -7,15 +7,7 @@ interface TopbarLoadingIndicatorProps {
   className?: string
 }
 
-/**
- * A subtle loading indicator that appears at the bottom border of the topbar.
- *
- * Renders as a thin line with a shimmer effect that moves back and forth.
- * Uses the golden thread primary color for visual consistency.
- *
- * The animation is a CSS-only shimmer that glides across the full width,
- * creating a sense of progress without indicating a specific percentage.
- */
+/** Indeterminate loading line at the bottom border of the topbar. */
 export function TopbarLoadingIndicator({ visible, className }: TopbarLoadingIndicatorProps) {
   return (
     <div
@@ -32,10 +24,8 @@ export function TopbarLoadingIndicator({ visible, className }: TopbarLoadingIndi
       aria-label="Loading"
       aria-hidden={!visible}
     >
-      {/* Background track - subtle base */}
       <div className="absolute inset-0 bg-border/50" />
 
-      {/* Animated shimmer - the golden thread */}
       <div
         className={cn(
           "absolute inset-y-0 w-1/3",
@@ -43,7 +33,6 @@ export function TopbarLoadingIndicator({ visible, className }: TopbarLoadingIndi
           visible && "animate-topbar-shimmer"
         )}
         style={{
-          // Ensure the shimmer gradient has good opacity
           background: `linear-gradient(
             90deg,
             transparent 0%,

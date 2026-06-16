@@ -1,10 +1,3 @@
-/**
- * AI text processing utilities.
- */
-
-/**
- * Convert snake_case to camelCase.
- */
 function snakeToCamel(str: string): string {
   return str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
 }
@@ -30,13 +23,11 @@ function normalizeObject(obj: unknown, fieldMappings?: Record<string, SemanticFi
   if (obj !== null && typeof obj === "object") {
     const result: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(obj)) {
-      // Check for semantic mapping first
       const mapping = fieldMappings?.[key]
       if (mapping) {
         const transformedValue = mapping.transform ? mapping.transform(value) : value
         result[mapping.field] = normalizeObject(transformedValue, fieldMappings)
       } else {
-        // Convert snake_case to camelCase
         result[snakeToCamel(key)] = normalizeObject(value, fieldMappings)
       }
     }
@@ -55,23 +46,19 @@ function normalizeObject(obj: unknown, fieldMappings?: Record<string, SemanticFi
  * - '": true}.{...}' (fragments from previous output)
  */
 function extractJsonObject(text: string): string {
-  // Find the first '{' that might start valid JSON
   const firstBrace = text.indexOf("{")
   if (firstBrace === -1) return text
 
-  // Try parsing from each '{' until we find valid JSON
   let pos = firstBrace
   while (pos < text.length) {
     const candidate = text.slice(pos)
 
-    // Skip if we hit a double brace - try the inner one
     if (candidate.startsWith("{{") || candidate.startsWith("{ {")) {
       pos = text.indexOf("{", pos + 1)
       if (pos === -1) break
       continue
     }
 
-    // Try to find matching closing brace by counting
     let depth = 0
     let inString = false
     let escape = false
@@ -117,40 +104,31 @@ function extractJsonObject(text: string): string {
       }
     }
 
-    // Find next '{' to try
     const nextBrace = text.indexOf("{", pos + 1)
     if (nextBrace === -1) break
     pos = nextBrace
   }
 
-  // Couldn't extract valid JSON, return original
   return text
 }
 
-/**
- * Create a JSON repair function with optional semantic field mappings and defaults.
- */
 export function createJsonRepair(options: JsonRepairOptions = {}) {
   const { fieldMappings, addDefaults } = options
 
   return async ({ text }: { text: string }): Promise<string> => {
-    // Strip markdown fences
     let cleaned = text
       .replace(/^\s*```(?:json)?\s*\n?/i, "")
       .replace(/\n?```\s*$/i, "")
       .trim()
 
-    // Extract JSON object from garbage prefixes
     cleaned = extractJsonObject(cleaned)
 
-    // Try to parse and normalize field names
     try {
       const parsed = JSON.parse(cleaned)
       const normalized = normalizeObject(parsed, fieldMappings) as Record<string, unknown>
       const withDefaults = addDefaults ? addDefaults(normalized) : normalized
       return JSON.stringify(withDefaults)
     } catch {
-      // If parsing fails, return the cleaned text as-is
       return cleaned
     }
   }

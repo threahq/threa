@@ -75,7 +75,6 @@ export function BudgetControlsPanel({
     timeZone: timezone,
   })
 
-  // Compute threshold states to annotate switches with current progress
   const usedPct = metrics.percentUsed
   const thresholdHit = (t: number) => usedPct >= t
 
@@ -86,7 +85,6 @@ export function BudgetControlsPanel({
         <CardTitle className="text-base font-medium">Budget &amp; guardrails</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Monthly budget */}
         <div className="space-y-2">
           <Label
             htmlFor="monthly-budget"
@@ -114,7 +112,6 @@ export function BudgetControlsPanel({
           </p>
         </div>
 
-        {/* Alert thresholds */}
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Bell className="h-3.5 w-3.5 text-muted-foreground" />
@@ -182,7 +179,6 @@ export function BudgetControlsPanel({
           </div>
         </div>
 
-        {/* Cost controls */}
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <Shield className="h-3.5 w-3.5 text-muted-foreground" />

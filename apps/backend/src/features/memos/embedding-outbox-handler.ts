@@ -9,8 +9,6 @@ import { E2eStreamsRepository } from "../e2e-streams"
 export type EmbeddingHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
- * Handler that dispatches embedding generation jobs for new messages.
- *
  * Embedding generation runs async - messages are immediately searchable via
  * keyword search, and become semantically searchable once the embedding is ready.
  */

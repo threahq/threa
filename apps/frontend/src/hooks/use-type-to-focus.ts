@@ -44,10 +44,8 @@ export function useTypeToFocus() {
     }
 
     function handleKeyDown(e: KeyboardEvent) {
-      // Only handle single printable characters without modifiers
       if (e.key.length !== 1 || e.metaKey || e.ctrlKey || e.altKey) return
 
-      // Skip if already focused on an editable element
       const active = document.activeElement
       if (
         active instanceof HTMLInputElement ||
@@ -68,14 +66,12 @@ export function useTypeToFocus() {
         return
       }
 
-      // Priority 1: inline edit editor
       const inlineEditor = document.querySelector<HTMLElement>("[data-inline-edit] [contenteditable='true']")
       if (inlineEditor) {
         focusAtEnd(inlineEditor)
         return
       }
 
-      // Priority 2: last-clicked zone's editor
       const zoneSelector = `[data-editor-zone="${lastZoneRef.current}"] [contenteditable="true"]`
       const zoneEditor = document.querySelector<HTMLElement>(zoneSelector)
       if (zoneEditor) {
@@ -83,7 +79,6 @@ export function useTypeToFocus() {
         return
       }
 
-      // Priority 3: main zone fallback
       if (lastZoneRef.current !== "main") {
         const mainEditor = document.querySelector<HTMLElement>('[data-editor-zone="main"] [contenteditable="true"]')
         if (mainEditor) {

@@ -44,7 +44,6 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
 
     /**
      * GET /api/workspaces/:workspaceId/link-previews/:linkPreviewId/resolve
-     * Permission-checked resolve endpoint for message link previews.
      * Returns different data depending on the viewer's access tier.
      */
     async resolveMessageLink(req: Request, res: Response, next: NextFunction) {

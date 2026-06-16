@@ -6,12 +6,6 @@ export interface ExcelProcessingWorkerDeps {
   excelProcessingService: ExcelProcessingServiceLike
 }
 
-/**
- * Create the Excel processing job handler for the queue system.
- *
- * This is a thin wrapper that extracts job data and delegates to the service.
- * All business logic lives in the service for reusability and testability.
- */
 export function createExcelProcessingWorker(deps: ExcelProcessingWorkerDeps): JobHandler<ExcelProcessJobData> {
   const { excelProcessingService } = deps
 

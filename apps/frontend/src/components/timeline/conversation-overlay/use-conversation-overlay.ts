@@ -55,7 +55,6 @@ export function useConversationOverlay({
 
   const model = useMemo(() => buildConversationOverlayModel(conversations, streamId), [conversations, streamId])
 
-  // --- In-view tracking ---------------------------------------------------
   const observerRef = useRef<IntersectionObserver | null>(null)
   const conversationByElement = useRef(new Map<Element, string>())
   const visibleElements = useRef(new Set<Element>())
@@ -108,7 +107,6 @@ export function useConversationOverlay({
     },
     [recomputeInView]
   )
-  // -------------------------------------------------------------------------
 
   const onToggleFocus = useCallback((conversationId: string) => {
     setFocusedConversationId((previous) => (previous === conversationId ? null : conversationId))

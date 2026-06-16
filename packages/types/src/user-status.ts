@@ -1,4 +1,3 @@
-// =============================================================================
 // User Statuses
 //
 // A user's status is a cosmetic emoji + short text shown beside their avatar
@@ -14,7 +13,6 @@
 // The *active* status lives on the user row (statusEmoji/statusText/
 // statusExpiresAt) so it broadcasts to the whole workspace. Presets are only
 // templates the picker resolves into an active status.
-// =============================================================================
 
 /**
  * How long a status stays active, expressed as a preset descriptor rather than
@@ -74,7 +72,6 @@ export interface UserStatusFields {
   statusExpiresAt: string | null
 }
 
-// =============================================================================
 // Notification pause (Do Not Disturb)
 //
 // Two independent sources can silence a user's notifications:
@@ -89,7 +86,6 @@ export interface UserStatusFields {
 // no clearing races. `resolveNotificationPause` is that function, shared by the
 // backend push gate and the frontend badge/settings so the rule has exactly one
 // definition (INV-35).
-// =============================================================================
 
 /** Manual notification-pause columns on a user row (wire format). */
 export interface UserNotificationPauseFields {

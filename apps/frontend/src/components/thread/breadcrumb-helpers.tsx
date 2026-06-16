@@ -20,9 +20,8 @@ interface StreamForLookup {
 }
 
 /**
- * Get a short context label for a thread's root stream.
- * Returns null if thread has no root or root not found.
- * Used for sidebar display: "Thread Name · #general"
+ * Short context label for a thread's root stream (sidebar: "Thread Name · #general").
+ * Null when the thread has no root or the root isn't in `allStreams`.
  */
 export function getThreadRootContext(
   thread: { rootStreamId: string | null },
@@ -46,10 +45,8 @@ interface AncestorBreadcrumbItemProps {
 }
 
 /**
- * Renders a breadcrumb item for an ancestor stream.
- * If the stream is the main view, renders a button that closes the panel.
- * Otherwise, renders a link to navigate to the stream.
- * Includes tooltip showing full name when truncated.
+ * Breadcrumb item for an ancestor stream. The main-view stream renders a button
+ * that closes the panel (INV-40); other streams render a navigation link.
  */
 export function AncestorBreadcrumbItem({
   stream,

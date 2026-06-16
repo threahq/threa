@@ -523,8 +523,6 @@ export class BackofficeService {
     }
   }
 
-  // --- private helpers -----------------------------------------------------
-
   private rethrowWorkosInvitationError(error: unknown): never {
     const code = getWorkosErrorCode(error)
     if (code === WORKOS_ERROR_CODES.EMAIL_ALREADY_INVITED) {

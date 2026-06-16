@@ -67,7 +67,6 @@ export const UserSessionRepository = {
 
   /**
    * Batch upsert sessions in a single SQL statement (INV-56).
-   * Used by heartbeat handler to avoid N individual upserts per workspace.
    * All entries in a batch share the same focused/interacted state (same browser tab).
    */
   async upsertBatch(

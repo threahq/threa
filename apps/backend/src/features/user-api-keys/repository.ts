@@ -91,10 +91,7 @@ export const UserApiKeyRepository = {
     return result.rows.map(mapRow)
   },
 
-  /**
-   * Atomic revoke with ownership check — avoids select-then-update (INV-20).
-   * Single UPDATE with all guards in the WHERE clause.
-   */
+  /** Ownership-checked update — all guards in the WHERE clause, no select-then-update (INV-20). */
   async updateScopesOwned(
     db: Querier,
     workspaceId: string,

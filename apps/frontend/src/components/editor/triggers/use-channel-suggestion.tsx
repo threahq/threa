@@ -14,15 +14,10 @@ function filterChannels(items: ChannelItem[], query: string): ChannelItem[] {
   return rankMatches(items, query, (item) => ({ labels: item.name ? [item.slug, item.name] : [item.slug] }))
 }
 
-/**
- * Hook that manages the channel suggestion state and provides render callbacks.
- * Returns configuration for the ChannelExtension and a render function for the popup.
- */
 export function useChannelSuggestion() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const streams = useWorkspaceStreams(workspaceId ?? "")
 
-  // Convert streams to channel items
   const channels = useMemo<ChannelItem[]>(() => {
     return streams
       .filter((stream) => stream.type === "channel" && stream.slug)

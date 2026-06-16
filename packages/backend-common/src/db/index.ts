@@ -32,7 +32,7 @@ export interface Querier {
 const DEFAULT_POOL_CONFIG: Partial<PoolConfig> = {
   max: 30,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000, // 10 seconds - was 2000ms, too short for startup stampede
+  connectionTimeoutMillis: 10000, // 2000ms is too short for the startup stampede
 }
 
 export function createDatabasePool(connectionString: string, config?: Partial<PoolConfig>): Pool {
@@ -101,10 +101,8 @@ export interface DatabasePools {
  *   leaves ample headroom for broadcast and pg_notify fan-out.
  */
 export function createDatabasePools(connectionString: string): DatabasePools {
-  // Main pool for transactional work
   const main = createDatabasePool(connectionString, { max: Number(process.env.DATABASE_POOL_MAX) || 30 })
 
-  // Listen pool for long-held NOTIFY/LISTEN connections.
   // Default 12 = 9 outbox listeners + 3 headroom for reconnection overlap.
   // Env-configurable via DATABASE_LISTEN_POOL_MAX so shared-DB environments
   // (PR-preview deploys hitting the same Postgres as main staging) can shrink
@@ -167,7 +165,6 @@ export async function withTransaction<T>(
   callback: (client: PoolClient) => Promise<T>
 ): Promise<T> {
   if (isPoolClient(db)) {
-    // Already have a client - use savepoint for nested transaction
     const savepointName = `sp_${ulid()}`
     await db.query(`SAVEPOINT ${savepointName}`)
     try {
@@ -182,7 +179,6 @@ export async function withTransaction<T>(
     }
   }
 
-  // Top-level transaction from pool
   let lastError: unknown
 
   // Retry once on recoverable connection errors
@@ -272,10 +268,8 @@ export async function warmPool(pool: Pool, count: number = 10): Promise<void> {
       clients.push(client)
     }
 
-    // Validate connections
     await Promise.all(clients.map((client) => client.query("SELECT 1")))
   } finally {
-    // Release all connections back to pool
     for (const client of clients) {
       client.release()
     }

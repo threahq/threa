@@ -134,7 +134,6 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
         next.set(payload.step.id, payload.step)
         return next
       })
-      // Clear streaming content for completed step
       setStreamingContent((prev) => {
         const { [payload.step.id]: _, ...rest } = prev
         return rest
@@ -315,16 +314,14 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
 function mergeSteps(apiSteps: AgentSessionStep[], realtimeSteps: Map<string, AgentSessionStep>): AgentSessionStep[] {
   const merged = new Map<string, AgentSessionStep>()
 
-  // Add API steps first
   for (const step of apiSteps) {
     merged.set(step.id, step)
   }
 
-  // Realtime steps override (more recent data)
+  // Realtime steps override API steps on id collision (more recent data).
   for (const [id, step] of realtimeSteps) {
     merged.set(id, step)
   }
 
-  // Sort by stepNumber
   return Array.from(merged.values()).sort((a, b) => a.stepNumber - b.stepNumber)
 }

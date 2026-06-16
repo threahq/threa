@@ -6,8 +6,6 @@ import { PushService } from "./service"
 import { PushSubscriptionRepository } from "./repository"
 import type { ActivityCreatedOutboxPayload } from "../../lib/outbox"
 
-// A do-not-disturb window must stop push at the source: the service should
-// never even look up the user's devices when notifications are paused.
 function makeActivityPayload(): ActivityCreatedOutboxPayload {
   return {
     workspaceId: "ws_1",
@@ -27,8 +25,6 @@ function makeActivityPayload(): ActivityCreatedOutboxPayload {
   }
 }
 
-// Fake pool good enough for getTargetSubscriptions, which only runs when not
-// paused; findByUserId is stubbed so the client is never queried in anger.
 const fakePool = {
   connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
 } as unknown as Pool

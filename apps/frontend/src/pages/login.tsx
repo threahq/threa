@@ -6,7 +6,6 @@ import { ThreaLogo } from "@/components/threa-logo"
 export function LoginPage() {
   const { user, login, loading } = useAuth()
 
-  // Redirect if already logged in
   if (user) {
     return <Navigate to="/workspaces" replace />
   }

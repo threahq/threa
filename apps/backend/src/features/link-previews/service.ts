@@ -11,7 +11,6 @@ import { OutboxRepository } from "../../lib/outbox"
 import { extractUrls, normalizeUrl, detectContentType, parseMessagePermalink } from "./url-utils"
 import { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
-/** Max characters for the content preview in a message link card */
 const CONTENT_PREVIEW_MAX_LENGTH = 200
 
 export interface LinkPreviewServiceDeps {
@@ -64,7 +63,6 @@ export class LinkPreviewService {
   }
 
   /**
-   * Replace link previews for an edited message.
    * Clears old junction rows then creates pending records for new URLs (INV-6: service owns transaction).
    */
   async replacePreviewsForMessage(
@@ -76,7 +74,6 @@ export class LinkPreviewService {
     const urls = extractUrls(contentMarkdown, appOrigins).slice(0, MAX_PREVIEWS_PER_MESSAGE)
 
     return withTransaction(this.deps.pool, async (client) => {
-      // Clear old message-preview links
       await LinkPreviewRepository.unlinkAllFromMessage(client, workspaceId, messageId)
 
       if (urls.length === 0) return []
@@ -120,16 +117,12 @@ export class LinkPreviewService {
     })
   }
 
-  /**
-   * Check if a preview is already completed (cached from another message).
-   */
   async isCompleted(workspaceId: string, id: string): Promise<boolean> {
     const existing = await LinkPreviewRepository.findById(this.deps.pool, workspaceId, id)
     return existing?.status === "completed"
   }
 
   /**
-   * Update fetched metadata and publish outbox event for completed previews.
    * Called by the worker after network fetches complete (INV-6: service owns transaction).
    */
   async completePreviewsAndPublish(
@@ -168,7 +161,6 @@ export class LinkPreviewService {
         }
       }
 
-      // Always publish when this message has completed previews.
       // Cached previews still need a ready event so the live UI can attach them
       // to newly-created messages without waiting for a bootstrap refresh.
       if (completedPreviews.length > 0) {
@@ -191,18 +183,12 @@ export class LinkPreviewService {
     })
   }
 
-  /**
-   * Get link preview summaries for a message.
-   * Filters out failed/pending previews.
-   */
+  /** Filters out failed/pending previews. */
   async getPreviewsForMessage(workspaceId: string, messageId: string): Promise<LinkPreviewSummary[]> {
     const previews = await LinkPreviewRepository.findByMessageId(this.deps.pool, workspaceId, messageId)
     return previews.filter((p) => p.status === "completed").map((p, i) => toLinkPreviewSummary(p, i))
   }
 
-  /**
-   * Get link preview summaries for multiple messages (batch).
-   */
   async getPreviewsForMessages(workspaceId: string, messageIds: string[]): Promise<Map<string, LinkPreviewSummary[]>> {
     const previewMap = await LinkPreviewRepository.findByMessageIds(this.deps.pool, workspaceId, messageIds)
     const result = new Map<string, LinkPreviewSummary[]>()
@@ -217,9 +203,7 @@ export class LinkPreviewService {
     return result
   }
 
-  /**
-   * Dismiss a link preview for a user and notify other sessions via outbox (INV-4).
-   */
+  /** Notifies other sessions via outbox (INV-4). */
   async dismiss(workspaceId: string, userId: string, messageId: string, linkPreviewId: string): Promise<void> {
     await withTransaction(this.deps.pool, async (client) => {
       const inserted = await LinkPreviewRepository.dismiss(client, workspaceId, userId, messageId, linkPreviewId)
@@ -234,9 +218,6 @@ export class LinkPreviewService {
     })
   }
 
-  /**
-   * Get dismissed preview keys for a user across multiple messages.
-   */
   async getDismissals(workspaceId: string, userId: string, messageIds: string[]): Promise<Set<string>> {
     return LinkPreviewRepository.findDismissals(this.deps.pool, workspaceId, userId, messageIds)
   }

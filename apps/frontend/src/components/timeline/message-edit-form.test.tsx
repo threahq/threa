@@ -186,7 +186,6 @@ describe("MessageEditForm", () => {
 
     renderForm({ onCancel, onSave })
 
-    // Click Save without changing the content
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(onCancel).toHaveBeenCalledOnce()
@@ -214,7 +213,6 @@ describe("MessageEditForm", () => {
     const emptyContent: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
     renderForm({ onSave, initialContentJson: emptyContent })
 
-    // Should not throw — just no-ops gracefully
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(onSave).not.toHaveBeenCalled()

@@ -133,7 +133,6 @@ export function EditorActionBar({
         </TooltipContent>
       </Tooltip>
 
-      {/* Insert emoji */}
       {showEmoji && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -156,7 +155,6 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {/* Insert mention */}
       {showMention && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -179,7 +177,6 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {/* Insert slash command */}
       {showSlashCommand && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -202,7 +199,6 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {/* Attach files */}
       {showAttach && onAttachClick && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -224,7 +220,6 @@ export function EditorActionBar({
         </Tooltip>
       )}
 
-      {/* Trailing content: Send button (composer) or Cancel+Save (edit form) */}
       {trailingContent}
     </div>
   )

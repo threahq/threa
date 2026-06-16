@@ -78,7 +78,6 @@ export class CostTracker {
         return response
       }
 
-      // Check if we're in a tracking context
       const store = this.storage.getStore()
       if (!store) {
         return response

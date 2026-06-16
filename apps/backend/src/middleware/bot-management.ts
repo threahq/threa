@@ -16,8 +16,7 @@ declare global {
 }
 
 /**
- * Resolve the workspace user ID from the request context.
- * Uses the local DB user (req.user.id) in preference to the WorkOS user ID
+ * Prefers the local DB user (req.user.id) over the WorkOS user ID
  * (req.authUser.id) — bot.ownerUserId stores the local DB user ID.
  */
 function resolveActorId(req: Request): string | null {
@@ -55,7 +54,9 @@ export function createRequireBotManagement(pool: Pool) {
           const hasManage =
             req.authUser?.permissions?.includes(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
             (req.user != null &&
-              (permissionsForRole(req.user.role) as readonly string[]).includes(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE)) ??
+              (permissionsForRole(req.user.role) as readonly string[]).includes(
+                WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE
+              )) ??
             req.userApiKey?.scopes.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
             req.botApiKey?.scopes.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
             false

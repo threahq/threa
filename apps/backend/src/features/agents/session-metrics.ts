@@ -38,7 +38,6 @@ export class AgentSessionMetricsCollector {
       return
     }
 
-    // Run immediately, then on interval
     this.collect().catch((err) => logger.error({ err }, "Initial agent session metrics collection failed"))
     this.intervalId = setInterval(() => {
       this.collect().catch((err) => logger.error({ err }, "Agent session metrics collection failed"))
@@ -61,7 +60,6 @@ export class AgentSessionMetricsCollector {
     // Reset gauge before updating (to handle sessions that no longer exist)
     agentSessionsActive.reset()
 
-    // Count sessions by workspace and status (last 24h for active/pending/running, all time for historical)
     const countResult = await this.pool.query<SessionCountRow>(sql`
       SELECT
         s.workspace_id,
@@ -77,7 +75,6 @@ export class AgentSessionMetricsCollector {
       agentSessionsActive.set({ workspace_id: row.workspace_id, status: row.status }, parseInt(row.count, 10))
     }
 
-    // Observe durations for sessions completed since last collection
     if (this.lastCollectedAt) {
       const durationResult = await this.pool.query<CompletedSessionRow>(sql`
         SELECT

@@ -928,14 +928,12 @@ function SentMessageEvent({
     })
   }, [payload.messageId, registerMessage, startEditing])
 
-  // Scroll to this message when highlighted
   useEffect(() => {
     if (isHighlighted && containerRef.current) {
       containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
     }
   }, [isHighlighted])
 
-  // Create draft panel URL for messages that don't have a thread yet
   const draftPanelId = createDraftPanelId(streamId, payload.messageId)
   const draftPanelUrl = getPanelUrl(draftPanelId)
 
@@ -985,7 +983,6 @@ function SentMessageEvent({
       await messageService.delete(workspaceId, payload.messageId)
       setDeleteDialogOpen(false)
     } catch {
-      // Enqueue for retry when back online
       await enqueueOperation(workspaceId, "delete_message", { messageId: payload.messageId })
       setDeleteDialogOpen(false)
       toast.info("Delete queued — will complete when back online")

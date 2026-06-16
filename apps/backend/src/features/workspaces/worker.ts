@@ -25,7 +25,7 @@ export function createAvatarProcessOnDLQ(): OnDLQHook<AvatarProcessJobData> {
       "Avatar processing moved to DLQ, deleting upload row"
     )
 
-    // Delete the upload row — raw S3 file is kept for debugging/reprocessing
+    // Raw S3 file is deliberately kept for debugging/reprocessing.
     await AvatarUploadRepository.deleteById(querier, avatarUploadId)
   }
 }

@@ -3,7 +3,6 @@ import { MulterError } from "multer"
 import { logger } from "../lib/logger"
 
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction) {
-  // Handle multer errors (file upload validation)
   if (err instanceof MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({ error: "File too large" })

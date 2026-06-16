@@ -27,7 +27,6 @@ interface QuoteReplyBlockProps {
 }
 
 /**
- * Renders a quote-reply block in message display.
  * Clicking the quoted text navigates to the source message; the chevron
  * toggles a summary / full-quote view. INV-40: the outer wrapper is a plain
  * container so author and toggle buttons aren't nested inside the Link.

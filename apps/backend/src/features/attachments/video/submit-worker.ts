@@ -24,7 +24,6 @@ export function createVideoTranscodeSubmitWorker(
 
     await videoTranscodingService.submit(attachmentId)
 
-    // Enqueue the first status check after a delay
     await jobQueue.send(
       JobQueues.VIDEO_TRANSCODE_CHECK,
       { attachmentId, workspaceId },

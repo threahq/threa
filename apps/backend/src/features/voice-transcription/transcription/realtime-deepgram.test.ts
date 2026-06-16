@@ -126,7 +126,7 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
     session.onDelta((d) => deltas.push(d))
 
     const flushed = session.flush()
-    // CloseStream has been sent, but flush is still awaiting the final frame.
+    // flush is still awaiting the final frame after sending CloseStream.
     const msg = JSON.parse(socket.sent.at(-1) as string)
     expect(msg).toEqual({ type: "CloseStream" })
 

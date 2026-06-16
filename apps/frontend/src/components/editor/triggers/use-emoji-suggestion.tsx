@@ -21,14 +21,12 @@ interface EmojiSuggestionState {
 }
 
 export interface UseEmojiSuggestionConfig {
-  /** All emojis available in the workspace */
   emojis: EmojiEntry[]
-  /** Emoji weights for personalized sorting */
+  /** Per-emoji weights driving personalized "recently used" sorting */
   emojiWeights: Record<string, number>
 }
 
 export interface UseEmojiSuggestionResult {
-  /** Configuration to pass to the TipTap extension */
   suggestionConfig: {
     items: (props: { query: string }) => EmojiEntry[]
     render: () => {
@@ -38,11 +36,8 @@ export interface UseEmojiSuggestionResult {
       onKeyDown: (props: SuggestionKeyDownProps) => boolean
     }
   }
-  /** Call this in your component to render the suggestion popup */
   renderEmojiGrid: () => ReactNode
-  /** Whether the suggestion popup is currently active */
   isActive: boolean
-  /** Imperatively close the suggestion popup */
   close: () => void
 }
 

@@ -34,7 +34,6 @@ export function useThreadAncestors(
     // Build a lookup map for O(1) access
     const streamMap = new Map(streams.map((s) => [s.id, s]))
 
-    // Walk up the parent chain starting from parentStreamId
     const chain: ThreadAncestor[] = []
     const visited = new Set<string>()
     let currentId: string | null = parentStreamId

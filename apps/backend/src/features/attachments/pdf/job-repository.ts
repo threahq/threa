@@ -1,7 +1,6 @@
 import { sql, type Querier } from "../../../db"
 import type { PdfJobStatus } from "@threa/types"
 
-// Internal row type (snake_case)
 interface PdfProcessingJobRow {
   id: string
   attachment_id: string
@@ -16,7 +15,6 @@ interface PdfProcessingJobRow {
   created_at: Date
 }
 
-// Domain type (camelCase)
 export interface PdfProcessingJob {
   id: string
   attachmentId: string
@@ -94,10 +92,6 @@ export const PdfProcessingJobRepository = {
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
-  /**
-   * Update job status.
-   * Returns true if the update was applied.
-   */
   async updateStatus(
     client: Querier,
     id: string,
@@ -128,10 +122,8 @@ export const PdfProcessingJobRepository = {
   },
 
   /**
-   * Atomically increment pages_completed and return the updated job.
-   * Used for fan-in coordination after each page completes.
-   *
-   * Returns the updated job so caller can check if all pages are done.
+   * Atomically increment pages_completed and return the updated job for
+   * fan-in coordination after each page completes.
    */
   async incrementPagesCompleted(client: Querier, id: string): Promise<PdfProcessingJob | null> {
     const result = await client.query<PdfProcessingJobRow>(sql`
@@ -143,10 +135,7 @@ export const PdfProcessingJobRepository = {
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
-  /**
-   * Atomically increment pages_failed and return the updated job.
-   * Used when a page fails processing.
-   */
+  /** Atomically increment pages_failed and return the updated job. */
   async incrementPagesFailed(client: Querier, id: string): Promise<PdfProcessingJob | null> {
     const result = await client.query<PdfProcessingJobRow>(sql`
       UPDATE pdf_processing_jobs
@@ -157,9 +146,6 @@ export const PdfProcessingJobRepository = {
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
-  /**
-   * Check if all pages are processed (completed + failed >= total).
-   */
   async isAllPagesProcessed(client: Querier, id: string): Promise<boolean> {
     const result = await client.query<{ all_done: boolean }>(sql`
       SELECT (pages_completed + pages_failed >= total_pages) as all_done

@@ -188,8 +188,8 @@ async function runSubscribeFlow(
 
   const deviceKey = await getDeviceKey()
 
-  // Backend upsert (ON CONFLICT DO UPDATE) — idempotent for re-registrations
-  // toJSON().keys returns base64url encoding, matching web-push library's contract
+  // Backend upsert (ON CONFLICT DO UPDATE) — idempotent for re-registrations.
+  // toJSON().keys returns base64url encoding, matching web-push library's contract.
   await api.post(
     `/api/workspaces/${workspaceId}/push/subscribe`,
     {
@@ -319,7 +319,6 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
     }
   }, [workspaceId])
 
-  // Reset subscription state when permission is revoked or workspaceId changes
   useEffect(() => {
     if (permission !== "granted" || !workspaceId) {
       setIsSubscribed(false)
@@ -403,7 +402,6 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
     }
   }, [workspaceId, accountId])
 
-  // Request permission and subscribe
   const requestPermission = useCallback(async () => {
     if (!("Notification" in window) || !("serviceWorker" in navigator)) {
       setPermission("unsupported")

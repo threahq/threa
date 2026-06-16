@@ -487,10 +487,8 @@ describe("BroadcastHandler", () => {
     expect(emitChains.filter((e) => e.eventType === "conversation:message_reassigned")).toHaveLength(1)
   })
 
-  // ===========================================================================
   // Bot-scoped events route into the `/bot` namespace using the narrowest room
   // a payload supports — see `BroadcastHandler.dispatchBotEvent`.
-  // ===========================================================================
   it("routes bot_invocation:available with no steering to the per-bot room", async () => {
     const event = makeEvent(1n, "bot_invocation:available", {
       workspaceId: "ws_1",

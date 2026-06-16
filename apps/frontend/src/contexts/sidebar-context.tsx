@@ -200,7 +200,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     ? `${SIDEBAR_STATE_KEY}:${accountScope.activeWorkosUserId}`
     : SIDEBAR_STATE_KEY
 
-  // Load persisted state on mount
   const [persistedState, setPersistedState] = useState<SidebarPersistedState>(() => getStoredState(storageKey))
 
   // Runtime state (preview is transient, not persisted)
@@ -219,7 +218,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
   const fadeOutTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const menuOpenCountRef = useRef(0)
 
-  // Persist state changes
   const updatePersistedState = useCallback(
     (updates: Partial<SidebarPersistedState>) => {
       setPersistedState((current) => {
@@ -231,14 +229,12 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     [storageKey]
   )
 
-  // Auto-collapse when transitioning to mobile
   useEffect(() => {
     if (isMobile) {
       setState("collapsed")
     }
   }, [isMobile])
 
-  // Clear any pending hide timeout
   const clearHideTimeout = useCallback(() => {
     if (hideTimeoutRef.current) {
       clearTimeout(hideTimeoutRef.current)
@@ -246,7 +242,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     }
   }, [])
 
-  // Show preview (only from collapsed state)
   const showPreview = useCallback(() => {
     clearHideTimeout()
     // Dismiss mobile keyboard when opening sidebar
@@ -261,7 +256,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     })
   }, [clearHideTimeout, isMobile, state])
 
-  // Hide preview after delay (returns to collapsed)
   const hidePreview = useCallback(() => {
     clearHideTimeout()
     hideTimeoutRef.current = setTimeout(() => {
@@ -345,7 +339,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     [hidePreview]
   )
 
-  // Resize functions
   const startResizing = useCallback(() => {
     setIsResizing(true)
   }, [])
@@ -423,7 +416,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   // Urgency block registration for position-matched strip with fade transitions
   const setUrgencyBlock = useCallback((streamId: string, block: Omit<UrgencyBlock, "opacity"> | null) => {
-    // Clear any existing fade-out timeout for this stream
     const existingTimeout = fadeOutTimeoutsRef.current.get(streamId)
     if (existingTimeout) {
       clearTimeout(existingTimeout)
@@ -463,13 +455,11 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   const bumpScrollVersion = useCallback(() => setScrollVersion((v) => v + 1), [])
 
-  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (hideTimeoutRef.current) {
         clearTimeout(hideTimeoutRef.current)
       }
-      // Clean up all fade-out timeouts
       fadeOutTimeoutsRef.current.forEach((timeout) => clearTimeout(timeout))
       fadeOutTimeoutsRef.current.clear()
     }

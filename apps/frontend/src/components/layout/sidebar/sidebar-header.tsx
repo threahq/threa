@@ -12,9 +12,7 @@ import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "
 
 interface SidebarHeaderProps {
   workspaceName: string
-  /** Open the sidebar customization panel (presets, quick links, sections). */
   onEditLayout: () => void
-  /** Hide the customize control (e.g., when no streams exist) */
   hideViewToggle?: boolean
 }
 
@@ -35,8 +33,8 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
 
   return (
     <div className="flex-shrink-0 border-b">
-      {/* Top row — mirrors the h-12 page-header row so the sidebar toggle sits
-           in the identical viewport position whether the sidebar is open or not. */}
+      {/* Mirrors the h-12 page-header row so the sidebar toggle sits in the
+           identical viewport position whether the sidebar is open or not. */}
       <div className="flex h-12 items-center gap-1 px-4">
         <SidebarToggle location="sidebar" />
         <Link
@@ -52,9 +50,6 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
         </div>
       </div>
 
-      {/* Quick-action pills — replaces the former full-width search box. The
-           three affordances (stream / command palette / message search) are the
-           entry points to the three quick-switcher modes. */}
       <div className="flex items-center gap-1 px-3 pt-2">
         <QuickActionPill
           onClick={handleOpenSwitcher("stream")}
@@ -76,8 +71,6 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
         />
       </div>
 
-      {/* Customize control — hidden when there are no streams. Presets,
-           quick-link visibility, and section order all live in the panel it opens. */}
       {!hideViewToggle && (
         <div className="flex items-center px-3 pb-3 pt-2">
           <button
@@ -94,8 +87,8 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
         </div>
       )}
 
-      {/* When the customize control is hidden we still need trailing breathing
-           room under the pill row so the list below doesn't butt against the border. */}
+      {/* Trailing breathing room under the pill row when the customize control
+           is hidden, so the list below doesn't butt against the border. */}
       {hideViewToggle && <div className="h-3" aria-hidden="true" />}
     </div>
   )

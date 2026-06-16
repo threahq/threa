@@ -1,5 +1,5 @@
 export { type WorkspaceToolDeps, type ReactionToolDeps } from "./tool-deps"
-// Web + send tools moved to @threa/agent-runtime (shared with the enclave).
+// Web + send tools live in @threa/agent-runtime (shared with the enclave).
 // Re-exported here so backend imports (`../tools`) keep working.
 export {
   createSendMessageTool,
@@ -88,8 +88,7 @@ export {
 } from "./linear"
 
 /**
- * Check if a tool is enabled for a persona.
- * If enabledTools is null, all tools are enabled (backwards compatible default).
+ * A null `enabledTools` enables all tools (backwards-compatible default).
  */
 export function isToolEnabled(enabledTools: string[] | null, toolName: string): boolean {
   if (enabledTools === null) return true

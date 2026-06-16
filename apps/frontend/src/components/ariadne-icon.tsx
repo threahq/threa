@@ -74,7 +74,6 @@ function getRippleStrokeWidth(size: IconSize | number): number {
 export function AriadneIcon({ size = "md", animated = false, loading = false, className }: AriadneIconProps) {
   const pixelSize = typeof size === "number" ? size : SIZE_MAP[size]
 
-  // Calculate stroke widths based on size
   const strokeWidth = getStrokeWidth(size)
   const rippleStrokeWidth = getRippleStrokeWidth(size)
 
@@ -118,7 +117,6 @@ export function AriadneIcon({ size = "md", animated = false, loading = false, cl
         </svg>
       )}
 
-      {/* Heart icon */}
       <svg
         viewBox="0 0 100 100"
         fill="none"

@@ -90,7 +90,6 @@ export function createS3Storage(config: S3Config): StorageProvider {
         throw new Error(`No body in S3 response for key: ${key}`)
       }
 
-      // Convert readable stream to Buffer
       const chunks: Uint8Array[] = []
       for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
         chunks.push(chunk)

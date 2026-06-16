@@ -1,10 +1,3 @@
-/**
- * Stub Word Processing Service
- *
- * For testing and development without real file processing.
- * Generates deterministic fake extractions.
- */
-
 import type { Pool } from "pg"
 import type { WordMetadata } from "@threa/types"
 import { withClient, withTransaction } from "../../../db"
@@ -42,11 +35,9 @@ export class StubWordProcessingService implements WordProcessingServiceLike {
       return
     }
 
-    // Determine format from filename
     const isDocx = attachment.filename.toLowerCase().endsWith(".docx")
     const format = isDocx ? "docx" : "doc"
 
-    // Generate stub metadata
     const wordMetadata: WordMetadata = {
       format,
       sizeTier: TextSizeTiers.SMALL,

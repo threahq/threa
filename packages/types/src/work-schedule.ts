@@ -1,10 +1,7 @@
-// =============================================================================
-// Work Schedule
-// Working week + working hours, shared by user preferences (per-user override)
-// and workspace settings (workspace default). Drives schedule-aware reminder /
+// Work Schedule: working week + working hours, shared by user preferences (per-user
+// override) and workspace settings (workspace default). Drives schedule-aware reminder /
 // scheduled-message presets: "start of work" replaces the hardcoded 09:00, and
 // "start of the working week" replaces the hardcoded Monday.
-// =============================================================================
 
 /** Weekday index, matching JS `Date.getDay()` (0 = Sunday … 6 = Saturday). */
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6

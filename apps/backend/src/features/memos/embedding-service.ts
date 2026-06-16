@@ -6,7 +6,6 @@ export interface EmbeddingServiceConfig {
   model?: string
 }
 
-/** Context for cost tracking and telemetry */
 export interface EmbeddingContext {
   workspaceId: string
   userId?: string
@@ -14,16 +13,11 @@ export interface EmbeddingContext {
   functionId?: string
 }
 
-/** Interface for embedding service implementations */
 export interface EmbeddingServiceLike {
   embed(text: string, context?: EmbeddingContext): Promise<number[]>
   embedBatch(texts: string[], context?: EmbeddingContext): Promise<number[][]>
 }
 
-/**
- * Service for generating embeddings using the configured provider.
- * Wraps AI with a configured default model.
- */
 export class EmbeddingService implements EmbeddingServiceLike {
   private ai: AI
   private modelId: string
@@ -33,9 +27,6 @@ export class EmbeddingService implements EmbeddingServiceLike {
     this.modelId = config.model ?? EMBEDDING_MODEL_ID
   }
 
-  /**
-   * Generate embedding for a single text.
-   */
   async embed(text: string, context?: EmbeddingContext): Promise<number[]> {
     const costContext: CostContext | undefined = context
       ? { workspaceId: context.workspaceId, userId: context.userId, origin: "system" }
@@ -50,9 +41,6 @@ export class EmbeddingService implements EmbeddingServiceLike {
     return value
   }
 
-  /**
-   * Generate embeddings for multiple texts in a single request.
-   */
   async embedBatch(texts: string[], context?: EmbeddingContext): Promise<number[][]> {
     if (texts.length === 0) {
       return []

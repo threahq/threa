@@ -1,10 +1,7 @@
 /**
- * Centralized date utilities using date-fns.
- *
- * All date formatting and manipulation should go through this module to:
- * 1. Support user preference for date/time formats
- * 2. Ensure consistent date handling across the app
- * 3. Avoid ad-hoc Date manipulation scattered throughout the codebase
+ * Centralized date utilities. All date formatting goes through this module so
+ * user date/time-format preferences apply consistently and ad-hoc Date
+ * manipulation doesn't scatter across the codebase.
  */
 import {
   format,
@@ -21,7 +18,6 @@ import {
 } from "date-fns"
 import type { DateFormat, TimeFormat } from "@threa/types"
 
-// Map user preference format to date-fns format string
 const DATE_FORMAT_MAP: Record<DateFormat, string> = {
   "YYYY-MM-DD": "yyyy-MM-dd",
   "DD/MM/YYYY": "dd/MM/yyyy",
@@ -38,27 +34,16 @@ interface TimePrefs {
   timezone?: string
 }
 
-// ============================================================================
-// ISO Date Formatting (for API/filter values)
-// ============================================================================
-
 /**
- * Format a date as ISO date string (YYYY-MM-DD).
- * Used for filter values and API calls.
+ * Format a date as ISO date string (YYYY-MM-DD), for filter values and API calls.
  */
 export function formatISODate(date: Date): string {
   return format(date, "yyyy-MM-dd")
 }
 
-// ============================================================================
-// Display Formatting (for UI)
-// ============================================================================
-
 /**
- * Format a date according to user preferences.
- * @param date - The date to format
- * @param prefs - User preferences for date format
- * @returns Formatted date string (e.g., "2025-01-15", "15/01/2025", or "01/15/2025")
+ * Format a date according to user preferences
+ * (e.g., "2025-01-15", "15/01/2025", or "01/15/2025").
  */
 export function formatDisplayDate(date: Date, prefs?: DatePrefs): string {
   const dateFormat = prefs?.dateFormat ?? "YYYY-MM-DD"
@@ -66,10 +51,7 @@ export function formatDisplayDate(date: Date, prefs?: DatePrefs): string {
 }
 
 /**
- * Format time according to user preferences.
- * @param date - The date/time to format
- * @param prefs - User preferences for time format
- * @returns Formatted time string (e.g., "14:30" or "2:30 PM")
+ * Format time according to user preferences (e.g., "14:30" or "2:30 PM").
  */
 export function formatTime(date: Date, prefs?: TimePrefs): string {
   return format(date, prefs?.timeFormat === "12h" ? "h:mm a" : "HH:mm")
@@ -83,15 +65,8 @@ export function formatTime24h(date: Date): string {
   return format(date, "HH:mm")
 }
 
-// ============================================================================
-// Relative Date Helpers
-// ============================================================================
-
 export { isSameDay as dateFnsIsSameDay }
 
-/**
- * Check if two dates are the same day.
- */
 export function isSameDay(a: Date, b: Date): boolean {
   return dateFnsIsSameDay(a, b)
 }
@@ -126,32 +101,27 @@ export function formatRelativeTime(
 function formatRelativeTimeVerbose(date: Date, now: Date, prefs?: TimePrefs): string {
   const time = formatTime(date, prefs)
 
-  // Same day: just show time
   if (isSameDay(date, now)) {
     return time
   }
 
-  // Calculate days difference relative to `now` parameter, not system time
+  // Days difference relative to the `now` parameter, not system time.
   const daysAgo = differenceInDays(startOfDay(now), startOfDay(date))
 
-  // Yesterday (exactly 1 day ago)
   if (daysAgo === 1) {
     return `yesterday ${time}`
   }
 
-  // Within the last week: show day name
   if (daysAgo < 7 && daysAgo > 0) {
     const dayName = date.toLocaleDateString(undefined, { weekday: "long" })
     return `${dayName} ${time}`
   }
 
-  // Same year: show month and day
   if (date.getFullYear() === now.getFullYear()) {
     const monthDay = date.toLocaleDateString(undefined, { month: "long", day: "numeric" })
     return `${monthDay} ${time}`
   }
 
-  // Different year: show full date
   const fullDate = date.toLocaleDateString(undefined, {
     month: "long",
     day: "numeric",
@@ -167,40 +137,33 @@ function formatRelativeTimeTerse(date: Date, now: Date): string {
   const diffMin = Math.floor(diffSec / 60)
   const diffHour = Math.floor(diffMin / 60)
 
-  // Less than 1 minute ago
   if (diffSec < 60) {
     return "now"
   }
 
-  // Less than 1 hour ago
   if (diffMin < 60) {
     return `${diffMin}m ago`
   }
 
-  // Less than 24 hours ago
   if (diffHour < 24) {
     return `${diffHour}h ago`
   }
 
-  // Calculate days difference relative to `now` parameter, not system time
+  // Days difference relative to the `now` parameter, not system time.
   const daysAgo = differenceInDays(startOfDay(now), startOfDay(date))
 
-  // Yesterday (exactly 1 day ago)
   if (daysAgo === 1) {
     return "yesterday"
   }
 
-  // Within the last week: show day name only
   if (daysAgo < 7 && daysAgo > 0) {
     return date.toLocaleDateString(undefined, { weekday: "short" })
   }
 
-  // Same year: show month and day abbreviated
   if (date.getFullYear() === now.getFullYear()) {
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
   }
 
-  // Different year: show abbreviated date with year
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -281,7 +244,6 @@ export function formatFutureTime(date: Date, now: Date = new Date(), prefs?: Tim
   const tz = prefs?.timezone
 
   if (deltaMs < 60 * 60_000) {
-    // Within the next hour — show minutes; past dates clamp to 0m.
     const mins = Math.max(0, Math.ceil(deltaMs / 60_000))
     return `${mins}m`
   }
@@ -327,10 +289,6 @@ function formatPartInZone(date: Date, timezone: string | undefined, opts: Intl.D
   return new Intl.DateTimeFormat("en-US", { timeZone: timezone, ...opts }).format(date)
 }
 
-// ============================================================================
-// Date Presets (for filter pickers)
-// ============================================================================
-
 export interface DatePreset {
   id: string
   label: string
@@ -370,10 +328,6 @@ export function getFutureDatePresets(now: Date = new Date()): DatePreset[] {
   ]
 }
 
-// ============================================================================
-// Duration Formatting
-// ============================================================================
-
 /**
  * Format a duration in milliseconds to a human-readable string.
  * Examples: "150ms", "2.3s", "1m 30s"
@@ -387,10 +341,6 @@ export function formatDuration(ms: number): string {
   const remainingSeconds = Math.floor(seconds % 60)
   return `${minutes}m ${remainingSeconds}s`
 }
-
-// ============================================================================
-// Native input helpers (date / time / datetime-local)
-// ============================================================================
 
 const padTwo = (n: number) => String(n).padStart(2, "0")
 
@@ -432,10 +382,6 @@ export function localStartOfDayISO(dateStr: string): string | null {
   return parseLocalDateTime(dateStr, "00:00")?.toISOString() ?? null
 }
 
-// ============================================================================
-// Send countdown (≤1m falls back to "Sending soon")
-// ============================================================================
-
 /**
  * Future-time label for surfaces that count down toward an imminent send —
  * scheduled message rows, the in-composer popover, etc. Wraps `formatFutureTime`
@@ -447,9 +393,5 @@ export function formatSendCountdown(date: Date, now: Date = new Date(), prefs?: 
   if (deltaMs <= 60_000) return "Sending soon"
   return formatFutureTime(date, now, prefs)
 }
-
-// ============================================================================
-// Re-exports from date-fns for convenience
-// ============================================================================
 
 export { subDays, subWeeks, subMonths, subYears, addDays, addWeeks, addMonths, format }

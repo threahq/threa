@@ -1,8 +1,5 @@
 import type { CommandArgumentInfo, CommandKind, CommandScope } from "@threa/types"
 
-/**
- * Base interface for mentionable entities (users, personas, broadcast).
- */
 export interface Mentionable {
   id: string
   slug: string
@@ -10,13 +7,9 @@ export interface Mentionable {
   type: "user" | "persona" | "bot" | "broadcast"
   avatarEmoji?: string
   avatarUrl?: string
-  /** True if this is the current user */
   isCurrentUser?: boolean
 }
 
-/**
- * Interface for channel/stream links.
- */
 export interface ChannelItem {
   id: string
   slug: string
@@ -38,9 +31,6 @@ export interface ChannelItem {
  */
 export type CommandPlacement = "inline" | "message"
 
-/**
- * Interface for slash commands.
- */
 export interface CommandItem {
   name: string
   description: string
@@ -58,9 +48,6 @@ export interface CommandItem {
   placement?: CommandPlacement
 }
 
-/**
- * Suggestion state passed to the popup component.
- */
 export interface SuggestionState<T> {
   items: T[]
   query: string
@@ -68,9 +55,6 @@ export interface SuggestionState<T> {
   clientRect: (() => DOMRect | null) | null
 }
 
-/**
- * Command interface for controlling the suggestion popup from TipTap.
- */
 export interface SuggestionCommand<T> {
   items: T[]
   query: string

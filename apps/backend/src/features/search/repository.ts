@@ -123,7 +123,6 @@ export const SearchRepository = {
 
     const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
 
-    // If no participant filter, simpler query
     if (!hasParticipantFilter) {
       const result = await db.query<{ id: string }>(composeSql`
         SELECT s.id
@@ -181,7 +180,6 @@ export const SearchRepository = {
       return []
     }
 
-    // If no search terms, return recent messages matching filters
     if (!query.trim()) {
       const result = await db.query<SearchResultRow>(sql`
         SELECT
@@ -263,7 +261,6 @@ export const SearchRepository = {
       return []
     }
 
-    // Format embedding as PostgreSQL vector literal
     const embeddingLiteral = `[${embedding.join(",")}]`
 
     // Internal limit for each search type before RRF combination
@@ -418,7 +415,6 @@ export const SearchRepository = {
    * Used by agent access control for public_plus_stream access spec.
    */
   async getStreamWithThreads(db: Querier, streamId: string): Promise<string[]> {
-    // Get the stream itself and any threads that have this stream as root
     const result = await db.query<{ id: string }>(sql`
       SELECT id FROM streams
       WHERE id = ${streamId} OR root_stream_id = ${streamId}
@@ -458,13 +454,11 @@ export const SearchRepository = {
         return this.getPublicStreams(db, workspaceId, options)
 
       case "public_plus_stream": {
-        // Get public streams and the specific stream with its threads
         const [publicIds, streamTreeIds] = await Promise.all([
           this.getPublicStreams(db, workspaceId, options),
           this.getStreamWithThreads(db, spec.streamId),
         ])
 
-        // Combine and deduplicate
         return [...new Set([...publicIds, ...streamTreeIds])]
       }
 

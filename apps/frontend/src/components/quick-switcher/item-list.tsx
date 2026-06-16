@@ -26,7 +26,6 @@ export function ItemList({
 }: ItemListProps) {
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Scroll selected item into view
   useEffect(() => {
     if (listRef.current && selectedIndex >= 0) {
       const selectedElement = listRef.current.querySelector(`[data-index="${selectedIndex}"]`)
@@ -46,7 +45,6 @@ export function ItemList({
     return null
   }
 
-  // Group items by their group property
   const groups = items.reduce(
     (acc, item, index) => {
       const group = item.group ?? ""

@@ -121,7 +121,6 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
       }
     }
 
-    // ── touchstart ──────────────────────────────────────────────
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length > 1) {
         trackerRef.current = null
@@ -154,7 +153,6 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
       }
     }
 
-    // ── touchmove ───────────────────────────────────────────────
     const onTouchMove = (e: TouchEvent) => {
       const t = trackerRef.current
       if (!t) return
@@ -237,7 +235,6 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
       if (!t.horizontal) return
       e.preventDefault()
 
-      // Track velocity
       const now = performance.now()
       const dt = now - t.lastTime
       if (dt > 0) {
@@ -251,7 +248,6 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
       applyVisuals(t.opening ? Math.max(0, dx) / w : 1 + Math.min(0, dx) / w)
     }
 
-    // ── touchend ────────────────────────────────────────────────
     const onTouchEnd = () => {
       const t = trackerRef.current
       trackerRef.current = null
@@ -274,7 +270,6 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
         ? dx / w > POSITION_THRESHOLD || t.velocity > VELOCITY_THRESHOLD
         : Math.abs(dx) / w > POSITION_THRESHOLD || t.velocity < -VELOCITY_THRESHOLD
 
-      // Snap animation
       if (sidebarRef.current) sidebarRef.current.style.transition = `transform ${SNAP_MS}ms ease-out`
       if (backdropRef.current) backdropRef.current.style.transition = `opacity ${SNAP_MS}ms ease-out`
 

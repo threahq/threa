@@ -7,12 +7,10 @@ export interface VoiceSessionSweeper {
 }
 
 /**
- * Periodically expires voice sessions left `active` past their hard
- * `expires_at`. The gateway's in-process max-duration timer finalizes the
- * common case; this is the safety net for sessions a crash/restart (or an
- * HTTP-created session whose socket never connected) stranded active. Without
- * it those rows never reach a terminal status, holding a phantom "active"
- * dictation and skewing cost telemetry (PR3).
+ * Safety net for sessions left `active` past `expires_at`: the gateway's
+ * in-process max-duration timer finalizes the common case, but a crash/restart
+ * (or an HTTP-created session whose socket never connected) can strand rows that
+ * would otherwise never reach a terminal status.
  */
 export function createVoiceSessionSweeper(
   voiceTranscriptionService: VoiceTranscriptionService,

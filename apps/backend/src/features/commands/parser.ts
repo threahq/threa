@@ -15,9 +15,6 @@ export interface ParsedCommand {
   args: string
 }
 
-/**
- * Check if a message is a command (starts with /).
- */
 export function isCommand(content: string): boolean {
   return content.trimStart().startsWith("/")
 }

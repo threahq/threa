@@ -12,7 +12,6 @@ describe("MessageSourceList", () => {
   it("renders a collapsed source count that expands to linked citations", async () => {
     render(<MessageSourceList sources={sources} />)
 
-    // Collapsed by default: the count chip shows, the citations don't.
     expect(screen.getByText("Sources")).toBeInTheDocument()
     expect(screen.getByText("2")).toBeInTheDocument()
     expect(screen.queryByText("Tide Atlas")).not.toBeInTheDocument()

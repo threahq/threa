@@ -3,25 +3,17 @@ import { useStreamError } from "@/hooks/use-stream-error"
 import { StreamErrorView } from "./stream-error-view"
 
 interface StreamErrorBoundaryProps {
-  /** Stream ID to check for errors */
   streamId: string | undefined
-  /** Additional error from direct query (useStreamBootstrap, etc.) */
+  /** Additional error from a direct query (useStreamBootstrap, etc.) merged with coordinated loading errors. */
   queryError?: Error | null
-  /** If provided, shows navigation buttons on error page */
+  /** If provided, shows navigation buttons on the error page. */
   workspaceId?: string
   children: ReactNode
 }
 
 /**
- * Wraps content that depends on a stream and handles error display.
- * Checks both coordinated loading errors and direct query errors.
- *
- * Usage:
- * ```tsx
- * <StreamErrorBoundary streamId={streamId} queryError={error} workspaceId={workspaceId}>
- *   <StreamContent ... />
- * </StreamErrorBoundary>
- * ```
+ * Wraps stream-dependent content, showing an error view when either a
+ * coordinated loading error or a direct query error is present.
  */
 export function StreamErrorBoundary({ streamId, queryError, workspaceId, children }: StreamErrorBoundaryProps) {
   const error = useStreamError(streamId, queryError)

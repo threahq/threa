@@ -140,8 +140,8 @@ export class BotApiKeyService {
   }
 
   /**
-   * Validate a bot API key value. Returns the key context if valid, null otherwise.
-   * Also updates last_used_at as a fire-and-forget side effect.
+   * Validate a bot API key value, returning its context or null.
+   * Updates last_used_at as a fire-and-forget side effect.
    */
   async validateKey(value: string): Promise<ValidatedBotApiKey | null> {
     if (!value.startsWith(BOT_KEY_PREFIX)) return null

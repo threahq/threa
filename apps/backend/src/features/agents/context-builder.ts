@@ -26,27 +26,18 @@ import { AttachmentExtractionRepository, type PdfMetadata, type PdfSection } fro
 import { getUtcOffset, type TemporalContext, type ParticipantTemporal } from "../../lib/temporal"
 import { DEFAULT_CONTEXT_WINDOW_MESSAGES } from "./context-window-policy"
 
-/**
- * A participant in a stream (user or persona).
- */
 export interface Participant {
   id: string
   name: string
   role?: string
 }
 
-/**
- * Info about a message in the thread hierarchy.
- */
 export interface AnchorMessage {
   id: string
   content: string
   authorName: string
 }
 
-/**
- * Position in thread hierarchy for nested threads.
- */
 export interface ThreadPathEntry {
   streamId: string
   displayName: string | null
@@ -68,7 +59,6 @@ export interface AttachmentContext {
     fullText: string | null
     /** Structured data for charts, tables, diagrams (included for recent messages) */
     structuredData: ChartData | TableData | DiagramData | null
-    /** Source type: 'image' or 'pdf' */
     sourceType: ExtractionSourceType
     /** PDF-specific metadata (only for PDFs) */
     pdfMetadata?: {
@@ -99,9 +89,6 @@ export interface AttachmentContext {
   dataUrl?: string
 }
 
-/**
- * Message with attachment context.
- */
 export interface MessageWithAttachments extends Message {
   attachments?: AttachmentContext[]
 }
@@ -280,7 +267,6 @@ export async function buildStreamContext(
     context.conversationHistory = pinned > 0 ? [...head, ...trimmed] : trimmed
   }
 
-  // Enrich with attachment context if requested
   if (options?.includeAttachments) {
     context.conversationHistory = await enrichMessagesWithAttachments(db, context.conversationHistory, {
       triggerMessageId: options.triggerMessageId,
@@ -294,9 +280,6 @@ export async function buildStreamContext(
 
 type TemporalPreferenceFields = Pick<UserPreferences, "timezone" | "dateFormat" | "timeFormat">
 
-/**
- * Build temporal context from timezone and display preferences.
- */
 function buildTemporalContext(preferences: TemporalPreferenceFields, currentTime?: Date): TemporalContext {
   const now = currentTime ?? new Date()
 
@@ -309,9 +292,6 @@ function buildTemporalContext(preferences: TemporalPreferenceFields, currentTime
   }
 }
 
-/**
- * Scratchpad context: personal, solo-first. Conversation history is primary context.
- */
 async function buildScratchpadContext(
   db: Querier,
   stream: Stream,
@@ -333,9 +313,6 @@ async function buildScratchpadContext(
   }
 }
 
-/**
- * Channel context: collaborative. Includes members, slug, and conversation.
- */
 async function buildChannelContext(
   db: Querier,
   stream: Stream,
@@ -372,9 +349,6 @@ async function buildChannelContext(
   }
 }
 
-/**
- * DM context: two-party. Like channels but focused.
- */
 async function buildDmContext(
   db: Querier,
   stream: Stream,
@@ -426,7 +400,6 @@ async function buildThreadContext(
 ): Promise<StreamContext> {
   const messages = await MessageRepository.list(db, stream.id, { limit: maxMessages })
 
-  // Build thread path from current thread up to root
   const threadPath = await buildThreadPath(db, stream)
 
   // Include the parent (root) message that spawned this thread — the reply
@@ -478,7 +451,7 @@ async function buildThreadPath(db: Querier, stream: Stream): Promise<ThreadPathE
       const authorName = await resolveAuthorName(db, current.workspaceId, message.authorId, message.authorType)
       anchorMessage = {
         id: message.id,
-        content: message.contentMarkdown.slice(0, 200), // Truncate for context
+        content: message.contentMarkdown.slice(0, 200),
         authorName,
       }
     }
@@ -489,7 +462,6 @@ async function buildThreadPath(db: Querier, stream: Stream): Promise<ThreadPathE
       anchorMessage,
     })
 
-    // Traverse up
     if (current.parentStreamId) {
       current = await StreamRepository.findById(db, current.parentStreamId)
     } else {
@@ -515,7 +487,6 @@ async function resolveParticipantsWithTimezones(
     return { participants: [], participantTimezones: includeTimezones ? [] : undefined }
   }
 
-  // Batch fetch all users in one query
   const members = await UserRepository.findByIds(db, workspaceId, userIds)
 
   const participants: Participant[] = members.map((member) => ({
@@ -523,7 +494,6 @@ async function resolveParticipantsWithTimezones(
     name: member.name,
   }))
 
-  // Build timezone info from the same member data if needed
   let participantTimezones: ParticipantTemporal[] | undefined
   if (includeTimezones) {
     const now = currentTime ?? new Date()
@@ -541,9 +511,6 @@ async function resolveParticipantsWithTimezones(
   return { participants, participantTimezones }
 }
 
-/**
- * Resolve author name for a message.
- */
 async function resolveAuthorName(
   db: Querier,
   workspaceId: string,
@@ -559,19 +526,12 @@ async function resolveAuthorName(
     return member?.name ?? "Unknown"
   }
 
-  // For personas, we'd need to look up the persona
-  // For now, return a placeholder
+  // Persona author names are not resolved here; placeholder for now.
   return "Assistant"
 }
 
-/**
- * Number of recent user messages to include full extraction details for.
- */
 const FULL_EXTRACTION_USER_MESSAGES = 3
 
-/**
- * Options for enriching messages with attachment context.
- */
 export interface EnrichAttachmentsOptions {
   /** The trigger message ID (for determining detail levels) */
   triggerMessageId?: string
@@ -610,18 +570,14 @@ export async function enrichMessagesWithAttachments(
   const { triggerMessageId, storage, loadImages } = options ?? {}
   if (messages.length === 0) return []
 
-  // Get all message IDs
   const messageIds = messages.map((m) => m.id)
 
-  // Batch fetch attachments for all messages
   const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
 
-  // If no attachments, return messages as-is
   if (attachmentsByMessage.size === 0) {
     return messages
   }
 
-  // Collect all attachment IDs for extraction lookup
   const allAttachmentIds: string[] = []
   for (const attachments of attachmentsByMessage.values()) {
     for (const a of attachments) {
@@ -629,13 +585,10 @@ export async function enrichMessagesWithAttachments(
     }
   }
 
-  // Batch fetch extractions
   const extractionsByAttachment = await AttachmentExtractionRepository.findByAttachmentIds(db, allAttachmentIds)
 
-  // Determine which messages get full extraction details
   const triggerIdx = triggerMessageId ? messages.findIndex((m) => m.id === triggerMessageId) : -1
 
-  // Find indices of last N user messages before trigger
   const userMessageIndicesBeforeTrigger: number[] = []
   for (let i = triggerIdx - 1; i >= 0 && userMessageIndicesBeforeTrigger.length < FULL_EXTRACTION_USER_MESSAGES; i--) {
     if (messages[i].authorType === AuthorTypes.USER) {
@@ -643,23 +596,18 @@ export async function enrichMessagesWithAttachments(
     }
   }
 
-  // Build set of message indices that get full extraction
   const fullExtractionIndices = new Set<number>()
   if (triggerIdx >= 0) {
-    // Trigger message and all messages after it
     for (let i = triggerIdx; i < messages.length; i++) {
       fullExtractionIndices.add(i)
     }
   }
-  // Last N user messages before trigger
   for (const idx of userMessageIndicesBeforeTrigger) {
     fullExtractionIndices.add(idx)
   }
 
-  // Determine if we should load images
   const shouldLoadImages = loadImages && storage
 
-  // Collect image attachments that need loading (for recent messages only)
   const imageAttachmentsToLoad: Array<{ attachmentId: string; storagePath: string; mimeType: string }> = []
   if (shouldLoadImages) {
     for (let idx = 0; idx < messages.length; idx++) {
@@ -678,7 +626,6 @@ export async function enrichMessagesWithAttachments(
     }
   }
 
-  // Load image data in parallel
   const imageDataByAttachment = new Map<string, string>()
   if (imageAttachmentsToLoad.length > 0 && storage) {
     const results = await Promise.allSettled(
@@ -696,7 +643,6 @@ export async function enrichMessagesWithAttachments(
     }
   }
 
-  // Enrich each message with attachment context
   return messages.map((message, idx): MessageWithAttachments => {
     const attachments = attachmentsByMessage.get(message.id)
     if (!attachments || attachments.length === 0) {

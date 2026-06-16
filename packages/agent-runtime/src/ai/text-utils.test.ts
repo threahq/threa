@@ -1,7 +1,3 @@
-/**
- * Text Processing Utilities Tests
- */
-
 import { describe, test, expect } from "bun:test"
 import { stripMarkdownFences } from "./text-utils"
 

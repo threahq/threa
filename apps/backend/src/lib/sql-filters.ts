@@ -1,7 +1,3 @@
-/**
- * SQL filter helpers for common query patterns.
- */
-
 export type ArchiveStatus = "active" | "archived"
 
 /**

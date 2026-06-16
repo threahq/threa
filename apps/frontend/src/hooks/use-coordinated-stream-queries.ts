@@ -61,7 +61,6 @@ export function useCoordinatedStreamQueries(workspaceId: string, streamIds: stri
     return errored
   }, [serverStreamIds, workspaceId, queryClient])
 
-  // Memoize the queries array to prevent unnecessary re-renders
   const queries = useMemo(
     () =>
       serverStreamIds.map((streamId) => ({

@@ -28,7 +28,6 @@ import {
 // directly, which the component layer is barred from (INV-15).
 export type { CachedStream } from "@/db"
 
-// =============================================================================
 // In-memory cache — populated by applyWorkspaceBootstrap, used as the default
 // value for useLiveQuery so the first synchronous render returns real data
 // instead of empty arrays. This eliminates the one-frame flash that useLiveQuery
@@ -37,7 +36,6 @@ export type { CachedStream } from "@/db"
 // The cache is NOT the source of truth — IDB is. The cache only serves as the
 // initial value. Once useLiveQuery resolves (next render), IDB data takes over
 // and subsequent updates flow reactively through useLiveQuery.
-// =============================================================================
 
 const cache = {
   workspaces: new Map<string, CachedWorkspace>(),
@@ -270,12 +268,7 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
   emitWorkspaceCacheChange(workspaceId)
 }
 
-// =============================================================================
-// Store hooks — useLiveQuery for reactivity, in-memory cache for first render
-// =============================================================================
-
-// ---------------------------------------------------------------------------
-// Helper: array-valued hooks read live from IDB but fall back to the in-memory
+// Array-valued hooks read live from IDB but fall back to the in-memory
 // cache while the first query is in flight, so the first visible render after
 // the coordinated-loading gate opens shows real data instead of a flash of
 // empty content (the cache is seeded from the same bootstrap that wrote IDB).
@@ -285,7 +278,6 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
 // cache after an empty resolution — an incremental delete (e.g. the last
 // assignment removed via a socket event, which updates IDB but not the cache)
 // would otherwise be masked until the next bootstrap.
-// ---------------------------------------------------------------------------
 
 function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
   const live = useLiveQuery(queryFn, deps)

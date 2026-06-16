@@ -22,10 +22,6 @@ import { $ } from "bun"
 import path from "path"
 import { readdir } from "fs/promises"
 
-// ---------------------------------------------------------------------------
-// CLI args
-// ---------------------------------------------------------------------------
-
 const { values } = parseArgs({
   args: process.argv.slice(2),
   options: {
@@ -53,10 +49,6 @@ if ((action === "deploy" || action === "reset-db") && !branch) {
   console.error("--branch is required for deploy and reset-db actions")
   process.exit(1)
 }
-
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
 
 function requireEnv(name: string): string {
   const val = process.env[name]
@@ -86,10 +78,6 @@ const serviceName = `pr-${prNumber}-backend`
 /** Flat subdomain: pr-228-staging.threa.io (covered by *.threa.io cert) */
 const prHostname = `pr-${prNumber}-staging.threa.io`
 
-// ---------------------------------------------------------------------------
-// Database helpers (uses psql via STAGING_DATABASE_URL)
-// ---------------------------------------------------------------------------
-
 // STAGING_DATABASE_URL is the public proxy URL (required so GH Actions runners
 // can reach Postgres for psql/pg_dump). Railway services in the same project
 // must talk to Postgres over the internal network to avoid egress charges.
@@ -99,7 +87,6 @@ function toInternalDbUrl(publicUrl: string, dbName: string): string {
 }
 
 async function runPsql(db: string, sql: string): Promise<string> {
-  // Replace the database name in the URL
   const url = STAGING_DATABASE_URL.replace(/\/([^/?]+)(\?.*)?$/, `/${db}$2`)
   const result = await $`psql ${url} -tAc ${sql}`.quiet().nothrow()
   if (result.exitCode !== 0) {
@@ -150,7 +137,6 @@ async function seedPreExistingMigrations(prDb: string, sourceDb: string, migrati
     "CREATE TABLE IF NOT EXISTS umzug_migrations (name VARCHAR(255) PRIMARY KEY, executed_at TIMESTAMPTZ DEFAULT NOW())"
   )
 
-  // Pull the explicit set of applied migration names from the source DB.
   let appliedNames: string[] = []
   try {
     const raw = await runPsql(sourceDb, "SELECT name FROM umzug_migrations ORDER BY name")
@@ -214,7 +200,6 @@ async function cloneDatabase(sourceDb: string, targetDb: string): Promise<void> 
   console.log("Syncing sequences...")
   await runPsql(targetDb, "SELECT setval('outbox_id_seq', COALESCE((SELECT MAX(id) FROM outbox), 0) + 1, false)")
 
-  // Reset outbox listener cursors
   console.log("Resetting outbox listener cursors...")
   await runPsql(targetDb, "UPDATE outbox_listeners SET last_processed_id = COALESCE((SELECT MAX(id) FROM outbox), 0)")
 
@@ -250,14 +235,6 @@ async function updateWorkspaceSlug(dbName: string, branchName: string): Promise<
     `UPDATE workspaces SET slug = '${slug}', name = '${name}' WHERE id = (SELECT id FROM workspaces LIMIT 1)`
   )
 }
-
-// ---------------------------------------------------------------------------
-// Railway helpers (uses Railway CLI via RAILWAY_TOKEN)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Railway GraphQL API helpers (replaces CLI calls for CI reliability)
-// ---------------------------------------------------------------------------
 
 const RAILWAY_API = "https://backboard.railway.com/graphql/v2"
 
@@ -453,7 +430,6 @@ async function deployRailwayService(): Promise<string> {
 
   console.log("Deploy triggered — Railway will build from the branch")
 
-  // Get or create service domain
   const domainData = (await railwayGql(`{
     serviceInstance(serviceId: "${service.id}", environmentId: "${environmentId}") {
       domains { serviceDomains { domain } }
@@ -463,7 +439,6 @@ async function deployRailwayService(): Promise<string> {
   const existingDomain = domainData.serviceInstance.domains.serviceDomains[0]?.domain
   if (existingDomain) return `https://${existingDomain}`
 
-  // Create a service domain if none exists
   const newDomain = (await railwayGql(`mutation {
     serviceDomainCreate(input: { serviceId: "${service.id}", environmentId: "${environmentId}" }) { domain }
   }`)) as { serviceDomainCreate: { domain: string } }
@@ -481,10 +456,6 @@ async function deleteRailwayService(): Promise<void> {
   await railwayGql(`mutation { serviceDelete(id: "${service.id}") }`)
   console.log(`Deleted Railway service '${serviceName}'`)
 }
-
-// ---------------------------------------------------------------------------
-// Cloudflare KV helpers
-// ---------------------------------------------------------------------------
 
 const CF_KV_BASE = `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/storage/kv/namespaces/${STAGING_KV_NAMESPACE_ID}`
 
@@ -517,11 +488,9 @@ async function kvPut(key: string, value: string): Promise<void> {
  * mutex (e.g. Cloudflare Durable Object lock).
  */
 async function registerRegion(backendUrl: string): Promise<void> {
-  // Read current regions config from KV
   const existing = await kvGet("__regions_config__")
   const regions: Record<string, { apiUrl: string; wsUrl: string }> = existing ? JSON.parse(existing) : {}
 
-  // Add this PR's region
   regions[regionName] = { apiUrl: backendUrl, wsUrl: backendUrl }
   await kvPut("__regions_config__", JSON.stringify(regions))
   console.log(`Registered region '${regionName}' → ${backendUrl}`)
@@ -581,10 +550,6 @@ async function unregisterRegion(): Promise<void> {
   console.log(`Unregistered region '${regionName}'`)
 }
 
-// ---------------------------------------------------------------------------
-// Cloudflare DNS + Worker Route helpers (per-PR subdomain)
-// ---------------------------------------------------------------------------
-
 const CF_ZONE_BASE = `https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}`
 
 async function cfApi(
@@ -638,7 +603,6 @@ async function createPrDnsAndRoute(): Promise<void> {
     console.log(`DNS record for ${prHostname} already exists`)
   }
 
-  // Create worker route
   const routePattern = `${prHostname}/*`
   const existingRoute = await findWorkerRoute(routePattern)
   if (!existingRoute) {
@@ -656,7 +620,6 @@ async function createPrDnsAndRoute(): Promise<void> {
 }
 
 async function deletePrDnsAndRoute(): Promise<void> {
-  // Delete worker route
   const routePattern = `${prHostname}/*`
   const routeId = await findWorkerRoute(routePattern)
   if (routeId) {
@@ -664,17 +627,12 @@ async function deletePrDnsAndRoute(): Promise<void> {
     console.log(`Deleted worker route for ${prHostname}`)
   }
 
-  // Delete DNS record
   const dnsId = await findDnsRecord(prHostname)
   if (dnsId) {
     await cfApi(`/dns_records/${dnsId}`, "DELETE")
     console.log(`Deleted DNS record for ${prHostname}`)
   }
 }
-
-// ---------------------------------------------------------------------------
-// Actions
-// ---------------------------------------------------------------------------
 
 /**
  * Restart the existing PR Railway service without reconnecting to a branch.
@@ -744,7 +702,6 @@ async function deploy(): Promise<void> {
   await seedPreExistingMigrations(prDbName, "staging_main", "apps/backend/src/db/migrations")
   await seedPreExistingMigrations(prCpDbName, "staging_main_cp", "apps/control-plane/src/db/migrations")
 
-  // 2. Create and deploy Railway service
   await createRailwayService()
   const backendUrl = await deployRailwayService()
 
@@ -760,7 +717,6 @@ async function deploy(): Promise<void> {
   await registerRegion(backendUrl)
   await registerStagingRegion()
 
-  // 4. Create DNS record + worker route for pr-N-staging.threa.io
   await createPrDnsAndRoute()
 
   console.log(`\n=== Staging environment deployed ===`)
@@ -773,13 +729,11 @@ async function deploy(): Promise<void> {
 async function resetDb(): Promise<void> {
   console.log(`\n=== Resetting databases for PR #${prNumber} (branch: ${branch}) ===\n`)
 
-  // Drop and re-clone backend database
   await dropDatabase(prDbName)
   await runPsqlOnDefault(`CREATE DATABASE "${prDbName}"`)
   await cloneDatabase("staging_main", prDbName)
   await updateWorkspaceSlug(prDbName, branch!)
 
-  // Drop and re-clone control-plane database
   await dropDatabase(prCpDbName)
   await runPsqlOnDefault(`CREATE DATABASE "${prCpDbName}"`)
   await cloneDatabase("staging_main_cp", prCpDbName)
@@ -800,25 +754,17 @@ async function resetDb(): Promise<void> {
 async function teardown(): Promise<void> {
   console.log(`\n=== Tearing down staging environment for PR #${prNumber} ===\n`)
 
-  // 1. Unregister this PR's region from KV
   await unregisterRegion()
 
-  // 2. Delete DNS record + worker route
   await deletePrDnsAndRoute()
 
-  // 3. Delete Railway service
   await deleteRailwayService()
 
-  // 4. Drop databases
   await dropDatabase(prDbName)
   await dropDatabase(prCpDbName)
 
   console.log(`\n=== Staging environment torn down ===`)
 }
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
 
 async function main() {
   switch (action) {

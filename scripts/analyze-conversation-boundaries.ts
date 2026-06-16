@@ -169,7 +169,6 @@ async function main() {
   const msgIdToConv = new Map<string, Conversation>()
   for (const c of conversations) for (const mid of c.message_ids ?? []) msgIdToConv.set(mid, c)
 
-  // Section A — doubt-expressed boundaries
   log()
   log("## A. Classifier self-flagged doubt")
   log("(topic_summary contains phrases like 'no clear link', 'rather than', 'unclear')")
@@ -184,7 +183,6 @@ async function main() {
     log(`  > ${c.topic_summary}`)
   }
 
-  // Section B — low confidence
   log()
   log("## B. Low-confidence boundaries (confidence < 0.4)")
   log()
@@ -196,7 +194,6 @@ async function main() {
     log(`  > ${c.topic_summary}`)
   }
 
-  // Section C — tiny conversations (1-2 msgs) sandwiched between larger ones
   log()
   log("## C. Tiny conversations (1-2 messages)")
   log()
@@ -207,7 +204,6 @@ async function main() {
     log(`  > ${c.topic_summary}`)
   }
 
-  // Section D — adjacent conversations with high topic overlap
   log()
   log("## D. Adjacent conversations on overlapping topics (likely bad split)")
   log()
@@ -231,7 +227,6 @@ async function main() {
     }
   }
 
-  // Section E — resolved status that should have stayed active
   log()
   log("## E. Resolved conversations followed by topical continuation (premature resolve)")
   log()
@@ -255,7 +250,6 @@ async function main() {
     }
   }
 
-  // Section F — case study windows around the worst boundaries
   log()
   log("## F. Case study windows")
   log("Lines marked '>>>' belong to the conversation under inspection.")

@@ -47,7 +47,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
   const [selectedText, setSelectedText] = useState("")
   const contentRef = useRef<HTMLDivElement>(null)
 
-  // Reset expanded state when drawer closes
   const handleOpenChange = useCallback(
     (open: boolean) => {
       if (!open) setExpanded(false)
@@ -56,7 +55,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     [onOpenChange]
   )
 
-  // Track text selection within the expanded content area
   useEffect(() => {
     if (!expanded) {
       setSelectedText("")
@@ -76,7 +74,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
         return
       }
 
-      // Verify selection is within our content area
       const range = sel.getRangeAt(0)
       if (contentRef.current?.contains(range.startContainer) && contentRef.current?.contains(range.endContainer)) {
         setSelectedText(text)
@@ -129,7 +126,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
     [emojis, emojiWeights, allReactionShortcodes]
   )
 
-  // Quick-react toggles: removes if user already reacted, adds otherwise
   const handleQuickReact = useCallback(
     (shortcode: string) => {
       handleOpenChange(false)
@@ -151,7 +147,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
       <DrawerContent className={cn(expanded ? "h-[95dvh]" : "max-h-[85dvh]")}>
-        {/* Accessible title (visually hidden) */}
         <DrawerTitle className="sr-only">{expanded ? "Select text to quote" : "Message actions"}</DrawerTitle>
 
         {expanded ? (
@@ -168,7 +163,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
           />
         ) : (
           <>
-            {/* Message preview */}
             <div className="px-4 pt-1 pb-3">
               <button
                 type="button"
@@ -208,7 +202,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
               )}
             </div>
 
-            {/* Quick reactions row + full picker button */}
             {(activeEmojis.length > 0 || othersEmojis.length > 0 || quickEmojis.length > 0) && context.onReact && (
               <div className="flex justify-center px-4 pb-3">
                 <EmojiQuickBar
@@ -225,7 +218,6 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
               </div>
             )}
 
-            {/* Action list */}
             <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
               {groupedActions.map((item) => (
                 <DrawerActionItem
@@ -293,7 +285,6 @@ function ExpandedQuoteView({
 
   return (
     <div className="flex flex-col min-h-0 h-full">
-      {/* Header — soft app-bar with gradient divider */}
       <div className="relative flex items-center gap-1 px-2 pt-2 pb-3">
         <button
           type="button"
@@ -307,15 +298,12 @@ function ExpandedQuoteView({
         <div className="absolute left-0 right-0 bottom-0 h-px bg-gradient-to-r from-transparent via-border/70 to-transparent" />
       </div>
 
-      {/* Scrollable byline + content as a single actor-typed block */}
       <div data-vaul-no-drag className="flex-1 min-h-0 overflow-y-auto">
         <div className={cn("relative", accentClass)}>
-          {/* Decorative quote watermark */}
           <div aria-hidden="true" className={watermarkClass}>
             &ldquo;
           </div>
 
-          {/* Byline — avatar anchored, matches timeline message style */}
           <div className="relative flex items-center gap-3 px-4 pt-4 pb-3">
             <Avatar className="h-9 w-9 rounded-[10px] shrink-0">
               <AvatarFallback
@@ -352,7 +340,6 @@ function ExpandedQuoteView({
             </div>
           </div>
 
-          {/* Selectable message content */}
           <div
             ref={contentRef}
             className="relative px-4 pb-6 select-text [-webkit-touch-callout:none] outline-none"
@@ -363,7 +350,6 @@ function ExpandedQuoteView({
         </div>
       </div>
 
-      {/* Footer toolbar — compact, two-state */}
       <div className="relative px-4 pt-2.5 pb-[max(10px,env(safe-area-inset-bottom))]">
         <div
           aria-hidden="true"

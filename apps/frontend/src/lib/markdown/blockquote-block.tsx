@@ -37,10 +37,10 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const measured = useMeasuredLineCount(bodyRef, [text])
   const lineCount = measured.lineCount
-  // Same "more than threshold" semantic as before, but measured by rendered
-  // line-height (handles soft wrapping) instead of paragraph/char estimates.
-  // The extra half line is exactly what the collapsed view reveals as the
-  // "there's more" hint, so a barely-over quote never gets a useless toggle.
+  // "More than threshold" measured by rendered line-height (handles soft
+  // wrapping) rather than paragraph/char estimates. The extra half line is
+  // exactly what the collapsed view reveals as the "there's more" hint, so a
+  // barely-over quote never gets a useless toggle.
   const collapsible = foldable && lineCount !== null && lineCount > threshold + 0.5
   const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 

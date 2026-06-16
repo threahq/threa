@@ -6,10 +6,8 @@ import { logger } from "../logger"
 const LANGGRAPH_SCHEMA = "langgraph"
 
 /**
- * Create and initialize a LangGraph PostgreSQL checkpointer.
- *
- * This creates the necessary tables in the `langgraph` schema on first run.
- * The returned checkpointer should be passed as a dependency to components that need it.
+ * Create and initialize a LangGraph PostgreSQL checkpointer. Creates the
+ * tables in the `langgraph` schema on first run.
  */
 export async function createPostgresCheckpointer(pool: Pool): Promise<PostgresSaver> {
   const checkpointer = new PostgresSaver(pool, undefined, {

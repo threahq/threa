@@ -134,7 +134,6 @@ export function useScrollBehavior({
     prevItemCount.current = itemCount
 
     if (oldCount === 0 && itemCount > 0) {
-      // Initial load — scroll to bottom
       scrollToBottom()
       return
     }
@@ -218,7 +217,6 @@ export function useScrollBehavior({
 
     if (itemCount === 0) return
 
-    // Estimate average item height and compute pixel threshold from item count
     const avgItemHeight = scrollHeight / itemCount
     const triggerPixels = triggerItemCount * avgItemHeight
     const jumpThresholdPixels = JUMP_TO_LATEST_ITEM_THRESHOLD * avgItemHeight
