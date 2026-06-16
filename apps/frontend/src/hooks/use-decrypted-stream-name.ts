@@ -77,10 +77,10 @@ export function useDecryptedStreamName(
  * locked/no-key session (the placeholder is then the settled answer), and once the
  * name has decrypted (or definitively failed).
  *
- * Pure so the single decision can be computed at the read boundary that already
- * resolves the name — the open-stream header (via `useStreamNameDecrypting`) and
- * the sidebar's stream-list builder — rather than each leaf row re-wiring the
- * session. Reads the same cache as the name overlay, so loader and label agree.
+ * The pure decision. Surfaces never call this with a hand-wired session — they go
+ * through {@link useSealedNamePendingResolver}, the single authority that binds it
+ * to the live session + name cache. Reads the same cache as the name overlay, so
+ * loader and label agree.
  */
 export function resolveSealedNamePending(
   workspaceId: string,
@@ -97,19 +97,39 @@ export function resolveSealedNamePending(
 }
 
 /**
- * Hook form of {@link resolveSealedNamePending} for a single open stream (the
- * header), which already has session context. List surfaces resolve this through
- * their stream-list builder instead, off the same shared cache.
+ * The single session-aware authority for "is this sealed E2E name still
+ * resolving". Wires the session and the name-cache version subscription once and
+ * returns a resolver bound to them; recompute is driven by the session flipping
+ * and by a decrypt landing (or the cache clearing on lock). Every surface that
+ * needs the loading state — the open-stream header, the sidebar's stream-list
+ * builder, the coordinated-loading reveal gate — calls this instead of
+ * re-deriving the `useE2eSession` + cache-subscription pairing, which is the
+ * recurring "fix one surface, miss another" drift. List surfaces apply the
+ * resolver across their rows (`.map`/`.some`); a single-stream surface calls
+ * {@link useStreamNameDecrypting}.
  */
-export function useStreamNameDecrypting(workspaceId: string, stream: SealedNameStream | null | undefined): boolean {
+export function useSealedNamePendingResolver(
+  workspaceId: string
+): (stream: SealedNameStream | null | undefined) => boolean {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
-  // `version` re-evaluates pending when a decrypt settles (including a failure,
-  // which doesn't change the overlaid row).
+  // `version` re-binds the resolver when a decrypt settles (including a failure,
+  // which leaves the overlaid row unchanged) or the cache clears on lock.
   const version = useSyncExternalStore(subscribeStreamNameCache, getStreamNameCacheVersion, getStreamNameCacheVersion)
 
   return useMemo(
-    () => resolveSealedNamePending(workspaceId, stream, session.status),
-    [workspaceId, stream, session.status, version]
+    () => (stream: SealedNameStream | null | undefined) =>
+      resolveSealedNamePending(workspaceId, stream, session.status),
+    [workspaceId, session.status, version]
   )
+}
+
+/**
+ * Loading state for a single open stream's sealed name (the header), routed
+ * through the same {@link useSealedNamePendingResolver} authority the list
+ * surfaces use, so loader and label never drift.
+ */
+export function useStreamNameDecrypting(workspaceId: string, stream: SealedNameStream | null | undefined): boolean {
+  const resolve = useSealedNamePendingResolver(workspaceId)
+  return resolve(stream)
 }

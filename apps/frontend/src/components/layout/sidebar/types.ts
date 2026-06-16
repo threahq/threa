@@ -19,9 +19,9 @@ export interface StreamItemData extends StreamWithPreview {
   dmPeerUserId?: string
   /**
    * True while this stream's sealed E2E name is still decrypting on cold load, so
-   * the row renders a loader instead of the placeholder. Resolved once by the
-   * sidebar builder off the shared name cache + session (see
-   * `resolveSealedNamePending`), not per row.
+   * the row renders a loader instead of the placeholder. The sidebar builder wires
+   * the single authority once (`useSealedNamePendingResolver`) and applies it per
+   * row, so the leaf reads this as plain data without touching the session.
    */
   nameDecrypting?: boolean
 }

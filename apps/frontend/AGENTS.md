@@ -66,6 +66,18 @@ session shows the placeholder; the open-stream header reads the same cache via
 `useDecryptedStreamName`. Don't re-decrypt names per surface — extend the cache /
 overlay if a new surface bypasses the workspace store.
 
+**Loading state goes through the single authority.** The decrypted _value_ is
+transparent through the overlay above, but "is this sealed name still resolving"
+(show a loader vs. the placeholder) needs the session, so it has exactly one
+owner: `useSealedNamePendingResolver(workspaceId)` in `use-decrypted-stream-name`.
+It wires `useE2eSession` + the name-cache subscription once and returns a resolver;
+list surfaces apply it across rows (the sidebar builder's `nameDecrypting`, the
+coordinated-loading reveal gate's `.some`) and the open-stream header reads one
+stream via `useStreamNameDecrypting`. Do **not** re-pair `useE2eSession` with the
+cache version yourself — that triple drifted across three surfaces before it was
+collapsed here. A new surface that needs the loading state calls the resolver; it
+never reaches for the session directly.
+
 ### Why this exists
 
 DM display names are computed per-viewer on the backend at bootstrap and are

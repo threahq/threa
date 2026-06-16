@@ -1,19 +1,7 @@
-import {
-  createContext,
-  useContext,
-  useState,
-  useEffect,
-  useMemo,
-  useRef,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react"
+import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { usePreloadImages } from "@/hooks/use-preload-images"
 import { useCoordinatedStreamQueries } from "@/hooks/use-coordinated-stream-queries"
-import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useE2eSession } from "@/stores/e2e-session-store"
-import { resolveSealedNamePending } from "@/hooks/use-decrypted-stream-name"
-import { getStreamNameCacheVersion, subscribeStreamNameCache } from "@/lib/crypto/stream-name-cache"
+import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
 import {
   hasSeededWorkspaceCache,
   seedCacheFromIdb,
@@ -194,22 +182,13 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const idbSidebarConfig = useWorkspaceSidebarConfig(workspaceId)
   // Hold the initial reveal until every sealed E2E stream name has decrypted, so
   // the first painted render shows real names instead of flashing the placeholder
-  // and popping to the decrypted name a tick later. `resolveSealedNamePending`
-  // only waits while the session is settling or unlocked-and-decrypting; it
-  // returns false for a locked/no-key session (the placeholder is then the right
-  // answer) and once a decrypt settles, so this can't deadlock the reveal.
-  // `nameCacheVersion` re-evaluates it when a decrypt lands.
-  const currentUserId = useWorkspaceUserId(workspaceId)
-  const e2eSessionStatus = useE2eSession(workspaceId, currentUserId ?? "").status
-  const nameCacheVersion = useSyncExternalStore(
-    subscribeStreamNameCache,
-    getStreamNameCacheVersion,
-    getStreamNameCacheVersion
-  )
-  const sealedNamesPending = useMemo(
-    () => idbStreams.some((stream) => resolveSealedNamePending(workspaceId, stream, e2eSessionStatus)),
-    [idbStreams, workspaceId, e2eSessionStatus, nameCacheVersion]
-  )
+  // and popping to the decrypted name a tick later. The resolver (the single
+  // session + name-cache authority) only reports pending while the session is
+  // settling or unlocked-and-decrypting; it returns false for a locked/no-key
+  // session (the placeholder is then the right answer) and once a decrypt settles,
+  // so this can't deadlock the reveal. It re-binds when a decrypt lands.
+  const isSealedNamePending = useSealedNamePendingResolver(workspaceId)
+  const sealedNamesPending = useMemo(() => idbStreams.some(isSealedNamePending), [idbStreams, isSealedNamePending])
   const streamById = useMemo(() => new Map(idbStreams.map((stream) => [stream.id, stream])), [idbStreams])
   const workspaceDataReady =
     hasSeededWorkspaceCache(workspaceId) &&
@@ -306,7 +285,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       workspaceLoading,
       streamsLoading,
       draftsLoading,
-      e2eSessionStatus,
       sealedNamesPending,
       isAnySyncing,
       isLoading,
