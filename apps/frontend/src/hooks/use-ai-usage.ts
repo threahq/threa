@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { aiUsageApi } from "@/api"
 import type { UpdateAIBudgetInput, AIBudgetResponse } from "@threa/types"
 
-// Query keys for cache management
 export const aiUsageKeys = {
   all: ["ai-usage"] as const,
   usage: (workspaceId: string) => [...aiUsageKeys.all, "usage", workspaceId] as const,
@@ -40,7 +39,6 @@ export function useUpdateAIBudget(workspaceId: string) {
   return useMutation({
     mutationFn: (input: UpdateAIBudgetInput) => aiUsageApi.updateBudget(workspaceId, input),
     onSuccess: (data: AIBudgetResponse) => {
-      // Update the budget cache with the response
       queryClient.setQueryData(aiUsageKeys.budget(workspaceId), data)
     },
   })

@@ -13,7 +13,6 @@ import "./index.css"
 // own ResizeObserver overwrites the variable on the editor zone once mounted.
 applyPersistedComposerHeight()
 
-// Handle messages from the service worker
 navigator.serviceWorker?.addEventListener("message", (event) => {
   if (event.data?.type === SW_MSG_NOTIFICATION_CLICK && event.data.url) {
     // Client-side navigation preserves React tree, TanStack Query cache, and socket connection

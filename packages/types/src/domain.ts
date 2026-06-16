@@ -898,10 +898,6 @@ export interface AttachmentExtraction {
   updatedAt: string
 }
 
-// =============================================================================
-// Link Previews
-// =============================================================================
-
 /**
  * Cached metadata for a URL found in a message.
  * Fetched server-side by background worker.
@@ -942,10 +938,6 @@ export interface LinkPreviewSummary {
   previewData?: GitHubPreview | LinearPreview | null
   position: number
 }
-
-// =============================================================================
-// Workspace Integrations
-// =============================================================================
 
 export interface WorkspaceIntegration {
   id: string
@@ -999,10 +991,6 @@ export interface LinearWorkspaceIntegration extends WorkspaceIntegration {
   scope: string | null
   rateLimit: LinearRateLimit
 }
-
-// =============================================================================
-// Rich GitHub Link Previews
-// =============================================================================
 
 export interface GitHubPreviewActor {
   login: string
@@ -1137,10 +1125,6 @@ export interface GitHubPreview {
   fetchedAt: string
 }
 
-// =============================================================================
-// Rich Linear Link Previews
-// =============================================================================
-
 export interface LinearActor {
   id: string
   name: string
@@ -1233,10 +1217,6 @@ export interface LinearPreview {
   data: LinearIssuePreviewData | LinearCommentPreviewData | LinearProjectPreviewData | LinearDocumentPreviewData
   fetchedAt: string
 }
-
-// =============================================================================
-// Message Link Previews (internal permalinks)
-// =============================================================================
 
 /** Access tiers for message link previews, resolved per-viewer at render time. */
 export type MessageLinkAccessTier = "full" | "private" | "cross_workspace"

@@ -128,7 +128,6 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
       wasNewlyInserted: true,
     } as never)
 
-    // The retired ASCII regex could never match this mention; the node can.
     await runProcessMessageCreated(
       userMessagePayload({ contentMarkdown: "@аріадна hi", contentJson: docWithMention("аріадна") })
     )

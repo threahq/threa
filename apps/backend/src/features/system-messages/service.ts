@@ -48,7 +48,6 @@ export class SystemMessageService {
   }
 
   /**
-   * Format and send a budget alert to workspace owners.
    * Owns the message formatting — outbox handler passes structured data (INV-46).
    *
    * TODO: Hardcoded English text — replace with proper i18n/template system

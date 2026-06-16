@@ -19,9 +19,8 @@ export function createSyncHandlers({ syncService }: Dependencies) {
     async catchUp(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      // Permission-scoped log entries (e.g. invitation lifecycle) replay only to
-      // holders. Derived from role to stay congruent with the socket join, which
-      // joins the same permission rooms off the same role.
+      // Role-derived to stay congruent with the socket join's rooms, so catch-up
+      // admits exactly the permission-scoped entries live delivery reached.
       const permissionGroups = permissionGroupsForRole(req.user!.role)
 
       const parsed = catchUpQuerySchema.safeParse(req.query)

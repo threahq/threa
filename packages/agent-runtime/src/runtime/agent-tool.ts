@@ -2,10 +2,6 @@ import type { Tool } from "ai"
 import { z } from "zod"
 import type { AgentStepType, ToolPrivacyCategory, TraceSource, SourceItem } from "@threa/types"
 
-// ---------------------------------------------------------------------------
-// AgentToolResult — unified return type for all tool execute handlers
-// ---------------------------------------------------------------------------
-
 export interface AgentToolResult {
   /** What the LLM sees as the tool result */
   output: string
@@ -23,10 +19,6 @@ export interface AgentToolResult {
   /** Injected into system prompt on next iteration (workspace research context) */
   systemContext?: string
 }
-
-// ---------------------------------------------------------------------------
-// AgentToolConfig — self-describing tool definition
-// ---------------------------------------------------------------------------
 
 /**
  * Execution phase controls tool ordering within a single LLM turn.
@@ -92,26 +84,14 @@ export interface AgentToolConfig<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// AgentTool — opaque handle returned by defineAgentTool
-// ---------------------------------------------------------------------------
-
 export interface AgentTool {
   readonly name: string
   readonly config: AgentToolConfig
 }
 
-// ---------------------------------------------------------------------------
-// defineAgentTool — factory that validates config and returns an AgentTool
-// ---------------------------------------------------------------------------
-
 export function defineAgentTool<TSchema extends z.ZodTypeAny>(config: AgentToolConfig<TSchema>): AgentTool {
   return { name: config.name, config: config as AgentToolConfig }
 }
-
-// ---------------------------------------------------------------------------
-// buildToolPromptSections — assemble system-prompt tool prose from the toolset
-// ---------------------------------------------------------------------------
 
 /**
  * Join the prompt blocks of the ACTUAL built toolset, in toolset order. This
@@ -127,11 +107,7 @@ export function buildToolPromptSections(tools: AgentTool[]): string {
     .join("\n\n")
 }
 
-// ---------------------------------------------------------------------------
-// toVercelToolDefs — convert AgentTool[] to Vercel AI tool definitions
-// (schema only, no execute — the runtime executes tools manually)
-// ---------------------------------------------------------------------------
-
+// Schema only, no execute — the runtime executes tools manually.
 export function toVercelToolDefs(tools: AgentTool[]): Record<string, Tool<any, any>> {
   const defs: Record<string, Tool<any, any>> = {}
   for (const t of tools) {

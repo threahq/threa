@@ -13,10 +13,7 @@ export class AvatarService {
     this.storage = storage
   }
 
-  /**
-   * Process an image buffer into WebP variants at each AVATAR_SIZES dimension.
-   * Pure image transformation — no I/O.
-   */
+  /** Pure image transformation — no I/O, so it can run with no DB connection held (INV-41). */
   async processImages(buffer: Buffer): Promise<Map<number, Buffer>> {
     const results = new Map<number, Buffer>()
     await Promise.all(
@@ -31,9 +28,6 @@ export class AvatarService {
     return results
   }
 
-  /**
-   * Upload pre-processed image buffers to S3 under the given base path.
-   */
   async uploadImages(basePath: string, images: Map<number, Buffer>): Promise<void> {
     await Promise.all(
       [...images.entries()].map(([size, processed]) => {
@@ -70,9 +64,6 @@ export class AvatarService {
     return key
   }
 
-  /**
-   * Download a raw image buffer from S3 by key.
-   */
   async downloadRaw(rawS3Key: string): Promise<Buffer> {
     return this.storage.getObject(rawS3Key)
   }
@@ -109,9 +100,6 @@ export class AvatarService {
     return this.storage.getObjectStream(s3Key)
   }
 
-  /**
-   * Stream a bot avatar file from S3.
-   */
   async streamBotAvatarFile(params: { workspaceId: string; botId: string; file: string }): Promise<Readable | null> {
     if (!AvatarService.AVATAR_FILE_PATTERN.test(params.file)) return null
     const s3Key = `avatars/${params.workspaceId}/bots/${params.botId}/${params.file}`

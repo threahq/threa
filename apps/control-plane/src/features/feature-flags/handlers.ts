@@ -18,7 +18,6 @@ interface Dependencies {
 export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) {
   return {
     /**
-     * GET /api/backoffice/workspaces/:id/feature-flags
      * Registry (key + declared values, first value is the default) plus the
      * stored per-user overrides. The backoffice renders the member × flag
      * grid from these two lists.
@@ -40,7 +39,6 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
       })
     },
 
-    /** PUT /api/backoffice/workspaces/:id/feature-flags */
     async setWorkspaceFlag(req: Request, res: Response) {
       const id = req.params.id
       if (!id) {

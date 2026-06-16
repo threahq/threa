@@ -1,9 +1,5 @@
 import type { AgentStepType, TraceSource, AuthorType } from "@threa/types"
 
-// ---------------------------------------------------------------------------
-// NewMessageInfo — shared type for new-message checking
-// ---------------------------------------------------------------------------
-
 export interface NewMessageInfo {
   sequence: bigint
   messageId: string
@@ -30,10 +26,6 @@ export interface TraceContextMessage {
   createdAt: string
   isTrigger?: boolean
 }
-
-// ---------------------------------------------------------------------------
-// AgentEvent — emitted by the runtime, consumed by observers
-// ---------------------------------------------------------------------------
 
 export type AgentEvent =
   | { type: "session:start"; sessionId: string; inputSummary?: string }

@@ -55,7 +55,6 @@ describe("SessionAbortRegistry", () => {
 
   test("unregister is safe to call when no entry exists", () => {
     const registry = new SessionAbortRegistry()
-    // Should not throw
     registry.unregister("never-registered")
     expect(registry.get("never-registered")).toBeUndefined()
   })

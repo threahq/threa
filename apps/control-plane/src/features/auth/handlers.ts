@@ -44,7 +44,6 @@ const logoutQuerySchema = z.object({
  */
 function isAllowedForwardedHost(host: string, allowedDomain: string): boolean {
   if (host === allowedDomain) return true
-  // Nested subdomain: foo.staging.threa.io
   if (host.endsWith(`.${allowedDomain}`)) return true
   // Flat PR subdomain: pr-N-staging.threa.io is a sibling of staging.threa.io
   // under the same base domain. Match the explicit PR pattern only.

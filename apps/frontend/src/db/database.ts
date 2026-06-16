@@ -19,8 +19,6 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 const WORKSPACE_USERS_STORE = "workspaceUsers"
 const LEGACY_WORKSPACE_USERS_STORE = "workspaceMembers"
 
-// Cached entity types - mirror backend domain types
-
 export interface CachedWorkspace {
   id: string
   name: string
@@ -777,7 +775,6 @@ export interface CachedWorkspaceMetadata {
   _cachedAt: number
 }
 
-// Database class with typed tables
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
   workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
@@ -1211,7 +1208,6 @@ export const db: ThreaDatabase = new Proxy(Object.create(null) as ThreaDatabase,
   },
 })
 
-// Helper to clear all cached data (useful for logout)
 export async function clearAllCachedData(): Promise<void> {
   try {
     await Promise.all([
@@ -1262,7 +1258,6 @@ export async function clearAllCachedData(): Promise<void> {
   }
 }
 
-// Helper to clear pending messages (useful when explicitly canceling)
 export async function clearPendingMessages(): Promise<void> {
   await db.pendingMessages.clear()
 }

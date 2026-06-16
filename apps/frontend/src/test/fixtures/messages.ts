@@ -1,6 +1,4 @@
-/**
- * Search result shape (from search API).
- */
+/** Search result shape (from search API). */
 export interface MockSearchResult {
   id: string
   streamId: string
@@ -10,9 +8,6 @@ export interface MockSearchResult {
   createdAt: string
 }
 
-/**
- * Factory for creating mock search results.
- */
 export function createMockSearchResult(overrides: Partial<MockSearchResult> & { id: string }): MockSearchResult {
   return {
     streamId: "stream_channel1",
@@ -24,9 +19,6 @@ export function createMockSearchResult(overrides: Partial<MockSearchResult> & { 
   }
 }
 
-/**
- * Pre-built mock search results.
- */
 export const mockSearchResults = {
   hello: createMockSearchResult({
     id: "msg_1",
@@ -43,7 +35,4 @@ export const mockSearchResults = {
   }),
 }
 
-/**
- * Array of all mock search results.
- */
 export const mockSearchResultsList: MockSearchResult[] = Object.values(mockSearchResults)

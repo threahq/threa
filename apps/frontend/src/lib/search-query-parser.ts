@@ -31,15 +31,13 @@ export function parseSearchQuery(query: string): ParsedQuery {
   const filters: ParsedFilter[] = []
   const parts: string[] = []
 
-  // Match filter patterns: from:@slug, with:@slug, in:#slug, in:@slug, is:streamType, type:streamType (alias), status:archiveStatus, after:date, before:date
-  // Using regex to find all filters while preserving order
+  // Filter grammar: from:@slug, with:@slug, in:#slug, in:@slug, is:/type:streamType, status:archiveStatus, after:date, before:date
   const filterRegex = /\b(from:@|with:@|in:#|in:@|type:|status:|is:|after:|before:)(\S*)/g
 
   let lastIndex = 0
   let match: RegExpExecArray | null
 
   while ((match = filterRegex.exec(query)) !== null) {
-    // Add text before this filter
     if (match.index > lastIndex) {
       parts.push(query.slice(lastIndex, match.index))
     }
@@ -50,19 +48,17 @@ export function parseSearchQuery(query: string): ParsedQuery {
     if (type && value) {
       filters.push({ type, value, raw })
     } else {
-      // Invalid filter syntax, treat as text
+      // Invalid filter syntax — keep it as plain search text.
       parts.push(raw)
     }
 
     lastIndex = match.index + raw.length
   }
 
-  // Add remaining text
   if (lastIndex < query.length) {
     parts.push(query.slice(lastIndex))
   }
 
-  // Clean up text: join parts and normalize whitespace
   const text = parts.join("").trim().replace(/\s+/g, " ")
 
   return { filters, text }
@@ -121,7 +117,6 @@ export function removeFilterFromQuery(query: string, filterIndex: number): strin
 export function addFilterToQuery(query: string, type: FilterType, value: string): string {
   const { filters, text } = parseSearchQuery(query)
 
-  // Determine the raw format based on filter type
   let raw: string
   switch (type) {
     case "from":
@@ -131,7 +126,6 @@ export function addFilterToQuery(query: string, type: FilterType, value: string)
       raw = `with:@${value}`
       break
     case "in":
-      // Determine if it's a channel or user based on value prefix or content
       raw = value.startsWith("#") ? `in:${value}` : `in:@${value}`
       break
     case "type":

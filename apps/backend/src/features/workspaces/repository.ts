@@ -1,7 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
-// Internal row type (snake_case, not exported)
 interface WorkspaceRow {
   id: string
   name: string
@@ -11,7 +10,6 @@ interface WorkspaceRow {
   updated_at: Date
 }
 
-// Domain type (camelCase, exported)
 export interface Workspace {
   id: string
   name: string

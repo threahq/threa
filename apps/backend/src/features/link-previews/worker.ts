@@ -25,8 +25,6 @@ interface WorkerDeps {
   workspaceIntegrationService: WorkspaceIntegrationService
 }
 
-// ── oEmbed ──────────────────────────────────────────────────────────
-
 interface OEmbedResponse {
   title?: string
   author_name?: string
@@ -67,7 +65,6 @@ async function tryOEmbed(url: string): Promise<UpdateLinkPreviewParams | null> {
       fallbackImageUrl = await fetchLinkedOEmbedImage(data.html)
     }
 
-    // Derive a favicon from the provider's origin
     let faviconUrl: string | null = null
     try {
       faviconUrl = `${new URL(url).origin}/favicon.ico`
@@ -184,8 +181,6 @@ async function fetchOEmbedFallbackImage(url: string): Promise<string | null> {
   }
 }
 
-// ── HTML metadata fetching ──────────────────────────────────────────
-
 /**
  * Fetch OpenGraph / meta tag metadata from a URL.
  * Tries oEmbed first for known providers, then falls back to HTML parsing.
@@ -198,7 +193,6 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     return { status: "failed", expiresAt: minutesFromNow(1) }
   }
 
-  // Fast path: try oEmbed for known providers
   const oembedResult = await tryOEmbed(url)
   if (oembedResult) return oembedResult
 
@@ -234,7 +228,6 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
 
     const contentTypeHeader = response.headers.get("content-type") ?? ""
 
-    // For images, we don't need to parse HTML
     if (contentTypeHeader.startsWith("image/")) {
       response.body?.cancel()
       return {
@@ -244,7 +237,6 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
       }
     }
 
-    // For PDFs, extract basic info from headers
     if (contentTypeHeader.includes("application/pdf")) {
       response.body?.cancel()
       const disposition = response.headers.get("content-disposition") ?? ""
@@ -259,7 +251,6 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
       }
     }
 
-    // For non-HTML content types, detect from URL extension
     if (!contentTypeHeader.includes("text/html") && !contentTypeHeader.includes("application/xhtml")) {
       response.body?.cancel()
       return { status: "completed", contentType: detectContentType(url), expiresAt: hoursFromNow(24) }
@@ -336,8 +327,6 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
   }
 }
 
-// ── HTML parsing via Bun's HTMLRewriter (lol-html) ──────────────────
-
 /**
  * Parse OpenGraph and standard meta tags from HTML using Bun's HTMLRewriter.
  * Uses CSS selectors instead of regex for robust extraction from malformed HTML.
@@ -389,7 +378,6 @@ export async function parseHtmlMeta(html: string, url: string): Promise<UpdateLi
   const siteName = decode(meta["og:site_name"]) ?? fallbackSiteName(url)
   const fallbackTitle = !title && !description && !imageUrl ? fallbackTitleFromUrl(url) : null
 
-  // Resolve favicon
   let faviconUrl: string | null = null
   if (faviconHref) {
     faviconUrl = resolveUrl(faviconHref, url)
@@ -524,8 +512,7 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
 
     log.info({ messageId, workspaceId, isEdit }, "Processing link previews for message")
 
-    // 1. Extract URLs and create pending records (DB work via service)
-    //    For edits, clear old junction rows first so stale previews are removed.
+    // For edits, clear old junction rows first so stale previews are removed.
     const pendingPreviews = isEdit
       ? await deps.linkPreviewService.replacePreviewsForMessage(workspaceId, messageId, contentMarkdown)
       : await deps.linkPreviewService.extractAndCreatePending(workspaceId, messageId, contentMarkdown)
@@ -539,9 +526,8 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
       return
     }
 
-    // 2. Check which previews are already cached, then fetch metadata for the rest
-    //    Network work runs outside any DB transaction (INV-41)
-    //    Message link previews are already completed at insert time — skip fetch entirely.
+    // Network work runs outside any DB transaction (INV-41).
+    // Message link previews are already completed at insert time — skip fetch entirely.
     const fetchResults = await Promise.allSettled(
       pendingPreviews.map(async (p) => {
         const existing = await deps.linkPreviewService.getPreviewById(workspaceId, p.id)
@@ -580,7 +566,6 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
       })
     )
 
-    // 3. Collect settled results, delegate persistence + outbox to service (INV-6)
     const settled = fetchResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []))
 
     await deps.linkPreviewService.completePreviewsAndPublish(workspaceId, streamId, messageId, settled, {

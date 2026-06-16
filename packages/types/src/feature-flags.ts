@@ -1,6 +1,4 @@
-// =============================================================================
-// Feature Flags
-// Per-user rollout switches managed from the backoffice (control plane) and
+// Feature Flags: per-user rollout switches managed from the backoffice (control plane) and
 // fanned out to regional backends, where they ride WorkspaceBootstrap and a
 // user-scoped socket event so both sides of the stack resolve the same value.
 //
@@ -13,7 +11,6 @@
 // truth for which keys and values exist. Deleting a key here makes any
 // lingering DB override rows inert everywhere (they are filtered through the
 // registry at read time), so removing a finished flag is a one-line change.
-// =============================================================================
 
 /**
  * Every live feature flag, mapping key → allowed values. The first value is

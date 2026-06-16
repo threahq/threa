@@ -20,7 +20,6 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
   const workspaceUsers = useWorkspaceUsers(workspaceId)
   const selectedSet = useMemo(() => new Set(selectedUserIds), [selectedUserIds])
 
-  // Users available to add: not current user, not already selected
   const availableToAdd = useMemo((): UserListItem[] => {
     if (!search) return []
     const q = search.toLowerCase()
@@ -40,7 +39,6 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
       }))
   }, [workspaceUsers, currentUserId, selectedSet, search])
 
-  // Resolve selected user details for chips
   const selectedUsers = useMemo(() => {
     return selectedUserIds.map((id) => workspaceUsers.find((u) => u.id === id)).filter(Boolean) as typeof workspaceUsers
   }, [selectedUserIds, workspaceUsers])
@@ -62,7 +60,6 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
       <Label className="text-sm font-medium">Users</Label>
       <p className="text-xs text-muted-foreground -mt-1.5">You'll be added automatically as the creator</p>
 
-      {/* Selected users as removable chips */}
       {selectedUsers.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {selectedUsers.map((user) => {
@@ -91,7 +88,6 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
         </div>
       )}
 
-      {/* Searchable user list with keyboard navigation */}
       <SearchableList
         items={availableToAdd}
         renderItem={renderUserListItem}

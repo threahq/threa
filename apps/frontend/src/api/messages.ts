@@ -54,7 +54,6 @@ export const messagesApi = {
     return api.post(`/api/workspaces/${workspaceId}/messages/move-to-thread/validate`, data)
   },
 
-  // Reactions
   addReaction(workspaceId: string, messageId: string, emoji: string): Promise<void> {
     return api.post(`/api/workspaces/${workspaceId}/messages/${messageId}/reactions`, { emoji })
   },

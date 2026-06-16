@@ -1,23 +1,14 @@
-/**
- * Stream Naming Configuration
- *
- * Co-located config following INV-43 - both production code and evals
- * import from here to ensure consistency.
- */
+// Co-located config (INV-43): both production and evals import from here.
 
-/** Default model for stream naming */
 export const STREAM_NAMING_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
 
-/** Temperature for name generation - low for consistency */
+// Low for consistent naming across runs
 export const STREAM_NAMING_TEMPERATURE = 0.3
 
-/** Maximum messages to include for context */
 export const MAX_MESSAGES_FOR_NAMING = 10
 
-/** Maximum existing names to check for duplicates */
 export const MAX_EXISTING_NAMES = 10
 
-/** System prompt for stream naming */
 export function buildNamingSystemPrompt(existingNames: string[], requireName: boolean): string {
   return `Your task is to generate a short, descriptive title in 2-5 words for the provided conversation.
 

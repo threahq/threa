@@ -263,7 +263,6 @@ describe("MessageComposer", () => {
     it("should show tooltip when hasFailed is true", () => {
       render(<MessageComposer {...defaultProps} hasFailed={true} />)
 
-      // The button should be disabled with tooltip
       const button = screen.getByRole("button", { name: /send/i })
       expect(button).toBeDisabled()
     })
@@ -297,7 +296,6 @@ describe("MessageComposer", () => {
       const editor = screen.getByTestId("rich-editor")
       await userEvent.type(editor, "H")
 
-      // Should have been called with JSONContent structure
       expect(onContentChange).toHaveBeenCalled()
       expect(onContentChange).toHaveBeenCalledWith(expect.objectContaining({ type: "doc" }))
     })
@@ -327,7 +325,6 @@ describe("MessageComposer", () => {
     it("should not render attachments section when empty", () => {
       render(<MessageComposer {...defaultProps} pendingAttachments={[]} />)
 
-      // No attachment chips should be visible
       expect(screen.queryByText(/\.txt$/)).not.toBeInTheDocument()
     })
   })
@@ -355,7 +352,6 @@ describe("MessageComposer", () => {
 
       // Editor is rendered (not hidden) — CSS clips it to single-line preview
       expect(screen.getByTestId("rich-editor")).toBeInTheDocument()
-      // Action bar is not rendered in unfocused state
       expect(screen.queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
     })
 
@@ -364,14 +360,12 @@ describe("MessageComposer", () => {
 
       const { rerender } = render(<MessageComposer {...defaultProps} scopeId="scope-a" />)
 
-      // Initially unfocused — action bar not rendered
       expect(screen.queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
 
       // Click editor area to focus (not the textarea itself, which the guard skips)
       fireEvent.click(screen.getByTestId("rich-editor-wrapper"))
       expect(screen.getByRole("button", { name: "Formatting" })).toBeInTheDocument()
 
-      // Scope change resets to unfocused
       rerender(<MessageComposer {...defaultProps} scopeId="scope-b" />)
       expect(screen.queryByRole("button", { name: "Formatting" })).not.toBeInTheDocument()
     })

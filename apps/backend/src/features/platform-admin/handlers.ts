@@ -16,7 +16,6 @@ interface Dependencies {
 export function createPlatformAdminHandlers({ platformAdminService }: Dependencies) {
   return {
     /**
-     * POST /internal/platform-admin
      * CP fan-out endpoint: replace one workspace user's platform-admin mirror
      * row in this region (grant upserts, revoke deletes — idempotent).
      */

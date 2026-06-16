@@ -64,7 +64,6 @@ export function ProfileSettings() {
   const githubChanged = githubUsername !== null && (githubUsername || null) !== (currentUser.githubUsername || null)
   const nameValid = currentName.trim().length > 0
 
-  // Determine if current pronouns value is a preset or custom
   const isPreset = PRONOUN_PRESETS.includes(currentPronouns as (typeof PRONOUN_PRESETS)[number])
   const showCustomInput = isCustomPronouns || (currentPronouns !== "" && !isPreset)
   const selectValue = showCustomInput ? "custom" : currentPronouns || "none"

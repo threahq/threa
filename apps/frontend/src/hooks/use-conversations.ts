@@ -95,7 +95,6 @@ export function useConversations(workspaceId: string, streamId: string, options?
     queryClient.invalidateQueries({ queryKey: conversationKeys.list(workspaceId, streamId, { status, limit }) })
   }, [reconnectCount, workspaceId, streamId, status, limit, enabled, queryClient, syncEngine])
 
-  // Handle real-time conversation events
   useEffect(() => {
     if (!socket || !workspaceId || !streamId || !enabled) return
 

@@ -1,10 +1,6 @@
 /**
- * Identifier Resolver
- *
- * Resolves flexible identifiers (IDs, slugs, or prefixed references) to actual entity IDs.
- * This allows agents to reference entities naturally without knowing the exact ID format.
- *
- * Supported formats:
+ * Resolves flexible identifiers to entity IDs so agents can reference entities
+ * without knowing the exact format:
  * - Streams: "stream_xxx" (ID), "general" (slug), "#general" (prefixed slug)
  * - Users: "usr_xxx" (ID), "kristoffer-remback" (slug), "@kristoffer-remback" (prefixed slug)
  */
@@ -14,55 +10,27 @@ import { StreamRepository } from "../../streams"
 import { UserRepository } from "../../workspaces"
 import { logger } from "../../../lib/logger"
 
-/**
- * Result of resolving an identifier.
- */
 export type ResolveResult = { resolved: true; id: string } | { resolved: false; reason: string }
 
-/**
- * Check if a string looks like a stream ID (starts with stream_ prefix).
- */
 function isStreamId(value: string): boolean {
   return value.startsWith("stream_")
 }
 
-/**
- * Check if a string looks like a user ID.
- */
 function isUserId(value: string): boolean {
   return value.startsWith("usr_")
 }
 
-/**
- * Strip common prefixes from stream references.
- * "#general" -> "general"
- */
 function normalizeStreamRef(value: string): string {
   return value.replace(/^#/, "").trim()
 }
 
-/**
- * Strip common prefixes from user references.
- * "@kristoffer-remback" -> "kristoffer-remback"
- */
 function normalizeUserRef(value: string): string {
   return value.replace(/^@/, "").trim()
 }
 
 /**
- * Resolve a stream identifier to its ID.
- *
- * @param db - Database client
- * @param workspaceId - Workspace to scope the lookup to
- * @param identifier - Stream ID, slug, or #slug
- * @param accessibleStreamIds - Optional list of streams the agent can access (for validation)
- * @returns The resolved stream ID or an error reason
- *
- * @example
- * // All of these should resolve to the same stream:
- * resolveStreamIdentifier(db, workspaceId, "stream_01KEM8751NC7E01NTKF00A47BM")
- * resolveStreamIdentifier(db, workspaceId, "general")
- * resolveStreamIdentifier(db, workspaceId, "#general")
+ * Resolve a stream identifier (ID, slug, or #slug) to its ID. When
+ * `accessibleStreamIds` is provided, resolution fails for streams outside it.
  */
 export async function resolveStreamIdentifier(
   db: Querier,
@@ -76,16 +44,13 @@ export async function resolveStreamIdentifier(
     return { resolved: false, reason: "Empty identifier" }
   }
 
-  // If it looks like an ID, validate and return
   if (isStreamId(trimmed)) {
-    // Check access if we have the list
     if (accessibleStreamIds && !accessibleStreamIds.includes(trimmed)) {
       return { resolved: false, reason: `Stream not accessible: ${trimmed}` }
     }
     return { resolved: true, id: trimmed }
   }
 
-  // Otherwise, treat as slug (strip # prefix if present)
   const slug = normalizeStreamRef(trimmed)
 
   const stream = await StreamRepository.findBySlug(db, workspaceId, slug)
@@ -94,7 +59,6 @@ export async function resolveStreamIdentifier(
     return { resolved: false, reason: `No stream found with slug: ${slug}` }
   }
 
-  // Check access if we have the list
   if (accessibleStreamIds && !accessibleStreamIds.includes(stream.id)) {
     return { resolved: false, reason: `Stream not accessible: ${slug}` }
   }
@@ -105,18 +69,7 @@ export async function resolveStreamIdentifier(
 }
 
 /**
- * Resolve a user identifier to their ID.
- *
- * @param db - Database client
- * @param workspaceId - Workspace to scope the lookup to
- * @param identifier - User ID, slug, or @slug
- * @returns The resolved user ID or an error reason
- *
- * @example
- * // All of these should resolve to the same user:
- * resolveUserIdentifier(db, workspaceId, "usr_01KEM8751NC7E01NTKF00A47BM")
- * resolveUserIdentifier(db, workspaceId, "kristoffer-remback")
- * resolveUserIdentifier(db, workspaceId, "@kristoffer-remback")
+ * Resolve a user identifier (ID, slug, or @slug) to their ID, scoped to the workspace.
  */
 export async function resolveUserIdentifier(
   db: Querier,
@@ -129,7 +82,6 @@ export async function resolveUserIdentifier(
     return { resolved: false, reason: "Empty identifier" }
   }
 
-  // If it looks like a user ID, validate it exists in this workspace
   if (isUserId(trimmed)) {
     const user = await UserRepository.findById(db, workspaceId, trimmed)
     if (!user) {
@@ -138,7 +90,6 @@ export async function resolveUserIdentifier(
     return { resolved: true, id: trimmed }
   }
 
-  // Otherwise, treat as slug (strip @ prefix if present)
   const slug = normalizeUserRef(trimmed)
 
   const user = await UserRepository.findBySlug(db, workspaceId, slug)

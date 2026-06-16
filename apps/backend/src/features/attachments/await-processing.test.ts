@@ -3,12 +3,10 @@ import { awaitAttachmentProcessing, hasPendingAttachmentProcessing } from "./awa
 import { AttachmentRepository } from "./repository"
 import type { Attachment } from "./repository"
 
-// Mock the repository
 const originalFindByIds = AttachmentRepository.findByIds
 
 describe("awaitAttachmentProcessing", () => {
   beforeEach(() => {
-    // Reset mock after each test
     AttachmentRepository.findByIds = originalFindByIds
   })
 

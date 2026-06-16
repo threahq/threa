@@ -235,7 +235,6 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
 
       if (!updated) return
 
-      // Move to pending state and kick the queue
       setPendingIds((prev) => new Set(prev).add(id))
       setEditingIds((prev) => {
         const next = new Map(prev)
@@ -249,7 +248,6 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
 
   const cancelEditing = useCallback(
     async (id: string) => {
-      // Restore the status the message had before editing started
       const preEditStatus: PreEditStatus = editingIds.get(id) ?? "pending"
 
       const restored = await db.transaction("rw", db.pendingMessages, db.events, async () => {
@@ -304,7 +302,6 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       await db.pendingMessages.delete(id)
       await db.events.delete(id)
     })
-    // Clear from React state
     setPendingIds((prev) => {
       const next = new Set(prev)
       next.delete(id)

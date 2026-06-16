@@ -88,7 +88,6 @@ export const FromFilterExtension = Extension.create<FromFilterOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as Mentionable
-          // Insert plain text: "from:@slug "
           editor.chain().focus().deleteRange(range).insertContent(`from:@${item.slug} `).run()
         },
       }),

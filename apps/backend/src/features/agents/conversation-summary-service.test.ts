@@ -39,7 +39,7 @@ describe("ConversationSummaryService", () => {
   const TEST_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
   const TEST_TEMPERATURE = 0.1
 
-  // The companion now folds through the shared `foldRollingSummary`, which calls
+  // The companion folds through the shared `foldRollingSummary`, which calls
   // `generateTextWithTools` (the narrow surface the enclave shares) rather than
   // `generateObject` — so the summary is plain text, not a schema'd object.
   const mockGenerateText = mock((_options: unknown) =>

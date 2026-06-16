@@ -8,7 +8,6 @@ import {
   type EventType,
 } from "@threa/types"
 
-// Internal row type (snake_case, not exported)
 interface StreamEventRow {
   id: string
   stream_id: string
@@ -240,11 +239,8 @@ export const StreamEventRepository = {
     const afterSequence = filters?.afterSequence
     const beforeSequence = filters?.beforeSequence
 
-    // Command events are author-only: only visible to the actor who created them.
-    // If viewerId is provided, filter out command events from other users.
-    // If viewerId is not provided, return all events (backwards compatibility for internal use).
-
-    // Build query dynamically to avoid many permutations of the same query
+    // Command events are author-only: when viewerId is set, hide other users'
+    // command events. Without viewerId, all events return (internal callers).
     const conditions: string[] = ["stream_id = $1"]
     const params: unknown[] = [streamId]
     let paramIndex = 2
@@ -330,7 +326,6 @@ export const StreamEventRepository = {
     const trimmedOlder = hasOlder ? olderEvents.slice(1) : olderEvents
     const trimmedNewer = hasNewer ? newerEvents.slice(0, half) : newerEvents
 
-    // Merge and dedupe
     const eventMap = new Map<string, StreamEvent>()
     for (const e of [...trimmedOlder, ...trimmedNewer]) {
       eventMap.set(e.id, e)

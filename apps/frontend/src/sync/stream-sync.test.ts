@@ -664,10 +664,6 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// updateMessageEvent — atomic payload updates
-// ---------------------------------------------------------------------------
-
 describe("updateMessageEvent", () => {
   beforeEach(async () => {
     await db.events.clear()

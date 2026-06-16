@@ -64,7 +64,6 @@ export async function runMigrations(pool: Pool, migrationsGlob: string): Promise
         logger.info("Database migrations complete")
         return
       } finally {
-        // Release advisory lock
         await pool.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_ID])
       }
     }

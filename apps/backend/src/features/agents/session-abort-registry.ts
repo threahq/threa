@@ -1,9 +1,5 @@
 import { logger } from "../../lib/logger"
 
-/**
- * Context attached to a registered session AbortController — used for observability
- * and, in the future, for authorization checks or metrics tagging.
- */
 export interface SessionAbortContext {
   workspaceId: string
   streamId: string
@@ -50,9 +46,6 @@ export class SessionAbortRegistry {
     return controller
   }
 
-  /**
-   * Get the currently registered controller for a session, if any.
-   */
   get(sessionId: string): AbortController | undefined {
     return this.entries.get(sessionId)?.controller
   }

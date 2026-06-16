@@ -4,10 +4,7 @@ import { MentionList } from "./mention-list"
 import { filterSearchMentionables, useMentionables } from "@/hooks/use-mentionables"
 import { useSuggestion } from "./use-suggestion"
 
-/**
- * Hook for `from:@` filter suggestions in search context.
- * Shows users/personas when typing `from:@`.
- */
+/** Hook for `from:@` filter suggestions (users/personas) in search context. */
 export function useFromFilterSuggestion() {
   const { mentionables } = useMentionables()
 

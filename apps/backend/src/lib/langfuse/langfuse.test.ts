@@ -5,14 +5,12 @@ describe("langfuse", () => {
   const originalEnv = { ...process.env }
 
   beforeEach(() => {
-    // Clear Langfuse env vars before each test
     delete process.env.LANGFUSE_SECRET_KEY
     delete process.env.LANGFUSE_PUBLIC_KEY
     delete process.env.LANGFUSE_BASE_URL
   })
 
   afterEach(() => {
-    // Restore original env
     process.env = { ...originalEnv }
   })
 

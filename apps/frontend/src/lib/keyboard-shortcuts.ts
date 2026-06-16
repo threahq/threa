@@ -1,10 +1,3 @@
-/**
- * Keyboard shortcuts registry and utilities.
- *
- * This module defines available keyboard shortcuts and their defaults.
- * Users can customize shortcuts via preferences.
- */
-
 export interface ShortcutAction {
   id: string
   label: string
@@ -15,10 +8,7 @@ export interface ShortcutAction {
   global?: boolean
 }
 
-/**
- * All available shortcut actions with their defaults.
- * Key format uses "mod" as a platform-agnostic modifier (Cmd on Mac, Ctrl elsewhere).
- */
+/** "mod" is the platform-agnostic modifier: Cmd on Mac, Ctrl elsewhere. */
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "openQuickSwitcher",
@@ -131,16 +121,10 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
 ]
 
-/**
- * Get shortcut action by ID.
- */
 export function getShortcutAction(id: string): ShortcutAction | undefined {
   return SHORTCUT_ACTIONS.find((a) => a.id === id)
 }
 
-/**
- * Get all shortcuts grouped by category.
- */
 export function getShortcutsByCategory(): Record<ShortcutAction["category"], ShortcutAction[]> {
   const result: Record<ShortcutAction["category"], ShortcutAction[]> = {
     navigation: [],
@@ -169,10 +153,7 @@ export function getEffectiveKeyBinding(
   return getShortcutAction(actionId)?.defaultKey
 }
 
-/**
- * Detect conflicts in keyboard shortcuts.
- * Returns a map of key bindings to the action IDs that use them.
- */
+/** Returns a map of key binding to the action IDs that share it (length > 1). */
 export function detectConflicts(customBindings: Record<string, string> = {}): Map<string, string[]> {
   const keyToActions = new Map<string, string[]>()
 
@@ -183,7 +164,6 @@ export function detectConflicts(customBindings: Record<string, string> = {}): Ma
     keyToActions.set(key, [...existing, action.id])
   }
 
-  // Filter to only return conflicts (more than one action per key)
   const conflicts = new Map<string, string[]>()
   for (const [key, actions] of keyToActions) {
     if (actions.length > 1) {
@@ -194,17 +174,11 @@ export function detectConflicts(customBindings: Record<string, string> = {}): Ma
   return conflicts
 }
 
-/**
- * Check if the current platform is Mac.
- */
 export function isMac(): boolean {
   return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
 }
 
-/**
- * Parse a key string like "mod+k" into keyboard event properties.
- * Returns null if the event doesn't match.
- */
+/** Parse a key string like "mod+k" into modifier flags + the resolved key. */
 export function parseKeyBinding(key: string): {
   key: string
   mod: boolean
@@ -250,15 +224,12 @@ export function parseKeyBinding(key: string): {
   }
 }
 
-/**
- * Check if a keyboard event matches a key binding.
- */
 export function matchesKeyBinding(event: KeyboardEvent, binding: string): boolean {
   const parsed = parseKeyBinding(binding)
-  // Accept either metaKey OR ctrlKey for "mod" - cross-platform compatibility
+  // "mod" matches metaKey OR ctrlKey for cross-platform parity.
   const modPressed = event.metaKey || event.ctrlKey
 
-  // Handle special vim-style escape
+  // vim-style ctrl+[ as escape.
   if (parsed.key === "[" && event.ctrlKey && event.key === "[") {
     return true
   }
@@ -386,9 +357,6 @@ export function keyEventToBinding(event: KeyboardEvent): string | null {
   return isSafeShortcutBinding(binding) ? binding : null
 }
 
-/**
- * IDs of all editor formatting shortcut actions.
- */
 export const EDITOR_SHORTCUT_IDS = [
   "formatBold",
   "formatItalic",
@@ -402,7 +370,6 @@ export const EDITOR_SHORTCUT_IDS = [
  * with a global app-level shortcut (app shortcuts always win).
  */
 export function getEffectiveEditorBindings(customBindings: Record<string, string> = {}): Record<string, string> {
-  // Collect all global app-level binding values
   const globalBindings = new Set<string>()
   for (const action of SHORTCUT_ACTIONS) {
     if (!action.global) continue
@@ -410,7 +377,6 @@ export function getEffectiveEditorBindings(customBindings: Record<string, string
     if (binding) globalBindings.add(binding)
   }
 
-  // Build editor bindings, excluding any claimed by a global shortcut
   const result: Record<string, string> = {}
   for (const id of EDITOR_SHORTCUT_IDS) {
     const binding = getEffectiveKeyBinding(id, customBindings)

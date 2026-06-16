@@ -59,7 +59,6 @@ export function GeneralTab({
   // Build sections dynamically so we never render orphan or stacked dividers
   const sections: React.ReactNode[] = []
 
-  // 1. Notifications — all stream types
   sections.push(
     <NotificationSection
       key="notifications"
@@ -70,7 +69,6 @@ export function GeneralTab({
     />
   )
 
-  // 2. Visibility
   if (isChannel) {
     sections.push(<VisibilitySection key="visibility" workspaceId={workspaceId} stream={stream} />)
   } else if (isScratchpad) {
@@ -97,7 +95,6 @@ export function GeneralTab({
     sections.push(<VisibilityDisplay key="visibility" label="Visibility" hint="System messages are always private" />)
   }
 
-  // 3. Name / Slug / Display name
   if (isChannel) {
     sections.push(<SlugSection key="name" workspaceId={workspaceId} stream={stream} />)
   } else if (isScratchpad) {
@@ -110,17 +107,14 @@ export function GeneralTab({
     sections.push(<ThreadDisplayNameSection key="name" displayName={stream.displayName ?? "Thread"} />)
   }
 
-  // 4. Description
   if (isChannel || isDm) {
     sections.push(<DescriptionSection key="description" workspaceId={workspaceId} stream={stream} />)
   }
 
-  // 5. System disclaimer
   if (isSystem) {
     sections.push(<SystemDisclaimerSection key="disclaimer" />)
   }
 
-  // 6. Archive (danger zone)
   if (isChannel || isScratchpad || isThread) {
     let archiveLabel: string
     if (isChannel) {
@@ -141,7 +135,6 @@ export function GeneralTab({
     )
   }
 
-  // Render with separators between consecutive sections only
   const nodes: React.ReactNode[] = []
   for (let i = 0; i < sections.length; i++) {
     if (i > 0) {
@@ -152,8 +145,6 @@ export function GeneralTab({
 
   return <div className="space-y-6 p-1">{nodes}</div>
 }
-
-// ─── Notification Section ───────────────────────────────────────────────────
 
 const NOTIFICATION_OPTION_META: Record<string, { label: string; description: string }> = {
   default: { label: "Default", description: "Use workspace notification settings" },
@@ -216,8 +207,6 @@ function NotificationSection({
     </div>
   )
 }
-
-// ─── Visibility Sections ────────────────────────────────────────────────────
 
 function VisibilitySection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -297,8 +286,6 @@ function ThreadVisibilityDisplay({
     </div>
   )
 }
-
-// ─── Name / Slug / Display Name Sections ────────────────────────────────────
 
 function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [slug, setSlug] = useState(stream.slug ?? "")
@@ -403,8 +390,6 @@ function ThreadDisplayNameSection({ displayName }: { displayName: string }) {
   )
 }
 
-// ─── Description Section ────────────────────────────────────────────────────
-
 function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [description, setDescription] = useState(stream.description ?? "")
   const updateMutation = useUpdateStream(workspaceId, stream.id)
@@ -442,8 +427,6 @@ function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stre
   )
 }
 
-// ─── System Disclaimer Section ──────────────────────────────────────────────
-
 function SystemDisclaimerSection() {
   return (
     <div className="space-y-3">
@@ -455,8 +438,6 @@ function SystemDisclaimerSection() {
     </div>
   )
 }
-
-// ─── Archive Section ────────────────────────────────────────────────────────
 
 function ArchiveSection({
   workspaceId,

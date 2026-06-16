@@ -13,10 +13,6 @@ export type RichPreviewType = GitHubPreviewType | LinearPreviewType
 /** Union of all rich provider preview payloads stored in `link_previews.preview_data`. */
 export type RichPreview = GitHubPreview | LinearPreview
 
-// =============================================================================
-// Row types
-// =============================================================================
-
 export interface LinkPreview {
   id: string
   workspaceId: string
@@ -69,10 +65,6 @@ export interface MessageLinkPreview {
   position: number
 }
 
-// =============================================================================
-// Mappers
-// =============================================================================
-
 function mapRow(row: Record<string, unknown>): LinkPreview {
   return {
     id: row.id as string,
@@ -96,10 +88,6 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
     createdAt: new Date(row.created_at as string),
   }
 }
-
-// =============================================================================
-// Repository
-// =============================================================================
 
 export const LinkPreviewRepository = {
   async insert(querier: Querier, params: InsertLinkPreviewParams): Promise<LinkPreview> {
@@ -131,7 +119,6 @@ export const LinkPreviewRepository = {
     if (result.rows.length > 0) {
       return mapRow(result.rows[0])
     }
-    // Already exists — return the existing row
     const existing = await LinkPreviewRepository.findByNormalizedUrl(querier, params.workspaceId, params.normalizedUrl)
     if (!existing) {
       throw new Error(`link_preview row disappeared after conflict for ${params.normalizedUrl}`)
@@ -217,8 +204,6 @@ export const LinkPreviewRepository = {
     return result.rows.length > 0 ? mapRow(result.rows[0]) : null
   },
 
-  // --- Message junction ---
-
   async unlinkAllFromMessage(querier: Querier, workspaceId: string, messageId: string): Promise<void> {
     await querier.query(sql`DELETE FROM message_link_previews WHERE workspace_id = $1 AND message_id = $2`, [
       workspaceId,
@@ -278,8 +263,6 @@ export const LinkPreviewRepository = {
     return map
   },
 
-  // --- User dismissals ---
-
   async dismiss(
     querier: Querier,
     workspaceId: string,
@@ -310,7 +293,6 @@ export const LinkPreviewRepository = {
       [workspaceId, userId, messageIds]
     )
 
-    // Key: "messageId:linkPreviewId"
     const set = new Set<string>()
     for (const row of result.rows) {
       set.add(`${row.message_id}:${row.link_preview_id}`)

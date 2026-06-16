@@ -101,9 +101,6 @@ export interface UpdateMemoParams {
   revisionReason?: string
 }
 
-/**
- * Result from semantic memo search, including source stream info.
- */
 export interface MemoSearchResult {
   memo: Memo
   distance: number
@@ -286,16 +283,13 @@ export const MemoRepository = {
     const limit = options?.limit ?? 50
     const orderBy = options?.orderBy === "updatedAt" ? "updated_at" : "created_at"
 
-    // Use UNION to fetch both:
-    // 1. Conversation memos (via source_conversation_id -> conversations.stream_id)
-    // 2. Message memos (via source_message_id -> messages.stream_id)
-    // Status filter is optional - when provided, filter both branches with parameterized values
+    // UNION over the two source paths: conversation memos (via source_conversation_id)
+    // and message memos (via source_message_id), each resolving to a stream_id.
     const values: unknown[] = [streamId]
     let paramIndex = 2
     let statusClause = ""
 
     if (options?.status) {
-      // Use parameterized query to prevent SQL injection
       statusClause = `AND m.status = $${paramIndex}`
       values.push(options.status)
       paramIndex++
@@ -476,13 +470,7 @@ export const MemoRepository = {
     return result.rows.map((r) => r.tag)
   },
 
-  /**
-   * Semantic search over memo abstracts using vector similarity.
-   *
-   * Finds memos whose abstract embedding is similar to the query embedding.
-   * Optionally filters to memos linked to specific streams.
-   * Returns memos with their source stream info for navigation.
-   */
+  /** Semantic search over memo abstract embeddings by vector similarity. */
   async semanticSearch(db: Querier, params: SemanticSearchParams): Promise<MemoSearchResult[]> {
     const { workspaceId, embedding, filters, limit = 10, semanticDistanceThreshold = 0.8 } = params
     const streamIds = filters?.streamIds
@@ -493,7 +481,6 @@ export const MemoRepository = {
 
     const embeddingLiteral = `[${embedding.join(",")}]`
 
-    // Join through either source_message_id or source_conversation_id to get stream info
     const result = await db.query<MemoSearchRow & { distance: number }>(sql`
       WITH memo_with_stream AS (
         SELECT
@@ -530,13 +517,7 @@ export const MemoRepository = {
     return result.rows.map((row) => mapMemoSearchResult(row, row.distance))
   },
 
-  /**
-   * Full-text search over memo title, abstract, and key points.
-   *
-   * Uses PostgreSQL full-text search for exact phrase matching.
-   * Optionally filters to memos linked to specific streams.
-   * Returns memos with their source stream info for navigation.
-   */
+  /** Full-text search over memo title, abstract, and key points. */
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<MemoSearchResult[]> {
     const { workspaceId, query, filters, limit = 10 } = params
     const streamIds = filters?.streamIds
@@ -579,8 +560,7 @@ export const MemoRepository = {
       return result.rows.map((row) => mapMemoSearchResult(row, 0))
     }
 
-    // Convert query to tsquery - plainto_tsquery handles most cases,
-    // but we use websearch_to_tsquery for phrase support
+    // websearch_to_tsquery over plainto_tsquery for phrase support.
     const result = await db.query<MemoSearchRow & { rank: number }>(sql`
       WITH memo_with_stream AS (
         SELECT

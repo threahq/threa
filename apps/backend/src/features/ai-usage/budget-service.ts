@@ -1,12 +1,3 @@
-/**
- * AI Budget Service
- *
- * Manages workspace AI budgets with:
- * - Budget checking before AI calls
- * - Model degradation when over soft limit
- * - Hard limit enforcement
- */
-
 import type { Pool, PoolClient } from "pg"
 import { withClient } from "../../db"
 import { AIBudgetRepository } from "./budget-repository"
@@ -14,28 +5,17 @@ import { AIUsageRepository } from "./usage-repository"
 import { aiBudgetId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 
-/**
- * Default budget settings for new workspaces.
- * Generous defaults to avoid friction while still providing guardrails.
- */
 const DEFAULT_MONTHLY_BUDGET_USD = 50.0
 
-/** Threshold percentages for alerts and degradation */
 const SOFT_LIMIT_THRESHOLD = 0.8 // 80% - start degrading models
 
-/**
- * Model degradation mappings.
- * Maps expensive models to cheaper alternatives when over budget.
- * Uses full model IDs with provider prefix to match the format used in AI calls.
- */
+/** Full model IDs with provider prefix to match the format used in AI calls. */
 const MODEL_DEGRADATION_MAP: Record<string, string> = {
-  // Claude models - degrade to Haiku
   "openrouter:anthropic/claude-sonnet-4.6": "openrouter:anthropic/claude-haiku-4.5",
   "openrouter:anthropic/claude-sonnet-4-20250514": "openrouter:anthropic/claude-haiku-4.5",
   "openrouter:anthropic/claude-sonnet-4.5": "openrouter:anthropic/claude-haiku-4.5",
   "openrouter:anthropic/claude-sonnet-4": "openrouter:anthropic/claude-haiku-4.5",
 
-  // OpenAI models - degrade to mini
   "openrouter:openai/gpt-4o": "openrouter:openai/gpt-4o-mini",
   "openrouter:openai/gpt-5": "openrouter:openai/gpt-5-mini",
   "openrouter:openai/gpt-5-turbo": "openrouter:openai/gpt-5-mini",
@@ -88,20 +68,17 @@ export class AIBudgetService implements AIBudgetServiceLike {
 
   async checkBudget(workspaceId: string, requestedModel?: string): Promise<BudgetStatus> {
     return withClient(this.pool, async (client) => {
-      // Get or create budget
       let budget = await AIBudgetRepository.findByWorkspace(client, workspaceId)
       if (!budget) {
         budget = await this.createDefaultBudget(client, workspaceId)
       }
 
-      // Get current month usage
       const { start, end } = getCurrentMonthRange()
       const usage = await AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end)
       const currentUsageUsd = Number(usage.totalCostUsd)
       const budgetUsd = Number(budget.monthlyBudgetUsd)
       const percentUsed = budgetUsd > 0 ? currentUsageUsd / budgetUsd : 0
 
-      // Check hard limit
       const hardLimitThreshold = budget.hardLimitPercent / 100
       if (budget.hardLimitEnabled && percentUsed >= hardLimitThreshold) {
         logger.warn(
@@ -117,7 +94,6 @@ export class AIBudgetService implements AIBudgetServiceLike {
         }
       }
 
-      // Check soft limit (degradation)
       if (budget.degradationEnabled && percentUsed >= SOFT_LIMIT_THRESHOLD) {
         logger.info(
           { workspaceId, currentUsageUsd, budgetUsd, percentUsed },
@@ -177,17 +153,10 @@ export class AIBudgetService implements AIBudgetServiceLike {
     })
   }
 
-  /**
-   * Get the degraded model for a given model ID.
-   * Returns the original model if no degradation mapping exists.
-   */
   private getDegradedModel(modelId: string): string {
     return MODEL_DEGRADATION_MAP[modelId] ?? modelId
   }
 
-  /**
-   * Create a default budget for a workspace.
-   */
   private async createDefaultBudget(client: PoolClient, workspaceId: string) {
     return AIBudgetRepository.upsert(client, {
       id: aiBudgetId(),
@@ -202,9 +171,6 @@ export class AIBudgetService implements AIBudgetServiceLike {
   }
 }
 
-/**
- * Get the start and end dates for the current calendar month.
- */
 function getCurrentMonthRange(): { start: Date; end: Date } {
   const now = new Date()
   const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)

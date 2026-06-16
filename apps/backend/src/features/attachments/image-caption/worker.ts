@@ -6,12 +6,6 @@ export interface ImageCaptionWorkerDeps {
   imageCaptionService: ImageCaptionServiceLike
 }
 
-/**
- * Create the image caption job handler for the queue system.
- *
- * This is a thin wrapper that extracts job data and delegates to the service.
- * All business logic lives in the service for reusability and testability.
- */
 export function createImageCaptionWorker(deps: ImageCaptionWorkerDeps): JobHandler<ImageCaptionJobData> {
   const { imageCaptionService } = deps
 

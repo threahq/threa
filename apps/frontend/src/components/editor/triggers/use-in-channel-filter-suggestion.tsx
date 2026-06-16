@@ -14,10 +14,7 @@ function filterChannels(items: ChannelItem[], query: string): ChannelItem[] {
   return rankMatches(items, query, (item) => ({ labels: item.name ? [item.slug, item.name] : [item.slug] }))
 }
 
-/**
- * Hook for `in:#` filter suggestions in search context.
- * Shows channels when typing `in:#`.
- */
+/** Hook for `in:#` filter suggestions (channels) in search context. */
 export function useInChannelFilterSuggestion() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const streams = useWorkspaceStreams(workspaceId ?? "")

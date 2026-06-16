@@ -12,12 +12,9 @@ const GITHUB_FAVICON_URL = "https://github.com/favicon.ico"
 const DEFAULT_FILE_LINE_COUNT = 30
 const COMMENT_PREVIEW_MAX_LENGTH = 320
 const README_MARKDOWN_MAX_CHARS = 3000
-// Maximum number of (ref, path) split candidates to try when resolving a GitHub
-// blob URL. The cost of resolveBlobPath is bounded by the number of slashes in
-// the *branch name*, not the file path — nested file paths still resolve in a
-// single GitHub call. A cap of 5 covers branches up to 4 slashes deep
-// (e.g. `feature/team/sprint-42/foo`) and prevents an adversarial URL with
-// many segments from burning installation API quota.
+// Caps (ref, path) split candidates when resolving a blob URL: covers branches up to 4 slashes
+// deep (e.g. `feature/team/sprint-42/foo`) while stopping an adversarial URL with many segments
+// from burning installation API quota. Bounded by slashes in the branch name, not the file path.
 const MAX_BLOB_PATH_SPLIT_ATTEMPTS = 5
 const LABEL_COLOR_HEX_PATTERN = /^[0-9a-f]{6}$/i
 const DEFAULT_LABEL_COLOR = "999999"

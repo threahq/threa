@@ -190,10 +190,8 @@ self.addEventListener("fetch", (event) => {
   )
 })
 
-// ============================================================================
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
-// (stream: IndexedDB; workspace: the Cache API entry served by the interceptor)
-// ============================================================================
+// (stream: IndexedDB; workspace: the Cache API entry served by the interceptor).
 
 /** Cache name for pre-fetched workspace bootstrap responses triggered by push or background sync. */
 const PUSH_BOOTSTRAP_CACHE = "push-bootstrap"
@@ -436,10 +434,6 @@ function buildPreviewFromEvent(event: StreamEvent): LastMessagePreview {
   }
 }
 
-// ============================================================================
-// Share Target POST interception — stash files + text for the app to read
-// ============================================================================
-
 /**
  * When the OS shares content to Threa (Web Share Target API), the browser sends
  * a POST with multipart/form-data to /share. The SW intercepts this, stashes
@@ -461,7 +455,6 @@ self.addEventListener("fetch", (event) => {
 
         const cache = await caches.open(SHARE_TARGET_CACHE)
 
-        // Clear any previous share data
         const keys = await cache.keys()
         for (const key of keys) await cache.delete(key)
 
@@ -534,15 +527,10 @@ self.addEventListener("fetch", (event) => {
         void cache.delete(event.request.url)
         return cached
       }
-      // No pre-fetched data — pass through to network
       return fetch(event.request)
     })()
   )
 })
-
-// ============================================================================
-// Push notification handling
-// ============================================================================
 
 /** Structured push payload — display text is formatted here, not on the backend (INV-46). */
 interface PushData {
@@ -716,10 +704,6 @@ self.addEventListener("push", (event) => {
   )
 })
 
-// ============================================================================
-// Notification click — focus existing window or open new one
-// ============================================================================
-
 self.addEventListener("notificationclick", (event) => {
   event.notification.close()
 
@@ -742,7 +726,6 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
-      // Focus an existing window if one is open
       for (const client of clients) {
         if (new URL(client.url).origin === self.location.origin) {
           await client.focus()
@@ -754,7 +737,6 @@ self.addEventListener("notificationclick", (event) => {
           return
         }
       }
-      // No existing window — open a new one.
       // Use absolute URL so browsers that associate the full URL with the manifest
       // scope (e.g. for PWA standalone windows) can open in the correct context.
       await self.clients.openWindow(absoluteUrl)
@@ -762,10 +744,7 @@ self.addEventListener("notificationclick", (event) => {
   )
 })
 
-// ============================================================================
-// Clear notifications when the user reads a stream in the app
-// ============================================================================
-
+// Clear notifications when the user reads a stream in the app.
 self.addEventListener("message", (event) => {
   if (event.data?.type !== SW_MSG_CLEAR_NOTIFICATIONS) return
   const streamId = event.data.streamId as string | undefined
@@ -780,10 +759,6 @@ self.addEventListener("message", (event) => {
     })
   )
 })
-
-// ============================================================================
-// Re-subscribe on push subscription change
-// ============================================================================
 
 self.addEventListener("pushsubscriptionchange", (event) => {
   // The old subscription has been invalidated — re-subscribe with the same

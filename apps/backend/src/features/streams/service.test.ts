@@ -1103,8 +1103,6 @@ describe("StreamService.reviveActorKeyWraps", () => {
     // bot key that merely relabels itself "enclave".
     mockEnclaveGenerations.mockResolvedValue([0])
 
-    // A live bot key relabeled "enclave" must not unlock the enclave-only
-    // older-generation rule.
     const error = await service
       .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
         keyGeneration: 1,

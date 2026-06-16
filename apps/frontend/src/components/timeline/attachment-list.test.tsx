@@ -115,7 +115,6 @@ describe("AttachmentList", () => {
       ]
       render(<AttachmentList attachments={attachments} workspaceId={workspaceId} />, renderOpts)
 
-      // Both should be rendered
       await waitFor(() => {
         expect(screen.getByAltText("photo.jpg")).toBeInTheDocument()
       })
@@ -244,12 +243,10 @@ describe("AttachmentList", () => {
       })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
-      // Wait for image to load
       const imageButton = await screen.findByRole("button", { name: /photo\.png/i })
 
       await user.click(imageButton)
 
-      // Lightbox should open with dialog
       await waitFor(() => {
         expect(screen.getByRole("dialog")).toBeInTheDocument()
       })
@@ -283,21 +280,18 @@ describe("AttachmentList", () => {
       })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
-      // Wait for image to load
       const imageButton = await screen.findByRole("button", { name: /photo\.png/i })
 
       await user.click(imageButton)
 
-      // Wait for dialog to open
       await waitFor(() => {
         expect(screen.getByRole("dialog")).toBeInTheDocument()
       })
 
-      // Click close button (DialogContent has its own, use first one)
+      // DialogContent renders its own close button; use the first.
       const closeButtons = screen.getAllByRole("button", { name: /close/i })
       await user.click(closeButtons[0])
 
-      // Dialog should close
       await waitFor(() => {
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
       })

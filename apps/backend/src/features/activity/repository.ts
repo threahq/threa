@@ -123,8 +123,7 @@ export const ActivityRepository = {
     const id = activityId()
     const isSelf = params.isSelf ?? false
     // Self rows are inserted already read so they show in the feed without
-    // inflating unread counts. Using a JS Date keeps the call tree consistent
-    // with other repo methods that round-trip timestamps through parameters.
+    // inflating unread counts.
     const readAt = isSelf ? new Date() : null
     const emoji = params.emoji ?? null
     const result = await db.query<ActivityRow>(sql`

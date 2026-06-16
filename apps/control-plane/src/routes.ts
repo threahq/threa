@@ -99,13 +99,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const internalAuthz = createInternalAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const accounts = createAccountsHandlers({ accountsService })
 
-  // Readiness probe
   app.get("/readyz", (_, res) => res.json({ status: "ok" }))
 
-  // Global rate limit on all routes
   app.use(globalLimit)
 
-  // Auth routes (auth-specific rate limit on login/callback)
   app.get("/api/auth/login", authLimit, authHandlers.login)
   app.all("/api/auth/callback", authLimit, authHandlers.callback)
   app.get("/api/auth/logout", authHandlers.logout)
@@ -119,7 +116,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // its own IP rate limit guards against spam.
   app.post("/api/waitlist", waitlistLimit, waitlist.signUp)
 
-  // Dev/test auth stub routes
   if (authService instanceof StubAuthService) {
     if (!allowDevAuthRoutes) {
       throw new Error("StubAuthService is active but dev auth routes are not allowed in this environment")
@@ -146,12 +142,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/accounts/switch", auth, authLimit, accounts.switch)
   app.post("/api/accounts/remove", auth, authLimit, accounts.remove)
 
-  // Workspace routes
   app.get("/api/workspaces", auth, workspace.list)
   app.post("/api/workspaces", auth, workspace.create)
   app.get("/api/regions", workspace.listRegions)
 
-  // User-facing invitation acceptance
   app.post("/api/invitations/:id/accept", auth, shadow.accept)
 
   // Public/unauthenticated link-invite surface (the /join page).
@@ -214,7 +208,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
   app.delete("/api/backoffice/workspaces/:id/members/:userId", auth, requirePlatformAdmin, backofficeAuthz.removeMember)
 
-  // Internal API (inter-service)
   app.get("/internal/workspaces/:workspaceId/region", internalAuth, workspace.getRegion)
   app.get("/internal/workspaces/:workspaceId/members/:workosUserId", internalAuth, workspace.confirmMembership)
   app.post("/internal/invitation-shadows", internalAuth, shadow.create)

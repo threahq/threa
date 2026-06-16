@@ -1,11 +1,3 @@
-/**
- * Excel Content Extraction
- *
- * Uses SheetJS to extract structured content from Excel workbooks.
- * Returns computed values (not formulas), infers column types, and
- * extracts chart metadata where available.
- */
-
 import * as XLSX from "xlsx"
 import type { ExcelFormat } from "./detector"
 import { EXCEL_SAMPLE_ROWS } from "./config"
@@ -41,13 +33,6 @@ export interface ExcelExtractionResult {
   charts: ExtractedChart[]
 }
 
-/**
- * Extract content from an Excel workbook buffer.
- *
- * @param buffer - File buffer
- * @param _format - Detected format (xlsx or xls)
- * @returns Structured extraction result
- */
 export function extractExcel(buffer: Buffer, _format: ExcelFormat): ExcelExtractionResult {
   const workbook = XLSX.read(buffer, {
     type: "buffer",
@@ -61,7 +46,6 @@ export function extractExcel(buffer: Buffer, _format: ExcelFormat): ExcelExtract
     const worksheet = workbook.Sheets[sheetName]
     if (!worksheet) continue
 
-    // Convert sheet to array of arrays (computed values as strings)
     const rawData: unknown[][] = XLSX.utils.sheet_to_json(worksheet, {
       header: 1,
       raw: false,
@@ -84,7 +68,6 @@ export function extractExcel(buffer: Buffer, _format: ExcelFormat): ExcelExtract
     const allRows = rawData.map((row) => row.map((cell) => String(cell ?? "")))
     const columnCount = allRows.reduce((max, row) => Math.max(max, row.length), 0)
 
-    // Use autofilter to detect structurally defined headers, fall back to column letters
     const headerRowIndex = detectHeaderRow(worksheet)
 
     let headers: string[]
@@ -115,7 +98,6 @@ export function extractExcel(buffer: Buffer, _format: ExcelFormat): ExcelExtract
     })
   }
 
-  // Extract workbook metadata
   const props = workbook.Props ?? {}
   const metadata: WorkbookMetadata = {
     author: props.Author ?? null,
@@ -123,7 +105,6 @@ export function extractExcel(buffer: Buffer, _format: ExcelFormat): ExcelExtract
     modifiedAt: props.ModifiedDate instanceof Date ? props.ModifiedDate : null,
   }
 
-  // Extract chart metadata from SheetJS
   const charts = extractChartMetadata(workbook)
 
   return { sheets, metadata, charts }
@@ -226,12 +207,11 @@ function looksLikeDateFormat(fmt: string): boolean {
 function extractChartMetadata(workbook: XLSX.WorkBook): ExtractedChart[] {
   const charts: ExtractedChart[] = []
 
-  // SheetJS exposes chart sheets as separate entries
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName]
     if (!sheet) continue
 
-    // Check if this is a chart sheet (SheetJS marks these with !type)
+    // SheetJS exposes chart sheets as separate entries marked with !type
     if ((sheet as Record<string, unknown>)["!type"] === "chart") {
       charts.push({
         sheetName,

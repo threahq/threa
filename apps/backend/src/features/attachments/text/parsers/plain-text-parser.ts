@@ -16,11 +16,9 @@ export const plainTextParser: TextParser = {
     const lines = content.split("\n")
     const totalLines = lines.length
 
-    // Create line-based sections for navigation
     const sections: TextSection[] = []
 
     if (totalLines > SECTION_SIZE) {
-      // Split into sections of SECTION_SIZE lines
       let sectionStart = 0
       while (sectionStart < totalLines) {
         const sectionEnd = Math.min(sectionStart + SECTION_SIZE, totalLines)
@@ -35,7 +33,6 @@ export const plainTextParser: TextParser = {
       }
     }
 
-    // Preview is first N lines
     const previewContent = lines.slice(0, PREVIEW_LINES).join("\n")
 
     return {

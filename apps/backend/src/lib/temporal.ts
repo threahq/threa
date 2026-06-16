@@ -1,9 +1,5 @@
 import type { DateFormat, TimeFormat } from "@threa/types"
 
-/**
- * Temporal context for agent invocations.
- * Captures the invoking user's timezone and preferences.
- */
 export interface TemporalContext {
   /** Current time in ISO format at invocation */
   currentTime: string
@@ -17,9 +13,6 @@ export interface TemporalContext {
   timeFormat: TimeFormat
 }
 
-/**
- * Participant with timezone information.
- */
 export interface ParticipantTemporal {
   id: string
   name: string
@@ -41,9 +34,7 @@ export function getUtcOffset(timezone: string, date: Date = new Date()): string 
     const offsetPart = parts.find((p) => p.type === "timeZoneName")
 
     if (offsetPart?.value) {
-      // Format like "GMT+1" or "GMT-5" -> normalize to "UTC+1" or "UTC-5"
       const offset = offsetPart.value.replace("GMT", "UTC")
-      // Handle "UTC" (no offset) case
       if (offset === "UTC") return "UTC+0"
       return offset
     }
@@ -67,9 +58,6 @@ export function parseUtcOffsetMinutes(offset: string): number {
   return sign * (hours * 60 + minutes)
 }
 
-/**
- * Check if all participants share the same UTC offset.
- */
 export function hasSameOffset(offsets: string[]): boolean {
   if (offsets.length === 0) return true
 
@@ -92,9 +80,6 @@ export function formatTime(date: Date, timezone: string, format: TimeFormat): st
   return new Intl.DateTimeFormat("en-US", options).format(date)
 }
 
-/**
- * Format a date according to user preferences.
- */
 export function formatDate(date: Date, timezone: string, format: DateFormat): string {
   const options: Intl.DateTimeFormatOptions = {
     timeZone: timezone,
@@ -122,17 +107,11 @@ export function formatDate(date: Date, timezone: string, format: DateFormat): st
   }
 }
 
-/**
- * Get the date string for a given Date in a timezone (for grouping).
- */
+/** Date key in a timezone, for grouping. */
 export function getDateKey(date: Date, timezone: string): string {
   return formatDate(date, timezone, "YYYY-MM-DD")
 }
 
-/**
- * Format the current time for inclusion in system prompts.
- * Uses hour-level granularity when minute precision isn't needed.
- */
 export function formatCurrentTime(
   date: Date,
   timezone: string,
@@ -158,13 +137,11 @@ export function buildTemporalPromptSection(temporal: TemporalContext, participan
     temporal.timeFormat
   )
 
-  // Check if we have mixed timezones
   const hasMixedTimezones =
     participants &&
     participants.length > 0 &&
     !hasSameOffset([temporal.utcOffset, ...participants.map((p) => p.utcOffset)])
 
-  // Instruction about time format
   const formatExample = temporal.timeFormat === "12h" ? "2:30 PM" : "14:30"
   const formatInstruction = `When referencing times, use ${temporal.timeFormat === "12h" ? "12-hour" : "24-hour"} format (e.g., ${formatExample}).`
   const timestampInstruction = `User messages are prefixed with their send time, e.g., (${formatExample}). Do not include timestamps in your responses.`

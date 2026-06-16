@@ -153,7 +153,6 @@ export class InvitationShadowService {
     expiresAt: Date
     inviterWorkosUserId?: string
   }) {
-    // Step 1: Insert shadow record (quick DB write)
     const shadow = await InvitationShadowRepository.insert(this.pool, params)
 
     // Link invites have no email at creation — defer WorkOS until claim.
@@ -161,10 +160,9 @@ export class InvitationShadowService {
       return shadow
     }
 
-    // Step 2: Ensure WorkOS organization exists for this workspace (lazy create, cached)
     const orgId = await this.ensureWorkosOrganization(params.workspaceId)
 
-    // Step 3: Send WorkOS invitation email (no DB connection held — INV-41)
+    // No DB connection held during the WorkOS send (INV-41).
     if (orgId && params.inviterWorkosUserId) {
       await this.sendWorkosInvitationForShadow({
         shadowId: shadow.id,

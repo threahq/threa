@@ -23,15 +23,10 @@ import { stripMarkdownFences } from "./text-utils"
 import { CostTracker } from "./openrouter-cost-interceptor"
 import { logger } from "../logger"
 
-// Re-export cost tracking utilities for consumers
 export { CostTracker, type CapturedUsage } from "./openrouter-cost-interceptor"
 export { getCostTrackingCallbacks, CostTrackingCallback } from "./cost-tracking-callback"
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-// -----------------------------------------------------------------------------
-// Types
-// -----------------------------------------------------------------------------
 
 export interface ParsedModel {
   /** The provider (e.g., "openrouter", "anthropic") */
@@ -335,10 +330,6 @@ interface BudgetPolicyDecision {
   percentUsed?: number
 }
 
-// -----------------------------------------------------------------------------
-// Model ID Parsing
-// -----------------------------------------------------------------------------
-
 /**
  * Parse a provider:model string into its components.
  *
@@ -385,12 +376,7 @@ export function parseModelId(providerModelString: string): ParsedModel {
   return { provider, modelId, modelProvider, modelName }
 }
 
-// -----------------------------------------------------------------------------
-// Factory
-// -----------------------------------------------------------------------------
-
 export function createAI(config: AIConfig): AI {
-  // Initialize providers
   const providers = {
     openrouter: config.openrouter ? createOpenRouter({ apiKey: config.openrouter.apiKey }) : null,
   }
@@ -402,8 +388,7 @@ export function createAI(config: AIConfig): AI {
 
   const defaultRepair = config.defaults?.repair ?? stripMarkdownFences
 
-  // Create CostTracker instance for this AI wrapper
-  // This is used for LangChain/LangGraph calls via getCostTrackingCallbacks
+  // Used for LangChain/LangGraph calls via getCostTrackingCallbacks.
   const costTracker = new CostTracker()
 
   function getLanguageModel(modelString: string): LanguageModel {

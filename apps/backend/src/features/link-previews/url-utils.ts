@@ -1,6 +1,5 @@
 import type { LinkPreviewContentType } from "@threa/types"
 
-/** Parsed internal message permalink reference */
 export interface MessagePermalink {
   workspaceId: string
   streamId: string
@@ -77,7 +76,6 @@ export function parseMessagePermalink(url: string, appOrigins: string[]): Messag
 
     if (!appOrigins.some((o) => o === origin)) return null
 
-    // Match /w/:workspaceId/s/:streamId
     const pathMatch = parsed.pathname.match(/^\/w\/([^/]+)\/s\/([^/]+)$/)
     if (!pathMatch) return null
 
@@ -139,7 +137,6 @@ export function isBlockedUrl(url: string): boolean {
     if (BLOCKED_HOSTNAMES.has(hostname)) return true
     if (hostname === "localhost") return true
 
-    // Check IP patterns
     for (const pattern of BLOCKED_IP_PATTERNS) {
       if (pattern.test(hostname)) return true
     }
@@ -159,20 +156,18 @@ export function normalizeUrl(raw: string): string {
     const url = new URL(raw)
     url.hostname = url.hostname.toLowerCase()
 
-    // Strip tracking params
     for (const param of TRACKING_PARAMS) {
       url.searchParams.delete(param)
     }
 
-    // Sort remaining params for consistent ordering
+    // Sort remaining params so dedup keys are stable regardless of original ordering.
     url.searchParams.sort()
 
-    // Remove trailing slash from pathname (but keep root /)
+    // Keep root "/" but drop other trailing slashes.
     if (url.pathname.length > 1 && url.pathname.endsWith("/")) {
       url.pathname = url.pathname.slice(0, -1)
     }
 
-    // Remove default ports
     if ((url.protocol === "https:" && url.port === "443") || (url.protocol === "http:" && url.port === "80")) {
       url.port = ""
     }
@@ -278,10 +273,8 @@ function stripUnbalancedTrailingParens(url: string): string {
   return url
 }
 
-/** Image file extensions */
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "avif"])
 
-/** PDF extension */
 const PDF_EXTENSION = "pdf"
 
 /**

@@ -47,7 +47,6 @@ export function useUnreadTabIndicator(workspaceId: string) {
   const unreadCounts = unreadState?.unreadCounts ?? {}
   const mutedStreamIds = unreadState?.mutedStreamIds ?? []
 
-  // Compute total unread (excluding muted streams)
   const muted = new Set(mutedStreamIds)
   let totalUnread = 0
   for (const [streamId, count] of Object.entries(unreadCounts)) {
@@ -65,14 +64,12 @@ export function useUnreadTabIndicator(workspaceId: string) {
     setFavicon(svgToDataUri(svg))
   }, [totalUnread])
 
-  // Re-render favicon when theme changes
   useEffect(() => {
     let lastDark = isDarkMode()
     const themeObserver = new MutationObserver(() => {
       const nowDark = isDarkMode()
       if (nowDark === lastDark) return
       lastDark = nowDark
-      // Immediately update favicon for the new theme at the current unread count
       const baseSvg = nowDark ? DARK_FAVICON_SVG : LIGHT_FAVICON_SVG
       const svg = totalUnread > 0 ? addNotificationDot(baseSvg) : baseSvg
       setFavicon(svgToDataUri(svg))

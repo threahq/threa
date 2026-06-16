@@ -18,13 +18,9 @@ import { WORKSPACE_PERMISSION_SCOPES, WORKSPACE_PERMISSIONS, WORKSPACE_ROLE_DEFI
 
 const WORKOS_BASE = "https://api.workos.com"
 
-// --- Config ---
-
 function loadApiKey(): string {
-  // Explicit env var takes precedence
   if (process.env.WORKOS_API_KEY) return process.env.WORKOS_API_KEY
 
-  // Fall back to backend .env
   const envPath = path.resolve(import.meta.dir, "../apps/backend/.env")
   if (fs.existsSync(envPath)) {
     const content = fs.readFileSync(envPath, "utf-8")
@@ -43,8 +39,6 @@ function loadApiKey(): string {
   console.error("WORKOS_API_KEY not found. Set it as env var or in apps/backend/.env")
   process.exit(1)
 }
-
-// --- WorkOS API client ---
 
 interface WorkOSPermission {
   id: string
@@ -161,8 +155,6 @@ const REQUIRED_ROLES: RoleDefinition[] = WORKSPACE_ROLE_DEFINITIONS.map((role) =
     : [...role.permissions],
 }))
 
-// --- Role API client ---
-
 interface WorkOSRole {
   id: string
   slug: string
@@ -194,8 +186,6 @@ async function updateRole(
 async function setRolePermissions(apiKey: string, roleSlug: string, permissions: string[]): Promise<void> {
   await workosRequest<unknown>(apiKey, "PUT", `/authorization/roles/${roleSlug}/permissions`, { permissions })
 }
-
-// --- Drift detection ---
 
 interface DriftReport {
   missing: typeof WORKSPACE_PERMISSIONS
@@ -308,8 +298,6 @@ function printDrift(drift: DriftReport): boolean {
   return true
 }
 
-// --- Sync logic ---
-
 async function check() {
   const apiKey = loadApiKey()
   const remote = await listPermissions(apiKey)
@@ -342,7 +330,6 @@ async function check() {
     console.log("No drift detected. WorkOS permissions match code definitions.")
   }
 
-  // --- Role check ---
   console.log("\n--- Roles ---\n")
   const remoteRoles = await listRoles(apiKey)
   const roleDrifts = detectRoleDrift(remoteRoles)
@@ -440,7 +427,6 @@ async function sync(dryRun: boolean) {
     console.log(`${drift.orphans.length} orphan(s) need manual deletion in WorkOS dashboard`)
   }
 
-  // --- Role sync ---
   console.log("\n--- Roles ---\n")
   const remoteRoles = await listRoles(apiKey)
   const roleDriftsBySlug = new Map(detectRoleDrift(remoteRoles).map((d) => [d.slug, d]))
@@ -500,8 +486,6 @@ async function sync(dryRun: boolean) {
     }
   }
 }
-
-// --- Main ---
 
 const mode = process.argv.includes("--check") ? "check" : process.argv.includes("--dry-run") ? "dry-run" : "sync"
 

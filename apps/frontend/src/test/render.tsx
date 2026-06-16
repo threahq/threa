@@ -31,9 +31,7 @@ export function renderWithProviders(ui: ReactElement, options?: Omit<RenderOptio
   return render(ui, { wrapper: TestProviders, ...options })
 }
 
-// Re-export everything from testing-library for convenience
 export * from "@testing-library/react"
 export { default as userEvent } from "@testing-library/user-event"
 
-// Override render with our wrapped version as the default export
 export { renderWithProviders as render }

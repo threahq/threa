@@ -15,9 +15,8 @@ import { logger } from "../../lib/logger"
  * RFC 5987 filename* parameter for non-ASCII filenames.
  */
 export function buildContentDisposition(filename: string): string {
-  // ASCII-safe fallback: replace non-ASCII chars with underscores, escape quotes
   const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, '\\"')
-  // RFC 5987 encoding for the full filename (percent-encode per UTF-8)
+  // RFC 5987 filename* parameter, percent-encoded per UTF-8.
   const encoded = encodeURIComponent(filename).replace(/'/g, "%27")
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`
 }

@@ -46,7 +46,6 @@ Apply them in scratchpads and scratchpad-root threads unless they conflict with 
 ${scratchpadCustomPrompt.trim()}`
   }
 
-  // Add mention invocation context if applicable
   if (trigger === AgentTriggers.MENTION) {
     const mentionerDesc = mentionerName ? `**${mentionerName}**` : "a user"
     prompt += `
@@ -87,7 +86,6 @@ ${spawnedFromContext.trim()}`
     prompt += `\n\n${conversationMemory}`
   }
 
-  // Add send_message tool instructions
   prompt += `
 
 ## Responding to Messages

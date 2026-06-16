@@ -34,7 +34,6 @@ describe("v34 drafts migration", () => {
     })
     legacy.close()
 
-    // Reopen through the app schema — runs the v34 upgrade.
     const db = new ThreaDatabase(name)
     await db.open()
 
@@ -59,7 +58,6 @@ describe("v34 drafts migration", () => {
     expect(stash).toMatchObject({ scope: "stream:stream_1", workspaceId: "ws_1", clientUpdatedAt: 2000 })
     expect(stash!.contentJson).toEqual(doc("stashed"))
 
-    // The old stores are dropped.
     expect(db.tables.some((t) => t.name === "draftMessages")).toBe(false)
     expect(db.tables.some((t) => t.name === "stashedDrafts")).toBe(false)
 

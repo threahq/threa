@@ -40,7 +40,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
     queryFn: () => botsApi.get(workspaceId, botId),
   })
 
-  // Profile editing
   const [editing, setEditing] = useState(false)
   const [editName, setEditName] = useState("")
   const [editSlug, setEditSlug] = useState("")
@@ -74,7 +73,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
     },
   })
 
-  // Avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null)
   const uploadAvatarMutation = useMutation({
     mutationFn: (file: File) => botsApi.uploadAvatar(workspaceId, botId, file),
@@ -150,7 +148,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
 
   return (
     <div className="space-y-6 p-1">
-      {/* Header */}
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onBack} className="h-7 px-2">
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -167,7 +164,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
         )}
       </div>
 
-      {/* Profile */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Profile</h4>
@@ -178,7 +174,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
           )}
         </div>
 
-        {/* Avatar upload */}
         {!isArchived && (
           <div className="flex items-center gap-3">
             <BotAvatar bot={bot} workspaceId={workspaceId} size={56} />
@@ -288,7 +283,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       <BotChannelsSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
       <Separator />
 
-      {/* Danger zone */}
       <section className="space-y-3">
         <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Danger zone</h4>
         {isArchived ? (
@@ -309,7 +303,6 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
         )}
       </section>
 
-      {/* Archive confirmation */}
       <AlertDialog open={archiveTarget} onOpenChange={(open) => !open && setArchiveTarget(false)}>
         <AlertDialogContent>
           <AlertDialogHeader>

@@ -1,6 +1,6 @@
 /**
- * Voice transcription defaults, shared by the service, gateway, and strategies.
- * Pricing is NOT here — it lives in models.yaml and is read via ModelRegistry (INV-33).
+ * Voice transcription defaults. Pricing is NOT here — it lives in models.yaml
+ * and is read via ModelRegistry (INV-33).
  */
 
 import { parseModelId } from "@threa/agent-runtime"
@@ -12,10 +12,8 @@ export const VOICE_SESSION_STATUSES = ["active", "finished", "aborted", "expired
 export type VoiceSessionStatus = (typeof VOICE_SESSION_STATUSES)[number]
 
 /**
- * Extract the provider prefix from a full model id
- * (`elevenlabs:scribe-v2-realtime` → `elevenlabs`). Returns null when the id
- * carries no provider prefix; callers decide how to surface that. Delegates to
- * the shared `parseModelId` so model-id parsing lives in one place (INV-35).
+ * Provider prefix of a full model id (`elevenlabs:scribe-v2-realtime` → `elevenlabs`),
+ * or null if absent. Delegates to shared `parseModelId` (INV-35).
  */
 export function parseModelProvider(model: string): string | null {
   try {
@@ -31,11 +29,7 @@ export const voiceConfig = {
   sampleRateHz: 16_000,
   /** Approximate audio frame size the client emits, in ms (~100ms PCM16 frames). */
   frameMs: 100,
-  /**
-   * Hard max session duration — a cheap runaway-cost guard for the PR1 skeleton.
-   * The gateway force-stops a session that exceeds this. Full idle-timeout +
-   * sweeper-driven expiry land in PR2.
-   */
+  /** Hard max session duration — a runaway-cost guard; the gateway force-stops a session that exceeds it. */
   maxSessionMs: 10 * 60 * 1_000,
 } as const
 
@@ -45,22 +39,14 @@ export const POLISH_MODEL = "openrouter:openai/gpt-5.4-nano"
 export const POLISH_TIMEOUT_MS = 4500
 export const POLISH_MAX_TOKENS = 2048
 
-// The example vocabulary in both level prompts is English (fillers like "uh"
-// / "um", self-correction phrases like "no sorry", spoken shortcodes like
-// "colon X colon"). Modern multilingual models can transpose the intent to
-// other languages but do it more reliably when told explicitly. Without this
-// note, non-English transcripts see inconsistent filler dropping and the
-// spoken shortcode rules never fire (a Swede saying "kolon blush kolon"
-// doesn't match "colon").
+// The example vocabulary in both prompts is English; without this note,
+// non-English transcripts drop fillers inconsistently and the spoken-shortcode
+// rules never fire (a Swede saying "kolon blush kolon" doesn't match "colon").
+// INV-54: no English-only heuristics for language-dependent behavior.
 export const POLISH_LANGUAGE_NOTE = `Language: detect the language of the raw transcript and apply every rule below in that language. The examples are written in English for brevity — transpose them to the speaker's language (drop its filler words, recognize its self-correction phrases, match its words for "colon" / "at sign" / "slash command" before the shortcode rules, capitalize per its conventions, e.g., German noun capitalization). Never translate the transcript itself.`
 
-// Shared at the top of every polish system prompt. Two things matter to the
-// user strongly enough to bake into both levels:
-//   1. No em dashes ("—") and no en dashes ("–"). They read as AI-isms and
-//      the speaker almost never dictates them. Substitute a colon when one
-//      clause expands or explains another, otherwise a comma or a period.
-//   2. Output ONLY the polished transcript text — no commentary, no quotes
-//      around the result, no "Here:" / "Polished:" prefix.
+// Shared across both polish levels. Em/en dashes are banned because they read
+// as AI-isms the speaker almost never dictates.
 export const POLISH_SHARED_HARD_RULES = `Hard rules:
 - NEVER use em dashes ("—") or en dashes ("–"). Use a colon, comma, or period instead. When a clause expands or explains another, prefer a colon. Example: "here's what I'm thinking: pie for dinner" — NOT "here's what I'm thinking—pie for dinner".
 - Preserve the speaker's words and intent. Do not paraphrase, summarize, translate, or add information that wasn't dictated.

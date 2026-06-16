@@ -15,10 +15,6 @@ import {
 } from "./attachment-markdown"
 import { buildGiphyHref, buildMemoHref, buildQuoteHref, buildSharedMessageHref, parseGiphyHref } from "./pointer-urls"
 
-// ============================================================================
-// Shared Inline Pattern
-// ============================================================================
-
 /**
  * Inline markdown pattern - captures each format type in separate groups.
  * Group layout (order matters for matching priority):
@@ -41,13 +37,6 @@ export const INLINE_MARKDOWN_PATTERN =
   /(\[((?:\\.|[^\\\]])+)\]\(attachment:([^)\s"]+)(?:\s+"((?:\\"|\\\\|[^"])*)")?\))|(\[((?:\\.|[^\\\]])+)\]\(memo:([\w-]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(\*\*\*(.+?)\*\*\*)|(\*\*(.+?)\*\*)|(?<!\*)(\*([^*]+?)\*)(?!\*)|(\~\~(.+?)\~\~)|(`([^`]+)`)|((?<=\s|^)@([\w-]+))|((?<=\s|^)#([\w-]+))|(:([\w+-]+):)/
     .source
 
-// ============================================================================
-// JSON → Markdown Serialization
-// ============================================================================
-
-/**
- * Serialize ProseMirror JSON to Markdown string.
- */
 export function serializeToMarkdown(content: JSONContent): string {
   if (!content.content) return ""
   // Group consecutive top-level `tableRow` nodes into a synthetic table.
@@ -239,9 +228,6 @@ function serializeTableCell(cell: JSONContent): string {
   return joined.replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim()
 }
 
-/**
- * Get plain text content from a node (for atom nodes like mentions).
- */
 function getNodeText(node: JSONContent): string {
   if (node.type === "hardBreak") return "\n"
   if (node.type === "mention") {
@@ -263,7 +249,6 @@ function getNodeText(node: JSONContent): string {
     const imageIndex = node.attrs?.imageIndex as number | null
     const status = node.attrs?.status as string
 
-    // Skip uploading/error nodes in serialization
     if (status === "uploading" || status === "error") {
       return ""
     }
@@ -307,9 +292,6 @@ function getNodeText(node: JSONContent): string {
   return ""
 }
 
-/**
- * Check if a node is an atom (mention, channel, command, attachment, emoji).
- */
 function isAtomNode(node: JSONContent): boolean {
   return (
     node.type === "mention" ||
@@ -323,27 +305,22 @@ function isAtomNode(node: JSONContent): boolean {
   )
 }
 
-/**
- * Get marks from a node, with atom nodes inheriting from adjacent text.
- */
 function getEffectiveMarks(nodes: JSONContent[], index: number): JSONContentMark[] {
   const node = nodes[index]
 
-  // Text nodes have their own marks
   if (node.type === "text") {
     return node.marks ?? []
   }
 
-  // Atom nodes inherit marks from adjacent text nodes
+  // Atom nodes inherit marks from adjacent text nodes.
   if (isAtomNode(node)) {
-    // Look for marks from next text node (preferred for "@here hello" case)
+    // Prefer the next text node (the "@here hello" case).
     for (let i = index + 1; i < nodes.length; i++) {
       if (nodes[i].type === "text" && nodes[i].marks?.length) {
         return nodes[i].marks!
       }
       if (!isAtomNode(nodes[i])) break
     }
-    // Fall back to previous text node
     for (let i = index - 1; i >= 0; i--) {
       if (nodes[i].type === "text" && nodes[i].marks?.length) {
         return nodes[i].marks!
@@ -355,9 +332,6 @@ function getEffectiveMarks(nodes: JSONContent[], index: number): JSONContentMark
   return []
 }
 
-/**
- * Check if two mark arrays are equivalent.
- */
 function marksEqual(a: JSONContentMark[], b: JSONContentMark[]): boolean {
   if (a.length !== b.length) return false
   const aTypes = a.map((m) => m.type).sort()
@@ -365,21 +339,16 @@ function marksEqual(a: JSONContentMark[], b: JSONContentMark[]): boolean {
   return aTypes.every((t, i) => t === bTypes[i])
 }
 
-/**
- * Wrap text with markdown mark syntax.
- * Preserves leading/trailing whitespace outside the marks.
- */
+/** Preserves leading/trailing whitespace outside the marks. */
 function wrapWithMarks(text: string, marks: JSONContentMark[]): string {
   if (marks.length === 0) return text
 
-  // Extract leading and trailing whitespace
   const leadingMatch = text.match(/^(\s*)/)
   const trailingMatch = text.match(/(\s*)$/)
   const leading = leadingMatch?.[1] ?? ""
   const trailing = trailingMatch?.[1] ?? ""
   const trimmed = text.slice(leading.length, text.length - trailing.length)
 
-  // Don't wrap pure whitespace
   if (!trimmed) return text
 
   let result = trimmed
@@ -431,7 +400,7 @@ function resolveSerializedLinkHref(displayText: string, href: string): string {
 function serializeInline(nodes: JSONContent[] | undefined): string {
   if (!nodes) return ""
 
-  // Group consecutive nodes with same effective marks
+  // Group consecutive nodes with the same effective marks.
   const groups: Array<{ text: string; marks: JSONContentMark[] }> = []
 
   for (let i = 0; i < nodes.length; i++) {
@@ -441,7 +410,6 @@ function serializeInline(nodes: JSONContent[] | undefined): string {
 
     const marks = getEffectiveMarks(nodes, i)
 
-    // Check if we can append to the last group
     if (groups.length > 0 && marksEqual(groups[groups.length - 1].marks, marks)) {
       groups[groups.length - 1].text += text
     } else {
@@ -449,24 +417,13 @@ function serializeInline(nodes: JSONContent[] | undefined): string {
     }
   }
 
-  // Serialize each group with its marks
   return groups.map((group) => wrapWithMarks(group.text, group.marks)).join("")
 }
 
-// ============================================================================
-// Markdown → JSON Parsing
-// ============================================================================
-
-/**
- * Lookup function to determine mention type from slug.
- * "me" is a special type for the current user's own mentions.
- */
+/** "me" is a special type for the current user's own mentions. */
 export type MentionTypeLookup = (slug: string) => "user" | "persona" | "bot" | "broadcast" | "me"
 
-/**
- * Lookup function to get emoji character from shortcode.
- * Returns null if shortcode is not a valid emoji.
- */
+/** Returns null if shortcode is not a valid emoji. */
 export type EmojiLookup = (shortcode: string) => string | null
 
 /**
@@ -495,9 +452,6 @@ interface ParseOptions extends ParseMarkdownOptions {
   getEmoji?: EmojiLookup
 }
 
-/**
- * Parse Markdown string to ProseMirror JSON.
- */
 export function parseMarkdown(
   markdown: string,
   getMentionType?: MentionTypeLookup,
@@ -901,11 +855,9 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       return "user"
     })
 
-  // Check for slash command at start of text
   const commandMatch = allowSlashCommands ? text.match(/^(\s*)(\/)([\w-]+)/) : null
   let processText = text
   if (commandMatch) {
-    // Preserve leading whitespace
     if (commandMatch[1]) {
       result.push({ type: "text", text: commandMatch[1] })
     }
@@ -922,7 +874,6 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
   let match
 
   while ((match = inlinePattern.exec(processText)) !== null) {
-    // Add plain text before this match
     if (match.index > lastIndex) {
       result.push({ type: "text", text: processText.slice(lastIndex, match.index) })
     }
@@ -1078,7 +1029,6 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     lastIndex = match.index + match[0].length
   }
 
-  // Add remaining plain text
   if (lastIndex < processText.length) {
     result.push({ type: "text", text: processText.slice(lastIndex) })
   }

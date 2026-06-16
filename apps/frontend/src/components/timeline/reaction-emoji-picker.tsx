@@ -117,7 +117,6 @@ function EmojiGridContent({
   open: boolean
   isMobile: boolean
 }) {
-  // Compute column count based on container width on mobile
   const [columns, setColumns] = useState(isMobile ? MAX_MOBILE_COLUMNS : DESKTOP_GRID_COLUMNS)
   const rowHeight = isMobile ? MOBILE_ROW_HEIGHT : DESKTOP_ROW_HEIGHT
   const virtuosoRef = useRef<VirtuosoHandle>(null)
@@ -330,7 +329,6 @@ function EmojiGridContent({
   if (isMobile) {
     return (
       <>
-        {/* Search — pill-shaped with icon, full-bleed padding */}
         <div className="px-4 pt-3 pb-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
@@ -348,7 +346,6 @@ function EmojiGridContent({
           </div>
         </div>
 
-        {/* Your reactions — horizontal strip, only when no search */}
         {activeEmojis.length > 0 && !search && (
           <div className="px-4 pb-2">
             <p className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider mb-1.5">
@@ -427,10 +424,8 @@ function EmojiGridContent({
     )
   }
 
-  // Desktop layout
   return (
     <>
-      {/* Search input */}
       <div className="px-2 pt-2 pb-1">
         <input
           ref={searchInputRef}
@@ -446,7 +441,6 @@ function EmojiGridContent({
         />
       </div>
 
-      {/* Reactions row */}
       {activeEmojis.length > 0 && !search && (
         <div className="px-2 pb-1">
           <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider px-0.5 mb-1">
@@ -472,7 +466,6 @@ function EmojiGridContent({
 
       {recent.length > 0 && all.length > 0 && <div className="border-t" />}
 
-      {/* Emoji grid */}
       {total === 0 && (
         <div
           className="flex items-center justify-center text-sm text-muted-foreground p-2"
@@ -519,7 +512,6 @@ function EmojiGridContent({
         />
       )}
 
-      {/* Footer — desktop only */}
       {selectedEmoji && (
         <div className="border-t px-2 py-1.5 text-xs text-muted-foreground truncate">
           <span className="mr-1.5">{selectedEmoji.emoji}</span>

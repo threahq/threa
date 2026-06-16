@@ -20,11 +20,6 @@ export interface CommandWorkerDeps {
   commandRegistry: CommandRegistry
 }
 
-/**
- * Create the command execution job handler for queue system.
- *
- * Executes a command and creates completion/failure events.
- */
 export function createCommandWorker(deps: CommandWorkerDeps): JobHandler<CommandExecuteJobData> {
   const { pool, commandRegistry } = deps
 

@@ -54,7 +54,6 @@ export function ReactionDetailsContent({ reactions, workspaceId, defaultEmoji = 
 
   return (
     <>
-      {/* Emoji filter tabs */}
       <div className="flex flex-wrap gap-0.5 px-1.5 pt-1.5 pb-1">
         <button
           type="button"
@@ -87,7 +86,6 @@ export function ReactionDetailsContent({ reactions, workspaceId, defaultEmoji = 
 
       <div className="border-t border-border/50" />
 
-      {/* User list */}
       <div className="max-h-[220px] overflow-y-auto py-1 px-1">
         {displayedUsers.map(({ userId, emojis }) => {
           const visibleEmojis = emojis.slice(0, 4)

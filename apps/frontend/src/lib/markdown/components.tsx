@@ -112,9 +112,6 @@ function extractQuoteReplyFromChildren(children: ReactNode): {
   return null
 }
 
-/**
- * Extract plain text from React children tree.
- */
 function extractTextFromChildren(children: ReactNode): string {
   if (typeof children === "string") return children
   if (typeof children === "number") return String(children)
@@ -127,9 +124,6 @@ function extractTextFromChildren(children: ReactNode): string {
   return ""
 }
 
-/**
- * Link component that handles attachment:// URLs specially
- */
 function MarkdownLink({ href, children }: { href?: string; children: ReactNode }) {
   const attachmentContext = useAttachmentContext()
   const linkPreviewContext = useLinkPreviewContext()
@@ -165,7 +159,6 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
     )
   }
 
-  // Check if this is an attachment link
   if (href?.startsWith("attachment:")) {
     const attachmentId = href.replace("attachment:", "")
 
@@ -320,17 +313,14 @@ export const markdownComponents: Components = {
     return <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono break-all">{children}</code>
   },
 
-  // Code blocks wrapper - let code component handle rendering
   pre: ({ children }) => <>{children}</>,
 
-  // Bold
   strong: ({ children }) => (
     <strong className="font-semibold">
       <ProcessedChildren>{children}</ProcessedChildren>
     </strong>
   ),
 
-  // Italic
   em: ({ children }) => (
     <em className="italic">
       <ProcessedChildren>{children}</ProcessedChildren>
@@ -363,7 +353,6 @@ export const markdownComponents: Components = {
     return <BlockquoteBlock>{children}</BlockquoteBlock>
   },
 
-  // Lists
   ul: ({ children }) => <ul className="list-disc pl-6 my-2">{children}</ul>,
   ol: ({ children }) => <ol className="list-decimal pl-6 my-2">{children}</ol>,
   li: ({ children, className }) => {
@@ -403,7 +392,6 @@ export const markdownComponents: Components = {
     </TableCell>
   ),
 
-  // Horizontal rule
   hr: () => <hr className="my-4 border-border" />,
 
   // Images - render as links (no embedding for external URLs)

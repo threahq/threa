@@ -53,7 +53,6 @@ const mockNavigate = vi.fn()
 
 let mockMessageSendMode: "enter" | "cmdEnter" = "enter"
 
-// Mock hooks
 const mockSendMessage = vi.fn()
 const mockClearDraft = vi.fn()
 const mockResolveDraft = vi.fn()
@@ -459,9 +458,7 @@ describe("MessageInput", () => {
       const sendButton = screen.getByRole("button", { name: /send/i })
       await userEvent.click(sendButton)
 
-      // setIsSending(true) called at start
       expect(mockSetIsSending).toHaveBeenCalledWith(true)
-      // setIsSending(false) called in finally
       expect(mockSetIsSending).toHaveBeenCalledWith(false)
     })
 

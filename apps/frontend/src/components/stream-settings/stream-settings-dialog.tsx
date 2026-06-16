@@ -74,7 +74,6 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
     return idbStreams.find((s) => s.id === resolvedStream.rootStreamId) ?? null
   }, [resolvedStream, idbStreams])
 
-  // Determine available tabs based on stream type
   const availableTabs: readonly StreamSettingsTab[] = useMemo(() => {
     if (!resolvedStream) return STREAM_SETTINGS_TABS
     switch (resolvedStream.type) {
@@ -89,7 +88,6 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
     }
   }, [resolvedStream])
 
-  // If active tab isn't available for this stream type, fall back
   const effectiveTab = (availableTabs as readonly string[]).includes(activeTab) ? activeTab : availableTabs[0]
 
   // DMs carry the viewer-specific peer name in `dmDisplayName`; everything else

@@ -10,7 +10,6 @@ import { resolveStreamIdentifier } from "./identifier-resolver"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
 
-// Schema for search_messages tool
 const SearchMessagesSchema = z.object({
   query: z.string().describe("The search query to find relevant messages in the workspace"),
   stream: z
@@ -36,7 +35,6 @@ export interface MessageSearchResult {
   createdAt: string
 }
 
-// Schema for search_streams tool
 const SearchStreamsSchema = z.object({
   query: z.string().describe("The search query to find streams by name or description"),
   types: z.array(z.enum(STREAM_TYPES)).optional().describe("Filter by stream types"),
@@ -57,7 +55,6 @@ interface RankedStreamSearchResult {
   sourceOrder: number
 }
 
-// Schema for search_users tool
 const SearchUsersSchema = z.object({
   query: z.string().describe("The search query to find users by slug, name, or email"),
 })
@@ -70,7 +67,6 @@ export interface UserSearchResult {
   email: string
 }
 
-// Schema for get_stream_messages tool
 const GetStreamMessagesSchema = z.object({
   stream: z
     .string()
@@ -250,9 +246,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
         const dmDisplayNamesById = new Map(dmSearchResults.map((result) => [result.streamId, result.displayName]))
         const rankedResults: RankedStreamSearchResult[] = [
           ...nameMatches.map((stream, index): RankedStreamSearchResult => {
-            // Use viewer-resolved DM name when available so ranking aligns with what users see.
-            // For non-DM streams, score against displayName/slug as before.
-            // If no resolved DM label exists, fall back to persisted stream naming fields.
+            // Rank DMs against the viewer-resolved name so ranking aligns with what users see.
             const searchText =
               stream.type === StreamTypes.DM
                 ? (dmDisplayNamesById.get(stream.id) ?? stream.displayName ?? stream.slug ?? "")

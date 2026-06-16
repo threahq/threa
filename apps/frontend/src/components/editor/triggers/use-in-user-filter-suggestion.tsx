@@ -5,8 +5,8 @@ import { filterUsersOnly, useMentionables } from "@/hooks/use-mentionables"
 import { useSuggestion } from "./use-suggestion"
 
 /**
- * Hook for `in:` and `in:@` filter suggestions in search context.
- * Shows only users (not personas) since you can only DM with users.
+ * Hook for `in:` and `in:@` filter suggestions in search context. Users only,
+ * not personas, since you can only DM with users.
  */
 export function useInUserFilterSuggestion() {
   const { mentionables } = useMentionables()
@@ -24,7 +24,7 @@ export function useInUserFilterSuggestion() {
   const { suggestionConfig, renderSuggestionList, isActive, close } = useSuggestion<Mentionable>({
     extensionName: "inUserFilter",
     getItems: () => mentionables,
-    filterItems: filterUsersOnly, // Only users, not personas (can't DM with agents)
+    filterItems: filterUsersOnly,
     renderList,
   })
 

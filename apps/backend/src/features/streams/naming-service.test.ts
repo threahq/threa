@@ -10,7 +10,6 @@ import * as displayNameModule from "./display-name"
 import type { AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ComponentConfig } from "../../lib/ai/config-resolver"
 
-// Mock message formatter
 const mockFormatMessages = mock(() => Promise.resolve("<messages></messages>"))
 const mockFormatMessagesWithAttachments = mock(() => Promise.resolve("<messages></messages>"))
 const mockMessageFormatter = {
@@ -18,7 +17,6 @@ const mockMessageFormatter = {
   formatMessagesWithAttachments: mockFormatMessagesWithAttachments,
 } as unknown as MessageFormatter
 
-// Mock repositories
 const mockStream = {
   id: "stream_123",
   workspaceId: "ws_456",
@@ -44,13 +42,11 @@ const mockMessages = [
   },
 ]
 
-// Mock AI instance
 const mockGenerateText = mock(async (_options: unknown) => ({ value: "", response: {} }))
 const mockAI: Partial<AI> = {
   generateText: mockGenerateText as unknown as AI["generateText"],
 }
 
-// Mock ConfigResolver
 const mockConfigResolver: ConfigResolver = {
   async resolve<T extends ComponentConfig>(): Promise<T> {
     return {
@@ -84,8 +80,7 @@ describe("StreamNamingService", () => {
     mockFormatMessages.mockResolvedValue("<messages></messages>")
     mockFormatMessagesWithAttachments.mockResolvedValue("<messages></messages>")
 
-    // Use spyOn for AttachmentRepository to avoid mock.module pollution
-    // findByIds is used by awaitAttachmentProcessing - return empty to make it complete immediately
+    // findByIds drives awaitAttachmentProcessing — empty makes it complete immediately
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByMessageIdsWithExtractions").mockResolvedValue(new Map())
@@ -183,9 +178,7 @@ describe("StreamNamingService", () => {
       const lastCall = calls[calls.length - 1]?.[0] as { messages: Array<{ role: string; content: string }> }
       const systemMessage = lastCall.messages.find((m) => m.role === "system")?.content ?? ""
 
-      // Should include the other stream's name
       expect(systemMessage).toContain("Another Scratchpad")
-      // Should NOT include current stream's name (excluded by filter)
       expect(systemMessage).not.toContain("Current Stream Name")
     })
   })
@@ -265,46 +258,38 @@ describe("StreamNamingService", () => {
     test("should process attachments when messages have them", async () => {
       mockGenerateText.mockResolvedValue({ value: "Fish Image", response: {} })
 
-      // Set up attachments for the messages
       const attachmentsMap = new Map()
       attachmentsMap.set("msg_1", [{ id: "attach_1" }])
       spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(attachmentsMap)
 
-      // awaitAttachmentProcessing will call findByIds - return completed status
       spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
         { id: "attach_1", processingStatus: "completed" },
       ] as any)
 
       const result = await service.attemptAutoNaming("stream_123", false)
 
-      // Should still generate a name successfully
       expect(result).toBe(true)
     })
 
     test("should work when no attachments", async () => {
       mockGenerateText.mockResolvedValue({ value: "Title", response: {} })
 
-      // No attachments (default from beforeEach)
       const result = await service.attemptAutoNaming("stream_123", false)
 
-      // Should generate a name
       expect(result).toBe(true)
     })
 
     test("should fetch attachments with extractions after awaiting processing", async () => {
       mockGenerateText.mockResolvedValue({ value: "Fish Analysis", response: {} })
 
-      // Set up attachments
       const attachmentsMap = new Map()
       attachmentsMap.set("msg_1", [{ id: "attach_1" }])
       spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(attachmentsMap)
 
-      // awaitAttachmentProcessing will call findByIds - return completed status
       spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
         { id: "attach_1", processingStatus: "completed" },
       ] as any)
 
-      // Set up extractions
       const extractionsMap = new Map()
       extractionsMap.set("msg_1", [
         {
@@ -320,19 +305,15 @@ describe("StreamNamingService", () => {
 
       await service.attemptAutoNaming("stream_123", false)
 
-      // Should have used formatMessagesWithAttachments
       expect(mockFormatMessagesWithAttachments).toHaveBeenCalled()
     })
 
     test("should use formatMessagesWithAttachments for conversation text", async () => {
       mockGenerateText.mockResolvedValue({ value: "Image Discussion", response: {} })
 
-      // No attachments (default from beforeEach)
       await service.attemptAutoNaming("stream_123", false)
 
-      // Should always use formatMessagesWithAttachments
       expect(mockFormatMessagesWithAttachments).toHaveBeenCalled()
-      // Should not use the old formatMessages
       expect(mockFormatMessages).not.toHaveBeenCalled()
     })
   })

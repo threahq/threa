@@ -19,10 +19,7 @@ interface Dependencies {
 
 export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) {
   return {
-    /**
-     * POST /internal/feature-flags
-     * CP fan-out endpoint: replace one user's flag snapshot in this region.
-     */
+    /** CP fan-out endpoint: replace one user's flag snapshot in this region. */
     async sync(req: Request, res: Response, next: NextFunction) {
       const result = syncSchema.safeParse(req.body)
       if (!result.success) {

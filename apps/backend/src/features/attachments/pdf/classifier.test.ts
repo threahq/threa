@@ -1,12 +1,3 @@
-/**
- * PDF Page Classifier Unit Tests
- *
- * Tests verify:
- * 1. Page classification based on text content, images, tables, and layout
- * 2. Classification logic for each category
- * 3. Edge cases (empty pages, mixed content)
- */
-
 import { describe, test, expect } from "bun:test"
 import { classifyPage, type ClassificationInput, type TextItemWithPosition } from "./classifier"
 

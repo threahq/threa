@@ -9,7 +9,6 @@ import {
   type BuiltInAgentConfig,
 } from "./built-in-agents"
 
-// Internal row type (snake_case)
 interface PersonaRow {
   id: string
   workspace_id: string | null
@@ -28,7 +27,6 @@ interface PersonaRow {
   updated_at: Date
 }
 
-// Domain type (camelCase)
 export interface Persona {
   id: string
   workspaceId: string | null

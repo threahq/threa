@@ -1,15 +1,12 @@
 /**
- * StaticConfigResolver - Production Configuration
- *
- * Provides default configs for all AI components, importing from their
- * co-located config.ts files (INV-43). Supports optional overrides at
- * construction time for testing or per-environment configuration.
+ * Production config resolver: default configs for all AI components, sourced
+ * from their co-located config.ts files (INV-43). Optional construction-time
+ * overrides for testing or per-environment configuration.
  */
 
 import type { ConfigResolver, ComponentConfig } from "./config-resolver"
 import { COMPONENT_PATHS } from "./config-resolver"
 
-// Import from co-located configs (INV-43)
 import {
   BOUNDARY_EXTRACTION_MODEL_ID,
   BOUNDARY_EXTRACTION_TEMPERATURE,
@@ -34,14 +31,6 @@ import {
 } from "../../features/agents"
 import { EMBEDDING_MODEL_ID } from "../../features/memos"
 
-// -----------------------------------------------------------------------------
-// Default Configs
-// -----------------------------------------------------------------------------
-
-/**
- * Build default configs for all components.
- * Internal structure uses string keys with extended properties.
- */
 function buildDefaultConfigs(): Map<string, ComponentConfig> {
   const configs = new Map<string, ComponentConfig>()
 
@@ -96,38 +85,13 @@ function buildDefaultConfigs(): Map<string, ComponentConfig> {
   return configs
 }
 
-// Build once at module load
 const DEFAULT_CONFIGS = buildDefaultConfigs()
 
-// -----------------------------------------------------------------------------
-// Factory
-// -----------------------------------------------------------------------------
-
 export interface StaticConfigResolverOptions {
-  /**
-   * Optional overrides for specific component paths.
-   * Merged with defaults (overrides win).
-   */
+  /** Overrides per component path, merged onto defaults (overrides win). */
   overrides?: Partial<Record<string, Partial<ComponentConfig>>>
 }
 
-/**
- * Create a static config resolver with production defaults.
- *
- * @param options Optional overrides
- * @returns ConfigResolver instance
- *
- * @example Production usage
- * const resolver = createStaticConfigResolver()
- * const config = await resolver.resolve("boundary-extraction")
- *
- * @example With overrides (e.g., for testing)
- * const resolver = createStaticConfigResolver({
- *   overrides: {
- *     "boundary-extraction": { modelId: "openrouter:anthropic/claude-haiku-4.5" }
- *   }
- * })
- */
 export function createStaticConfigResolver(options: StaticConfigResolverOptions = {}): ConfigResolver {
   const { overrides = {} } = options
 
@@ -151,12 +115,4 @@ export function createStaticConfigResolver(options: StaticConfigResolverOptions 
   }
 }
 
-// -----------------------------------------------------------------------------
-// Convenience Export
-// -----------------------------------------------------------------------------
-
-/**
- * Default production resolver instance.
- * Use createStaticConfigResolver() if you need custom overrides.
- */
 export const defaultConfigResolver = createStaticConfigResolver()

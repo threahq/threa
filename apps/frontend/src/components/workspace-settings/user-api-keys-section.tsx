@@ -149,7 +149,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
 
   return (
     <div className="space-y-4">
-      {/* ── Key reveal banner ── */}
       {createdKeyValue && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div className="flex items-start gap-2">
@@ -200,7 +199,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </div>
       )}
 
-      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
           Personal keys act on your behalf with the same stream access as your account.
@@ -213,7 +211,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         )}
       </div>
 
-      {/* ── Create form ── */}
       {showCreateForm && (
         <div className="rounded-lg border bg-card p-4 space-y-4">
           <div className="space-y-1.5">
@@ -280,7 +277,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </div>
       )}
 
-      {/* ── Active keys list ── */}
       {activeKeys.length > 0 && (
         <div className="rounded-lg border divide-y">
           {activeKeys.map((key) => (
@@ -340,7 +336,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </div>
       )}
 
-      {/* ── Empty state ── */}
       {activeKeys.length === 0 && !showCreateForm && (
         <div className="rounded-lg border border-dashed py-8 flex flex-col items-center gap-2">
           <Key className="h-5 w-5 text-muted-foreground/50" />
@@ -348,7 +343,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </div>
       )}
 
-      {/* ── Revoked keys ── */}
       {revokedKeys.length > 0 && (
         <Collapsible open={revokedOpen} onOpenChange={setRevokedOpen}>
           <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer py-1 group">
@@ -368,13 +362,11 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </Collapsible>
       )}
 
-      {/* ── Key update errors ── */}
       {updateScopesMutation.error && (
         <p className="text-sm text-destructive">Failed to update key scopes. Please try again.</p>
       )}
       {revokeMutation.error && <p className="text-sm text-destructive">Failed to revoke key. Please try again.</p>}
 
-      {/* ── Edit scopes dialog ── */}
       <AlertDialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -403,7 +395,6 @@ export function UserApiKeysSection({ workspaceId }: UserApiKeysSectionProps) {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Revoke confirmation dialog ── */}
       <AlertDialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>

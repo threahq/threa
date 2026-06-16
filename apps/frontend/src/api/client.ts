@@ -1,4 +1,3 @@
-// API Error class with structured error information
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -15,8 +14,7 @@ export class ApiError extends Error {
   }
 }
 
-// Response type for error responses.
-// Canonical shape emitted by the backend's `errorHandler` middleware
+// Canonical error shape emitted by the backend's `errorHandler` middleware
 // (packages/backend-common/src/middleware/error-handler.ts) and matched by
 // inline handler responses: `{ error: "<message>", code?: "<CODE>" }`.
 interface ErrorResponse {
@@ -56,7 +54,6 @@ const DEFAULT_TIMEOUT_MS = 20000
 
 export type ApiRequestInit = RequestInit & { timeoutMs?: number }
 
-// Base fetch wrapper with error handling
 async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: callerSignal, ...init } = options
 
@@ -77,7 +74,7 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
   try {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      credentials: "include", // Include cookies for auth
+      credentials: "include",
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
@@ -98,7 +95,6 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
     if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort)
   }
 
-  // Handle non-JSON responses (like 204 No Content)
   if (response.status === 204) {
     return undefined as T
   }
@@ -107,9 +103,8 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
     throw await parseApiError(response)
   }
 
-  // Parse JSON success body. A malformed payload here is its own failure
-  // mode (server lied about content-type), distinct from an error
-  // response, so use a dedicated code so callers can tell them apart.
+  // A malformed success payload (server lied about content-type) is a distinct
+  // failure mode from an error response, so it gets its own code.
   try {
     return (await response.json()) as T
   } catch {
@@ -117,7 +112,6 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
   }
 }
 
-// HTTP method helpers
 export const api = {
   get<T>(path: string, options?: ApiRequestInit): Promise<T> {
     return apiFetch<T>(path, { ...options, method: "GET" })
@@ -152,5 +146,4 @@ export const api = {
   },
 }
 
-// Re-export for convenience
 export default api

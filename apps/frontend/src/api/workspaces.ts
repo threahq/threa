@@ -150,7 +150,6 @@ export const workspacesApi = {
     return res.user
   },
 
-  // User-scoped API keys
   async listUserApiKeys(workspaceId: string): Promise<UserApiKey[]> {
     const res = await api.get<{ keys: UserApiKey[] }>(`/api/workspaces/${workspaceId}/user-api-keys`)
     return res.keys

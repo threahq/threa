@@ -1,9 +1,8 @@
 /**
  * Linear OAuth 2.0 helpers.
  *
- * We use `authorization_code` with `actor=app`: an admin in the Threa workspace
- * authorizes once, and the tokens represent our app across all public teams in
- * the Linear workspace. Tokens are 24 h with refresh tokens.
+ * `authorization_code` with `actor=app`: a workspace admin authorizes once and
+ * the tokens represent the app across all public teams. 24 h tokens with refresh.
  *
  * Docs: https://linear.app/developers/oauth-2-0-authentication
  */
@@ -13,15 +12,9 @@ const TOKEN_URL = "https://api.linear.app/oauth/token"
 const REVOKE_URL = "https://api.linear.app/oauth/revoke"
 
 /**
- * Scopes we request.
- *
- * - `read`: fetch issues, comments, projects, documents.
- * - `app:assignable` / `app:mentionable`: future-proofing for agent surfaces
- *   (users can @mention and delegate to the app). Requested now so we don't
- *   need a re-consent flow later.
- *
- * `admin` is intentionally omitted: it conflicts with `actor=app` and we don't
- * need webhook management in v1.
+ * `app:assignable` / `app:mentionable` are requested up front to avoid a
+ * re-consent flow when agent surfaces ship. `admin` is omitted because it
+ * conflicts with `actor=app`.
  */
 export const LINEAR_OAUTH_SCOPES = ["read", "app:assignable", "app:mentionable"] as const
 export const LINEAR_OAUTH_SCOPE_STRING = LINEAR_OAUTH_SCOPES.join(",")
@@ -148,7 +141,6 @@ async function postOAuthToken(
   }
 }
 
-/** Convert `expires_in` (seconds) to an ISO timestamp. */
 export function expiresAtFromNow(expiresInSeconds: number, nowMs = Date.now()): string {
   return new Date(nowMs + expiresInSeconds * 1000).toISOString()
 }

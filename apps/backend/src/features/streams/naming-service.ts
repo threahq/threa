@@ -27,14 +27,9 @@ export class StreamNamingService {
   ) {}
 
   /**
-   * Generate a name for a conversation given formatted text.
-   * This is the pure naming logic without database integration.
-   * Used by attemptAutoNaming() and can be called directly for testing.
+   * Pure naming logic without database integration.
    *
-   * @param conversationText Formatted conversation text
-   * @param existingNames Names to avoid duplicating
    * @param requireName If true, NOT_ENOUGH_CONTEXT throws instead of returning null
-   * @param context Optional context for cost tracking
    */
   async generateName(
     conversationText: string,
@@ -68,7 +63,6 @@ export class StreamNamingService {
       return { name: null, notEnoughContext: true }
     }
 
-    // Clean up the response (remove quotes, trim)
     const cleanName = rawName.replace(/^["']|["']$/g, "").trim()
 
     if (cleanName.length === 0 || cleanName.length > 100) {
@@ -82,28 +76,19 @@ export class StreamNamingService {
   }
 
   /**
-   * Attempts to auto-generate a display name for a stream.
-   * Called after each message is created in scratchpads/threads.
+   * Auto-generate a display name for a stream after a message is created.
    *
-   * IMPORTANT: This method uses the three-phase pattern (INV-41) to avoid holding
-   * database connections during slow operations:
-   *
-   * Phase 1: Fetch all data (stream, messages, attachments, names) with withClient (~100-200ms)
-   * Await: Poll for image processing completion with no connection held (0-60s)
-   * Fetch extractions: Quick read of extraction data after processing completes (~50ms)
-   * Phase 2: AI call with no database connection held (1-5+ seconds)
-   * Phase 3: Save result with withTransaction, re-checking stream state (~100ms)
-   *
-   * The re-check in Phase 3 handles the race condition where another process
-   * names the stream while we're generating. This wastes one AI call but prevents
-   * pool exhaustion from holding connections during AI operations.
+   * Uses the three-phase pattern (INV-41) to avoid holding DB connections during
+   * the slow AI call: fetch data, run the AI call with no connection held, then
+   * save in one transaction. Phase 3 re-checks under a row lock because another
+   * process may name the stream while we generate — that wastes one AI call but
+   * prevents pool exhaustion from holding connections across AI operations.
    *
    * @param requireName If true, must generate a name (throws if NOT_ENOUGH_CONTEXT).
-   *                    Set to true for agent messages, false for user messages.
    * @returns true if a name was successfully generated and saved.
    */
   async attemptAutoNaming(streamId: string, requireName: boolean): Promise<boolean> {
-    // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms)
+    // Phase 1: fetch all data with withClient (no transaction)
     const fetchedData = await withClient(this.pool, async (client) => {
       const stream = await StreamRepository.findById(client, streamId)
       if (!stream) {
@@ -114,7 +99,6 @@ export class StreamNamingService {
         return { stream: null, messages: [], otherStreams: [], attachmentIds: [] }
       }
 
-      // Fetch recent messages to build context
       const messages = await MessageRepository.list(client, streamId, {
         limit: MAX_MESSAGES_FOR_NAMING,
       })
@@ -123,14 +107,12 @@ export class StreamNamingService {
         return { stream: null, messages: [], otherStreams: [], attachmentIds: [] }
       }
 
-      // Fetch existing stream names to avoid duplicates
+      // Existing names in the workspace are passed to the prompt to avoid duplicates
       const otherStreams = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
 
-      // Fetch attachments for these messages (to get IDs for awaiting processing)
       const messageIds = messages.map((m) => m.id)
       const attachmentsByMessage = await AttachmentRepository.findByMessageIds(client, messageIds)
 
-      // Collect all attachment IDs
       const attachmentIds: string[] = []
       for (const attachments of attachmentsByMessage.values()) {
         for (const a of attachments) {
@@ -141,15 +123,14 @@ export class StreamNamingService {
       return { stream, messages, otherStreams, attachmentIds }
     })
 
-    // Early exit if nothing to do
     if (!fetchedData.stream) {
       return false
     }
 
     const { stream, messages, otherStreams, attachmentIds } = fetchedData
 
-    // Await attachment processing (no connection held - polling releases between checks)
-    // This ensures attachment extractions are available before we format the conversation
+    // Await attachment processing (no connection held) so extractions are
+    // available before formatting the conversation
     if (attachmentIds.length > 0) {
       logger.debug(
         { streamId, attachmentCount: attachmentIds.length },
@@ -166,7 +147,7 @@ export class StreamNamingService {
       )
     }
 
-    // Fetch attachments with extractions (quick read, uses pool directly per INV-30)
+    // Uses pool directly per INV-30 (single-query path)
     const messageIds = messages.map((m) => m.id)
     let attachmentsByMessageId: Map<string, AttachmentWithExtraction[]>
     if (attachmentIds.length > 0) {
@@ -175,7 +156,6 @@ export class StreamNamingService {
       attachmentsByMessageId = new Map()
     }
 
-    // Format messages with attachment extractions (quick read for author names)
     const conversationText = await this.messageFormatter.formatMessagesWithAttachments(
       this.pool,
       stream.workspaceId,
@@ -183,13 +163,12 @@ export class StreamNamingService {
       attachmentsByMessageId
     )
 
-    // Phase 2: AI processing (no connection held, 1-5+ seconds!)
+    // Phase 2: AI call, no connection held
     const existingNames = otherStreams
       .filter((s) => s.displayName && s.id !== streamId)
       .slice(0, MAX_EXISTING_NAMES)
       .map((s) => s.displayName!)
 
-    // Call LLM via generateName() (1-5+ seconds, no DB connection held!)
     let result: GenerateNameResult
     try {
       result = await this.generateName(conversationText, existingNames, requireName, {
@@ -207,29 +186,25 @@ export class StreamNamingService {
 
     const cleanName = result.name
 
-    // Phase 3: Save result in ONE transaction (fast, ~100ms)
-    // Re-check that stream still needs naming (another process may have named it)
+    // Phase 3: save in one transaction, re-checking under a row lock that the
+    // stream still needs naming (another process may have named it meanwhile)
     return withTransaction(this.pool, async (client) => {
-      // Lock the stream row to ensure atomicity
       const currentStream = await StreamRepository.findByIdForUpdate(client, streamId)
       if (!currentStream) {
         logger.debug({ streamId }, "Stream disappeared during naming, skipping")
         return false
       }
 
-      // Re-check: another process might have named it while we were generating
       if (!needsAutoNaming(currentStream)) {
         logger.debug({ streamId }, "Stream was named by another process, skipping")
         return false
       }
 
-      // Update the stream with the generated name
       await StreamRepository.update(client, streamId, {
         displayName: cleanName,
         displayNameGeneratedAt: new Date(),
       })
 
-      // Emit to outbox for real-time delivery
       await OutboxRepository.insert(client, "stream:display_name_updated", {
         workspaceId: stream.workspaceId,
         streamId,

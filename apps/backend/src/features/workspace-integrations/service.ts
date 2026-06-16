@@ -185,12 +185,10 @@ export class WorkspaceIntegrationService {
   }
 
   /**
-   * The tool-privacy categories whose backing tools are actually available in
-   * this workspace, for the per-stream tool-policy UI to show only relevant
-   * toggles. `web` and `workspace` primitives are always present; `github` /
-   * `linear` only when their integration is enabled for the deployment AND
-   * connected (active) for the workspace. `messaging` is omitted — it is always
-   * allowed and never offered as a toggle.
+   * Tool-privacy categories whose backing tools are actually available in this
+   * workspace. `web`/`workspace` are always present; `github`/`linear` only when
+   * enabled for the deployment AND active for the workspace. `messaging` is
+   * omitted — always allowed, never offered as a toggle.
    */
   async getAvailableToolCategories(workspaceId: string): Promise<ToolPrivacyCategory[]> {
     // GitHub and Linear are independent lookups — fan them out so they don't
@@ -644,8 +642,6 @@ export class WorkspaceIntegrationService {
     this.requireGitHubEnabled()
     return this.app!.octokit
   }
-
-  // ── Linear ────────────────────────────────────────────────────────────
 
   async getLinearIntegration(workspaceId: string): Promise<LinearWorkspaceIntegration | null> {
     const record = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(

@@ -67,17 +67,14 @@ export function DocumentEditorModal({
   const wasOpenRef = useRef(false)
   const [linkEditorOpen, setLinkEditorOpen] = useState(false)
 
-  // Mention, channel, and emoji autocomplete
   const { mentionables } = useMentionables()
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion()
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
 
-  // Emoji autocomplete
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
-  // Create lookup for mention types from mentionables
   const getMentionType = useMemo<MentionTypeLookup>(() => {
     const slugToType = new Map<string, "user" | "persona" | "bot" | "broadcast" | "me">()
     for (const m of mentionables) {
@@ -215,10 +212,8 @@ export function DocumentEditorModal({
     },
   })
 
-  // Store editor ref for accessing inside callbacks
   editorRef.current = editor
 
-  // Handle send
   const handleSubmit = useCallback(() => {
     if (!editorRef.current) return
     const markdown = serializeToMarkdown(editorRef.current.getJSON())
@@ -228,7 +223,6 @@ export function DocumentEditorModal({
     }
   }, [onSend, onOpenChange])
 
-  // Handle dismiss (sync content back to parent)
   const handleDismiss = useCallback(() => {
     if (editorRef.current && onDismiss) {
       const markdown = serializeToMarkdown(editorRef.current.getJSON())
@@ -237,7 +231,6 @@ export function DocumentEditorModal({
     onOpenChange(false)
   }, [onDismiss, onOpenChange])
 
-  // Update submit ref for keyboard shortcut
   handleSubmitRef.current = handleSubmit
 
   // Reset content only when dialog transitions from closed to open
@@ -261,7 +254,6 @@ export function DocumentEditorModal({
     selector: (ctx) => !ctx.editor || ctx.editor.isEmpty,
   })
 
-  // Handle dialog close events (escape, click outside) - sync content
   const handleOpenChange = useCallback(
     (newOpen: boolean) => {
       if (!newOpen) {
@@ -287,17 +279,14 @@ export function DocumentEditorModal({
           }
         }}
       >
-        {/* Header */}
         <ResponsiveDialogHeader className="px-4 py-3 border-b">
           <ResponsiveDialogTitle className="text-base font-medium">
             Message in <span className="text-primary">{streamName}</span>
           </ResponsiveDialogTitle>
         </ResponsiveDialogHeader>
 
-        {/* Toolbar - fixed position, not floating */}
         <TooltipProvider delayDuration={300}>
           <div className="flex items-center gap-0.5 px-4 py-2 border-b bg-muted/30 overflow-x-auto">
-            {/* Heading buttons */}
             <ToolbarButton
               onAction={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
               icon={Heading1}
@@ -319,7 +308,6 @@ export function DocumentEditorModal({
 
             <Separator orientation="vertical" className="mx-1 h-6" />
 
-            {/* Inline formatting */}
             <ToolbarButton
               onAction={() => editor?.chain().focus().toggleBold().run()}
               icon={Bold}
@@ -357,7 +345,6 @@ export function DocumentEditorModal({
 
             <Separator orientation="vertical" className="mx-1 h-6" />
 
-            {/* Block formatting */}
             <ToolbarButton
               onAction={() => editor && toggleMultilineBlock(editor, "blockquote")}
               icon={Quote}
@@ -385,7 +372,6 @@ export function DocumentEditorModal({
             />
           </div>
 
-          {/* Link editor - inline below toolbar when open */}
           {linkEditorOpen && editor && (
             <LinkEditor
               editor={editor}
@@ -398,7 +384,6 @@ export function DocumentEditorModal({
           )}
         </TooltipProvider>
 
-        {/* Editor body */}
         <div
           ref={containerRef}
           className="flex-1 overflow-hidden cursor-text"
@@ -410,7 +395,6 @@ export function DocumentEditorModal({
           {renderEmojiGrid()}
         </div>
 
-        {/* Footer */}
         <ResponsiveDialogFooter className="px-4 py-3 border-t flex-row items-center">
           <span className="hidden sm:inline text-xs text-muted-foreground">
             <kbd className="kbd-hint">{navigator.platform?.includes("Mac") ? "⌘" : "Ctrl+"}↵</kbd> to send

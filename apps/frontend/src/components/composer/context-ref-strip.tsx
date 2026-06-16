@@ -11,10 +11,8 @@ interface ContextRefStripProps {
   streamId: string
   /**
    * Sidecar refs from the live draft. The strip renders only when this list
-   * is non-empty — once the user sends their first message and the draft is
-   * cleared, the strip disappears and the chip "moves" into the timeline as
-   * a `<MessageContextBadge>` on the first message (matches the
-   * attachment-on-message UX every other chat app uses).
+   * is non-empty — once the draft is cleared on first send, the chip moves
+   * into the timeline as a `<MessageContextBadge>` on the first message.
    */
   draftRefs?: DraftContextRef[]
 }
@@ -49,16 +47,10 @@ function refKey(r: {
 /**
  * Inline strip rendered above the composer for any context refs attached
  * to the active draft. Uses the same `<AttachmentPill>` primitive as
- * `<PendingAttachments>` so context refs and uploaded files read as one
- * type of "thing attached to this message."
- *
- * Renders nothing when the draft has no refs — the post-send case where
- * the chip migrates to the timeline as `<MessageContextBadge>` on the
- * first message is intentionally separate.
- *
- * Each pill is a `<Link>` to the source thread, deep-linked to the
- * specific message when `fromMessageId` is set, so users can jump back to
- * "where this discussion came from" with a single click.
+ * `<PendingAttachments>` so context refs and uploaded files read alike.
+ * Renders nothing when the draft has no refs. Each pill links to the
+ * source thread, deep-linked to a specific message when `fromMessageId`
+ * is set.
  */
 export function ContextRefStrip({ workspaceId, streamId, draftRefs }: ContextRefStripProps) {
   const hasDraftRefs = Boolean(draftRefs && draftRefs.length > 0)

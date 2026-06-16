@@ -1,11 +1,9 @@
-// Handlers
 export { createStreamHandlers } from "./handlers"
 
-// Service
 export { StreamService } from "./service"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
-// Access (canonical "can this user read this stream?" check — INV-8)
+// Canonical "can this user read this stream?" check (INV-8)
 export {
   checkStreamAccess,
   listAccessibleStreamIds,
@@ -14,7 +12,6 @@ export {
   streamAccessPredicateSql,
 } from "./access"
 
-// Naming
 export { StreamNamingService } from "./naming-service"
 export type { GenerateNameResult } from "./naming-service"
 export { StubStreamNamingService } from "./naming-service.stub"
@@ -23,7 +20,6 @@ export type { StreamNamingServiceLike, NamingWorkerDeps } from "./naming-worker"
 export { NamingHandler } from "./naming-outbox-handler"
 export type { NamingHandlerConfig } from "./naming-outbox-handler"
 
-// Naming config (INV-44)
 export {
   STREAM_NAMING_MODEL_ID,
   STREAM_NAMING_TEMPERATURE,
@@ -32,14 +28,11 @@ export {
   buildNamingSystemPrompt,
 } from "./naming-config"
 
-// Notification config (INV-44)
 export { NOTIFICATION_CONFIG, isAllowedLevel, getDefaultLevel, getEffectiveLevel } from "./notification-config"
 
-// Notification resolver
 export { resolveNotificationLevelsForStream } from "./notification-resolver"
 export type { ResolvedNotification } from "./notification-resolver"
 
-// Repositories
 export { StreamRepository } from "./repository"
 export type {
   Stream,
@@ -68,6 +61,5 @@ export type { MemoStreamState, StreamReadyToProcess } from "./state-repository"
 
 export { StreamPoliciesRepository } from "./policy-repository"
 
-// Display name utilities
 export { getEffectiveDisplayName, formatParticipantNames, needsAutoNaming } from "./display-name"
 export type { DisplayNameSource, DisplayNameContext, EffectiveDisplayName } from "./display-name"

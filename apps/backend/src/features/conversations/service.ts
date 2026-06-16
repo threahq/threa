@@ -65,7 +65,6 @@ export class ConversationService {
 
       const messagesMap = await MessageRepository.findByIds(client, conversation.messageIds)
 
-      // Return messages in the order they appear in the conversation
       return conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => m !== undefined)
     })
   }

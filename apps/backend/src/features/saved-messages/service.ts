@@ -376,9 +376,7 @@ export class SavedMessagesService {
  * queue id back onto the saved row's `reminder_queue_message_id` pointer.
  * The insert + retry-on-PK-collision loop lives in `enqueueQueuedJob`; we
  * only do the table-specific write-back here so a later edit can cancel
- * the exact job we enqueued (the previous "swallow and continue" branch was
- * unsafe because it left the saved row pointing at a queue row that belonged
- * to a different job).
+ * the exact job we enqueued.
  */
 async function enqueueReminder(
   client: import("pg").PoolClient,

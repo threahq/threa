@@ -31,10 +31,7 @@ interface Dependencies {
 
 export function createWorkspaceAuthzHandlers({ workspaceAuthzService }: Dependencies) {
   return {
-    /**
-     * POST /internal/authz/memberships
-     * CP fan-out endpoint for membership changes within this region.
-     */
+    /** CP fan-out endpoint for membership changes within this region. */
     async syncMembership(req: Request, res: Response, next: NextFunction) {
       const result = bodySchema.safeParse(req.body)
       if (!result.success) {

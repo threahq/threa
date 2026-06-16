@@ -95,7 +95,6 @@ export async function resolveQuoteReplies(
 
   let depth = 0
   while (frontier.length > 0 && depth < maxDepth && resolved.size < maxTotalResolved) {
-    // Cap the frontier if we're near the total limit
     const remaining = maxTotalResolved - resolved.size
     const toFetch = frontier.length > remaining ? frontier.slice(0, remaining) : frontier
     if (toFetch.length < frontier.length) {
@@ -106,7 +105,6 @@ export async function resolveQuoteReplies(
 
     const fetched = await MessageRepository.findByIdsInStreams(db, toFetch, streamIdsArray)
 
-    // Log not_accessible / not_found for anything we asked for but didn't get
     for (const requestedId of toFetch) {
       if (!fetched.has(requestedId)) {
         logger.debug(
@@ -141,7 +139,6 @@ export async function resolveQuoteReplies(
     }
   }
 
-  // Batch-resolve author names for every resolved precursor
   const authorNames = await resolveAuthorNamesForMessages(db, workspaceId, [...resolved.values()])
 
   return { resolved, authorNames }
@@ -216,10 +213,6 @@ export function extractAppendedQuoteContext(rendered: string, base: string): str
   const tail = rendered.slice(base.length)
   return tail.startsWith("\n\n") ? tail.slice(2) : tail
 }
-
-// ============================================================================
-// Internals
-// ============================================================================
 
 function extractQuoteReplyMessageIds(content: JSONContent): string[] {
   const ids: string[] = []

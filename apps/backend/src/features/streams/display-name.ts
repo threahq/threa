@@ -13,12 +13,7 @@ export interface EffectiveDisplayName {
   source: DisplayNameSource
 }
 
-/**
- * Computes the effective display name for a stream based on its type:
- * - Channel: use slug directly
- * - DM: format participant names
- * - Scratchpad/Thread: use generated name or placeholder
- */
+/** Computes the effective display name for a stream based on its type. */
 export function getEffectiveDisplayName(stream: Stream, context?: DisplayNameContext): EffectiveDisplayName {
   switch (stream.type) {
     case "channel":
@@ -46,7 +41,6 @@ export function getEffectiveDisplayName(stream: Stream, context?: DisplayNameCon
           source: "generated",
         }
       }
-      // Placeholder for threads without a generated name
       if (context?.parentStream) {
         const parentName = context.parentStream.slug ?? context.parentStream.displayName ?? "channel"
         return {
@@ -93,12 +87,7 @@ export function formatParticipantNames(participants: { id: string; name: string 
   return participants[0]?.name ?? "Direct message"
 }
 
-/**
- * Checks whether a stream needs auto-naming.
- * Returns true if:
- * - Stream is a scratchpad or thread
- * - Display name is not set (neither manually nor generated)
- */
+/** True only for scratchpads/threads that have no display name yet. */
 export function needsAutoNaming(stream: Stream): boolean {
   if (stream.type !== "scratchpad" && stream.type !== "thread") {
     return false

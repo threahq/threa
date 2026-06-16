@@ -131,7 +131,6 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       for (const file of files) {
         const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
-        // Add as uploading
         updatePendingAttachments((prev) => [
           ...prev,
           {
@@ -146,12 +145,10 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         try {
           const facts = await uploadOne(file)
 
-          // Replace temp with real attachment
           updatePendingAttachments((prev) =>
             prev.map((a) => (a.id === tempId ? { ...facts, status: "uploaded" as const } : a))
           )
         } catch (err) {
-          // Mark as error
           updatePendingAttachments((prev) =>
             prev.map((a) =>
               a.id === tempId
@@ -179,8 +176,8 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       const isImage = file.type.startsWith("image/")
       let assignedImageIndex: number | null = null
 
-      // Assign image index immediately if it's an image
-      // Use ref for synchronous access, then update state
+      // Assign the image index off the synchronous ref, not state, so back-to-back
+      // uploads in one tick get distinct sequential indices.
       if (isImage) {
         assignedImageIndex = imageCountRef.current + 1
         imageCountRef.current = assignedImageIndex
@@ -195,7 +192,6 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         status: "uploading",
       }
 
-      // Add as uploading
       updatePendingAttachments((prev) => [...prev, pendingAttachment])
 
       try {
@@ -206,7 +202,6 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
           status: "uploaded",
         }
 
-        // Replace temp with real attachment
         updatePendingAttachments((prev) => prev.map((a) => (a.id === tempId ? uploadedAttachment : a)))
 
         return {
@@ -221,7 +216,6 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
           error: err instanceof Error ? err.message : "Upload failed",
         }
 
-        // Mark as error
         updatePendingAttachments((prev) => prev.map((a) => (a.id === tempId ? errorAttachment : a)))
 
         return {
@@ -239,10 +233,8 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       const attachment = pendingAttachmentsRef.current.find((a) => a.id === attachmentId)
       if (!attachment) return
 
-      // Remove from UI immediately
       updatePendingAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
 
-      // If it was successfully uploaded, delete from server
       if (attachment.status === "uploaded" && !attachmentId.startsWith("temp_")) {
         try {
           await attachmentsApi.delete(workspaceId, attachmentId)
@@ -269,7 +261,6 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       }))
       pendingAttachmentsRef.current = restoredAttachments
       setPendingAttachments(restoredAttachments)
-      // Count images for proper numbering
       const restoredImageCount = attachments.filter((a) => a.mimeType.startsWith("image/")).length
       setImageCount(restoredImageCount)
       imageCountRef.current = restoredImageCount

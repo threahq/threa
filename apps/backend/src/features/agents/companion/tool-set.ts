@@ -113,13 +113,11 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
       : null,
 
-    // Web tools
     tavilyApiKey && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
       ? createWebSearchTool({ tavilyApiKey, currentTime, timezone })
       : null,
     isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision }) : null,
 
-    // Workspace search tools
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_MESSAGES)
       ? createSearchMessagesTool(workspace)
       : null,
@@ -129,7 +127,6 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createGetStreamMessagesTool(workspace)
       : null,
 
-    // Attachment tools
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_ATTACHMENTS)
       ? createSearchAttachmentsTool(workspace)
       : null,

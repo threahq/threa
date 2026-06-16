@@ -59,7 +59,6 @@ const resolveEffectiveStreamAdapter: ResolveEffectiveStream = async (db, source)
   }
 }
 
-// Event payloads
 export interface MessageCreatedPayload {
   messageId: string
   contentJson: JSONContent
@@ -113,10 +112,6 @@ export interface ThreadCreatedPayload {
   parentMessageId: string
 }
 
-// `MovedMessagePreview` and `MessagesMovedEventPayload` are wire types
-// shared with the frontend — see `packages/types/src/api.ts`.
-
-// Service params
 export interface CreateMessageParams {
   workspaceId: string
   streamId: string
@@ -273,11 +268,8 @@ const MOVED_MESSAGE_PREVIEW_CHAR_CAP = 200
 
 function capMovedPreview(content: string): string {
   if (content.length <= MOVED_MESSAGE_PREVIEW_CHAR_CAP) return content
-  // Iterate by code points so emoji and other non-BMP characters don't get
-  // split into a lone surrogate at the truncation boundary. `Array.from`
-  // on a string yields one entry per code point, which is what we want
-  // for "200 user-perceived characters" (close enough — grapheme clusters
-  // would be ideal but cost more for very little user benefit here).
+  // Iterate by code points so non-BMP characters aren't split into a lone
+  // surrogate at the truncation boundary.
   const codePoints = Array.from(content)
   if (codePoints.length <= MOVED_MESSAGE_PREVIEW_CHAR_CAP) return content
   return `${codePoints.slice(0, MOVED_MESSAGE_PREVIEW_CHAR_CAP).join("")}…`
@@ -423,8 +415,7 @@ export class EventService {
   }
 
   async createMessageInTransaction(client: PoolClient, params: CreateMessageParams): Promise<Message> {
-    // Fast path: if a message with this clientMessageId already exists,
-    // return it without doing any writes. Handles sequential retries.
+    // Fast path for sequential retries: return the existing message without writes.
     if (params.clientMessageId) {
       const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
       if (existing) return existing
@@ -436,17 +427,13 @@ export class EventService {
     const msgId = params.id ?? messageId()
     const evtId = eventId()
 
-    // 0. Get stream for thread handling (metrics deferred until after conflict check)
     const stream = await StreamRepository.findById(client, params.streamId)
 
-    // INV-E1 enforced at the write sink (E2EE-5): an E2E stream stores only
-    // ciphertext, and a plaintext stream never carries an E2E envelope. The
-    // messaging create handler checks this too (with caller-friendly copy off
-    // the resolved stream), but the sink is the backstop so no other caller —
-    // the scheduled-message worker, public-API bot-invocation completion, any
-    // future adapter — can persist plaintext into a sealed stream. `findById`
-    // already LEFT JOINs `e2e_streams`, so this reads `e2eEnabled` off the row
-    // we just loaded rather than issuing a second SELECT.
+    // INV-E1 backstop at the write sink: an E2E stream stores only ciphertext, a
+    // plaintext stream never carries an E2E envelope. The create handler checks
+    // this too, but the sink covers every other caller (scheduled-message worker,
+    // public-API bot completion). `findById` already LEFT JOINs `e2e_streams`, so
+    // `e2eEnabled` reads off the loaded row without a second SELECT.
     assertE2eContentMatch({
       streamIsE2e: stream?.e2eEnabled === true,
       ciphertext: params.ciphertext,
@@ -454,23 +441,14 @@ export class EventService {
       e2eVersion: params.e2eVersion,
     })
 
-    // 1. Validate and prepare attachments FIRST (before creating event).
-    //    Two flavors are allowed:
-    //    - "new" (`messageId === null`): a fresh upload owned by this send.
-    //      The attachment row gets its `message_id` / `stream_id` set in
-    //      step 6 via `attachToMessage`, anchoring ownership to this message.
-    //    - "referenced" (`messageId !== null`): the message body re-uses an
-    //      attachment that already belongs to a previous message — typical
-    //      after copy-paste of a message containing `[Image #1](attachment:id)`.
-    //      Ownership stays with the original message; an
-    //      `attachment_references` row in step 6b records the pointer so
-    //      recipients of the new message can resolve download access via the
-    //      same workspace/stream gate that already covers shared messages.
-    //
-    //    Verifying the author can read the referenced attachment closes the
-    //    obvious abuse — submitting an arbitrary id from someone else's
-    //    workspace would otherwise bypass `getDownloadUrl`'s access check by
-    //    being silently summarised on the wire.
+    // Validate attachments before creating the event. Two flavors:
+    // - "new" (`messageId === null`): fresh upload, ownership anchored to this
+    //   message via `attachToMessage` below.
+    // - "referenced" (`messageId !== null`): body re-uses an attachment owned by
+    //   a previous message; ownership stays put and an `attachment_references`
+    //   row records the pointer.
+    // Verifying the author can read a referenced attachment closes the abuse of
+    // submitting an arbitrary id to get it silently summarised on the wire.
     let attachmentSummaries: AttachmentSummary[] | undefined
     const attachmentsToAttach: string[] = []
     const attachmentsToReference: string[] = []
@@ -492,23 +470,12 @@ export class EventService {
           attachmentsToAttach.push(a.id)
           continue
         }
-        // Referenced from another message — gate on the author's ability
-        // to read it via the same chain `getDownloadUrl` honours so the
-        // two paths can never disagree. Direct stream access first; the
-        // shared helper covers the share-grant + inline-reference fallback.
-        //
-        // Two flavors:
-        // 1. User authors (no `accessibleStreamIds` provided): membership
-        //    lookups keyed by `authorId`, including the share-grant fallback.
-        // 2. Persona authors (`accessibleStreamIds` provided): mirrors
-        //    `AttachmentService.getAccessible` exactly — direct set
-        //    membership, then reference-projection intersection.
-        //    `accessibleStreamIds` comes from `AgentAccessSpec` and is
-        //    scope-restricted (from a public channel only public streams,
-        //    from a private channel only that channel + public, etc.) —
-        //    NOT the invoking user's full reach. Bypassing it with a
-        //    user-id check would let agents resurface attachments the
-        //    user couldn't surface from this invocation point.
+        // Gate on the author's read access via the same chain `getDownloadUrl`
+        // honours so the two paths can never disagree. User authors use
+        // membership lookups keyed by `authorId`; persona authors pass
+        // `accessibleStreamIds` from `AgentAccessSpec`, which is scope-restricted
+        // (NOT the invoking user's full reach) — bypassing it with a user-id check
+        // would let agents resurface attachments the user couldn't surface here.
         let accessible = false
         if (params.accessibleStreamIds) {
           const accessibleSet = new Set(params.accessibleStreamIds)
@@ -542,7 +509,6 @@ export class EventService {
     // Non-empty metadata only — keep payloads and projections clean of `{}`.
     const metadata = params.metadata && Object.keys(params.metadata).length > 0 ? params.metadata : undefined
 
-    // 2. Append event (source of truth) - includes attachments and sources in payload
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
       streamId: params.streamId,
@@ -565,7 +531,6 @@ export class EventService {
       actorType: params.authorType,
     })
 
-    // 3. Update projection
     const message = await MessageRepository.insert(client, {
       id: msgId,
       streamId: params.streamId,
@@ -598,24 +563,20 @@ export class EventService {
       author_type: params.authorType,
     })
 
-    // 4. Update author's read position to include their own message
-    // This ensures the sender's own message is never counted as unread
+    // Advance the author's read position so their own message isn't counted unread.
     if (params.authorType === "user") {
       await StreamMemberRepository.update(client, params.streamId, params.authorId, {
         lastReadEventId: evtId,
       })
     }
 
-    // 5. Record persona participation (idempotent)
     if (params.authorType === "persona") {
       await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
     }
 
-    // 6. Link first-time attachments to this message (also sets streamId).
-    //    Re-referenced attachments deliberately skip this step — their
-    //    `message_id`/`stream_id` already point at the original owner and
-    //    overwriting that would orphan the original `attachment:` link in
-    //    other messages.
+    // Link first-time attachments to this message (also sets streamId).
+    // Re-referenced attachments skip this: overwriting their owning
+    // `message_id`/`stream_id` would orphan the original `attachment:` link.
     if (attachmentsToAttach.length > 0) {
       const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
       if (attached !== attachmentsToAttach.length) {
@@ -623,10 +584,9 @@ export class EventService {
       }
     }
 
-    // 6b. Record an attachment_references row for every attachment in this
-    //     message — both newly-attached and re-referenced. Lookups for
-    //     "is this attachment visible to a viewer of stream X?" can then
-    //     consult one index without caring about original ownership.
+    // Record an attachment_references row for every attachment (newly-attached
+    // and re-referenced) so "is this visible to a viewer of stream X?" lookups
+    // consult one index regardless of original ownership.
     const attachmentReferenceIds = [...attachmentsToAttach, ...attachmentsToReference]
     if (attachmentReferenceIds.length > 0) {
       await AttachmentReferenceRepository.insertMany(
@@ -641,10 +601,9 @@ export class EventService {
       )
     }
 
-    // 7. Validate and record any cross-stream share references carried in
-    //    contentJson. Runs inside the transaction so the shared_messages
-    //    access-projection is committed atomically with the event + projection
-    //    (INV-7). No-op for messages without cross-stream share nodes.
+    // Validate and record cross-stream share references in contentJson, inside
+    // the transaction so the shared_messages access-projection commits atomically
+    // with the event + projection (INV-7).
     await ShareService.validateAndRecordShares({
       client,
       workspaceId: params.workspaceId,
@@ -663,20 +622,17 @@ export class EventService {
       confirmedPrivacyWarning: params.confirmedPrivacyWarning,
     })
 
-    // 8. Publish to outbox for real-time delivery
     await OutboxRepository.insert(client, "message:created", {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       event: serializeBigInt(event),
     })
 
-    // 9. Publish stream activity for sidebar updates
-    // Stream-scoped: only members of this stream receive the preview content.
-    // sequence/messageOrdinal are absolute stream facts (sync phase 2c):
-    // clients derive unread as latestOrdinal - lastReadOrdinal instead of
-    // incrementing, so replayed/duplicated events converge. Exact under
-    // concurrency: the sequence allocator's row lock serializes message
-    // inserts per stream until commit.
+    // Stream activity for sidebar updates. sequence/messageOrdinal are absolute
+    // stream facts: clients derive unread as latestOrdinal - lastReadOrdinal
+    // rather than incrementing, so replayed/duplicated events converge. Exact
+    // under concurrency because the sequence allocator's row lock serializes
+    // message inserts per stream until commit.
     const messageOrdinal = await StreamEventRepository.countMessagesThrough(client, params.streamId, event.sequence)
     await OutboxRepository.insert(client, "stream:activity", {
       workspaceId: params.workspaceId,
@@ -692,7 +648,6 @@ export class EventService {
       },
     })
 
-    // 10. If this is a thread, update parent message's reply count
     if (stream?.parentMessageId && stream?.parentStreamId) {
       await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
       await this.publishParentThreadUpdate(client, {
@@ -711,12 +666,9 @@ export class EventService {
 
   async editMessage(params: EditMessageParams): Promise<Message | null> {
     return withTransaction(this.pool, async (client) => {
-      // INV-E1 (E2EE-1): there is no sealed-edit path yet, so editing a message
-      // in an E2E stream would overwrite the sealed projection with plaintext,
-      // snapshot a plaintext version row, and broadcast plaintext over
-      // `message:edited`. Refuse loudly at the sink until a ciphertext edit
-      // payload exists; the frontend also hides the Edit affordance for E2E
-      // messages so this never surfaces as a dead button.
+      // INV-E1: no sealed-edit path exists yet, so editing in an E2E stream would
+      // overwrite the sealed projection with plaintext and broadcast it. Refuse
+      // until a ciphertext edit payload exists (the frontend also hides Edit here).
       if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.streamId)) {
         throw new HttpError("Cannot edit a message in an end-to-end-encrypted stream", {
           status: 400,
@@ -733,7 +685,6 @@ export class EventService {
 
       const actorType = await this.resolveActorType(client, params.streamId, params.actorId, params.actorType, existing)
 
-      // 1. Snapshot pre-edit content as a version record
       await MessageVersionRepository.insert(client, {
         id: messageVersionId(),
         messageId: params.messageId,
@@ -742,7 +693,6 @@ export class EventService {
         editedBy: params.actorId,
       })
 
-      // 2. Append event
       const event = await StreamEventRepository.insert(client, {
         id: eventId(),
         streamId: params.streamId,
@@ -756,7 +706,6 @@ export class EventService {
         actorType,
       })
 
-      // 3. Update projection
       const message = await MessageRepository.updateContent(
         client,
         params.messageId,
@@ -765,11 +714,11 @@ export class EventService {
       )
 
       if (message) {
-        // 4. Re-validate share nodes. Same call as createMessage — edits that
-        //    add, remove, or swap share references rewrite the shared_messages
-        //    row set so hydration/authorization reflects the new content.
-        //    Without this, an author could edit in a sharedMessage pointing
-        //    at an arbitrary id and leak its content past the create-time check.
+        // Re-validate share nodes: edits that add, remove, or swap share
+        // references rewrite the shared_messages row set so
+        // hydration/authorization reflects the new content. Without this, an
+        // author could edit in a sharedMessage pointing at an arbitrary id and
+        // leak its content past the create-time check.
         await ShareService.validateAndRecordShares({
           client,
           workspaceId: params.workspaceId,
@@ -788,15 +737,15 @@ export class EventService {
           confirmedPrivacyWarning: params.confirmedPrivacyWarning,
         })
 
-        // 4b. Refresh `attachment_references` projection to match the new
-        //     contentJson (INV-7). Without this, an edit that adds or removes
-        //     an `attachment:` link leaves stale rows behind and download
-        //     authorization stops matching the persisted body. Reference-only
-        //     — fresh uploads aren't supported on edit (a zero-`messageId`
-        //     attachment id will fail the access validation here loudly).
-        //     Full delete-then-insert per edit; the projection is small and
-        //     this lets the helper share its access-check semantics with the
-        //     create path verbatim.
+        // Refresh `attachment_references` projection to match the new
+        // contentJson (INV-7). Without this, an edit that adds or removes an
+        // `attachment:` link leaves stale rows behind and download
+        // authorization stops matching the persisted body. Reference-only —
+        // fresh uploads aren't supported on edit (a zero-`messageId`
+        // attachment id will fail the access validation here loudly).
+        // Full delete-then-insert per edit; the projection is small and this
+        // lets the helper share its access-check semantics with the create
+        // path verbatim.
         const validatedReferenceIds = await this._validateEditAttachmentReferences(client, params)
         await AttachmentReferenceRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
         if (validatedReferenceIds.length > 0) {
@@ -812,7 +761,6 @@ export class EventService {
           )
         }
 
-        // 5. Publish to outbox
         await OutboxRepository.insert(client, "message:edited", {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
@@ -909,7 +857,6 @@ export class EventService {
 
       const actorType = await this.resolveActorType(client, params.streamId, params.actorId, params.actorType, existing)
 
-      // 1. Append event
       await StreamEventRepository.insert(client, {
         id: eventId(),
         streamId: params.streamId,
@@ -921,11 +868,9 @@ export class EventService {
         actorType,
       })
 
-      // 2. Update projection (soft delete)
       const message = await MessageRepository.softDelete(client, params.messageId)
 
       if (message) {
-        // 3. Publish to outbox
         await OutboxRepository.insert(client, "message:deleted", {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
@@ -933,7 +878,6 @@ export class EventService {
           deletedAt: message.deletedAt!.toISOString(),
         })
 
-        // 4. If this is a thread, update parent message's reply count
         const stream = await StreamRepository.findById(client, params.streamId)
         if (stream?.parentMessageId && stream?.parentStreamId) {
           await MessageRepository.decrementReplyCount(client, stream.parentMessageId)
@@ -1440,7 +1384,6 @@ export class EventService {
   async addReaction(params: AddReactionParams): Promise<Message | null> {
     const actorType = params.actorType ?? AuthorTypes.USER
     return withTransaction(this.pool, async (client) => {
-      // 1. Append event
       await StreamEventRepository.insert(client, {
         id: eventId(),
         streamId: params.streamId,
@@ -1454,11 +1397,9 @@ export class EventService {
         actorType,
       })
 
-      // 2. Update projection
       const message = await MessageRepository.addReaction(client, params.messageId, params.emoji, params.userId)
 
       if (message) {
-        // 3. Publish to outbox
         await OutboxRepository.insert(client, "reaction:added", {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
@@ -1476,7 +1417,6 @@ export class EventService {
   async removeReaction(params: RemoveReactionParams): Promise<Message | null> {
     const actorType = params.actorType ?? AuthorTypes.USER
     return withTransaction(this.pool, async (client) => {
-      // 1. Append event
       await StreamEventRepository.insert(client, {
         id: eventId(),
         streamId: params.streamId,
@@ -1490,11 +1430,9 @@ export class EventService {
         actorType,
       })
 
-      // 2. Update projection
       const message = await MessageRepository.removeReaction(client, params.messageId, params.emoji, params.userId)
 
       if (message) {
-        // 3. Publish to outbox
         await OutboxRepository.insert(client, "reaction:removed", {
           workspaceId: params.workspaceId,
           streamId: params.streamId,
@@ -1558,19 +1496,11 @@ export class EventService {
     })
   }
 
-  /**
-   * Get reply counts for multiple messages.
-   * Returns a map of messageId -> replyCount
-   */
   async getReplyCountsBatch(messageIds: string[]): Promise<Map<string, number>> {
     return MessageRepository.getReplyCountsBatch(this.pool, messageIds)
   }
 
-  /**
-   * Count message_created events for multiple streams.
-   * Used to compute reply counts by counting messages in thread streams.
-   * Returns a map of streamId -> message count
-   */
+  /** Count message_created events per stream, used to derive thread reply counts. */
   async countMessagesByStreams(streamIds: string[]): Promise<Map<string, number>> {
     return StreamEventRepository.countMessagesByStreamBatch(this.pool, streamIds)
   }
@@ -1618,9 +1548,8 @@ export class EventService {
     const messageIds = messageCreatedEvents.map((e) => (e.payload as MessageCreatedPayload).messageId)
 
     // Reactions live on the messages projection (not in events), so we must always
-    // fetch when message_created events exist. This replaces an earlier guard that
-    // only fetched on edits/deletes — the extra query is the cost of real-time
-    // reaction enrichment on bootstrap.
+    // fetch when message_created events exist — the extra query is the cost of
+    // real-time reaction enrichment on bootstrap.
     const messagesMap = messageIds.length > 0 ? await this.getMessagesByIds(messageIds) : new Map<string, Message>()
 
     // Event payloads snapshot attachment processingStatus at send time. Video

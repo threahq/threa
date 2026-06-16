@@ -264,7 +264,24 @@ Do not add speculative features, configuration, or comments for imagined require
 
 Delete dead code immediately (INV-38). Do not carry deprecated aliases after renames (INV-49).
 
-Comments explain why the current implementation works; they do not narrate the change history (INV-25).
+Comments explain why the current implementation works; they do not narrate the change history (INV-25). **Default to no comment.** A comment is a liability — it can go stale and then lie, and a stale comment is worse than none because the next reader (human or agent) trusts it. Spend one only when removing it would let a future reader silently break something or waste real time re-deriving intent.
+
+The test a comment must pass to survive: **would it still be true, and still tell the reader something the code itself cannot, six months from now once the diff that introduced it is forgotten?** If not, delete it.
+
+What earns a comment (the "why" the code can't show):
+
+- A non-obvious ordering, concurrency, or atomicity constraint ("append after the deletes so it sorts last").
+- A "this looks wrong but is load-bearing" — a backwards-compat shim, a race guard, a deliberate deviation from the obvious approach.
+- Intent the code genuinely can't express — why a bound is the value it is, why two fields are both optional, a reference to the invariant or external contract that forces the shape.
+
+What to delete on sight:
+
+- **Change narration** — "previously X, now Y", "renamed from", "used to use a loop" — that belongs in the commit message / PR, never in the code.
+- **Restatement** — a comment that says in prose what the next line already says in code. Zero information and the first to rot.
+- **Section-header / decoration** comments that just label the obvious (`// helpers`, `// state`).
+- **Speculative or TODO-for-imagined-requirements** comments (see INV-36).
+
+Comment density is not a navigation aid for agents — code is found by symbol, type, and structure, not by grepping prose. Fewer, load-bearing comments beat many shallow ones.
 
 Avoid nested ternaries beyond one level (INV-47).
 

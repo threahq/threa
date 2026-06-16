@@ -5,9 +5,6 @@ interface MetricsMiddlewareOptions {
   ignoredPaths: string[]
 }
 
-/**
- * Map HTTP status code to error type label.
- */
 function getErrorType(statusCode: number): string {
   if (statusCode < 400) return "-"
   if (statusCode === 401) return "not_authenticated"
@@ -25,10 +22,8 @@ function getErrorType(statusCode: number): string {
  * - With query ?limit=10&offset=0 -> /api/workspaces/:workspaceId/streams?limit&offset
  */
 function getNormalizedPath(req: Request): string {
-  // Use matched route pattern if available, otherwise use URL path
   const basePath = req.route?.path || req.path
 
-  // Append sorted query param names (no values)
   const queryKeys = Object.keys(req.query).sort()
   if (queryKeys.length > 0) {
     return `${basePath}?${queryKeys.join("&")}`
@@ -37,20 +32,10 @@ function getNormalizedPath(req: Request): string {
   return basePath
 }
 
-/**
- * Extract workspaceId from request params or return "-" for routes without workspace context.
- */
 function getWorkspaceId(req: Request): string {
   return (req.params?.workspaceId as string) || "-"
 }
 
-/**
- * HTTP metrics middleware.
- *
- * Tracks:
- * - Active connections (inc on request, dec on response)
- * - Request count and duration with labels for method, path, status, error type, workspace
- */
 export function createMetricsMiddleware(options: MetricsMiddlewareOptions) {
   const ignoredPathSet = new Set(options.ignoredPaths)
 
@@ -62,8 +47,7 @@ export function createMetricsMiddleware(options: MetricsMiddlewareOptions) {
     const startTime = process.hrtime.bigint()
     httpActiveConnections.inc()
 
-    // Intercept response finish to capture metrics
-    // Using 'finish' event instead of overriding res.end to avoid TypeScript overload issues
+    // 'finish' event instead of overriding res.end to avoid TypeScript overload issues
     res.on("finish", () => {
       httpActiveConnections.dec()
 

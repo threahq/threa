@@ -101,7 +101,6 @@ export const StatusFilterExtension = Extension.create<StatusFilterOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as StatusFilterItem
-          // Insert plain text: "status:value "
           editor.chain().focus().deleteRange(range).insertContent(`status:${item.value} `).run()
         },
       }),

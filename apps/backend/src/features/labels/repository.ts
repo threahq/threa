@@ -227,7 +227,6 @@ export const LabelRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  /** Promote a private label to public. Returns the updated label or null. */
   async promoteToPublic(db: Querier, workspaceId: string, labelId: string): Promise<Label | null> {
     const result = await db.query<LabelRow>(sql`
       UPDATE labels SET

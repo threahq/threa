@@ -97,8 +97,7 @@ export function ThreadSlot({ activity, replyCount, threadHref, summary, workspac
           and card (1fr when card, 0fr when pill-only). `grid-template-rows`
           animates in modern browsers (Chrome 111+, Firefox 120+, Safari 17+),
           smoothly extending the slot height on pill → card. Older browsers
-          snap to the final rows without transition, which matches previous
-          behavior. */}
+          snap to the final rows without transition. */}
       <div
         className="grid transition-[grid-template-rows] duration-[450ms] ease-out"
         style={{

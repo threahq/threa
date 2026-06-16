@@ -37,7 +37,6 @@ export function FilterSelect({
 }: FilterSelectProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Handle click outside
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {

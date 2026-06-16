@@ -1,9 +1,6 @@
-// =============================================================================
-// Workspace Settings
-// Workspace-scoped configuration owned by admins. Currently the default working
-// schedule that every member inherits unless they set a personal override.
-// Stored sparsely (only non-default keys persisted) like user preferences.
-// =============================================================================
+// Workspace Settings: workspace-scoped configuration owned by admins. Currently the
+// default working schedule that every member inherits unless they set a personal
+// override. Stored sparsely (only non-default keys persisted) like user preferences.
 
 import { type WorkSchedule, DEFAULT_WORK_SCHEDULE } from "./work-schedule"
 import { type StatusPreset, SYSTEM_DEFAULT_STATUSES } from "./user-status"

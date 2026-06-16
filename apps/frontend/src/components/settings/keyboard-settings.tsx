@@ -91,7 +91,6 @@ function ShortcutRow({
     [action.id, customBindings, onSaveBinding]
   )
 
-  // Handle keydown during capture mode
   useEffect(() => {
     if (!isCapturing) {
       setPendingBinding(null)
@@ -104,7 +103,6 @@ function ShortcutRow({
       e.stopPropagation()
       e.stopImmediatePropagation()
 
-      // Escape cancels capture
       if (e.key === "Escape") {
         onCancelCapture()
         return
@@ -120,7 +118,6 @@ function ShortcutRow({
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true })
   }, [isCapturing, onCancelCapture, handleCapturedBinding])
 
-  // Focus badge when entering capture mode
   useEffect(() => {
     if (isCapturing) {
       badgeRef.current?.focus()

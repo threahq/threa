@@ -71,9 +71,6 @@ const GIPHY_SLASH_ITEM: CommandItem = {
 }
 
 /**
- * Hook that manages the command suggestion state and provides render callbacks.
- * Returns configuration for the CommandExtension and a render function for the popup.
- *
  * Client-action commands (e.g. `/discuss-with-ariadne`) still insert a chip
  * into the composer via the normal suggestion flow; routing to the client
  * handler happens at composer-send time (`message-input.tsx`) so the user

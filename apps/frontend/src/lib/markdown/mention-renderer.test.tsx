@@ -69,7 +69,6 @@ describe("mention-renderer", () => {
       const result = renderMentions("#dev_team", noEmoji)
 
       expect(result).toHaveLength(1)
-      // Underscores are valid in slugs, so this should be parsed as a channel
     })
 
     it("should render mention chip with correct type styling", () => {
@@ -78,7 +77,6 @@ describe("mention-renderer", () => {
 
       const chip = screen.getByText(/@kristoffer/)
       expect(chip).toBeInTheDocument()
-      // User mentions have blue HSL background
       expect(chip.className).toContain("bg-[hsl(200")
     })
 
@@ -88,7 +86,6 @@ describe("mention-renderer", () => {
 
       const chip = screen.getByText(/#general/)
       expect(chip).toBeInTheDocument()
-      // Channel chips have muted background
       expect(chip.className).toContain("bg-muted")
     })
 
@@ -255,10 +252,8 @@ describe("mention-renderer", () => {
     })
 
     it("should not link non-channel stream types", () => {
-      // scratchpad streams with slugs should not create channel links
       renderWithChannelLinks("#general")
 
-      // Only the channel stream should be linked
       const links = screen.getAllByRole("link")
       expect(links).toHaveLength(1)
     })

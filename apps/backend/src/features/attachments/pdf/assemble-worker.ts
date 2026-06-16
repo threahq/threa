@@ -6,12 +6,7 @@ export interface PdfAssembleWorkerDeps {
   pdfProcessingService: PdfProcessingServiceLike
 }
 
-/**
- * Create the PDF assemble job handler.
- *
- * Thin wrapper delegating to the service.
- * Combines page results into final document extraction.
- */
+/** Phase 3: combine page results into the final document extraction. */
 export function createPdfAssembleWorker(deps: PdfAssembleWorkerDeps): JobHandler<PdfAssembleJobData> {
   const { pdfProcessingService } = deps
 

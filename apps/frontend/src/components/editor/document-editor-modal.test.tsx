@@ -76,7 +76,6 @@ describe("DocumentEditorModal", () => {
     it("should render the toolbar with formatting buttons", () => {
       renderWithRouter(<DocumentEditorModal {...defaultProps} />)
 
-      // Check for toolbar buttons by aria-label
       expect(screen.getByRole("button", { name: "Bold" })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Italic" })).toBeInTheDocument()
       expect(screen.getByRole("button", { name: "Strikethrough" })).toBeInTheDocument()
@@ -153,7 +152,6 @@ describe("DocumentEditorModal", () => {
         </MemoryRouter>
       )
 
-      // Editor initialised with content — Send is enabled
       expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled()
 
       // Parent updates initialContent to empty while the modal stays open

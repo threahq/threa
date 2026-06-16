@@ -12,7 +12,6 @@ import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 
-// Mock dependencies
 const mockCreate = vi.fn()
 const mockMarkPending = vi.fn()
 const mockMarkFailed = vi.fn()
@@ -25,7 +24,6 @@ const mockStreamCreate = vi.fn()
 const mockSubscribeStream = vi.fn()
 const mockKickOperationQueue = vi.fn()
 
-// Mock IndexedDB
 interface MockPendingMessage {
   clientId: string
   workspaceId: string
@@ -52,7 +50,6 @@ const mockSetQueryData = vi.fn()
 
 function createWrapper() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  // Spy on setQueryData so tests can observe interactions if needed
   vi.spyOn(client, "setQueryData").mockImplementation(((...args: unknown[]) =>
     mockSetQueryData(...args)) as unknown as typeof client.setQueryData)
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -84,7 +81,6 @@ describe("useMessageQueue", () => {
     mockIsConnected = true
     mockCreate.mockResolvedValue({ id: "msg_1" })
 
-    // Contexts
     vi.spyOn(contextsModule, "useSocketConnected").mockImplementation(() => mockIsConnected)
     vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
       create: mockCreate,
@@ -99,13 +95,11 @@ describe("useMessageQueue", () => {
       registerQueueNotify: mockRegisterQueueNotify,
     } as unknown as ReturnType<typeof contextsModule.usePendingMessages>)
 
-    // Sync engine
     vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
       subscribeStream: mockSubscribeStream,
       kickOperationQueue: mockKickOperationQueue,
     } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
 
-    // DB tables
     vi.spyOn(dbModule.db.pendingMessages, "orderBy").mockReturnValue({
       toArray: () => Promise.resolve([...mockPendingMessages]),
     } as unknown as ReturnType<typeof dbModule.db.pendingMessages.orderBy>)
@@ -138,7 +132,6 @@ describe("useMessageQueue", () => {
 
     vi.spyOn(dbModule, "sequenceToNum").mockImplementation((seq: string) => Number(seq))
 
-    // Prosemirror
     vi.spyOn(prosemirrorModule, "parseMarkdown").mockImplementation(
       (md: string) =>
         ({
@@ -147,13 +140,8 @@ describe("useMessageQueue", () => {
         }) as unknown as ReturnType<typeof prosemirrorModule.parseMarkdown>
     )
 
-    // Draft promotions
     vi.spyOn(draftPromotionsModule, "emitDraftPromoted").mockImplementation(() => {})
-
-    // Stream sync
     vi.spyOn(streamSyncModule, "setParentThreadId").mockResolvedValue(undefined as never)
-
-    // Draft store
     vi.spyOn(draftStoreModule, "deleteDraftScratchpadFromCache").mockImplementation(() => {})
     // Post-promotion draft re-pointing is exercised via its own tests; stub it here.
     vi.spyOn(useDraftMessageModule, "rescopeScopeDrafts").mockResolvedValue(undefined)

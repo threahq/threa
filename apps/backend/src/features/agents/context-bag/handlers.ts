@@ -24,7 +24,6 @@ interface Dependencies {
 // validated identically on both surfaces.
 const precomputeSchema = contextBagSchema
 
-// Re-export so existing import sites keep working without churn.
 export type { ContextRefSource, EnrichedContextRef, StreamContextBagResponse }
 
 export function createContextBagHandlers({ pool, ai }: Dependencies) {

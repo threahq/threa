@@ -1,11 +1,8 @@
-// Handlers
 export { createAgentSessionHandlers } from "./session-handlers"
 
-// Services & Agents
 export { PersonaAgent } from "./persona-agent"
 export type { PersonaAgentDeps, PersonaAgentInput, PersonaAgentResult, WithSessionResult } from "./persona-agent"
 
-// Runtime (composable agent loop, observers, tool definitions)
 export { defineAgentTool, toVercelToolDefs, AgentRuntime, createSessionTraceProjector, OtelObserver } from "./runtime"
 export type {
   AgentTool,
@@ -18,7 +15,6 @@ export type {
   AgentRuntimeResult,
 } from "./runtime"
 
-// Companion agent modules
 export {
   buildAgentContext,
   buildToolSet,
@@ -36,7 +32,6 @@ export type { SessionAbortContext } from "./session-abort-registry"
 
 export { AgentSessionMetricsCollector } from "./session-metrics"
 
-// Outbox handlers
 export { CompanionHandler } from "./companion-outbox-handler"
 export type { CompanionHandlerConfig } from "./companion-outbox-handler"
 export { MentionInvokeHandler } from "./mention-invoke-outbox-handler"
@@ -53,7 +48,6 @@ export type {
   ContextBagPrecomputeWorkerDeps,
 } from "./context-bag-precompute-handler"
 
-// Context-bag primitive
 export {
   ContextBagRepository,
   SummaryRepository,
@@ -96,13 +90,11 @@ export type {
   StreamContextBagResponse,
 } from "./context-bag"
 
-// Workers
 export { createPersonaAgentWorker, checkForUnseenMessages } from "./persona-agent-worker"
 export type { PersonaAgentLike, PersonaAgentWorkerDeps } from "./persona-agent-worker"
 export { createOrphanSessionCleanup, failSessionWithLifecycle } from "./orphan-session-cleanup"
 export type { OrphanSessionCleanup } from "./orphan-session-cleanup"
 
-// Repositories
 export { PersonaRepository } from "./persona-repository"
 export type { Persona } from "./persona-repository"
 export {
@@ -155,7 +147,6 @@ export type { ResolveQuoteRepliesInput, ResolveQuoteRepliesResult } from "./quot
 // researcher, and context-bag thread resolution.
 export { resolveActorNames } from "./actor-names"
 
-// Context builder
 export { buildStreamContext, enrichMessagesWithAttachments } from "./context-builder"
 
 // Per-turn hydration policy (window budget + digest carry; the `Hydrate` seam)
@@ -186,7 +177,6 @@ export type {
 export { protectToolOutputText, protectToolOutputBlocks } from "@threa/agent-runtime"
 export type { MultimodalContentBlock } from "@threa/agent-runtime"
 
-// Sub-barrels
 export { WorkspaceAgent } from "./researcher"
 export type { WorkspaceAgentResult, WorkspaceAgentInput, WorkspaceAgentDeps, WorkspaceSourceItem } from "./researcher"
 export { computeAgentAccessSpec } from "./researcher"

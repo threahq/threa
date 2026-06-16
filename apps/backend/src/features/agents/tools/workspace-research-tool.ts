@@ -86,9 +86,7 @@ When you do call it, incorporate retrieved context naturally into your response.
           snippet: s.snippet,
         }))
 
-      // The LLM gets a compact status summary; the actual context goes into systemContext.
-      // When partial, we tell the model so it can incorporate "we have some context, not all"
-      // into its response. The substep log is included so the trace dialog can reconstruct
+      // The substep log is serialized into output so the trace dialog can reconstruct
       // the phase timeline from persisted step.content after a browser refresh.
       const output = JSON.stringify({
         status: partial ? "partial" : "ok",
@@ -111,9 +109,6 @@ When you do call it, incorporate retrieved context naturally into your response.
 
     trace: {
       stepType: AgentStepTypes.WORKSPACE_SEARCH,
-      // formatContent returns the tool output verbatim. Because execute above serializes
-      // the full substep log into output, the persisted step.content will contain it too,
-      // giving browser-refresh stability for the trace dialog's phase timeline.
       formatContent: (_input, result) => {
         try {
           return result.output

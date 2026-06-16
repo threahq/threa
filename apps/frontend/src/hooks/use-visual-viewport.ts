@@ -93,7 +93,6 @@ export function useVisualViewport(enabled: boolean): boolean {
     const vv = window.visualViewport
     const docEl = document.documentElement
 
-    // Reset baseline on mount
     baseHeight.current = window.innerHeight
     // Last value written to --viewport-height so we can skip redundant style
     // writes during the rAF poll loop and avoid invalidating every consumer
@@ -298,10 +297,8 @@ export function useVisualViewport(enabled: boolean): boolean {
       pollForDuration(POLL_DURATION)
     }
 
-    // Set initial state
     update()
 
-    // Listen to visualViewport events (primary detection for Chrome/Safari)
     if (vv) {
       vv.addEventListener("resize", update)
       vv.addEventListener("scroll", onScroll)

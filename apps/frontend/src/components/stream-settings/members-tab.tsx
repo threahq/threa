@@ -225,8 +225,6 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
   )
 }
 
-// ─── Stream Bots Section ────────────────────────────────────────────────────
-
 function StreamBotsSection({
   workspaceId,
   streamId,
@@ -239,7 +237,6 @@ function StreamBotsSection({
   const queryClient = useQueryClient()
   const allBots = useWorkspaceBots(workspaceId)
 
-  // Single query: which bots have been granted access to this stream
   const streamBotsQueryKey = ["stream-bots", workspaceId, streamId]
   const { data: grantedBotIds = [] } = useQuery({
     queryKey: streamBotsQueryKey,

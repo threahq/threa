@@ -67,7 +67,6 @@ describe("resolveNotificationLevelsForStream", () => {
       { memberId: "member_1", effectiveLevel: "everything", source: "explicit" },
       { memberId: "member_2", effectiveLevel: "muted", source: "explicit" },
     ])
-    // No queries needed — all explicit
     expect(db.query).not.toHaveBeenCalled()
   })
 

@@ -8,10 +8,6 @@ import { sql } from "../../db"
  * policy is set. Rows are keyed by non-thread root streams — threads inherit
  * their root's policy, mirroring stream access (INV-62) — so callers resolve
  * thread → `rootStreamId` before looking up.
- *
- * Generalized from `e2e_streams.allowed_tool_categories` (agent-runtimes
- * unification Phase 1.4): one policy store for plaintext and E2E streams alike,
- * folded over each host's toolset via `negotiateCapabilities`.
  */
 export const StreamPoliciesRepository = {
   /**

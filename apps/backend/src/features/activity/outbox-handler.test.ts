@@ -271,7 +271,6 @@ describe("ActivityFeedHandler", () => {
       new Map([["usr_alice:stream_test", { mentionCount: 3, totalCount: 5 }]])
     )
 
-    // Mock withTransaction to just call the callback directly
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
       return callback({} as any)
     })

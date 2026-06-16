@@ -12,7 +12,6 @@ import { useWorkspaceUsers, upsertWorkspaceUserInCache } from "@/stores/workspac
 import type { WorkspaceBootstrap, User } from "@threa/types"
 import type { WorkspaceListResult } from "@/api/workspaces"
 
-// Query keys for cache management
 export const workspaceKeys = {
   all: ["workspaces"] as const,
   lists: () => [...workspaceKeys.all, "list"] as const,
@@ -30,7 +29,6 @@ export function useWorkspaces() {
     queryFn: async () => {
       const result = await workspaceService.list()
 
-      // Cache to IndexedDB
       const now = Date.now()
       await db.workspaces.bulkPut(result.workspaces.map((w) => ({ ...w, _cachedAt: now })))
 
@@ -73,7 +71,6 @@ export function useWorkspace(workspaceId: string) {
     queryFn: async () => {
       const workspace = await workspaceService.get(workspaceId)
 
-      // Cache to IndexedDB
       await db.workspaces.put({ ...workspace, _cachedAt: Date.now() })
 
       return workspace
@@ -184,13 +181,11 @@ export function useCreateWorkspace() {
   return useMutation({
     mutationFn: (data: { name: string; slug: string; region?: string }) => workspaceService.create(data),
     onSuccess: (newWorkspace) => {
-      // Update cache with correct WorkspaceListResult shape
       queryClient.setQueryData<WorkspaceListResult>(workspaceKeys.list(), (old) => ({
         workspaces: old ? [...old.workspaces, newWorkspace] : [newWorkspace],
         pendingInvitations: old?.pendingInvitations ?? [],
       }))
 
-      // Cache to IndexedDB
       db.workspaces.put({ ...newWorkspace, _cachedAt: Date.now() })
     },
   })

@@ -15,9 +15,6 @@ export const MAX_MESSAGE_CHARS = 400_000
  */
 const MAX_SINGLE_MESSAGE_CHARS = 50_000
 
-/**
- * Get the character length of a ModelMessage's content.
- */
 function getMessageLength(message: ModelMessage): number {
   if (message.role === "tool") {
     // Tool messages have ToolContent = Array<ToolResultPart>
@@ -42,10 +39,6 @@ function getMessageLength(message: ModelMessage): number {
   return 0
 }
 
-/**
- * Truncate a single message's content if it exceeds the limit.
- * Returns a new message with truncated content, or the original if no truncation needed.
- */
 function truncateSingleMessage(message: ModelMessage, maxChars: number): ModelMessage {
   const length = getMessageLength(message)
   if (length <= maxChars) return message
@@ -53,7 +46,6 @@ function truncateSingleMessage(message: ModelMessage, maxChars: number): ModelMe
   logger.warn({ messageLength: length, maxChars, role: message.role }, "Truncating oversized message")
 
   if (message.role === "tool") {
-    // For tool messages, truncate each tool-result part's output
     return {
       ...message,
       content: message.content.map((part) => {
@@ -124,16 +116,13 @@ function truncateSingleMessage(message: ModelMessage, maxChars: number): ModelMe
 export function truncateMessages(messages: ModelMessage[], maxChars: number): ModelMessage[] {
   if (messages.length === 0) return messages
 
-  // First pass: truncate any oversized individual messages
   const truncatedIndividual = messages.map((msg) => truncateSingleMessage(msg, MAX_SINGLE_MESSAGE_CHARS))
 
-  // Calculate total length after individual truncation
   let totalLength = 0
   for (const msg of truncatedIndividual) {
     totalLength += getMessageLength(msg)
   }
 
-  // If under limit, return all (after individual truncation)
   if (totalLength <= maxChars) return truncatedIndividual
 
   logger.warn(
@@ -141,17 +130,14 @@ export function truncateMessages(messages: ModelMessage[], maxChars: number): Mo
     "Truncating messages to stay within context limit"
   )
 
-  // Build from the end, keeping messages until we hit the limit
   const kept: ModelMessage[] = []
   let keptLength = 0
 
-  // Walk backwards through messages
   for (let i = truncatedIndividual.length - 1; i >= 0; i--) {
     const msg = truncatedIndividual[i]
     const msgLength = getMessageLength(msg)
 
-    // If adding this message would exceed limit, stop
-    // But always keep at least 1 message
+    // Always keep at least one message, even if it alone exceeds the limit.
     if (keptLength + msgLength > maxChars && kept.length > 0) {
       break
     }

@@ -1,10 +1,3 @@
-/**
- * Text Processing Service
- *
- * Processes text-based attachments to extract structured information
- * that can be used by AI agents to understand file content.
- */
-
 import type { Pool } from "pg"
 import type { TextFormat, TextSizeTier, InjectionStrategy, TextMetadata } from "@threa/types"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
@@ -48,7 +41,7 @@ export class TextProcessingService implements TextProcessingServiceLike {
     await processAttachment(this.pool, attachmentId, async (attachment) => {
       log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing text attachment")
 
-      // Fetch first 8KB for binary detection (avoid downloading full file for binaries)
+      // Range-read the head only, to skip downloading full binaries.
       const headBuffer = await this.storage.getObjectRange(attachment.storagePath, 0, BINARY_DETECTION.checkSize - 1)
 
       if (isBinaryFile(headBuffer)) {
@@ -57,27 +50,21 @@ export class TextProcessingService implements TextProcessingServiceLike {
       }
 
       try {
-        // Download full content
         const fileBuffer = await this.storage.getObject(attachment.storagePath)
 
-        // Normalize encoding to UTF-8
         const normalized = normalizeEncoding(fileBuffer)
         const textContent = normalized.text
         const encoding = normalized.encoding
 
-        // Infer format from filename and content
         const format = inferFormat(attachment.filename, textContent)
 
-        // Parse using format-specific parser
         const parser = getParser(format)
         const parseResult = parser.parse(textContent, attachment.filename)
 
-        // Determine size tier and injection strategy
         const totalBytes = fileBuffer.length
         const sizeTier = determineSizeTier(totalBytes)
         const injectionStrategy = determineInjectionStrategy(sizeTier)
 
-        // Build text metadata
         const textMetadata: TextMetadata = {
           format: parseResult.format,
           sizeTier,
@@ -89,7 +76,6 @@ export class TextProcessingService implements TextProcessingServiceLike {
           structure: parseResult.structure,
         }
 
-        // Determine what to store and summarize
         let summary: string
         let fullTextToStore: string | null
 

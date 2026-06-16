@@ -11,7 +11,7 @@ import { useAccountScope } from "@/auth/account-scope"
 const AUTH_REDIRECT_KEY = "auth_redirect_count"
 const AUTH_REDIRECT_TIMESTAMP_KEY = "auth_redirect_ts"
 const MAX_REDIRECTS = 3
-const REDIRECT_WINDOW_MS = 30_000 // 30 seconds
+const REDIRECT_WINDOW_MS = 30_000
 
 function handleGlobalError(error: Error) {
   if (ApiError.isApiError(error) && error.status === 401) {
@@ -20,7 +20,6 @@ function handleGlobalError(error: Error) {
     const lastTs = parseInt(sessionStorage.getItem(AUTH_REDIRECT_TIMESTAMP_KEY) ?? "0", 10)
     const count = parseInt(sessionStorage.getItem(AUTH_REDIRECT_KEY) ?? "0", 10)
 
-    // Reset counter if outside the window
     const currentCount = now - lastTs > REDIRECT_WINDOW_MS ? 0 : count
 
     if (currentCount >= MAX_REDIRECTS) {
@@ -28,7 +27,6 @@ function handleGlobalError(error: Error) {
       return
     }
 
-    // Update counter and timestamp
     sessionStorage.setItem(AUTH_REDIRECT_KEY, String(currentCount + 1))
     sessionStorage.setItem(AUTH_REDIRECT_TIMESTAMP_KEY, String(now))
 

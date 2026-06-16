@@ -1,55 +1,27 @@
 /**
- * Memo AI Configuration
- *
  * Central configuration for memo classification and memorization.
- * Used by both production code and evals to ensure consistency.
+ * Shared by production code and evals (INV-44).
  */
 
 import { z } from "zod"
 import { KNOWLEDGE_TYPES, type KnowledgeType, type StreamType } from "@threa/types"
 import { formatDate } from "../../lib/temporal"
 
-// ============================================================================
-// Model Configuration
-// ============================================================================
-
-/**
- * Model for memo classification (gem detection).
- *
- * GPT-5.4 Nano is OpenAI's cheapest 5.4-generation model ($0.20/$1.25 per 1M tokens),
- * explicitly designed for classification, data extraction, and ranking.
- * Outperforms GPT-5 Mini on benchmarks despite lower cost.
- * Previously used gpt-oss-120b whose patchwork OpenRouter provider backing
- * caused 60-120s tail latency and low-quality gem decisions.
- */
 export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
 
-/**
- * Model for memo content generation (abstractive extraction).
- *
- * GPT-5.4 Nano provides strong structured output and extraction quality
- * at a fraction of the cost of larger models. If memo abstract quality
- * proves insufficient, upgrade to gpt-5.4-mini ($0.75/$4.50 per 1M tokens).
- */
 export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
 
-/**
- * Temperature settings for different operations.
- */
 export const MEMO_TEMPERATURES = {
-  classification: 0.1, // Low temperature for consistent classification
-  memorization: 0.3, // Slightly higher for creative summarization
+  classification: 0.1,
+  memorization: 0.3,
 } as const
 
-/**
- * Minimum classifier confidence required to create a memo.
- * Conversations classified with confidence below this threshold are skipped.
- */
+/** Conversations classified below this confidence are skipped. */
 export const MEMO_GEM_CONFIDENCE_FLOOR = 0.7
 
 /**
- * Minimum age (ms) for a single-message conversation before it can be memoed.
- * Gives time for replies to arrive before treating the message as standalone knowledge.
+ * Minimum age for a single-message conversation before it can be memoed:
+ * gives time for replies to arrive before treating it as standalone knowledge.
  * Deferred items are retried on the next batch cycle (5-minute cap interval).
  */
 export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
@@ -61,10 +33,6 @@ export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
  * memorizer honest. Most conversations yield one or two.
  */
 export const MEMO_MAX_PER_CONVERSATION = 5
-
-// ============================================================================
-// Retrieval Configuration (gbrain B2 / B3 / B7)
-// ============================================================================
 
 /**
  * B2 structural boost. A multiplicative factor on the fused RRF score,
@@ -146,13 +114,6 @@ export function resolveMemoSearchMode(mode: MemoSearchMode = DEFAULT_MEMO_SEARCH
   return MEMO_SEARCH_MODES[mode]
 }
 
-// ============================================================================
-// Schemas
-// ============================================================================
-
-/**
- * Schema for conversation classification output.
- */
 export const conversationClassificationSchema = z.object({
   isKnowledgeWorthy: z.boolean().describe("Whether this conversation contains knowledge worth preserving"),
   shouldReviseExisting: z
@@ -175,9 +136,8 @@ export const conversationClassificationSchema = z.object({
 export type ConversationClassificationOutput = z.infer<typeof conversationClassificationSchema>
 
 /**
- * Schema for a single single-topic memo. One conversation can yield several of
- * these; each captures exactly one thing worth remembering and carries its own
- * knowledge type (a decision and a procedure from the same chat are distinct memos).
+ * One conversation can yield several of these; each carries its own knowledge
+ * type (a decision and a procedure from the same chat are distinct memos).
  */
 export const memoItemSchema = z.object({
   title: z.string().max(100).describe("Specific title naming this one topic (max 100 characters)"),
@@ -200,10 +160,9 @@ export const memoItemSchema = z.object({
 export type MemoItemOutput = z.infer<typeof memoItemSchema>
 
 /**
- * Schema for memo content generation. The memorizer returns a set of single-topic
- * memos rather than one blended summary, so a multi-topic conversation produces
- * several small memos. An empty set is valid: the conversation settled nothing
- * worth keeping beyond what already exists.
+ * The memorizer returns a set of single-topic memos rather than one blended
+ * summary. An empty set is valid: the conversation settled nothing worth
+ * keeping beyond what already exists.
  */
 export const memoSetSchema = z.object({
   memos: z
@@ -213,10 +172,6 @@ export const memoSetSchema = z.object({
 })
 
 export type MemoSetOutput = z.infer<typeof memoSetSchema>
-
-// ============================================================================
-// Classifier Prompts
-// ============================================================================
 
 export const CLASSIFIER_CONVERSATION_SYSTEM_PROMPT = `You are a knowledge classifier for a team chat application. You identify conversations that contain valuable knowledge worth preserving in organizational memory.
 
@@ -260,10 +215,6 @@ export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memos for this con
 
 Does the conversation above contain new or changed knowledge not already captured by these memos — e.g. new information, a changed conclusion, or a new topic? If so, set shouldReviseExisting true.`
 
-// ============================================================================
-// Memorizer Prompts
-// ============================================================================
-
 const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team chat application. From a conversation, you pull out only the things genuinely worth remembering later and write each as its own short, self-contained memo.
 
 How to write memos:
@@ -279,9 +230,6 @@ How to write memos:
 
 Output ONLY valid JSON matching the schema.`
 
-/**
- * Get the memorizer system prompt with date anchoring.
- */
 export function getMemorizerSystemPrompt(timezone?: string): string {
   const now = new Date()
   const tz = timezone ?? "UTC"

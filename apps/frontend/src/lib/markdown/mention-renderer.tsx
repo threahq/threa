@@ -7,10 +7,7 @@ import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
 import { MENTION_PATTERN, isValidSlug } from "@threa/types"
 
-/**
- * Styles for different trigger types.
- * Colors match the design system kitchen sink.
- */
+// Colors match the design system kitchen sink.
 const triggerStyles = {
   user: "bg-[hsl(200_70%_50%/0.1)] text-[hsl(200_70%_50%)]",
   persona: "bg-primary/10 text-primary",
@@ -28,10 +25,7 @@ interface TriggerChipProps {
 
 const chipBase = "inline px-1 py-px rounded font-medium"
 
-/**
- * Styled chip for rendered triggers (mentions, channels, commands).
- * Channel chips render as links; mentions and commands render as spans.
- */
+/** Channel chips render as links; mentions and commands render as spans. */
 function TriggerChip({ type, text }: TriggerChipProps) {
   const getMentionType = useMentionType()
   const getChannelUrl = useChannelUrl()
@@ -65,7 +59,6 @@ function TriggerChip({ type, text }: TriggerChipProps) {
       prefix = "@"
   }
 
-  // User and "me" mentions are clickable when a handler is provided
   const mentionType = type === "mention" ? getMentionType(text) : null
   const isClickable = onMentionClick && (mentionType === "user" || mentionType === "me")
 
@@ -90,19 +83,10 @@ function TriggerChip({ type, text }: TriggerChipProps) {
   )
 }
 
-/**
- * Patterns for triggers.
- * - Commands: /command at start of text
- * - Channels: #channel-name (uses same rules as slugs)
- * - Mentions: @slug (uses shared MENTION_PATTERN from @threa/types)
- * - Emojis: :shortcode: (converted to emoji character)
- */
 const COMMAND_PATTERN = /^(\s*)(\/)([\w-]+)/
 
-// Channel pattern uses same slug rules as mentions
 const CHANNEL_PATTERN = /(?<![a-z0-9])#([a-z][a-z0-9-]*[a-z0-9]|[a-z])(?![a-z0-9_.-])/g
 
-// Emoji shortcode pattern: :shortcode:
 const EMOJI_PATTERN = /:([a-z0-9_+-]+):/g
 
 type ToEmoji = (shortcode: string) => string | null
@@ -125,11 +109,8 @@ export function renderMentions(
   let processText = text
   let keyIndex = 0
 
-  // Check for command at start of text (allowing leading whitespace).
-  // Only treat as a command when the name matches a real registered command.
   const commandMatch = processText.match(COMMAND_PATTERN)
   if (commandMatch && isKnownCommand(commandMatch[3])) {
-    // Preserve any leading whitespace
     if (commandMatch[1]) {
       result.push(commandMatch[1])
     }
@@ -137,13 +118,11 @@ export function renderMentions(
     processText = processText.slice(commandMatch[0].length)
   }
 
-  // Collect all trigger matches with their positions
   type TriggerMatch =
     | { index: number; length: number; type: "mention" | "channel"; slug: string }
     | { index: number; length: number; type: "emoji"; shortcode: string; emoji: string }
   const triggers: TriggerMatch[] = []
 
-  // Find mentions using shared pattern
   const mentionPattern = new RegExp(MENTION_PATTERN.source, MENTION_PATTERN.flags)
   let match
   while ((match = mentionPattern.exec(processText)) !== null) {
@@ -152,7 +131,7 @@ export function renderMentions(
     }
   }
 
-  // Find channels using cloned pattern (avoid global state issues)
+  // Clone the global regex so concurrent calls don't share lastIndex.
   const channelPattern = new RegExp(CHANNEL_PATTERN.source, CHANNEL_PATTERN.flags)
   while ((match = channelPattern.exec(processText)) !== null) {
     if (isValidSlug(match[1])) {
@@ -160,7 +139,6 @@ export function renderMentions(
     }
   }
 
-  // Find emoji shortcodes
   const emojiPattern = new RegExp(EMOJI_PATTERN.source, EMOJI_PATTERN.flags)
   while ((match = emojiPattern.exec(processText)) !== null) {
     const shortcode = match[1]
@@ -170,13 +148,10 @@ export function renderMentions(
     }
   }
 
-  // Sort by position
   triggers.sort((a, b) => a.index - b.index)
 
-  // Build result
   let lastIndex = 0
   for (const trigger of triggers) {
-    // Skip if overlapping with previous
     if (trigger.index < lastIndex) continue
 
     if (trigger.index > lastIndex) {
@@ -184,7 +159,6 @@ export function renderMentions(
     }
 
     if (trigger.type === "emoji") {
-      // Render emoji as character with tooltip
       result.push(
         <span key={`${keyIndex++}-emoji-${trigger.shortcode}`} title={`:${trigger.shortcode}:`}>
           {trigger.emoji}
@@ -205,20 +179,13 @@ export function renderMentions(
   return result.length > 0 ? result : [text]
 }
 
-/**
- * Hook-based component to process children with mentions and emojis.
- * Must be used within a component (uses hooks).
- */
 export function ProcessedChildren({ children }: { children: ReactNode }): ReactNode {
   const toEmoji = useEmojiLookup()
   const isKnownCommand = useIsKnownCommand()
   return processChildrenForMentions(children, toEmoji, isKnownCommand)
 }
 
-/**
- * Process React children and render mentions/emojis in text nodes.
- * Preserves non-text children (like <strong>, <em>, etc).
- */
+/** Preserves non-text children (like <strong>, <em>) unchanged. */
 export function processChildrenForMentions(
   children: ReactNode,
   toEmoji: ToEmoji,

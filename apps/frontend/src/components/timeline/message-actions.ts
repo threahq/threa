@@ -215,13 +215,9 @@ export function groupVisibleActions(actions: MessageAction[]): GroupedActionItem
   return items
 }
 
-// --- Helpers ---
-
 async function copyToClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text)
 }
-
-// --- Action definitions ---
 
 export const messageActions: MessageAction[] = [
   {

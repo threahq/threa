@@ -43,8 +43,8 @@ interface ScheduledMessagesPickerProps {
 type Mode = "list" | "picking"
 
 /**
- * Unified scheduled-messages picker for the composer toolbar (Journey 2 in
- * the plan). Mirrors the StashedDraftsPicker shape: single trigger button
+ * Unified scheduled-messages picker for the composer toolbar. Mirrors the
+ * StashedDraftsPicker shape: single trigger button
  * with a presence dot when there are pending sends, popover with an action
  * in the header and a list below.
  *
@@ -567,12 +567,10 @@ interface ScheduledRowProps {
 
 /**
  * Row inside the composer popover. Mirrors the `/scheduled` list-row:
- *   - Body click opens the edit dialog (same affordance as before).
+ *   - Body click opens the edit dialog.
  *   - Desktop hover reveals the Send-now / Edit / Cancel triplet via the
- *     shared `ScheduledActions` cluster — the popover used to expose those
- *     only behind a keyboard-unreachable click=edit, which felt
- *     inconsistent with the full list view.
- *   - Mobile keeps long-press → bottom-sheet drawer (no tiny tap targets).
+ *     shared `ScheduledActions` cluster.
+ *   - Mobile uses long-press → bottom-sheet drawer (no tiny tap targets).
  */
 function ScheduledRow({ scheduled, now, timezone, onEdit, onSendNow, onCancel, onRequestActions }: ScheduledRowProps) {
   const isMobile = useIsMobile()

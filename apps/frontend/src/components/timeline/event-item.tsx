@@ -50,7 +50,6 @@ export function EventItem({
   isFirstMessage = false,
   batch,
 }: EventItemProps) {
-  // Check if this event's message should be highlighted
   const messageId = (event.payload as { messageId?: string })?.messageId
   const isHighlighted = highlightMessageId != null && messageId === highlightMessageId
 

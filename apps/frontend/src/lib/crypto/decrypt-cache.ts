@@ -3,10 +3,9 @@ import { tryDecryptMessagePayload, type DecryptedMessageContent, type DecryptMes
 /**
  * In-memory cache for decrypted E2E message payloads.
  *
- * Phase 3.5 keeps ciphertext + envelope at rest in `db.events.payload` and
- * decrypts only on demand at render time. Each rendered message hits this
- * cache; on miss, the caller kicks off a decrypt and the cache notifies
- * subscribers when it lands.
+ * Ciphertext + envelope stay at rest in `db.events.payload` and decrypt only on
+ * demand at render time. Each rendered message hits this cache; on miss, the
+ * caller kicks off a decrypt and the cache notifies subscribers when it lands.
  *
  * Lifecycle:
  *  - Entries are inserted on successful (or failed) decrypt.

@@ -21,7 +21,6 @@ export function createApp(options: CreateAppOptions): Express {
   const requestLoggingIgnoredPaths = ["/health", "/readyz"]
   const metricsIgnoredPaths = [...requestLoggingIgnoredPaths, "/metrics"]
 
-  // Configure JSON serialization to handle BigInt values
   app.set("json replacer", bigIntReplacer)
 
   // Trust X-Forwarded-For from the workspace router proxy so req.ip reflects the real client

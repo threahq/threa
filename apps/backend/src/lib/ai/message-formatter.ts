@@ -37,10 +37,7 @@ export class MessageFormatter {
     return `<messages>\n${formatted.join("\n")}\n</messages>`
   }
 
-  /**
-   * Batch-resolve author names for a set of messages.
-   * Returns a map from authorId to name.
-   */
+  /** Batch-resolves author names in at most 2 queries (users + personas). */
   private async resolveAuthorNames(
     client: Querier,
     workspaceId: string,
@@ -146,7 +143,6 @@ export class MessageFormatter {
       const authorName = nameById.get(m.authorId) ?? "Unknown"
       const attachments = attachmentsByMessageId.get(m.id) ?? []
 
-      // Build attachment tags for extractions
       const attachmentTags = attachments
         .filter((a) => a.extraction !== null)
         .map((a) => {
@@ -155,7 +151,6 @@ export class MessageFormatter {
         })
         .join("\n")
 
-      // Build message content with attachments
       const content = attachmentTags
         ? `${escapeXml(m.contentMarkdown)}\n${attachmentTags}`
         : escapeXml(m.contentMarkdown)

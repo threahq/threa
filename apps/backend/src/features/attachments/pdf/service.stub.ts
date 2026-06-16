@@ -1,10 +1,3 @@
-/**
- * Stub PDF Processing Service
- *
- * For testing and development without real AI/OCR calls.
- * Generates deterministic fake extractions.
- */
-
 import type { Pool } from "pg"
 import { withClient, withTransaction } from "../../../db"
 import { pdfPageId, pdfJobId, extractionId } from "../../../lib/id"
@@ -51,7 +44,6 @@ export class StubPdfProcessingService implements PdfProcessingServiceLike {
       return
     }
 
-    // Stub: Assume 5 pages, all text-rich
     const totalPages = 5
     const jobId = pdfJobId()
 
@@ -78,7 +70,6 @@ export class StubPdfProcessingService implements PdfProcessingServiceLike {
 
       await PdfProcessingJobRepository.updateStatus(client, jobId, PdfJobStatuses.PROCESSING_PAGES)
 
-      // Mark all pages as completed
       for (let i = 0; i < totalPages; i++) {
         await PdfProcessingJobRepository.incrementPagesCompleted(client, jobId)
       }

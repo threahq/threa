@@ -61,7 +61,7 @@ export function botInvocationStepEvents(frame: { stepType: AgentStepType; conten
   if (frame.stepType === AgentStepTypes.THINKING) {
     return [{ type: "thinking", content: frame.content, durationMs: 0 }]
   }
-  // Correlation id pairing the synthesized start/complete; never persisted.
+  // Correlates the synthesized start/complete pair; never persisted.
   const toolCallId = randomUUID()
   return [
     {

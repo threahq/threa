@@ -16,7 +16,6 @@ export const aiUsageApi = {
   },
 
   async updateBudget(workspaceId: string, input: UpdateAIBudgetInput): Promise<AIBudgetResponse> {
-    // Backend uses PUT, not PATCH
     return api.put<AIBudgetResponse>(`/api/workspaces/${workspaceId}/ai-budget`, input)
   },
 }

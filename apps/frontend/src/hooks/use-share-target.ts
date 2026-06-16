@@ -91,7 +91,6 @@ export async function clearShareTargetCache(): Promise<void> {
 function buildSharedContent(title: string | null, text: string | null, url: string | null): JSONContent {
   const nodes: JSONContent[] = []
 
-  // Add title as bold text if present and different from text
   if (title && title !== text) {
     nodes.push({
       type: "paragraph",
@@ -99,7 +98,6 @@ function buildSharedContent(title: string | null, text: string | null, url: stri
     })
   }
 
-  // Add text content — split into paragraphs on newlines
   if (text) {
     for (const line of text.split("\n")) {
       const trimmed = line.trim()
@@ -114,7 +112,6 @@ function buildSharedContent(title: string | null, text: string | null, url: stri
     }
   }
 
-  // Add URL as a linked paragraph
   if (url) {
     nodes.push({
       type: "paragraph",
@@ -128,7 +125,6 @@ function buildSharedContent(title: string | null, text: string | null, url: stri
     })
   }
 
-  // Fallback if nothing was shared
   if (nodes.length === 0) {
     nodes.push({ type: "paragraph" })
   }

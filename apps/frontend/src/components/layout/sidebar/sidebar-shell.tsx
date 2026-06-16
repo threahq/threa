@@ -3,22 +3,18 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface SidebarShellProps {
   header: ReactNode
-  /** Scrollable body content (quick links + stream list, or skeleton/error fallback). */
   body: ReactNode
   footer?: ReactNode
-  /** Ref for measuring sidebar dimensions */
   sidebarRef?: RefObject<HTMLDivElement | null>
-  /** Ref for the inner scroll container (used for position tracking by stream items) */
+  /** Inner scroll container; stream items read it for position tracking. */
   scrollContainerRef?: RefObject<HTMLDivElement | null>
 }
 
 /**
- * Sidebar structural shell.
- * Header is pinned at the top. Everything else (quick links + stream list)
- * lives inside a single scroll area. Footer is pinned at the bottom.
+ * Sidebar structural shell: pinned header, single scroll area body, pinned footer.
  *
- * Note: Collapsed state is handled by app-shell.tsx which clips the sidebar to 6px.
- * This component just renders content — no need to react to collapse state.
+ * Collapsed state is handled by app-shell.tsx (it clips the sidebar to 6px), so
+ * this component renders content without reacting to collapse state.
  */
 export function SidebarShell({ header, body, footer, sidebarRef, scrollContainerRef }: SidebarShellProps) {
   return (

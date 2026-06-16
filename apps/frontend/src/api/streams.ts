@@ -104,10 +104,8 @@ export const streamsApi = {
     return api.post(`/api/workspaces/${workspaceId}/streams/${streamId}/unarchive`)
   },
 
-  // Event fetching for pagination. Returns the `sharedMessages` hydration
-  // map alongside the events so paged-in pointers can render without
-  // waiting for a full bootstrap refetch — the previous shape silently
-  // dropped the map on the floor.
+  // Returns the `sharedMessages` hydration map alongside the events so paged-in
+  // pointers render without waiting for a full bootstrap refetch.
   async getEvents(
     workspaceId: string,
     streamId: string,

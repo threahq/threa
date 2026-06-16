@@ -1,14 +1,8 @@
 import type { Editor, Range } from "@tiptap/react"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 
-/**
- * Re-export suggestion types for convenience.
- */
 export type { SuggestionProps, SuggestionKeyDownProps }
 
-/**
- * Simplified props passed to our suggestion handlers.
- */
 export interface SuggestionCallbackProps<T> {
   editor: Editor
   range: Range
@@ -18,10 +12,6 @@ export interface SuggestionCallbackProps<T> {
   command: (item: T) => void
 }
 
-/**
- * Create render callbacks for TipTap suggestion plugin.
- * This factory provides a simpler interface for managing suggestion state.
- */
 export function createSuggestionRender<T>(handlers: {
   onStart: (props: SuggestionCallbackProps<T>) => void
   onUpdate: (props: SuggestionCallbackProps<T>) => void

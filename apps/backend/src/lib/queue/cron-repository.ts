@@ -2,7 +2,6 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { tickId } from "../id"
 
-// Internal row types (snake_case)
 interface CronScheduleRow {
   id: string
   queue_name: string
@@ -28,7 +27,6 @@ interface CronTickRow {
   created_at: Date
 }
 
-// Domain types (camelCase)
 export interface CronSchedule {
   id: string
   queueName: string
@@ -54,7 +52,6 @@ export interface CronTick {
   createdAt: Date
 }
 
-// Parameter types
 export interface CreateScheduleParams {
   id: string
   queueName: string
@@ -95,7 +92,6 @@ export interface DeleteExpiredTicksParams {
   expiredBefore: Date
 }
 
-// Mappers
 function mapRowToSchedule(row: CronScheduleRow): CronSchedule {
   return {
     id: row.id,
@@ -126,9 +122,6 @@ function mapRowToTick(row: CronTickRow): CronTick {
 }
 
 export const CronRepository = {
-  /**
-   * Create a new cron schedule.
-   */
   async createSchedule(db: Querier, params: CreateScheduleParams): Promise<CronSchedule> {
     const result = await db.query<CronScheduleRow>(
       sql`
@@ -149,13 +142,7 @@ export const CronRepository = {
     return mapRowToSchedule(result.rows[0])
   },
 
-  /**
-   * Ensure a cron schedule exists (atomic upsert).
-   * Creates new schedule or updates interval if exists.
-   * Uses INSERT ... ON CONFLICT to avoid race conditions.
-   *
-   * Returns: { schedule, created: boolean }
-   */
+  /** Atomic upsert (INSERT ... ON CONFLICT, INV-20); `created` is derived from `xmax = 0`. */
   async ensureSchedule(
     db: Querier,
     params: CreateScheduleParams
@@ -196,10 +183,6 @@ export const CronRepository = {
     }
   },
 
-  /**
-   * Find schedules that need tick generation soon.
-   * Only returns enabled schedules whose next_tick_needed_at is within lookahead window.
-   */
   async findSchedulesNeedingTicks(db: Querier, params: FindSchedulesNeedingTicksParams): Promise<CronSchedule[]> {
     const lookaheadInterval = `${params.lookaheadSeconds} seconds`
     const result = await db.query<CronScheduleRow>(
@@ -217,18 +200,12 @@ export const CronRepository = {
     return result.rows.map(mapRowToSchedule)
   },
 
-  /**
-   * Create tick tokens for schedules.
-   * UNIQUE constraint on (schedule_id, execute_at) prevents duplicates.
-   *
-   * After creating ticks, updates each schedule's next_tick_needed_at.
-   */
+  /** UNIQUE (schedule_id, execute_at) + ON CONFLICT DO NOTHING prevents duplicate ticks. */
   async createTicks(db: Querier, params: CreateTicksParams): Promise<CronTick[]> {
     if (params.schedules.length === 0) {
       return []
     }
 
-    // Build VALUES for batch insert
     const tickValues: unknown[] = []
     const updateValues: unknown[] = []
     let tickIdx = 1
@@ -253,13 +230,11 @@ export const CronRepository = {
         sched.executeAt
       )
 
-      // Update schedule's next_tick_needed_at
       updateCases.push(`WHEN id = $${updateIdx++} THEN $${updateIdx++}::timestamptz`)
       updateValues.push(sched.scheduleId, new Date(sched.executeAt.getTime() + sched.intervalSeconds * 1000))
       scheduleIds.push(sched.scheduleId)
     }
 
-    // Insert ticks
     const tickResult = await db.query<CronTickRow>(
       `INSERT INTO cron_ticks (
         id, schedule_id, queue_name, payload, workspace_id, execute_at, created_at
@@ -271,7 +246,6 @@ export const CronRepository = {
       tickValues
     )
 
-    // Update schedules' next_tick_needed_at
     if (updateCases.length > 0) {
       await db.query(
         `UPDATE cron_schedules
@@ -285,10 +259,7 @@ export const CronRepository = {
     return tickResult.rows.map(mapRowToTick)
   },
 
-  /**
-   * Batch lease ticks that are ready for execution.
-   * Only one worker can lease each tick (FOR UPDATE SKIP LOCKED).
-   */
+  /** FOR UPDATE SKIP LOCKED ensures only one worker leases each tick. */
   async batchLeaseTicks(db: Querier, params: BatchLeaseTicksParams): Promise<CronTick[]> {
     const result = await db.query<CronTickRow>(
       sql`
@@ -326,10 +297,7 @@ export const CronRepository = {
     return result.rows.map(mapRowToTick)
   },
 
-  /**
-   * Delete a tick after execution.
-   * Verifies leasedBy to prevent race conditions.
-   */
+  /** Verifies leasedBy so a worker only deletes a tick it still owns. */
   async deleteTick(db: Querier, params: DeleteTickParams): Promise<void> {
     const result = await db.query(
       sql`
@@ -344,10 +312,6 @@ export const CronRepository = {
     }
   },
 
-  /**
-   * Delete expired ticks (lease expired, not completed).
-   * Called by cleanup worker.
-   */
   async deleteExpiredTicks(db: Querier, params: DeleteExpiredTicksParams): Promise<number> {
     const result = await db.query(
       sql`
@@ -360,10 +324,7 @@ export const CronRepository = {
     return result.rowCount ?? 0
   },
 
-  /**
-   * Delete orphaned ticks (schedule was deleted).
-   * Called by cleanup worker.
-   */
+  /** Deletes ticks whose schedule no longer exists. */
   async deleteOrphanedTicks(db: Querier): Promise<number> {
     const result = await db.query(
       sql`
@@ -375,9 +336,6 @@ export const CronRepository = {
     return result.rowCount ?? 0
   },
 
-  /**
-   * Disable a schedule (pause without deleting).
-   */
   async disableSchedule(db: Querier, scheduleId: string): Promise<void> {
     const result = await db.query(
       sql`
@@ -392,9 +350,7 @@ export const CronRepository = {
     }
   },
 
-  /**
-   * Enable a schedule and regenerate tick immediately.
-   */
+  /** Sets next_tick_needed_at to NOW so a tick regenerates immediately. */
   async enableSchedule(db: Querier, scheduleId: string): Promise<void> {
     const result = await db.query(
       sql`
@@ -412,10 +368,6 @@ export const CronRepository = {
     }
   },
 
-  /**
-   * Delete a schedule permanently.
-   * Orphaned ticks will be cleaned up by cleanup worker.
-   */
   async deleteSchedule(db: Querier, scheduleId: string): Promise<void> {
     // Delete pending ticks first (not currently executing)
     await db.query(
@@ -426,7 +378,6 @@ export const CronRepository = {
       `
     )
 
-    // Delete the schedule
     const result = await db.query(
       sql`
         DELETE FROM cron_schedules
@@ -439,10 +390,7 @@ export const CronRepository = {
     }
   },
 
-  /**
-   * Update schedule interval.
-   * Sets next_tick_needed_at to NOW to regenerate with new interval.
-   */
+  /** Sets next_tick_needed_at to NOW so the next tick uses the new interval. */
   async updateScheduleInterval(db: Querier, scheduleId: string, intervalSeconds: number): Promise<void> {
     const result = await db.query(
       sql`
@@ -460,9 +408,7 @@ export const CronRepository = {
     }
   },
 
-  /**
-   * Get schedule by ID (for testing/debugging).
-   */
+  /** For testing/debugging. */
   async getScheduleById(db: Querier, id: string): Promise<CronSchedule | null> {
     const result = await db.query<CronScheduleRow>(
       sql`
@@ -477,10 +423,6 @@ export const CronRepository = {
     return result.rows[0] ? mapRowToSchedule(result.rows[0]) : null
   },
 
-  /**
-   * Get schedule by queue name and workspace ID.
-   * Used for find-or-create pattern to prevent duplicates.
-   */
   async getScheduleByQueueAndWorkspace(
     db: Querier,
     queueName: string,
@@ -500,9 +442,7 @@ export const CronRepository = {
     return result.rows[0] ? mapRowToSchedule(result.rows[0]) : null
   },
 
-  /**
-   * Get tick by ID (for testing/debugging).
-   */
+  /** For testing/debugging. */
   async getTickById(db: Querier, id: string): Promise<CronTick | null> {
     const result = await db.query<CronTickRow>(
       sql`

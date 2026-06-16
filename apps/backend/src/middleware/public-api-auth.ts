@@ -46,7 +46,6 @@ export function createPublicApiAuthMiddleware({
       return
     }
 
-    // Try user-scoped key first (fast prefix check)
     if (token.startsWith("threa_uk_")) {
       const validated = await userApiKeyService.validateKey(token)
       if (!validated) {
@@ -97,7 +96,6 @@ export function createPublicApiAuthMiddleware({
       return
     }
 
-    // Try bot-scoped key (fast prefix check)
     if (token.startsWith(BOT_KEY_PREFIX)) {
       const validated = await botApiKeyService.validateKey(token)
       if (!validated) {
@@ -116,14 +114,12 @@ export function createPublicApiAuthMiddleware({
       return
     }
 
-    // No recognized key prefix
     next(new HttpError("Invalid API key", { status: 401, code: "UNAUTHORIZED" }))
   }
 }
 
 export function requireApiKeyScope(...scopes: WorkspacePermissionSlug[]) {
   return function requireScope(req: Request, _res: Response, next: NextFunction): void {
-    // User-scoped keys: check scopes from the key
     if (req.userApiKey) {
       for (const scope of scopes) {
         if (!req.userApiKey.scopes.has(scope)) {
@@ -135,7 +131,6 @@ export function requireApiKeyScope(...scopes: WorkspacePermissionSlug[]) {
       return
     }
 
-    // Bot-scoped keys: check scopes from the key
     if (req.botApiKey) {
       for (const scope of scopes) {
         if (!req.botApiKey.scopes.has(scope)) {

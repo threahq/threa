@@ -24,7 +24,6 @@ export interface ProcessResult {
   memosCreated: number
 }
 
-/** Data prepared for memo creation (before DB insert) */
 interface MemoToCreate {
   id: string
   workspaceId: string
@@ -42,7 +41,6 @@ interface MemoToCreate {
   embedding: number[]
 }
 
-/** Outbox event to insert after memo creation */
 interface OutboxEvent {
   eventType: "memo:created"
   payload: {
@@ -52,7 +50,6 @@ interface OutboxEvent {
   }
 }
 
-/** Interface for memo service implementations */
 export interface MemoServiceLike {
   processBatch(workspaceId: string, streamId: string): Promise<ProcessResult>
 }
@@ -103,22 +100,14 @@ export class MemoService implements MemoServiceLike {
   }
 
   /**
-   * Process accumulated conversations to extract knowledge-worthy memos.
-   *
-   * IMPORTANT: This method uses the three-phase pattern (INV-41) to avoid holding
-   * database connections during AI calls (which can take 1-5+ seconds):
-   *
-   * Phase 1: Fetch data with withClient (~100-200ms)
-   * Phase 2: AI classification and memorization with no database connection held (1-5+ seconds)
-   * Phase 3: Save memos with withTransaction (~100ms)
+   * Three-phase fetch / AI / save so no DB connection is held during AI calls,
+   * which can take 1-5+ seconds (INV-41).
    *
    * Single-message conversations are deferred (not marked processed) until they are
    * at least MEMO_SINGLE_MESSAGE_AGE_GATE_MS old, giving time for replies to arrive.
-   * Deferred streams are retried every ~30s (quiet-interval cycle) until the age gate
-   * passes — these are cheap no-op runs (no AI calls).
+   * Deferred streams are retried on the next quiet-interval cycle (cheap no-op, no AI).
    */
   async processBatch(workspaceId: string, streamId: string): Promise<ProcessResult> {
-    // Phase 1: Fetch all data with withClient (no transaction, fast reads)
     const fetchedData = await withClient(this.pool, async (client) => {
       const pending = await PendingItemRepository.findUnprocessed(client, workspaceId, streamId, {
         limit: 50,
@@ -136,7 +125,6 @@ export class MemoService implements MemoServiceLike {
 
       const existingTags = await MemoRepository.getAllTags(client, workspaceId)
 
-      // Fetch all conversations and their messages for conversation items
       const conversationItemIds = pending.filter((p) => p.itemType === "conversation").map((p) => p.itemId)
       const conversations = new Map<string, NonNullable<Awaited<ReturnType<typeof ConversationRepository.findById>>>>()
       const conversationMessages = new Map<string, Map<string, Message | null>>()
@@ -196,7 +184,6 @@ export class MemoService implements MemoServiceLike {
       return { processed: 0, memosCreated: 0 }
     }
 
-    // Phase 2: AI processing (no connection held, can take seconds/minutes)
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
     const memosToCreate: MemoToCreate[] = []
     const outboxEvents: OutboxEvent[] = []
@@ -204,7 +191,6 @@ export class MemoService implements MemoServiceLike {
     let memosCreated = 0
     let itemsFailed = 0
 
-    // Process conversation items
     const convItems = fetchedData.pending.filter((p) => p.itemType === "conversation")
     for (const item of convItems) {
       try {
@@ -243,7 +229,7 @@ export class MemoService implements MemoServiceLike {
           continue
         }
 
-        // Get pre-formatted messages from Phase 1 (formatted with database access)
+        // Pre-formatted in Phase 1 while a connection was held (INV-41).
         const formattedMessages = fetchedData.formattedConversations.get(item.itemId)
         if (!formattedMessages) {
           logger.warn({ conversationId: conversation.id }, "No formatted messages found")
@@ -401,16 +387,15 @@ export class MemoService implements MemoServiceLike {
       )
     }
 
-    // Phase 3: Save all results in ONE transaction (fast, ~200ms instead of 10-50 seconds)
+    // Save all results in one transaction so the memo rows, their outbox
+    // events, and the memos:captured timeline events commit atomically.
     await withTransaction(this.pool, async (client) => {
-      // Insert all memos
       for (const memoData of memosToCreate) {
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
         await MemoRepository.updateEmbedding(client, memoData.id, embedding)
       }
 
-      // Insert all outbox events
       for (const event of outboxEvents) {
         await OutboxRepository.insert(client, event.eventType, event.payload)
       }
@@ -492,7 +477,7 @@ export class MemoService implements MemoServiceLike {
     return { processed, memosCreated }
   }
 
-  /** Convert MemoToCreate data to wire format (before DB insert, so use current timestamp) */
+  /** Wire format for a memo not yet inserted, so timestamps are synthesized as now. */
   private toWireMemoFromData(memoData: MemoToCreate): import("@threa/types").Memo {
     const now = new Date().toISOString()
     return {

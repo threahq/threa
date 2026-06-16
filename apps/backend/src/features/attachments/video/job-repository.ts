@@ -1,7 +1,6 @@
 import { sql, type Querier } from "../../../db"
 import type { VideoTranscodeStatus } from "@threa/types"
 
-// Internal row type (snake_case)
 interface VideoTranscodeJobRow {
   id: string
   attachment_id: string
@@ -16,7 +15,6 @@ interface VideoTranscodeJobRow {
   created_at: Date
 }
 
-// Domain type (camelCase)
 export interface VideoTranscodeJob {
   id: string
   attachmentId: string

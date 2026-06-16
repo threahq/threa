@@ -7,8 +7,7 @@ import { RealtimeElevenLabsStrategy } from "./realtime-elevenlabs"
 /**
  * A single transcript update from the upstream provider. `isFinal` marks the
  * point at which the preceding interim span is committed and will not be
- * revised. The PR1 skeleton only inserts final text; interim-replacement
- * lands in PR2.
+ * revised.
  */
 export interface TranscriptionDelta {
   text: string
@@ -20,7 +19,7 @@ export interface TranscriptionError {
   message: string
 }
 
-/** Result of closing a session, used for cost recording (wired in PR3). */
+/** Result of closing a session, used for cost recording. */
 export interface TranscriptionResult {
   totalAudioMs: number
   costUsd?: number
@@ -46,7 +45,7 @@ export interface TranscriptionOpenOptions {
   model: string
   /** Language hint (BCP-47 or provider code); omit for auto-detect. */
   language?: string
-  /** Keyterm/biasing hints (provider-capped). Wired through in PR4. */
+  /** Keyterm/biasing hints (provider-capped). */
   vocabulary?: string[]
 }
 
@@ -71,7 +70,6 @@ export interface TranscriptionFactoryConfig {
  * The transcription factory — the createAI-adjacent entry point for the STT
  * modality (INV-28). It resolves the right provider strategy from the model id
  * and validates the model is an audio/realtime model before opening a session.
- * Cost recording on close() is layered on in PR3.
  */
 export interface Transcription {
   open(opts: TranscriptionOpenOptions): Promise<TranscriptionSession>

@@ -1,16 +1,11 @@
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
 
 /**
- * Ephemeral per-stream "hand-off" of a share node from the Share action
- * (anywhere in the app) to the target stream's composer. The composer reads
- * and clears the entry on mount, inserts the node, and the user sends via
- * the normal send button.
- *
- * Scoped to a single navigation hop with a short TTL so stale entries never
- * resurface if the user bails mid-flow.
+ * Ephemeral per-stream "hand-off" of a share node from the Share action to the
+ * target stream's composer. Scoped to a single navigation hop with a short TTL
+ * so stale entries never resurface if the user bails mid-flow.
  */
 export interface ShareHandoffEntry {
-  /** Attrs for the ThreaSharedMessage node to insert at the top of the composer */
   attrs: SharedMessageAttrs
   /** Epoch ms expiration; entries past this are ignored + evicted on read */
   expiresAt: number
@@ -23,7 +18,6 @@ export interface ShareHandoffEntry {
  * an explicit confirmation. `attrs` is carried for author attribution.
  */
 export interface PlaintextShareHandoffEntry {
-  /** The decrypted source content, to insert as a public blockquote. */
   markdown: string
   attrs: SharedMessageAttrs
   expiresAt: number
@@ -36,11 +30,10 @@ const plaintextCache = new Map<string, PlaintextShareHandoffEntry>()
 const listeners = new Map<string, Set<() => void>>()
 
 /**
- * Queue a share node for the target stream's composer. The next composer
- * mount for that stream consumes and clears the entry, and any composer
- * already mounted for the stream is notified via {@link subscribeShareHandoff}
- * so it can pick the share up without remounting (e.g. when the user shares
- * back into the stream they're already viewing in the main view).
+ * Queue a share node for the target stream's composer. A composer already
+ * mounted for the stream is notified via {@link subscribeShareHandoff} so it
+ * picks the share up without remounting (e.g. sharing back into the stream the
+ * user is already viewing).
  */
 export function queueShareHandoff(targetStreamId: string, attrs: SharedMessageAttrs): void {
   cache.set(targetStreamId, {
@@ -76,12 +69,10 @@ export function consumePlaintextShareHandoff(targetStreamId: string): PlaintextS
 }
 
 /**
- * Subscribe to share-handoff events for a given stream. The listener fires
- * whenever a new share is queued for that stream — composers already mounted
- * call this in addition to the on-mount {@link consumeShareHandoff} read so
- * they pick up shares queued while they were live.
- *
- * Returns an unsubscribe function. Safe to call from a `useEffect`.
+ * Subscribe to share-handoff events for a given stream. Composers already
+ * mounted call this in addition to the on-mount {@link consumeShareHandoff}
+ * read so they pick up shares queued while they were live. Returns an
+ * unsubscribe function.
  */
 export function subscribeShareHandoff(targetStreamId: string, listener: () => void): () => void {
   let subs = listeners.get(targetStreamId)

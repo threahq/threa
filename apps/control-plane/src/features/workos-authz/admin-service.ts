@@ -156,9 +156,8 @@ export class WorkosAuthzAdminService {
     })
   }
 
-  // --- guards (all derived from a single WorkOS snapshot taken under the
-  // per-org advisory lock) --------------------------------------------------
-
+  // Guards all derive from a single WorkOS snapshot taken under the per-org
+  // advisory lock.
   private assertActorMayManage(actor: AdminActor, memberships: WorkosOrganizationMembership[]): void {
     if (actor.isPlatformAdmin) return
     const actorMembership = memberships.find((m) => m.userId === actor.workosUserId)

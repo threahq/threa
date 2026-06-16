@@ -1,4 +1,3 @@
-// Auth
 export { WorkosAuthService, pickSealed } from "./auth/auth-service"
 export type { AuthResult, AuthService } from "./auth/auth-service"
 export { StubAuthService } from "./auth/auth-service.stub"
@@ -28,22 +27,18 @@ export { decodeAndSanitizeRedirectState } from "./auth/redirect"
 export { renderLoginPage } from "./auth/stub-login-page"
 export type { WorkosConfig } from "./auth/types"
 
-// Database
 export { sql, createDatabasePool, createDatabasePools, withTransaction, withClient, warmPool } from "./db/index"
 export type { Querier, DatabasePools } from "./db/index"
 export { composeSql } from "./db/compose"
 export { createMigrator, runMigrations } from "./db/migrations"
 
-// Errors
 export { HttpError, isUniqueViolation } from "./errors"
 
-// Middleware
 export { errorHandler } from "./middleware/error-handler"
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
 export { createRateLimit, getClientIp } from "./middleware/rate-limit"
 export type { RateLimitOptions } from "./middleware/rate-limit"
 
-// Utilities
 export { logger } from "./logger"
 export { extractWorkspaceIdFromGithubInstallState } from "./github-install-state"
 export {
@@ -134,7 +129,6 @@ export {
 export type { SessionCookieOptions } from "./cookies"
 export { generateSlug, generateUniqueSlug } from "./slug"
 
-// Outbox infrastructure
 export {
   OutboxDispatcher,
   OutboxRetentionWorker,
@@ -161,10 +155,8 @@ export type {
   CompactGapOptions,
 } from "./outbox/index"
 
-// CORS
 export { createCorsOriginChecker } from "./cors"
 
-// Shared utilities
 export { DebounceWithMaxWait } from "./debounce"
 export { calculateBackoffMs, type BackoffOptions } from "./backoff"
 export { bigIntReplacer, serializeBigInt } from "./serialization"

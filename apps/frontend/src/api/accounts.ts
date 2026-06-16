@@ -14,10 +14,8 @@ export interface AccountSummary {
   state: "active" | "parked" | "stale"
 }
 
-// Shared TanStack Query key for the accounts switcher list. Several surfaces
-// (sidebar logout pre-check, switcher dialog, logout-scope dialog) read the
-// same query — keeping the key in one place stops a cache-miss bug from
-// sneaking in when one consumer drifts.
+// Shared query key: multiple surfaces (sidebar logout pre-check, switcher
+// dialog, logout-scope dialog) read the same query and must not drift.
 export const ACCOUNTS_LIST_KEY = ["accounts", "list"] as const
 
 export const accountsApi = {

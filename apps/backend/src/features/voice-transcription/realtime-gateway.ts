@@ -15,10 +15,9 @@ import type { UserPreferencesService } from "../user-preferences"
 const startPayloadSchema = z.object({
   workspaceId: z.string().min(1),
   voiceSessionId: z.string().min(1),
-  // Draft text around the composer caret at take start, sent as read-only
-  // polish context. The client caps both sides at VOICE_DRAFT_CONTEXT_MAX_CHARS;
-  // the gateway re-caps below (truncate, don't reject — an oversized draft must
-  // never block dictation from starting).
+  // Draft around the caret, read-only polish context. The gateway re-caps to
+  // VOICE_DRAFT_CONTEXT_MAX_CHARS below (truncate, don't reject — an oversized
+  // draft must never block dictation from starting).
   draftBefore: z.string().optional(),
   draftAfter: z.string().optional(),
 })
@@ -45,58 +44,42 @@ interface RelayState {
   maxDurationTimer: ReturnType<typeof setTimeout>
   finalized: boolean
   /**
-   * Polish level resolved from user prefs at start. "minor" / "opinionated"
-   * trigger a cumulative polish on every final final delta (every raw final
-   * segment so far is joined and re-polished, then emitted as
-   * `voice:transcript:polished` so the client can swap its tracked session
-   * chunk to the new polished snapshot). This is what lets the model fix a
-   * self-correction in chunk N+1 by rewriting chunk N ("nine, no sorry eight"
-   * collapses to "eight"). When "none", finals ship as plain
-   * `voice:transcript:delta` with no `chunkId` and the client never tracks them.
+   * Resolved once at start. "minor" / "opinionated" trigger a cumulative
+   * re-polish of the whole transcript on every final, letting a later chunk
+   * rewrite an earlier self-correction ("nine, no sorry eight" -> "eight").
+   * "none" ships finals as plain deltas with no chunkId and no tracking.
    */
   polishLevel: VoicePolishLevel
   /**
-   * Stable chunkId for the whole session: every final delta and every
-   * polished event carries it, so the editor extends/replaces a single
-   * tracked range instead of accumulating per-chunk decorations.
+   * Stable chunkId for the whole session: every final and polished event
+   * carries it, so the editor extends/replaces a single tracked range.
    */
   sessionChunkId: string
-  /**
-   * Cumulative raw final segments collected this session. Joined with single
-   * spaces and re-polished on every final. Bounded only by the session's
-   * max duration — provider segments are short enough that this stays small.
-   */
+  /** Cumulative raw final segments, joined and re-polished on every final. */
   rawFinals: string[]
   /**
-   * Latest interim (uncommitted) hypothesis for the current segment. Updated
-   * on every interim delta and cleared whenever a final delta arrives (the
-   * final supersedes the partial). Promoted to a synthetic final if the
-   * upstream errors before the partial gets committed — otherwise everything
-   * the user spoke between the last final and the error would be polished as
-   * raw text by the client's flushInterim fallback (the spurious ElevenLabs
-   * "insufficient funds" close often fires before any final lands).
+   * Latest uncommitted interim hypothesis. Promoted to a synthetic final if
+   * the upstream errors before the partial commits — otherwise the client's
+   * flushInterim fallback would ship it as raw, unpolished text (the spurious
+   * ElevenLabs "insufficient funds" close often fires before any final lands).
    */
   lastInterim: string
   /**
-   * Draft text around the insertion point, captured once at `voice:start` and
-   * forwarded to every polish pass as read-only context (vocabulary, names,
-   * sentence continuation). Already capped to VOICE_DRAFT_CONTEXT_MAX_CHARS.
+   * Draft around the insertion point, forwarded to every polish pass as
+   * read-only context. Already capped to VOICE_DRAFT_CONTEXT_MAX_CHARS.
    */
   draftBefore: string | undefined
   draftAfter: string | undefined
   /**
-   * Serializes polish work — out-of-order resolves would let an older
-   * polished snapshot land in the editor after a newer one, which would
-   * undo the model's incremental corrections. Each polish step awaits the
-   * previous one before reading `rawFinals` and emitting.
+   * Serializes polish work: out-of-order resolves would let an older polished
+   * snapshot land after a newer one and undo incremental corrections.
    */
   polishQueue: Promise<void>
 }
 
-// Cap how long an upstream error waits on in-flight polish before propagating
-// to the client. Long enough that a typical polish call (sub-second) lands
-// the polished swap; short enough that a stuck provider can't delay the
-// user-facing error past a heartbeat.
+// Cap on how long an upstream error waits on in-flight polish: long enough for
+// a sub-second polish to land the swap, short enough that a stuck provider
+// can't delay the user-facing error past a heartbeat.
 const POLISH_DRAIN_ON_ERROR_MS = 2000
 
 function toBuffer(frame: unknown): Buffer | null {
@@ -150,12 +133,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         logger.warn({ err, voiceSessionId: current.voiceSessionId }, "Voice upstream close failed")
       }
 
-      // Drain any polish call still in flight before responding to voice:stop
-      // so a late `voice:transcript:polished` doesn't race the socket close.
-      // On an aborted finalize the client is already gone; there is no
-      // socket to emit on, so don't pay the polish wait. The catch is
-      // unreachable (the queue swallows its own errors) but it's here so a
-      // defect in the chain can't tear down the whole finalize.
+      // Drain in-flight polish before responding to voice:stop so a late
+      // `voice:transcript:polished` doesn't race the socket close. On abort
+      // the client is already gone, so skip the wait.
       if (reason !== "aborted") {
         try {
           await current.polishQueue
@@ -215,9 +195,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         })
         resolvedUserId = row.userId
 
-        // Resolve polish level once per session: a mid-session pref change
-        // doesn't change behavior for an in-flight take, which keeps the
-        // session chunkId story consistent for the editor's chunk tracker.
+        // Resolve once per session so a mid-session pref change can't shift
+        // behavior for an in-flight take and break the editor's chunk tracker.
         let polishLevel: VoicePolishLevel = "none"
         try {
           const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
@@ -245,11 +224,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
 
         const sessionChunkId = ulid()
 
-        // Commit a raw final segment: push to the cumulative buffer, emit a
-        // tagged final delta (so the client extends its tracked chunk), and
-        // enqueue a cumulative polish pass. Used by both the normal final
-        // path and the interim-promotion-on-error path so the polish queue
-        // semantics are identical regardless of how the segment landed.
+        // Commit a raw final: buffer it, emit a tagged final delta, and enqueue
+        // a cumulative polish pass. Shared by the normal final path and the
+        // interim-promotion-on-error path so the queue semantics are identical.
         const commitPolishedFinal = (polishingState: RelayState, raw: string) => {
           polishingState.rawFinals.push(raw)
           socket.emit("voice:transcript:delta", {
@@ -258,12 +235,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             isFinal: true,
             chunkId: polishingState.sessionChunkId,
           })
-          // Cumulative polish: each pass re-polishes the FULL transcript so
-          // far. That's what lets a later chunk rewrite an earlier one — the
-          // canonical example is "let's start at nine tonight, no sorry eight"
-          // collapsing to "let's start at eight tonight". The queue keeps
-          // emissions in order so a slow polish N can't clobber a faster
-          // polish N+1 already in the editor.
+          // Each pass re-polishes the FULL transcript so a later chunk can
+          // rewrite an earlier one. The queue keeps emissions in order so a
+          // slow polish N can't clobber a faster polish N+1 already in the editor.
           polishingState.polishQueue = polishingState.polishQueue.then(async () => {
             if (state !== polishingState || polishingState.finalized) return
             const rawTranscript = polishingState.rawFinals.join(" ")
@@ -285,8 +259,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
                 polished,
               })
             } catch (err) {
-              // Raw text is already in the editor (we emitted the delta above)
-              // — silently skip the polish swap on failure.
+              // Raw text is already in the editor, so skip the polish swap.
               logger.warn(
                 { err, voiceSessionId, chunkId: polishingState.sessionChunkId },
                 "Voice transcript polish failed; leaving raw text in editor"
@@ -295,12 +268,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           })
         }
 
-        // Per-session payloads (plan §3): the client filters deltas by
-        // voiceSessionId so a stale session can't leak text into a new one.
-        // Interim deltas always pass through unchanged. Finals are tagged with
-        // a session-wide chunkId only when polish is on, which signals the
-        // client to track them as a swappable chunk; with polish off, no
-        // chunkId is sent and the client commits them as plain text.
+        // Finals are tagged with a session-wide chunkId only when polish is on,
+        // signalling the client to track them as a swappable chunk; with polish
+        // off, no chunkId is sent and the client commits them as plain text.
         upstream.onDelta((delta) => {
           if (!state) return
           if (!delta.isFinal) {
@@ -310,7 +280,6 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
             return
           }
-          // A real final supersedes the pending interim.
           state.lastInterim = ""
           const raw = delta.text ?? ""
           if (state.polishLevel === "none" || !raw.trim()) {
@@ -322,33 +291,25 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           commitPolishedFinal(state, raw)
         })
         upstream.onError((e) => {
-          // Drain in-flight polish so the polished swap can land BEFORE the
-          // client tears down on this error. ElevenLabs sometimes closes the
-          // socket ~10s in even on healthy sessions; without this drain the
-          // raw text stays in the editor and the user loses the polish.
-          // Socket.io preserves order within the namespace, so as long as we
-          // emit the error AFTER awaiting the polish promise, the client sees
-          // `voice:transcript:polished` (and applies it) before the error
-          // tears the take down. Bounded so a hung polish can't delay the
-          // error indefinitely.
+          // Drain in-flight polish so the polished swap lands BEFORE the client
+          // tears down on this error (ElevenLabs sometimes closes ~10s in even
+          // on healthy sessions). Socket.io preserves order, so emitting the
+          // error after awaiting the polish promise guarantees the client
+          // applies the polish first. Bounded so a hung polish can't stall it.
           const current = state
           if (!current || current.finalized) {
             socket.emit("voice:transcription:error", { voiceSessionId, ...e })
             return
           }
           // Promote the pending interim to a synthetic final so the user
-          // doesn't lose what they just said. ElevenLabs' spurious
-          // "insufficient funds" close fires before the in-flight segment
-          // gets committed, so without this all the speech since the last
-          // committed_transcript exists only as interim text — which the
-          // client's flushInterim() would commit as RAW (unpolished). Promote
-          // it through the same path a real final takes: emit a tagged delta
-          // (so the client commits it as a tracked chunk and clears its
-          // interim ref, making flushInterim a no-op) and enqueue a polish
-          // pass that the drain below will then wait for. Best-effort: an
-          // interim is a hypothesis the provider hadn't yet finalized, so
-          // punctuation/spacing may drift from what would have been the real
-          // final — better an approximation than nothing.
+          // doesn't lose what they just said. ElevenLabs' spurious close fires
+          // before the in-flight segment commits, so without this the speech
+          // since the last committed_transcript exists only as interim text,
+          // which the client's flushInterim() would commit as RAW (unpolished).
+          // Route it through the real-final path so the client tracks it as a
+          // chunk and clears its interim ref (making flushInterim a no-op), and
+          // the drain below waits for the polish. Best-effort: an unfinalized
+          // hypothesis may drift in punctuation, but an approximation beats loss.
           const pendingInterim = current.lastInterim.trim()
           if (pendingInterim) {
             current.lastInterim = ""

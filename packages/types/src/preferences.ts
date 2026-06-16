@@ -1,12 +1,8 @@
 import type { WorkSchedule } from "./work-schedule"
 import type { StatusPreset } from "./user-status"
 
-// =============================================================================
-// User Preferences Types
-// Workspace-scoped preferences that sync across devices
-// =============================================================================
+// Workspace-scoped preferences that sync across devices.
 
-// Theme
 export const THEME_OPTIONS = ["light", "dark", "system"] as const
 export type Theme = (typeof THEME_OPTIONS)[number]
 
@@ -16,7 +12,6 @@ export const Themes = {
   SYSTEM: "system",
 } as const satisfies Record<string, Theme>
 
-// Message display density
 export const MESSAGE_DISPLAY_OPTIONS = ["compact", "comfortable"] as const
 export type MessageDisplay = (typeof MESSAGE_DISPLAY_OPTIONS)[number]
 
@@ -35,7 +30,6 @@ export const DateFormats = {
   US: "MM/DD/YYYY",
 } as const satisfies Record<string, DateFormat>
 
-// Time format
 export const TIME_FORMAT_OPTIONS = ["24h", "12h"] as const
 export type TimeFormat = (typeof TIME_FORMAT_OPTIONS)[number]
 
@@ -54,7 +48,6 @@ export const PrefNotificationLevels = {
   NONE: "none",
 } as const satisfies Record<string, PrefNotificationLevel>
 
-// Font size for accessibility
 export const FONT_SIZE_OPTIONS = ["small", "medium", "large"] as const
 export type FontSize = (typeof FONT_SIZE_OPTIONS)[number]
 
@@ -64,7 +57,6 @@ export const FontSizes = {
   LARGE: "large",
 } as const satisfies Record<string, FontSize>
 
-// Font family for accessibility
 export const FONT_FAMILY_OPTIONS = ["system", "monospace", "dyslexic"] as const
 export type FontFamily = (typeof FONT_FAMILY_OPTIONS)[number]
 
@@ -159,7 +151,6 @@ export const VOICE_TRANSCRIPTION_MODELS: readonly VoiceTranscriptionModelOption[
   },
 ] as const
 
-// Settings tab options (for URL-driven settings dialog)
 export const SETTINGS_TAB_OPTIONS = [
   "profile",
   "ai",
@@ -172,12 +163,7 @@ export const SETTINGS_TAB_OPTIONS = [
 ] as const
 export type SettingsTab = (typeof SETTINGS_TAB_OPTIONS)[number]
 
-// Alias for convenience
 export const SETTINGS_TABS = SETTINGS_TAB_OPTIONS
-
-// =============================================================================
-// Domain Types
-// =============================================================================
 
 /**
  * Accessibility preferences stored as JSONB
@@ -296,10 +282,6 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   gettingStartedDismissed: false,
 }
 
-// =============================================================================
-// API Types
-// =============================================================================
-
 /**
  * Input for updating user preferences (all fields optional for partial updates)
  */
@@ -326,10 +308,6 @@ export interface UpdateUserPreferencesInput {
   statusPresets?: StatusPreset[]
   gettingStartedDismissed?: boolean
 }
-
-// =============================================================================
-// Sparse Override Types
-// =============================================================================
 
 /**
  * A single preference override stored in the database.

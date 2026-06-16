@@ -28,7 +28,6 @@ export class BotChannelService {
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
     if (!stream || stream.archivedAt) return false
 
-    // Check public first (fast path)
     if (stream.visibility === "public") return true
 
     const grantStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id

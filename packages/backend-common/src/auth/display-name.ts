@@ -1,7 +1,4 @@
-/**
- * Derive a display name from WorkOS identity fields.
- * Prefers "firstName lastName", falls back to email.
- */
+/** Derive a display name from WorkOS identity fields. */
 export function displayNameFromWorkos(user: {
   firstName?: string | null
   lastName?: string | null

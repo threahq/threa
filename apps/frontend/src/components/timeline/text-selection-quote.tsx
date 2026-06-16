@@ -116,7 +116,6 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
       actorType: selection.actorType,
       snippet: selection.text,
     })
-    // Clear selection
     window.getSelection()?.removeAllRanges()
     setSelection(null)
   }, [selection, quoteReplyCtx])

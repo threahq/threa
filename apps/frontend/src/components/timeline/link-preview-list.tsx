@@ -9,7 +9,6 @@ import { LinkPreviewCard } from "./link-preview-card"
 import { MessageLinkPreviewCard } from "./message-link-preview-card"
 import type { LinkPreviewSummary } from "@threa/types"
 
-/** Number of previews shown before the "show more" expansion */
 const DEFAULT_VISIBLE_COUNT = 3
 
 interface LinkPreviewListProps {
@@ -56,9 +55,8 @@ export function LinkPreviewList({
 
   const defaultCollapsed = preferences?.linkPreviewDefault === "collapsed"
 
-  // Sync previews from stream event payloads.
-  // An explicit empty array (from an edited message that removed URLs or from
-  // backend dismissal filtering) clears stale previews.
+  // An explicit empty array (edited message that removed URLs, or backend
+  // dismissal filtering) clears stale previews; undefined leaves them intact.
   useEffect(() => {
     if (initialPreviews === undefined) return
     setPreviews(initialPreviews)
@@ -78,7 +76,6 @@ export function LinkPreviewList({
       try {
         await linkPreviewsApi.dismiss(workspaceId, messageId, previewId)
       } catch {
-        // Revert on failure
         setDismissedIds((prev) => {
           const next = new Set(prev)
           next.delete(previewId)
@@ -89,7 +86,6 @@ export function LinkPreviewList({
     [workspaceId, messageId]
   )
 
-  // Filter out dismissed previews
   const visiblePreviews = useMemo(() => previews.filter((p) => !dismissedIds.has(p.id)), [previews, dismissedIds])
 
   if (visiblePreviews.length === 0) return null
@@ -115,10 +111,8 @@ export function LinkPreviewList({
           )
         }
 
-        // Determine if this preview corresponds to the hovered inline link
         const isHighlighted = hoveredUrl ? normalizeForCompare(preview.url) === normalizeForCompare(hoveredUrl) : false
 
-        // Collapsed if explicitly collapsed, or default-collapsed and not explicitly opened
         const explicitlyCollapsed = collapsedIds.has(preview.id)
         const explicitlyOpened = collapsedIds.has(`__opened_${preview.id}`)
         const isCollapsed = explicitlyCollapsed || (defaultCollapsed && !explicitlyOpened)
@@ -134,9 +128,7 @@ export function LinkPreviewList({
               onToggleCollapse={(id) => {
                 setCollapsedIds((prev) => {
                   const next = new Set(prev)
-                  // Determine current effective collapsed state
                   const currentlyCollapsed = next.has(id) || (defaultCollapsed && !next.has(`__opened_${id}`))
-                  // Clear both markers, then set the opposite
                   next.delete(id)
                   next.delete(`__opened_${id}`)
                   if (currentlyCollapsed) {

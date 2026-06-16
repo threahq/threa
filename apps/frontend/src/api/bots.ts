@@ -55,8 +55,6 @@ export const botsApi = {
     return res.data
   },
 
-  // Key management
-
   async listKeys(workspaceId: string, botId: string): Promise<BotApiKey[]> {
     const res = await api.get<{ data: BotApiKey[] }>(`/api/workspaces/${workspaceId}/bots/${botId}/keys`)
     return res.data
@@ -82,8 +80,6 @@ export const botsApi = {
     await api.post(`/api/workspaces/${workspaceId}/bots/${botId}/keys/${keyId}/revoke`)
   },
 
-  // Avatar management
-
   async uploadAvatar(workspaceId: string, botId: string, file: File): Promise<Bot> {
     const formData = new FormData()
     formData.append("avatar", file)
@@ -104,8 +100,6 @@ export const botsApi = {
     return res.data
   },
 
-  // Channel access
-
   async listStreamGrants(
     workspaceId: string,
     botId: string
@@ -124,7 +118,6 @@ export const botsApi = {
     await api.delete(`/api/workspaces/${workspaceId}/bots/${botId}/streams/${streamId}/grant`)
   },
 
-  /** List bot IDs that have been granted access to a specific stream */
   async listStreamBots(workspaceId: string, streamId: string): Promise<string[]> {
     const res = await api.get<{ data: string[] }>(`/api/workspaces/${workspaceId}/streams/${streamId}/bots`)
     return res.data

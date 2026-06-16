@@ -34,7 +34,6 @@ export function useUnreadCounts(workspaceId: string) {
       const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       const hadActivity = (current?.activityCounts[streamId] ?? 0) > 0
 
-      // Update TanStack workspace bootstrap (bridge)
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const clearedActivity = old.activityCounts[streamId] ?? 0
@@ -50,8 +49,6 @@ export function useUnreadCounts(workspaceId: string) {
         }
       })
 
-      // Update stream bootstrap's membership.lastReadEventId in TanStack
-      // so the unread divider repositions immediately
       queryClient.setQueryData(
         streamKeys.bootstrap(workspaceId, streamId),
         (old: import("@threa/types").StreamBootstrap | undefined) => {
@@ -108,7 +105,6 @@ export function useUnreadCounts(workspaceId: string) {
   const markAllAsReadMutation = useMutation({
     mutationFn: () => workspaceService.markAllAsRead(workspaceId),
     onSuccess: (updatedStreamIds) => {
-      // Update TanStack cache (bridge)
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const newUnread = { ...old.unreadCounts }
@@ -128,7 +124,6 @@ export function useUnreadCounts(workspaceId: string) {
         }
       })
 
-      // Update IDB
       db.transaction("rw", [db.unreadState], async () => {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return

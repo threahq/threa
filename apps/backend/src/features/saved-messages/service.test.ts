@@ -93,7 +93,6 @@ function fakeSaved(overrides: Partial<SavedMessage> = {}): SavedMessage {
 }
 
 function setupService() {
-  // withTransaction invokes the callback with a fake client
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
   // resolveSavedView is covered by its own tests; stub out here
   spyOn(viewModule, "resolveSavedView").mockImplementation(async (_db: any, _userId: string, rows: SavedMessage[]) =>
@@ -169,7 +168,6 @@ describe("SavedMessagesService.save", () => {
 
     expect(capturedRemindAt).not.toBeNull()
     expect(capturedRemindAt!.getTime()).toBeGreaterThanOrEqual(past.getTime())
-    // Should have been clamped forward to approximately now
     expect(capturedRemindAt!.getTime()).toBeGreaterThan(past.getTime() + 30_000)
   })
 
@@ -548,7 +546,6 @@ describe("SavedMessagesService.list", () => {
 
   it("requests limit+1 rows and sets nextCursor when there are more", async () => {
     const service = setupService()
-    // return 3 rows; limit is 2, so we expect a nextCursor
     spyOn(SavedMessagesRepository, "listByUser").mockResolvedValue([
       fakeSaved({ id: "saved_a" }),
       fakeSaved({ id: "saved_b" }),

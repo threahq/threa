@@ -1,10 +1,3 @@
-/**
- * Stub Excel Processing Service
- *
- * For testing and development without real file processing.
- * Generates deterministic fake extractions.
- */
-
 import type { Pool } from "pg"
 import type { ExcelMetadata } from "@threa/types"
 import { withClient, withTransaction } from "../../../db"
@@ -42,12 +35,10 @@ export class StubExcelProcessingService implements ExcelProcessingServiceLike {
       return
     }
 
-    // Determine format from filename
     const isXlsx =
       attachment.filename.toLowerCase().endsWith(".xlsx") || attachment.filename.toLowerCase().endsWith(".xlsm")
     const format = isXlsx ? "xlsx" : "xls"
 
-    // Generate stub metadata
     const excelMetadata: ExcelMetadata = {
       format,
       sizeTier: TextSizeTiers.SMALL,

@@ -81,7 +81,6 @@ export function EditorToolbar({
   const lastSelectionRectRef = useRef<DOMRect>(new DOMRect())
   const [linkEditorSnapshot, setLinkEditorSnapshot] = useState<LinkEditorSnapshot | null>(null)
 
-  // Dynamic shortcut hints from user preferences
   const { preferences } = usePreferences()
   const kb = preferences?.keyboardShortcuts ?? {}
   const effectiveEditorBindings = useMemo(() => getEffectiveEditorBindings(kb), [kb])
@@ -332,7 +331,6 @@ export function EditorToolbar({
           )}
         >
           <div className={cn("flex items-center gap-0.5", inlinePosition === "below" ? "pt-1" : "py-1")}>
-            {/* Formatting buttons — scroll horizontally when narrow */}
             <div
               data-testid={isMobileInlineToolbar ? "mobile-inline-toolbar-scroll" : undefined}
               className={cn(

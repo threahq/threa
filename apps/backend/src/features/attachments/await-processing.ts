@@ -3,39 +3,19 @@ import { ProcessingStatuses } from "@threa/types"
 import { AttachmentRepository } from "./repository"
 import { logger } from "../../lib/logger"
 
-/**
- * Default timeout for awaiting attachment processing (60 seconds).
- * Works for both images and PDFs.
- */
 export const DEFAULT_ATTACHMENT_PROCESSING_TIMEOUT_MS = 60_000
 
-/**
- * Polling interval for checking processing status (1 second).
- */
 const POLL_INTERVAL_MS = 1_000
 
-/**
- * Result of awaiting attachment processing.
- */
 export interface AwaitAttachmentProcessingResult {
-  /** Whether all attachments completed processing */
   allCompleted: boolean
-  /** IDs of attachments that completed successfully */
   completedIds: string[]
-  /** IDs of attachments that failed or timed out */
   failedOrTimedOutIds: string[]
 }
 
 /**
- * Await processing completion for a list of attachment IDs.
- *
  * Polls the database until all attachments reach a terminal state (completed, failed, skipped)
- * or the timeout is reached. Works for all attachment types (images, PDFs, etc.).
- *
- * @param pool - Database pool
- * @param attachmentIds - IDs of attachments to wait for
- * @param timeoutMs - Maximum time to wait (default: 60s)
- * @returns Result indicating which attachments completed
+ * or the timeout is reached.
  */
 export async function awaitAttachmentProcessing(
   pool: Pool,
@@ -70,19 +50,15 @@ export async function awaitAttachmentProcessing(
         pendingIds.delete(attachment.id)
         failedIds.push(attachment.id)
       }
-      // PENDING and PROCESSING continue to be polled
     }
 
-    // If all are done, return early
     if (pendingIds.size === 0) {
       break
     }
 
-    // Wait before polling again
     await sleep(POLL_INTERVAL_MS)
   }
 
-  // Any remaining pending IDs are timed out
   const timedOutIds = Array.from(pendingIds)
   const failedOrTimedOutIds = [...failedIds, ...timedOutIds]
 

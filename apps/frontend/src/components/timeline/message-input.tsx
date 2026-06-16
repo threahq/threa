@@ -296,7 +296,6 @@ function MessageInputComponent({
         content: [...trimmedBlocks, quoteNode, { type: "paragraph" }],
       })
 
-      // Focus the composer so the user can start typing immediately
       composerFocusRef.current?.focusAfterQuoteReply()
     })
   }, [quoteReplyCtx])
@@ -533,7 +532,6 @@ function MessageInputComponent({
       const attachments = extractUploadedAttachments(normalizedContent)
       const attachmentIds = attachments.map((attachment) => attachment.id)
 
-      // Capture content before clearing
       const contentJson = liveContent
 
       try {

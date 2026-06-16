@@ -138,7 +138,6 @@ ${recencyGroundingBullet}
 
         const output = JSON.stringify(result)
 
-        // Extract sources from results
         const sources = result.results.filter((r) => r.title && r.url).map((r) => ({ title: r.title, url: r.url }))
 
         return { output, sources }

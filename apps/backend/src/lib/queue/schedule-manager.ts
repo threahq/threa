@@ -16,17 +16,11 @@ const DEFAULT_CONFIG: ScheduleManagerConfig = {
 }
 
 /**
- * ScheduleManager - Generates cron ticks for upcoming schedule executions
- *
- * Runs periodically (default: every 10s) to pre-generate tick tokens for
- * schedules whose next execution is within the lookahead window (default: 60s).
- *
- * This two-phase approach (tick generation + tick execution) avoids polling
- * all schedules every 100ms. Instead:
- * - ScheduleManager runs infrequently (10s) to create future ticks
- * - QueueManager's existing ticker (100ms) discovers and executes due ticks
- *
- * See docs/distributed-cron-design.md for full design.
+ * Pre-generates tick tokens for schedules whose next execution falls inside the
+ * lookahead window. Two-phase by design: this runs infrequently (10s) to create
+ * future ticks, while QueueManager's ticker (100ms) discovers and executes due
+ * ones — so we avoid polling every schedule every 100ms. See
+ * docs/distributed-cron-design.md.
  */
 export class ScheduleManager {
   private readonly ticker: Ticker
@@ -44,9 +38,6 @@ export class ScheduleManager {
     })
   }
 
-  /**
-   * Start generating ticks for cron schedules.
-   */
   start(): void {
     this.ticker.start(() => this.generateTicks())
     logger.info(
@@ -59,25 +50,14 @@ export class ScheduleManager {
     )
   }
 
-  /**
-   * Stop generating ticks and wait for in-flight work to complete.
-   */
   async stop(): Promise<void> {
     this.ticker.stop()
     await this.ticker.drain()
     logger.info("ScheduleManager stopped")
   }
 
-  /**
-   * Generate ticks for schedules that need execution soon.
-   *
-   * Queries schedules with next_tick_needed_at <= NOW + lookahead,
-   * creates tick tokens at deterministic execution timestamps,
-   * and updates each schedule's next_tick_needed_at.
-   */
   private async generateTicks(): Promise<void> {
     try {
-      // Find schedules needing tick generation in configured lookahead window
       const schedules = await CronRepository.findSchedulesNeedingTicks(this.pool, {
         lookaheadSeconds: this.config.lookaheadSeconds,
         limit: this.config.batchSize,
@@ -87,8 +67,8 @@ export class ScheduleManager {
         return
       }
 
-      // Convert to createTicks format with deterministic executeAt values.
-      // This preserves one canonical tick per schedule interval across all nodes.
+      // Deterministic executeAt preserves one canonical tick per schedule
+      // interval across all nodes.
       const ticksToCreate = schedules.map((schedule) => {
         return {
           scheduleId: schedule.id,
@@ -100,7 +80,6 @@ export class ScheduleManager {
         }
       })
 
-      // Create tick tokens
       const ticks = await CronRepository.createTicks(this.pool, {
         schedules: ticksToCreate,
       })
@@ -118,9 +97,6 @@ export class ScheduleManager {
     }
   }
 
-  /**
-   * Check if ticker is running.
-   */
   isRunning(): boolean {
     return this.ticker.isRunning()
   }

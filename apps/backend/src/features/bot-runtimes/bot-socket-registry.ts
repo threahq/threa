@@ -28,23 +28,10 @@ export interface BotSocketRegistryOptions {
 
 /**
  * In-memory registry of `/bot` namespace sockets keyed by
- * (workspaceId, botId, instanceId). Sockets are tied to this server
- * process — connect/disconnect events keep the map in sync, lookups are
- * O(1), and a stale entry can only outlive the actual disconnect event
- * by the engine's ping timeout.
- *
- * One instance can technically hold a Set of sockets to tolerate
- * reconnect overlap (browser opens a new socket before the old one's
- * disconnect timer fires) — siblings that won't both serve invocations
- * because the claim is brokered through Postgres.
- *
- * Use cases:
- *   - `getSockets(...)` for diagnostics and per-socket fanout that
- *     bypasses the room layer (key rotation, force-disconnect)
- *   - `disconnectInstance(...)` when an admin revokes a session and the
- *     runtime must drop its in-memory state immediately
- *   - `onInstanceOffline` after a grace window so the DB presence row
- *     reflects "this instance is no longer connected"
+ * (workspaceId, botId, instanceId), tied to this server process. One instance
+ * holds a Set of sockets to tolerate reconnect overlap (a new socket opens
+ * before the old one's disconnect timer fires); the siblings won't both serve
+ * invocations because the claim is brokered through Postgres.
  */
 export class BotSocketRegistry {
   private byInstance = new Map<string, Set<Socket>>()

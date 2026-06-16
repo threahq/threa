@@ -94,7 +94,6 @@ export class SearchService {
 
     logger.debug({ query, filters, workspaceId, exact }, "Search request")
 
-    // Intersect caller-provided accessible streams with any filter-requested streams
     const candidateStreamIds = this.resolveStreamIds(permissions.accessibleStreamIds, filters)
 
     // Partition out E2E streams: the server can't read their ciphertext, so

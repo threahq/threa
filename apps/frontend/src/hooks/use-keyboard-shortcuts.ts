@@ -10,11 +10,10 @@ import {
 type ShortcutHandlers = Partial<Record<string, () => void>>
 
 /**
- * Hook to register keyboard shortcut handlers.
- * Uses user preferences for custom key bindings.
+ * Register keyboard shortcut handlers, honoring user preferences for custom
+ * key bindings.
  *
  * @param handlers - Map of action IDs to handler functions
- * @param enabled - Whether shortcuts are enabled (default: true)
  *
  * @example
  * ```tsx

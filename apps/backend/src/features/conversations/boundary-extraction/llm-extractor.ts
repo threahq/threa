@@ -153,7 +153,6 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       ...(context.parentMessageConversations ?? []).map((c) => c.id),
     ])
 
-    // Filter assignments to only valid conversation IDs (or null for new).
     const validAssignments: MessageAssignment[] = []
     for (const a of parsed.assignments) {
       if (a.conversationId !== null && !validConvIds.has(a.conversationId)) {
@@ -163,8 +162,6 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       validAssignments.push({ conversationId: a.conversationId, isPrimary: a.isPrimary })
     }
 
-    // Need at least one assignment with isPrimary=true. If nothing valid came back,
-    // or no primary was set, treat as a new conversation.
     let primaryCount = validAssignments.filter((a) => a.isPrimary).length
     if (validAssignments.length === 0 || primaryCount === 0) {
       logger.warn(
@@ -180,7 +177,6 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       }
     }
 
-    // If more than one primary came back, keep the first and demote the rest.
     if (primaryCount > 1) {
       let seenPrimary = false
       for (const a of validAssignments) {

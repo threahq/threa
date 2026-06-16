@@ -130,8 +130,8 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
         })
       }
 
-      // Owner is server-derived from the authenticated actor — never read
-      // from the request body — so callers can't spoof ownership.
+      // Server-derived from the authenticated actor, never the request body, so
+      // callers can't spoof ownership.
       const actorId = resolveWorkspaceUserActorId(req)
       if (type === BotTypes.PERSONAL && !actorId) {
         throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHORIZED" })
@@ -183,7 +183,6 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
     async update(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const { botId: id } = req.params
-      // req.bot set by requireBotManagement middleware
 
       const data = validateRequest(updateBotSchema, req.body)
 
@@ -268,7 +267,6 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
           throw new HttpError("Bot not found or already archived", { status: 404, code: "NOT_FOUND" })
         }
 
-        // Revoke all active keys and channel grants on archive
         await BotApiKeyRepository.revokeAllByBot(client, workspaceId, id)
         await BotChannelAccessRepository.revokeAllByBot(client, workspaceId, id)
 
@@ -315,8 +313,6 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
 
       res.json({ data: serializeBot(bot) })
     },
-
-    // --- Bot API key management ---
 
     /** GET /api/workspaces/:workspaceId/bots/:botId/keys */
     async listKeys(req: Request, res: Response) {
@@ -370,8 +366,6 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       res.status(204).send()
     },
 
-    // --- Avatar management ---
-
     /** POST /api/workspaces/:workspaceId/bots/:botId/avatar */
     async uploadAvatar(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -396,13 +390,12 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       const images = await avatarService.processImages(req.file.buffer)
       await avatarService.uploadImages(basePath, images)
 
-      // Clean up raw file (don't need it after inline processing)
       avatarService.deleteRawFile(rawS3Key)
 
       const oldAvatarUrl = req.bot!.avatarUrl
 
-      // Update bot with new avatar URL. If the transaction fails (e.g. bot
-      // was archived concurrently), clean up the orphaned processed images.
+      // On transaction failure (e.g. concurrent archive), clean up the orphaned
+      // processed images.
       let updated
       try {
         updated = await withTransaction(pool, async (client) => {
@@ -491,8 +484,6 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
         return res.status(404).end()
       }
     },
-
-    // --- Channel access grants ---
 
     /** GET /api/workspaces/:workspaceId/bots/:botId/streams */
     async listStreamGrants(req: Request, res: Response) {

@@ -15,18 +15,14 @@ export {
   MESSAGE_METADATA_RESERVED_PREFIX,
 } from "./metadata-schema"
 
-// Content helpers
 export { deriveContentMarkdown } from "./content"
 
-// Repository
 export { MessageRepository } from "./repository"
 export type { Message, InsertMessageParams } from "./repository"
 
-// Version Repository
 export { MessageVersionRepository } from "./version-repository"
 export type { MessageVersion } from "./version-repository"
 
-// Event Service
 export { EventService } from "./event-service"
 export type {
   MessageCreatedPayload,
@@ -44,7 +40,6 @@ export type {
   MoveMessagesToThreadResult,
 } from "./event-service"
 
-// Handlers
 export { createMessageHandlers } from "./handlers"
 export {
   createMessageSchema,
@@ -54,7 +49,6 @@ export {
   validateMoveMessagesToThreadSchema,
 } from "./handlers"
 
-// Sharing sub-feature
 export {
   ShareService,
   SharedMessageRepository,

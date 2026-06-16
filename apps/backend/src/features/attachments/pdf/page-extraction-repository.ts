@@ -1,7 +1,6 @@
 import { sql, type Querier } from "../../../db"
 import type { PdfPageClassification, ProcessingStatus } from "@threa/types"
 
-// Internal row type (snake_case)
 interface PdfPageExtractionRow {
   id: string
   attachment_id: string
@@ -18,7 +17,6 @@ interface PdfPageExtractionRow {
   updated_at: Date
 }
 
-// Domain type (camelCase)
 export interface PdfPageExtraction {
   id: string
   attachmentId: string
@@ -118,7 +116,7 @@ export const PdfPageExtractionRepository = {
   async insertMany(client: Querier, pages: InsertPdfPageExtractionParams[]): Promise<number> {
     if (pages.length === 0) return 0
 
-    // Insert each page individually - simpler and still atomic within a transaction
+    // Per-row inserts, kept atomic by the caller's transaction.
     let count = 0
     for (const p of pages) {
       await client.query(sql`
@@ -191,8 +189,7 @@ export const PdfPageExtractionRepository = {
   },
 
   async update(client: Querier, id: string, params: UpdatePdfPageExtractionParams): Promise<PdfPageExtraction | null> {
-    // Use a full update query with all fields - simpler than building dynamic SET clauses
-    // First fetch current values, then apply changes
+    // Read-modify-write the whole row to avoid building dynamic SET clauses.
     const current = await this.findById(client, id)
     if (!current) return null
 
@@ -217,10 +214,6 @@ export const PdfPageExtractionRepository = {
     return result.rows[0] ? mapRowToExtraction(result.rows[0]) : null
   },
 
-  /**
-   * Update processing status for a page.
-   * Returns true if the update was applied.
-   */
   async updateProcessingStatus(
     client: Querier,
     id: string,
@@ -255,9 +248,6 @@ export const PdfPageExtractionRepository = {
     return result.rowCount ?? 0
   },
 
-  /**
-   * Count pages by processing status for an attachment.
-   */
   async countByStatus(
     client: Querier,
     attachmentId: string

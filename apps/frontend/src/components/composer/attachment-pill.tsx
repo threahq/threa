@@ -10,32 +10,20 @@ import { cn } from "@/lib/utils"
  * - `default` — fully resolved (uploaded file, ready/inline context-ref).
  * - `pending` — in-flight (upload progressing, precompute in flight).
  * - `error`   — terminal failure.
- *
- * Drives the visual state on a single primitive so files + context-refs
- * read as one type of "thing attached to the message" — sets up the data
- * model for an eventual unified bag where attachments live as another
- * ref kind.
  */
 export type AttachmentPillStatus = "default" | "pending" | "error"
 
 export interface AttachmentPillProps {
-  /** Lucide icon component rendered at the leading edge of the pill. */
   icon: ComponentType<{ className?: string }>
-  /** Primary label (filename, ref label, etc.). Truncated to fit. */
   label: string
-  /** Optional secondary text rendered after the label (size, count, etc.). */
   secondary?: ReactNode
-  /** Visual status — gates the border/bg palette and animations. */
   status?: AttachmentPillStatus
-  /** Hover tooltip body. */
   tooltip?: ReactNode
-  /** Remove handler. When provided renders a small × button at the trailing edge. */
+  /** When provided renders a small × button at the trailing edge. */
   onRemove?: () => void
-  /** Internal route to navigate to on click — turns the pill into a `<Link>`. */
+  /** Internal route — turns the pill into a `<Link>`. */
   href?: string
-  /** Aria label for the remove button. */
   removeLabel?: string
-  /** Override the truncation max-width on the label. */
   labelMaxWidth?: string
   className?: string
 }
@@ -60,9 +48,9 @@ const SECONDARY_TONE: Record<AttachmentPillStatus, string> = {
 
 /**
  * Canonical pill primitive used by the composer attachment row and the
- * timeline message context-ref badge. Keeps file uploads, context refs,
- * and any future bag entry visually consistent — same shape, same
- * spacing, same status palette, same remove + link affordances.
+ * timeline message context-ref badge. Keeps file uploads and context refs
+ * visually consistent — same shape, spacing, status palette, and
+ * remove + link affordances.
  */
 export function AttachmentPill({
   icon: Icon,
@@ -76,11 +64,9 @@ export function AttachmentPill({
   labelMaxWidth = "max-w-[160px]",
   className,
 }: AttachmentPillProps) {
-  // Matches `<Button variant="outline" size="sm" className="h-8 gap-2 text-xs">` —
-  // the canonical attachment surface used by `<AttachmentList>` for sent-message
-  // file cards. Keeping pre-send composer pills and post-send message pills at
-  // identical metrics so the chip's size doesn't change as it "moves" from
-  // composer to timeline.
+  // Matches `<Button variant="outline" size="sm" className="h-8 gap-2 text-xs">`,
+  // the surface `<AttachmentList>` uses for sent-message file cards, so a chip
+  // keeps identical metrics moving from composer to timeline.
   const baseStyles = "inline-flex h-8 items-center gap-2 rounded-md px-3 text-xs select-none"
   const statusStyles = STATUS_STYLES[status]
 

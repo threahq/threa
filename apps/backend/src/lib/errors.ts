@@ -1,6 +1,5 @@
 import { HttpError } from "@threa/backend-common"
 
-// Re-export shared errors for backward compatibility with existing imports
 export { HttpError, isUniqueViolation } from "@threa/backend-common"
 
 export class DuplicateSlugError extends HttpError {

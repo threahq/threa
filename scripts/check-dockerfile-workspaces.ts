@@ -19,11 +19,6 @@ import { resolve } from "node:path"
 
 const REPO_ROOT = resolve(import.meta.dir, "..")
 
-/**
- * `apps/<name>/package.json` and `packages/<name>/package.json` — the two
- * workspace roots in this monorepo (matches the `"workspaces"` glob in the
- * root package.json).
- */
 async function findWorkspacePackageJsons(): Promise<string[]> {
   const result: string[] = []
   for (const root of ["apps", "packages"]) {
@@ -35,11 +30,6 @@ async function findWorkspacePackageJsons(): Promise<string[]> {
   return result.sort()
 }
 
-/**
- * Any Dockerfile that runs `bun install --frozen-lockfile` is in scope.
- * `Dockerfile.postgres` is excluded automatically because it doesn't
- * touch bun.
- */
 async function findDockerfilesNeedingChecks(): Promise<string[]> {
   const result: string[] = []
   const glob = new Bun.Glob("Dockerfile*")
@@ -52,13 +42,7 @@ async function findDockerfilesNeedingChecks(): Promise<string[]> {
   return result.sort()
 }
 
-/**
- * Extract the set of workspace package.json paths that a Dockerfile
- * COPYs into the build context. Matches lines like:
- *
- *   COPY apps/backend/package.json apps/backend/
- *   COPY packages/types/package.json packages/types/
- */
+// Matches `COPY apps/backend/package.json apps/backend/` style lines.
 function extractCopiedWorkspaces(dockerfileContent: string): Set<string> {
   const result = new Set<string>()
   for (const line of dockerfileContent.split("\n")) {

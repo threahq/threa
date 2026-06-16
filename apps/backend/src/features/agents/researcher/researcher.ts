@@ -243,7 +243,6 @@ export class WorkspaceAgent {
 
     this.emitSubstep(substeps, "Checking workspace access…", input.onSubstep)
 
-    // Abort check before any work
     const earlyExit = this.checkAbortOrDeadline(input)
     if (earlyExit) {
       return this.buildPartialResult([], [], [], workspaceId, substeps, earlyExit)
@@ -261,13 +260,11 @@ export class WorkspaceAgent {
         invokingUserId,
       })
 
-      // Get accessible streams for searches
       const accessibleStreamIds = await SearchRepository.getAccessibleStreamsForAgent(client, accessSpec, workspaceId)
 
       return { stream, accessSpec, accessibleStreamIds }
     })
 
-    // Return empty if stream not found
     if (!fetchedData.stream || !fetchedData.accessSpec || !fetchedData.accessibleStreamIds) {
       logger.warn({ streamId }, "Stream not found for workspace agent")
       return this.emptyResult(substeps)
@@ -545,7 +542,6 @@ export class WorkspaceAgent {
             return { kind: "stop", summary: { stopped: "no_new_queries", reasoning: evaluation.reasoning } }
           }
 
-          // Abort check before execute
           const preExecIter = this.checkAbortOrDeadline(input)
           if (preExecIter) {
             return { kind: "partial", reason: preExecIter, summary: { aborted: preExecIter } }
@@ -603,7 +599,6 @@ export class WorkspaceAgent {
       }
     }
 
-    // Final abort check before building result
     const postLoop = this.checkAbortOrDeadline(input)
     if (postLoop) {
       return this.buildPartialResult(allMemos, allMessages, allAttachments, workspaceId, substeps, postLoop)
@@ -989,7 +984,6 @@ Each query must have:
       )
     )
 
-    // Aggregate results
     const memos: EnrichedMemoResult[] = []
     const messages: EnrichedMessageResult[] = []
     const attachments: EnrichedAttachmentResult[] = []
@@ -1241,7 +1235,6 @@ Each query must have:
           }
         }
 
-        // Enrich results with author names and stream names
         const enriched = await enrichMessageSearchResults(client, workspaceId, [...dedupedResultsById.values()])
 
         // Resolve quote-reply precursors for each retrieved message so Ariadne

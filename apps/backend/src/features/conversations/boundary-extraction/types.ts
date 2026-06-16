@@ -59,11 +59,8 @@ const extractionResultSchema = z.object({
   assignments: z.array(messageAssignmentSchema),
   /** Topic summary; required when any assignment has `conversationId: null`. */
   newConversationTopic: z.string().optional(),
-  /** Optional reassignments of prior messages. Empty/undefined if none. */
   reassignments: z.array(reassignmentSchema).optional(),
-  /** Updates to completeness scores for affected conversations. */
   completenessUpdates: z.array(completenessUpdateSchema).optional(),
-  /** Overall confidence in the classification. */
   confidence: z.number(),
 })
 

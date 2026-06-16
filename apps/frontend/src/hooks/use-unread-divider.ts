@@ -47,11 +47,9 @@ export function useUnreadDivider({
   highlightMessageId,
   isLoading = false,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
-  // Calculate first unread event from another user
   const firstUnreadEventId = useMemo(() => {
     if (events.length === 0) return undefined
 
-    // Find events after lastReadEventId that are from other users
     const startIndex = lastReadEventId ? events.findIndex((e) => e.id === lastReadEventId) + 1 : 0
 
     if (startIndex <= 0 && lastReadEventId) {
@@ -77,13 +75,11 @@ export function useUnreadDivider({
   const previousStreamId = useRef(streamId)
 
   useEffect(() => {
-    // Show divider when we have a firstUnreadEventId and haven't shown one yet
     if (firstUnreadEventId && !hasShownDivider.current) {
       setDisplayedUnreadId(firstUnreadEventId)
       setIsFading(false)
       hasShownDivider.current = true
 
-      // Start fade after 3 seconds
       const fadeTimer = setTimeout(() => {
         setIsFading(true)
       }, 3000)
@@ -113,7 +109,6 @@ export function useUnreadDivider({
     hasShownDivider.current = false
   }, [firstUnreadEventId])
 
-  // Reset when stream changes
   useEffect(() => {
     if (previousStreamId.current === streamId) return
     previousStreamId.current = streamId
@@ -137,7 +132,6 @@ export function useUnreadDivider({
     deepLinkedRef.current.seen = true
   }
 
-  // Scroll to first unread on initial load
   useScrollToElement({
     enabled: scrollToUnread && !isLoading && !!firstUnreadEventId && !deepLinkedRef.current.seen,
     selector: firstUnreadEventId ? `[data-event-id="${firstUnreadEventId}"]` : undefined,

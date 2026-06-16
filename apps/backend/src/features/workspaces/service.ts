@@ -584,11 +584,9 @@ export class WorkspaceService {
   async ensureWorkosOrganization(workspaceId: string): Promise<string | null> {
     if (!this.workosOrgService) return null
 
-    // Tier 1: Local DB cache
     const cached = await WorkspaceRepository.getWorkosOrganizationId(this.pool, workspaceId)
     if (cached) return cached
 
-    // Tier 2: WorkOS by external ID
     const existing = await this.workosOrgService.getOrganizationByExternalId(workspaceId)
     if (existing) {
       await WorkspaceRepository.setWorkosOrganizationId(this.pool, workspaceId, existing.id)

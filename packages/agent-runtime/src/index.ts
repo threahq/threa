@@ -1,4 +1,3 @@
-// Runtime
 export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./runtime/agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./runtime/agent-tool"
 export {
@@ -76,7 +75,6 @@ export {
   type TraceSubstepEntry,
 } from "./runtime/trace-projector"
 
-// Tools (web + internal)
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "./tools/web-search-tool"
 export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "./tools/read-url-tool"
 
@@ -111,7 +109,6 @@ export {
 } from "./tools/send-message-tool"
 export { createKeepResponseTool } from "./tools/keep-response-tool"
 
-// AI wrapper
 export {
   createAI,
   parseModelId,
@@ -149,10 +146,8 @@ export { CostTracker, type CapturedUsage } from "./ai/openrouter-cost-intercepto
 export { getCostTrackingCallbacks, CostTrackingCallback } from "./ai/cost-tracking-callback"
 export { DebugCallback, getDebugCallbacks, isDebugEnabled } from "./ai/debug-callback"
 
-// Text helpers
 export { stripMarkdownFences, createJsonRepair, type SemanticFieldMapping } from "./ai/text-utils"
 
-// Model registry
 export {
   createModelRegistry,
   type ModelRegistry,
@@ -165,7 +160,6 @@ export {
 // Truncation helpers (used by enclave-side orchestrator + backend personas)
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./runtime/truncation"
 
-// Trust boundary helpers
 export {
   protectToolOutputText,
   protectToolOutputBlocks,

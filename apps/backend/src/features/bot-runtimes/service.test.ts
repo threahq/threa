@@ -147,7 +147,6 @@ describe("BotRuntimeService outbox emission", () => {
         claimTtlSeconds: 60,
       })
 
-      // The claim is bounded by the attempt ceiling.
       expect(claimSpy.mock.calls[0]?.[1]).toMatchObject({ maxAttempts: BOT_CLAIM_MAX_ATTEMPTS })
       expect(insertSpy).toHaveBeenCalledTimes(1)
       expect(insertSpy.mock.calls[0]?.[1]).toBe("bot_invocation:claimed")

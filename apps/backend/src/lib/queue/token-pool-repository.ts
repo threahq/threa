@@ -2,7 +2,6 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { tokenId } from "../id"
 
-// Internal row type (snake_case)
 interface QueueTokenRow {
   id: string
   queue_name: string
@@ -14,7 +13,6 @@ interface QueueTokenRow {
   created_at: Date
 }
 
-// Domain type (camelCase)
 export interface QueueToken {
   id: string
   queueName: string
@@ -26,7 +24,6 @@ export interface QueueToken {
   createdAt: Date
 }
 
-// Batch lease params
 export interface BatchLeaseTokensParams {
   leasedBy: string
   leasedAt: Date
@@ -49,25 +46,21 @@ export interface BatchLeaseTokensParams {
   fairnessMode?: "workspace" | "none"
 }
 
-// Renew lease params
 export interface RenewLeaseParams {
   tokenId: string
   leasedBy: string
   leasedUntil: Date
 }
 
-// Delete token params
 export interface DeleteTokenParams {
   tokenId: string
   leasedBy: string
 }
 
-// Delete expired params
 export interface DeleteExpiredTokensParams {
   now: Date
 }
 
-// Mapper
 function mapRowToToken(row: QueueTokenRow): QueueToken {
   return {
     id: row.id,
@@ -89,16 +82,7 @@ const SELECT_FIELDS = sql.raw(`
 
 export const TokenPoolRepository = {
   /**
-   * Atomically lease a batch of tokens.
-   *
-   * Algorithm:
-   * 1. Find available (queue, workspace) pairs with pending messages
-   * 2. Exclude pairs that already have active tokens
-   * 3. Order by earliest process_after (fairness)
-   * 4. INSERT tokens for selected pairs
-   * 5. RETURN leased tokens
-   *
-   * Returns empty array if no work available.
+   * Atomically lease a batch of tokens. Returns empty array if no work available.
    *
    * TODO: Implement chunking based on scalingThreshold - split pairs with high
    * pending_count into multiple tokens.
@@ -106,8 +90,7 @@ export const TokenPoolRepository = {
   async batchLeaseTokens(db: Querier, params: BatchLeaseTokensParams): Promise<QueueToken[]> {
     const fairnessMode = params.fairnessMode ?? "workspace"
 
-    // Pre-generate ULIDs (INV-2: all entity IDs must be prefix_ulid)
-    // Generate limit ULIDs upfront, actual usage will be limited by available pairs
+    // Pre-generate ULIDs (INV-2). Usage is bounded by available pairs.
     const tokenIds = Array.from({ length: params.limit }, () => tokenId())
 
     // Two query shapes, one per fairness mode. We keep them as separate
@@ -257,12 +240,7 @@ export const TokenPoolRepository = {
     return result.rows.map(mapRowToToken)
   },
 
-  /**
-   * Renew lease for a token.
-   * Returns false if lease lost.
-   *
-   * Verifies leasedBy to prevent race conditions.
-   */
+  /** Verifies leasedBy so only the holder renews; returns false if the lease was lost. */
   async renewLease(db: Querier, params: RenewLeaseParams): Promise<boolean> {
     const result = await db.query(
       sql`
@@ -276,11 +254,7 @@ export const TokenPoolRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  /**
-   * Delete a token (release work unit).
-   *
-   * Verifies leasedBy to prevent race conditions.
-   */
+  /** Verifies leasedBy so only the holder releases the token. */
   async deleteToken(db: Querier, params: DeleteTokenParams): Promise<void> {
     const result = await db.query(
       sql`
@@ -295,10 +269,6 @@ export const TokenPoolRepository = {
     }
   },
 
-  /**
-   * Delete expired tokens (cleanup).
-   * Returns count of deleted tokens.
-   */
   async deleteExpiredTokens(db: Querier, params: DeleteExpiredTokensParams): Promise<number> {
     const result = await db.query(
       sql`
@@ -310,9 +280,7 @@ export const TokenPoolRepository = {
     return result.rowCount ?? 0
   },
 
-  /**
-   * Get token by ID (for testing/debugging)
-   */
+  /** For testing/debugging. */
   async getById(db: Querier, id: string): Promise<QueueToken | null> {
     const result = await db.query<QueueTokenRow>(
       sql`

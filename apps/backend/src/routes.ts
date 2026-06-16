@@ -386,7 +386,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/users", ...authed, workspace.getUsers)
   app.get("/api/workspaces/:workspaceId/emojis", ...authed, emoji.list)
 
-  // User preferences
   app.get("/api/workspaces/:workspaceId/preferences", ...authed, preferences.get)
   app.patch("/api/workspaces/:workspaceId/preferences", ...authed, preferences.update)
 
@@ -450,7 +449,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId/events", ...authed, stream.listEvents)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/events/around", ...authed, stream.listEventsAround)
 
-  // Search
   app.post("/api/workspaces/:workspaceId/search", ...authed, rateLimits.search, search.search)
   app.post("/api/workspaces/:workspaceId/memos/search", ...authed, rateLimits.search, memo.search)
   app.get("/api/workspaces/:workspaceId/memos/:memoId", ...authed, memo.getById)
@@ -482,7 +480,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/attachments/:attachmentId/extraction", ...authed, attachment.getExtraction)
   app.delete("/api/workspaces/:workspaceId/attachments/:attachmentId", ...authed, attachment.delete)
 
-  // Conversations
   app.get("/api/workspaces/:workspaceId/streams/:streamId/conversations", ...authed, conversation.listByStream)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.getById)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/messages", ...authed, conversation.getMessages)
@@ -492,7 +489,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     conversation.reassignMessage
   )
 
-  // Commands
   app.post("/api/workspaces/:workspaceId/commands/dispatch", ...authed, rateLimits.commandDispatch, command.dispatch)
   app.get("/api/workspaces/:workspaceId/commands", ...authed, command.list)
 
@@ -533,7 +529,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/slug-available", ...authed, workspace.checkSlugAvailability)
   app.post("/api/workspaces/:workspaceId/setup", ...authed, workspace.completeUserSetup)
 
-  // User profile
   app.patch("/api/workspaces/:workspaceId/profile", ...authed, workspace.updateProfile)
   app.put("/api/workspaces/:workspaceId/status", ...authed, workspace.setStatus)
   app.delete("/api/workspaces/:workspaceId/status", ...authed, workspace.clearStatus)
@@ -545,7 +540,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Avatar file serving (unauthenticated — S3 keys contain unguessable ULIDs)
   app.get("/api/workspaces/:workspaceId/users/:userId/avatar/:file", workspace.serveAvatarFile)
 
-  // AI Usage and Budget
   app.get("/api/workspaces/:workspaceId/ai-usage", ...authed, aiUsage.getUsage)
   app.get("/api/workspaces/:workspaceId/ai-usage/recent", ...authed, aiUsage.getRecentUsage)
   app.get("/api/workspaces/:workspaceId/ai-budget", ...authed, aiUsage.getBudget)
@@ -556,7 +550,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     aiUsage.updateBudget
   )
 
-  // Activity feed
   // Sync-log catch-up (sync engine v2 step 1): ordered entries after a cursor,
   // ACL-filtered to the requester's delivery groups.
   app.get("/api/workspaces/:workspaceId/sync", ...authed, sync.catchUp)
@@ -565,7 +558,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/activity/read", ...authed, activity.markAllAsRead)
   app.post("/api/workspaces/:workspaceId/activity/:id/read", ...authed, activity.markOneAsRead)
 
-  // Saved messages
   app.get("/api/workspaces/:workspaceId/saved", ...authed, savedMessages.list)
   app.post("/api/workspaces/:workspaceId/saved", ...authed, savedMessages.create)
   app.patch("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.update)
@@ -576,7 +568,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/accept", ...authed, savedSuggestions.accept)
   app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/dismiss", ...authed, savedSuggestions.dismiss)
 
-  // Labels
   app.get("/api/workspaces/:workspaceId/labels", ...authed, label.list)
   app.post("/api/workspaces/:workspaceId/labels", ...authed, label.create)
   app.patch("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.update)
@@ -587,7 +578,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/labels/:labelId/assignments", ...authed, label.assign)
   app.delete("/api/workspaces/:workspaceId/labels/:labelId/assignments", ...authed, label.unassign)
 
-  // Scheduled messages
   app.get("/api/workspaces/:workspaceId/scheduled", ...authed, scheduledMessages.list)
   app.post("/api/workspaces/:workspaceId/scheduled", ...authed, scheduledMessages.create)
   app.get("/api/workspaces/:workspaceId/scheduled/:id", ...authed, scheduledMessages.getById)
@@ -604,7 +594,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/drafts/:id/resolve", ...authed, drafts.resolve)
   app.delete("/api/workspaces/:workspaceId/drafts/:id", ...authed, drafts.delete)
 
-  // Push notifications
   const push = createPushHandlers({ pushService })
   app.get("/api/workspaces/:workspaceId/push/vapid-key", ...authed, push.getVapidKey)
   app.post("/api/workspaces/:workspaceId/push/subscribe", ...authed, push.subscribe)
@@ -613,14 +602,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Non-workspace-scoped: cleans up all push subscriptions for a browser endpoint (used on logout)
   app.post("/api/push/cleanup-endpoint", auth, push.cleanupEndpoint)
 
-  // Agent Sessions (trace viewing)
   app.get("/api/workspaces/:workspaceId/agent-sessions/:sessionId", ...authed, agentSession.getSession)
 
-  // Context-bag standalone precompute (composer draft flow)
   app.post("/api/workspaces/:workspaceId/context-bag/precompute", ...authed, contextBag.precompute)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/context-bag", ...authed, contextBag.getStreamBag)
 
-  // Link Previews
   app.get("/api/workspaces/:workspaceId/messages/:messageId/link-previews", ...authed, linkPreview.getForMessage)
   app.post(
     "/api/workspaces/:workspaceId/messages/:messageId/link-previews/:linkPreviewId/dismiss",
@@ -831,7 +817,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.getAttachmentDownloadUrl
   )
 
-  // Bot runtimes
   app.post(
     "/api/v1/workspaces/:workspaceId/bot-runtime/presence",
     ...publicMiddleware,
@@ -881,7 +866,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.failBotInvocation
   )
 
-  // Streams
   app.get(
     "/api/v1/workspaces/:workspaceId/streams",
     ...publicMiddleware,
@@ -901,7 +885,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.listMembers
   )
 
-  // Messages
   app.get(
     "/api/v1/workspaces/:workspaceId/streams/:streamId/messages",
     ...publicMiddleware,
@@ -933,7 +916,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.deleteMessage
   )
 
-  // Users
   app.get(
     "/api/v1/workspaces/:workspaceId/users",
     ...publicMiddleware,

@@ -5,7 +5,6 @@ import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filt
 
 export type { StreamType, Visibility, CompanionMode, ArchiveStatus }
 
-// Internal row type (snake_case, not exported)
 interface StreamRow {
   id: string
   workspace_id: string
@@ -455,7 +454,6 @@ export const StreamRepository = {
       return result.rows.map(mapRowToStream)
     }
 
-    // Build query with visibility filter if user's membership stream IDs provided
     if (userMembershipStreamIds !== undefined) {
       if (types && types.length > 0) {
         const result = await db.query<StreamRow>(
@@ -683,7 +681,6 @@ export const StreamRepository = {
    * @returns { stream, created } - The stream and whether it was newly created
    */
   async insertThreadOrFind(db: Querier, params: InsertStreamParams): Promise<{ stream: Stream; created: boolean }> {
-    // Try to insert with ON CONFLICT DO NOTHING
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
@@ -712,14 +709,11 @@ export const StreamRepository = {
     `)
 
     if (insertResult.rows.length > 0) {
-      // Insert succeeded - this is a new thread
       return { stream: mapRowToStream(insertResult.rows[0]), created: true }
     }
 
-    // Insert was no-op due to conflict - find the existing thread
     const existing = await this.findByParentMessage(db, params.parentStreamId!, params.parentMessageId!)
     if (!existing) {
-      // This shouldn't happen - if ON CONFLICT triggered, the row exists
       throw new Error("Thread creation conflict but existing thread not found")
     }
     return { stream: existing, created: false }

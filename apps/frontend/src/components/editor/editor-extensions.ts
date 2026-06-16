@@ -7,10 +7,8 @@ import History from "@tiptap/extension-history"
 import Gapcursor from "@tiptap/extension-gapcursor"
 import Placeholder from "@tiptap/extension-placeholder"
 
-// Inline marks with atom-aware input rules
 import { AtomAwareBold, AtomAwareItalic, AtomAwareStrike, AtomAwareCode, BoundaryAwareLink } from "./atom-aware-marks"
 
-// Block extensions
 import Blockquote from "@tiptap/extension-blockquote"
 import BulletList from "@tiptap/extension-bullet-list"
 import OrderedList from "@tiptap/extension-ordered-list"
@@ -38,7 +36,6 @@ import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-sea
 import { DictationPreview } from "./dictation-preview-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 
-// Create lowlight instance with common languages
 const lowlight = createLowlight(common)
 
 interface CreateEditorExtensionsOptions {
@@ -67,7 +64,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
   const config: CreateEditorExtensionsOptions = typeof options === "string" ? { placeholder: options } : options
 
   const extensions: AnyExtension[] = [
-    // Core text editing
     Document,
     Paragraph,
     Text,
@@ -75,19 +71,16 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     History,
     Gapcursor,
 
-    // Placeholder text when empty
     Placeholder.configure({
       placeholder: config.placeholder,
       emptyEditorClass: "is-editor-empty",
     }),
 
-    // Inline marks with atom-aware input rules
     AtomAwareBold,
     AtomAwareItalic,
     AtomAwareStrike,
     AtomAwareCode,
 
-    // Block formatting
     Heading.configure({ levels: [1, 2, 3] }),
     BulletList,
     OrderedList,
@@ -117,7 +110,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     // pipe-row paragraphs to a real table node.
     MarkdownTableInputRule,
 
-    // Auto-link URLs (makes them clickable)
     BoundaryAwareLink.configure({
       openOnClick: false,
       autolink: true,
@@ -127,19 +119,14 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
       },
     }),
 
-    // Inline attachments (images, files)
     AttachmentReferenceExtension,
 
-    // Quote reply blocks
     QuoteReplyExtension,
 
-    // Shared message pointer blocks (cross-stream shares)
     SharedMessageExtension,
 
-    // Memo embed pointer blocks (inline memory references)
     MemoEmbedExtension,
 
-    // Giphy GIF embeds (inline, rendered from Giphy's CDN)
     GiphyEmbedExtension,
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
@@ -150,7 +137,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     DictationChunkExtension,
   ]
 
-  // Add mention extension if suggestion config provided
   if (config.mentionSuggestion) {
     extensions.push(
       MentionExtension.configure({
@@ -159,7 +145,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     )
   }
 
-  // Add channel extension if suggestion config provided
   if (config.channelSuggestion) {
     extensions.push(
       ChannelExtension.configure({
@@ -168,7 +153,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     )
   }
 
-  // Add command extension if suggestion config provided
   if (config.commandSuggestion) {
     extensions.push(
       CommandExtension.configure({
@@ -177,7 +161,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     )
   }
 
-  // Add emoji extension if suggestion config provided
   if (config.emojiSuggestion && config.toEmoji) {
     extensions.push(
       EmojiExtension.configure({
@@ -187,7 +170,6 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     )
   }
 
-  // Add /memo inline-search extension if suggestion config provided
   if (config.memoSearchSuggestion) {
     extensions.push(
       MemoSearchExtension.configure({

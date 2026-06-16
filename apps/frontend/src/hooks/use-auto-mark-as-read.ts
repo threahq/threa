@@ -42,7 +42,6 @@ export function useAutoMarkAsRead(
     const unreadCount = getUnreadCount(streamId)
     const activityCount = getActivityCount(streamId)
 
-    // Skip if nothing to clear
     if (unreadCount === 0 && activityCount === 0) return
 
     // Skip if already marked this event AND no pending activities to clear.
@@ -51,13 +50,13 @@ export function useAutoMarkAsRead(
     // them even if lastEventId hasn't changed.
     if (lastMarkedRef.current === lastEventId && activityCount === 0) return
 
-    // Clear any pending timer
     if (timerRef.current) {
       clearTimeout(timerRef.current)
     }
 
     timerRef.current = setTimeout(() => {
-      // Use refs to get current values at execution time, not capture time
+      // Read current values at execution time, not capture time, so a stream
+      // switch during the debounce window marks the stream actually in view.
       const currentStreamId = streamIdRef.current
       const currentLastEventId = lastEventIdRef.current
       if (currentLastEventId) {

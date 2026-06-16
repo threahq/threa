@@ -309,7 +309,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     }
   }, [suppressedStreamErrors, workspaceId])
 
-  // Compute phase from state
   const phase = useMemo<CoordinatedPhase>(() => {
     if (isReady) return "ready"
     if (showSkeleton) return "skeleton"
@@ -371,17 +370,14 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   // This shows for both initial loads AND reconnect loads
   useEffect(() => {
     if (isLoading) {
-      // Clear any pending hide timeout
       if (hideIndicatorTimerRef.current) {
         clearTimeout(hideIndicatorTimerRef.current)
         hideIndicatorTimerRef.current = null
       }
-      // Start timer to show loading indicator after delay
       loadingIndicatorTimerRef.current = setTimeout(() => {
         setShowLoadingIndicator(true)
       }, LOADING_DELAY_MS)
     } else {
-      // Clear timer and hide indicator when loading completes
       if (loadingIndicatorTimerRef.current) {
         clearTimeout(loadingIndicatorTimerRef.current)
         loadingIndicatorTimerRef.current = null
@@ -400,8 +396,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     }
   }, [isLoading])
 
-  // Build a map of stream states for O(1) lookup
-  // Filter out both draft scratchpads (draft_xxx) and draft thread panels (draft:xxx:xxx)
   const streamStateMap = useMemo(() => {
     const map = new Map<string, { isLoading: boolean; error: Error | null }>()
 
@@ -426,8 +420,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     return map
   }, [streamQueryStates, syncSnapshot])
 
-  // Extract errors for getStreamError
-  // Filter out both draft scratchpads (draft_xxx) and draft thread panels (draft:xxx:xxx)
   const streamErrors = useMemo<StreamError[]>(() => {
     return streamQueryStates
       .map((state) => {

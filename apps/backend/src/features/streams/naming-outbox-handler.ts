@@ -12,15 +12,9 @@ import { E2eStreamsRepository } from "../e2e-streams"
 export type NamingHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
- * Handler that dispatches auto-naming jobs for messages in streams
- * that need display name generation.
- *
- * Triggers LLM processing for:
- * - Scratchpads without a generated name
- * - Threads without a generated name
- *
- * Uses time-based cursor locking for exclusive access without
- * holding database connections during processing.
+ * Dispatches auto-naming jobs for scratchpads and threads that still need a
+ * generated display name. Uses time-based cursor locking for exclusive access
+ * without holding database connections during processing.
  */
 export class NamingHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager

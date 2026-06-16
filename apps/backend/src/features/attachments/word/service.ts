@@ -1,10 +1,3 @@
-/**
- * Word Processing Service
- *
- * Processes Word documents (.doc, .docx) to extract structured information
- * that can be used by AI agents to understand document content.
- */
-
 import type { Pool } from "pg"
 import type { TextSizeTier, InjectionStrategy, TextSection, WordMetadata } from "@threa/types"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
@@ -53,18 +46,14 @@ export class WordProcessingService implements WordProcessingServiceLike {
       log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing Word document")
 
       try {
-        // Download the file
         const fileBuffer = await this.storage.getObject(attachment.storagePath)
 
-        // Validate format using magic bytes
         const format = validateWordFormat(fileBuffer)
         log.info({ format }, "Word format detected")
 
-        // Extract content
         const extracted = await extractWord(fileBuffer, format)
         const textContent = extracted.text
 
-        // Process embedded images if any (DOCX only)
         let processedImageCaptions: string[] = []
         if (extracted.images.length > 0) {
           log.info({ imageCount: extracted.images.length }, "Processing embedded images")
@@ -75,22 +64,17 @@ export class WordProcessingService implements WordProcessingServiceLike {
           )
         }
 
-        // Integrate image captions into text
         const contentWithImages = this.integrateImageCaptions(textContent, processedImageCaptions)
 
-        // Calculate metrics
         const wordCount = countWords(textContent)
         const characterCount = textContent.length
         const contentBytes = Buffer.byteLength(contentWithImages, "utf-8")
 
-        // Determine size tier and injection strategy
         const sizeTier = determineSizeTier(contentBytes)
         const injectionStrategy = determineInjectionStrategy(sizeTier)
 
-        // Build sections for navigation
         const sections = buildSections(textContent)
 
-        // Build metadata
         const wordMetadata: WordMetadata = {
           format,
           sizeTier,
@@ -105,7 +89,6 @@ export class WordProcessingService implements WordProcessingServiceLike {
           sections,
         }
 
-        // Determine what to store and summarize
         let summary: string
         let fullTextToStore: string | null
 
@@ -175,9 +158,6 @@ export class WordProcessingService implements WordProcessingServiceLike {
     })
   }
 
-  /**
-   * Caption embedded images using AI.
-   */
   private async captionEmbeddedImages(
     images: ExtractedImage[],
     workspaceId: string,
@@ -234,15 +214,11 @@ export class WordProcessingService implements WordProcessingServiceLike {
     return captions
   }
 
-  /**
-   * Integrate image captions into the text content.
-   */
   private integrateImageCaptions(text: string, captions: string[]): string {
     if (captions.length === 0) {
       return text
     }
 
-    // Append image descriptions at the end of the document
     const imageSection = captions.map((caption, i) => `[Image ${i + 1}: ${caption}]`).join("\n")
     return `${text}\n\n--- Embedded Images ---\n${imageSection}`
   }

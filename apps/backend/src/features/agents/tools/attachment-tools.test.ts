@@ -175,7 +175,6 @@ describe("get_attachment tool", () => {
   })
 
   it("should return error when attachment not found", async () => {
-    // Default makeAttachmentService returns null — attachment not found
     const tool = createGetAttachmentTool(makeDeps())
     const { output } = await tool.config.execute({ attachmentId: "nonexistent" }, toolOpts)
     const parsed = JSON.parse(output)
@@ -185,7 +184,6 @@ describe("get_attachment tool", () => {
   })
 
   it("should return error when attachment is in inaccessible stream", async () => {
-    // getAccessible returns null for inaccessible streams
     const tool = createGetAttachmentTool(makeDeps())
     const { output } = await tool.config.execute({ attachmentId: "attach_1" }, toolOpts)
     const parsed = JSON.parse(output)
@@ -262,7 +260,6 @@ describe("load_attachment tool", () => {
   })
 
   it("should return error when attachment not found", async () => {
-    // Default makeAttachmentService returns null
     const tool = createLoadAttachmentTool(makeDeps())
     const { output } = await tool.config.execute({ attachmentId: "nonexistent" }, toolOpts)
     const parsed = JSON.parse(output)

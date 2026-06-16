@@ -1,28 +1,15 @@
-/**
- * PDF Page Classifier
- *
- * Classifies PDF pages based on their content characteristics
- * to determine the optimal extraction strategy.
- */
-
 import type { PdfPageClassification } from "@threa/types"
 import { PdfPageClassifications } from "@threa/types"
 import { PDF_TEXT_THRESHOLDS } from "./config"
 
-/**
- * Text item with position information from PDF extraction.
- * Based on PDF.js TextContent items.
- */
+/** Text item with position, mirroring PDF.js TextContent items. */
 export interface TextItemWithPosition {
-  /** The text string */
   str: string
-  /** X position (from transform matrix) */
+  /** X position (from transform matrix). */
   x: number
-  /** Y position (from transform matrix) */
+  /** Y position (from transform matrix). */
   y: number
-  /** Width of the text */
   width: number
-  /** Height of the text */
   height: number
 }
 

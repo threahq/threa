@@ -31,10 +31,9 @@ export const E2eStreamActorsRepository = {
   },
 
   /**
-   * Invite a specific actor (`kind` + `actorId`) into an E2E stream. Race-safe
-   * (INV-20): the insert is idempotent per (workspace, stream, kind, actor_id),
-   * so a scratchpad can hold multiple bots while a repeat invite of the same
-   * one is a no-op. Returns true when a new actor row was created.
+   * Race-safe (INV-20): the insert is idempotent per
+   * (workspace, stream, kind, actor_id), so a scratchpad can hold multiple bots
+   * while a repeat invite of the same one is a no-op.
    */
   async add(
     db: Querier,

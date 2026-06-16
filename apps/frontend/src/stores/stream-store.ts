@@ -10,7 +10,7 @@ import { db, type CachedEvent, type CachedStream } from "@/db"
  */
 const DEFAULT_IDB_EVENT_LIMIT = 150
 
-/** No-op — the in-memory event cache has been removed. Kept for clearAllCachedData compat. */
+/** No-op kept for clearAllCachedData compat; events live only in IDB now. */
 export function resetStreamStoreCache(): void {}
 
 /**

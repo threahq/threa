@@ -27,7 +27,6 @@ describe("SyncLogRetentionWorker.pruneOnce", () => {
 
     // Paged twice: the first full batch continued, the short second stopped.
     expect(prune).toHaveBeenCalledTimes(2)
-    // The cutoff is retentionMs behind now and minKeep/limit flow through.
     expect(prune.mock.calls[0][1]).toMatchObject({ minKeep: 10, limit: 2 })
     expect(prune.mock.calls[0][1].cutoff).toBeInstanceOf(Date)
   })

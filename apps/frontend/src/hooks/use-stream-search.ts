@@ -222,7 +222,6 @@ export function useStreamSearch({
     [workspaceId]
   )
 
-  // Build flat matches from results + current query
   const flatMatches = useMemo(() => buildFlatMatches(results, query), [results, query])
 
   const search = useCallback(async () => {

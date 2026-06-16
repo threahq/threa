@@ -5,7 +5,6 @@ import { GiphyEmbedView } from "./giphy-embed-view"
 export interface GiphyEmbedAttrs {
   /** Giphy CDN URL of the rendition to display. */
   giphyUrl: string
-  /** Cached Giphy title; cosmetic fallback label. */
   title: string
   /** Intrinsic pixel size of the rendition, so the renderer reserves an
    *  aspect-ratio box before the GIF loads (no layout shift). */

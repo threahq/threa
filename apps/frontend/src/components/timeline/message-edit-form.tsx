@@ -54,7 +54,6 @@ export function MessageEditForm({
   const [docEditorOpen, setDocEditorOpen] = useState(false)
   const [initialMarkdown] = useState(() => serializeToMarkdown(initialContentJson ?? EMPTY_DOC).trim())
 
-  // Mobile drawer state
   const [formatOpen, setFormatOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
@@ -90,7 +89,6 @@ export function MessageEditForm({
         queryClient.invalidateQueries({ queryKey: messageKeys.versions(workspaceId, messageId) })
         onSave()
       } catch {
-        // Enqueue for retry when back online
         await enqueueOperation(workspaceId, "edit_message", { messageId, contentJson: json })
         onSave() // Close the edit form — the edit will be retried
         toast.info("Edit queued — will be saved when back online")
@@ -160,7 +158,6 @@ export function MessageEditForm({
     mobileActionBarRef.current?.focus()
   }, [])
 
-  // Mobile: Drawer bottom sheet
   if (isMobile) {
     const trailingContent = (
       <>
@@ -207,10 +204,8 @@ export function MessageEditForm({
           </p>
 
           <div className="flex flex-col flex-1 min-h-0 px-4 pt-1">
-            {/* Author context */}
             {authorName && <p className="text-[13px] font-semibold text-muted-foreground mb-1">{authorName}</p>}
 
-            {/* Editor */}
             <div
               data-inline-edit
               className="flex-1 min-h-0 overflow-y-auto [&_.tiptap]:!pt-0 [&_.tiptap_p]:!leading-relaxed [&_.tiptap]:max-h-none [&_.tiptap]:min-h-full"
@@ -233,7 +228,6 @@ export function MessageEditForm({
             </div>
           </div>
 
-          {/* Action bar + toolbar at the bottom of the drawer */}
           <div
             ref={mobileActionBarRef}
             className="px-4 pb-[max(8px,env(safe-area-inset-bottom))]"
@@ -267,7 +261,6 @@ export function MessageEditForm({
     )
   }
 
-  // Desktop layout — unchanged
   return (
     <>
       <p id={instructionsId} className="sr-only">

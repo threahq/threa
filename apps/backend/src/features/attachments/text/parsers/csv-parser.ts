@@ -1,9 +1,3 @@
-/**
- * CSV Parser
- *
- * Extracts column headers, row counts, and sample data.
- */
-
 import type { TextSection, CsvStructure } from "@threa/types"
 import type { ParseResult, TextParser } from "./types"
 
@@ -26,20 +20,16 @@ export const csvParser: TextParser = {
       }
     }
 
-    // Detect delimiter (comma vs tab)
     const firstLine = lines[0]
     const delimiter = filename.toLowerCase().endsWith(".tsv") || firstLine.includes("\t") ? "\t" : ","
 
-    // Parse header row
     const headers = parseCsvLine(firstLine, delimiter)
 
-    // Parse sample rows
     const sampleRows: string[][] = []
     for (let i = 1; i < Math.min(lines.length, SAMPLE_ROWS + 1); i++) {
       sampleRows.push(parseCsvLine(lines[i], delimiter))
     }
 
-    // Create sections for row ranges
     const sections: TextSection[] = []
     const dataRows = lines.length - 1 // Exclude header
 
@@ -88,11 +78,10 @@ function parseCsvLine(line: string, delimiter: string): string[] {
 
     if (char === '"') {
       if (inQuotes && nextChar === '"') {
-        // Escaped quote
+        // Escaped quote ("").
         current += '"'
         i++
       } else {
-        // Toggle quote state
         inQuotes = !inQuotes
       }
     } else if (char === delimiter && !inQuotes) {

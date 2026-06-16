@@ -111,7 +111,6 @@ export function SharePickerPage() {
     [title, text, url, resolvedFiles]
   )
 
-  // Build a preview of what's being shared
   const sharedPreview = useMemo(() => {
     const parts: string[] = []
     if (title) parts.push(title)
@@ -166,7 +165,6 @@ export function SharePickerPage() {
     }
   }, [workspaceId, shareData, navigate, createShareDraft, filesLoading, submitting])
 
-  // Reset selection when query changes
   useEffect(() => {
     setSelectedIndex(0)
   }, [query])
@@ -249,11 +247,9 @@ export function SharePickerPage() {
   return (
     <div className="flex h-full items-center justify-center bg-background">
       <div className="w-full max-w-lg flex flex-col max-h-[80dvh]">
-        {/* Header */}
         <div className="px-4 pt-6 pb-4">
           <h1 className="text-lg font-medium">Share to Threa</h1>
 
-          {/* Text preview */}
           {sharedPreview && (
             <div className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
               <LinkIcon className="h-4 w-4 shrink-0 mt-0.5 opacity-60" />
@@ -261,7 +257,6 @@ export function SharePickerPage() {
             </div>
           )}
 
-          {/* File preview */}
           {filesSummary && (
             <div className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
               {resolvedFiles.some((f) => f.type.startsWith("image/")) ? (
@@ -274,7 +269,6 @@ export function SharePickerPage() {
           )}
         </div>
 
-        {/* Search */}
         <div className="px-4 pb-3 flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -318,7 +312,6 @@ export function SharePickerPage() {
           </ToggleGroup>
         </div>
 
-        {/* Stream list */}
         <div className="flex-1 min-h-0 overflow-y-auto border-t border-border">
           <ItemList
             items={items}

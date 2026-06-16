@@ -84,13 +84,6 @@ interface PushServiceDeps {
 }
 
 /**
- * Manages push subscriptions, session tracking, and push delivery.
- *
- * The VAPID config is optional — when null, delivery methods are no-ops
- * (push feature is disabled but the service can still be constructed).
- */
-
-/**
  * Resolve the `contentPreview` for a saved-reminder push. E2E messages store a
  * zero-width placeholder on the wire (the server holds no key), so surfacing
  * the raw markdown produces a blank notification — substitute a generic,
@@ -278,10 +271,8 @@ export class PushService {
     // Member-added activities notify via the feed only, not push.
     if (activity.activityType === ActivityTypes.MEMBER_ADDED) return
 
-    // 1. Load user's global notification preference (via injected lookup)
     const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
 
-    // 2. Filter by preference
     if (prefLevel === PrefNotificationLevels.NONE) {
       return
     }
@@ -299,7 +290,6 @@ export class PushService {
       }
     }
 
-    // 3. Determine which subscriptions to push to, partitioned by session state.
     // Subscriptions on devices with an expired session get a one-shot "session expired"
     // notification and are cleaned up; active-device subscriptions get normal delivery.
     const { active: activeSubscriptions, expired: expiredSubscriptions } = await this.getTargetSubscriptions(
@@ -307,7 +297,6 @@ export class PushService {
       targetUserId
     )
 
-    // 3b. Handle expired-device subscriptions: notify and clean up per-device
     if (expiredSubscriptions.length > 0) {
       await this.deliverSessionExpiredAndCleanup(workspaceId, targetUserId, expiredSubscriptions)
     }
@@ -322,7 +311,6 @@ export class PushService {
     // lookup for a delivery that won't happen.
     const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
 
-    // 4. Build structured push payload — display text is formatted by the service worker (INV-46)
     const context = activity.context as
       | { contentPreview?: string; streamName?: string; authorName?: string; emoji?: string }
       | null
@@ -343,7 +331,6 @@ export class PushService {
       },
     })
 
-    // 5. Send to active-device subscriptions and evict stale ones
     await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload)
   }
 

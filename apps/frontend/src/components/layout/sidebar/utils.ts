@@ -40,7 +40,6 @@ export function calculateUrgency(
 
 /** Categorize stream into smart section */
 export function categorizeStream(stream: StreamWithPreview, unreadCount: number, urgency: UrgencyLevel): SectionKey {
-  // Important: mentions or AI activity with unread
   if (urgency === "mentions" || (urgency === "ai" && unreadCount > 0)) {
     return "important"
   }
@@ -56,7 +55,6 @@ export function categorizeStream(stream: StreamWithPreview, unreadCount: number,
     return "recent"
   }
 
-  // Recent: activity in last 7 days
   if (stream.lastMessagePreview) {
     const diff = Date.now() - new Date(stream.lastMessagePreview.createdAt).getTime()
     const sevenDays = 7 * 24 * 60 * 60 * 1000
@@ -109,7 +107,6 @@ export function sortStreams(
 ): StreamItemData[] {
   switch (sortType) {
     case "activity":
-      // Most recent activity first
       return streams.sort((a, b) => getActivityTime(b) - getActivityTime(a))
 
     case "importance":

@@ -17,7 +17,6 @@ export function useEditLastMessageTrigger(
   events: StreamEvent[],
   currentUserId: string | null
 ): EditLastMessageContextValue {
-  // Registry: maps messageId → openEdit callback registered by mounted SentMessageEvent instances.
   // Ref-based so registration/deregistration never triggers re-renders.
   const editRegistryRef = useRef(new Map<string, () => void>())
 

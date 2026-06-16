@@ -128,7 +128,6 @@ export function LinkPreviewCard({
     [onToggleCollapse, preview.id]
   )
 
-  // Image-type previews render as a thumbnail
   if (preview.contentType === "image") {
     return (
       <a
@@ -175,14 +174,12 @@ export function LinkPreviewCard({
     )
   }
 
-  // Resolve the header icon and label for provider-rich previews (GitHub / Linear)
   const headerIcon = resolveHeaderIcon(githubPreview, linearPreview, preview.contentType)
   const headerLabel = resolveHeaderLabel(githubPreview, linearPreview, preview.siteName, domain)
 
-  // Website, PDF, and GitHub previews render as a card.
-  // data-native-context tells the message-level long-press hook to skip
-  // its timer so long-pressing anywhere on the card gets the browser's
-  // native link menu (via the inner <a>) instead of the message drawer.
+  // data-native-context tells the message-level long-press hook to skip its
+  // timer so long-pressing anywhere on the card gets the browser's native link
+  // menu (via the inner <a>) instead of the message drawer.
   return (
     <div
       data-native-context="true"
@@ -192,7 +189,6 @@ export function LinkPreviewCard({
         isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
       )}
     >
-      {/* Header with collapse/dismiss controls */}
       <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
         <button
           type="button"
@@ -231,11 +227,8 @@ export function LinkPreviewCard({
         </div>
       </div>
 
-      {/* Expandable content — always clamped to a shared body height so a
-          message with mixed preview types (e.g. a PR + a diff) lines up.
-          Tall cards reveal a "Show more" affordance that persists per
-          (messageId, previewId) in IDB, mirroring the collapsible markdown
-          block pattern. */}
+      {/* Clamped to a shared body height so a message with mixed preview types
+          (e.g. a PR + a diff) lines up. */}
       {!isCollapsedProp && (
         <LinkPreviewBody messageId={messageId} previewId={preview.id}>
           <a
@@ -252,10 +245,6 @@ export function LinkPreviewCard({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Provider dispatch (routes to GitHub / Linear / generic)
-// ---------------------------------------------------------------------------
-
 function ProviderContent({
   preview,
   imageError,
@@ -271,10 +260,6 @@ function ProviderContent({
   }
   return <GitHubContent preview={preview} imageError={imageError} onImageError={onImageError} />
 }
-
-// ---------------------------------------------------------------------------
-// GitHub type icon (state-aware)
-// ---------------------------------------------------------------------------
 
 function GitHubTypeIcon({ type, data }: { type: string; data: GitHubPreview["data"] }) {
   switch (type) {
@@ -301,10 +286,6 @@ function GitHubTypeIcon({ type, data }: { type: string; data: GitHubPreview["dat
       return <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
   }
 }
-
-// ---------------------------------------------------------------------------
-// Content router
-// ---------------------------------------------------------------------------
 
 function GitHubContent({
   preview,
@@ -387,10 +368,6 @@ function getGenericFallbackLabel(url: string): string {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Pull Request
-// ---------------------------------------------------------------------------
-
 function GitHubPrContent({ data }: { data: GitHubPrPreviewData }) {
   const stateLabels = { merged: "Merged", closed: "Closed", open: "Open" } as const
   const stateLabel = stateLabels[data.state]
@@ -444,10 +421,6 @@ function ReviewSummary({ summary }: { summary: GitHubPrPreviewData["reviewStatus
 
   return <p className="mt-1 text-[11px] text-muted-foreground">{parts.join(" \u00b7 ")}</p>
 }
-
-// ---------------------------------------------------------------------------
-// Issue
-// ---------------------------------------------------------------------------
 
 function GitHubIssueContent({ data }: { data: GitHubIssuePreviewData }) {
   return (
@@ -509,10 +482,6 @@ function IssueLabel({ name, color }: { name: string; color: string }) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Commit
-// ---------------------------------------------------------------------------
-
 function GitHubCommitContent({ data }: { data: GitHubCommitPreviewData }) {
   const firstLine = data.message.split("\n")[0]
 
@@ -534,10 +503,6 @@ function GitHubCommitContent({ data }: { data: GitHubCommitPreviewData }) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// File
-// ---------------------------------------------------------------------------
 
 function GitHubFileContent({ preview, data }: { preview: LinkPreviewSummary; data: GitHubFilePreviewData }) {
   let content = null
@@ -644,10 +609,6 @@ function GitHubDiffContent({ data }: { data: GitHubDiffPreviewData }) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Comment
-// ---------------------------------------------------------------------------
-
 function GitHubCommentContent({ data }: { data: GitHubCommentPreviewData }) {
   const parentLabel = data.parent.kind === "pull_request" ? "PR" : "Issue"
 
@@ -675,10 +636,6 @@ function GitHubCommentContent({ data }: { data: GitHubCommentPreviewData }) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Shared primitives
-// ---------------------------------------------------------------------------
 
 function ActorAvatar({ actor, className }: { actor: GitHubPreviewActor | null; className?: string }) {
   if (!actor) return null
@@ -722,10 +679,6 @@ function getDiffLinePrefix(type: GitHubDiffPreviewData["lines"][number]["type"])
   return " "
 }
 
-// ---------------------------------------------------------------------------
-// Linear type icon
-// ---------------------------------------------------------------------------
-
 function LinearTypeIcon({ type }: { type: LinearPreview["type"] }) {
   switch (type) {
     case "linear_issue":
@@ -740,10 +693,6 @@ function LinearTypeIcon({ type }: { type: LinearPreview["type"] }) {
       return <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
   }
 }
-
-// ---------------------------------------------------------------------------
-// Linear content dispatcher
-// ---------------------------------------------------------------------------
 
 function LinearContent({ preview }: { preview: LinearPreview }) {
   switch (preview.type) {
@@ -942,11 +891,6 @@ function LinearActorAvatar({ actor, className }: { actor: LinearActor | null; cl
   )
 }
 
-/**
- * Turn a Linear-provided hex color into an `rgba(...)` with alpha so state/label
- * pills tint nicely against the card's neutral background without us
- * maintaining a parallel palette. Falls back to a gray tint on parse failure.
- */
 function formatLinearStatus(status: string): string {
   return status
     .split(/[_\s-]+/)

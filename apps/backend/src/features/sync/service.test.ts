@@ -5,7 +5,6 @@ import { SyncLogRepository } from "./repository"
 import * as dbModule from "../../db"
 
 function setupService() {
-  // withClient just runs the callback with a throwaway client (no DB).
   spyOn(dbModule, "withClient").mockImplementation(async (_pool: any, fn: any) => fn({} as any))
   return new SyncService({ pool: {} as Pool })
 }

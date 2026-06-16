@@ -6,7 +6,6 @@ import { useSuggestion } from "./use-suggestion"
 
 /**
  * Hook for `with:@` filter suggestions in search context.
- * Shows users/personas when typing `with:@`.
  * Filters for messages in streams where the selected user is a member.
  */
 export function useWithFilterSuggestion() {

@@ -5,10 +5,7 @@ import { DebouncedOutboxHandler, type OutboxEvent } from "../../lib/outbox"
 import type { ControlPlaneClient } from "../../lib/control-plane-client"
 import { InvitationRepository } from "./repository"
 
-/**
- * Syncs invitation lifecycle events to the control-plane as shadows.
- * Handles invitation:sent (create shadow) and invitation:revoked (revoke shadow).
- */
+/** Syncs invitation lifecycle events to the control-plane as shadows. */
 export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
   private readonly controlPlaneClient: ControlPlaneClient
   private readonly region: string

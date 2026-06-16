@@ -456,7 +456,6 @@ export function StreamContent({
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId)
 
-  // --- In-stream search ---
   // E2E streams search decrypted bodies client-side (the server only holds
   // ciphertext); pass the flag + viewer id so the hook can resolve the session.
   const streamSearch = useStreamSearch({
@@ -834,7 +833,6 @@ export function StreamContent({
   // Use virtualized scroll for non-thread views, plain scroll for threads
   const useVirtualized = !isThread
 
-  // --- Skeleton rows while an older page is in flight ---
   // A fast scroll can reach the top of the loaded window before the older
   // page lands; without placeholders that space is plain blank and reads as
   // broken. Track each older fetch from its start: capture the oldest
@@ -941,7 +939,6 @@ export function StreamContent({
   // (new message, link preview, virtua measuring) must not disarm follow.
   const userInteractedAtRef = useRef(0)
 
-  // --- Virtuoso scroll (main streams, channels, scratchpads) ---
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
@@ -1991,7 +1988,6 @@ function TimelineMessageList({
   }, [phase, hydrationWave, itemCount])
   const releasedFromBottom = hydrationWave * HYDRATION_RELEASE_BATCH
 
-  // Fetch guards to prevent rapid re-firing
   const olderFetchCooldownRef = useRef(0)
   const newerFetchCooldownRef = useRef(0)
   const FETCH_COOLDOWN_MS = 500

@@ -96,7 +96,6 @@ export const InUserFilterExtension = Extension.create<InUserFilterOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as Mentionable
-          // Insert "in:@slug " for DM filter
           editor.chain().focus().deleteRange(range).insertContent(`in:@${item.slug} `).run()
         },
       }),

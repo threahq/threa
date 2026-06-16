@@ -64,7 +64,6 @@ export class SyncStatusStore {
       this.statuses.set(key, "stale")
     }
     this.refreshSnapshot()
-    // Notify all key-specific listeners
     for (const [, listeners] of this.listeners) {
       for (const listener of listeners) listener()
     }
@@ -157,10 +156,7 @@ export function useSyncSnapshot(): {
   )
 }
 
-/**
- * Subscribe to whether any resource is currently syncing.
- * Useful for showing a global loading indicator.
- */
+/** Subscribe to whether any resource is currently syncing. */
 export function useIsAnySyncing(): boolean {
   const store = useSyncStatusStore()
   return useSyncExternalStore(

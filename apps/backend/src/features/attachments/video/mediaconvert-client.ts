@@ -122,7 +122,6 @@ export class ThreaMediaConvertClient {
           },
         ],
         OutputGroups: [
-          // Output group 1: Transcoded H.264 MP4
           {
             Name: "MP4 Output",
             OutputGroupSettings: {
@@ -167,7 +166,6 @@ export class ThreaMediaConvertClient {
               },
             ],
           },
-          // Output group 2: Thumbnail frame capture
           {
             Name: "Thumbnail",
             OutputGroupSettings: {
@@ -209,9 +207,6 @@ export class ThreaMediaConvertClient {
     return jobId
   }
 
-  /**
-   * Poll MediaConvert for job status.
-   */
   async getJobStatus(mediaconvertJobId: string): Promise<TranscodeJobStatus> {
     await this.discoverEndpoint()
 

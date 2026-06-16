@@ -9,11 +9,8 @@ import { PersonaRepository } from "./persona-repository"
  * Both `messages.author_id` and `agent_sessions.persona_id` reference the
  * same `id` column space (ULIDs with different prefixes), so any context-
  * building surface that wants "author name → display name" needs to look
- * up both tables and merge. This used to be inlined separately in
- * `companion/context.ts`, `context-bag/resolvers/thread-resolver.ts`, and
- * one or two other surfaces — promote it here so a single source-of-truth
- * batches the user lookup (workspace-scoped, INV-8) and persona lookup
- * (workspace-agnostic) in parallel and stays consistent.
+ * up both tables and merge. Batches the user lookup (workspace-scoped, INV-8)
+ * and persona lookup (workspace-agnostic) in parallel.
  *
  * INV-56: batched lookups, never per-row.
  *

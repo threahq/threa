@@ -172,7 +172,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     sidebarWidth = "6px"
   }
 
-  // Swipe gestures for mobile sidebar (open/close by dragging)
   // Use showPreview (idempotent) instead of togglePinned (a toggle) to avoid
   // double-call races on fast swipes collapsing the sidebar right after opening.
   const { isSwiping, sidebarRef, backdropRef } = useSidebarSwipe({
@@ -182,21 +181,19 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     onClose: collapse,
   })
 
-  // Handle mouse enter on hover margin or sidebar (disabled on mobile - touch devices don't hover)
+  // Disabled on mobile — touch devices don't hover.
   const handleMouseEnter = useCallback(() => {
     if (!isMobile) {
       setHovering(true)
     }
   }, [setHovering, isMobile])
 
-  // Handle mouse leave from sidebar
   const handleMouseLeave = useCallback(() => {
     if (!isMobile) {
       setHovering(false)
     }
   }, [setHovering, isMobile])
 
-  // Close backdrop on mobile
   const handleBackdropClick = useCallback(() => {
     collapse()
   }, [collapse])
@@ -232,7 +229,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
           <TopbarLoadingIndicator visible={showLoadingIndicator} />
         </div>
 
-        {/* Pull-to-refresh indicator */}
         <div
           className="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-2 pointer-events-none"
           style={{ height: `${pullDistance}px` }}
@@ -279,20 +275,17 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             />
           )}
 
-          {/* Sidebar wrapper - handles positioning */}
           <div
             className={cn(
               "relative z-40 flex flex-shrink-0 flex-col",
-              // Transitions - disable during resize for smooth dragging
+              // Disable the width transition during resize for smooth dragging.
               !isResizing && "transition-[width] duration-200 ease-out",
-              // On mobile, sidebar is always overlay (no wrapper width)
               isMobile && "w-0"
             )}
             style={{
               width: wrapperWidth,
             }}
           >
-            {/* Urgency strip - always visible on left edge (6px wide) */}
             {!isMobile && (
               <div
                 className="absolute left-0 top-0 h-full w-[6px] z-50 pointer-events-none"
@@ -303,15 +296,12 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                 }}
                 aria-hidden="true"
               >
-                {/* Grey baseline - always visible */}
                 <div className="absolute inset-0" style={{ backgroundColor: "hsl(var(--muted-foreground) / 0.3)" }} />
-                {/* Activity blocks - single blurred bar per stream, 150% height centered */}
                 <UrgencyGlowBlocks blocks={urgencyBlocks} />
               </div>
             )}
 
-            {/* Hover margin - invisible zone for "magnetic" feel (collapsed state only, not on mobile) */}
-            {/* 30px zone to trigger preview when collapsed */}
+            {/* Invisible 30px zone giving the collapsed sidebar a "magnetic" feel — enters preview on hover. */}
             {isCollapsed && !isMobile && (
               <div
                 className="absolute left-full top-0 z-30 h-full w-[30px]"
@@ -337,7 +327,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               ref={isMobile ? sidebarRef : undefined}
               className={cn(
                 "relative flex h-full flex-col border-r bg-background overflow-hidden z-40",
-                // Positioning - preview is absolute, or always absolute on mobile
                 (isPreview || isMobile) && "absolute left-0 top-0",
                 // Depth shadow only when the drawer is actually showing — on mobile the
                 // closed drawer is off-screen and its right-edge shadow would otherwise
@@ -345,7 +334,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                 (isPreview || (isMobile && isOpen)) && "shadow-[4px_0_24px_hsl(var(--foreground)/0.08)]",
                 // Mobile: transform-based positioning (GPU-composited, swipe-compatible)
                 isMobile && sidebarTransform,
-                // Transitions - disable during resize/swipe for smooth dragging
+                // Disable transitions during resize/swipe for smooth dragging.
                 isMobile
                   ? !isSwiping && "transition-transform duration-200 ease-out"
                   : !isResizing && "transition-[width,box-shadow] duration-200 ease-out"
@@ -367,7 +356,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                 {sidebar}
               </div>
 
-              {/* Resize handle - only visible when not collapsed and not on mobile */}
               {!isCollapsed && !isMobile && (
                 <div
                   className={cn(

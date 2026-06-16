@@ -2,10 +2,6 @@ import { type ReactNode } from "react"
 import { FloatingComposerShell } from "@/components/composer/floating-composer-shell"
 import { Skeleton } from "@/components/ui/skeleton"
 
-// ============================================================================
-// Stream Content Shell - defines structural layout for main content area
-// ============================================================================
-
 interface StreamContentShellProps {
   header: ReactNode
   content: ReactNode
@@ -27,10 +23,6 @@ export function StreamContentShell({ header, content, footer }: StreamContentShe
     </div>
   )
 }
-
-// ============================================================================
-// Skeleton content for each slot
-// ============================================================================
 
 function HeaderSkeleton() {
   return (
@@ -61,18 +53,14 @@ function ContentSkeleton() {
 function MessageSkeleton() {
   return (
     <div className="flex gap-3">
-      {/* Avatar */}
       <Skeleton className="h-9 w-9 flex-shrink-0 rounded-full" />
 
-      {/* Content */}
       <div className="flex-1 space-y-2">
-        {/* Header row */}
         <div className="flex items-center gap-2">
           <Skeleton className="h-4 w-24" />
           <Skeleton className="h-3 w-12" />
         </div>
 
-        {/* Message content */}
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-3/4" />
       </div>
@@ -84,22 +72,7 @@ function FooterSkeleton() {
   return <Skeleton className="h-[46px] sm:h-24 w-full rounded-[16px] sm:rounded-md" />
 }
 
-// ============================================================================
-// Composed skeleton using the shell
-// ============================================================================
-
-/**
- * Stream content skeleton using the shell pattern.
- * Guaranteed to have identical structure to real stream content.
- */
+/** Guaranteed to have identical structure to real stream content. */
 export function StreamContentSkeleton() {
   return <StreamContentShell header={<HeaderSkeleton />} content={<ContentSkeleton />} footer={<FooterSkeleton />} />
 }
-
-// ============================================================================
-// Legacy export for SidebarSkeleton (now defined in sidebar.tsx)
-// Re-export for backwards compatibility during transition
-// ============================================================================
-
-// Note: SidebarSkeleton is now co-located with Sidebar in sidebar.tsx
-// This file only exports StreamContentShell and StreamContentSkeleton

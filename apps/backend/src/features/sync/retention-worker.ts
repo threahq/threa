@@ -46,7 +46,7 @@ export class SyncLogRetentionWorker {
     this.pool = deps.pool
     // Per-field ?? (not spread): callers pass `undefined` for unset env
     // overrides, and an undefined retentionMs/minKeep would prune far more
-    // aggressively than intended — fall through to the safe defaults.
+    // aggressively than intended.
     this.config = {
       intervalMs: config?.intervalMs ?? DEFAULT_CONFIG.intervalMs,
       retentionMs: config?.retentionMs ?? DEFAULT_CONFIG.retentionMs,
@@ -72,7 +72,6 @@ export class SyncLogRetentionWorker {
     logger.info("SyncLogRetentionWorker stopped")
   }
 
-  /** One retention pass; the ticker calls this on its interval. */
   async pruneOnce(): Promise<void> {
     try {
       const cutoff = new Date(Date.now() - this.config.retentionMs)
@@ -96,9 +95,8 @@ export class SyncLogRetentionWorker {
         totalPruned += deletedCount
         batches += 1
 
-        // A short batch means the eligible window is drained. Sequenced rows
-        // drop out of the next pass anyway, so a partial run is simply retried
-        // next tick, never skipped.
+        // A short batch means the window is drained. Pruned rows drop out of the
+        // next pass, so a partial run is retried next tick, never skipped.
         if (deletedCount < this.config.batchSize) {
           break
         }

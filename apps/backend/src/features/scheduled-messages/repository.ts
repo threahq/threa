@@ -287,11 +287,10 @@ export const ScheduledMessagesRepository = {
    * row?". Returns the row when the bump landed, null when the row was no
    * longer pending (worker won, user cancelled).
    *
-   * Critically does NOT touch `updated_at` — that timestamp is the version
-   * for the optimistic CAS in `update()`. If the fence bump moved it,
-   * heartbeats from any device would invalidate the editor's
-   * `expectedUpdatedAt` and the next save would 409 STALE_VERSION even
-   * though no content actually changed.
+   * Critically does NOT touch `version` — the optimistic CAS in `update()`.
+   * If the fence bump bumped it, heartbeats from any device would invalidate
+   * the editor's `expectedVersion` and the next save would 409 STALE_VERSION
+   * even though no content actually changed.
    */
   async bumpEditFence(
     db: Querier,

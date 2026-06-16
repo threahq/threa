@@ -27,14 +27,10 @@ export interface PolishTranscriptInput {
 export type PolishTranscript = (input: PolishTranscriptInput) => Promise<string>
 
 /**
- * Builds the polish entrypoint used by the voice relay. The level controls
- * how aggressive the rewrite is: "minor" only fixes punctuation/capitalization
- * and leaves filler/self-corrections alone; "opinionated" drops filler, applies
- * self-corrections, formats clearly-enumerated lists, and expands spoken emoji
- * shortcodes. "none" never reaches here — the gateway short-circuits.
- *
- * On timeout or upstream error this never throws; it logs and returns the raw
- * text so dictation always commits something.
+ * Builds the polish entrypoint used by the voice relay. `level` controls rewrite
+ * aggressiveness ("minor" vs "opinionated"); "none" short-circuits in the gateway
+ * and never reaches here. On timeout or upstream error this never throws: it logs
+ * and returns the raw text so dictation always commits something.
  */
 export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
   return async ({ rawTranscript, level, workspaceId, userId, sessionId, draftBefore, draftAfter }) => {
@@ -75,9 +71,8 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
 
       const polished = result.value.trim()
       if (!polished) return rawTranscript
-      // Safety net: even with the prompt rule, providers occasionally slip an
-      // em-dash through. Strip it deterministically so the user never sees one
-      // they didn't dictate.
+      // Providers slip em-dashes through despite the prompt rule; strip them
+      // deterministically so the user never sees one they didn't dictate.
       return scrubDashes(polished)
     } catch (err) {
       logger.warn({ err, sessionId, workspaceId, level }, "Voice transcript polish failed; falling back to raw")
@@ -89,11 +84,10 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
 }
 
 /**
- * Assembles the polish user message. When the composer already holds text, the
- * draft around the insertion point is included as labeled read-only sections so
- * the model can match the draft's vocabulary (names, project terms) and make
- * the polished text flow with the surrounding sentence. The prompt's hard rules
- * tell the model these sections must never appear in the output.
+ * Assembles the polish user message. Draft text around the insertion point is
+ * included as labeled read-only sections so the model can match the draft's
+ * vocabulary and make the polished text flow with its surroundings; the prompt's
+ * hard rules forbid echoing these sections into the output.
  */
 export function buildPolishUserMessage(args: {
   rawTranscript: string
@@ -114,12 +108,11 @@ export function buildPolishUserMessage(args: {
 }
 
 /**
- * Belt-and-suspenders for the "no em-dash" rule. The polish model is told not
- * to use em or en dashes, but providers slip them through often enough that the
- * user notices. Replace them with punctuation that reads naturally:
+ * Replace em/en dashes the model slipped past the prompt rule with natural
+ * punctuation:
  *   - " — " / " – " between clauses → ": " (clause expansion / explanation)
  *   - "word—word" / "word–word"     → "word, word" (interruption / list)
- * A regular ASCII hyphen "-" is left alone (it's used in legitimate compounds).
+ * A regular ASCII hyphen "-" is left alone (legitimate compounds).
  */
 export function scrubDashes(text: string): string {
   return text.replace(/\s+[—–]\s+/g, ": ").replace(/[—–]/g, ", ")

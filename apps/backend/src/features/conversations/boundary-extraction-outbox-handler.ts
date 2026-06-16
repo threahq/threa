@@ -10,12 +10,7 @@ import { E2eStreamsRepository } from "../e2e-streams"
 export type BoundaryExtractionHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
- * Handler that dispatches jobs for messages to detect conversational boundaries.
- *
- * Flow:
- * 1. Message arrives (via outbox)
- * 2. Check if it's a user message (persona messages can be added later)
- * 3. Dispatch queue job for LLM processing
+ * Dispatches boundary-extraction jobs for user messages arriving via the outbox.
  */
 export class BoundaryExtractionHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager

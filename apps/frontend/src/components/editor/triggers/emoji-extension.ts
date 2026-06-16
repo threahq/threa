@@ -90,11 +90,11 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         // adjacent contenteditable=false inline-block emoji spans poorly.
         class: "inline",
       }),
-      node.attrs.emoji, // Display the emoji character
+      node.attrs.emoji,
     ]
   },
 
-  // For copy/paste - serialize as :shortcode:
+  // Copy/paste serializes back to :shortcode:.
   renderText({ node }) {
     return `:${node.attrs.shortcode}:`
   },
@@ -116,7 +116,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
           // Suppress inside an unclosed inline-code word (see markdown-guards).
           if (isInBacktickWord(state, range.from)) return null
 
-          // Get marks at current position to preserve styling
+          // Preserve marks at the caret so the converted emoji keeps surrounding styling.
           const $from = state.doc.resolve(range.from)
           const { storedMarks } = state
           const currentMarks = storedMarks || $from.marks()
@@ -125,7 +125,6 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
             attrs: mark.attrs,
           }))
 
-          // Replace the :shortcode: with editable emoji text.
           chain()
             .deleteRange(range)
             .insertContent([{ type: "text", text: emoji, marks }])
@@ -143,11 +142,9 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         char: ":",
         allowSpaces: false,
         startOfLine: false,
-        // Only allow if character after : is valid shortcode char
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
 
-          // Check if inside a code block
           for (let depth = $from.depth; depth >= 0; depth--) {
             const node = $from.node(depth)
             if (node.type.name === "codeBlock") {
@@ -155,13 +152,11 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
             }
           }
 
-          // Check if cursor position has code mark
           const marks = $from.marks()
           if (marks.some((mark) => mark.type.name === "code")) {
             return false
           }
 
-          // Check stored marks too
           const storedMarks = state.storedMarks || $from.marks()
           if (storedMarks.some((mark) => mark.type.name === "code")) {
             return false
@@ -178,7 +173,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         command: ({ editor, range, props }) => {
           const item = props as EmojiEntry
 
-          // Get marks at the current position to preserve styling
+          // Preserve marks at the caret so the inserted emoji keeps surrounding styling.
           const { $from } = editor.state.selection
           const { storedMarks } = editor.state
           const currentMarks = storedMarks || $from.marks()

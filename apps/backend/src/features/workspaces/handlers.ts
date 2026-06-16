@@ -191,7 +191,6 @@ export function createWorkspaceHandlers({
         userId
       )
 
-      // Calculate unread counts for all streams based on memberships
       const [unreadCountsMap, activityCounts] = await Promise.all([
         streamService.getUnreadCounts(
           streamMemberships.map((m) => ({ streamId: m.streamId, lastReadEventId: m.lastReadEventId }))
@@ -282,7 +281,6 @@ export function createWorkspaceHandlers({
 
       const updatedStreamIds = await streamService.markAllAsRead(workspaceId, userId)
 
-      // Clear all mention badges
       await activityService?.markAllAsRead(userId, workspaceId)
 
       res.json({ updatedStreamIds })

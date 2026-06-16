@@ -35,10 +35,6 @@ interface SavedEditDialogProps {
  * anchored rows display the live message instead) and note (both variants).
  * Title and note save together as one content PATCH, so the row updates in a
  * single socket event.
- *
- * Follows the app's dialog anatomy (see CreateChannelDialog): icon-chip
- * header, bordered body with labeled fields and character counters, and a
- * muted footer bar with outline-Cancel + pending-state primary.
  */
 export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: SavedEditDialogProps) {
   const isStandalone = saved.messageId === null
@@ -79,12 +75,9 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
   }
 
   return (
-    // disableSnapPoints: this dialog is a keyboard form. The default
-    // snap-point drawer is forced to h-[100dvh]; when the on-screen keyboard
-    // opens on a focused input, the drawer is pushed up and its top — header
-    // and first field — slides off-screen under the status bar. A content-
-    // height, bottom-anchored drawer rides above the keyboard instead
-    // (matches PassphraseSetupModal, the reference for input drawers).
+    // disableSnapPoints: the snap-point drawer is forced to h-[100dvh], so the
+    // on-screen keyboard pushes the header and first field off-screen. A
+    // content-height, bottom-anchored drawer rides above the keyboard instead.
     <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
       <ResponsiveDialogContent
         desktopClassName="max-w-[480px] gap-0 p-0 overflow-hidden"

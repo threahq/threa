@@ -28,13 +28,11 @@ function requireEnabled(giphyService: GiphyService): void {
 
 export function createGiphyHandlers({ giphyService }: HandlerDeps) {
   return {
-    /** GET /api/workspaces/:workspaceId/giphy/config */
     getConfig(_req: Request, res: Response) {
       const body: GiphyConfigResponse = { enabled: giphyService.isEnabled() }
       res.json(body)
     },
 
-    /** GET /api/workspaces/:workspaceId/giphy/search?q=&offset=&limit= */
     async search(req: Request, res: Response, next: NextFunction) {
       try {
         requireEnabled(giphyService)
@@ -51,7 +49,6 @@ export function createGiphyHandlers({ giphyService }: HandlerDeps) {
       }
     },
 
-    /** GET /api/workspaces/:workspaceId/giphy/trending?offset=&limit= */
     async trending(req: Request, res: Response, next: NextFunction) {
       try {
         requireEnabled(giphyService)

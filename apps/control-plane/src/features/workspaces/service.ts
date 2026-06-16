@@ -194,18 +194,15 @@ export class ControlPlaneWorkspaceService {
    * 3-tier lookup: local cache → WorkOS by external ID → create new.
    */
   private async ensureWorkosOrganization(workspaceId: string, workspaceName: string): Promise<string | null> {
-    // Tier 1: Check local DB cache
     const cachedOrgId = await WorkspaceRegistryRepository.getWorkosOrganizationId(this.pool, workspaceId)
     if (cachedOrgId) return cachedOrgId
 
-    // Tier 2: Check WorkOS by external ID
     const existingOrg = await this.workosOrgService.getOrganizationByExternalId(workspaceId)
     if (existingOrg) {
       await WorkspaceRegistryRepository.setWorkosOrganizationId(this.pool, workspaceId, existingOrg.id)
       return existingOrg.id
     }
 
-    // Tier 3: Create new org in WorkOS (with concurrent-creation race guard)
     try {
       const org = await this.workosOrgService.createOrganization({
         name: workspaceName,

@@ -13,14 +13,9 @@ export class VoiceTranscriptionService {
   ) {}
 
   /**
-   * Create an active dictation session. Provider is derived from the model
-   * prefix; region is fixed to `us` for the PR1 skeleton — the residency
-   * resolver that may route elsewhere (e.g. Deepgram-EU) lands in PR5.
-   *
-   * Model resolution order: explicit `params.model` (one-off override from the
-   * client) → the user's `voiceTranscriptionModel` preference → the configured
-   * default. This is what lets a user opt into Deepgram without UI: set the
-   * preference once and every session inherits it.
+   * Create an active dictation session; provider is derived from the model prefix.
+   * Model resolution order: explicit `params.model` → the user's
+   * `voiceTranscriptionModel` preference → the configured default.
    */
   async createSession(params: {
     workspaceId: string
@@ -53,12 +48,10 @@ export class VoiceTranscriptionService {
   }
 
   /**
-   * Resolve a session for the realtime relay: the connecting WorkOS user must
-   * map to a member of this workspace, and the session must exist, be active,
-   * and be owned by that user. Identity resolution lives here (not in the
-   * gateway) so all session data access stays behind the service (INV-34).
-   * Throws otherwise so the gateway can refuse to open an upstream socket for a
-   * stale/foreign session.
+   * Resolve a session for the realtime relay: the WorkOS user must map to a
+   * member of this workspace, and the session must exist, be active, and be
+   * owned by that user; throws otherwise. Identity resolution lives here, not
+   * in the gateway, so session data access stays behind the service (INV-34).
    */
   async getRelaySession(params: {
     workspaceId: string

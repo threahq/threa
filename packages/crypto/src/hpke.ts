@@ -26,8 +26,6 @@ export function getSuite(): CipherSuite {
   return suite
 }
 
-/** Convenience accessors that map onto the underlying `@hpke/core` interfaces. */
-
 export async function generateKeyPair(): Promise<CryptoKeyPair> {
   return getSuite().kem.generateKeyPair()
 }

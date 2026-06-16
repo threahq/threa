@@ -57,8 +57,6 @@ export function AttachmentReferenceView({ node }: NodeViewProps) {
 
   const handleClick = () => {
     if (attrs.status !== "uploaded") return
-
-    // TODO: Open lightbox for images, trigger download for files
   }
 
   const content = (
@@ -73,12 +71,10 @@ export function AttachmentReferenceView({ node }: NodeViewProps) {
     </NodeViewWrapper>
   )
 
-  // No tooltip for uploading state
   if (attrs.status === "uploading") {
     return content
   }
 
-  // Error tooltip
   if (attrs.status === "error") {
     return (
       <TooltipProvider delayDuration={300}>
@@ -92,7 +88,6 @@ export function AttachmentReferenceView({ node }: NodeViewProps) {
     )
   }
 
-  // Uploaded tooltip with file info (and image preview in future)
   return (
     <TooltipProvider delayDuration={300}>
       <Tooltip>

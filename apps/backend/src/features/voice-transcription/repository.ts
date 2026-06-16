@@ -74,9 +74,8 @@ export const VoiceSessionRepository = {
   },
 
   /**
-   * Atomically transition an active session to a terminal status, recording
-   * billed audio duration. Single guarded UPDATE — no select-then-update
-   * (INV-20). Returns "ok" if it transitioned, else why not.
+   * Atomically transition an active session to a terminal status. Single
+   * guarded UPDATE — no select-then-update (INV-20).
    */
   async finalizeOwned(
     db: Querier,
@@ -108,10 +107,9 @@ export const VoiceSessionRepository = {
   },
 
   /**
-   * Sweep every active session past its hard `expires_at` to the terminal
-   * `expired` status in one set-based UPDATE (INV-56), guarded on status so
-   * concurrent finalizers can't double-transition (INV-20). Returns how many
-   * rows were swept. Backed by idx_voice_sessions_expiry (status, expires_at).
+   * Sweep active sessions past `expires_at` to `expired` in one set-based
+   * UPDATE (INV-56), guarded on status so concurrent finalizers can't
+   * double-transition (INV-20). Backed by idx_voice_sessions_expiry.
    */
   async expireStale(db: Querier, now: Date): Promise<number> {
     const result = await db.query(sql`

@@ -4,10 +4,7 @@ import { logger } from "../../lib/logger"
 import { DebouncedOutboxHandler, type OutboxEvent } from "../../lib/outbox"
 import type { SystemMessageService } from "./service"
 
-/**
- * Converts outbox events into system messages posted to each user's system stream.
- * Listens for events like budget:alert and formats them as messages.
- */
+/** Converts outbox events into system messages posted to each user's system stream. */
 export class SystemMessageOutboxHandler extends DebouncedOutboxHandler {
   private readonly systemMessageService: SystemMessageService
 

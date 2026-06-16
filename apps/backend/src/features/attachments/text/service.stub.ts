@@ -1,10 +1,3 @@
-/**
- * Stub Text Processing Service
- *
- * For testing and development without real file processing.
- * Generates deterministic fake extractions.
- */
-
 import type { Pool } from "pg"
 import type { TextMetadata } from "@threa/types"
 import { withClient, withTransaction } from "../../../db"
@@ -42,7 +35,6 @@ export class StubTextProcessingService implements TextProcessingServiceLike {
       return
     }
 
-    // Generate stub metadata
     const textMetadata: TextMetadata = {
       format: TextFormats.PLAIN,
       sizeTier: TextSizeTiers.SMALL,

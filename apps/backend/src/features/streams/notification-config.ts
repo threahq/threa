@@ -12,8 +12,7 @@ export function getDefaultLevel(streamType: StreamType): NotificationLevel {
 }
 
 /**
- * Resolve effective notification level from an explicit level and stream type.
- * Explicit level wins; NULL falls back to stream-type default.
+ * Resolve notification level from an explicit level and stream type.
  * Does NOT consider ancestor inheritance — use the resolver for that.
  */
 export function getEffectiveLevel(

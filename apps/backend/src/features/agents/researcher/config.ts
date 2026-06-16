@@ -8,12 +8,8 @@
 /**
  * Model for workspace agent retrieval planning / evaluation.
  *
- * Chosen for fast, predictable latency and solid structured-output compliance.
- * The previous `gpt-oss-120b` choice via OpenRouter was cheap but its patchwork
- * provider backing meant tail latency ran into the 60–120s range on some calls,
- * which fed directly into the "30 minute workspace research" demo failure mode.
- * Haiku 4.5 is the Anthropic cost-effective tier and remains on a single reliable
- * provider path.
+ * Chosen for fast, predictable tail latency (single reliable provider path) and
+ * solid structured-output compliance; the cost-effective Anthropic tier.
  */
 export const WORKSPACE_AGENT_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
 /** Lower temperature to reduce decision variance in retrieval planning */
@@ -23,9 +19,9 @@ export const WORKSPACE_AGENT_TEMPERATURE = 0.1
  * Maximum iterations for the plan→execute→evaluate→iterate loop.
  *
  * Two is the GAM sweet spot: one initial plan+search, plus one optional refinement
- * when the evaluator finds a specific gap. Dropping to one iteration would remove
- * the "deep" in deep research (no refinement at all); keeping five as before
- * compounds wall-clock cost too aggressively when the evaluator over-iterates.
+ * when the evaluator finds a specific gap. One iteration removes the "deep" in deep
+ * research (no refinement at all); more compounds wall-clock cost too aggressively
+ * when the evaluator over-iterates.
  */
 export const WORKSPACE_AGENT_MAX_ITERATIONS = 2
 

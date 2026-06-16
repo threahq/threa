@@ -7,23 +7,9 @@
 import type { JSONContent } from "@threa/types"
 
 /**
- * Collect attachment IDs referenced inline in the document via
- * `attachmentReference` nodes (the `attachment:<id>` pointer URL form).
- *
- * Filters out nodes whose `status` is `uploading` or `error` to mirror the
- * markdown serializer's omission rule (see markdown.ts: skip uploading/error).
- * Deduplicates while preserving first-seen order so callers can pass the
- * result straight to access-check / projection code that already accepts
- * an ordered ID list.
- */
-/**
- * Collect mention slugs from `mention` nodes, in document order, keeping
- * duplicate occurrences. Slugs come from the node attrs the editor (or
- * `parseMarkdown`) produced, so this works for any script the slug is
+ * Slugs come from the node attrs, so this works for any script the slug is
  * written in — no ASCII pattern matching over serialized markdown (INV-54).
- *
- * Slugs are lowercased to match how mention targets are stored and looked
- * up. Callers that need a unique set dedupe on their side.
+ * Lowercased to match how mention targets are stored and looked up.
  */
 export function collectMentionSlugs(content: JSONContent): string[] {
   const slugs: string[] = []
@@ -46,6 +32,10 @@ export function collectMentionSlugs(content: JSONContent): string[] {
   return slugs
 }
 
+/**
+ * Skips `uploading`/`error` nodes to mirror the markdown serializer's omission
+ * rule (markdown.ts), and dedupes preserving first-seen order.
+ */
 export function collectAttachmentReferenceIds(content: JSONContent): string[] {
   const seen = new Set<string>()
   const ordered: string[] = []

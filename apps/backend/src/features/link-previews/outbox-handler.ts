@@ -10,10 +10,6 @@ const LINK_PREVIEW_EVENT_TYPES = new Set(["message:created", "message:edited"])
 
 export type LinkPreviewHandlerConfig = DebouncedOutboxHandlerConfig
 
-/**
- * Outbox handler that dispatches link preview extraction jobs
- * when messages are created or edited.
- */
 export class LinkPreviewOutboxHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager
 

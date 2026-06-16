@@ -10,15 +10,11 @@ import {
   DEFAULT_ACCESSIBILITY,
 } from "@threa/types"
 
-/**
- * Merge overrides onto defaults to produce full preferences.
- */
 function mergeOverrides(
   workspaceId: string,
   userId: string,
   overrides: Array<{ key: string; value: unknown }>
 ): UserPreferences {
-  // Start with defaults
   const result: UserPreferences = {
     workspaceId,
     userId,
@@ -27,7 +23,6 @@ function mergeOverrides(
     updatedAt: new Date().toISOString(),
   }
 
-  // Apply each override
   for (const { key, value } of overrides) {
     if (key.startsWith("accessibility.")) {
       const accessibilityKey = key.slice("accessibility.".length) as keyof AccessibilityPreferences
@@ -43,9 +38,6 @@ function mergeOverrides(
   return result
 }
 
-/**
- * Get the default value for a preference key.
- */
 function getDefaultValue(key: string): unknown {
   if (key.startsWith("accessibility.")) {
     const accessibilityKey = key.slice("accessibility.".length) as keyof AccessibilityPreferences
@@ -57,21 +49,15 @@ function getDefaultValue(key: string): unknown {
   return (DEFAULT_USER_PREFERENCES as Record<string, unknown>)[key]
 }
 
-/**
- * Check if a value matches the default (should not be stored).
- */
+/** Defaults are not stored as overrides; this gates that. */
 function matchesDefault(key: string, value: unknown): boolean {
   const defaultValue = getDefaultValue(key)
   return JSON.stringify(value) === JSON.stringify(defaultValue)
 }
 
-/**
- * Flatten an UpdateUserPreferencesInput into key-value pairs.
- */
 function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: string; value: unknown }> {
   const pairs: Array<{ key: string; value: unknown }> = []
 
-  // Top-level simple fields
   const simpleKeys = [
     "theme",
     "messageDisplay",
@@ -122,9 +108,6 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
 export class UserPreferencesService {
   constructor(private pool: Pool) {}
 
-  /**
-   * Get user preferences for a user, merging overrides with defaults.
-   */
   async getPreferences(workspaceId: string, userId: string): Promise<UserPreferences> {
     // Single query, INV-30
     const overrides = await UserPreferencesRepository.findOverrides(this.pool, userId)
@@ -145,7 +128,6 @@ export class UserPreferencesService {
         updates.keyboardShortcuts !== undefined ? await UserPreferencesRepository.findOverrides(client, userId) : null
       const pairs = flattenUpdates(updates)
 
-      // Separate into overrides to set vs keys to delete (match default)
       const toSet: Array<{ key: string; value: unknown }> = []
       const toDelete: string[] = []
 
@@ -169,7 +151,6 @@ export class UserPreferencesService {
         }
       }
 
-      // Apply changes
       if (toSet.length > 0) {
         await UserPreferencesRepository.bulkSetOverrides(client, userId, toSet)
       }
@@ -177,11 +158,10 @@ export class UserPreferencesService {
         await UserPreferencesRepository.bulkDeleteOverrides(client, userId, toDelete)
       }
 
-      // Fetch current state and merge with defaults
       const overrides = await UserPreferencesRepository.findOverrides(client, userId)
       const preferences = mergeOverrides(workspaceId, userId, overrides)
 
-      // Publish outbox event for real-time sync across all user's devices
+      // Outbox event drives real-time sync across all the user's devices
       await OutboxRepository.insert(client, "user_preferences:updated", {
         workspaceId,
         authorId: userId,

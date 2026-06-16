@@ -208,38 +208,31 @@ export interface ServerInstance {
 export async function startServer(): Promise<ServerInstance> {
   const config = loadConfig()
 
-  // Initialize Prometheus metrics collection
   const { collectDefaultMetrics } = await import("./lib/observability")
   collectDefaultMetrics()
   logger.info("Prometheus metrics collection initialized")
 
-  // Create separated connection pools:
-  // - main: services, workers, queue system, HTTP handlers (30 connections)
-  // - listen: OutboxListener LISTEN connections (12 connections)
-  // - realtime: broadcast + push outbox handlers (8 connections, reserved)
+  // Separated pools: main (services/workers/HTTP), listen (LISTEN connections),
+  // realtime (broadcast + push, reserved capacity).
   const pools = createDatabasePools(config.databaseUrl)
-  const pool = pools.main // Alias for backwards compatibility during transition
+  const pool = pools.main
 
-  // Start monitoring pool health
-  // Note: Logging disabled - use Grafana dashboard for monitoring
-  // Will still log warnings for high utilization or waiting connections
   const poolMonitor = new PoolMonitor(
     { main: pools.main, listen: pools.listen, realtime: pools.realtime },
     {
-      logIntervalMs: 30000, // Update metrics every 30 seconds
-      warnThreshold: 80, // Warn when 80% utilized
-      disableLogging: true, // Disable periodic console logs (use Grafana instead)
+      logIntervalMs: 30000,
+      warnThreshold: 80,
+      disableLogging: true, // use Grafana for monitoring instead of periodic logs
     }
   )
   poolMonitor.start()
 
   await runMigrations(pool)
 
-  // Pre-warm pool before starting workers to prevent thundering herd
-  // When 15+ workers start simultaneously, they all try to connect at once
-  // which can overwhelm an empty pool and cause phantom connections
+  // Pre-warm before workers start: 15+ workers connecting at once can overwhelm
+  // an empty pool and cause phantom connections.
   logger.info("Pre-warming connection pool...")
-  await warmPool(pools.main, 15) // Pre-create 15 connections for workers
+  await warmPool(pools.main, 15)
   logger.info("Connection pool pre-warmed")
 
   const workosOrgService = config.useStubAuth ? new StubWorkosOrgService() : new WorkosOrgServiceImpl(config.workos)
@@ -249,12 +242,10 @@ export async function startServer(): Promise<ServerInstance> {
   const eventService = new EventService(pool)
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
 
-  // Attachment service
   const malwareScanner = createMalwareScanner(storage, config.attachments)
   const attachmentService = new AttachmentService(pool, storage, malwareScanner)
   await attachmentService.recoverStalePendingScans()
 
-  // Create cost tracking service for AI usage
   const costService = new AICostService({ pool })
   const budgetService = new AIBudgetService({ pool })
 
@@ -277,25 +268,18 @@ export async function startServer(): Promise<ServerInstance> {
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
 
-  // Search and embedding services
   const embeddingService = config.useStubAI ? new StubEmbeddingService() : new EmbeddingService({ ai })
   const memoReranker = config.useStubAI ? new StubReranker() : new MemoReranker({ ai })
   const searchService = new SearchService({ pool, embeddingService })
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
 
-  // Job queue for durable background work (companion responses, etc.).
-  //
   // Tiered concurrency budgets: each tier has its own in-flight cap so slow
   // heavy work (PDF/image/memo) cannot monopolize the pool and starve
-  // interactive work (persona agent responses, commands). Budgets roughly
-  // target: 45 worst-case concurrent handlers (15 tokens × 3 msgs/token),
-  // bounded per tier. Main pool = 30, so real-time handlers on `pools.realtime`
-  // are isolated regardless of queue load.
-  //
-  // Fairness defaults to `none` per-queue (see handler registrations below).
-  // Region-level sharding already isolates tenants, so a single workspace can
-  // use a tier's full budget — the previous per-workspace fairness was
-  // serializing bursts unnecessarily.
+  // interactive work (persona agent responses, commands). Worst case ~45
+  // concurrent handlers (15 tokens × 3 msgs/token), bounded per tier; main pool
+  // is 30, so realtime handlers on `pools.realtime` stay isolated. Fairness
+  // defaults to `none` because region sharding already isolates tenants, so a
+  // single workspace may use a tier's full budget.
   const jobQueue = new QueueManager({
     pool,
     queueRepository: QueueRepository,
@@ -325,24 +309,19 @@ export async function startServer(): Promise<ServerInstance> {
       : null
   const invitationService = new InvitationService(pool, workspaceService)
 
-  // Schedule manager for cron tick generation
   const scheduleManager = new ScheduleManager(pool, {
-    lookaheadSeconds: 60, // Generate ticks for next minute
-    intervalMs: 10000, // Check every 10 seconds
-    batchSize: 100, // Process up to 100 schedules per run
+    lookaheadSeconds: 60,
+    intervalMs: 10000,
+    batchSize: 100,
   })
 
-  // Cleanup worker for expired and orphaned cron ticks
   const cleanupWorker = new CleanupWorker(pool, {
-    intervalMs: 300000, // Run every 5 minutes
-    expiredThresholdMs: 300000, // Delete ticks expired for 5+ minutes
+    intervalMs: 300000,
+    expiredThresholdMs: 300000,
   })
 
-  // Agent session metrics collector
   const agentSessionMetrics = new AgentSessionMetricsCollector(pool)
 
-  // Create helpers for agents
-  // This adapter accepts markdown content and converts to JSON+markdown format
   const createMessage = async (params: {
     workspaceId: string
     streamId: string
@@ -488,9 +467,9 @@ export async function startServer(): Promise<ServerInstance> {
   const activityService = new ActivityService({ pool })
   const syncService = new SyncService({ pool })
   const savedMessagesService = new SavedMessagesService({ pool })
-  // Quiet to-do collector. Always constructed (its accept/dismiss/list
-  // endpoints are AI-free); the extractor only fires via the collector hook
-  // the memo pipeline calls, which the stub memo service never invokes.
+  // Always constructed (accept/dismiss/list endpoints are AI-free); the
+  // extractor only fires via the collector hook the memo pipeline calls, which
+  // the stub memo service never invokes.
   const savedSuggestionsService = new SavedSuggestionsService({
     pool,
     extractor: new SuggestionExtractor(ai, configResolver),
@@ -552,15 +531,14 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const systemMessageService = new SystemMessageService({ pool, createMessage })
 
-  // Command infrastructure - created early for route registration
   const commandRegistry = new CommandRegistry()
   commandRegistry.register(new InviteCommand({ pool, streamService }))
 
-  // Public API key service — WorkOS validates API keys in production, stub in dev
+  // WorkOS validates API keys in production, stub in dev.
   const apiKeyService = config.useStubAuth ? new StubApiKeyService() : new WorkosApiKeyService(config.workos)
   const botChannelService = new BotChannelService({ pool })
 
-  // User-scoped API key service — managed by Threa (not WorkOS)
+  // User-scoped API keys are managed by Threa, not WorkOS.
   const userApiKeyService = new UserApiKeyServiceImpl(pool)
 
   // Voice dictation — session lifecycle service + the realtime STT factory.
@@ -574,7 +552,6 @@ export async function startServer(): Promise<ServerInstance> {
     modelRegistry,
   })
 
-  // Bot API key service — self-managed keys for bot integrations
   const botApiKeyService = new BotApiKeyService(pool)
 
   // Enclave runtime registry — register/heartbeat/revoke of enclave instance
@@ -605,7 +582,6 @@ export async function startServer(): Promise<ServerInstance> {
   // permissions outside the request middleware chain.
   const workspaceAuthzService = new WorkspaceAuthzService({ pool })
 
-  // Link preview service — created early for route registration
   const workspaceIntegrationService = new WorkspaceIntegrationService({
     pool,
     github: config.github,
@@ -728,7 +704,6 @@ export async function startServer(): Promise<ServerInstance> {
 
   const serverId = `server_${ulid()}`
 
-  // Create workspace agent for on-demand workspace knowledge retrieval
   const workspaceAgent = new WorkspaceAgent({ pool, ai, configResolver, embeddingService })
 
   // General researcher: bounded multi-surface research (workspace + web +
@@ -814,7 +789,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Boundary extraction
   const boundaryExtractor = config.useStubBoundaryExtraction
     ? new StubBoundaryExtractor()
     : new LLMBoundaryExtractor(ai, configResolver)
@@ -859,7 +833,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Image captioning worker
   const imageCaptionService = config.useStubAI
     ? new StubImageCaptionService(pool)
     : new ImageCaptionService({ pool, ai, storage })
@@ -885,7 +858,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // PDF processing workers
   const pdfProcessingService = config.useStubAI
     ? new StubPdfProcessingService({ pool })
     : new PdfProcessingService({ pool, ai, storage, jobQueue })
@@ -911,7 +883,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Text processing worker
   const textProcessingService = config.useStubAI
     ? new StubTextProcessingService({ pool })
     : new TextProcessingService({ pool, ai, storage })
@@ -925,7 +896,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Word processing worker
   const wordProcessingService = config.useStubAI
     ? new StubWordProcessingService({ pool })
     : new WordProcessingService({ pool, ai, storage })
@@ -939,7 +909,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Excel processing worker
   const excelProcessingService = config.useStubAI
     ? new StubExcelProcessingService({ pool })
     : new ExcelProcessingService({ pool, ai, storage })
@@ -953,7 +922,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Video transcoding workers
   const videoTranscodingService = config.mediaConvert.enabled
     ? new VideoTranscodingService({
         pool,
@@ -1042,18 +1010,13 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Register handlers before starting
   await jobQueue.start()
 
-  // Start schedule manager, cleanup worker, and metrics collectors
   scheduleManager.start()
   cleanupWorker.start()
   agentSessionMetrics.start()
 
-  // Schedule memo batch check cron job (every 30 seconds)
-  // workspaceId in payload: "system" for system-wide batch check
-  // workspaceId in schedule: null for global (not workspace-specific) schedule
-  // Skip when AI is stubbed - stub memo services don't need batch processing
+  // payload workspaceId "system" = system-wide check; schedule workspaceId null = global schedule
   if (!config.useStubAI) {
     await jobQueue.schedule(JobQueues.MEMO_BATCH_CHECK, 30, { workspaceId: "system" }, null)
   }
@@ -1061,8 +1024,6 @@ export async function startServer(): Promise<ServerInstance> {
   // Outbox dispatcher - single LISTEN connection fans out to all handlers
   const outboxDispatcher = new OutboxDispatcher({ listenPool: pools.listen })
 
-  // Create handlers - each manages its own cursor, debouncing, and processing.
-  //
   // Real-time delivery handlers (broadcast, push) use a dedicated `pools.realtime`
   // so a saturated main pool (AI workers, file processing, embeddings) can never
   // starve socket.io broadcasts or push notifications. All other outbox handlers
@@ -1123,7 +1084,6 @@ export async function startServer(): Promise<ServerInstance> {
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
   ]
 
-  // Ensure listeners exist in database, then register all handlers
   for (const handler of outboxHandlers) {
     await handler.ensureListener()
     outboxDispatcher.register(handler)
@@ -1197,13 +1157,11 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   const stop = async () => {
-    // In fast shutdown mode, skip graceful shutdown for immediate termination
     if (config.fastShutdown) {
       logger.info("Fast shutdown mode - skipping graceful shutdown")
-      // Force close everything immediately without waiting
       server.close()
       io.close()
-      // Skip pool cleanup entirely - process exit will terminate connections
+      // Skip pool cleanup; process exit terminates connections
       return
     }
 
@@ -1224,7 +1182,7 @@ export async function startServer(): Promise<ServerInstance> {
     await jobQueue.stop()
     logger.info("Closing socket.io...")
 
-    // Close socket.io with callback - add timeout since it can hang with postgres adapter
+    // Timeout since io.close() can hang with the postgres adapter
     await Promise.race([
       new Promise<void>((resolve) => io.close(() => resolve())),
       new Promise<void>((resolve) =>

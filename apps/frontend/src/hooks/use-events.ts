@@ -643,8 +643,8 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     queryClient.removeQueries({ queryKey: eventKeys.newer(workspaceId, streamId) })
   }, [queryClient, workspaceId, streamId])
 
-  // addEvent and updateEvent now write directly to IDB.
-  // useLiveQuery picks up changes automatically — no TanStack cache needed.
+  // addEvent and updateEvent write directly to IDB; useLiveQuery picks up
+  // changes automatically — no TanStack cache needed.
   const addEvent = useCallback(
     async (event: StreamEvent) => {
       await db.events.put({ ...event, workspaceId, _sequenceNum: sequenceToNum(event.sequence), _cachedAt: Date.now() })

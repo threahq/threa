@@ -128,10 +128,6 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Add label overlay (create new + join an existing public label)
-// ---------------------------------------------------------------------------
-
 function AddLabelDialog({
   workspaceId,
   view,
@@ -330,10 +326,6 @@ function JoinMatchRow({ label, disabled, onJoin }: { label: CachedLabel; disable
   )
 }
 
-// ---------------------------------------------------------------------------
-// Catalog cards
-// ---------------------------------------------------------------------------
-
 function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: CachedLabel }) {
   const isOnline = useIsOnline()
   const [editing, setEditing] = useState(false)
@@ -469,10 +461,6 @@ function JoinedLabelCard({ workspaceId, label, userId }: { workspaceId: string; 
     </LabelSwatchCard>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Shared atoms
-// ---------------------------------------------------------------------------
 
 function LabelSwatchCard({
   workspaceId,

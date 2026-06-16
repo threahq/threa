@@ -130,11 +130,9 @@ export interface ComposerControlHandle {
 }
 
 export interface MessageComposerProps {
-  // Content (controlled)
   content: JSONContent
   onContentChange: (content: JSONContent) => void
 
-  // Attachments (controlled)
   pendingAttachments: PendingAttachment[]
   onRemoveAttachment: (id: string) => void
   /**
@@ -163,17 +161,14 @@ export interface MessageComposerProps {
   /** Current count of images for sequential naming of pasted images */
   imageCount?: number
 
-  // Submit
   onSubmit: (content?: JSONContent) => void
   canSubmit: boolean
   submitLabel?: string
   submittingLabel?: string
 
-  // State
   isSubmitting?: boolean
   hasFailed?: boolean
 
-  // Customization
   placeholder?: string
   disabled?: boolean
   className?: string
@@ -517,7 +512,6 @@ export function MessageComposer({
   // Plain-text first line for the mobile collapsed preview bar
   const previewText = useMemo(() => getPreviewText(content), [content])
 
-  // Handle attach button click
   const handleAttachClick = useCallback(() => {
     fileInputRef.current?.click()
   }, [fileInputRef])
@@ -636,7 +630,6 @@ export function MessageComposer({
     />
   )
 
-  // ── Send button (shared between states) ──────────────────────────────
   const sendButton = hasFailed ? (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -666,7 +659,6 @@ export function MessageComposer({
     </Button>
   )
 
-  // ── Mic / dictation button ────────────────────────────────────────────────
   // Always available on workspace surfaces so dictation can be resumed after the
   // composer already has text — appended at the caret like committed speech.
   const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
@@ -738,8 +730,6 @@ export function MessageComposer({
     />
   ) : null
 
-  // ── Expanded (fullscreen) layout ──────────────────────────────────────────
-  // Trailing content for the inline toolbar: just the close X
   const expandedTrailingContent = expanded ? (
     <div className="flex items-center gap-0.5 shrink-0 ml-auto">
       <Separator orientation="vertical" className="mx-1 h-6" />
@@ -776,7 +766,6 @@ export function MessageComposer({
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
           </p>
-          {/* Hidden file input */}
           <input
             ref={fileInputRef}
             type="file"
@@ -836,7 +825,6 @@ export function MessageComposer({
             <div className="h-[50vh]" />
           </div>
 
-          {/* Floating action drawer + send button — bottom-right corner */}
           <div className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 group/fab">
             {/* Action drawer — slides out from behind the + button on hover or focus-within */}
             <div className="flex items-center gap-1 overflow-hidden max-w-0 opacity-0 group-hover/fab:max-w-[240px] group-hover/fab:opacity-100 group-focus-within/fab:max-w-[240px] group-focus-within/fab:opacity-100 transition-all duration-200 ease-out">
@@ -924,7 +912,6 @@ export function MessageComposer({
                 </TooltipContent>
               </Tooltip>
             </div>
-            {/* Plus button — triggers drawer reveal */}
             <Button
               type="button"
               variant="outline"
@@ -936,7 +923,6 @@ export function MessageComposer({
               <Plus className="h-4 w-4" />
             </Button>
             {micButtonFab}
-            {/* Send button */}
             {hasFailed ? (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -979,7 +965,6 @@ export function MessageComposer({
     )
   }
 
-  // ── Inline layout ────────────────────────────────────────────────────────
   return (
     <TooltipProvider delayDuration={300}>
       {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
@@ -1003,7 +988,6 @@ export function MessageComposer({
         <p id={instructionsId} className="sr-only">
           {screenReaderInstructions}
         </p>
-        {/* Attachment bar - shown above input */}
         <PendingAttachments
           attachments={pendingAttachments}
           onRemove={onRemoveAttachment}
@@ -1014,7 +998,6 @@ export function MessageComposer({
           }
         />
 
-        {/* Hidden file input */}
         <input
           ref={fileInputRef}
           type="file"
@@ -1024,7 +1007,6 @@ export function MessageComposer({
           disabled={controlsDisabled}
         />
 
-        {/* Main input area */}
         <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
           <div
             className={cn(
@@ -1050,7 +1032,6 @@ export function MessageComposer({
               richEditorRef.current?.focus()
             }}
           >
-            {/* Mobile preview bar — plain text first line + send button */}
             {isMobile && !mobileChromeOpen && (
               <div className="flex items-center gap-2 min-h-[30px] text-sm select-none pointer-events-none">
                 <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
@@ -1163,7 +1144,6 @@ export function MessageComposer({
           </div>
         </div>
 
-        {/* Send hint */}
         <div className="flex justify-end px-1 pt-1">
           <span className="text-[10px] text-muted-foreground opacity-60 hidden sm:block select-none pointer-events-none">
             {sendHint}

@@ -12,7 +12,6 @@ import { E2eStreamActorsRepository } from "./actor-repository"
 export type SealingActorRef = { kind: "companion" } | { kind: "enclave" } | { kind: "bot"; botId: string }
 
 /**
- * Resolve the DB-backed inputs for `resolveDeliveryVerdict` (Phase 2.4a).
  * Threads carry their own `e2e_streams` and `e2e_stream_actors` rows (copied
  * from the root on creation), so the lookup is always against the message's
  * own stream id — no thread→root hop here.

@@ -103,12 +103,9 @@ export const StreamE2eKeyWrapsRepository = {
   },
 
   /**
-   * Distinct key generations that already have a wrap for the given recipient
-   * kind. Scopes the read to exactly the rows the caller consumes — the revive
-   * path needs only the generations the (singleton) enclave actor provably
-   * held to gate an older-generation re-wrap, never the full wrap set — so the
-   * `recipient_kind` filter is pushed into SQL rather than scanning every row
-   * for the stream and filtering in JS.
+   * The revive path gates an older-generation re-wrap on the generations the
+   * (singleton) enclave actor provably held, so the `recipient_kind` filter is
+   * pushed into SQL rather than fetching the full wrap set and filtering in JS.
    */
   async listGenerationsForRecipientKind(
     db: Querier,

@@ -104,7 +104,6 @@ export const FilterTypeExtension = Extension.create<FilterTypeOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as FilterTypeItem
-          // Insert plain text: "is:value "
           editor.chain().focus().deleteRange(range).insertContent(`is:${item.value} `).run()
         },
       }),

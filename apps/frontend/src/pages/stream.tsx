@@ -621,7 +621,6 @@ export function StreamPage() {
   // Conversation side panel - shown for channels and DMs
   const conversationPanel = (isChannel || isDm) && (
     <>
-      {/* Backdrop */}
       <div
         className={cn(
           "fixed inset-0 z-40 bg-black/80 transition-opacity duration-300",
@@ -629,7 +628,6 @@ export function StreamPage() {
         )}
         onClick={() => setConversationViewOpen(false)}
       />
-      {/* Panel */}
       <div
         className={cn(
           "fixed inset-y-0 right-0 z-50 w-full sm:w-96 bg-background border-l shadow-lg flex flex-col",

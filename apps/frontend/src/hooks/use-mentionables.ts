@@ -147,11 +147,9 @@ export function filterBroadcastMentions(ctx?: MentionStreamContext): Mentionable
 }
 
 /**
- * Hook that provides mentionable entities for the current workspace.
- * Combines users, personas, broadcast options, and a special "me" shortcut.
- *
- * When `streamContext` is provided, broadcast mentions are filtered based on
- * stream type. Without it, all broadcasts are included (backwards-compatible).
+ * Mentionable entities for the current workspace (users, personas, bots,
+ * broadcasts, "me" shortcut). With `streamContext`, broadcasts are filtered by
+ * stream type; without it, all broadcasts are included.
  */
 export function useMentionables(streamContext?: MentionStreamContext) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -164,7 +162,6 @@ export function useMentionables(streamContext?: MentionStreamContext) {
   const mentionables = useMemo<Mentionable[]>(() => {
     const broadcasts = filterBroadcastMentions(streamContext)
 
-    // Build user mentionables from workspace-scoped user profiles.
     const currentUserId = currentUser?.id
     const users: Mentionable[] = workspaceUsers.map((u) => ({
       id: u.id,
@@ -238,7 +235,6 @@ export function useMentionables(streamContext?: MentionStreamContext) {
 export function filterMentionables(items: Mentionable[], query: string): Mentionable[] {
   if (!query) return items
 
-  // Special case: "me" should match the current user
   if (query.toLowerCase() === "me") {
     const currentUser = items.find((item) => item.isCurrentUser)
     if (currentUser) return [currentUser]
@@ -252,7 +248,6 @@ export function filterMentionables(items: Mentionable[], query: string): Mention
  * Excludes broadcast mentions (@channel, @here) since they don't make sense to search for.
  */
 export function filterSearchMentionables(items: Mentionable[], query: string): Mentionable[] {
-  // Filter out broadcast mentions first
   const searchableItems = items.filter((item) => item.type !== "broadcast")
   return filterMentionables(searchableItems, query)
 }

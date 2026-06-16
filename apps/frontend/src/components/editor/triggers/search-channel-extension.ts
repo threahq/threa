@@ -25,10 +25,6 @@ export interface SearchChannelOptions {
   }
 }
 
-/**
- * Extension for #channels in search mode.
- * Triggers on # and inserts "#slug " as plain text.
- */
 export const SearchChannelExtension = Extension.create<SearchChannelOptions>({
   name: "searchChannel",
 
@@ -56,7 +52,6 @@ export const SearchChannelExtension = Extension.create<SearchChannelOptions>({
         ...this.options.suggestion,
         command: ({ editor, range, props }) => {
           const item = props as ChannelItem
-          // Insert plain text: "#slug "
           editor.chain().focus().deleteRange(range).insertContent(`#${item.slug} `).run()
         },
       }),

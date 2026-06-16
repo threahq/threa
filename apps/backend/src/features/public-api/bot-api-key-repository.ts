@@ -82,9 +82,7 @@ export const BotApiKeyRepository = {
     return result.rows.map(mapRow)
   },
 
-  /**
-   * Atomic revoke with ownership check — avoids select-then-update (INV-20).
-   */
+  /** Atomic scope update gated on ownership — avoids select-then-update (INV-20). */
   async updateScopesOwned(
     db: Querier,
     workspaceId: string,

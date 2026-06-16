@@ -115,26 +115,21 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
 
-  // Build set of streams the user is a member of (for filtering public channels)
   const memberStreamIds = useMemo(() => {
     const ids = new Set<string>()
     for (const m of idbStreamMemberships) ids.add(m.streamId)
     return ids
   }, [idbStreamMemberships])
 
-  // Build set of muted streams (for suppressing unread badges)
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
 
-  // Process streams into enriched data with urgency and section
   const processedStreams = useMemo(() => {
     return idbStreams
       .filter((stream) => {
-        // Archived streams don't appear in the sidebar
         if (stream.archivedAt) return false
         // Non-public streams always appear (bootstrap only includes them if user has access)
         if (stream.visibility !== Visibilities.PUBLIC) return true
-        // Public channels: only show if user is a member
         return memberStreamIds.has(stream.id)
       })
       .map((stream): StreamItemData => {
@@ -247,7 +242,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [labelAssignments])
 
-  // Resolve the persisted sidebar config into ordered, sorted, capped lists.
   const resolvedSections = useMemo(
     () => resolveSections(sidebarConfig, { processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel }),
     [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel]
@@ -258,7 +252,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // (resolved as a positioned section) and the empty-streams state.
   const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
 
-  // Track sidebar and scroll container dimensions for position calculations
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
 
@@ -273,7 +266,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     const offsetRef = viewport ?? container
 
     const updateDimensions = () => {
-      // Get sidebar total height
       setSidebarHeight(sidebar.offsetHeight)
 
       // Offset from sidebar top to the scroll viewport top (the header region).
@@ -283,10 +275,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       setScrollContainerOffset(refRect.top - sidebarRect.top)
     }
 
-    // Initial measurement
     updateDimensions()
 
-    // Observe size changes on both elements
     const observer = new ResizeObserver(updateDimensions)
     observer.observe(container)
     observer.observe(sidebar)
@@ -331,7 +321,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     onCreateScratchpad: handleCreateScratchpad,
   })
 
-  // During initial coordinated loading, show skeleton
   if (phase !== "ready") {
     return (
       <SidebarShell
@@ -352,7 +341,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return <SidebarSearchPanel workspaceId={workspaceId} />
   }
 
-  // Show error state with retry button
   if (error && idbStreams.length === 0) {
     return (
       <SidebarShell
