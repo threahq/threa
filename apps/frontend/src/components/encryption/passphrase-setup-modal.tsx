@@ -178,7 +178,10 @@ export function PassphraseSetupModal({
 
   return (
     <ResponsiveDialog open={open} onOpenChange={handleOpenChange} disableSnapPoints>
-      <ResponsiveDialogContent desktopClassName="sm:max-w-md" drawerClassName="flex max-h-[92dvh] flex-col gap-0">
+      <ResponsiveDialogContent
+        desktopClassName="sm:flex sm:max-h-[90dvh] sm:max-w-md sm:flex-col sm:gap-0"
+        drawerClassName="flex max-h-[92dvh] flex-col gap-0"
+      >
         <ResponsiveDialogHeader className="px-6 pt-6">
           <ResponsiveDialogTitle>Set up encrypted scratchpads</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
