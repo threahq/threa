@@ -2,7 +2,7 @@ import { z } from "zod"
 import * as dns from "dns/promises"
 import * as ipaddr from "ipaddr.js"
 import { NodeHtmlMarkdown } from "node-html-markdown"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, threaFetchUserAgent } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, resolveFetchUserAgent } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
@@ -210,7 +210,10 @@ async function fetchWithRedirectValidation(
   const response = await fetch(url, {
     signal,
     headers: {
-      "User-Agent": threaFetchUserAgent("Agent Reader"),
+      // Reddit gates the polite Threa UA behind its anti-bot wall; resolveFetchUserAgent swaps in a
+      // recognized crawler token for Reddit hosts. Resolved per-request so a redirect into Reddit
+      // (e.g. redd.it → reddit.com) is covered too.
+      "User-Agent": resolveFetchUserAgent("Agent Reader", url),
       Accept: "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.8",
     },
     redirect: "manual", // Don't follow redirects automatically

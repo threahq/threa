@@ -344,7 +344,13 @@ export {
 export type { BroadcastSlug } from "./slug"
 
 // Outbound fetch identity (shared User-Agent for third-party URL fetches)
-export { THREA_BOT_CONTACT_URL, threaFetchUserAgent } from "./outbound-fetch"
+export {
+  isRedditUrl,
+  REDDIT_CRAWLER_USER_AGENT,
+  resolveFetchUserAgent,
+  THREA_BOT_CONTACT_URL,
+  threaFetchUserAgent,
+} from "./outbound-fetch"
 
 // Attachment categories (mime → category mapping for the attachment explorer)
 export { ATTACHMENT_CATEGORIES, categoryFromMime, mimePrefixesForCategory } from "./attachment-categories"

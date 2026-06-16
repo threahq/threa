@@ -14,6 +14,7 @@ import {
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
 } from "./config"
+import { isRedditUrl, resolveFetchUserAgent } from "@threa/types"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const log = logger.child({ module: "link-preview-worker" })
@@ -208,7 +209,7 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     const response = await fetch(url, {
       method: "GET",
       headers: {
-        "User-Agent": FETCH_USER_AGENT,
+        "User-Agent": resolveFetchUserAgent("Link Preview", url),
         Accept: "text/html, application/xhtml+xml, */*",
       },
       signal: controller.signal,
@@ -312,7 +313,21 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
 
     const bytes = concatChunks(chunks, totalBytes)
     const html = decodeHtmlBytes(bytes, contentTypeHeader)
-    return await parseHtmlMeta(html, url)
+    const metadata = await parseHtmlMeta(html, url)
+
+    // Reddit's anti-bot interstitial returns HTTP 200 with only a "Please wait for verification"
+    // <title> and no OpenGraph tags at all, so it yields neither an og:image nor an og:description.
+    // Require BOTH to be absent before treating it as the wall: a real Reddit page — including a
+    // text-only post, subreddit, or profile that carries no og:image — still serves an og:description,
+    // so keying on image alone would discard those good previews. Checking the absence of structured
+    // metadata (not the English title) keeps this language-independent, and stops the challenge page
+    // from being cached as a completed preview.
+    if (isRedditUrl(url) && !metadata.imageUrl && !metadata.description) {
+      log.warn({ url }, "Reddit served anti-bot interstitial; marking preview failed for retry")
+      return { status: "failed", expiresAt: minutesFromNow(30) }
+    }
+
+    return metadata
   } catch (err) {
     log.warn({ err, url }, "Failed to fetch link preview metadata")
     return { status: "failed", expiresAt: minutesFromNow(1) }
