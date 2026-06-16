@@ -212,7 +212,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: browser-tests
     if: always()
-    continue-on-error: true
     steps:
       - name: Download shard result markers
         uses: actions/download-artifact@v4
@@ -248,6 +247,13 @@ jobs:
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
+          # No markers at all means the matrix never reported — treat as a
+          # failure so a job that dies before writing results can't pass silently.
+          if [[ $passed_count -eq 0 && $flaky_count -eq 0 && $failed_count -eq 0 ]]; then
+            echo "⛔ No shard results were reported — the test job did not run to completion." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
           if [[ $passed_count -eq 0 && $flaky_count -eq 0 && $failed_count -gt 0 ]]; then
             echo "⛔ All shards failed — likely an infra issue, not test failures." >> "$GITHUB_STEP_SUMMARY"
           elif [[ $failed_count -gt 0 && $flaky_count -gt 0 ]]; then
@@ -258,6 +264,13 @@ jobs:
             echo "🌀 All failures were flaky — tests passed when retried in isolation." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "✅ All shards passed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Confirmed failures (including the all-shards infra case) turn the
+          # check red. Flaky-only runs stay green — that is the point of the
+          # retry-in-isolation step.
+          if [[ $failed_count -gt 0 ]]; then
+            exit 1
           fi
 
   merge-playwright-reports:
