@@ -3,6 +3,7 @@ import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
 import { sealDraftContent } from "./seal-draft"
 import { tryDecryptMessagePayload } from "./message-envelope"
+import { clearAttachmentRefCache, rememberAttachmentRef } from "./attachment-crypto"
 import * as sessionStore from "@/stores/e2e-session-store"
 import * as streamKeyCache from "./stream-key-cache"
 
@@ -31,6 +32,7 @@ const unlockedSession = {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  clearAttachmentRefCache()
 })
 
 describe("seal-draft", () => {
@@ -63,6 +65,52 @@ describe("seal-draft", () => {
       }
     )
     expect(opened?.contentJson).toEqual(parseMarkdown("hello e2e world"))
+  })
+
+  it("seals attachment refs into the body and recovers them on decrypt (Stage 4d)", async () => {
+    vi.spyOn(sessionStore, "getE2eSessionState").mockReturnValue(unlockedSession)
+    vi.spyOn(streamKeyCache, "resolveCurrentStreamKey").mockResolvedValue({ keyGeneration: 1, key: ssk })
+    vi.spyOn(streamKeyCache, "resolveStreamKey").mockResolvedValue(ssk)
+
+    // The per-file key/iv were minted at upload and live in the in-memory ref
+    // cache; the seal pulls them in by id (the same path messages use).
+    rememberAttachmentRef({
+      attachmentId: "att_1",
+      key: "a2V5",
+      iv: "aXY=",
+      filename: "secret.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1234,
+    })
+
+    const sealed = await sealDraftContent({
+      workspaceId,
+      senderId,
+      streamId,
+      draftId,
+      contentJson: makeDoc("body with a file"),
+      attachmentIds: ["att_1"],
+    })
+    expect(sealed.attachmentRefs).toHaveLength(1)
+
+    // The refs ride inside the SSK ciphertext — never on the wire — and come back
+    // on decrypt so the receiving device can render + fetch + re-seal the file.
+    const opened = await tryDecryptMessagePayload(
+      { contentMarkdown: "", ciphertext: sealed.ciphertext, envelope: sealed.envelope, e2eVersion: sealed.e2eVersion },
+      {
+        privateKey: unlockedSession.privateKey!,
+        recipientKeyId: unlockedSession.keyId!,
+        workspaceId,
+        streamId,
+        rootStreamId: streamId,
+      }
+    )
+    expect(opened?.contentJson).toEqual(parseMarkdown("body with a file"))
+    expect(opened?.attachmentRefs?.[0]).toMatchObject({
+      attachmentId: "att_1",
+      filename: "secret.pdf",
+      sizeBytes: 1234,
+    })
   })
 
   it("throws when the session is locked (the caller keeps content in the composer)", async () => {

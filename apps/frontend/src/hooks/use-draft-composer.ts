@@ -170,6 +170,12 @@ export function useDraftComposer({
   // rather than a value captured in a stale closure.
   const contentRef = useRef(content)
   contentRef.current = content
+  // Latest decrypted attachments, read by the late-hydrate effect without making
+  // them a dependency: `savedAttachments` is a fresh array each render (it maps
+  // decrypted refs), so depending on it would re-run the body late-hydrate every
+  // render and misfire its rising-edge tracking.
+  const savedAttachmentsRef = useRef(savedAttachments)
+  savedAttachmentsRef.current = savedAttachments
 
   // Persist the live editor content into the loaded draft row immediately
   // (sealed for E2E), but ONLY when it is non-empty. A stash/restore can fire
@@ -238,6 +244,19 @@ export function useDraftComposer({
     }
   }, [scopeId, isDraftLoaded, savedDraft, savedAttachments, restoreAttachments, resetForReinit])
 
+  // Restore the loaded draft's (decrypted) attachments alongside its body when the
+  // body late-hydrates. A sealed E2E draft's attachments become readable only once
+  // it decrypts (Stage 4d), so the unlock-after-open path that re-fills the body
+  // must re-fill the attachment chips too — they decrypt together. A no-op when
+  // there are none, so a body-only draft never clears an in-flight upload. Marks
+  // them restored so the persistence effect doesn't re-seal what we just read back.
+  const hydrateAttachments = useCallback(() => {
+    const attachments = savedAttachmentsRef.current
+    if (attachments.length === 0) return
+    restoredAttachmentIdsRef.current = new Set(attachments.map((a) => a.id))
+    restoreAttachments(attachments)
+  }, [restoreAttachments])
+
   // Late hydrate: the loaded draft's body can become available AFTER the one-shot
   // init above already ran — an E2E draft that was locked or still decrypting at
   // mount (unlock/decrypt lands later), or a stash/restore pointer move that swaps
@@ -260,13 +279,15 @@ export function useDraftComposer({
     if (!isDraftLoaded || userEngagedRef.current || !savedAvailable) return
     if (awaitingRehydrateRef.current) {
       setContent(savedDraft)
+      hydrateAttachments()
       awaitingRehydrateRef.current = false
       return
     }
     if (becameAvailable && !hasDocContent(content)) {
       setContent(savedDraft)
+      hydrateAttachments()
     }
-  }, [isDraftLoaded, savedDraft, content])
+  }, [isDraftLoaded, savedDraft, content, hydrateAttachments])
 
   // Blank the editor the moment the loaded draft is removed underneath the
   // composer: sent/resolved here, or discarded/resolved on another device (its

@@ -16,8 +16,9 @@ import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/typ
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { useE2eSession } from "@/stores/e2e-session-store"
-import { sealDraftContent } from "@/lib/crypto/seal-draft"
+import { sealDraftContent, type SealedDraftFields } from "@/lib/crypto/seal-draft"
 import { invalidateDecryption, seedDecryption } from "@/lib/crypto/decrypt-cache"
+import { cachedDraftAttachments, cachedDraftBody } from "@/lib/drafts/decryption"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 import { useDecryptedDraftContent } from "./use-decrypted-draft-content"
 
@@ -70,8 +71,12 @@ export interface DraftSealContext {
  * decrypted, so without it the SECOND edit would be ignored and a remount would
  * render the first edit's body. The seed is dropped with every other entry on lock.
  *
- * v1 seals the body only — attachments / context refs on E2E drafts stay
- * session-local — so the seal path doesn't carry them.
+ * Stage 4d: the seal carries the draft's attachments — their per-file
+ * key/iv/filename ride sealed inside `ciphertext` (as `attachmentRefs`), exactly
+ * as a message's do, so attachments roam with the body. The plaintext attachment
+ * linkage never lands on disk (`attachments` stays `[]` at rest, E2EE-4); the
+ * composer reads it back from the seeded/decrypted cache. (Context refs stay
+ * session-local — deferred.)
  */
 export async function upsertLoadedDraft(
   workspaceId: string,
@@ -86,6 +91,9 @@ export async function upsertLoadedDraft(
   const id = existing?.id ?? generateLocalDraftId()
 
   let row: CachedDraft
+  // The attachment refs the seal embedded — re-seeded into the decrypt cache
+  // below so the composer reads attachments back without a self-decrypt.
+  let sealedAttachmentRefs: SealedDraftFields["attachmentRefs"] = []
   if (seal) {
     const sealed = await sealDraftContent({
       workspaceId,
@@ -93,16 +101,17 @@ export async function upsertLoadedDraft(
       streamId: seal.streamId,
       draftId: id,
       contentJson: fields.contentJson,
+      attachmentIds: fields.attachments.map((a) => a.id),
     })
     row = {
       id,
       workspaceId,
       scope,
-      // E2EE-4: the plaintext never lands on disk — the sealed body is the
-      // at-rest copy and `contentJson` is only the empty placeholder. v1 seals
-      // the body only and does not carry attachments, so `attachmentIds` is left
-      // off too — an E2E row must not ship plaintext attachment linkage to the
-      // server/disk alongside its sealed body.
+      // E2EE-4: neither the plaintext body nor the plaintext attachment linkage
+      // lands on disk — the sealed `ciphertext` is the at-rest copy of both (the
+      // attachment key/iv/filename ride inside it as `attachmentRefs`), and
+      // `contentJson`/`attachments` are only empty placeholders. The composer
+      // reads body + attachments back from the seeded/decrypted in-memory cache.
       contentJson: EMPTY_DOC,
       attachments: [],
       clientUpdatedAt: Date.now(),
@@ -111,6 +120,7 @@ export async function upsertLoadedDraft(
       envelope: sealed.envelope,
       e2eVersion: sealed.e2eVersion,
     }
+    sealedAttachmentRefs = sealed.attachmentRefs
   } else {
     const contextRefs = fields.contextRefs && fields.contextRefs.length > 0 ? fields.contextRefs : undefined
     row = {
@@ -148,13 +158,15 @@ export async function upsertLoadedDraft(
 
   if (seal) {
     // Keep the read path serving the live plaintext (see the doc comment above):
-    // invalidate the reused id's stale entry, then seed the fresh body so the
-    // next decrypt-on-read (and any remount) serves THIS edit, not a prior one.
+    // invalidate the reused id's stale entry, then seed the fresh body AND the
+    // attachment refs just sealed, so the next decrypt-on-read (and any remount)
+    // serves THIS edit's body + attachments, not a prior one. The refs carry the
+    // filename/mime/size the composer renders and the key/iv a later send re-seals.
     invalidateDecryption(id)
     seedDecryption(id, {
       contentMarkdown: serializeToMarkdown(fields.contentJson),
       contentJson: fields.contentJson,
-      attachmentRefs: [],
+      attachmentRefs: sealedAttachmentRefs,
       sources: [],
     })
   }
@@ -330,7 +342,8 @@ export async function rescopeScopeDrafts(workspaceId: string, fromScope: string,
  *   on read through the shared decrypt cache (the same path messages use), which
  *   retries on unlock and clears on lock. While the session is locked the read
  *   reports `locked` and the composer shows the encryption notice; the sealed row
- *   waits on disk. Attachments / context refs on E2E drafts stay session-local.
+ *   waits on disk. Attachments roam sealed inside the body's ciphertext (Stage 4d);
+ *   context refs on E2E drafts stay session-local (deferred).
  */
 export function useDraftMessage(workspaceId: string, draftKey: string, e2eStreamId?: string | null) {
   const e2eEnabled = !!e2eStreamId
@@ -392,10 +405,16 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
       const gate = e2eGateRef.current
       if (gate.enabled) {
         // E2EE-4: seal before disk, and only while unlocked. Locked → keep the
-        // content in the composer for the session; nothing persists. v1 seals the
-        // body only, so an `attachments` arg is intentionally ignored here.
+        // content in the composer for the session; nothing persists.
         if (!gate.unlocked || !gate.senderId || !gate.streamId) return
-        if (isEmptyContent(contentJson)) {
+        // Resolve the attachment set: an explicit arg, else the draft's current
+        // (decrypted) attachments — a content-only save (a keystroke) must
+        // preserve them, exactly as the plaintext path preserves them below. The
+        // sealed row holds no plaintext attachments at rest, so they're read back
+        // from the in-memory decrypt cache (the plaintext authority).
+        const currentLoadedId = await getLoadedDraftId(draftKey)
+        const finalAttachments = attachments ?? (currentLoadedId ? cachedDraftAttachments(currentLoadedId) : [])
+        if (isEmptyContent(contentJson) && finalAttachments.length === 0) {
           await clearLoadedDraft(workspaceId, draftKey)
           syncEngine?.kickOperationQueue()
           return
@@ -404,7 +423,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
           await upsertLoadedDraft(
             workspaceId,
             draftKey,
-            { contentJson, attachments: [] },
+            { contentJson, attachments: finalAttachments },
             { senderId: gate.senderId, streamId: gate.streamId }
           )
           syncEngine?.kickOperationQueue()
@@ -464,9 +483,31 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
    */
   const addAttachment = useCallback(
     async (attachment: DraftAttachment) => {
-      // E2EE-4: attachments on encrypted-stream drafts are not sealed yet (v1) —
-      // they stay in the composer session and are not persisted to the draft.
-      if (e2eEnabled) return
+      if (e2eEnabled) {
+        // E2EE-4: re-seal the draft with the added attachment. The body + current
+        // attachments are the decrypted copy in memory (the row holds only
+        // ciphertext at rest); seal both together so the attachment's key/iv ride
+        // inside the body's ciphertext (Stage 4d). Locked → can't seal; the
+        // attachment stays in the composer session, like a typed body would.
+        const gate = e2eGateRef.current
+        if (!gate.unlocked || !gate.senderId || !gate.streamId) return
+        const sealedLoadedId = await getLoadedDraftId(draftKey)
+        const currentSealed = sealedLoadedId ? cachedDraftAttachments(sealedLoadedId) : []
+        if (currentSealed.some((a) => a.id === attachment.id)) return
+        const body = (sealedLoadedId ? cachedDraftBody(sealedLoadedId) : null) ?? EMPTY_DOC
+        try {
+          await upsertLoadedDraft(
+            workspaceId,
+            draftKey,
+            { contentJson: body, attachments: [...currentSealed, attachment] },
+            { senderId: gate.senderId, streamId: gate.streamId }
+          )
+          syncEngine?.kickOperationQueue()
+        } catch (err) {
+          console.error("Failed to seal draft attachment; kept in composer", err)
+        }
+        return
+      }
       const currentLoadedId = await getLoadedDraftId(draftKey)
       const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
       const currentAttachments = currentDraft?.attachments ?? []
@@ -493,7 +534,34 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
    */
   const removeAttachment = useCallback(
     async (attachmentId: string) => {
-      if (e2eEnabled) return
+      if (e2eEnabled) {
+        // E2EE-4: re-seal without the removed attachment (or clear when the draft
+        // is left empty). Reads body + attachments from the in-memory decrypt
+        // cache for the same reason `addAttachment` does. Locked → no-op.
+        const gate = e2eGateRef.current
+        if (!gate.unlocked || !gate.senderId || !gate.streamId) return
+        const sealedLoadedId = await getLoadedDraftId(draftKey)
+        if (!sealedLoadedId) return
+        const remaining = cachedDraftAttachments(sealedLoadedId).filter((a) => a.id !== attachmentId)
+        const body = cachedDraftBody(sealedLoadedId) ?? EMPTY_DOC
+        if (isEmptyContent(body) && remaining.length === 0) {
+          await clearLoadedDraft(workspaceId, draftKey)
+          syncEngine?.kickOperationQueue()
+          return
+        }
+        try {
+          await upsertLoadedDraft(
+            workspaceId,
+            draftKey,
+            { contentJson: body, attachments: remaining },
+            { senderId: gate.senderId, streamId: gate.streamId }
+          )
+          syncEngine?.kickOperationQueue()
+        } catch (err) {
+          console.error("Failed to re-seal draft after attachment removal; kept in composer", err)
+        }
+        return
+      }
       const currentLoadedId = await getLoadedDraftId(draftKey)
       const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
       if (!currentDraft) return
@@ -574,7 +642,10 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
      */
     loadedDraftId: loadedId,
     contentJson,
-    attachments: resolvedDraft?.attachments ?? [],
+    // Attachments come from the shared read path: a plaintext draft's own
+    // `attachments`, or — for a sealed draft — the metadata recovered from the
+    // decrypted `attachmentRefs` (empty while locked/decrypting, like the body).
+    attachments: decryptedContent.attachments,
     /** Sidecar context refs attached to the draft (see DraftContextRef). */
     contextRefs: (resolvedDraft?.contextRefs ?? []) as DraftContextRef[],
     saveDraft,

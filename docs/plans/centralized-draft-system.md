@@ -253,11 +253,12 @@ frontend-only:
 - Call sites (`message-input.tsx`, `thread/stream-panel.tsx`) pass the encrypted
   root (`rootStreamId ?? id`); `use-draft-composer.ts` threads `e2eStreamId`.
 
-**Scope boundary (v1) — deferred follow-up, non-regressing vs. pre-4c:**
+**Scope boundary (v1 / 4c cut) — attachments addressed in 4d (below):**
 
-- **E2E-draft attachments / context refs / slash commands are not sealed yet** —
-  only the body roams. They stay session-local exactly as before (per-file
-  attachment-key roaming across devices is its own design).
+- **E2E-draft attachments / context refs / slash commands were not sealed in 4c** —
+  only the body roamed; they stayed session-local. Stage 4d (below) seals
+  attachments. Context refs / slash commands remain session-local (their own
+  design — they have no message-payload field to ride in).
 
 **Shipped beyond the initial cut, so the feature is usable end-to-end:**
 
@@ -277,7 +278,50 @@ frontend-only:
   composer via a late-hydrate effect (no stream reopen required), guarded by
   `userEngagedRef` so it never clobbers typed content.
 
-**Reuse:** `sealOutgoingMessage` E2E path; existing `promoteDraft` / `setParentThreadId`; resolve CAS from Stage 1.
+#### Stage 4d — E2E draft attachment sealing — DONE
+
+E2E draft attachments now roam. Reuses the message attachment-seal path end to
+end (INV-35), so there is **no backend / types / wire / migration change** — the
+attachment linkage rides _inside_ the body's SSK ciphertext, and the wire
+`attachmentIds` stays `[]` for E2E (the server holds opaque bytes only).
+
+- `lib/crypto/seal-draft.ts`: `sealDraftContent` carries `attachmentIds` into
+  `sealOutgoingMessage`, which seals each file's `attachmentRef`
+  (key/iv/filename/mime/size) into the payload exactly as a message does; the
+  refs are returned so the write path can seed the decrypt cache.
+- `lib/drafts/decryption.ts`: `DraftDecryption` surfaces `attachments` (a
+  plaintext draft's own, or a sealed draft's refs mapped to display metadata).
+  On decrypt, `requestDraftDecryption` re-registers the recovered refs via
+  `rememberAttachmentRef` — on a fresh device the per-file keys were minted on
+  the authoring device, so without this a roamed draft could neither view nor
+  re-seal its attachments on send. `cachedDraftBody` / `cachedDraftAttachments`
+  expose the in-memory plaintext authority the write path re-seals from.
+- `hooks/use-draft-message.ts`: the seal write path carries the attachment set
+  (kept `[]` at rest, E2EE-4 — the real filename is sealed, never on disk);
+  `saveDraft` / `addAttachment` / `removeAttachment` E2E branches re-seal
+  body+attachments together, reading the current body + attachments back from the
+  decrypt cache so a keystroke or an attachment change preserves the other.
+  Returned `attachments` come from the decrypt read (empty while locked/decrypting).
+- `hooks/use-draft-composer.ts`: attachments late-hydrate alongside the body on
+  the unlock-after-open path (they decrypt together).
+
+**Scope boundary (4d):** context refs / slash commands on E2E drafts remain
+session-local — they have no field in the message sealed-payload schema to ride
+in, so sealing them would mean extending the shared `@threa/crypto` payload (and
+the enclave) for a draft-only concept; deferred as its own design.
+
+**Reuse:** `sealOutgoingMessage` + `serializeSealedPayload` attachment-ref path;
+`rememberAttachmentRef` / `getAttachmentRef` in-memory ref cache; the shared
+decrypt-cache + draft decrypt core from 4c.
+
+**Verification:** `seal-draft.test.ts` (attachment refs seal + recover on
+decrypt); `draft-e2e-roam.test.ts` (attachments survive the wire and their keys
+re-register on the receiving device); `use-draft-message.test.ts` (seal carries
+attachmentIds, never at rest; add/remove re-seal; content-only save preserves
+them; locked is a no-op); `use-decrypted-draft-content.test.ts` (attachments
+surfaced from refs). `bun run test`.
+
+**Reuse (4c):** `sealOutgoingMessage` E2E path; existing `promoteDraft` / `setParentThreadId`; resolve CAS from Stage 1.
 
 **Verification:** Backend test: resolve declines on drift, deletes on match; thread-conversion re-points drafts. Frontend/E2E (`test:e2e`): send clears draft; drifted draft survives send; reply draft follows a message into its new thread; E2E draft round-trips without plaintext at rest. `bun run test` + `bun run test:e2e`.
 
