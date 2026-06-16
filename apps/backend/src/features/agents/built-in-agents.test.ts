@@ -8,6 +8,19 @@ describe("Ariadne built-in config", () => {
     // just read its caption — keep it enabled so that capability can't regress.
     expect(BUILT_IN_AGENTS[ARIADNE_AGENT_ID].enabledTools).toContain(AgentToolNames.LOAD_ATTACHMENT)
   })
+
+  it("can find and read non-image document attachments", () => {
+    // load_attachment is image-only; without these, Ariadne could see images
+    // but had no way to read a text/PDF/Excel file's content — she'd find a
+    // snippet via search and then ask the user to paste it back. Keep the full
+    // find -> read -> page loop enabled.
+    const { enabledTools } = BUILT_IN_AGENTS[ARIADNE_AGENT_ID]
+    expect(enabledTools).toContain(AgentToolNames.SEARCH_ATTACHMENTS)
+    expect(enabledTools).toContain(AgentToolNames.GET_ATTACHMENT)
+    expect(enabledTools).toContain(AgentToolNames.LOAD_FILE_SECTION)
+    expect(enabledTools).toContain(AgentToolNames.LOAD_PDF_SECTION)
+    expect(enabledTools).toContain(AgentToolNames.LOAD_EXCEL_SECTION)
+  })
 })
 
 describe("isE2eCapablePersona", () => {

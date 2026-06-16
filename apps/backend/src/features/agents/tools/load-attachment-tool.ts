@@ -51,7 +51,7 @@ For text content from documents, prefer get_attachment which returns the extract
         if (!attachment) {
           return {
             output: JSON.stringify({
-              error: "Attachment not found, not accessible, or not an image",
+              error: "Attachment not found or not accessible",
               attachmentId: input.attachmentId,
             }),
           }
@@ -59,8 +59,9 @@ For text content from documents, prefer get_attachment which returns the extract
         if (!attachment.mimeType.startsWith("image/")) {
           return {
             output: JSON.stringify({
-              error: "Attachment not found, not accessible, or not an image",
+              error: `load_attachment only handles images, and ${attachment.mimeType} is not an image. Use get_attachment to read this file's extracted text and data.`,
               attachmentId: input.attachmentId,
+              mimeType: attachment.mimeType,
             }),
           }
         }
