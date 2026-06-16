@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
+import { markDraftResolved, resetDraftResolutionGuard } from "./draft-resolution-guard"
 import {
   applyDraftDeleted,
   applyDraftsBootstrap,
@@ -65,6 +66,7 @@ function localDraft(overrides: Partial<CachedDraft> = {}): CachedDraft {
 
 beforeEach(async () => {
   resetDraftStoreCache()
+  resetDraftResolutionGuard()
   await db.drafts.clear()
   await db.composerLoaded.clear()
   await db.pendingOperations.clear()
@@ -552,6 +554,55 @@ describe("pending local delete is authoritative (no resurrection)", () => {
     // The guard is scoped to the deleted id only; unrelated drafts still seed.
     expect(await db.drafts.get("draft_server1")).toBeUndefined()
     expect(await db.drafts.get("draft_server2")).toBeDefined()
+  })
+})
+
+describe("resolve-on-send is authoritative against inbound echoes (no resurrection)", () => {
+  it("applyDraftUpserted drops an echo of a draft this device just resolved", async () => {
+    // Sent the message → resolved draft_server1 at version 1. The echo of our own
+    // last push (or a reconnect re-seed of the still-present server row) arrives
+    // before the resolve op drains — it must NOT be re-created.
+    markDraftResolved("draft_server1", 1)
+
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 1 }) }, workspaceId)
+
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
+  it("applyDraftsBootstrap (reconnect) does not resurrect a just-resolved draft", async () => {
+    markDraftResolved("draft_server1", 1)
+
+    await applyDraftsBootstrap(workspaceId, [wireDraft({ version: 1 })])
+
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
+  it("still applies a STRICTLY NEWER version from another device (no-loss)", async () => {
+    // A genuine edit elsewhere bumped the version past what we resolved at — that
+    // is real new work and survives (as a stash entry), never silently dropped.
+    markDraftResolved("draft_server1", 1)
+
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 2 }) }, workspaceId)
+
+    expect(await db.drafts.get("draft_server1")).toBeDefined()
+  })
+})
+
+describe("inbound sync never activates the composer (loaded pointer is local-only)", () => {
+  it("applyDraftUpserted writes the row but never the composer-loaded pointer", async () => {
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft() }, workspaceId)
+
+    expect(await db.drafts.get("draft_server1")).toBeDefined()
+    // A roamed/echoed draft lands in the stash pile, never checked into a composer.
+    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+  })
+
+  it("applyDraftsBootstrap writes rows but never a composer-loaded pointer", async () => {
+    await applyDraftsBootstrap(workspaceId, [wireDraft(), wireDraft({ id: "draft_server2" })])
+
+    expect(await db.drafts.get("draft_server1")).toBeDefined()
+    expect(await db.drafts.get("draft_server2")).toBeDefined()
+    expect(await db.composerLoaded.get(scope)).toBeUndefined()
   })
 })
 
