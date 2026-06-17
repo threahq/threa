@@ -2003,8 +2003,10 @@ function textFromAgentMessages(messages: unknown): string {
   if (captured.length === 0) return "Done."
   const assistant = captured
     .filter((item) => item.role === "assistant")
-    .map((item) => item.text)
-    .join("\n\n")
+    // Same rationale as `resolveFinalText`: the final assistant message is the
+    // answer; earlier ones are per-step narration that belongs in the trace,
+    // not concatenated into the reply.
+    .at(-1)?.text
     .trim()
   if (assistant) return assistant
   return (
@@ -2101,6 +2103,17 @@ function extractAgentEndError(event: unknown): string | undefined {
   return undefined
 }
 
+/**
+ * Pick the text to post as the Threa reply.
+ *
+ * During an agentic turn Pi emits one assistant message per step — the model
+ * narrates each action ("Rebasing…", "Running the suite…") before producing
+ * its final summary. Only that final assistant message is the user-facing
+ * answer; the intermediate narration is shown in the scratchpad trace as
+ * `thinking` steps (see the `message_end` handler) and must NOT be concatenated
+ * into the reply, or the posted message balloons into a transcript of every
+ * "I'm doing this" aside followed by the summary.
+ */
 function resolveFinalText(
   event: unknown,
   state: {
@@ -2109,7 +2122,7 @@ function resolveFinalText(
     providerError?: string
   }
 ): string {
-  if (state.assistantTexts.length > 0) return state.assistantTexts.join("\n\n")
+  if (state.assistantTexts.length > 0) return state.assistantTexts[state.assistantTexts.length - 1]
   if (state.providerError) return state.providerError
   const eventError = extractAgentEndError(event)
   if (eventError) return eventError
@@ -2515,7 +2528,10 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("agent_start", async (_event, ctx) => {
     if (config && isEnabled(ctx)) await heartbeatBusyIfStale("Thinking…", ctx).catch(() => undefined)
-    await traceHeartbeat("Thinking…", ctx, "thinking")
+    // Just a live status heartbeat — no `thinking` trace step. The model's
+    // real narration lands as `thinking` trace steps from `message_end` below,
+    // so a placeholder "Thinking…" row here would only add noise to the trace.
+    await traceHeartbeat("Thinking…", ctx)
   })
 
   pi.on("tool_call", async (event) => {
@@ -2550,8 +2566,18 @@ export default function (pi: ExtensionAPI): void {
     if (!pending) return
     const captured = captureMessageText(event.message)
     if (!captured) return
-    if (captured.role === "assistant") pendingAssistantTexts.push(captured.text)
-    else pendingNonAssistantTexts.push(captured)
+    if (captured.role === "assistant") {
+      pendingAssistantTexts.push(captured.text)
+      // Surface the model's running narration as a `thinking` trace step so
+      // the scratchpad trace shows what the agent reasoned between tool
+      // calls — not just a placeholder "Thinking…". The final assistant
+      // message is reused as the posted reply (see `resolveFinalText`); we
+      // skip re-recording it as `message_sent` at `agent_end` to avoid a
+      // duplicate trace entry.
+      await recordTraceStep("thinking", sanitizeTraceText(captured.text), "Thinking…")
+    } else {
+      pendingNonAssistantTexts.push(captured)
+    }
   })
 
   pi.on("after_provider_response", async (event) => {
@@ -2587,8 +2613,15 @@ export default function (pi: ExtensionAPI): void {
         otherTexts: pendingNonAssistantTexts,
         providerError: pendingProviderError,
       })
-      const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
-      await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
+      // When the reply is the model's final assistant message, it was already
+      // recorded as the last `thinking` trace step in `message_end` — recording
+      // a `message_sent` step too would duplicate it in the trace dialog. Only
+      // record `message_sent` for the fallback paths (provider error, event
+      // error, non-assistant text) where there is no preceding thinking step.
+      if (pendingAssistantTexts.length === 0) {
+        const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
+        await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
+      }
       await completePending(finalText, ctx)
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {
