@@ -43,12 +43,14 @@ import {
   AuthorTypes,
   BotInvocationCapabilities,
   BotRuntimeKinds,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   PI_TOOL_TRACE_FORMAT,
   PI_TOOL_TRACE_SECTION_LABELS,
   PiToolTraceSectionLabels,
   THREA_CALLBACK_TOKEN_HEADER,
   sentViaApiKey,
   type AuthorType,
+  type JSONContent,
   type PiToolTraceSectionLabel,
   type SealedTurnContext,
 } from "@threa/types"
@@ -129,7 +131,16 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  completeSealedInvocationSchema,
 } from "./schemas"
+
+// Same opaque placeholder the enclave reply path and the user-send path store for
+// E2E rows (INV-E1: the canonical payload is the ciphertext; plaintext consumers
+// see this). Mirrors the local const in the enclave session-handlers.
+const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
+  type: "doc",
+  content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],
+}
 
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
   const effective = getEffectiveDisplayName(stream, context)
@@ -698,19 +709,24 @@ export function createPublicApiHandlers({
   }
 
   /**
-   * Resolve and authorize a sealed bot step callback (the external sibling of
-   * the enclave's session-callback guards). Bot invocations reuse the invocation
-   * id as the agent session id, so the path's `invocationId` is the session id.
-   * The neutral callback token (model A — the claim token, delivered only inside
-   * the winning sealed claim) is the binding; the workspace + persona checks are
-   * defense-in-depth isolation (INV-8) on top of it. Mirrors the enclave's
-   * `assertRunning`/`assertCallbackBound` + stream resolution.
+   * Resolve and authorize a sealed bot session callback — shared by the sealed
+   * `/steps`, `/steps/started`, and `/sealed-complete` handlers (the external
+   * siblings of the enclave's session-callback guards). Bot invocations reuse the
+   * invocation id as the agent session id, so the path's `invocationId` is the
+   * session id. The neutral callback token (model A — the claim token, delivered
+   * only inside the winning sealed claim) is the binding; the workspace + persona
+   * checks are defense-in-depth isolation (INV-8) on top of it. Mirrors the
+   * enclave's `assertRunning`/`assertCallbackBound` + stream resolution.
    */
-  async function authorizeSealedStepCallback(req: Request) {
+  async function authorizeSealedInvocationCallback(req: Request) {
     if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
     const session = await AgentSessionRepository.findById(pool, req.params.invocationId)
     assertSessionRunning(session)
-    verifyCallbackToken(session, req.header(THREA_CALLBACK_TOKEN_HEADER))
+    // The verified token IS the per-claim claim token (model A); return it so the
+    // `/sealed-complete` claim flip scopes by it without re-reading the header,
+    // keeping that security dependency explicit rather than an implicit `!`.
+    const callbackToken = req.header(THREA_CALLBACK_TOKEN_HEADER)
+    verifyCallbackToken(session, callbackToken)
     const stream = await StreamRepository.findById(pool, session.streamId)
     if (!stream || stream.workspaceId !== req.workspaceId) {
       throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
@@ -720,7 +736,7 @@ export function createPublicApiHandlers({
     if (session.personaId !== bot.id) {
       throw new HttpError("Session does not belong to this bot", { status: 403, code: "FORBIDDEN" })
     }
-    return { session, stream, bot }
+    return { session, stream, bot, callbackToken: callbackToken! }
   }
 
   /**
@@ -1306,7 +1322,7 @@ export function createPublicApiHandlers({
      */
     async startBotInvocationSealedStep(req: Request, res: Response) {
       const data = validateRequest(startSealedInvocationStepSchema, req.body)
-      const { session, stream, bot } = await authorizeSealedStepCallback(req)
+      const { session, stream, bot } = await authorizeSealedInvocationCallback(req)
       assertReplyKeyGeneration(session, data.envelope)
 
       // Insert the in-flight row (no completed_at) + current_step_type in one
@@ -1345,7 +1361,7 @@ export function createPublicApiHandlers({
      */
     async recordBotInvocationSealedStep(req: Request, res: Response) {
       const data = validateRequest(recordSealedInvocationStepSchema, req.body)
-      const { session, stream, bot } = await authorizeSealedStepCallback(req)
+      const { session, stream, bot } = await authorizeSealedInvocationCallback(req)
       assertReplyKeyGeneration(session, data.envelope)
 
       const completedAt = new Date()
@@ -1387,6 +1403,113 @@ export function createPublicApiHandlers({
       })
 
       res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
+    },
+
+    /**
+     * Complete a sealed bot turn — the external sibling of the enclave's
+     * `/complete` and the sealed variant of the plaintext `completeBotInvocation`.
+     * Unlike the enclave (which streams each reply to `/messages` and acks here),
+     * the bot path delivers its single sealed reply inline, exactly as the
+     * plaintext bot complete does — only the body is ciphertext the server can't
+     * read (INV-E7). In one transaction (INV-7): persist the sealed reply (when
+     * present), flip the `bot_invocations` claim, and finalize the session
+     * lifecycle (status + the `agent_session:completed` event/outbox), so the
+     * claimable set, the message, and the lifecycle event can never diverge. No
+     * reply-only trace synthesis (the plaintext floor needs cleartext we don't
+     * have); the trace is whatever sealed steps the harness already POSTed. The
+     * whole path is dark until `externalSealedDelivery` flips.
+     *
+     * Two things the plaintext sibling does are deliberately absent: the
+     * runtime-command `command:completed` event (a runtime command requires the
+     * SESSION_CONTROL capability, and the claim path never seals a session-control
+     * invocation — so a sealed completion is never a runtime command), and the
+     * `assertManifestAllows` reject-undeclared gate (it keys off the runtime's
+     * declared manifest, looked up by `instanceId`, which the header-auth model
+     * omits — the sealed grant is the capability proof here).
+     */
+    async completeBotInvocationSealed(req: Request, res: Response) {
+      const data = validateRequest(completeSealedInvocationSchema, req.body)
+      const { session, stream, bot, callbackToken } = await authorizeSealedInvocationCallback(req)
+      if (data.reply) assertReplyKeyGeneration(session, data.reply.envelope)
+
+      const { message, sessionFinalized } = await withTransaction(pool, async (client) => {
+        const reply = data.reply
+        const message = reply
+          ? await eventService.createMessageInTransaction(client, {
+              id: reply.messageId,
+              workspaceId: stream.workspaceId,
+              streamId: session.streamId,
+              sessionId: session.id,
+              authorId: bot.id,
+              authorType: AuthorTypes.BOT,
+              contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+              contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+              ciphertext: Buffer.from(reply.ciphertext, "base64"),
+              envelope: reply.envelope,
+              e2eVersion: 2,
+              // Restrict the bot's reach to this scratchpad and dedupe a redelivered
+              // completion (one reply per invocation), mirroring the enclave reply.
+              accessibleStreamIds: [session.streamId],
+              clientMessageId: `bot-invocation:${session.id}`,
+            })
+          : null
+
+        // Flip the claim atomically (INV-20): the `status = 'claimed'` predicate
+        // makes a raced/redelivered completion no-op (→ 404), and rolling back
+        // here drops the message insert above with it.
+        const completed = await botRuntimeService.completeInvocationInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          invocationId: session.id,
+          claimToken: callbackToken,
+        })
+        if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+
+        // Finalize the session lifecycle in the same transaction (INV-7), gated on
+        // winning the RUNNING→COMPLETED transition so a raced redelivery can't
+        // double-emit. Plaintext-free: counts + timing only.
+        const latestSequence = await eventService.getLatestSequence(session.streamId)
+        const finalized = await AgentSessionRepository.completeSession(client, session.id, {
+          lastSeenSequence: latestSequence ?? 0n,
+          responseMessageId: message?.id ?? null,
+          sentMessageIds: message ? [message.id] : [],
+        })
+        if (!finalized) return { message, sessionFinalized: false }
+
+        const completedAt = finalized.completedAt ?? new Date()
+        const steps = await AgentSessionRepository.findStepsBySession(client, session.id)
+        const streamEvent = await StreamEventRepository.insert(client, {
+          id: eventId(),
+          streamId: session.streamId,
+          eventType: "agent_session:completed",
+          payload: {
+            sessionId: session.id,
+            stepCount: steps.length,
+            messageCount: message ? 1 : 0,
+            duration: completedAt.getTime() - finalized.createdAt.getTime(),
+            completedAt: completedAt.toISOString(),
+          },
+          actorId: bot.id,
+          actorType: AuthorTypes.BOT,
+        })
+        await OutboxRepository.insert(client, "agent_session:completed", {
+          workspaceId: stream.workspaceId,
+          streamId: session.streamId,
+          event: streamEvent,
+        })
+        return { message, sessionFinalized: true }
+      })
+
+      // Live-update an open trace dialog (session room) the way the enclave/in-process
+      // completes do — the outbox broadcast only reaches the stream room, so the
+      // dialog wouldn't otherwise transition until a refetch.
+      if (sessionFinalized) {
+        io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:completed", {
+          sessionId: session.id,
+        })
+      }
+
+      res.json({ data: { invocationId: session.id, sessionId: session.id, messageId: message?.id ?? null } })
     },
 
     async completeBotInvocation(req: Request, res: Response) {

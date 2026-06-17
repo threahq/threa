@@ -383,6 +383,7 @@ export type {
   EnclaveSealedMessage,
   EnclaveSskWrap,
   SealedReply,
+  SealedComplete,
   EnclaveSealedName,
   EnclaveSealedSummary,
   SealedStep,

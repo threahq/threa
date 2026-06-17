@@ -197,6 +197,28 @@ export const startSealedInvocationStepSchema = z.object({
   envelope: sealedStreamEnvelopeSchema.optional(),
 })
 
+// The sealed variant of `completeInvocationSchema` (the external sibling of the
+// enclave's `/complete`). Carries the turn's final sealed reply — `messageId` is
+// clear (it keys the row and binds the seal AAD) while the content is ciphertext
+// the server can't read (INV-E7) — or `noResponse` when the turn produced none.
+// Auth is the bot API key + the neutral callback token header, not body claim
+// fields, so neither `instanceId` nor `claimToken` appears here.
+export const completeSealedInvocationSchema = z
+  .object({
+    reply: z
+      .object({
+        messageId: z.string().min(1).max(128),
+        ciphertext: z.base64().min(1),
+        envelope: sealedStreamEnvelopeSchema,
+      })
+      .optional(),
+    noResponse: z.boolean().optional(),
+  })
+  .refine((value) => value.noResponse === true || value.reply != null, {
+    message: "Either reply or noResponse is required",
+    path: ["reply"],
+  })
+
 export const listMessagesSchema = z
   .object({
     before: z.string().regex(/^\d+$/, "must be a numeric sequence").optional(),

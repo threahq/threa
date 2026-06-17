@@ -575,13 +575,15 @@ export class BotRuntimeService {
     return BotInvocationRepository.completeClaim(this.pool, params)
   }
 
+  // `instanceId` is optional: the sealed bot completion authenticates by the
+  // per-claim callback token and omits it (see `completeClaim`).
   async completeInvocationInTransaction(
     db: Querier,
     params: {
       workspaceId: string
       botId: string
       invocationId: string
-      instanceId: string
+      instanceId?: string
       claimToken: string
     }
   ): Promise<BotInvocation | null> {

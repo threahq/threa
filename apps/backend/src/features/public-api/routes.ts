@@ -45,6 +45,7 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  completeSealedInvocationSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -405,6 +406,11 @@ const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.st
 const invocationStepSchema = z.object({ invocationId: z.string(), sessionId: z.string(), stepId: z.string() })
 const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
 const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema.nullable() })
+const sealedCompletedInvocationSchema = z.object({
+  invocationId: z.string(),
+  sessionId: z.string(),
+  messageId: z.string().nullable(),
+})
 
 const errorSchema = z.object({
   error: z.string(),
@@ -723,6 +729,25 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: recordSealedInvocationStepSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(invocationStepSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-complete",
+    operationId: "completeBotInvocationSealed",
+    summary: "Complete a sealed bot invocation",
+    description:
+      "Sealed variant of the completion, for an owner-granted E2E bot harness: persists the turn's final sealed reply (ciphertext the server never decrypts) or noResponse, flips the claim, and finalizes the agent session. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+      callbackTokenHeaderParam,
+    ],
+    requestSchema: completeSealedInvocationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(sealedCompletedInvocationSchema),
     canReturn404: true,
   },
   {
