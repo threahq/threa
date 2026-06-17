@@ -658,6 +658,16 @@ export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 // the session was assigned to — the internal key alone proves only "internal".
 export const ENCLAVE_CALLBACK_TOKEN_HEADER = "X-Enclave-Callback-Token"
 
+// Per-session callback binding for sealed turns delivered to an owner-granted
+// external runner (a third-party / self-hosted bot harness). The claim-minted
+// token (the claim token itself, model A) is echoed on every sealed
+// `/steps`/`/complete` callback so the backend can verify the caller is the
+// instance the session was assigned to — the workspace bot key alone proves only
+// "this workspace". Deliberately not enclave-named (§2.6 rule 1): the enclave
+// keeps its own `X-Enclave-Callback-Token`, and this is the same binding for the
+// bot transport, shared by every sealed-capable external driver.
+export const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
+
 // Original client-facing host (e.g. `admin.threa.io`, `pr-204-staging.threa.io`)
 // carried from the Cloudflare routers to the control-plane.
 //

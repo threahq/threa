@@ -46,6 +46,7 @@ import {
   PI_TOOL_TRACE_FORMAT,
   PI_TOOL_TRACE_SECTION_LABELS,
   PiToolTraceSectionLabels,
+  THREA_CALLBACK_TOKEN_HEADER,
   sentViaApiKey,
   type AuthorType,
   type PiToolTraceSectionLabel,
@@ -73,7 +74,15 @@ import { botId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { AgentSessionRepository, hashCallbackToken, type AgentSessionStep } from "../agents"
+import {
+  AgentSessionRepository,
+  hashCallbackToken,
+  assertSessionRunning,
+  verifyCallbackToken,
+  assertReplyKeyGeneration,
+  type AgentSession,
+  type AgentSessionStep,
+} from "../agents"
 import { buildSealedTurnContext } from "./sealed-turn-context"
 import { encodeCursor, decodeCursor } from "./cursor"
 import {
@@ -118,6 +127,8 @@ import {
   completeInvocationSchema,
   failInvocationSchema,
   recordInvocationStepSchema,
+  recordSealedInvocationStepSchema,
+  startSealedInvocationStepSchema,
 } from "./schemas"
 
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
@@ -686,6 +697,51 @@ export function createPublicApiHandlers({
     }
   }
 
+  /**
+   * Resolve and authorize a sealed bot step callback (the external sibling of
+   * the enclave's session-callback guards). Bot invocations reuse the invocation
+   * id as the agent session id, so the path's `invocationId` is the session id.
+   * The neutral callback token (model A — the claim token, delivered only inside
+   * the winning sealed claim) is the binding; the workspace + persona checks are
+   * defense-in-depth isolation (INV-8) on top of it. Mirrors the enclave's
+   * `assertRunning`/`assertCallbackBound` + stream resolution.
+   */
+  async function authorizeSealedStepCallback(req: Request) {
+    if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+    const session = await AgentSessionRepository.findById(pool, req.params.invocationId)
+    assertSessionRunning(session)
+    verifyCallbackToken(session, req.header(THREA_CALLBACK_TOKEN_HEADER))
+    const stream = await StreamRepository.findById(pool, session.streamId)
+    if (!stream || stream.workspaceId !== req.workspaceId) {
+      throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+    }
+    const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+    if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+    if (session.personaId !== bot.id) {
+      throw new HttpError("Session does not belong to this bot", { status: 403, code: "FORBIDDEN" })
+    }
+    return { session, stream, bot }
+  }
+
+  /**
+   * Drive the inline stream-view indicator at a sealed step boundary — the same
+   * `agent_session:progress` payload the plaintext sink emits, step type only
+   * (never sealed content). Emitted at step start (and on the finalize fallback
+   * when the start was dropped) so "<bot> is …" tracks the live step.
+   */
+  function emitBotSealedProgress(stream: Stream, session: AgentSession, bot: Bot, step: AgentSessionStep): void {
+    io.to(`ws:${stream.workspaceId}:stream:${session.streamId}`).emit("agent_session:progress", {
+      workspaceId: stream.workspaceId,
+      streamId: session.streamId,
+      sessionId: session.id,
+      triggerMessageId: session.triggerMessageId,
+      personaName: bot.name,
+      stepCount: step.stepNumber,
+      messageCount: 0,
+      currentStepType: step.stepType,
+    })
+  }
+
   /** Find a message, verify stream access, and verify ownership. Used by update/delete. */
   async function resolveOwnedMessage(messageId: string, req: Request) {
     const message = await eventService.getMessageById(messageId)
@@ -1237,6 +1293,95 @@ export function createPublicApiHandlers({
         statusText: sanitizeStatusText(data.statusText),
       })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
+    },
+
+    /**
+     * Open one in-flight sealed trace step the moment the bot's loop starts it —
+     * the external sibling of the enclave's `/steps/started`. Content is sealed
+     * when already known (reasoning/reply) and absent for tools (no result yet);
+     * only `stepType` is clear. A later sealed `/steps` finalizes this `stepId` in
+     * place. The whole sealed path is dark until `externalSealedDelivery` flips.
+     */
+    async startBotInvocationSealedStep(req: Request, res: Response) {
+      const data = validateRequest(startSealedInvocationStepSchema, req.body)
+      const { session, stream, bot } = await authorizeSealedStepCallback(req)
+      assertReplyKeyGeneration(session, data.envelope)
+
+      // Insert the in-flight row (no completed_at) + current_step_type in one
+      // transaction (INV-6) so a reader never sees the step without its type;
+      // step_number is computed atomically in the INSERT (INV-20).
+      const persisted = await withTransaction(pool, async (tx) => {
+        const created = await AgentSessionRepository.appendStep(tx, {
+          id: data.stepId,
+          sessionId: session.id,
+          stepType: data.stepType,
+          messageId: data.messageId,
+          contentCiphertext: data.ciphertext,
+          contentEnvelope: data.envelope,
+          startedAt: new Date(),
+        })
+        await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
+        return created
+      })
+
+      io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:step:started", {
+        sessionId: session.id,
+        step: serializeTraceStep(persisted),
+      })
+      emitBotSealedProgress(stream, session, bot, persisted)
+
+      res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
+    },
+
+    /**
+     * Finalize one sealed trace step in place when it completes — set the sealed
+     * content + completed_at on the row opened at sealed `/steps/started`, keeping
+     * its original started_at so the duration is real. The content is ciphertext
+     * only; the owner's browser decrypts it (INV-E7). If the start POST was
+     * dropped, fall back to a race-safe completed insert so the trace still lands.
+     * The external sibling of the enclave's `/steps`.
+     */
+    async recordBotInvocationSealedStep(req: Request, res: Response) {
+      const data = validateRequest(recordSealedInvocationStepSchema, req.body)
+      const { session, stream, bot } = await authorizeSealedStepCallback(req)
+      assertReplyKeyGeneration(session, data.envelope)
+
+      const completedAt = new Date()
+      let persisted = await AgentSessionRepository.updateStep(pool, data.stepId, {
+        contentCiphertext: data.ciphertext,
+        contentEnvelope: data.envelope,
+        messageId: data.messageId,
+        completedAt,
+      })
+
+      // Fallback: the start POST never landed (dropped/raced), so there's no row
+      // to finalize. Insert a completed row + advance current_step_type (INV-6,
+      // INV-20) so the trace and inline indicator still reflect this step.
+      if (!persisted) {
+        const startedAt = new Date(completedAt.getTime() - (data.durationMs ?? 0))
+        persisted = await withTransaction(pool, async (tx) => {
+          const created = await AgentSessionRepository.appendStep(tx, {
+            id: data.stepId,
+            sessionId: session.id,
+            stepType: data.stepType,
+            messageId: data.messageId,
+            contentCiphertext: data.ciphertext,
+            contentEnvelope: data.envelope,
+            startedAt,
+            completedAt,
+          })
+          await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
+          return created
+        })
+        emitBotSealedProgress(stream, session, bot, persisted)
+      }
+
+      io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:step:completed", {
+        sessionId: session.id,
+        step: serializeTraceStep(persisted),
+      })
+
+      res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
     },
 
     async completeBotInvocation(req: Request, res: Response) {

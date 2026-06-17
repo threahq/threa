@@ -2,7 +2,6 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { timingSafeEqual } from "node:crypto"
 import {
   AGENT_STEP_TYPES,
   AuthorTypes,
@@ -26,7 +25,9 @@ import {
   SessionStatuses,
   ARIADNE_AGENT_ID,
   getBuiltInAgentConfig,
-  hashCallbackToken,
+  assertSessionRunning as assertRunning,
+  verifyCallbackToken,
+  assertReplyKeyGeneration as assertReplyGeneration,
   failSessionWithLifecycle,
   type AgentSession,
 } from "../agents"
@@ -174,50 +175,13 @@ interface Dependencies {
 }
 
 /**
- * Phase 2.4b (E2EE-21): bind callbacks to the session's assigned runner. The
- * cleartext token was minted at dispatch and delivered only inside the sealed
- * assignment to the pinned EIK's instance — possession proves the caller is
- * the runner this session was assigned to (a stronger binding than a
- * self-reported keyId, which any internal-key holder could copy). The row
- * holds only the sha256 digest, so the presented value is hashed before the
- * timing-safe compare (both sides are fixed-length hex). The token is
- * mandatory: the rollout-phase tolerance for tokenless in-flight sessions has
- * drained (all pre-2.4b rows are terminal), so an absent token — like a NULL
- * row hash, which no token can match — is rejected outright.
+ * Read the enclave's callback token from its own header and verify it against
+ * the session's binding (shared `verifyCallbackToken`, Phase 2.4b/E2EE-21). The
+ * binding rule lives in the agents feature because it's a property of the
+ * session row, not of the enclave transport; only the header differs per driver.
  */
 function assertCallbackBound(session: AgentSession, req: Request): void {
-  const presented = req.header(ENCLAVE_CALLBACK_TOKEN_HEADER)
-  if (!presented) {
-    throw new HttpError("Missing callback token", { status: 403, code: "CALLBACK_TOKEN_MISSING" })
-  }
-  const expected = session.callbackTokenHash
-  const presentedHash = Buffer.from(hashCallbackToken(presented))
-  if (!expected || !timingSafeEqual(presentedHash, Buffer.from(expected))) {
-    throw new HttpError("Callback token mismatch", { status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
-  }
-}
-
-/**
- * Phase 2.4b (E2EE-21): a seal under any generation other than the one the
- * assignment prescribed would persist as a permanently undecryptable row —
- * reject it loudly so the turn fails visibly instead. Sessions dispatched
- * before the column shipped (NULL) are exempt.
- */
-function assertReplyGeneration(session: AgentSession, envelope: { keyGeneration: number } | undefined): void {
-  if (!envelope || session.replyKeyGeneration == null) return
-  if (envelope.keyGeneration !== session.replyKeyGeneration) {
-    throw new HttpError(
-      `Sealed payload uses key generation ${envelope.keyGeneration}; this session seals under ${session.replyKeyGeneration}`,
-      { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
-    )
-  }
-}
-
-function assertRunning(session: AgentSession | null): asserts session is AgentSession {
-  if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
-  if (session.status !== SessionStatuses.RUNNING) {
-    throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
-  }
+  verifyCallbackToken(session, req.header(ENCLAVE_CALLBACK_TOKEN_HEADER))
 }
 
 /**

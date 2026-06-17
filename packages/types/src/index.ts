@@ -176,6 +176,7 @@ export {
   // Inter-service authentication
   INTERNAL_API_KEY_HEADER,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
+  THREA_CALLBACK_TOKEN_HEADER,
   // Original client host forwarded through the CF routers (survives Railway)
   ORIGINAL_HOST_HEADER,
   // Socket heartbeat

@@ -19,6 +19,7 @@ import {
   KNOWLEDGE_TYPES,
   PROCESSING_STATUSES,
   EXTRACTION_CONTENT_TYPES,
+  THREA_CALLBACK_TOKEN_HEADER,
 } from "@threa/types"
 import type { WorkspacePermissionSlug } from "@threa/types"
 import {
@@ -42,6 +43,8 @@ import {
   completeInvocationSchema,
   failInvocationSchema,
   recordInvocationStepSchema,
+  recordSealedInvocationStepSchema,
+  startSealedInvocationStepSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -464,6 +467,14 @@ const attachmentIdParam = {
   description: "Attachment ID (prefixed ULID)",
 }
 
+const callbackTokenHeaderParam = {
+  name: THREA_CALLBACK_TOKEN_HEADER,
+  in: "header" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Per-claim callback token from the sealed claim response (binds the caller to the assigned session).",
+}
+
 export interface PublicApiRoute {
   method: "get" | "post" | "patch" | "delete"
   path: string
@@ -474,7 +485,7 @@ export interface PublicApiRoute {
   scopes: WorkspacePermissionSlug[]
   parameters?: Array<{
     name: string
-    in: "path" | "query"
+    in: "path" | "query" | "header"
     required: boolean
     schema: { type: string }
     description: string
@@ -672,6 +683,44 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
       { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
     ],
     requestSchema: recordInvocationStepSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(invocationStepSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-steps/started",
+    operationId: "startBotInvocationSealedStep",
+    summary: "Open an in-flight sealed bot invocation trace step",
+    description:
+      "Sealed variant of the trace-step start, for an owner-granted E2E bot harness: the content is ciphertext the server never decrypts. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+      callbackTokenHeaderParam,
+    ],
+    requestSchema: startSealedInvocationStepSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(invocationStepSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-steps",
+    operationId: "recordBotInvocationSealedStep",
+    summary: "Finalize a sealed bot invocation trace step",
+    description:
+      "Sealed variant of the trace-step finalize, for an owner-granted E2E bot harness: sets the sealed content + completion on the step opened at sealed-steps/started (or inserts a completed row if the start was dropped). Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+      callbackTokenHeaderParam,
+    ],
+    requestSchema: recordSealedInvocationStepSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(invocationStepSchema),
     canReturn404: true,
