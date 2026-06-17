@@ -744,7 +744,7 @@ export interface EnclaveSessionAssignment {
    * bound to those messages; the enclave matches `attachmentId` to the
    * decrypted `attachmentRefs`, decrypts with the sealed key/iv, and feeds the
    * trigger's files to the (vision/PDF-capable) model eagerly while history
-   * files load on demand via its `load_attachment` tool. Omitted when there
+   * files load on demand via its `read_attachment` tool. Omitted when there
    * are none.
    */
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]

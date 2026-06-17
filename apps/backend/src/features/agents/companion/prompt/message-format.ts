@@ -23,7 +23,7 @@ import { formatAttachImageTag, formatAttachTag, formatMsgAuthorTag } from "../..
  * agent can resurface them via `[Image #N](attachment:att_x)` /
  * `[filename](attachment:att_x)`.
  *
- * Actual images are loaded on-demand via the load_attachment tool.
+ * Actual images are loaded on-demand via the read_attachment tool.
  */
 export function formatMessagesWithTemporal(
   messages: MessageWithAttachments[],
@@ -176,7 +176,7 @@ function formatAttachmentDescription(att: AttachmentContext, imageIndexById: Map
 
 /**
  * Format message content including attachment context as text descriptions.
- * Actual images are loaded on-demand via the load_attachment tool.
+ * Actual images are loaded on-demand via the read_attachment tool.
  */
 function formatMessageContent(
   msg: MessageWithAttachments,

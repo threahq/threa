@@ -656,11 +656,11 @@ export async function enrichMessagesWithAttachments(
       const extraction = extractionsByAttachment.get(attachment.id)
       const dataUrl = includeImageData ? imageDataByAttachment.get(attachment.id) : undefined
 
-      // For large PDFs, don't include full text (use load_pdf_section tool instead)
+      // For large PDFs, don't include full text (use read_attachment tool instead)
       const isLargePdf =
         extraction?.sourceType === ExtractionSourceTypes.PDF && extraction?.pdfMetadata?.sizeTier === PdfSizeTiers.LARGE
 
-      // For large Excel workbooks, don't include full text (use load_excel_section tool instead)
+      // For large Excel workbooks, don't include full text (use read_attachment tool instead)
       const isLargeExcel =
         extraction?.sourceType === ExtractionSourceTypes.EXCEL &&
         extraction?.excelMetadata?.injectionStrategy === InjectionStrategies.SUMMARY

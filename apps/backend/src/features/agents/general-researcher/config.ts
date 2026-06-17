@@ -38,7 +38,10 @@ export {
  *   directly rather than nesting another sub-agent (no researcher-in-researcher).
  * - `send_message` — the runtime always provides it; the final brief is the
  *   captured send_message content.
- * - attachment/vision loaders — out of scope for a text research brief.
+ * - `read_attachment` IS included so the researcher can pull an attachment's
+ *   extracted text/data into the brief instead of citing a search snippet it
+ *   cannot open. It builds with `supportsVision: false`, so the reader returns
+ *   text/structured data only — no image bytes — which is what a text brief wants.
  *
  * This is an explicit allowlist (typed `AgentToolName[]`, so a typo or removed
  * tool fails to compile). When a new research-capable PRIMITIVE tool is added to
@@ -54,6 +57,7 @@ export const GENERAL_RESEARCH_TOOL_POLICY: AgentToolName[] = [
   AgentToolNames.SEARCH_USERS,
   AgentToolNames.GET_STREAM_MESSAGES,
   AgentToolNames.SEARCH_ATTACHMENTS,
+  AgentToolNames.READ_ATTACHMENT,
   AgentToolNames.DESCRIBE_MEMO,
   AgentToolNames.GITHUB_LIST_REPOS,
   AgentToolNames.GITHUB_LIST_BRANCHES,

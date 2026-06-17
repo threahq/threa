@@ -58,11 +58,7 @@ export const TOOL_CATEGORIES_BY_NAME = {
   search_users: ["workspace"],
   get_stream_messages: ["workspace"],
   search_attachments: ["workspace"],
-  get_attachment: ["workspace"],
-  load_attachment: ["workspace"],
-  load_pdf_section: ["workspace"],
-  load_file_section: ["workspace"],
-  load_excel_section: ["workspace"],
+  read_attachment: ["workspace"],
   describe_memo: ["workspace"],
 
   // GitHub reads are public-web-class egress (a structured read_url), so they
@@ -115,7 +111,7 @@ export function isToolCategoryAllowed(
  *
  * An EMPTY category set is also always allowed: it marks a conversation-local
  * tool that reads nothing beyond what the model already sees (e.g. the
- * enclave's in-process `load_attachment`, whose files ride the messages
+ * enclave's in-process `read_attachment`, whose files ride the messages
  * themselves) — there is no egress or workspace read for a policy to gate.
  * Registered `AgentToolName`s never carry an empty set (the table below is
  * non-empty by test), so this case only arises for per-definition categories

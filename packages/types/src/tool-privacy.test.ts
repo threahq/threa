@@ -23,10 +23,12 @@ describe("TOOL_CATEGORIES_BY_NAME", () => {
     }
   })
 
-  test("send_message is the only messaging tool, and messaging never mixes with other categories", () => {
+  test("messaging tools are messaging-only and never mix with other categories", () => {
     const messaging = AGENT_TOOL_NAMES.filter((n) => categoriesOf(n).includes("messaging"))
-    expect(messaging).toEqual(["send_message"])
-    expect(categoriesOf("send_message")).toEqual(["messaging"])
+    // send_message (reply) and react_to_message (in-product participation) both
+    // ride the always-allowed messaging class; neither is a privacy-gated read.
+    expect(messaging).toContain("send_message")
+    for (const name of messaging) expect(categoriesOf(name)).toEqual(["messaging"])
   })
 
   test("GitHub reads ride the web grant; Linear stays auth-locked", () => {
