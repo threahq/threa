@@ -904,27 +904,33 @@ export async function revokeKeyForUser(workspaceId: string, userId: string): Pro
  */
 export async function lock(workspaceId: string, userId: string): Promise<void> {
   const scope = getOrCreateScope(workspaceId, userId)
-  // Drop every decrypted payload from memory — Phase 3.5 keeps ciphertext at
-  // rest in IDB and decrypts at render time, so the in-memory caches are the
-  // only surfaces holding plaintext for this session. The registry clears every
-  // registered decrypt/key cache, so a new encrypted field can't be forgotten here.
-  clearAllDecrypted()
-  // Bump the generation so a concurrent loadE2eKeyForUser can't restore the
-  // device key we're about to delete back into an unlocked state.
-  scope.loadGeneration++
-  if (!scope.cachedKey) {
-    setState(workspaceId, userId, INITIAL_STATE)
-  } else {
-    setState(workspaceId, userId, {
-      status: "locked",
-      keyId: scope.cachedKey.keyId,
-      publicKey: scope.cachedKey.publicKey,
-      privateKey: null,
-      deviceTrusted: false,
-      error: null,
-    })
+  try {
+    // Drop every decrypted payload from memory — Phase 3.5 keeps ciphertext at
+    // rest in IDB and decrypts at render time, so the in-memory caches are the
+    // only surfaces holding plaintext for this session. The registry clears every
+    // registered decrypt/key cache, so a new encrypted field can't be forgotten here.
+    clearAllDecrypted()
+  } finally {
+    // The lock-state teardown must complete even if a cache clear throws, so the
+    // device key is always deleted and the session always flips to locked (the
+    // error, if any, still propagates after this runs).
+    // Bump the generation so a concurrent loadE2eKeyForUser can't restore the
+    // device key we're about to delete back into an unlocked state.
+    scope.loadGeneration++
+    if (!scope.cachedKey) {
+      setState(workspaceId, userId, INITIAL_STATE)
+    } else {
+      setState(workspaceId, userId, {
+        status: "locked",
+        keyId: scope.cachedKey.keyId,
+        publicKey: scope.cachedKey.publicKey,
+        privateKey: null,
+        deviceTrusted: false,
+        error: null,
+      })
+    }
+    await deleteDeviceKey(workspaceId, userId)
   }
-  await deleteDeviceKey(workspaceId, userId)
 }
 
 /**
