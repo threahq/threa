@@ -1268,6 +1268,25 @@ describe("SyncEngine sync cursor (active mode)", () => {
       .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
       .mockResolvedValue(emptyPage("11"))
     const deps = makeCounterDeps(catchUp)
+    // The forceFull reseed re-fetches the authoritative server snapshot. By the
+    // time it runs, the buffered user (added at syncId 12) already exists
+    // server-side, so the real snapshot carries it and its stale-entity cleanup
+    // keeps the row the buffer drain wrote. Model that here: an empty pre-add
+    // snapshot would instead let cleanup race the drain and delete user_resumed.
+    const snapshotBootstrap = deps.workspaceService.bootstrap
+    let bootstrapCalls = 0
+    deps.workspaceService.bootstrap = vi.fn(async () => {
+      const snapshot = await snapshotBootstrap()
+      bootstrapCalls += 1
+      if (bootstrapCalls === 1) return snapshot
+      return {
+        ...snapshot,
+        users: [
+          ...snapshot.users,
+          userAddedLivePayload("12", "user_resumed").user as WorkspaceBootstrap["users"][number],
+        ],
+      }
+    })
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     // Force the flush's preview write to reject → the whole flush rejects.
