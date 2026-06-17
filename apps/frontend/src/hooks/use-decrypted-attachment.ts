@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useMemo, useSyncExternalStore } from "react"
 import { attachmentsApi } from "@/api"
 import { decryptAttachmentBytes, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import {
@@ -22,6 +22,13 @@ import {
  * The object URL is created here (not cached) and revoked on unmount or when the
  * underlying blob changes, so plaintext bytes can't outlive the component — the
  * cache itself drops the blob on lock via `clearAllDecrypted`.
+ *
+ * No session gate: an `AttachmentRef` only exists once the message it rode in has
+ * decrypted (its per-file key/iv are sealed in the SSK payload), so the caller —
+ * `E2eAttachmentList`, rendered only while `useDecryptedMessageContent` is
+ * `decrypted` — already holds an unlocked session, and a lock unmounts this hook
+ * (the parent stops passing `attachmentRefs`). The decrypt here uses the ref's own
+ * key, not the SSK, so it needs no `resolveDecryptContext` root/hydration gate.
  */
 export type DecryptedAttachment = { status: "pending" } | { status: "ready"; url: string } | { status: "failed" }
 
@@ -56,18 +63,20 @@ export function useDecryptedAttachment(workspaceId: string, ref: AttachmentRef):
   }, [attachmentId, workspaceId, status])
 
   const blob = cached?.status === "decrypted" ? cached.value : null
-  const [url, setUrl] = useState<string | null>(null)
+  // Derive the URL synchronously from the cached blob so a cache-hit re-mount
+  // (scroll away and back) paints the image on the first render, rather than
+  // flashing the pending spinner for the one commit a `useState` url would lag
+  // the blob that arrives synchronously from `useSyncExternalStore`. The effect
+  // owns revocation: its cleanup runs on unmount and whenever `url` changes (a new
+  // blob, or null when the cache clears on lock), so a blob never outlives the
+  // component or the lock.
+  const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob])
   useEffect(() => {
-    if (!blob) {
-      setUrl(null)
-      return
-    }
-    const objectUrl = URL.createObjectURL(blob)
-    setUrl(objectUrl)
-    return () => URL.revokeObjectURL(objectUrl)
-  }, [blob])
+    if (!url) return
+    return () => URL.revokeObjectURL(url)
+  }, [url])
 
   if (cached?.status === "failed") return { status: "failed" }
-  if (blob && url) return { status: "ready", url }
+  if (url) return { status: "ready", url }
   return { status: "pending" }
 }

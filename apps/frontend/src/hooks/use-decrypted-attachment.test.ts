@@ -64,7 +64,9 @@ describe("useDecryptedAttachment", () => {
     const { result } = renderHook(() => useDecryptedAttachment(WORKSPACE_ID, ref()))
 
     expect(result.current).toEqual({ status: "failed" })
-    // A terminal failure isn't re-requested — the cache's retry is the file-download retry.
+    // The hook's request effect only fires on undefined/pending, so a cached failure
+    // isn't auto-re-requested here; the cache is `retryFailed`, so the retry is driven
+    // by the file-download button calling `requestAttachmentBytes` again.
     expect(request).not.toHaveBeenCalled()
   })
 })
