@@ -1,7 +1,7 @@
 # Client-side decrypt layer unification (design)
 
 **Status:** In progress — slices 0 (PR #955, sealed-name loading-state authority),
-1, and 2 are implemented; slice 3 pending. Targets current
+1, 2, and 3 are implemented. Targets current
 `origin/main` (post-#946, Stage 4c E2E draft roaming); the implementing branch
 must rebase onto it (the inventory below reflects post-#946 reality).
 
@@ -189,11 +189,21 @@ function clearAllDecrypted(): void // called once on lock / account switch
   `__tests__/decrypt-context.test.ts`. (One test artifact changed: the search
   integration test now stubs a hydrated stream row, since the hold-until-hydrated
   guard — previously absent from search — now applies there too.)
-- **Slice 3 — attachments onto the layer + uniform read.** Give attachment-bytes
-  a real cache (`attachmentBytesCache`), move `e2e-attachment-list` off
-  per-mount re-decrypt, and align names / attachments / drafts on the
-  `{ value, status }` read shape. Document the "how to add an encrypted field"
-  recipe in `apps/frontend/AGENTS.md`.
+- **Slice 3 — DONE.** Attachments onto the layer + uniform read.
+  `lib/crypto/attachment-cache.ts` is a per-key `createDecryptedCache` instance
+  (`retryFailed` — a fetch/decrypt miss is transient; `lru: 64` — blobs are whole
+  files); `useDecryptedAttachment` (`hooks/use-decrypted-attachment.ts`) mirrors
+  `useDecryptedMessageContent` and owns the object-URL lifecycle (bytes cached,
+  URL created/revoked in the hook so a blob can't leak past unmount/lock).
+  `e2e-attachment-list` reads through it instead of re-fetching + re-decrypting per
+  mount, and the file-download path warms the same cache. The cache-entry field is
+  unified on `{ status, value }` — `DecryptCacheEntry.content` was renamed to
+  `value` (deferred here from slices 1–2), so message bodies, names, and attachment
+  bytes all carry the same shape; drafts read it via the rename, keeping their
+  domain hook. Q2/Q3 resolved (below). The "how to add an encrypted field" recipe
+  is in `apps/frontend/AGENTS.md`. Behavior-preserving for existing surfaces; new
+  focused tests cover the attachment cache + hook, and the rename is guarded by the
+  existing message/step/search/draft/sync tests.
 
 ## Risks & mitigations
 
@@ -257,8 +267,15 @@ absorbs. The draft read path joins slices 2–3.
    distinction: registration is orthogonal to what a cache does (the SSK layer's
    resolution logic is untouched), and a cache can only hold material if its module
    is loaded — and loading registers it — so any cache with data is cleared on lock.
-2. Do steps keep sharing `messageCache` (keyed by `step.id`) or get their own
-   instance? Leaning: keep sharing — same shape, same LRU pressure profile.
-3. Is a single `useDecryptedField` hook worth it, or do the per-domain hooks stay
-   (thinned to shared helpers)? Leaning: keep per-domain hooks for typed returns;
-   share the helpers, not the hook.
+2. ~~Do steps keep sharing `messageCache` (keyed by `step.id`) or get their own
+   instance?~~ **Resolved (slice 3): keep sharing.** Same entry shape and LRU
+   pressure profile; a separate instance would duplicate the cache for no behavior
+   difference. `useDecryptedStepContent` keeps reading `messageCache` via the
+   `decrypt-cache` wrapper keyed by `step.id`.
+3. ~~Is a single `useDecryptedField` hook worth it, or do the per-domain hooks
+   stay?~~ **Resolved (slice 3): keep per-domain hooks** for typed returns; share
+   the helpers (`createDecryptedCache`, `resolveDecryptContext`), not the hook. The
+   uniformity that mattered — the `{ status, value }` cache-entry shape — is shared
+   at the cache layer; each hook still returns its own typed discriminated union
+   (a message carries `attachmentRefs`/`sources`, an attachment a `url`, a step
+   `TraceSource[]`), which a single generic hook would flatten or widen.

@@ -17,7 +17,8 @@ export type { DecryptStatus }
 
 export interface DecryptCacheEntry {
   status: DecryptStatus
-  content: DecryptedMessageContent | null
+  /** The decrypted payload; null while pending or after a failed open. */
+  value: DecryptedMessageContent | null
 }
 
 const cache = createDecryptedCache<DecryptCacheEntry>({
@@ -27,7 +28,7 @@ const cache = createDecryptedCache<DecryptCacheEntry>({
   // A message id is immutable: a decrypt that fails (wrong recipient, tampered
   // AAD) is terminal, so a re-request must not retry.
   retryFailed: false,
-  pending: () => ({ status: "pending", content: null }),
+  pending: () => ({ status: "pending", value: null }),
   // A message id's first good decrypt is final, so a later seed must not clobber it.
   skipPrime: (existing) => existing?.status === "decrypted",
 })
@@ -64,7 +65,7 @@ export function requestDecryption(
 ): Promise<DecryptCacheEntry> {
   return cache.request(eventId, async () => {
     const decrypted = await tryDecryptMessagePayload(payload, opts)
-    return decrypted ? { status: "decrypted", content: decrypted } : { status: "failed", content: null }
+    return decrypted ? { status: "decrypted", value: decrypted } : { status: "failed", value: null }
   })
 }
 
@@ -77,7 +78,7 @@ export function requestDecryption(
  * sent row. No-op if the event already has a decrypted entry.
  */
 export function seedDecryption(eventId: string, content: DecryptedMessageContent): void {
-  cache.prime(eventId, { status: "decrypted", content })
+  cache.prime(eventId, { status: "decrypted", value: content })
 }
 
 /**

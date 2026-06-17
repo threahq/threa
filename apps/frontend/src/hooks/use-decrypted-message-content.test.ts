@@ -98,7 +98,7 @@ describe("useDecryptedMessageContent", () => {
     mockStreamRow({ rootStreamId: "stream_root" })
     vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({
       status: "decrypted",
-      content: { contentMarkdown: "hello from Ariadne", contentJson: { type: "doc" } as never, attachmentRefs: [] },
+      value: { contentMarkdown: "hello from Ariadne", contentJson: { type: "doc" } as never, attachmentRefs: [] },
     })
 
     const { result } = renderHook(() => useDecryptedMessageContent(sealedEvent(), WORKSPACE_ID, USER_ID))

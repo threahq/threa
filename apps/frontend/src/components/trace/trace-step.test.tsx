@@ -520,7 +520,7 @@ describe("TraceStep", () => {
     } as unknown as ReturnType<typeof e2eSessionModule.useE2eSession>)
     vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({
       status: "decrypted",
-      content: {
+      value: {
         contentMarkdown: "tides",
         contentJson: { type: "doc" } as never,
         sources: [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }],

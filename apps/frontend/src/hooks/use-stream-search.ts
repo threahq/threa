@@ -213,7 +213,7 @@ export function useStreamSearch({
         { contentMarkdown: sealed.contentMarkdown ?? "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
         ctx.opts
       )
-      return entry.status === "decrypted" && entry.content ? entry.content.contentMarkdown : null
+      return entry.status === "decrypted" && entry.value ? entry.value.contentMarkdown : null
     },
     [workspaceId]
   )

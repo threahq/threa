@@ -608,7 +608,7 @@ describe("useDraftMessage", () => {
         { senderId: "user_1", streamId: e2eStreamId }
       )
       const id = (await db.composerLoaded.get(draftKey))!.draftId!
-      expect(getCachedDecryption(id)?.content?.contentJson).toEqual(makeDoc("first edit"))
+      expect(getCachedDecryption(id)?.value?.contentJson).toEqual(makeDoc("first edit"))
 
       await upsertLoadedDraft(
         workspaceId,
@@ -616,7 +616,7 @@ describe("useDraftMessage", () => {
         { contentJson: makeDoc("second edit"), attachments: [] },
         { senderId: "user_1", streamId: e2eStreamId }
       )
-      expect(getCachedDecryption(id)?.content?.contentJson).toEqual(makeDoc("second edit"))
+      expect(getCachedDecryption(id)?.value?.contentJson).toEqual(makeDoc("second edit"))
     })
 
     it("keeps content in the composer (no plaintext written) when the session is locked", async () => {

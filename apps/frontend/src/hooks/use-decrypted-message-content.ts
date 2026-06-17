@@ -127,13 +127,13 @@ export function useDecryptedMessageContent(
   // through to `pending` — the decrypt fires once the row lands and `rootStreamId`
   // is trustworthy, never against the bare thread id.
   if (!ctx.ready && ctx.reason === "locked") return { status: "locked" }
-  if (cached?.status === "decrypted" && cached.content) {
+  if (cached?.status === "decrypted" && cached.value) {
     return {
       status: "decrypted",
-      contentMarkdown: cached.content.contentMarkdown,
-      contentJson: cached.content.contentJson,
-      attachmentRefs: cached.content.attachmentRefs ?? [],
-      sources: cached.content.sources ?? [],
+      contentMarkdown: cached.value.contentMarkdown,
+      contentJson: cached.value.contentJson,
+      attachmentRefs: cached.value.attachmentRefs ?? [],
+      sources: cached.value.sources ?? [],
     }
   }
   if (cached?.status === "failed") return { status: "failed" }

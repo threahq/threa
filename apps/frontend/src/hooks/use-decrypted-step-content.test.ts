@@ -80,7 +80,7 @@ describe("useDecryptedStepContent", () => {
     } as unknown as ReturnType<typeof e2eSessionModule.useE2eSession>)
     vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({
       status: "decrypted",
-      content: { contentMarkdown: "decrypted reasoning", contentJson: { type: "doc" } as never },
+      value: { contentMarkdown: "decrypted reasoning", contentJson: { type: "doc" } as never },
     })
 
     const { result } = renderHook(() =>
@@ -99,7 +99,7 @@ describe("useDecryptedStepContent", () => {
     unlockedSession()
     vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({
       status: "decrypted",
-      content: {
+      value: {
         contentMarkdown: "tides",
         contentJson: { type: "doc" } as never,
         sources: [
@@ -141,7 +141,7 @@ describe("useDecryptedStepContent", () => {
       privateKey: {} as CryptoKey,
       keyId: "key_1",
     } as unknown as ReturnType<typeof e2eSessionModule.useE2eSession>)
-    vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({ status: "failed", content: null })
+    vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({ status: "failed", value: null })
 
     const { result } = renderHook(() =>
       useDecryptedStepContent(
