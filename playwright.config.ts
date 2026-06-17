@@ -116,11 +116,14 @@ export default defineConfig({
   fullyParallel: true, // Each test creates unique user + workspace — safe to parallelize
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  // CI: 3 workers. The 4-vCPU runner also hosts the backend, control-plane,
-  // wrangler and Vite dev server, so higher worker counts oversubscribe it and
-  // tests fail under contention (only passing on the isolated retry).
+  // CI: 2 workers. The 4-vCPU runner also hosts the backend, control-plane,
+  // wrangler and the Vite preview server, so 3 workers (3 Chromiums + backend ≈
+  // 4 saturated cores) left no headroom — a rotating ~1-test-per-shard tail kept
+  // tripping on contention (slow assertions, clicks that never settle) and only
+  // passing on the in-run retry. 2 workers leaves a spare core and the suite is
+  // sharded ×4, so wall-clock stays well under the 25-min job budget.
   // Local: auto (half CPU cores).
-  workers: process.env.CI ? 3 : undefined,
+  workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
   // 30s locally for fast feedback. CI gets 60s: the shared 4-vCPU runner makes
   // setup + interaction-heavy flows (send-then-edit, hover-reveal menus) take
