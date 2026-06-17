@@ -244,12 +244,15 @@ export function StreamBotsSection({
 }) {
   const queryClient = useQueryClient()
   const allBots = useWorkspaceBots(workspaceId)
-  const { invite, isInviting } = useInviteActor(workspaceId, streamId)
+  const { invite, isInviting, isUnlocked } = useInviteActor(workspaceId, streamId)
 
   // On an E2E scratchpad the stream key must be wrapped to the bot before it can
   // participate; that grant is the owner's deliberate act, so it goes behind a
-  // confirm instead of the silent plaintext grant.
+  // confirm instead of the silent plaintext grant. Wrapping needs the owner's
+  // unlocked session, so the affordance is gated on it (as renaming is) — adding
+  // while locked would list the bot as a member it can't yet decrypt for.
   const isE2e = stream?.e2eEnabled === true
+  const e2eLocked = isE2e && !isUnlocked
   const [pendingGrantBot, setPendingGrantBot] = useState<(typeof allBots)[number] | null>(null)
 
   const streamBotsQueryKey = ["stream-bots", workspaceId, streamId]
@@ -361,7 +364,7 @@ export function StreamBotsSection({
           searchPlaceholder="Search bots..."
           emptyMessage="No matching bots"
           triggerIcon={BotIcon}
-          disabled={availableToGrant.length === 0 || grantMutation.isPending || isInviting}
+          disabled={availableToGrant.length === 0 || grantMutation.isPending || isInviting || e2eLocked}
           showAvailableCount
           availableLabel={(n) => `${n} ${n === 1 ? "bot" : "bots"} available`}
           renderItem={(bot) => (
@@ -372,6 +375,10 @@ export function StreamBotsSection({
             </>
           )}
         />
+      )}
+
+      {!readOnly && allBots.length > 0 && e2eLocked && (
+        <p className="text-xs text-muted-foreground">Unlock this scratchpad&rsquo;s encryption to add a bot.</p>
       )}
 
       <ResponsiveAlertDialog open={pendingGrantBot !== null} onOpenChange={(open) => !open && setPendingGrantBot(null)}>

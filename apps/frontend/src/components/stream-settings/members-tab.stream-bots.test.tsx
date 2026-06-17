@@ -44,13 +44,13 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
   }
 }
 
-function renderSection(stream: Stream | undefined, invite: InviteFn) {
+function renderSection(stream: Stream | undefined, invite: InviteFn, isUnlocked = true) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([makeBot()] as unknown as ReturnType<
     typeof workspaceStoreModule.useWorkspaceBots
   >)
-  vi.spyOn(inviteActorModule, "useInviteActor").mockReturnValue({ invite, isInviting: false })
+  vi.spyOn(inviteActorModule, "useInviteActor").mockReturnValue({ invite, isInviting: false, isUnlocked })
   return render(
     <QueryClientProvider client={queryClient}>
       <StreamBotsSection workspaceId="ws_1" streamId="stream_1" stream={stream} />
@@ -101,6 +101,16 @@ describe("StreamBotsSection bot grant consent", () => {
 
     await waitFor(() => expect(invite).toHaveBeenCalledWith("bot", "bot_1"))
     await waitFor(() => expect(botsApi.grantStreamAccess).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1"))
+  })
+
+  it("blocks adding a bot to an E2E stream while the session is locked (can't wrap the key)", async () => {
+    const invite = vi.fn()
+    renderSection(makeStream({ e2eEnabled: true, e2eActors: [] }), invite, false)
+
+    // The add affordance is disabled and an unlock hint is shown — no key-blind grant.
+    expect(screen.getByRole("combobox")).toBeDisabled()
+    expect(screen.getByText(/unlock this scratchpad.s encryption to add a bot/i)).toBeInTheDocument()
+    expect(invite).not.toHaveBeenCalled()
   })
 
   it("skips the redundant invite when the bot is already an E2E actor", async () => {
