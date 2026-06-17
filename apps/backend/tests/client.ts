@@ -92,14 +92,15 @@ export class TestClient {
    */
   async uploadFile<T = unknown>(
     path: string,
-    file: { content: string | Buffer; filename: string; mimeType: string }
+    file: { content: string | Buffer; filename: string; mimeType: string },
+    extraHeaders?: Record<string, string>
   ): Promise<{ status: number; data: T; headers: Headers }> {
     const formData = new FormData()
     const blobPart: BlobPart = typeof file.content === "string" ? file.content : Uint8Array.from(file.content)
     const blob = new Blob([blobPart], { type: file.mimeType })
     formData.append("file", blob, file.filename)
 
-    const headers: Record<string, string> = {}
+    const headers: Record<string, string> = { ...extraHeaders }
     if (this.cookies.size > 0) {
       headers["Cookie"] = Array.from(this.cookies.entries())
         .map(([k, v]) => `${k}=${v}`)
@@ -831,6 +832,23 @@ export function botApiPost<T = unknown>(
   body: unknown
 ) {
   return client.request<T>("POST", `/api/v1/workspaces/${workspaceId}${path}`, body, {
+    Authorization: `Bearer ${apiKey}`,
+  })
+}
+
+export function botApiGet<T = unknown>(client: TestClient, workspaceId: string, path: string, apiKey: string) {
+  return client.request<T>("GET", `/api/v1/workspaces/${workspaceId}${path}`, undefined, {
+    Authorization: `Bearer ${apiKey}`,
+  })
+}
+
+export function botUploadFile<T = unknown>(
+  client: TestClient,
+  workspaceId: string,
+  apiKey: string,
+  file: { content: string | Buffer; filename: string; mimeType: string }
+) {
+  return client.uploadFile<T>(`/api/v1/workspaces/${workspaceId}/attachments`, file, {
     Authorization: `Bearer ${apiKey}`,
   })
 }
