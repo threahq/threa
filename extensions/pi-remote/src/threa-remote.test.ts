@@ -222,6 +222,26 @@ describe("Pi remote trace safety", () => {
     ).toBe("here is the answer")
   })
 
+  test("uses only the last assistant message as the reply, not the concatenated narration", () => {
+    // During an agentic turn the model emits one assistant message per step
+    // ("I'll rebase…", "Running the suite…", …). Only the final summary is the
+    // user-facing answer; the intermediate narration must stay in the trace,
+    // not get joined into the posted reply.
+    expect(
+      __testing.resolveFinalText(
+        {},
+        {
+          assistantTexts: [
+            "I'll rebase the PR worktree onto fresh origin/main.",
+            "Rebase completed cleanly and force-pushed with lease.",
+            "Done.\n- Rebased onto b328a444\n- CI is green",
+          ],
+          otherTexts: [],
+        }
+      )
+    ).toBe("Done.\n- Rebased onto b328a444\n- CI is green")
+  })
+
   test("falls back to captured non-assistant message text when assistant produced nothing", () => {
     expect(
       __testing.resolveFinalText(
@@ -238,6 +258,16 @@ describe("Pi remote trace safety", () => {
         { assistantTexts: [], otherTexts: [] }
       )
     ).toBe("usage limit hit")
+  })
+
+  test("textFromAgentMessages keeps only the last assistant message from the fallback scan", () => {
+    expect(
+      __testing.textFromAgentMessages([
+        { role: "assistant", content: "I'll rebase onto origin/main." },
+        { role: "assistant", content: "Rebase completed cleanly." },
+        { role: "assistant", content: "Done. CI is green." },
+      ])
+    ).toBe("Done. CI is green.")
   })
 
   test("ignores user-role echoes when picking the final response", () => {
