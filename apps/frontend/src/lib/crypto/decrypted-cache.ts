@@ -74,7 +74,19 @@ export function registerDecryptedCache(clear: () => void): void {
 
 /** Clear every registered cache — the single lock / account-switch boundary. */
 export function clearAllDecrypted(): void {
-  for (const clear of lockClearRegistry) clear()
+  // A security boundary (E2EE-4): one cache's clear throwing must not skip the
+  // rest, so run them all and surface any failures only afterwards.
+  const errors: unknown[] = []
+  for (const clear of lockClearRegistry) {
+    try {
+      clear()
+    } catch (error) {
+      errors.push(error)
+    }
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, "One or more decrypted caches failed to clear")
+  }
 }
 
 export function createDecryptedCache<E extends BaseEntry>(options: CreateDecryptedCacheOptions<E>): DecryptedCache<E> {
@@ -129,18 +141,30 @@ export function createDecryptedCache<E extends BaseEntry>(options: CreateDecrypt
     // (`holder.promise` is assigned synchronously below, before any await resolves).
     const holder: { promise?: Promise<E> } = {}
     holder.promise = (async (): Promise<E> => {
-      const entry = await run()
-      // Dropped if the cache was cleared (lock / account switch) mid-flight —
-      // writing plaintext back would leak it past the lock boundary.
-      if (startGeneration !== generation) return entry
-      // A concurrent prime/invalidate may have replaced this key's slot while we
-      // decrypted; only the current in-flight writes back, so a stale decrypt
-      // can't clobber freshly-authored content.
-      if (inflight.get(key) !== holder.promise) return entry
-      touch(key, entry)
-      inflight.delete(key)
-      emit(key)
-      return entry
+      try {
+        const entry = await run()
+        // Dropped if the cache was cleared (lock / account switch) mid-flight —
+        // writing plaintext back would leak it past the lock boundary.
+        if (startGeneration !== generation) return entry
+        // A concurrent prime/invalidate may have replaced this key's slot while we
+        // decrypted; only the current in-flight writes back, so a stale decrypt
+        // can't clobber freshly-authored content.
+        if (inflight.get(key) !== holder.promise) return entry
+        touch(key, entry)
+        inflight.delete(key)
+        emit(key)
+        return entry
+      } catch (error) {
+        // A rejected decrypt must not leave a sticky in-flight promise (every later
+        // request would return the same rejection) or a stranded pending entry —
+        // drop both so the key can recover on a later request.
+        if (startGeneration === generation && inflight.get(key) === holder.promise) {
+          inflight.delete(key)
+          entries.delete(key)
+          emit(key)
+        }
+        throw error
+      }
     })()
     inflight.set(key, holder.promise)
     return holder.promise

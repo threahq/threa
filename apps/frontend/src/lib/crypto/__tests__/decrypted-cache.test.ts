@@ -70,6 +70,15 @@ describe("createDecryptedCache", () => {
     expect(cache.peek("k")).toBeUndefined()
   })
 
+  it("recovers after a rejected decrypt (no sticky in-flight)", async () => {
+    const cache = makeCache()
+    await expect(cache.request("k", () => Promise.reject(new Error("boom")))).rejects.toThrow("boom")
+    // The rejected attempt must not leave a stuck pending entry or in-flight promise.
+    expect(cache.peek("k")).toBeUndefined()
+    await cache.request("k", async () => ({ status: "decrypted", value: "recovered" }))
+    expect(cache.peek("k")).toEqual({ status: "decrypted", value: "recovered" })
+  })
+
   it("primes a known entry and skips a later decrypt", async () => {
     const cache = makeCache()
     cache.prime("k", { status: "decrypted", value: "seed" })
@@ -141,5 +150,21 @@ describe("lock-clear registry", () => {
     registerDecryptedCache(clear)
     clearAllDecrypted()
     expect(clear).toHaveBeenCalled()
+  })
+
+  it("runs every registered clear even when one throws, then surfaces the failure", async () => {
+    const cache = makeCache()
+    await cache.request("k", async () => ({ status: "decrypted", value: "x" }))
+    // Throw once so the registered clear doesn't poison later clearAllDecrypted calls.
+    let armed = true
+    registerDecryptedCache(() => {
+      if (armed) {
+        armed = false
+        throw new Error("boom")
+      }
+    })
+    expect(() => clearAllDecrypted()).toThrow()
+    // The healthy cache was still cleared despite the sibling throwing.
+    expect(cache.peek("k")).toBeUndefined()
   })
 })

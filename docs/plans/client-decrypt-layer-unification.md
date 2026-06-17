@@ -1,7 +1,7 @@
 # Client-side decrypt layer unification (design)
 
-**Status:** Draft for review — no implementation yet. PR #955 (sealed-name
-loading-state authority) is slice 0 of the sequencing below. Targets current
+**Status:** In progress — slice 0 (PR #955, sealed-name loading-state authority)
+and slice 1 are implemented; later slices pending. Targets current
 `origin/main` (post-#946, Stage 4c E2E draft roaming); the implementing branch
 must rebase onto it (the inventory below reflects post-#946 reality).
 
