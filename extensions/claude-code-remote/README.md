@@ -124,6 +124,16 @@ bun run typecheck
 ## Limitations
 
 - A channel only sees the inbound message and the reply, not Claude's individual tool calls, so the Threa trace card shows a single "working" step rather than the per-tool trace a Pi session produces.
-- Attachments posted in Threa are not downloaded into the working directory yet.
 - Claude must call the `reply` tool to close a request. If a turn ends without a reply, the request is force-closed after `replyTimeoutMs` with a short notice.
 - One turn at a time: a message sent while Claude is still working is handled after the current reply (a permission verdict is the exception and goes through immediately).
+
+## Roadmap (parity with `pi-remote`)
+
+- **Attachments, both directions** — download attachments posted in the scratchpad into the working directory so Claude can read them, and send local files back as attachments on the reply (Pi does this with a `THREA_ATTACH: <path>` directive that uploads the file and rewrites it to an attachment link). This is the main remaining gap.
+- Per-tool trace steps — a channel can't observe Claude's tool calls, so matching Pi's rich trace needs a different mechanism than Pi's lifecycle hooks.
+
+## Troubleshooting
+
+- **The channel doesn't show in `/mcp` and never prompts.** If you ever answered "No" to the _"Use this MCP server?"_ prompt for `threa` in a project, Claude Code records it in `disabledMcpjsonServers` in that project's `.claude/settings.local.json` and then silently skips it — no prompt, no `/mcp` entry, no hint. Remove `"threa"` from `disabledMcpjsonServers` (or add it to `enabledMcpjsonServers`) there, or re-enable it from the `/mcp` menu, then restart.
+- **`--channels server:threa` warns it's "not on the approved list."** That flag only loads allowlisted plugins; a custom channel is loaded with `--dangerously-load-development-channels server:threa` instead — drop `--channels`.
+- **Logs.** Diagnostics go to stderr, captured by Claude Code in `~/.claude/debug/<session-id>.txt`: `[threa-channel] linked to scratchpad …` means it connected; `could not link …` means the backend is unreachable (check `THREA_BASE_URL`).
