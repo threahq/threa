@@ -729,13 +729,18 @@ export const BotInvocationRepository = {
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
+  // `instanceId` is optional and null-guarded: the plaintext path scopes the
+  // completion to the claiming instance, while the sealed bot path authenticates
+  // by the per-claim callback token (the `claim_token` filter below) and omits
+  // it — the token is the unique per-claim secret, so the instance is redundant
+  // there. Identical SQL when an instance is supplied.
   async completeClaim(
     db: Querier,
-    params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId?: string; claimToken: string }
   ): Promise<BotInvocation | null> {
     const result =
       await db.query<BotInvocationRow>(sql`UPDATE bot_invocations SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claim_token = ${params.claimToken} AND (${params.instanceId ?? null}::text IS NULL OR claimed_by_instance_id = ${params.instanceId ?? null}) AND claim_expires_at > NOW()
       RETURNING *`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },

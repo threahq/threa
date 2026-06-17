@@ -575,6 +575,22 @@ export interface SealedReply {
 }
 
 /**
+ * The sealed turn completion an owner-granted bot harness POSTs to
+ * `POST .../bot-invocations/:invocationId/sealed-complete` — the external sibling
+ * of the enclave's `/complete` and the sealed variant of the plaintext bot
+ * complete. Carries the turn's final sealed reply (ciphertext the server can't
+ * read, INV-E7) or `noResponse` when the turn produced none. Unlike the enclave —
+ * which streams each reply to `/messages` and sends `/complete` as a bare ack —
+ * the bot path delivers its single reply inline here, mirroring the plaintext
+ * bot complete. Auth is the bot API key + the per-claim callback token in
+ * `X-Threa-Callback-Token`, never body claim fields.
+ */
+export interface SealedComplete {
+  reply?: SealedReply
+  noResponse?: boolean
+}
+
+/**
  * A sealed auto-generated stream title the enclave produced this turn, POSTed to
  * `POST .../sessions/:id/sealed-name`. The server can't read message content, so
  * it can't title an encrypted scratchpad — the enclave (which sees plaintext)
