@@ -29,12 +29,12 @@ function makeTool(name: string, categories: readonly ToolPrivacyCategory[]): Age
 describe("negotiateCapabilities", () => {
   const webSearch = makeTool("web_search", ["web"])
   const searchMessages = makeTool("search_messages", ["workspace"])
-  const githubGetIssue = makeTool("github_get_issue", ["github", "web"])
+  const githubIssues = makeTool("github_issues", ["github", "web"])
   const reply = makeTool("send_message", ["messaging"])
   const conversationLocal = makeTool("read_attachment", [])
 
   test("no policy means no restriction", () => {
-    const tools = [webSearch, searchMessages, githubGetIssue]
+    const tools = [webSearch, searchMessages, githubIssues]
     expect(negotiateCapabilities({ streamPolicy: null, tools }).tools).toEqual(tools)
     expect(negotiateCapabilities({ streamPolicy: undefined, tools }).tools).toEqual(tools)
   })
@@ -42,11 +42,11 @@ describe("negotiateCapabilities", () => {
   test("filters on any-intersection of each tool's own categories", () => {
     const { tools } = negotiateCapabilities({
       streamPolicy: ["web"],
-      tools: [webSearch, searchMessages, githubGetIssue],
+      tools: [webSearch, searchMessages, githubIssues],
     })
-    // github_get_issue rides the `web` grant (public-web-class egress);
+    // github_issues rides the `web` grant (public-web-class egress);
     // workspace reads drop.
-    expect(tools).toEqual([webSearch, githubGetIssue])
+    expect(tools).toEqual([webSearch, githubIssues])
   })
 
   test("an empty policy still passes messaging and conversation-local tools", () => {

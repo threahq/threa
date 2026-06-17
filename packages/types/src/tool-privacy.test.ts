@@ -91,13 +91,13 @@ describe("isToolAllowedByPolicy", () => {
 
   test("a web policy reaches GitHub reads (shared category) but not raw github/linear/workspace", () => {
     expect(isToolAllowedByPolicy(["web"], "read_url")).toBe(true)
-    expect(isToolAllowedByPolicy(["web"], "github_get_issue")).toBe(true) // github read rides web
+    expect(isToolAllowedByPolicy(["web"], "github_issues")).toBe(true) // github read rides web
     expect(isToolAllowedByPolicy(["web"], "linear_get_issue")).toBe(false) // linear is auth-locked
     expect(isToolAllowedByPolicy(["web"], "search_messages")).toBe(false) // workspace is private
   })
 
   test("a github-only policy does NOT grant raw web (the asymmetry)", () => {
-    expect(isToolAllowedByPolicy(["github"], "github_get_issue")).toBe(true)
+    expect(isToolAllowedByPolicy(["github"], "github_issues")).toBe(true)
     expect(isToolAllowedByPolicy(["github"], "web_search")).toBe(false)
     expect(isToolAllowedByPolicy(["github"], "read_url")).toBe(false)
   })

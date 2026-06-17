@@ -1,9 +1,9 @@
 import { describe, it, expect } from "bun:test"
-import { createGithubListCommitsTool, createGithubGetCommitTool } from "./commits"
-import { createGithubGetFileContentsTool } from "./content"
-import { createGithubGetPullRequestTool, createGithubListPrFilesTool } from "./pull-requests"
-import { createGithubGetIssueTool } from "./issues"
-import { createGithubGetWorkflowRunTool } from "./workflows"
+import { createGithubCommitsTool } from "./commits"
+import { createGithubContentTool } from "./content"
+import { createGithubPullsTool } from "./pull-requests"
+import { createGithubIssuesTool } from "./issues"
+import { createGithubWorkflowsTool } from "./workflows"
 import type { GitHubToolDeps } from "./deps"
 import type { GitHubClient } from "../../../workspace-integrations"
 
@@ -18,10 +18,13 @@ function makeDeps(request: RequestFn | null): GitHubToolDeps {
 
 const toolOpts = { toolCallId: "test" }
 
-describe("github_list_commits", () => {
+describe("github_commits mode=list", () => {
   it("returns the not-connected error when GitHub is not installed", async () => {
-    const tool = createGithubListCommitsTool(makeDeps(null))
-    const { output } = await tool.config.execute({ owner: "o", repo: "r", page: 1, perPage: 20 }, toolOpts)
+    const tool = createGithubCommitsTool(makeDeps(null))
+    const { output } = await tool.config.execute(
+      { mode: "list", owner: "o", repo: "r", page: 1, perPage: 20 },
+      toolOpts
+    )
     const parsed = JSON.parse(output)
     expect(parsed.code).toBe("GITHUB_NOT_CONNECTED")
   })
@@ -41,8 +44,8 @@ describe("github_list_commits", () => {
         },
       ]
     }
-    const tool = createGithubListCommitsTool(makeDeps(request))
-    const result = await tool.config.execute({ owner: "o", repo: "r", page: 1, perPage: 20 }, toolOpts)
+    const tool = createGithubCommitsTool(makeDeps(request))
+    const result = await tool.config.execute({ mode: "list", owner: "o", repo: "r", page: 1, perPage: 20 }, toolOpts)
     const parsed = JSON.parse(result.output)
     expect(parsed.count).toBe(1)
     expect(parsed.commits[0].shortSha).toBe("abc1234")
@@ -58,14 +61,17 @@ describe("github_list_commits", () => {
       err.status = 404
       throw err
     }
-    const tool = createGithubListCommitsTool(makeDeps(request))
-    const { output } = await tool.config.execute({ owner: "o", repo: "r", page: 1, perPage: 20 }, toolOpts)
+    const tool = createGithubCommitsTool(makeDeps(request))
+    const { output } = await tool.config.execute(
+      { mode: "list", owner: "o", repo: "r", page: 1, perPage: 20 },
+      toolOpts
+    )
     const parsed = JSON.parse(output)
     expect(parsed.code).toBe("GITHUB_NOT_FOUND")
   })
 })
 
-describe("github_get_commit", () => {
+describe("github_commits mode=get", () => {
   it("truncates large file patches and reports sizes", async () => {
     const bigPatch = "+".repeat(50_000)
     const request: RequestFn = async (route) => {
@@ -78,8 +84,11 @@ describe("github_get_commit", () => {
         stats: { additions: 100, deletions: 0, total: 100 },
       }
     }
-    const tool = createGithubGetCommitTool(makeDeps(request))
-    const result = await tool.config.execute({ owner: "o", repo: "r", ref: "abc1234", includeFiles: true }, toolOpts)
+    const tool = createGithubCommitsTool(makeDeps(request))
+    const result = await tool.config.execute(
+      { mode: "get", owner: "o", repo: "r", ref: "abc1234", includeFiles: true },
+      toolOpts
+    )
     const parsed = JSON.parse(result.output)
     const patch = parsed.commit.files.items[0].patch
     expect(patch.truncated).toBe(true)
@@ -88,7 +97,7 @@ describe("github_get_commit", () => {
   })
 })
 
-describe("github_get_file_contents", () => {
+describe("github_content mode=get_file", () => {
   it("decodes base64 content and honors line ranges", async () => {
     const lines = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join("\n")
     const base64 = Buffer.from(lines, "utf8").toString("base64")
@@ -103,9 +112,9 @@ describe("github_get_file_contents", () => {
         html_url: "https://github.com/o/r/blob/main/src/auth.ts",
       }
     }
-    const tool = createGithubGetFileContentsTool(makeDeps(request))
+    const tool = createGithubContentTool(makeDeps(request))
     const result = await tool.config.execute(
-      { owner: "o", repo: "r", path: "src/auth.ts", fromLine: 3, toLine: 5 },
+      { mode: "get_file", owner: "o", repo: "r", path: "src/auth.ts", fromLine: 3, toLine: 5 },
       toolOpts
     )
     const parsed = JSON.parse(result.output)
@@ -120,14 +129,14 @@ describe("github_get_file_contents", () => {
     const binary = "\x00\x01\x02hello"
     const base64 = Buffer.from(binary, "utf8").toString("base64")
     const request: RequestFn = async () => ({ type: "file", path: "x", content: base64 })
-    const tool = createGithubGetFileContentsTool(makeDeps(request))
-    const result = await tool.config.execute({ owner: "o", repo: "r", path: "x" }, toolOpts)
+    const tool = createGithubContentTool(makeDeps(request))
+    const result = await tool.config.execute({ mode: "get_file", owner: "o", repo: "r", path: "x" }, toolOpts)
     const parsed = JSON.parse(result.output)
     expect(parsed.code).toBe("BINARY")
   })
 })
 
-describe("github_get_pull_request", () => {
+describe("github_pulls mode=get", () => {
   it("fetches PR, reviews, and commits concurrently and summarizes reviews", async () => {
     const calls: string[] = []
     const request: RequestFn = async (route) => {
@@ -162,8 +171,8 @@ describe("github_get_pull_request", () => {
           throw new Error(`unexpected route: ${route}`)
       }
     }
-    const tool = createGithubGetPullRequestTool(makeDeps(request))
-    const result = await tool.config.execute({ owner: "o", repo: "r", number: 42 }, toolOpts)
+    const tool = createGithubPullsTool(makeDeps(request))
+    const result = await tool.config.execute({ mode: "get", owner: "o", repo: "r", number: 42 }, toolOpts)
     const parsed = JSON.parse(result.output)
     expect(calls).toHaveLength(3)
     expect(parsed.pullRequest.number).toBe(42)
@@ -172,9 +181,7 @@ describe("github_get_pull_request", () => {
     expect(parsed.pullRequest.reviews.pendingReviewers).toBe(1)
     expect(result.sources?.[0].url).toBe("https://github.com/o/r/pull/42")
   })
-})
 
-describe("github_get_pull_request recentCommits truncation", () => {
   it("returns null recentCommits when the PR has more commits than fit on one page", async () => {
     const request: RequestFn = async (route) => {
       switch (route) {
@@ -198,15 +205,45 @@ describe("github_get_pull_request recentCommits truncation", () => {
           throw new Error(`unexpected: ${route}`)
       }
     }
-    const tool = createGithubGetPullRequestTool(makeDeps(request))
-    const { output } = await tool.config.execute({ owner: "o", repo: "r", number: 1 }, toolOpts)
+    const tool = createGithubPullsTool(makeDeps(request))
+    const { output } = await tool.config.execute({ mode: "get", owner: "o", repo: "r", number: 1 }, toolOpts)
     const parsed = JSON.parse(output)
     expect(parsed.pullRequest.recentCommits).toBeNull()
     expect(parsed.pullRequest.commitsCount).toBe(250)
   })
 })
 
-describe("github_get_issue comment ordering", () => {
+describe("github_pulls mode=files", () => {
+  it("truncates per-file patches over the byte cap", async () => {
+    const bigPatch = "+".repeat(30_000)
+    const request: RequestFn = async () => [
+      { filename: "a.ts", status: "modified", additions: 1, deletions: 0, patch: bigPatch },
+      { filename: "b.ts", status: "added", additions: 1, deletions: 0 },
+    ]
+    const tool = createGithubPullsTool(makeDeps(request))
+    const { output } = await tool.config.execute(
+      { mode: "files", owner: "o", repo: "r", number: 1, includePatches: true, perPage: 30, page: 1 },
+      toolOpts
+    )
+    const parsed = JSON.parse(output)
+    expect(parsed.files[0].patch.truncated).toBe(true)
+    expect(parsed.files[1].patch).toBeNull()
+  })
+
+  it("defaults perPage to 30 when omitted (files-mode default differs from list)", async () => {
+    let capturedPerPage: unknown
+    const request: RequestFn = async (_route, params) => {
+      capturedPerPage = params?.per_page
+      return []
+    }
+    const tool = createGithubPullsTool(makeDeps(request))
+    const { output } = await tool.config.execute({ mode: "files", owner: "o", repo: "r", number: 1 }, toolOpts)
+    expect(capturedPerPage).toBe(30)
+    expect(JSON.parse(output).perPage).toBe(30)
+  })
+})
+
+describe("github_issues mode=get", () => {
   it("requests comments newest-first and returns them in chronological order", async () => {
     const captured: Array<Record<string, unknown> | undefined> = []
     const request: RequestFn = async (route, params) => {
@@ -232,8 +269,11 @@ describe("github_get_issue comment ordering", () => {
           throw new Error(`unexpected: ${route}`)
       }
     }
-    const tool = createGithubGetIssueTool(makeDeps(request))
-    const { output } = await tool.config.execute({ owner: "o", repo: "r", number: 7, includeComments: true }, toolOpts)
+    const tool = createGithubIssuesTool(makeDeps(request))
+    const { output } = await tool.config.execute(
+      { mode: "get", owner: "o", repo: "r", number: 7, includeComments: true },
+      toolOpts
+    )
     const parsed = JSON.parse(output)
     const commentsCall = captured[1] as Record<string, unknown>
     expect(commentsCall.direction).toBe("desc")
@@ -244,25 +284,7 @@ describe("github_get_issue comment ordering", () => {
   })
 })
 
-describe("github_list_pr_files", () => {
-  it("truncates per-file patches over the byte cap", async () => {
-    const bigPatch = "+".repeat(30_000)
-    const request: RequestFn = async () => [
-      { filename: "a.ts", status: "modified", additions: 1, deletions: 0, patch: bigPatch },
-      { filename: "b.ts", status: "added", additions: 1, deletions: 0 },
-    ]
-    const tool = createGithubListPrFilesTool(makeDeps(request))
-    const { output } = await tool.config.execute(
-      { owner: "o", repo: "r", number: 1, includePatches: true, perPage: 30, page: 1 },
-      toolOpts
-    )
-    const parsed = JSON.parse(output)
-    expect(parsed.files[0].patch.truncated).toBe(true)
-    expect(parsed.files[1].patch).toBeNull()
-  })
-})
-
-describe("github_get_workflow_run", () => {
+describe("github_workflows mode=get_run", () => {
   it("fetches failed job logs only and returns tail", async () => {
     const longLog = "log line\n".repeat(5_000)
     const request: RequestFn = async (route, params) => {
@@ -293,8 +315,11 @@ describe("github_get_workflow_run", () => {
           throw new Error(`unexpected route ${route}`)
       }
     }
-    const tool = createGithubGetWorkflowRunTool(makeDeps(request))
-    const result = await tool.config.execute({ owner: "o", repo: "r", runId: 1, includeFailedJobLogs: true }, toolOpts)
+    const tool = createGithubWorkflowsTool(makeDeps(request))
+    const result = await tool.config.execute(
+      { mode: "get_run", owner: "o", repo: "r", runId: 1, includeFailedJobLogs: true },
+      toolOpts
+    )
     const parsed = JSON.parse(result.output)
     const successJob = parsed.run.jobs.find((j: any) => j.name === "build")
     const failedJob = parsed.run.jobs.find((j: any) => j.name === "test")

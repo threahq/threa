@@ -63,21 +63,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
 
   // GitHub reads are public-web-class egress (a structured read_url), so they
   // ride the `web` grant as well as `github`.
-  github_list_repos: ["github", "web"],
-  github_list_branches: ["github", "web"],
-  github_list_commits: ["github", "web"],
-  github_get_commit: ["github", "web"],
-  github_list_pull_requests: ["github", "web"],
-  github_get_pull_request: ["github", "web"],
-  github_list_pr_files: ["github", "web"],
-  github_get_file_contents: ["github", "web"],
-  github_search_code: ["github", "web"],
-  github_list_workflow_runs: ["github", "web"],
-  github_get_workflow_run: ["github", "web"],
-  github_list_releases: ["github", "web"],
-  github_get_release: ["github", "web"],
-  github_search_issues: ["github", "web"],
-  github_get_issue: ["github", "web"],
+  github_repos: ["github", "web"],
+  github_commits: ["github", "web"],
+  github_pulls: ["github", "web"],
+  github_content: ["github", "web"],
+  github_workflows: ["github", "web"],
+  github_releases: ["github", "web"],
+  github_issues: ["github", "web"],
 
   // Linear has no unauthenticated public surface — it never rides `web`.
   linear_list_issues: ["linear"],

@@ -350,7 +350,7 @@ describe("TraceStep", () => {
           step={createStep({
             stepType: "tool_call",
             content: JSON.stringify({
-              tool: "github_list_pull_requests",
+              tool: "github_pulls",
               args: { repo: "threahq/threa", path: null, author: null, page: 1 },
             }),
           })}
