@@ -142,6 +142,17 @@ function isRecoverableConnectionError(err: unknown): boolean {
   return error.code === "57P05" || error.code === "ECONNRESET"
 }
 
+// 40P01 = deadlock_detected, 40001 = serialization_failure. Postgres aborts one
+// transaction in a lock cycle; the documented remedy is to roll back and retry
+// the whole transaction (INV-20). The connection itself stays healthy, so unlike
+// a connection error we reuse it rather than destroying it.
+function isRetryableTransactionError(err: unknown): boolean {
+  const error = err as Error & { code?: string }
+  return error.code === "40P01" || error.code === "40001"
+}
+
+const MAX_TRANSACTION_ATTEMPTS = 3
+
 /**
  * Check if a querier is a PoolClient (already has connection, possibly in transaction).
  * PoolClient has a `release` method that Pool doesn't have.
@@ -181,8 +192,7 @@ export async function withTransaction<T>(
 
   let lastError: unknown
 
-  // Retry once on recoverable connection errors
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
     const client = await db.connect()
     let released = false
     try {
@@ -196,8 +206,9 @@ export async function withTransaction<T>(
       })
 
       lastError = error
+      const isLastAttempt = attempt === MAX_TRANSACTION_ATTEMPTS - 1
 
-      // Only retry on recoverable connection errors, and only on first attempt
+      // Recoverable connection errors: retry once with a fresh connection.
       if (attempt === 0 && isRecoverableConnectionError(error)) {
         logger.debug(
           { err: error, attempt: attempt + 1 },
@@ -205,6 +216,20 @@ export async function withTransaction<T>(
         )
         released = true
         client.release(true) // Destroy the bad connection
+        continue
+      }
+
+      // Deadlock / serialization failures are transient under concurrency. Return
+      // the healthy connection to the pool and retry after a little jittered
+      // backoff so the contending transactions don't immediately re-collide.
+      if (!isLastAttempt && isRetryableTransactionError(error)) {
+        logger.debug(
+          { err: error, attempt: attempt + 1 },
+          "Transaction failed with retryable serialization error, retrying..."
+        )
+        released = true
+        client.release()
+        await new Promise((resolve) => setTimeout(resolve, 5 + Math.random() * 20))
         continue
       }
 
