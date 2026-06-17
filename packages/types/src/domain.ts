@@ -15,6 +15,7 @@ import type {
   Visibility,
   LabelableResourceType,
   CompanionMode,
+  MemoryMode,
   AuthorType,
   EventType,
   WorkspaceRoleSlug,
@@ -179,6 +180,12 @@ export interface Stream {
   rootStreamId: string | null
   companionMode: CompanionMode
   companionPersonaId: string | null
+  /**
+   * GAM memory automation gate. Absent on legacy cached rows synced before this
+   * shipped — treat a missing value as `"auto"` (the backend column is
+   * `NOT NULL DEFAULT 'auto'`, so a freshly-fetched stream always carries it).
+   */
+  memoryMode?: MemoryMode
   createdBy: string
   createdAt: string
   updatedAt: string

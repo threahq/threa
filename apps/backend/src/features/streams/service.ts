@@ -28,6 +28,7 @@ import {
   type StreamType,
   type Visibility,
   type CompanionMode,
+  type MemoryMode,
   type NotificationLevel,
   type ThreadSummary,
   type ContextBag,
@@ -763,6 +764,7 @@ export class StreamService {
       slug?: string
       description?: string
       visibility?: Visibility
+      memoryMode?: MemoryMode
       /**
        * Sealed (encrypted) display name for an E2E stream — stored on
        * `e2e_streams`, not `streams`. The server holds opaque bytes it can't

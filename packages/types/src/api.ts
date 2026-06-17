@@ -9,6 +9,7 @@ import type {
   Visibility,
   LabelableResourceType,
   CompanionMode,
+  MemoryMode,
   SavedStatus,
   SavedSuggestionStatus,
   AuthorType,
@@ -88,6 +89,7 @@ export interface UpdateStreamInput {
   visibility?: Visibility
   companionMode?: CompanionMode
   companionPersonaId?: string
+  memoryMode?: MemoryMode
   /**
    * Encrypted display name for an E2E stream — base64 ciphertext + its
    * `StreamEnvelope` framing (typed `unknown` to keep this package crypto-free).
