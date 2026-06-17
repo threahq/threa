@@ -163,8 +163,8 @@ function installSpies() {
     isLoading: false,
   } as unknown as ReturnType<typeof hooksModule.useWorkspaceBootstrap>)
   vi.spyOn(hooksModule, "useDraftScratchpads").mockReturnValue({
-    createDraft: vi.fn(),
-    deleteDraft: mockDeleteDraft,
+    createScratchpad: vi.fn(),
+    deleteScratchpad: mockDeleteDraft,
   } as unknown as ReturnType<typeof hooksModule.useDraftScratchpads>)
   vi.spyOn(hooksModule, "useArchiveStream").mockReturnValue({
     mutateAsync: mockArchiveMutateAsync,

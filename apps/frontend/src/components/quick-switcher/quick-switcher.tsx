@@ -84,7 +84,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   const navigate = useNavigate()
   const [, setSearchParams] = useSearchParams()
   const user = useUser()
-  const { createDraft, deleteDraft } = useDraftScratchpads(workspaceId)
+  const { createScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
   const { openSettings } = useSettings()
   const { openCreateChannel } = useCreateChannel()
   const { open: openExplorer } = useExplorerUrlState()
@@ -262,7 +262,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       workspaceId,
       navigate,
       closeDialog: handleClose,
-      createDraftScratchpad: createDraft,
+      createDraftScratchpad: createScratchpad,
       createEncryptedScratchpad,
       openCreateChannel,
       setMode,
@@ -282,7 +282,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       workspaceId,
       navigate,
       handleClose,
-      createDraft,
+      createScratchpad,
       createEncryptedScratchpad,
       openCreateChannel,
       setMode,
@@ -414,7 +414,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     const { streamId, isDraft } = pendingArchive
     try {
       if (isDraft) {
-        await deleteDraft(streamId)
+        await deleteScratchpad(streamId)
         // Drafts are fully deleted — leave the (now-gone) stream if viewing it.
         if (currentStreamId === streamId) navigate(`/w/${workspaceId}`)
       } else {
@@ -425,7 +425,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     } finally {
       setPendingArchive(null)
     }
-  }, [pendingArchive, deleteDraft, navigate, workspaceId, currentStreamId, archiveStream])
+  }, [pendingArchive, deleteScratchpad, navigate, workspaceId, currentStreamId, archiveStream])
 
   const archiveIsDraft = pendingArchive?.isDraft ?? false
   const archiveStreamLabel = pendingArchive?.name ?? "this stream"
