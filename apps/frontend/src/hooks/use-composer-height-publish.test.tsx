@@ -48,15 +48,11 @@ function Harness({
   onHeightChange,
   active = true,
   zoneHeight,
-  floatingShell = false,
-  shellPaddingTop = "0px",
 }: {
   onHeightChange: (px: number) => void
   active?: boolean
   /** Pre-existing `--composer-height` on the zone, simulating the first-paint value. */
   zoneHeight?: string
-  floatingShell?: boolean
-  shellPaddingTop?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   useComposerHeightPublish(ref, { active, onHeightChange })
@@ -65,9 +61,7 @@ function Harness({
       data-editor-zone="main"
       style={zoneHeight ? ({ "--composer-height": zoneHeight } as CSSProperties) : undefined}
     >
-      <div ref={ref} data-floating-composer-shell={floatingShell ? true : undefined}>
-        {floatingShell ? <div style={{ paddingTop: shellPaddingTop }}>composer</div> : "composer"}
-      </div>
+      <div ref={ref}>composer</div>
     </div>
   )
 }
@@ -113,7 +107,7 @@ describe("useComposerHeightPublish", () => {
     const ro = installManualResizeObserver()
     try {
       const onHeightChange = vi.fn()
-      // Timeline already reserved 80px (persisted `:root` fallback); the
+      // Footer already rendered at 80px (persisted `:root` fallback); the
       // composer measures the same 80px (pinned in beforeEach) — seed silently.
       render(<Harness onHeightChange={onHeightChange} zoneHeight="80px" />)
       expect(onHeightChange).not.toHaveBeenCalled()
@@ -122,27 +116,14 @@ describe("useComposerHeightPublish", () => {
     }
   })
 
-  it("publishes visual bleed from a floating shell's transparent top padding", () => {
-    const ro = installManualResizeObserver()
-    try {
-      const { container } = render(
-        <Harness onHeightChange={() => {}} floatingShell shellPaddingTop="12px" zoneHeight="80px" />
-      )
-      const zone = container.querySelector<HTMLElement>("[data-editor-zone]")!
-      expect(zone.style.getPropertyValue("--composer-visual-bleed")).toBe("12px")
-    } finally {
-      ro.restore()
-    }
-  })
-
-  it("fires on the initial measure when the persisted composer height was wrong", () => {
+  it("fires on the initial measure when the persisted footer height was wrong", () => {
     const ro = installManualResizeObserver()
     try {
       const onHeightChange = vi.fn()
-      // Timeline first reserved 120px (stale persisted value), but the actual
-      // composer measures 80px: the scroller will resize after mount, so the
-      // timeline must re-anchor (last message would otherwise park too high).
-      // The same drift the other direction hides the last message.
+      // Footer first painted at 120px (stale persisted value), but the actual
+      // composer measures 80px: the spacer will shrink after mount, so the
+      // virtualized list must re-anchor (last message would otherwise park too
+      // high). The same drift the other direction hides the last message.
       // This fires from a layout effect (pre-paint), flagged `initial: true` so
       // the timeline corrects it synchronously instead of debouncing.
       render(<Harness onHeightChange={onHeightChange} zoneHeight="120px" />)

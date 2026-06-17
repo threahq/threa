@@ -52,12 +52,7 @@ import {
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
-import {
-  COMPOSER_SCROLL_INSET,
-  FloatingComposerShell,
-  MessageComposer,
-  StashedDraftsPicker,
-} from "@/components/composer"
+import { FloatingComposerShell, MessageComposer, StashedDraftsPicker } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
@@ -291,14 +286,21 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     draftPortalTargetRef.current = el
   }, [])
 
-  // Measured height of the draft composer pill; consumed by the scroll area so
-  // messages dock above the floating pill instead of scrolling underneath it.
+  // Measured height of the draft composer pill; consumed by the scroll area
+  // below it (padding-bottom) so messages sit offset above the floating pill.
   const draftComposerRef = useRef<HTMLDivElement>(null)
-  const draftScrollRef = useRef<HTMLDivElement>(null)
+  const draftScrollRef = useRef<HTMLDivElement | null>(null)
   const handleDraftComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
-    if (!opts.initial) return
     const scroller = draftScrollRef.current
-    if (scroller) scroller.scrollTop = scroller.scrollHeight
+    if (!scroller) return
+    const rePin = () => {
+      scroller.scrollTop = scroller.scrollHeight
+    }
+    if (opts.initial) {
+      rePin()
+    } else {
+      requestAnimationFrame(rePin)
+    }
   }, [])
   useComposerHeightPublish(draftComposerRef, {
     active: !draftExpanded,
@@ -591,8 +593,10 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
               )}
             <div
               ref={draftScrollRef}
-              className={draftExpanded ? "hidden" : "absolute inset-x-0 top-0 flex flex-col overflow-y-auto"}
-              style={{ bottom: COMPOSER_SCROLL_INSET }}
+              className={
+                draftExpanded ? "hidden flex-1 flex-col overflow-y-auto" : "flex flex-1 flex-col overflow-y-auto"
+              }
+              style={{ paddingBottom: "var(--composer-height, 0px)" }}
             >
               {parentMessage && (
                 <ThreadParentMessage
