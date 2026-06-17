@@ -989,6 +989,10 @@ export function StreamContent({
     isFetchingOlder,
     isFetchingNewer,
     resetKey: streamId,
+    // Only treat the user as "at the bottom" when they are essentially flush.
+    // A small scroll-up to reference older messages while typing should not be
+    // snapped back when the composer grows.
+    bottomThreshold: 4,
   })
 
   // Unified API regardless of scroll mode
