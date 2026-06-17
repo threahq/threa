@@ -401,7 +401,7 @@ describe("useDraftMessage", () => {
       expect(resolves[0]?.payload).toMatchObject({ draftId: "draft_confirmed", expectedVersion: 2 })
     })
 
-    it("does not enqueue a server resolve for a never-synced draft (nothing to resolve)", async () => {
+    it("uses an idempotent delete cleanup for a never-confirmed draft instead of a CAS resolve", async () => {
       await db.pendingOperations.clear()
       await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("x"), attachments: [] })
 
@@ -412,6 +412,9 @@ describe("useDraftMessage", () => {
 
       expect(await loadedDraft(draftKey)).toBeUndefined()
       expect(await db.pendingOperations.where("type").equals("resolve_draft").count()).toBe(0)
+      const deletes = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+      expect(deletes).toHaveLength(1)
+      expect(typeof deletes[0]?.payload.draftId).toBe("string")
     })
 
     it("a stale debounced save (started before resolve-on-send) does NOT resurrect the draft", async () => {

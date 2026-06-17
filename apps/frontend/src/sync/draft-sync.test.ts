@@ -357,12 +357,14 @@ describe("syncDraftResolution", () => {
     expect(resolves.filter((o) => o.payload.draftId === "draft_x" && o.payload.expectedVersion === 4)).toHaveLength(1)
   })
 
-  it("only drops the pending push for a never-synced draft (nothing to resolve server-side)", async () => {
+  it("queues a cleanup delete for a never-confirmed draft in case its upsert is already in flight", async () => {
     await enqueueDraftUpsert(workspaceId, "draft_x")
     await syncDraftResolution(workspaceId, "draft_x", 0)
 
     expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
     expect(await db.pendingOperations.where("type").equals("resolve_draft").count()).toBe(0)
+    const deletes = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(deletes.filter((op) => op.payload.draftId === "draft_x")).toHaveLength(1)
   })
 })
 
@@ -577,6 +579,25 @@ describe("resolve-on-send is authoritative against inbound echoes (no resurrecti
     expect(await db.drafts.get("draft_server1")).toBeUndefined()
   })
 
+  it("applyDraftUpserted drops an echo when the persisted resolve op is still queued", async () => {
+    // Same scenario after a reload/resume: the in-memory tombstone is gone, but
+    // the durable resolve_draft op remains. The server row still exists until the
+    // queue drains, and must not be re-seeded as a sent-message draft.
+    await enqueueDraftResolve(workspaceId, "draft_server1", 1)
+
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 1 }) }, workspaceId)
+
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
+  it("applyDraftsBootstrap does not resurrect a draft whose resolve is still queued", async () => {
+    await enqueueDraftResolve(workspaceId, "draft_server1", 1)
+
+    await applyDraftsBootstrap(workspaceId, [wireDraft({ version: 1 })])
+
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
   it("still applies a STRICTLY NEWER version from another device (no-loss)", async () => {
     // A genuine edit elsewhere bumped the version past what we resolved at — that
     // is real new work and survives (as a stash entry), never silently dropped.
@@ -585,6 +606,14 @@ describe("resolve-on-send is authoritative against inbound echoes (no resurrecti
     await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 2 }) }, workspaceId)
 
     expect(await db.drafts.get("draft_server1")).toBeDefined()
+  })
+
+  it("still applies a strictly newer version when a persisted resolve is queued", async () => {
+    await enqueueDraftResolve(workspaceId, "draft_server1", 1)
+
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 2 }) }, workspaceId)
+
+    expect((await db.drafts.get("draft_server1"))?.baseVersion).toBe(2)
   })
 })
 
@@ -626,14 +655,15 @@ describe("deleteDraftById — the single user-initiated delete path", () => {
     expect(await db.composerLoaded.get(scope)).toBeUndefined()
   })
 
-  it("cancels a never-synced draft's push instead of queuing a server delete", async () => {
+  it("queues an idempotent server delete for a never-confirmed draft to clean up in-flight upsert ghosts", async () => {
     await db.drafts.put(localDraft({ id: "draft_x" })) // never confirmed → no baseVersion
     await enqueueDraftUpsert(workspaceId, "draft_x")
 
     await deleteDraftById(workspaceId, "draft_x")
 
     expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
-    expect(await db.pendingOperations.where("type").equals("delete_draft").toArray()).toHaveLength(0)
+    const deletes = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(deletes.filter((op) => op.payload.draftId === "draft_x")).toHaveLength(1)
   })
 
   it("no-ops on an already-gone row", async () => {

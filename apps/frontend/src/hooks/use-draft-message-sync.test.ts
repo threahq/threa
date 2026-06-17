@@ -56,13 +56,13 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect((await db.composerLoaded.get(scope))?.draftId).toBe(row.id)
   })
 
-  it("clearLoadedDraft cancels the push for a never-synced draft (no server delete)", async () => {
+  it("clearLoadedDraft queues an idempotent cleanup delete for a never-confirmed draft", async () => {
     const row = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("hi"), attachments: [] })
 
     await clearLoadedDraft(workspaceId, scope)
 
     expect(await hasPendingDraftUpsert(row.id)).toBe(false)
-    expect(await pendingDeletes(row.id)).toBe(0)
+    expect(await pendingDeletes(row.id)).toBe(1)
   })
 
   it("clearLoadedDraft enqueues a server delete for a confirmed draft", async () => {
@@ -76,7 +76,7 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect(await db.drafts.get(row.id)).toBeUndefined()
   })
 
-  it("purgeScopeDrafts deletes server copies for confirmed rows and cancels pushes for unsynced ones", async () => {
+  it("purgeScopeDrafts queues cleanup deletes for confirmed and never-confirmed rows", async () => {
     const confirmed = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("a"), attachments: [] })
     await db.drafts.put({ ...confirmed, baseVersion: 2 })
     const unsyncedRow: CachedDraft = {
@@ -92,7 +92,7 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     await purgeScopeDrafts(workspaceId, scope)
 
     expect(await pendingDeletes(confirmed.id)).toBe(1)
-    expect(await pendingDeletes(unsyncedRow.id)).toBe(0)
+    expect(await pendingDeletes(unsyncedRow.id)).toBe(1)
     expect(await db.drafts.count()).toBe(0)
   })
 

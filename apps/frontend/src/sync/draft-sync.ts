@@ -233,6 +233,24 @@ export async function hasPendingDraftDelete(draftId: string): Promise<boolean> {
 }
 
 /**
+ * Last server-confirmed version this device is trying to resolve-on-send for the
+ * draft, if that resolve is queued but has not drained yet. While this persisted
+ * op exists, inbound/bootstrap rows at or below the expected version are stale
+ * echoes of an already-sent draft and must not be re-created. Strictly newer
+ * rows still apply so another device's drifted edit survives (no-loss).
+ */
+export async function pendingDraftResolveVersion(draftId: string): Promise<number | undefined> {
+  const ops = await pendingDraftOps("resolve_draft", draftId)
+  let version: number | undefined
+  for (const op of ops) {
+    const expected = Number(op.payload.expectedVersion)
+    if (!Number.isFinite(expected)) continue
+    version = version === undefined ? expected : Math.max(version, expected)
+  }
+  return version
+}
+
+/**
  * Enqueue a debounced background push for a draft. Coalesces to at most one
  * queued `upsert_draft` op per id: the op reads the draft's current content
  * fresh at drain time, so a superseded op would only re-push identical state.
@@ -256,9 +274,10 @@ export async function enqueueDraftUpsert(workspaceId: string, draftId: string): 
 
 /**
  * Enqueue an unconditional server delete for a draft and drop any queued push
- * for it (no point mirroring content we're discarding). Use only when the draft
- * may exist server-side (`baseVersion > 0`); for a never-synced draft call
- * `cancelPendingDraftUpsert` instead — there is nothing to delete.
+ * for it (no point mirroring content we're discarding). This is also used for
+ * never-confirmed local drafts: their queued upsert may already be in-flight, so
+ * an idempotent delete is the durable cleanup/suppression marker that prevents a
+ * late server insert from reappearing on the next socket/bootstrap pass.
  */
 export async function enqueueDraftDelete(workspaceId: string, draftId: string): Promise<void> {
   await db.transaction("rw", db.pendingOperations, async () => {
@@ -316,30 +335,28 @@ export async function cancelPendingDraftUpsert(draftId: string): Promise<void> {
 }
 
 /**
- * Mirror a locally-removed draft to the backend: a confirmed draft
- * (`baseVersion > 0`) has a server row to delete; a never-synced one only needs
- * its queued push dropped (nothing exists server-side). Shared by every local
- * delete path (composer clear, scope purge, stash discard).
+ * Mirror a locally-removed draft to the backend. A confirmed draft
+ * (`baseVersion > 0`) has a server row to delete. A never-confirmed draft may
+ * still have an in-flight upsert creating a ghost server row after the local
+ * delete, so we also enqueue an idempotent delete instead of only canceling the
+ * queued upsert. Shared by every local delete path (composer clear, scope purge,
+ * stash discard).
  */
 export async function syncDraftRemoval(
   workspaceId: string,
   id: string,
-  baseVersion: number | undefined
+  _baseVersion: number | undefined
 ): Promise<void> {
-  if ((baseVersion ?? 0) > 0) {
-    await enqueueDraftDelete(workspaceId, id)
-  } else {
-    await cancelPendingDraftUpsert(id)
-  }
+  await enqueueDraftDelete(workspaceId, id)
 }
 
 /**
  * Mirror a sent draft's removal to the backend CAS-safely (resolve-on-send): a
  * confirmed draft (`baseVersion > 0`) is resolved on the version it was last
  * confirmed at, so a copy that drifted on another device survives as a stash
- * entry; a never-synced one only needs its queued push dropped (nothing exists
- * server-side). The counterpart to `syncDraftRemoval` for the send path — the
- * local row is already gone by the time this runs.
+ * entry. A never-confirmed draft cannot be CAS-resolved yet, but its upsert may
+ * already be in-flight; enqueue an idempotent delete so a ghost row from that
+ * late upsert is cleaned up and suppressed on bootstrap/socket echoes.
  */
 export async function syncDraftResolution(
   workspaceId: string,
@@ -349,7 +366,7 @@ export async function syncDraftResolution(
   if ((baseVersion ?? 0) > 0) {
     await enqueueDraftResolve(workspaceId, id, baseVersion as number)
   } else {
-    await cancelPendingDraftUpsert(id)
+    await enqueueDraftDelete(workspaceId, id)
   }
 }
 
@@ -379,7 +396,8 @@ export async function applyDraftUpserted(
   payload: DraftUpsertedPayload,
   expectedWorkspaceId: string,
   pendingUpsertIds?: ReadonlySet<string>,
-  pendingDeleteIds?: ReadonlySet<string>
+  pendingDeleteIds?: ReadonlySet<string>,
+  pendingResolveVersions?: ReadonlyMap<string, number>
 ): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
@@ -391,6 +409,13 @@ export async function applyDraftUpserted(
   // composer). Drop the echo at or below the resolved version; a strictly newer
   // version is a genuine edit from another device and still applies (no-loss).
   if (isResolvedDraftEcho(draft.id, draft.version)) return
+
+  // Same guard, but durable across reload/reconnect: if the resolve op is still
+  // queued, a bootstrap can see the not-yet-tombstoned server row before the op
+  // drains. Drop rows at or below the CAS version being resolved; accept a
+  // strictly newer version as real drift from another device.
+  const pendingResolveVersion = pendingResolveVersions?.get(draft.id) ?? (await pendingDraftResolveVersion(draft.id))
+  if (pendingResolveVersion !== undefined && draft.version <= pendingResolveVersion) return
 
   // A queued local delete wins: the user discarded this draft here and its
   // `delete_draft` op (not yet drained) will remove the server row. Until then,
@@ -469,18 +494,27 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
   // parallel) and reuse the sets across the loops, rather than scanning the op
   // table per draft. A queued delete means the user discarded that draft here;
   // the re-seed must not resurrect it before the delete drains.
-  const [upsertOps, deleteOps] = await Promise.all([
+  const [upsertOps, deleteOps, resolveOps] = await Promise.all([
     db.pendingOperations.where("type").equals("upsert_draft").toArray(),
     db.pendingOperations.where("type").equals("delete_draft").toArray(),
+    db.pendingOperations.where("type").equals("resolve_draft").toArray(),
   ])
   const pendingUpsertIds = new Set(upsertOps.map((op) => op.payload.draftId as string))
   const pendingDeleteIds = new Set(deleteOps.map((op) => op.payload.draftId as string))
+  const pendingResolveVersions = new Map<string, number>()
+  for (const op of resolveOps) {
+    const draftId = op.payload.draftId as string
+    const expectedVersion = Number(op.payload.expectedVersion)
+    if (!Number.isFinite(expectedVersion)) continue
+    pendingResolveVersions.set(draftId, Math.max(pendingResolveVersions.get(draftId) ?? 0, expectedVersion))
+  }
   for (const draft of drafts) {
     await applyDraftUpserted(
       { workspaceId: draft.workspaceId, targetUserId: draft.userId, draft },
       workspaceId,
       pendingUpsertIds,
-      pendingDeleteIds
+      pendingDeleteIds,
+      pendingResolveVersions
     )
   }
 
