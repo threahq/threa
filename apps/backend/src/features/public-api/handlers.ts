@@ -6,7 +6,12 @@ import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { MessageRepository, type EventService } from "../messaging"
-import { resolveDeliveryVerdict, TrustTiers, type ExternalContextHandle } from "@threa/agent-runtime"
+import {
+  resolveDeliveryVerdict,
+  TrustTiers,
+  type DeliveryVerdict,
+  type ExternalContextHandle,
+} from "@threa/agent-runtime"
 import {
   StreamRepository,
   StreamEventRepository,
@@ -17,7 +22,7 @@ import {
   type StreamService,
 } from "../streams"
 import { UserRepository } from "../workspaces"
-import { E2eStreamsRepository, resolveSealingContext } from "../e2e-streams"
+import { E2eStreamsRepository, StreamE2eKeyWrapsRepository, resolveSealingContext } from "../e2e-streams"
 import { PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -44,8 +49,15 @@ import {
   sentViaApiKey,
   type AuthorType,
   type PiToolTraceSectionLabel,
+  type SealedTurnContext,
 } from "@threa/types"
-import { BotRuntimeService, assertManifestAllows, type BotRuntimeInstance } from "../bot-runtimes"
+import {
+  BotRuntimeService,
+  BotRuntimeInstanceRepository,
+  assertManifestAllows,
+  type BotInvocation,
+  type BotRuntimeInstance,
+} from "../bot-runtimes"
 import {
   insertCommandCompletedEvent,
   insertCommandFailedEvent,
@@ -61,7 +73,8 @@ import { botId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { AgentSessionRepository, type AgentSessionStep } from "../agents"
+import { AgentSessionRepository, hashCallbackToken, type AgentSessionStep } from "../agents"
+import { buildSealedTurnContext } from "./sealed-turn-context"
 import { encodeCursor, decodeCursor } from "./cursor"
 import {
   botInvocationStepEvents,
@@ -372,27 +385,23 @@ const CLAIM_CONTEXT_MAX_MESSAGES = 30
  * the root), and standing grants are the wrong axis anyway.
  *
  * Returns `undefined` when context is WITHHELD (stream gone, cross-workspace,
- * or E2E — plaintext history never leaves the enclave path). An empty
- * conversation instead yields an explicit empty inline handle, so the runner
- * can tell "nothing came before" from "context unavailable".
+ * or any non-plaintext verdict — plaintext history never leaves the enclave/
+ * sealed path). An empty conversation instead yields an explicit empty inline
+ * handle, so the runner can tell "nothing came before" from "context unavailable".
+ *
+ * The `verdict` is resolved once by the caller and shared with the sealed branch
+ * so the two can't disagree; the plaintext self-guard here is kept as
+ * defense-in-depth (a future caller must still never leak plaintext into a sealed
+ * stream).
  */
 async function buildClaimContext(
   pool: Pool,
-  invocation: { workspaceId: string; activeStreamId: string; sourceMessageId: string; actorId: string }
+  invocation: { workspaceId: string; activeStreamId: string; sourceMessageId: string; actorId: string },
+  verdict: DeliveryVerdict
 ): Promise<ExternalContextHandle | undefined> {
+  if (verdict.delivery !== "plaintext") return undefined
   const stream = await StreamRepository.findById(pool, invocation.activeStreamId)
   if (!stream || stream.workspaceId !== invocation.workspaceId) return undefined
-  // Same predicate the dispatch sites consult (Phase 2.4a): plaintext history
-  // is only served where a plaintext turn may be minted for this bot. This
-  // guards invocations that predate a later E2E enablement of the stream —
-  // the dispatch-time check already blocks new ones.
-  const sealing = await resolveSealingContext(pool, {
-    workspaceId: invocation.workspaceId,
-    streamId: invocation.activeStreamId,
-    actor: { kind: "bot", botId: invocation.actorId },
-  })
-  const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
-  if (verdict.delivery !== "plaintext") return undefined
 
   const surrounding = await MessageRepository.findSurrounding(
     pool,
@@ -420,6 +429,86 @@ async function buildClaimContext(
       }
     }),
   }
+}
+
+/**
+ * Builds the sealed assignment for a claimed invocation when the delivery
+ * verdict is `sealed` — the external analog of the enclave's
+ * `buildEnclaveSessionAssignment`. The backend never decrypts: it ships the
+ * SSK wraps addressed to the claiming bot's BIK plus the sealed history/prompt
+ * ciphertext, and the bot opens them with its identity private key.
+ *
+ * Key material resolves against the root (`rootStreamId`): a thread shares the
+ * root's SSK and carries no wraps of its own, and the root's `e2e_streams` row
+ * is authoritative for `currentKeyGeneration` (a roll lands there). The
+ * conversation window and trigger are read from the invocation's own
+ * `activeStreamId`, mirroring `buildClaimContext` and the enclave claim.
+ *
+ * Throws (INV-11) rather than returning a context the bot can't open: the
+ * claim gate (`BotInvocationRepository.claimOne`) already proved this instance's
+ * BIK covers the prompt's and reply's generations, so a missing key id or a
+ * coverage miss here is a revoke/rotation race between claim and build. Failing
+ * loudly leaves the row claimed; its TTL hands it back to a still-qualifying
+ * instance.
+ */
+async function buildSealedClaimContext(
+  pool: Pool,
+  invocation: BotInvocation,
+  instanceId: string
+): Promise<SealedTurnContext> {
+  const instance = await BotRuntimeInstanceRepository.findByInstance(pool, {
+    workspaceId: invocation.workspaceId,
+    botId: invocation.actorId,
+    instanceId,
+  })
+  if (!instance?.publicKeyId) {
+    throw new HttpError("Claiming bot instance has no registered identity key", {
+      status: 409,
+      code: "BOT_IDENTITY_KEY_REQUIRED",
+    })
+  }
+  const e2e = await E2eStreamsRepository.getByStreamId(pool, invocation.workspaceId, invocation.rootStreamId)
+  if (!e2e) {
+    throw new HttpError("Sealed claim targets a stream that is no longer E2E", {
+      status: 409,
+      code: "E2E_STREAM_GONE",
+    })
+  }
+  const [wraps, trigger, surrounding] = await Promise.all([
+    StreamE2eKeyWrapsRepository.listForStream(pool, invocation.workspaceId, invocation.rootStreamId),
+    MessageRepository.findById(pool, invocation.sourceMessageId),
+    MessageRepository.findSurrounding(
+      pool,
+      invocation.sourceMessageId,
+      invocation.activeStreamId,
+      CLAIM_CONTEXT_MAX_MESSAGES,
+      0
+    ),
+  ])
+  if (!trigger) {
+    throw new HttpError("Sealed claim trigger message is gone", { status: 409, code: "TRIGGER_MESSAGE_GONE" })
+  }
+  const priorMessages = surrounding.filter((m) => m.id !== invocation.sourceMessageId)
+  const triggerAuthorName = (await resolveAuthorDisplayNames(pool, invocation.workspaceId, [trigger])).get(
+    trigger.authorId
+  )
+  const context = buildSealedTurnContext({
+    e2e,
+    bikKeyId: instance.publicKeyId,
+    wraps,
+    trigger,
+    triggerAuthorName,
+    priorMessages,
+    replySenderId: invocation.actorId,
+    callbackToken: invocation.claimToken!,
+  })
+  if (!context) {
+    throw new HttpError("Claiming bot key no longer covers the stream's key generations", {
+      status: 409,
+      code: "SEALED_KEY_COVERAGE_LOST",
+    })
+  }
+  return context
 }
 
 export interface PublicApiDeps {
@@ -981,6 +1070,27 @@ export function createPublicApiHandlers({
       })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       const isSessionControl = invocation.requiredCapability === BotInvocationCapabilities.SESSION_CONTROL
+
+      // One delivery verdict per claim (Phase 2.4) drives both the sealed
+      // assignment and the plaintext context so they can't disagree. The sealed
+      // assignment is built BEFORE the session insert because it supplies the
+      // callback binding (token hash + reply generation) the session row stores.
+      const sealing = await resolveSealingContext(pool, {
+        workspaceId: invocation.workspaceId,
+        streamId: invocation.activeStreamId,
+        actor: { kind: "bot", botId: invocation.actorId },
+      })
+      const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
+      let sealedContext: SealedTurnContext | undefined
+      let callbackBinding: { callbackTokenHash: string; replyKeyGeneration: number } | undefined
+      if (!isSessionControl && verdict.delivery === "sealed") {
+        sealedContext = await buildSealedClaimContext(pool, invocation, data.instanceId)
+        callbackBinding = {
+          callbackTokenHash: hashCallbackToken(invocation.claimToken!),
+          replyKeyGeneration: sealedContext.reply.keyGeneration,
+        }
+      }
+
       if (!isSessionControl && bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
           const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
@@ -990,6 +1100,7 @@ export function createPublicApiHandlers({
             personaId: bot.id,
             triggerMessageId: invocation.sourceMessageId,
             initialSequence: latestSequence ?? 0n,
+            ...callbackBinding,
           })
           if (!session) return
           const streamEvent = await StreamEventRepository.insert(client, {
@@ -1014,7 +1125,7 @@ export function createPublicApiHandlers({
           })
         })
       }
-      const context = await buildClaimContext(pool, invocation)
+      const context = await buildClaimContext(pool, invocation, verdict)
       res.json({
         data: {
           id: invocation.id,
@@ -1034,6 +1145,7 @@ export function createPublicApiHandlers({
           runtimeSessionId: invocation.targetRuntimeSessionId,
           metadata: invocation.metadata,
           ...(context && { context }),
+          ...(sealedContext && { sealedContext }),
         },
       })
     },

@@ -225,19 +225,21 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   }
 
   /**
-   * E2EE-11 → Phase 2.4a: the external wire carries plaintext, so a bot turn
-   * dispatches only when the delivery verdict says plaintext may be minted
-   * for this bot on this stream. E2E streams come back `denied` (or `sealed`
-   * once a grant plus the policy switch exist — still not plaintext), keeping
-   * external bots out of E2E without a bespoke guard. The skip is logged,
-   * never silent. On E2E streams mention extraction already sees nothing
-   * (mentions ride in the ciphertext, the outbox payload carries the
-   * placeholder), so in practice this gates the active-scratchpad path.
+   * E2EE-11 → Phase 2.4: a bot turn dispatches only when the delivery verdict
+   * says a payload variant may be minted for this bot on this stream — either
+   * `plaintext` (non-E2E streams) or `sealed` (an E2E stream the bot holds a key
+   * grant on, with the policy switch on). A `denied` verdict (E2E without a
+   * grant, or the sealed policy switched off) keeps the bot out without a
+   * bespoke guard. The skip is logged, never silent. On E2E streams mention
+   * extraction already sees nothing (mentions ride in the ciphertext, the outbox
+   * payload carries the placeholder), so in practice the sealed path is the
+   * active-scratchpad one. Inert until the switch flips: `resolveSealingContext`
+   * reports `externalSealedDelivery` off, so no verdict resolves to `sealed`.
    */
   private async verdictAllowsExternalDispatch(workspaceId: string, streamId: string, botId: string): Promise<boolean> {
     const sealing = await resolveSealingContext(this.pool, { workspaceId, streamId, actor: { kind: "bot", botId } })
     const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
-    if (verdict.delivery === "plaintext") return true
+    if (verdict.delivery === "plaintext" || verdict.delivery === "sealed") return true
     logger.info(
       { workspaceId, streamId, botId, verdict },
       "BotInvocationOutboxHandler: skipping dispatch — external wire cannot carry the delivery verdict"

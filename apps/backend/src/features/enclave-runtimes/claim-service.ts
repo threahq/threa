@@ -23,9 +23,9 @@ import {
   ARIADNE_AGENT_ID,
   buildEnclaveSystemPrompt,
   getBuiltInAgentConfig,
+  hashCallbackToken,
   isE2eCapablePersona,
 } from "../agents"
-import { hashCallbackToken } from "./callback-token"
 import { buildEnclaveSessionAssignment } from "./dispatch/request-builder"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "./service"
 import { EnclaveRewrapNotificationsRepository } from "./rewrap-notifications-repository"

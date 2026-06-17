@@ -112,6 +112,8 @@ export type { BuiltInAgentConfig, BuiltInAgentConfigPatch } from "./built-in-age
 export { AgentConfigOverrideRepository } from "./agent-config-override-repository"
 export type { AgentConfigOverride } from "./agent-config-override-repository"
 
+export { hashCallbackToken } from "./callback-token"
+
 export { AgentSessionRepository, SessionStatuses } from "./session-repository"
 export type {
   AgentSession,
