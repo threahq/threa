@@ -49,9 +49,11 @@ export function useDecryptedAttachment(workspaceId: string, ref: AttachmentRef):
     if (status === undefined || status === "pending") {
       void requestAttachmentBytes(attachmentId, () => fetchAndDecryptAttachment(workspaceId, ref))
     }
-    // A given attachment id's ref content is immutable, so the ref object's identity
-    // is not a dep — `status` re-fires the request only when it could need one.
-  }, [attachmentId, workspaceId, status, ref])
+    // Deps are the primitives that key/gate the request, not the per-render `ref`
+    // object — a given attachment id's ref content (key/iv/mime) is immutable, so
+    // depending on the object would only add identity churn (mirrors the
+    // primitive-field deps in `useDecryptedMessageContent`).
+  }, [attachmentId, workspaceId, status])
 
   const blob = cached?.status === "decrypted" ? cached.value : null
   const [url, setUrl] = useState<string | null>(null)
