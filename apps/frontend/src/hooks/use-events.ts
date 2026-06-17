@@ -636,6 +636,41 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     [streamService, workspaceId, streamId, queryClient]
   )
 
+  /**
+   * Jump to a calendar date: load events around the first message on/after the
+   * instant and switch to bidirectional pagination. Returns the `anchorMessageId`
+   * the caller should scroll to, or null when no message lands on/after the date
+   * (the date is past the last message — caller stays on the live tail).
+   */
+  const jumpToEventByDate = useCallback(
+    async (isoDate: string): Promise<string | null> => {
+      const result = await streamService.getEventsAroundDate(workspaceId, streamId, isoDate, EVENT_PAGE_SIZE)
+      if (result.events.length === 0) return null
+
+      await cacheToIndexedDB(workspaceId, result.events)
+
+      // No newer events means the anchor sits at the live tail — skip jump mode
+      // and let IDB render the tail; the caller still scrolls to the anchor.
+      if (!result.hasNewer) return result.anchorMessageId
+
+      const sorted = sortBySequence([...result.events])
+      setJumpState({
+        events: sorted,
+        hasOlder: result.hasOlder,
+        hasNewer: result.hasNewer,
+        oldestSequence: sorted[0].sequence,
+        newestSequence: sorted[sorted.length - 1].sequence,
+        sharedMessages: result.sharedMessages,
+      })
+
+      queryClient.removeQueries({ queryKey: eventKeys.list(workspaceId, streamId) })
+      queryClient.removeQueries({ queryKey: eventKeys.newer(workspaceId, streamId) })
+
+      return result.anchorMessageId
+    },
+    [streamService, workspaceId, streamId, queryClient]
+  )
+
   /** Exit jump mode and return to live tail (latest messages from IDB). */
   const exitJumpMode = useCallback(() => {
     setJumpState(null)
@@ -694,6 +729,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     hasNewerEvents,
     isFetchingNewer,
     jumpToEvent,
+    jumpToEventByDate,
     exitJumpMode,
     isJumpMode: !!jumpState,
     addEvent,

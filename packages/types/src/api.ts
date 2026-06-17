@@ -247,6 +247,17 @@ export interface EventsAroundResponse {
   sharedMessages?: Record<string, SharedMessageHydration>
 }
 
+/**
+ * Response for jump-to-date (`?date=`). Same window shape as
+ * `EventsAroundResponse` plus the message the client should scroll to: the
+ * first message at or after the requested calendar instant. `null` when the
+ * date is past the stream's last message (the client falls back to the live
+ * tail).
+ */
+export interface EventsAroundDateResponse extends EventsAroundResponse {
+  anchorMessageId: string | null
+}
+
 // Sync log catch-up — GET /api/workspaces/:workspaceId/sync
 
 /**

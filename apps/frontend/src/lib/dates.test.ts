@@ -7,9 +7,11 @@ import {
   formatRelativeTime,
   formatFullDateTime,
   formatFutureTime,
+  formatDayDivider,
   getPastDatePresets,
   getFutureDatePresets,
   localStartOfDayISO,
+  localStartOfDayMs,
 } from "./dates"
 
 describe("dates", () => {
@@ -259,6 +261,48 @@ describe("dates", () => {
         timezone: "America/Los_Angeles",
       })
       expect(label).toBe("11:30")
+    })
+  })
+
+  describe("formatDayDivider", () => {
+    // Local constructors so day boundaries are evaluated in the runner's
+    // timezone, matching how the divider renders on the device (INV-42).
+    const now = new Date(2026, 5, 16, 12, 0, 0)
+
+    it("labels the current day as Today", () => {
+      expect(formatDayDivider(new Date(2026, 5, 16, 8, 0, 0), now)).toBe("Today")
+    })
+
+    it("labels the prior day as Yesterday", () => {
+      expect(formatDayDivider(new Date(2026, 5, 15, 23, 30, 0), now)).toBe("Yesterday")
+    })
+
+    it("labels an earlier same-year day with weekday and date, no year", () => {
+      const date = new Date(2026, 1, 3, 9, 0, 0)
+      expect(formatDayDivider(date, now)).toBe(
+        date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+      )
+    })
+
+    it("includes the year for a different calendar year", () => {
+      const date = new Date(2024, 10, 20, 9, 0, 0)
+      expect(formatDayDivider(date, now)).toBe(
+        date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+      )
+    })
+  })
+
+  describe("localStartOfDayMs", () => {
+    it("collapses two instants on the same local day to one key", () => {
+      const morning = new Date(2026, 5, 16, 1, 0, 0)
+      const evening = new Date(2026, 5, 16, 23, 0, 0)
+      expect(localStartOfDayMs(morning)).toBe(localStartOfDayMs(evening))
+    })
+
+    it("produces distinct keys across a local-day boundary", () => {
+      expect(localStartOfDayMs(new Date(2026, 5, 16, 23, 59, 0))).not.toBe(
+        localStartOfDayMs(new Date(2026, 5, 17, 0, 1, 0))
+      )
     })
   })
 })

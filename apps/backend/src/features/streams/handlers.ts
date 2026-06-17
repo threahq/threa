@@ -276,14 +276,12 @@ const listEventsAroundQuerySchema = z
   .object({
     eventId: z.string().optional(),
     messageId: z.string().optional(),
+    /** ISO datetime — jump to the first message on or after this instant. */
+    date: z.string().datetime().optional(),
     limit: z.coerce.number().int().min(2).max(100).optional(),
   })
-  .refine((d) => d.eventId ?? d.messageId, {
-    message: "eventId or messageId is required",
-    path: ["eventId"],
-  })
-  .refine((d) => !(d.eventId && d.messageId), {
-    message: "provide eventId or messageId, not both",
+  .refine((d) => [d.eventId, d.messageId, d.date].filter(Boolean).length === 1, {
+    message: "exactly one of eventId, messageId, or date is required",
     path: ["eventId"],
   })
 
@@ -676,16 +674,29 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const { eventId, messageId, limit } = validateRequest(listEventsAroundQuerySchema, req.query)
-      const targetId = (eventId ?? messageId)!
+      const { eventId, messageId, date, limit } = validateRequest(listEventsAroundQuerySchema, req.query)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const result = await eventService.listEventsAround(streamId, targetId, {
-        idType: eventId ? "event" : "message",
-        limit,
-        viewerId: userId,
-      })
+      // Date jumps resolve to the first message on/after the instant and carry
+      // an explicit scroll anchor; id jumps center on the given event/message.
+      let result: Awaited<ReturnType<typeof eventService.listEventsAround>>
+      let anchorMessageId: string | null | undefined
+      if (date) {
+        const dateResult = await eventService.listEventsAroundDate(streamId, new Date(date), {
+          limit,
+          viewerId: userId,
+        })
+        anchorMessageId = dateResult.anchorMessageId
+        result = dateResult
+      } else {
+        const targetId = (eventId ?? messageId)!
+        result = await eventService.listEventsAround(streamId, targetId, {
+          idType: eventId ? "event" : "message",
+          limit,
+          viewerId: userId,
+        })
+      }
 
       const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, new Map())
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
@@ -701,6 +712,7 @@ export function createStreamHandlers({
         sharedMessages,
         hasOlder: result.hasOlder,
         hasNewer: result.hasNewer,
+        ...(anchorMessageId !== undefined ? { anchorMessageId } : {}),
       })
     },
 

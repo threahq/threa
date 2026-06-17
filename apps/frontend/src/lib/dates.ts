@@ -71,6 +71,14 @@ export function isSameDay(a: Date, b: Date): boolean {
   return dateFnsIsSameDay(a, b)
 }
 
+/**
+ * Local start-of-day timestamp (ms) — the stable per-day key for grouping
+ * timeline rows into day buckets in the device's timezone (INV-42).
+ */
+export function localStartOfDayMs(date: Date): number {
+  return startOfDay(date).getTime()
+}
+
 interface RelativeTimeOptions {
   /** Use terse format (e.g., "2m ago") vs verbose (e.g., "yesterday 14:30") */
   terse?: boolean
@@ -185,6 +193,29 @@ export function formatFullDateTime(date: Date, prefs?: TimePrefs): string {
   })
   const timePart = formatTime(date, prefs)
   return `${datePart}, ${timePart}`
+}
+
+/**
+ * Label for an in-stream day divider, in the device's local calendar (INV-42).
+ *
+ *   today                 → "Today"
+ *   yesterday             → "Yesterday"
+ *   same calendar year    → "Monday, June 16"
+ *   other year            → "Monday, June 16, 2024"
+ *
+ * Future days (rare — clock skew, a message dated ahead) fall through to the
+ * absolute date. Weekday/month names come from the runtime locale.
+ */
+export function formatDayDivider(date: Date, now: Date = new Date()): string {
+  if (isSameDay(date, now)) return "Today"
+
+  const daysAgo = differenceInDays(startOfDay(now), startOfDay(date))
+  if (daysAgo === 1) return "Yesterday"
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
+  }
+  return date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })
 }
 
 /**

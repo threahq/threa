@@ -41,6 +41,7 @@ export interface StreamService {
   unarchive: typeof streamsApi.unarchive
   getEvents: typeof streamsApi.getEvents
   getEventsAround: typeof streamsApi.getEventsAround
+  getEventsAroundDate: typeof streamsApi.getEventsAroundDate
   markAsRead: typeof streamsApi.markAsRead
   checkSlugAvailable: typeof streamsApi.checkSlugAvailable
   setNotificationLevel: typeof streamsApi.setNotificationLevel

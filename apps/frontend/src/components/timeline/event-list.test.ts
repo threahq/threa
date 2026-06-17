@@ -8,6 +8,7 @@ import {
   getTimelineItemKey,
   groupTimelineItems,
   injectGapItems,
+  injectDayDividers,
   timelineItemEqual,
   timelineRowPropsEqual,
   OLDER_SKELETON_COUNT,
@@ -15,6 +16,7 @@ import {
   type TimelineItem,
   type TimelineItemRenderContext,
 } from "./event-list"
+import { localStartOfDayMs } from "@/lib/dates"
 
 interface CreateEventParams {
   id: string
@@ -633,5 +635,60 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     const prev = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }), deferSecondaryHydration: false }
     const next = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_y"]) }), deferSecondaryHydration: false }
     expect(timelineRowPropsEqual(prev, next)).toBe(true)
+  })
+})
+
+describe("injectDayDividers", () => {
+  // Local constructors so the day a message lands on is evaluated in the
+  // runner's timezone — the same calendar the divider renders in (INV-42).
+  const isoOn = (y: number, m: number, d: number, h: number) => new Date(y, m, d, h, 0, 0).toISOString()
+
+  function dayItem(id: string, y: number, m: number, d: number, h: number): TimelineItem {
+    return toEventItem(createMessageEvent({ id, actorId: "user_a", createdAt: isoOn(y, m, d, h) }))
+  }
+
+  it("inserts a divider before the first row of each new day, but never above the first row", () => {
+    const items = [
+      dayItem("1", 2026, 5, 15, 9),
+      dayItem("2", 2026, 5, 15, 18),
+      dayItem("3", 2026, 5, 16, 8),
+      dayItem("4", 2026, 5, 16, 9),
+      dayItem("5", 2026, 5, 17, 10),
+    ]
+
+    const result = injectDayDividers(items)
+    const types = result.map((item) => item.type)
+
+    // No leading divider; one before the first June-16 row and one before June-17.
+    expect(types).toEqual(["event", "event", "day_divider", "event", "event", "day_divider", "event"])
+
+    const dividers = result.filter((item) => item.type === "day_divider")
+    expect(dividers.map((d) => (d as { dayStartMs: number }).dayStartMs)).toEqual([
+      localStartOfDayMs(new Date(2026, 5, 16, 0, 0, 0)),
+      localStartOfDayMs(new Date(2026, 5, 17, 0, 0, 0)),
+    ])
+  })
+
+  it("does not insert dividers when every row is on the same day", () => {
+    const items = [dayItem("1", 2026, 5, 16, 1), dayItem("2", 2026, 5, 16, 12), dayItem("3", 2026, 5, 16, 23)]
+    expect(injectDayDividers(items).some((item) => item.type === "day_divider")).toBe(false)
+  })
+
+  it("passes timestamp-less rows (gaps, skeletons) through without opening a day", () => {
+    const gap: TimelineItem = { type: "gap", afterEventId: "1", missingCount: 2 }
+    const items = [dayItem("1", 2026, 5, 16, 9), gap, dayItem("2", 2026, 5, 16, 10)]
+
+    const result = injectDayDividers(items)
+    // The gap sits between two same-day rows: no divider, gap preserved in place.
+    expect(result.map((item) => item.type)).toEqual(["event", "gap", "event"])
+  })
+
+  it("keys dividers stably so equal day buckets compare equal", () => {
+    const a = injectDayDividers([dayItem("1", 2026, 5, 15, 9), dayItem("2", 2026, 5, 16, 9)])
+    const b = injectDayDividers([dayItem("1", 2026, 5, 15, 9), dayItem("2", 2026, 5, 16, 9)])
+    const dividerA = a.find((item) => item.type === "day_divider")!
+    const dividerB = b.find((item) => item.type === "day_divider")!
+    expect(getTimelineItemKey(dividerA)).toBe(getTimelineItemKey(dividerB))
+    expect(timelineItemEqual(dividerA, dividerB)).toBe(true)
   })
 })

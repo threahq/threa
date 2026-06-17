@@ -19,6 +19,8 @@ import { EventItem } from "./event-item"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
 import { UnreadDivider } from "./unread-divider"
+import { DayDivider } from "./day-divider"
+import { localStartOfDayMs } from "@/lib/dates"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
 import type {
@@ -139,6 +141,14 @@ export type TimelineItem =
    * separate item types.
    */
   | { type: "skeleton"; index: number }
+  /**
+   * A day boundary between rows from different local calendar days (INV-42).
+   * Purely client-derived — not a server event, so it consumes no
+   * `broadcastSequence` and never participates in contiguity/hole detection
+   * (INV-61). `dayStartMs` is the local start-of-day key; the renderer formats
+   * the label ("Today"/"Yesterday"/date) at render time so it stays current.
+   */
+  | { type: "day_divider"; dayStartMs: number }
 
 /** Event types that participate in author-grouping (render as message bodies). */
 const MESSAGE_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["message_created", "companion_response"])
@@ -287,6 +297,8 @@ export function getTimelineItemKey(item: TimelineItem): string {
       return `gap:${item.afterEventId}`
     case "skeleton":
       return `skeleton:older:${item.index}`
+    case "day_divider":
+      return `day:${item.dayStartMs}`
     default:
       return item.event.id
   }
@@ -314,6 +326,7 @@ function itemContainsEvent(item: TimelineItem, eventId: string): boolean {
       return item.events.some((event) => event.id === eventId)
     case "gap":
     case "skeleton":
+    case "day_divider":
       return false
     default:
       return item.event.id === eventId
@@ -345,6 +358,59 @@ export function injectGapItems(
         holesByAnchor.delete(anchorId)
       }
     }
+  }
+  return result
+}
+
+/**
+ * Local-day key (start-of-day ms) the row belongs to, or null for rows that
+ * carry no day (gaps, skeletons). A `day_divider` reports the day it opens, so
+ * the floating date header can read the topmost visible day off either a
+ * message row or a divider. Command/session groups key off their first event.
+ */
+export function itemDayStartMs(item: TimelineItem): number | null {
+  switch (item.type) {
+    case "event":
+      return localStartOfDayMs(new Date(item.event.createdAt))
+    case "command_group":
+    case "session_group": {
+      const first = item.events[0]
+      return first ? localStartOfDayMs(new Date(first.createdAt)) : null
+    }
+    case "day_divider":
+      return item.dayStartMs
+    default:
+      return null
+  }
+}
+
+/**
+ * Insert a `day_divider` before the first row of each local calendar day
+ * (INV-42). Walks render-ordered items; rows without a timestamp (gaps,
+ * skeletons) pass through without opening or resetting the current day. Pure
+ * and export-only for isolated coverage, mirroring `annotateAuthorGroups`.
+ *
+ * Run AFTER `filterVisibleItems` so a boundary lands above the first *visible*
+ * row of a day, not above a zero-height event that never renders.
+ */
+export function injectDayDividers(items: TimelineItem[]): TimelineItem[] {
+  const result: TimelineItem[] = []
+  let currentDayMs: number | null = null
+  for (const item of items) {
+    const dayMs = itemDayStartMs(item)
+    if (dayMs !== null) {
+      // Never emit a divider above the very first timestamped row. Keeping a
+      // real event at index 0 means its key changes on every older-page
+      // prepend, so useTimelineScroll's first-key prepend detection still fires
+      // and virtua holds the viewport (INV-21). A leading divider whose
+      // `day:<ms>` key repeats across a same-day prepend would silently break
+      // that hold.
+      if (currentDayMs !== null && dayMs !== currentDayMs) {
+        result.push({ type: "day_divider", dayStartMs: dayMs })
+      }
+      currentDayMs = dayMs
+    }
+    result.push(item)
   }
   return result
 }
@@ -476,7 +542,7 @@ export interface TimelineItemRenderContext {
 
 function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean {
   if (!firstUnreadEventId) return false
-  if (item.type === "gap" || item.type === "skeleton") return false
+  if (item.type === "gap" || item.type === "skeleton" || item.type === "day_divider") return false
   if (item.type === "command_group" || item.type === "session_group") {
     return item.events[0]?.id === firstUnreadEventId
   }
@@ -532,6 +598,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
   return (
     <>
       {showUnreadDivider && <UnreadDivider isFading={ctx.isDividerFading} />}
+      {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
         <div className="px-3 sm:px-6">
           <CommandEvent events={item.events} />
@@ -634,6 +701,10 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
     case "skeleton": {
       const other = b as Extract<TimelineItem, { type: "skeleton" }>
       return a.index === other.index
+    }
+    case "day_divider": {
+      const other = b as Extract<TimelineItem, { type: "day_divider" }>
+      return a.dayStartMs === other.dayStartMs
     }
   }
 }
@@ -764,6 +835,11 @@ export function EventList({
     [abortResearch, workspaceId]
   )
 
+  // Day boundaries between rows from different local days (INV-42). Threads
+  // render all events with no zero-height filtering, so dividers go straight
+  // onto the grouped list.
+  const itemsWithDividers = useMemo(() => injectDayDividers(timelineItems), [timelineItems])
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
@@ -824,7 +900,7 @@ export function EventList({
 
   return (
     <div className="flex flex-col py-3 sm:py-6 mx-auto max-w-[800px] w-full min-w-0">
-      {timelineItems.map((item) => {
+      {itemsWithDividers.map((item) => {
         const itemKey = getTimelineItemKey(item)
         return (
           <div key={itemKey} className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}>
