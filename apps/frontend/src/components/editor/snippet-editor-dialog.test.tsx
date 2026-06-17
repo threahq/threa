@@ -37,12 +37,12 @@ describe("SnippetEditorDialog", () => {
       />
     )
 
-    expect(screen.getByRole("button", { name: /Snippet format/ }).textContent).toContain("JSON")
+    expect(screen.getByRole("combobox", { name: "Snippet format" }).textContent).toContain("JSON")
     fireEvent.change(screen.getByLabelText("Snippet filename"), { target: { value: "data.csv" } })
-    expect(screen.getByRole("button", { name: /Snippet format/ }).textContent).toContain("CSV")
+    expect(screen.getByRole("combobox", { name: "Snippet format" }).textContent).toContain("CSV")
   })
 
-  it("overrides a wrong sniff via the format dropdown, rewriting the extension", async () => {
+  it("overrides a wrong sniff via the format select, rewriting the extension", async () => {
     const user = userEvent.setup()
     render(
       <SnippetEditorDialog
@@ -54,11 +54,11 @@ describe("SnippetEditorDialog", () => {
       />
     )
 
-    await user.click(screen.getByRole("button", { name: /Snippet format/ }))
-    await user.click(await screen.findByRole("menuitemradio", { name: /CSV/ }))
+    await user.click(screen.getByRole("combobox", { name: "Snippet format" }))
+    await user.click(await screen.findByRole("option", { name: "CSV" }))
 
     expect((screen.getByLabelText("Snippet filename") as HTMLInputElement).value).toBe("snippet-1.csv")
-    expect(screen.getByRole("button", { name: /Snippet format/ }).textContent).toContain("CSV")
+    expect(screen.getByRole("combobox", { name: "Snippet format" }).textContent).toContain("CSV")
   })
 
   it("saves the edited text and filename", () => {

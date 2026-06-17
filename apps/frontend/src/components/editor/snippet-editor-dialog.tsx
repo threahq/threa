@@ -1,14 +1,8 @@
 import { useEffect, useRef, useState } from "react"
-import { ChevronDown, FileCode2 } from "lucide-react"
+import { FileCode2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import {
   ResponsiveDialog,
@@ -136,42 +130,28 @@ export function SnippetEditorDialog({
               placeholder={SNIPPET_FALLBACK_FILENAME}
               className="flex-1 text-sm font-mono"
             />
-            {/* The sniff is a guess; this dropdown lets the user correct it.
+            {/* The sniff is a guess; this Select lets the user correct it.
                 Picking a format rewrites the filename extension so the filename
-                stays the single source of truth for the badge label and mime. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-10 shrink-0 justify-between gap-1.5 min-w-28 font-normal"
-                >
-                  <span className="sr-only">Snippet format: </span>
-                  {format.label}
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
-                <DropdownMenuRadioGroup
-                  value={format.key}
-                  onValueChange={(key) =>
-                    setFilename(
-                      withSnippetFormatExtension(trimmedFilename || SNIPPET_FALLBACK_FILENAME, snippetFormatByKey(key))
-                    )
-                  }
-                >
-                  {SNIPPET_FORMAT_OPTIONS.map((option) => (
-                    <DropdownMenuRadioItem key={option.key} value={option.key} className="cursor-pointer">
-                      {option.label}
-                      <span className="ml-auto pl-4 text-xs text-muted-foreground tabular-nums">
-                        .{option.extension}
-                      </span>
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                stays the single source of truth for the label and mime. */}
+            <Select
+              value={format.key}
+              onValueChange={(key) =>
+                setFilename(
+                  withSnippetFormatExtension(trimmedFilename || SNIPPET_FALLBACK_FILENAME, snippetFormatByKey(key))
+                )
+              }
+            >
+              <SelectTrigger aria-label="Snippet format" className="h-10 w-auto min-w-[7.5rem] shrink-0 font-normal">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SNIPPET_FORMAT_OPTIONS.map((option) => (
+                  <SelectItem key={option.key} value={option.key}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {/* wrap="off": long lines scroll horizontally so code keeps its
               column layout rather than reflowing. */}
