@@ -218,7 +218,12 @@ describe("recordBotInvocationSealedStep", () => {
     )
 
     const updateParams = update.mock.calls[0]?.[2] as unknown as Record<string, unknown>
-    expect(updateParams).toMatchObject({ contentCiphertext: "c2VhbGVk", contentEnvelope: REPLY_ENVELOPE })
+    // sessionId scopes the finalize so a caller-supplied stepId can't touch another session's step.
+    expect(updateParams).toMatchObject({
+      sessionId: "binv_1",
+      contentCiphertext: "c2VhbGVk",
+      contentEnvelope: REPLY_ENVELOPE,
+    })
     expect(updateParams.completedAt).toBeInstanceOf(Date)
     // No fallback insert when the in-flight row was finalized.
     expect(append).not.toHaveBeenCalled()

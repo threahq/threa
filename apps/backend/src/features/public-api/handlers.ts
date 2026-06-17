@@ -1347,7 +1347,10 @@ export function createPublicApiHandlers({
       assertReplyKeyGeneration(session, data.envelope)
 
       const completedAt = new Date()
+      // Scope the finalize to this session: data.stepId is caller-supplied, so an
+      // unscoped update would let a bot overwrite another session's step row.
       let persisted = await AgentSessionRepository.updateStep(pool, data.stepId, {
+        sessionId: session.id,
         contentCiphertext: data.ciphertext,
         contentEnvelope: data.envelope,
         messageId: data.messageId,
