@@ -1025,13 +1025,19 @@ export function StreamContent({
       const rePin = () => {
         const draftScroller = draftScrollRef.current
         if (draftScroller) {
-          draftScroller.scrollTop = draftScroller.scrollHeight
+          // Drafts: only snap if the user is already parked at the bottom.
+          if (opts.initial || draftScroller.scrollTop + draftScroller.clientHeight >= draftScroller.scrollHeight - 10) {
+            draftScroller.scrollTop = draftScroller.scrollHeight
+          }
           return
         }
+        // Main timeline: force on initial correction (cold-load anchor fix),
+        // but respect the follow flag for runtime composer growth so a user
+        // scrolled up to read history isn't yanked back to the tail.
         if (useVirtualized) {
-          virtualScrollToBottomRef.current({ force: true })
+          virtualScrollToBottomRef.current({ force: opts.initial })
         } else {
-          plainScrollToBottomRef.current({ force: true })
+          plainScrollToBottomRef.current({ force: opts.initial })
         }
       }
       if (opts.initial) {

@@ -294,7 +294,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     const scroller = draftScrollRef.current
     if (!scroller) return
     const rePin = () => {
-      scroller.scrollTop = scroller.scrollHeight
+      // Only snap if already at the bottom; if the user has scrolled up to
+      // read older draft context, composer growth should not yank them back.
+      if (opts.initial || scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 10) {
+        scroller.scrollTop = scroller.scrollHeight
+      }
     }
     if (opts.initial) {
       rePin()
