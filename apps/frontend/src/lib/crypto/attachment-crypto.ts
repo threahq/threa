@@ -6,6 +6,7 @@ import {
   sealMessage,
   type AttachmentRef,
 } from "@threa/crypto"
+import { registerDecryptedCache } from "./decrypted-cache"
 
 // The `AttachmentRef` type and the `decryptAttachmentBytes` open primitive are
 // canonical in @threa/crypto so the enclave shares them (INV-35). Re-export them
@@ -59,3 +60,7 @@ export function getAttachmentRef(attachmentId: string): AttachmentRef | null {
 export function clearAttachmentRefCache(): void {
   pendingRefs.clear()
 }
+
+// The pre-send key bridge holds AES key material, so it dies on the same lock
+// boundary as decrypted plaintext via the single `clearAllDecrypted()` call site.
+registerDecryptedCache(clearAttachmentRefCache)

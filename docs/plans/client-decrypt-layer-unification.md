@@ -1,7 +1,7 @@
 # Client-side decrypt layer unification (design)
 
-**Status:** Draft for review — no implementation yet. PR #955 (sealed-name
-loading-state authority) is slice 0 of the sequencing below. Targets current
+**Status:** In progress — slice 0 (PR #955, sealed-name loading-state authority)
+and slice 1 are implemented; later slices pending. Targets current
 `origin/main` (post-#946, Stage 4c E2E draft roaming); the implementing branch
 must rebase onto it (the inventory below reflects post-#946 reality).
 
@@ -165,10 +165,13 @@ function clearAllDecrypted(): void // called once on lock / account switch
 
 - **Slice 0 — DONE (PR #955):** sealed-name loading-state collapsed into one
   authority. Proves the status-drift and the fix.
-- **Slice 1 — cache primitive + registry.** Extract `createDecryptedCache` and
-  the lock-clear registry; refactor `decrypt-cache` and `stream-name-cache` to be
-  instances. Pure internal refactor; behavior identical; existing tests are the
-  guard. No surface changes.
+- **Slice 1 — DONE.** `createDecryptedCache` (`lib/crypto/decrypted-cache.ts`)
+  and the lock-clear registry (`registerDecryptedCache` / `clearAllDecrypted`)
+  are extracted; `decrypt-cache` (per-key, LRU 500, terminal failures) and
+  `stream-name-cache` (global version, `retryFailed`) are thin instances over it.
+  The two divergences are options: `subscription` ("global" | "per-key") and
+  `retryFailed`. Behavior is identical — the existing wrapper tests are the guard,
+  plus a focused `decrypted-cache.test.ts` for the primitive and registry.
 - **Slice 2 — unified decode entry.** Extract `resolveDecryptContext` (session +
   root-SSK + hydration guard); route `useDecryptedMessageContent`,
   `useDecryptedStepContent`, `useStreamSearch`, and the draft decrypt
@@ -234,9 +237,14 @@ absorbs. The draft read path joins slices 2–3.
 
 ## Open questions
 
-1. Does `clearStreamKeyCache` join the registry, or stay explicit (it's a key
-   cache, not content)? Leaning: register it too, so "lock clears everything" is
-   one call — but it has different semantics (keys vs plaintext). Decide in slice 1.
+1. ~~Does `clearStreamKeyCache` join the registry, or stay explicit?~~
+   **Resolved (slice 1): all four register.** `clearStreamKeyCache` and
+   `clearAttachmentRefCache` call `registerDecryptedCache(...)` at module load, so
+   `e2e-session-store`'s two clear sites each became a single `clearAllDecrypted()`.
+   The constraint "one call site, no field forgotten" wins over the keys-vs-plaintext
+   distinction: registration is orthogonal to what a cache does (the SSK layer's
+   resolution logic is untouched), and a cache can only hold material if its module
+   is loaded — and loading registers it — so any cache with data is cleared on lock.
 2. Do steps keep sharing `messageCache` (keyed by `step.id`) or get their own
    instance? Leaning: keep sharing — same shape, same LRU pressure profile.
 3. Is a single `useDecryptedField` hook worth it, or do the per-domain hooks stay

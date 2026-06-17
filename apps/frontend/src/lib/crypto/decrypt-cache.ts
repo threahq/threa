@@ -1,89 +1,53 @@
 import { tryDecryptMessagePayload, type DecryptedMessageContent, type DecryptMessageOpts } from "./message-envelope"
+import { createDecryptedCache, type DecryptStatus } from "./decrypted-cache"
 
 /**
- * In-memory cache for decrypted E2E message payloads.
+ * In-memory cache for decrypted E2E message payloads — a per-key instance of the
+ * shared {@link createDecryptedCache} primitive (which owns the inflight-dedup,
+ * lock-epoch guard, subscribe/version signal, LRU, and lock-clear registration).
  *
  * Ciphertext + envelope stay at rest in `db.events.payload` and decrypt only on
  * demand at render time. Each rendered message hits this cache; on miss, the
  * caller kicks off a decrypt and the cache notifies subscribers when it lands.
- *
- * Lifecycle:
- *  - Entries are inserted on successful (or failed) decrypt.
- *  - LRU eviction caps memory regardless of how many messages the user scrolls.
- *  - `clearDecryptCache()` drops everything; call it on session lock and on
- *    account switch so plaintext never outlives the unlocked session.
+ * `clearDecryptCache()` (also fired by `clearAllDecrypted` on lock) drops
+ * everything so plaintext never outlives the unlocked session.
  */
 
-export type DecryptStatus = "pending" | "decrypted" | "failed"
+export type { DecryptStatus }
 
 export interface DecryptCacheEntry {
   status: DecryptStatus
   content: DecryptedMessageContent | null
 }
 
-const MAX_ENTRIES = 500
-
-const entries = new Map<string, DecryptCacheEntry>()
-const inflight = new Map<string, Promise<DecryptCacheEntry>>()
-const listeners = new Map<string, Set<() => void>>()
-
-// Bumped by clearDecryptCache so in-flight decrypts that resolve after a lock
-// can detect they're stale and refuse to write plaintext back into the cache.
-let generation = 0
-
-// A monotonic version bumped on EVERY cache change, with its own listener set.
-// Per-id subscriptions (`subscribeToDecryption`) suit a single rendered message;
-// a batch reader (e.g. decrypted draft previews across a list) instead watches
-// this one signal and re-reads the ids it cares about.
-let cacheVersion = 0
-const versionListeners = new Set<() => void>()
-
-function emit(eventId: string): void {
-  cacheVersion++
-  for (const listener of versionListeners) listener()
-  const set = listeners.get(eventId)
-  if (!set) return
-  for (const listener of set) listener()
-}
+const cache = createDecryptedCache<DecryptCacheEntry>({
+  subscription: "per-key",
+  // LRU caps memory regardless of how many messages the user scrolls.
+  lru: 500,
+  // A message id is immutable: a decrypt that fails (wrong recipient, tampered
+  // AAD) is terminal, so a re-request must not retry.
+  retryFailed: false,
+  pending: () => ({ status: "pending", content: null }),
+  // A message id's first good decrypt is final, so a later seed must not clobber it.
+  skipPrime: (existing) => existing?.status === "decrypted",
+})
 
 /** Snapshot of the global cache version — changes on any insert/seed/invalidate/clear. */
 export function getDecryptCacheVersion(): number {
-  return cacheVersion
+  return cache.getVersion()
 }
 
 /** Subscribe to ANY cache change (for batch readers like draft-preview lists). */
 export function subscribeDecryptCacheVersion(listener: () => void): () => void {
-  versionListeners.add(listener)
-  return () => versionListeners.delete(listener)
-}
-
-function touch(eventId: string, entry: DecryptCacheEntry): void {
-  // Map iteration order is insertion order; re-inserting bumps it to MRU.
-  entries.delete(eventId)
-  entries.set(eventId, entry)
-  if (entries.size > MAX_ENTRIES) {
-    const oldest = entries.keys().next().value
-    if (oldest !== undefined) entries.delete(oldest)
-  }
+  return cache.subscribe(null, listener)
 }
 
 export function getCachedDecryption(eventId: string): DecryptCacheEntry | undefined {
-  return entries.get(eventId)
+  return cache.peek(eventId)
 }
 
 export function subscribeToDecryption(eventId: string, listener: () => void): () => void {
-  let set = listeners.get(eventId)
-  if (!set) {
-    set = new Set()
-    listeners.set(eventId, set)
-  }
-  set.add(listener)
-  return () => {
-    const current = listeners.get(eventId)
-    if (!current) return
-    current.delete(listener)
-    if (current.size === 0) listeners.delete(eventId)
-  }
+  return cache.subscribe(eventId, listener)
 }
 
 export interface RequestDecryptionInput {
@@ -98,39 +62,10 @@ export function requestDecryption(
   payload: RequestDecryptionInput,
   opts: DecryptMessageOpts
 ): Promise<DecryptCacheEntry> {
-  const existing = entries.get(eventId)
-  if (existing && existing.status !== "pending") return Promise.resolve(existing)
-
-  const pending = inflight.get(eventId)
-  if (pending) return pending
-
-  touch(eventId, { status: "pending", content: null })
-
-  const startGeneration = generation
-  // A holder so the async body can compare against its own promise identity
-  // (`holder.promise` is assigned synchronously below, before any await resolves).
-  const holder: { promise?: Promise<DecryptCacheEntry> } = {}
-  holder.promise = (async (): Promise<DecryptCacheEntry> => {
+  return cache.request(eventId, async () => {
     const decrypted = await tryDecryptMessagePayload(payload, opts)
-    const entry: DecryptCacheEntry = decrypted
-      ? { status: "decrypted", content: decrypted }
-      : { status: "failed", content: null }
-    // If the cache was cleared (lock / account switch) while this decrypt was
-    // in flight, drop the result — writing it back would leak plaintext past
-    // the lock boundary.
-    if (startGeneration !== generation) return entry
-    // A concurrent `invalidateDecryption` (or a fresh `seedDecryption`) may have
-    // replaced this id's slot while we were decrypting; only the current inflight
-    // writes back, so a stale decrypt can never clobber freshly-authored content.
-    if (inflight.get(eventId) !== holder.promise) return entry
-    touch(eventId, entry)
-    inflight.delete(eventId)
-    emit(eventId)
-    return entry
-  })()
-
-  inflight.set(eventId, holder.promise)
-  return holder.promise
+    return decrypted ? { status: "decrypted", content: decrypted } : { status: "failed", content: null }
+  })
 }
 
 /**
@@ -142,11 +77,7 @@ export function requestDecryption(
  * sent row. No-op if the event already has a decrypted entry.
  */
 export function seedDecryption(eventId: string, content: DecryptedMessageContent): void {
-  const existing = entries.get(eventId)
-  if (existing && existing.status === "decrypted") return
-  touch(eventId, { status: "decrypted", content })
-  inflight.delete(eventId)
-  emit(eventId)
+  cache.prime(eventId, { status: "decrypted", content })
 }
 
 /**
@@ -162,15 +93,9 @@ export function seedDecryption(eventId: string, content: DecryptedMessageContent
  * write path therefore invalidates this id, then seeds the fresh plaintext.
  */
 export function invalidateDecryption(eventId: string): void {
-  const had = entries.delete(eventId)
-  const wasInflight = inflight.delete(eventId)
-  if (had || wasInflight) emit(eventId)
+  cache.invalidate(eventId)
 }
 
 export function clearDecryptCache(): void {
-  generation++
-  const ids = Array.from(entries.keys())
-  entries.clear()
-  inflight.clear()
-  for (const id of ids) emit(id)
+  cache.clear()
 }

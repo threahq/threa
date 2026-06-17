@@ -8,6 +8,7 @@ import {
 } from "@threa/crypto"
 import type { E2eKeyRollRecipient, E2eKeyWrapsResponse } from "@threa/types"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
+import { registerDecryptedCache } from "./decrypted-cache"
 
 /**
  * In-memory cache for per-stream symmetric keys (SSKs).
@@ -427,3 +428,7 @@ export function clearStreamKeyCache(): void {
   currentGenerations.clear()
   inflight.clear()
 }
+
+// SSK material dies on the same lock boundary as decrypted plaintext, so the
+// single `clearAllDecrypted()` call site can't forget it.
+registerDecryptedCache(clearStreamKeyCache)
