@@ -67,7 +67,14 @@ const frontendPort = getOrAllocatePort("PLAYWRIGHT_FRONTEND_PORT")
 const dbName = deriveTestDatabaseName()
 const cpDbName = `${dbName}_cp`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
-const webServerTimeout = 60000
+// In CI the backend, control-plane and router boot concurrently with the
+// CPU-heavy frontend prod build (`vite build`) on a 4-vCPU runner, so their
+// `/readyz` can lag well past a dev-machine cold start. A too-tight ceiling here
+// fails the whole shard before a single test runs (no `.last-run.json` → the
+// isolation-retry step bails → the shard is marked failed), which is a recurring
+// source of red runs on otherwise-green commits. Give the boot real headroom in
+// CI; locally these servers start fast (and are reused across runs).
+const webServerTimeout = isCI ? 120000 : 60000
 
 // In CI the frontend is served as a production build via `vite preview` rather
 // than the Vite dev server: dev-mode on-demand transform competes for CPU with
@@ -109,13 +116,21 @@ export default defineConfig({
   fullyParallel: true, // Each test creates unique user + workspace — safe to parallelize
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  // CI: 3 workers. The 4-vCPU runner also hosts the backend, control-plane,
-  // wrangler and Vite dev server, so higher worker counts oversubscribe it and
-  // tests fail under contention (only passing on the isolated retry).
+  // CI: 2 workers. The 4-vCPU runner also hosts the backend, control-plane,
+  // wrangler and the Vite preview server, so 3 workers (3 Chromiums + backend ≈
+  // 4 saturated cores) left no headroom — a rotating ~1-test-per-shard tail kept
+  // tripping on contention (slow assertions, clicks that never settle) and only
+  // passing on the in-run retry. 2 workers leaves a spare core and the suite is
+  // sharded ×4, so wall-clock stays well under the 25-min job budget.
   // Local: auto (half CPU cores).
-  workers: process.env.CI ? 3 : undefined,
+  workers: process.env.CI ? 2 : undefined,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
-  timeout: 30000, // 30s per test
+  // 30s locally for fast feedback. CI gets 60s: the shared 4-vCPU runner makes
+  // setup + interaction-heavy flows (send-then-edit, hover-reveal menus) take
+  // markedly longer under contention, and several tests were timing out mid-flow
+  // only to pass on the isolated retry. A higher ceiling absorbs that without
+  // masking a genuinely stuck test — the 25-min job timeout still bounds it.
+  timeout: process.env.CI ? 60000 : 30000,
 
   use: {
     baseURL: `http://localhost:${frontendPort}`,

@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk, generateTestId } from "./helpers"
+import {
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  createChannel,
+  expectApiOk,
+  generateTestId,
+  editLastMessageViaArrowUp,
+} from "./helpers"
 
 /**
  * E2E tests for the "press ArrowUp in empty composer to edit last message" feature.
@@ -65,11 +72,9 @@ test.describe("Edit last message (ArrowUp)", () => {
 
     // Editor should be empty after sending before ArrowUp can trigger inline edit.
     await expect(page.getByRole("button", { name: "Send" })).toBeDisabled({ timeout: 5000 })
-    await page.locator("[contenteditable='true']").click()
-    await page.keyboard.press("ArrowUp")
 
-    // Inline edit form opens
-    await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible({ timeout: 3000 })
+    // Inline edit form opens (ArrowUp re-issued until it does — see helper).
+    await editLastMessageViaArrowUp(page)
   })
 
   test("does nothing when the current user has no messages in the stream", async ({ page }) => {
@@ -86,7 +91,9 @@ test.describe("Edit last message (ArrowUp)", () => {
   })
 
   test("scrolls off-screen message into view and opens edit", async ({ browser }) => {
-    test.setTimeout(90000)
+    // Headroom for editLastMessageViaArrowUp's worst-case recovery: a stalled
+    // scroll-to-edit can take a few full settle windows before it lands.
+    test.setTimeout(120000)
     const testId = generateTestId()
     const channelName = `elm-scroll-${testId}`
 
@@ -154,16 +161,10 @@ test.describe("Edit last message (ArrowUp)", () => {
     const firstMessageEl = userA.page.getByRole("main").locator(".message-item").getByText(firstMessage).first()
     await expect(firstMessageEl).not.toBeInViewport({ timeout: 5000 })
 
-    // Press ArrowUp in the empty composer
-    await userA.page.locator("[contenteditable='true']").click()
-    await userA.page.keyboard.press("ArrowUp")
-
-    // Inline edit form should open
-    await expect(userA.page.getByRole("button", { name: "Cancel" })).toBeVisible({ timeout: 5000 })
-    // First message should now be scrolled into view. Generous timeout: the
-    // scroll-into-view runs after the edit form mounts and re-measures, which
-    // lands well past 5s on a cold/loaded backend.
-    await expect(firstMessageEl).toBeInViewport({ timeout: 15000 })
+    // Press ArrowUp in the empty composer: the inline edit form opens AND the
+    // off-screen target scrolls into view. Both are re-issued under load — the
+    // in-app trigger's scroll-into-view can lose to a tail re-pin (see helper).
+    await editLastMessageViaArrowUp(userA.page, { scrollTarget: firstMessageEl })
 
     await userA.context.close()
     await userB.context.close()
