@@ -178,6 +178,8 @@ export class BotRuntimeService {
     botId: string
     instanceId: string
     runtimeSessionId: string
+    /** Passed by session-create so reuse is kind-exact; omitted by rename (any kind). */
+    runtimeKind?: BotRuntimeKind
   }): Promise<BotRuntimeSessionLink | null> {
     return BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(this.pool, params)
   }
@@ -301,7 +303,13 @@ export class BotRuntimeService {
 
   private async upsertPiRemoteSessionPresenceInTransaction(
     db: Querier,
-    params: { workspaceId: string; botId: string; runtimeKind: BotRuntimeKind; instanceId: string; runtimeSessionId: string }
+    params: {
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+    }
   ): Promise<void> {
     await BotRuntimeInstanceRepository.upsertPresence(db, {
       id: botRuntimeInstanceId(),

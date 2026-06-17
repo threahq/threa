@@ -981,6 +981,7 @@ export function createPublicApiHandlers({
         botId: bot.id,
         instanceId: data.instanceId,
         runtimeSessionId: data.runtimeSessionId,
+        runtimeKind: data.runtimeKind,
       })
       if (existingLink) {
         await withTransaction(pool, (client) =>
