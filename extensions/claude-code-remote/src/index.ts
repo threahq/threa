@@ -41,9 +41,11 @@ async function main(): Promise<void> {
   process.on("SIGINT", () => void shutdown())
   process.on("SIGTERM", () => void shutdown())
 
-  await server.start().catch((error) => {
-    process.stderr.write(`[threa-channel] start failed: ${error instanceof Error ? error.message : String(error)}\n`)
-  })
+  // start() is best-effort internally (link/socket/presence self-heal on the
+  // poll loop); an error escaping it is an unexpected init failure, so fail loud
+  // — let it propagate to main().catch below, which logs and exits non-zero
+  // rather than leaving a connected-but-dead channel Claude can't detect.
+  await server.start()
 }
 
 main().catch((error) => {

@@ -115,6 +115,12 @@ export class ChannelServer {
   private renewTimer: ReturnType<typeof setInterval> | undefined
   private readonly inflight = new Map<string, Inflight>()
   private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
+  // The invocation whose turn is executing — the stream a relayed permission
+  // prompt belongs in. Set when a non-verdict invocation is pushed to Claude;
+  // it's the turn that can trigger a tool-approval prompt. Tracking it beats
+  // guessing from the in-flight map, where a follow-up message claimed during
+  // an open-permission window would otherwise be picked as the (wrong) target.
+  private activeTurnStreamId: string | undefined
 
   constructor(
     private readonly config: ThreaChannelConfig,
@@ -314,6 +320,9 @@ export class ChannelServer {
 
     const deadline = setTimeout(() => void this.onReplyTimeout(invocation.id), this.config.replyTimeoutMs)
     this.inflight.set(invocation.id, { invocation, deadline })
+    // This is the turn Claude is now executing; a permission prompt it triggers
+    // belongs in this invocation's stream (see handlePermissionRequest).
+    this.activeTurnStreamId = invocation.responseStreamId
     await this.syncPresence()
     await this.client
       .recordStep(invocation.id, {
@@ -375,6 +384,7 @@ export class ChannelServer {
         ],
       }
     }
+    if (this.activeTurnStreamId === entry.invocation.responseStreamId) this.activeTurnStreamId = undefined
     await this.syncPresence()
     return { content: [{ type: "text", text: "sent" }] }
   }
@@ -391,6 +401,7 @@ export class ChannelServer {
         metadata: { "cc.channel.invocationId": invocationId, "cc.channel.timedOut": "true" },
       })
       .catch((error) => log(`timeout completion failed: ${this.summarize(error)}`))
+    if (this.activeTurnStreamId === entry.invocation.responseStreamId) this.activeTurnStreamId = undefined
     await this.syncPresence()
   }
 
@@ -404,9 +415,9 @@ export class ChannelServer {
   // --- Permission relay -----------------------------------------------------
 
   private async handlePermissionRequest(params: z.infer<typeof PermissionRequestSchema>["params"]): Promise<void> {
-    // Post into the stream the in-flight turn is conversing in (where the user
-    // is reading and will reply), falling back to the scratchpad root.
-    const targetStreamId = [...this.inflight.values()].at(-1)?.invocation.responseStreamId ?? this.link?.rootStreamId
+    // Post into the executing turn's stream (where the user is reading and will
+    // reply), falling back to the scratchpad root.
+    const targetStreamId = this.activeTurnStreamId ?? this.link?.rootStreamId
     if (!targetStreamId) return
     // Drop the open request after the same window we give a reply, so an
     // abandoned/cancelled prompt the user never answers doesn't leak forever.
@@ -521,10 +532,16 @@ export class ChannelServer {
             claimTtlSeconds: CLAIM_TTL_SECONDS,
           })
           .catch((error) => {
-            if (error instanceof ThreaApiError && error.status === 404) this.clearInflight(id)
-            // Surface other failures: a swallowed renew error can let the claim
-            // lapse silently, after which the eventual reply 404s and is lost.
-            else log(`renew ${id} failed: ${this.summarize(error)}`)
+            if (error instanceof ThreaApiError && error.status === 404) {
+              // The claim's gone server-side; drop it and resync presence so a
+              // last-in-flight 404 doesn't strand the runtime as busy.
+              this.clearInflight(id)
+              void this.syncPresence()
+            } else {
+              // Surface other failures: a swallowed renew error can let the claim
+              // lapse silently, after which the eventual reply 404s and is lost.
+              log(`renew ${id} failed: ${this.summarize(error)}`)
+            }
           })
       }
     }, RENEW_INTERVAL_MS)

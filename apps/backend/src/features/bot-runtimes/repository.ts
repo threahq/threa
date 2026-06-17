@@ -486,13 +486,11 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
-  // A runtime client is identified by (instanceId, runtimeSessionId). Callers that
-  // know the kind they're acting for (session create) pass it so reuse is kind-exact
-  // — the original bug was the inverse, a hardcoded `runtime_kind = 'pi-local'` that
-  // made a claude-code-channel relaunch miss its own link and re-run the create path,
-  // violating the (…, runtime_kind, instance_id, runtime_session_id) unique key.
-  // `runtimeKind` omitted (rename) matches any kind; ORDER BY keeps that deterministic
-  // even though the (instance, session) pair is unique per kind in practice.
+  // A runtime client is identified by (instanceId, runtimeSessionId). Session-create
+  // callers pass `runtimeKind` so reuse matches the link of the kind being created —
+  // the unique key includes runtime_kind, so two kinds can hold the same instance/
+  // session pair. Rename callers omit it to match that runtime identity across kinds;
+  // `ORDER BY updated_at DESC LIMIT 1` keeps the kindless case deterministic.
   async findActiveByRuntimeSession(
     db: Querier,
     params: {

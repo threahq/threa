@@ -1,13 +1,11 @@
 /**
- * E2E coverage for the `claude-code-channel` runtime kind (the Claude Code
+ * E2E coverage for `claude-code-channel` runtime sessions (the Claude Code
  * channel in `extensions/claude-code-remote/`).
  *
- * Proves the backend accepts a session for the new kind and — the regression
- * that matters — that creating the same session twice is idempotent. The second
- * call is what every channel restart in the same directory does; it previously
- * 500'd because `findActivePiRemoteSession` hardcoded `runtime_kind = 'pi-local'`,
- * missed the existing claude-code-channel link, re-ran the create path, and
- * violated the (…, runtime_kind, instance_id, runtime_session_id) unique key.
+ * Verifies the session API for the new kind: create, idempotent reuse on a
+ * repeat create (what every channel restart in the same directory does — it
+ * must return the same scratchpad, not a fresh one or a 500), rejection of
+ * link-free kinds, and the dispatch → claim → complete round-trip.
  */
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test"

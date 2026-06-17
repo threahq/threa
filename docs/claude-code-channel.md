@@ -37,7 +37,7 @@ The extension is a single MCP server (`src/index.ts` → `ChannelServer`). Claud
 - `ChannelServer` (`src/channel-server.ts`) owns the MCP `Server`, a socket.io connection to the `/bot` namespace, and the bridge logic.
 - `config.ts` resolves credentials and derives stable ids.
 
-It talks to production Threa over HTTPS and a websocket. There are **no backend changes**: it uses the public bot-runtime API that already exists for Pi.
+It talks to Threa over HTTPS and a websocket, reusing the public bot-runtime API that already serves Pi. The only backend change is making `claude-code-channel` a first-class linked runtime kind (see [A first-class runtime kind](#a-first-class-runtime-kind) below) — small and additive; everything else rides the existing rails.
 
 ## Startup: linking a scratchpad
 
