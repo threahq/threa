@@ -229,6 +229,18 @@ describe("github_pulls mode=files", () => {
     expect(parsed.files[0].patch.truncated).toBe(true)
     expect(parsed.files[1].patch).toBeNull()
   })
+
+  it("defaults perPage to 30 when omitted (files-mode default differs from list)", async () => {
+    let capturedPerPage: unknown
+    const request: RequestFn = async (_route, params) => {
+      capturedPerPage = params?.per_page
+      return []
+    }
+    const tool = createGithubPullsTool(makeDeps(request))
+    const { output } = await tool.config.execute({ mode: "files", owner: "o", repo: "r", number: 1 }, toolOpts)
+    expect(capturedPerPage).toBe(30)
+    expect(JSON.parse(output).perPage).toBe(30)
+  })
 })
 
 describe("github_issues mode=get", () => {

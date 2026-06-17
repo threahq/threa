@@ -37,7 +37,13 @@ const PullsSchema = z
       .optional()
       .default(true)
       .describe("files: include per-file diff patches, truncated to bounded size"),
-    perPage: z.number().int().min(1).max(100).optional().default(20).describe("list/files: items per page"),
+    perPage: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("list/files: items per page. Defaults to 20 for list, 30 for files."),
     page: z.number().int().min(1).optional().default(1).describe("list/files: 1-indexed page number"),
   })
   // number identifies the PR for get/files; list enumerates instead, so it's
@@ -51,6 +57,7 @@ const PullsSchema = z
 export type PullsInput = z.infer<typeof PullsSchema>
 
 async function listPullRequests(deps: GitHubToolDeps, input: PullsInput): Promise<AgentToolResult> {
+  const perPage = input.perPage ?? 20
   const result = await withGithubClient(deps, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/pulls", {
       owner: input.owner,
@@ -60,7 +67,7 @@ async function listPullRequests(deps: GitHubToolDeps, input: PullsInput): Promis
       head: input.head,
       sort: input.sort,
       direction: input.direction,
-      per_page: input.perPage,
+      per_page: perPage,
       page: input.page,
     })
     return response.map((p) => ({
@@ -95,7 +102,7 @@ async function listPullRequests(deps: GitHubToolDeps, input: PullsInput): Promis
       repo: input.repo,
       state: input.state,
       page: input.page,
-      perPage: input.perPage,
+      perPage,
       count: result.length,
       pullRequests: result,
     }),
@@ -186,12 +193,13 @@ async function getPullRequest(deps: GitHubToolDeps, input: PullsInput): Promise<
 }
 
 async function listPrFiles(deps: GitHubToolDeps, input: PullsInput): Promise<AgentToolResult> {
+  const perPage = input.perPage ?? 30
   const result = await withGithubClient(deps, async (client) => {
     const response = await client.request<any[]>("GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
       owner: input.owner,
       repo: input.repo,
       pull_number: input.number,
-      per_page: Math.min(input.perPage, MAX_PR_FILES),
+      per_page: Math.min(perPage, MAX_PR_FILES),
       page: input.page,
     })
     return response.map((f: any) => {
@@ -218,7 +226,7 @@ async function listPrFiles(deps: GitHubToolDeps, input: PullsInput): Promise<Age
       repo: input.repo,
       number: input.number,
       page: input.page,
-      perPage: input.perPage,
+      perPage,
       count: result.length,
       files: result,
     }),
