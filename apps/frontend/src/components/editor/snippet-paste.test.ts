@@ -4,8 +4,10 @@ import {
   shouldConvertPasteToSnippet,
   defaultSnippetFilename,
   detectSnippetFormat,
+  snippetFormatByKey,
   snippetFormatForFilename,
   snippetMimeForFilename,
+  withSnippetFormatExtension,
   SNIPPET_PASTE_BYTE_THRESHOLD,
 } from "./snippet-paste"
 
@@ -89,6 +91,23 @@ describe("detectSnippetFormat", () => {
     expect(detectSnippetFormat("---\nname: threa\nversion: 1\nitems:\n  - a\n  - b").key).toBe("yaml")
     expect(detectSnippetFormat("host: localhost\nport: 5432\nuser: admin\ndebug: false").key).toBe("yaml")
     expect(detectSnippetFormat("The quick brown fox.\nJumped over the lazy dog.\nAgain and again.").key).toBe("text")
+  })
+})
+
+describe("withSnippetFormatExtension", () => {
+  it("swaps an existing extension for the chosen format's", () => {
+    expect(withSnippetFormatExtension("data.json", snippetFormatByKey("csv"))).toBe("data.csv")
+    expect(withSnippetFormatExtension("query.sql", snippetFormatByKey("text"))).toBe("query.txt")
+  })
+
+  it("appends an extension when the name has none", () => {
+    expect(withSnippetFormatExtension("mydata", snippetFormatByKey("yaml"))).toBe("mydata.yaml")
+    expect(withSnippetFormatExtension("notes.", snippetFormatByKey("markdown"))).toBe("notes.md")
+  })
+
+  it("falls back to a snippet base for an empty or dot-only name", () => {
+    expect(withSnippetFormatExtension("", snippetFormatByKey("json"))).toBe("snippet.json")
+    expect(withSnippetFormatExtension("   ", snippetFormatByKey("json"))).toBe("snippet.json")
   })
 })
 

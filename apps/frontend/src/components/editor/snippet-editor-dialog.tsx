@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { FileCode2 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import {
   ResponsiveDialog,
@@ -11,7 +11,13 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { SNIPPET_FALLBACK_FILENAME, snippetFormatForFilename } from "./snippet-paste"
+import {
+  SNIPPET_FALLBACK_FILENAME,
+  SNIPPET_FORMAT_OPTIONS,
+  snippetFormatByKey,
+  snippetFormatForFilename,
+  withSnippetFormatExtension,
+} from "./snippet-paste"
 
 interface SnippetEditorDialogProps {
   open: boolean
@@ -67,8 +73,8 @@ export function SnippetEditorDialog({
 
   const trimmedFilename = filename.trim()
   const canSave = text.length > 0 && trimmedFilename.length > 0
-  // Reads off the live filename (not the original sniff) so the badge always
-  // matches the extension that will actually be attached.
+  // Reads off the live filename (not the original sniff) so the format control
+  // always reflects the extension that will actually be attached.
   const format = snippetFormatForFilename(trimmedFilename || SNIPPET_FALLBACK_FILENAME)
 
   const handleSave = () => {
@@ -124,13 +130,28 @@ export function SnippetEditorDialog({
               placeholder={SNIPPET_FALLBACK_FILENAME}
               className="flex-1 text-sm font-mono"
             />
-            <Badge
-              variant="secondary"
-              className="shrink-0 justify-center min-w-24 font-normal pointer-events-none select-none"
+            {/* The sniff is a guess; this Select lets the user correct it.
+                Picking a format rewrites the filename extension so the filename
+                stays the single source of truth for the label and mime. */}
+            <Select
+              value={format.key}
+              onValueChange={(key) =>
+                setFilename(
+                  withSnippetFormatExtension(trimmedFilename || SNIPPET_FALLBACK_FILENAME, snippetFormatByKey(key))
+                )
+              }
             >
-              <span className="sr-only">Detected format: </span>
-              {format.label}
-            </Badge>
+              <SelectTrigger aria-label="Snippet format" className="h-10 w-auto min-w-[7.5rem] shrink-0 font-normal">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SNIPPET_FORMAT_OPTIONS.map((option) => (
+                  <SelectItem key={option.key} value={option.key}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           {/* wrap="off": long lines scroll horizontally so code keeps its
               column layout rather than reflowing. */}

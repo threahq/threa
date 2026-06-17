@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { SnippetEditorDialog } from "./snippet-editor-dialog"
 import * as useMobileModule from "@/hooks/use-mobile"
 
@@ -25,7 +26,7 @@ describe("SnippetEditorDialog", () => {
     expect((screen.getByLabelText("Snippet filename") as HTMLInputElement).value).toBe("snippet-1.txt")
   })
 
-  it("shows a format badge that tracks the filename extension", () => {
+  it("shows a format control that tracks the filename extension", () => {
     render(
       <SnippetEditorDialog
         open
@@ -36,10 +37,28 @@ describe("SnippetEditorDialog", () => {
       />
     )
 
-    expect(screen.getByText("JSON")).toBeTruthy()
+    expect(screen.getByRole("combobox", { name: "Snippet format" }).textContent).toContain("JSON")
     fireEvent.change(screen.getByLabelText("Snippet filename"), { target: { value: "data.csv" } })
-    expect(screen.getByText("CSV")).toBeTruthy()
-    expect(screen.queryByText("JSON")).toBeNull()
+    expect(screen.getByRole("combobox", { name: "Snippet format" }).textContent).toContain("CSV")
+  })
+
+  it("overrides a wrong sniff via the format select, rewriting the extension", async () => {
+    const user = userEvent.setup()
+    render(
+      <SnippetEditorDialog
+        open
+        onOpenChange={() => {}}
+        initialText="id,name\n1,ada"
+        defaultFilename="snippet-1.txt"
+        onSave={() => {}}
+      />
+    )
+
+    await user.click(screen.getByRole("combobox", { name: "Snippet format" }))
+    await user.click(await screen.findByRole("option", { name: "CSV" }))
+
+    expect((screen.getByLabelText("Snippet filename") as HTMLInputElement).value).toBe("snippet-1.csv")
+    expect(screen.getByRole("combobox", { name: "Snippet format" }).textContent).toContain("CSV")
   })
 
   it("saves the edited text and filename", () => {

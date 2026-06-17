@@ -62,6 +62,12 @@ if (typeof globalThis.BroadcastChannel === "undefined") {
 // Mock scrollIntoView (not available in jsdom)
 Element.prototype.scrollIntoView = () => {}
 
+// Pointer-capture APIs (not implemented in jsdom). Radix Select/Dropdown call
+// these during pointer interactions, so userEvent clicks throw without them.
+Element.prototype.hasPointerCapture ??= () => false
+Element.prototype.setPointerCapture ??= () => {}
+Element.prototype.releasePointerCapture ??= () => {}
+
 // Mock matchMedia (not available in jsdom, needed by useIsMobile)
 Object.defineProperty(window, "matchMedia", {
   writable: true,
