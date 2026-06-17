@@ -33,7 +33,7 @@ describe("decrypt-cache", () => {
     await requestDecryption("evt_1", { contentMarkdown: "ph", envelope: { fake: true } }, STUB_OPTS)
     const cached = getCachedDecryption("evt_1")
     expect(cached?.status).toBe("decrypted")
-    expect(cached?.content?.contentMarkdown).toBe("hello")
+    expect(cached?.value?.contentMarkdown).toBe("hello")
     expect(decrypt).toHaveBeenCalledTimes(1)
   })
 
@@ -116,7 +116,7 @@ describe("decrypt-cache", () => {
 
     const cached = getCachedDecryption("evt_seed")
     expect(cached?.status).toBe("decrypted")
-    expect(cached?.content?.contentMarkdown).toBe("from-sender")
+    expect(cached?.value?.contentMarkdown).toBe("from-sender")
 
     // A render-time request for the same event must short-circuit on the seed.
     await requestDecryption("evt_seed", { contentMarkdown: "ph", envelope: {} }, STUB_OPTS)
@@ -137,7 +137,7 @@ describe("decrypt-cache", () => {
       contentMarkdown: "should-not-replace",
       contentJson: { type: "doc", content: [] },
     })
-    expect(getCachedDecryption("evt_decrypted")?.content?.contentMarkdown).toBe("real")
+    expect(getCachedDecryption("evt_decrypted")?.value?.contentMarkdown).toBe("real")
   })
 
   it("evicts the least recently used entry when the cache exceeds its cap", async () => {

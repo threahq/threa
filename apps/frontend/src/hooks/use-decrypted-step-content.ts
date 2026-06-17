@@ -98,11 +98,11 @@ export function useDecryptedStepContent(
   // falls through to `pending`: the decrypt fires once the row lands and the
   // root is known, never against the bare thread id.
   if (!ctx.ready && ctx.reason === "locked") return { status: "locked", content: undefined }
-  if (cached?.status === "decrypted" && cached.content) {
+  if (cached?.status === "decrypted" && cached.value) {
     return {
       status: "decrypted",
-      content: cached.content.contentMarkdown,
-      sources: toTraceSources(cached.content.sources ?? []),
+      content: cached.value.contentMarkdown,
+      sources: toTraceSources(cached.value.sources ?? []),
     }
   }
   if (cached?.status === "failed") return { status: "failed", content: undefined }

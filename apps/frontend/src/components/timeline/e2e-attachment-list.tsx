@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 import { Download, FileLock2, Loader2 } from "lucide-react"
-import { attachmentsApi } from "@/api"
-import { decryptAttachmentBytes, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { type AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { requestAttachmentBytes } from "@/lib/crypto/attachment-cache"
+import { fetchAndDecryptAttachment, useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
 import { triggerDownload } from "@/lib/image-utils"
 import { Button } from "@/components/ui/button"
 
@@ -12,20 +13,12 @@ import { Button } from "@/components/ui/button"
  * ciphertext with no thumbnails, variants, or real metadata, so we fetch the
  * raw ciphertext, decrypt it in-memory with the per-file key/iv from the ref,
  * and render from a blob URL. Images preview inline; everything else is a
- * decrypt-on-click download. Real filename/size come from the ref, never the
- * server's placeholder row.
+ * decrypt-on-click download. The fetched bytes live in the shared
+ * `attachment-cache`, so an image re-mounting on scroll doesn't re-fetch and
+ * re-decrypt. Real filename/size come from the ref, never the server's placeholder.
  */
 
 const PREFIX = "🔒 "
-
-async function fetchAndDecrypt(workspaceId: string, ref: AttachmentRef): Promise<Blob> {
-  const url = await attachmentsApi.getDownloadUrl(workspaceId, ref.attachmentId, { variant: "raw" })
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Attachment fetch failed (${res.status})`)
-  const ciphertext = new Uint8Array(await res.arrayBuffer())
-  const plaintext = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
-  return new Blob([plaintext], { type: ref.mimeType })
-}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -34,29 +27,11 @@ function formatSize(bytes: number): string {
 }
 
 function E2eImageAttachment({ workspaceId, attachmentRef }: { workspaceId: string; attachmentRef: AttachmentRef }) {
-  const [url, setUrl] = useState<string | null>(null)
-  const [failed, setFailed] = useState(false)
+  const decrypted = useDecryptedAttachment(workspaceId, attachmentRef)
 
-  useEffect(() => {
-    let cancelled = false
-    let objectUrl: string | null = null
-    fetchAndDecrypt(workspaceId, attachmentRef)
-      .then((blob) => {
-        if (cancelled) return
-        objectUrl = URL.createObjectURL(blob)
-        setUrl(objectUrl)
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true)
-      })
-    return () => {
-      cancelled = true
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [workspaceId, attachmentRef])
-
-  if (failed) return <E2eFileAttachment workspaceId={workspaceId} attachmentRef={attachmentRef} />
-  if (!url) {
+  if (decrypted.status === "failed")
+    return <E2eFileAttachment workspaceId={workspaceId} attachmentRef={attachmentRef} />
+  if (decrypted.status === "pending") {
     return (
       <div className="flex h-40 w-full max-w-sm items-center justify-center rounded-lg border bg-muted/40">
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-label="Decrypting attachment" />
@@ -65,7 +40,7 @@ function E2eImageAttachment({ workspaceId, attachmentRef }: { workspaceId: strin
   }
   return (
     <img
-      src={url}
+      src={decrypted.url}
       alt={attachmentRef.filename}
       className="max-h-80 max-w-sm rounded-lg border object-contain"
       title={`${PREFIX}${attachmentRef.filename}`}
@@ -80,8 +55,11 @@ function E2eFileAttachment({ workspaceId, attachmentRef }: { workspaceId: string
     if (busy) return
     setBusy(true)
     try {
-      const blob = await fetchAndDecrypt(workspaceId, attachmentRef)
-      const objectUrl = URL.createObjectURL(blob)
+      const entry = await requestAttachmentBytes(attachmentRef.attachmentId, () =>
+        fetchAndDecryptAttachment(workspaceId, attachmentRef)
+      )
+      if (!entry.value) throw new Error("decrypt failed")
+      const objectUrl = URL.createObjectURL(entry.value)
       triggerDownload(objectUrl, attachmentRef.filename)
       // Give the browser a beat to start the download before reclaiming the URL.
       setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000)

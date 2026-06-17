@@ -107,3 +107,48 @@ always written the sealed columns only.
   searchable only client-side over the decrypted copy. Streams renamed _before_
   this shipped still hold plaintext in `display_name`; the server can't re-seal
   them, so they stay until the owner renames again while unlocked.
+
+## How to add an encrypted field (the decrypt layer)
+
+Every client-side encrypted field (message bodies, trace steps, stream names,
+drafts, attachment bytes) decrypts through one shared layer under
+`lib/crypto/`. Ciphertext stays at rest in IDB; plaintext is memory-only and
+cleared on lock (E2EE-4). Don't hand-roll a new cache, session gate, or
+hydration guard — reuse the three pieces below, and a new field needs no new
+session wiring and no copied footgun.
+
+1. **A cache instance, not a new cache.** Call
+   `createDecryptedCache<{ status, value }>(...)` from `lib/crypto/decrypted-cache.ts`.
+   Every entry is `{ status: "pending" | "decrypted" | "failed"; value: V | null }` —
+   keep that uniform shape (`value`, not a field named after the domain). Pick:
+   - `subscription`: `"per-key"` for many keys where one resolve must not re-render
+     the rest (messages, attachments); `"global"` for few keys read as a list (names).
+   - `retryFailed`: `false` when a miss is terminal (a message id's decrypt can't
+     start succeeding); `true` when a null open is transient (locked / not-yet-a-
+     recipient / a network blip — names, attachment bytes).
+   - `lru`: cap when entries are unbounded in count or large in size (messages 500,
+     attachment blobs 64); omit for a small bounded set (names).
+
+   The instance auto-registers its `clear` in the lock-clear registry, so
+   `clearAllDecrypted()` (the single lock / account-switch site in
+   `e2e-session-store`) wipes it — you do **not** add a clear call. A cache can only
+   hold plaintext if its module is loaded, and loading registers it.
+
+2. **Gate the decrypt through `resolveDecryptContext`** (`lib/crypto/decrypt-context.ts`)
+   for any field keyed under a stream's SSK. It owns the unlocked check
+   (`isSessionUnlocked`), root-SSK resolution, and the hold-until-the-stream-row-
+   hydrates guard — decrypting a thread's content against its own id finds no wrap,
+   fails, and caches that failure **forever**, so never decrypt against a bare
+   `streamId` when the row is unhydrated. Read the row with `useStreamFromStore` and
+   pass it in; `{ ready: false }` means hold at `locked`/`pending`, never attempt.
+
+3. **A per-domain read hook returning a `{ status }` discriminated union**
+   (`plaintext | locked | pending | decrypted | failed`). Subscribe to the cache
+   with `useSyncExternalStore` (per-key) and fire `request(...)` from an effect
+   whose deps are the **primitive opts fields** (`opts?.privateKey`, …,
+   `opts?.rootStreamId`), not the per-render `opts` object — a fresh object every
+   render would re-fire settled decrypts on unrelated row updates. Keep hooks
+   per-domain (typed returns) rather than one generic hook; they share the helpers
+   above, not the hook. `useDecryptedMessageContent` is the reference shape;
+   `useDecryptedAttachment` mirrors it (and owns the object-URL lifecycle so the
+   blob in the cache never leaks past unmount/lock).

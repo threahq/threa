@@ -1046,8 +1046,8 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
     expect(await db.events.get("evt_server")).toBeDefined()
     const cached = getCachedDecryption("evt_server")
     expect(cached?.status).toBe("decrypted")
-    expect(cached?.content?.contentMarkdown).toBe("secret")
-    expect(cached?.content?.contentJson).toEqual(plaintextJson)
+    expect(cached?.value?.contentMarkdown).toBe("secret")
+    expect(cached?.value?.contentJson).toEqual(plaintextJson)
 
     cleanup()
   })

@@ -138,7 +138,7 @@ describe("useStreamSearch hook integration", () => {
     }
     vi.spyOn(decryptCache, "requestDecryption").mockImplementation(
       async (eventId: string) =>
-        ({ status: "decrypted", content: { contentMarkdown: decryptedById[eventId] ?? "" } }) as never
+        ({ status: "decrypted", value: { contentMarkdown: decryptedById[eventId] ?? "" } }) as never
     )
 
     const { result } = renderHook(() =>

@@ -58,11 +58,11 @@ export function resolveDraftDecryption(
   if (draft.ciphertext == null)
     return { status: "plaintext", contentJson: draft.contentJson ?? null, attachments: draft.attachments }
   if (!unlocked) return { status: "locked", contentJson: null, attachments: [] }
-  if (cached?.status === "decrypted" && cached.content)
+  if (cached?.status === "decrypted" && cached.value)
     return {
       status: "decrypted",
-      contentJson: cached.content.contentJson,
-      attachments: (cached.content.attachmentRefs ?? []).map(attachmentFromRef),
+      contentJson: cached.value.contentJson,
+      attachments: (cached.value.attachmentRefs ?? []).map(attachmentFromRef),
     }
   if (cached?.status === "failed") return { status: "failed", contentJson: null, attachments: [] }
   return { status: "pending", contentJson: null, attachments: [] }
@@ -109,7 +109,7 @@ export function requestDraftDecryption(
 
 /** Re-register a decrypted entry's attachment refs so a roamed draft is sendable. */
 function rememberDecryptedRefs(entry: DecryptCacheEntry): void {
-  for (const ref of entry.content?.attachmentRefs ?? []) rememberAttachmentRef(ref)
+  for (const ref of entry.value?.attachmentRefs ?? []) rememberAttachmentRef(ref)
 }
 
 /**
@@ -121,7 +121,7 @@ function rememberDecryptedRefs(entry: DecryptCacheEntry): void {
 export function cachedDraftBody(draftId: string): JSONContent | null {
   const cached = getCachedDecryption(draftId)
   if (cached?.status !== "decrypted") return null
-  return cached.content?.contentJson ?? null
+  return cached.value?.contentJson ?? null
 }
 
 /**
@@ -133,7 +133,7 @@ export function cachedDraftBody(draftId: string): JSONContent | null {
 export function cachedDraftAttachments(draftId: string): DraftAttachment[] {
   const cached = getCachedDecryption(draftId)
   if (cached?.status !== "decrypted") return []
-  return (cached.content?.attachmentRefs ?? []).map(attachmentFromRef)
+  return (cached.value?.attachmentRefs ?? []).map(attachmentFromRef)
 }
 
 // --- List-preview presentation (stash picker, /drafts explorer) ---
