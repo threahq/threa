@@ -105,6 +105,7 @@ describe("JoinChannelBar", () => {
       )
       const zone = container.querySelector<HTMLElement>("[data-editor-zone]")!
       expect(zone.style.getPropertyValue("--composer-height")).toBe("96px")
+      expect(zone.style.getPropertyValue("--composer-visual-bleed")).toBe("0px")
     } finally {
       HTMLElement.prototype.getBoundingClientRect = original
     }

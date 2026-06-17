@@ -27,6 +27,7 @@ import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships, useWorkspaceBots } from "@/stores/workspace-store"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
+import { COMPOSER_SCROLL_INSET } from "@/components/composer"
 import { toast } from "sonner"
 import {
   AlertDialog,
@@ -1592,7 +1593,7 @@ export function StreamContent({
                 <div
                   ref={draftScrollRef}
                   className="absolute inset-x-0 top-0 overflow-y-auto overflow-x-hidden overscroll-y-contain"
-                  style={{ bottom: "var(--composer-height, 0px)" }}
+                  style={{ bottom: COMPOSER_SCROLL_INSET }}
                 >
                   {hasDraftPendingEvents ? (
                     <EventList
@@ -1689,7 +1690,7 @@ export function StreamContent({
                     (isSearchOpen || batchMode) && "pt-11",
                     batchMode && "select-none"
                   )}
-                  style={{ bottom: "var(--composer-height, 0px)" }}
+                  style={{ bottom: COMPOSER_SCROLL_INSET }}
                   data-suppress-pull-refresh="true"
                   onScroll={plainHandleScroll}
                   {...batchPointerHandlers}
@@ -2253,7 +2254,7 @@ function TimelineMessageList({
           "absolute inset-x-0 top-0 overflow-y-auto overflow-x-hidden overscroll-y-contain",
           batch?.enabled && "select-none"
         )}
-        style={{ bottom: "var(--composer-height, 0px)", overflowAnchor: "none" }}
+        style={{ bottom: COMPOSER_SCROLL_INSET, overflowAnchor: "none" }}
         data-suppress-pull-refresh="true"
         onScroll={handleScroll}
         {...batchPointerHandlers}

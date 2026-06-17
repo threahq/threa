@@ -48,11 +48,15 @@ function Harness({
   onHeightChange,
   active = true,
   zoneHeight,
+  floatingShell = false,
+  shellPaddingTop = "0px",
 }: {
   onHeightChange: (px: number) => void
   active?: boolean
   /** Pre-existing `--composer-height` on the zone, simulating the first-paint value. */
   zoneHeight?: string
+  floatingShell?: boolean
+  shellPaddingTop?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
   useComposerHeightPublish(ref, { active, onHeightChange })
@@ -61,7 +65,9 @@ function Harness({
       data-editor-zone="main"
       style={zoneHeight ? ({ "--composer-height": zoneHeight } as CSSProperties) : undefined}
     >
-      <div ref={ref}>composer</div>
+      <div ref={ref} data-floating-composer-shell={floatingShell ? true : undefined}>
+        {floatingShell ? <div style={{ paddingTop: shellPaddingTop }}>composer</div> : "composer"}
+      </div>
     </div>
   )
 }
@@ -111,6 +117,19 @@ describe("useComposerHeightPublish", () => {
       // composer measures the same 80px (pinned in beforeEach) — seed silently.
       render(<Harness onHeightChange={onHeightChange} zoneHeight="80px" />)
       expect(onHeightChange).not.toHaveBeenCalled()
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it("publishes visual bleed from a floating shell's transparent top padding", () => {
+    const ro = installManualResizeObserver()
+    try {
+      const { container } = render(
+        <Harness onHeightChange={() => {}} floatingShell shellPaddingTop="12px" zoneHeight="80px" />
+      )
+      const zone = container.querySelector<HTMLElement>("[data-editor-zone]")!
+      expect(zone.style.getPropertyValue("--composer-visual-bleed")).toBe("12px")
     } finally {
       ro.restore()
     }

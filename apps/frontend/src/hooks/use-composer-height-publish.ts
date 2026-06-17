@@ -1,6 +1,13 @@
 import { useLayoutEffect, useRef } from "react"
 import { persistComposerHeight } from "@/lib/composer-height-storage"
 
+function readComposerVisualBleed(el: HTMLElement): number {
+  if (!el.hasAttribute("data-floating-composer-shell")) return 0
+  const paddingHost = el.firstElementChild instanceof HTMLElement ? el.firstElementChild : el
+  const px = Number.parseFloat(getComputedStyle(paddingHost).paddingTop)
+  return Number.isFinite(px) ? Math.ceil(px) : 0
+}
+
 interface UseComposerHeightPublishOptions {
   active?: boolean
   /**
@@ -28,9 +35,10 @@ interface UseComposerHeightPublishOptions {
 
 /**
  * Measures the element referenced by `ref` and publishes its height (in px) as
- * `--composer-height` on the nearest `[data-editor-zone]` ancestor. Scrollable
- * siblings inside the same editor zone can consume the variable to keep their
- * scroll viewport docked above the floating composer pill.
+ * `--composer-height` on the nearest `[data-editor-zone]` ancestor. Floating
+ * composer shells also publish `--composer-visual-bleed` from their transparent
+ * top padding so scrollable siblings can show messages behind that premium gap
+ * without extending underneath the actual composer card.
  *
  * The first measurement runs in a layout effect (before paint) so the variable
  * and the timeline's bottom anchor can be corrected in the same frame the list
@@ -88,6 +96,7 @@ export function useComposerHeightPublish(
         return
       }
       zone.style.setProperty("--composer-height", `${px}px`)
+      zone.style.setProperty("--composer-visual-bleed", `${readComposerVisualBleed(el)}px`)
       persistComposerHeight(px)
       // Notify on any change from the height the timeline last reserved —
       // including the initial measure when it differs from first paint (see the

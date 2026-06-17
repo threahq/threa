@@ -52,7 +52,12 @@ import {
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
-import { FloatingComposerShell, MessageComposer, StashedDraftsPicker } from "@/components/composer"
+import {
+  COMPOSER_SCROLL_INSET,
+  FloatingComposerShell,
+  MessageComposer,
+  StashedDraftsPicker,
+} from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
@@ -587,7 +592,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
             <div
               ref={draftScrollRef}
               className={draftExpanded ? "hidden" : "absolute inset-x-0 top-0 flex flex-col overflow-y-auto"}
-              style={{ bottom: "var(--composer-height, 0px)" }}
+              style={{ bottom: COMPOSER_SCROLL_INSET }}
             >
               {parentMessage && (
                 <ThreadParentMessage
