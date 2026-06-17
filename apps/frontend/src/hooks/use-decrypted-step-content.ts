@@ -7,6 +7,7 @@ import {
   subscribeToDecryption,
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
+import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 
@@ -53,15 +54,12 @@ export function useDecryptedStepContent(
 ): DecryptedStepContent {
   const session = useE2eSession(workspaceId, userId ?? "")
   const cacheKey = step.id
-  // A thread shares its root scratchpad's SSK; resolve the key against the root.
-  // Until the stream row hydrates the root is unknown, and `undefined` is
-  // indistinguishable from a top-level stream — resolving a thread step against
-  // the bare thread id finds no wrap, fails, and caches that failure forever. So
-  // gate on the row being present (mirrors `useDecryptedMessageContent`): hold
-  // at `pending` rather than attempt a doomed decrypt.
+  // Session + root-SSK resolution and the "hold until the row hydrates" guard
+  // (a doomed thread-id decrypt poisons the cache forever) live in
+  // `resolveDecryptContext`, shared with the message and search read paths.
   const stream = useStreamFromStore(streamId)
-  const streamHydrated = stream !== undefined
-  const rootStreamId = stream?.rootStreamId ?? undefined
+  const ctx = resolveDecryptContext(workspaceId, streamId, session, stream)
+  const opts = ctx.ready ? ctx.opts : null
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => subscribeToDecryption(cacheKey, listener),
@@ -73,24 +71,33 @@ export function useDecryptedStepContent(
   // `useDecryptedMessageContent`'s `readEnvelopePayload` memo, giving `sealed` a
   // stable identity it can enter the dep array with directly.
   const sealed = useMemo(() => readSealedStep(step), [step])
-  const sessionUnlocked = session.status === "unlocked" && !!session.privateKey && !!session.keyId
-  const canDecrypt = !!sealed && sessionUnlocked && streamHydrated
-  const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
+  const needsDecrypt = !!sealed && opts !== null && (cached === undefined || cached.status === "pending")
 
   useEffect(() => {
-    if (!needsDecrypt || !sealed || !session.privateKey || !session.keyId) return
+    if (!needsDecrypt || !sealed || !opts) return
     void requestDecryption(
       cacheKey,
       { contentMarkdown: "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
-      { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId, rootStreamId }
+      opts
     )
-  }, [needsDecrypt, sealed, session.privateKey, session.keyId, cacheKey, workspaceId, streamId, rootStreamId])
+    // Primitive opts fields, not the per-render object, so a settled decrypt
+    // doesn't re-fire on an unrelated stream-row update.
+  }, [
+    needsDecrypt,
+    sealed,
+    opts?.privateKey,
+    opts?.recipientKeyId,
+    opts?.workspaceId,
+    opts?.streamId,
+    opts?.rootStreamId,
+    cacheKey,
+  ])
 
   if (!sealed) return { status: "plaintext", content: step.content }
   // `locked` means the session isn't unlocked. Unlocked-but-not-yet-hydrated
   // falls through to `pending`: the decrypt fires once the row lands and the
   // root is known, never against the bare thread id.
-  if (!sessionUnlocked) return { status: "locked", content: undefined }
+  if (!ctx.ready && ctx.reason === "locked") return { status: "locked", content: undefined }
   if (cached?.status === "decrypted" && cached.content) {
     return {
       status: "decrypted",

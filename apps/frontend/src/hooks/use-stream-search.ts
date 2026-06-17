@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useMemo } from "react"
 import { searchMessages, type SearchFilters, type SearchResultItem } from "@/api"
 import { db, type CachedEvent } from "@/db"
 import { requestDecryption } from "@/lib/crypto/decrypt-cache"
+import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 
@@ -183,14 +184,15 @@ export function useStreamSearch({
   // E2E search reads decrypted bodies on demand. For a plaintext stream the
   // session is irrelevant (sealed-payload resolution returns null and the row
   // falls through to its plaintext `contentMarkdown`), so this is a no-op there.
+  // The search runs in a callback, so snapshot the session + stream row into refs
+  // and feed them to the shared `resolveDecryptContext` (session + root-SSK + the
+  // hold-until-hydrated guard) — the same gate the message/step read paths use.
   const session = useE2eSession(workspaceId, userId ?? "")
   const sessionRef = useRef(session)
   sessionRef.current = session
-  // A thread shares its root's SSK; resolve the key against the root (the search
-  // is scoped to this one stream, so every result carries `streamId`).
-  const rootStreamId = useStreamFromStore(streamId)?.rootStreamId ?? undefined
-  const rootStreamIdRef = useRef(rootStreamId)
-  rootStreamIdRef.current = rootStreamId
+  const streamRow = useStreamFromStore(streamId)
+  const streamRowRef = useRef(streamRow)
+  streamRowRef.current = streamRow
 
   // Resolve an event's searchable body. Sealed rows decrypt on demand (warming
   // the shared decrypt cache the timeline also reads); plaintext rows return
@@ -204,18 +206,12 @@ export function useStreamSearch({
         const payload = event.payload as { contentMarkdown?: string }
         return typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : null
       }
-      const s = sessionRef.current
-      if (s.status !== "unlocked" || !s.privateKey || !s.keyId) return null
+      const ctx = resolveDecryptContext(workspaceId, event.streamId, sessionRef.current, streamRowRef.current)
+      if (!ctx.ready) return null
       const entry = await requestDecryption(
         event.id,
         { contentMarkdown: sealed.contentMarkdown ?? "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
-        {
-          privateKey: s.privateKey,
-          recipientKeyId: s.keyId,
-          workspaceId,
-          streamId: event.streamId,
-          rootStreamId: rootStreamIdRef.current,
-        }
+        ctx.opts
       )
       return entry.status === "decrypted" && entry.content ? entry.content.contentMarkdown : null
     },
