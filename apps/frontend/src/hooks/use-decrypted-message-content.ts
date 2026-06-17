@@ -6,6 +6,7 @@ import {
   subscribeToDecryption,
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
+import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
@@ -70,17 +71,12 @@ export function useDecryptedMessageContent(
 ): DecryptedMessageContent {
   const session = useE2eSession(workspaceId, userId ?? "")
   const eventId = event.id
-  // A thread shares its root scratchpad's SSK and carries no wraps of its own,
-  // so the key must be resolved against the root (the wrap AAD is bound to the
-  // root id). `undefined` here is ambiguous: a top-level stream (its own root,
-  // resolve against self) reads the same as a thread whose row hasn't hydrated
-  // yet (root unknown). Resolving the latter against the thread id finds no
-  // wrap and fails — and the failure is cached permanently. So gate the decrypt
-  // on the stream row being present: until then we don't know the root and hold
-  // at `pending` rather than poison the cache with a doomed attempt.
+  // The session + root-SSK resolution and the "hold until the stream row hydrates"
+  // guard (a doomed thread-id decrypt poisons the cache forever) live in
+  // `resolveDecryptContext` — see it for why an unhydrated row must hold.
   const stream = useStreamFromStore(event.streamId)
-  const streamHydrated = stream !== undefined
-  const rootStreamId = stream?.rootStreamId ?? undefined
+  const ctx = resolveDecryptContext(workspaceId, event.streamId, session, stream)
+  const opts = ctx.ready ? ctx.opts : null
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => subscribeToDecryption(eventId, listener),
@@ -91,12 +87,10 @@ export function useDecryptedMessageContent(
   // Memoize so useEffect deps don't churn on every render — a fresh wrapper
   // object every render would re-fire the effect even though nothing changed.
   const envelopePayload = useMemo(() => readEnvelopePayload(event), [event])
-  const sessionUnlocked = session.status === "unlocked" && !!session.privateKey && !!session.keyId
-  const canDecrypt = !!envelopePayload && sessionUnlocked && streamHydrated
-  const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
+  const needsDecrypt = !!envelopePayload && opts !== null && (cached === undefined || cached.status === "pending")
 
   useEffect(() => {
-    if (!needsDecrypt || !envelopePayload || !session.privateKey || !session.keyId) return
+    if (!needsDecrypt || !envelopePayload || !opts) return
     void requestDecryption(
       eventId,
       {
@@ -104,23 +98,19 @@ export function useDecryptedMessageContent(
         envelope: envelopePayload.envelope,
         ciphertext: envelopePayload.ciphertext,
       },
-      {
-        privateKey: session.privateKey,
-        recipientKeyId: session.keyId,
-        workspaceId,
-        streamId: event.streamId,
-        rootStreamId,
-      }
+      opts
     )
+    // Depend on the opts fields (primitives) rather than the per-render opts object
+    // so an unrelated stream-row update doesn't re-fire a settled decrypt.
   }, [
     needsDecrypt,
     envelopePayload,
-    session.privateKey,
-    session.keyId,
+    opts?.privateKey,
+    opts?.recipientKeyId,
+    opts?.workspaceId,
+    opts?.streamId,
+    opts?.rootStreamId,
     eventId,
-    workspaceId,
-    event.streamId,
-    rootStreamId,
   ])
 
   if (!envelopePayload) {
@@ -136,7 +126,7 @@ export function useDecryptedMessageContent(
   // unlocked but the stream row hasn't hydrated (root still unknown), fall
   // through to `pending` — the decrypt fires once the row lands and `rootStreamId`
   // is trustworthy, never against the bare thread id.
-  if (!sessionUnlocked) return { status: "locked" }
+  if (!ctx.ready && ctx.reason === "locked") return { status: "locked" }
   if (cached?.status === "decrypted" && cached.content) {
     return {
       status: "decrypted",

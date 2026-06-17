@@ -1,7 +1,7 @@
 # Client-side decrypt layer unification (design)
 
-**Status:** In progress — slice 0 (PR #955, sealed-name loading-state authority)
-and slice 1 are implemented; later slices pending. Targets current
+**Status:** In progress — slices 0 (PR #955, sealed-name loading-state authority),
+1, and 2 are implemented; slice 3 pending. Targets current
 `origin/main` (post-#946, Stage 4c E2E draft roaming); the implementing branch
 must rebase onto it (the inventory below reflects post-#946 reality).
 
@@ -172,11 +172,23 @@ function clearAllDecrypted(): void // called once on lock / account switch
   The two divergences are options: `subscription` ("global" | "per-key") and
   `retryFailed`. Behavior is identical — the existing wrapper tests are the guard,
   plus a focused `decrypted-cache.test.ts` for the primitive and registry.
-- **Slice 2 — unified decode entry.** Extract `resolveDecryptContext` (session +
-  root-SSK + hydration guard); route `useDecryptedMessageContent`,
-  `useDecryptedStepContent`, `useStreamSearch`, and the draft decrypt
-  (`use-draft-message`'s `decryptDraftContent` path) through it. Removes the four
-  copies of the session/viewer-id + hydration wiring (drafts included, post-#946).
+- **Slice 2 — DONE.** `resolveDecryptContext` (`lib/crypto/decrypt-context.ts`)
+  owns the session-unlocked check, root-SSK resolution, and the hold-until-the-
+  row-hydrates guard (a doomed thread-id decrypt poisons the cache forever).
+  `useDecryptedMessageContent`, `useDecryptedStepContent`, and `useStreamSearch`
+  route their per-render/per-callback decrypt through it — the three copies of the
+  footgun collapse to one. The unlocked predicate is exported as `isSessionUnlocked`
+  (a type guard narrowing the key fields non-null); `lib/drafts/decryption.ts`'s
+  `isE2eUnlocked` delegates to it, so the draft path shares the 4th copy of the
+  session check. The draft does **not** route through `resolveDecryptContext`'s
+  row→root step: its root (`e2eStreamId`) is already resolved at the composer
+  (`stream?.rootStreamId ?? streamId`) before reaching the draft layer, which then
+  operates on a pre-resolved root in batch with no per-draft stream row — so it
+  carries no row→root footgun to share. Behavior-preserving; the existing
+  message/step/search/draft tests are the guard, plus a focused
+  `__tests__/decrypt-context.test.ts`. (One test artifact changed: the search
+  integration test now stubs a hydrated stream row, since the hold-until-hydrated
+  guard — previously absent from search — now applies there too.)
 - **Slice 3 — attachments onto the layer + uniform read.** Give attachment-bytes
   a real cache (`attachmentBytesCache`), move `e2e-attachment-list` off
   per-mount re-decrypt, and align names / attachments / drafts on the

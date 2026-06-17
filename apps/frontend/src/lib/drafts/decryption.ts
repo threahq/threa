@@ -3,6 +3,7 @@ import type { JSONContent } from "@threa/types"
 import type { AttachmentRef } from "@threa/crypto"
 import type { CachedDraft, DraftAttachment } from "@/db"
 import { getCachedDecryption, requestDecryption, type DecryptCacheEntry } from "@/lib/crypto/decrypt-cache"
+import { isSessionUnlocked } from "@/lib/crypto/decrypt-context"
 import { rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
@@ -40,7 +41,7 @@ function attachmentFromRef(ref: AttachmentRef): DraftAttachment {
 
 /** A session that can actually open sealed content (unlocked, keys present). */
 export function isE2eUnlocked(session: E2eSession): boolean {
-  return session.status === "unlocked" && !!session.privateKey && !!session.keyId
+  return isSessionUnlocked(session)
 }
 
 /**

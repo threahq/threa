@@ -5,6 +5,7 @@ import type { CachedEvent } from "@/db"
 import * as dbModule from "@/db"
 import * as decryptCache from "@/lib/crypto/decrypt-cache"
 import * as e2eStore from "@/stores/e2e-session-store"
+import * as streamStore from "@/stores/stream-store"
 import * as api from "@/api"
 
 function event(overrides: Partial<CachedEvent> & { id: string; _sequenceNum: number }): CachedEvent {
@@ -109,6 +110,9 @@ describe("useStreamSearch hook integration", () => {
       privateKey: {} as CryptoKey,
       keyId: "e2ek_self",
     } as never)
+    // The decrypt gate holds until the stream row hydrates (root known); the open
+    // stream being searched is always present, so stub a top-level row.
+    vi.spyOn(streamStore, "useStreamFromStore").mockReturnValue({ rootStreamId: null } as never)
     searchMessagesSpy = vi.spyOn(api, "searchMessages").mockResolvedValue({ results: [] } as never)
   })
 
