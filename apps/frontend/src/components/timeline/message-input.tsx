@@ -43,9 +43,9 @@ interface MessageInputProps {
   autoFocus?: boolean
   /**
    * Notified when the composer's measured height changes (or when the initial
-   * measurement differs from the persisted footer the list first painted with).
-   * The virtualized timeline uses this to re-anchor to the bottom so the last
-   * message isn't left covered by a composer that settled taller. `opts.initial`
+   * measurement differs from the persisted inset the list first painted with).
+   * The timeline uses this to re-anchor to the bottom so the last message isn't
+   * left covered by a composer that settled taller. `opts.initial`
    * marks the pre-paint first measurement so the timeline can correct it
    * synchronously instead of debouncing.
    */
@@ -479,10 +479,10 @@ function MessageInputComponent({
   const handleCollapse = useCallback(() => setExpanded(false), [])
 
   // Publish the floating composer's measured height so the scroll area can
-  // reserve matching space (Virtuoso Footer, plain-scroll padding-bottom).
+  // dock above it instead of relying on in-content bottom padding.
   // Disabled while the expanded overlay is open so the scroll area can use its
-  // full height behind the overlay. `onHeightChange` lets the virtualized
-  // timeline re-anchor to the bottom when the composer settles to a new height.
+  // full height behind the overlay. `onHeightChange` lets the timeline
+  // re-anchor to the bottom when the composer settles to a new height.
   useComposerHeightPublish(selfRef, { active: !expanded, onHeightChange: onComposerHeightChange })
 
   // Escape to close — only when focus is inside this expanded editor

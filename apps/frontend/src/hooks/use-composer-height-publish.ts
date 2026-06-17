@@ -4,22 +4,22 @@ import { persistComposerHeight } from "@/lib/composer-height-storage"
 interface UseComposerHeightPublishOptions {
   active?: boolean
   /**
-   * Fired whenever the published height *changes* from the height the footer
-   * spacer was last sized for — including the initial measurement when it
+   * Fired whenever the published height *changes* from the height the timeline
+   * first reserved for the composer — including the initial measurement when it
    * differs from what first paint rendered with (the persisted `:root`
    * fallback), but not when the first measurement matches that fallback. The
-   * timeline uses this to re-anchor a virtualized list to the bottom: the
-   * footer spacer that keeps the last message above the composer is sized from
-   * `--composer-height`, and on first paint that variable holds the persisted
-   * approximation, not this composer's real height. Runtime spacer resizes are
-   * re-pinned by the timeline's own ResizeObserver; the initial correction is
-   * the one that must happen here, pre-paint, or the list paints anchored to
-   * the approximate height — the last message hidden behind the composer, or
-   * the list parked too high — until something else moves it.
+   * timeline uses this to re-anchor the active list to the bottom: its
+   * scroller viewport is inset by `--composer-height`, and on first paint that
+   * variable holds the persisted approximation, not this composer's real height.
+   * Runtime viewport resizes are re-pinned by the timeline's own
+   * ResizeObserver; the initial correction is the one that must happen here,
+   * pre-paint, or the list paints anchored to the approximate height — the last
+   * message hidden behind the composer, or the list parked too high — until
+   * something else moves it.
    *
    * `opts.initial` is true only for the very first measurement of this mount,
    * which runs inside a layout effect *before the browser paints*. The timeline
-   * uses that to correct the approximate persisted footer height synchronously
+   * uses that to correct the approximate persisted composer inset synchronously
    * (no visible jump) instead of debouncing — later, async runtime changes
    * arrive with `initial: false`.
    */
@@ -29,9 +29,8 @@ interface UseComposerHeightPublishOptions {
 /**
  * Measures the element referenced by `ref` and publishes its height (in px) as
  * `--composer-height` on the nearest `[data-editor-zone]` ancestor. Scrollable
- * siblings inside the same editor zone can consume the variable (e.g.
- * plain-scroll `padding-bottom`) to reserve space for the floating composer
- * pill.
+ * siblings inside the same editor zone can consume the variable to keep their
+ * scroll viewport docked above the floating composer pill.
  *
  * The first measurement runs in a layout effect (before paint) so the variable
  * and the timeline's bottom anchor can be corrected in the same frame the list
@@ -43,8 +42,7 @@ interface UseComposerHeightPublishOptions {
  * next composer mount overwrites it with its own measurement. The same value
  * is also mirrored to localStorage so the next hard refresh starts with a
  * sensible global default on `:root` instead of falling back to 0px — that
- * fallback grew the timeline's footer spacer mid-paint and caused Virtuoso
- * to shift content up on every reload.
+ * fallback used to let the scroll viewport overlap the composer on first paint.
  */
 export function useComposerHeightPublish(
   ref: React.RefObject<HTMLElement | null>,
@@ -63,18 +61,18 @@ export function useComposerHeightPublish(
     if (!zone) return
     let retryRafId = 0
 
-    // Seed the baseline from the height the footer spacer is *currently*
-    // rendered with: the persisted `:root` fallback applied at boot, or a value
-    // a prior composer left on the zone. `getComputedStyle(zone)` resolves the
-    // inherited value, so this matches what `var(--composer-height)` paints
-    // with right now. When the first real measurement differs from this — the
-    // persisted default didn't match the actual composer (density/zoom change,
-    // a restored multi-line draft, attachment chips, the async encryption
-    // notice) — the footer spacer resizes after first paint, so we must notify
-    // even on the initial measure. Otherwise the virtualized list stays
-    // anchored to the stale height: the last message ends up hidden behind the
-    // composer, or the list parks too high. A first measurement that matches
-    // seeds silently, exactly as before (no spurious snap on a clean reload).
+    // Seed the baseline from the composer height the timeline is *currently*
+    // using: the persisted `:root` fallback applied at boot, or a value a prior
+    // composer left on the zone. `getComputedStyle(zone)` resolves the inherited
+    // value, so this matches what `var(--composer-height)` paints with right
+    // now. When the first real measurement differs from this — the persisted
+    // default didn't match the actual composer (density/zoom change, a restored
+    // multi-line draft, attachment chips, the async encryption notice) — the
+    // scroller viewport resizes after first paint, so we must notify even on the
+    // initial measure. Otherwise the timeline stays anchored to the stale
+    // height: the last message ends up hidden behind the composer, or the
+    // list parks too high. A first measurement that matches seeds silently,
+    // exactly as before (no spurious snap on a clean reload).
     const rendered = Number.parseFloat(getComputedStyle(zone).getPropertyValue("--composer-height"))
     let lastPublished: number | null = Number.isFinite(rendered) ? Math.ceil(rendered) : null
     let isInitialMeasure = true
@@ -91,7 +89,7 @@ export function useComposerHeightPublish(
       }
       zone.style.setProperty("--composer-height", `${px}px`)
       persistComposerHeight(px)
-      // Notify on any change from the height the footer was last sized for —
+      // Notify on any change from the height the timeline last reserved —
       // including the initial measure when it differs from first paint (see the
       // baseline note above). The timeline re-anchors to the bottom on this;
       // `initial` lets it do so synchronously, pre-paint, on the first measure.
@@ -103,7 +101,7 @@ export function useComposerHeightPublish(
     }
 
     // Runs in the layout phase, before paint: the list reveals this frame with
-    // the corrected footer already accounted for.
+    // the corrected composer inset already accounted for.
     write(el.getBoundingClientRect().height)
 
     const ro = new ResizeObserver((entries) => {

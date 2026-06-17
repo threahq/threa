@@ -286,10 +286,19 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     draftPortalTargetRef.current = el
   }, [])
 
-  // Measured height of the draft composer pill; consumed by the scroll area
-  // below it (padding-bottom) so messages sit offset above the floating pill.
+  // Measured height of the draft composer pill; consumed by the scroll area so
+  // messages dock above the floating pill instead of scrolling underneath it.
   const draftComposerRef = useRef<HTMLDivElement>(null)
-  useComposerHeightPublish(draftComposerRef, { active: !draftExpanded })
+  const draftScrollRef = useRef<HTMLDivElement>(null)
+  const handleDraftComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
+    if (!opts.initial) return
+    const scroller = draftScrollRef.current
+    if (scroller) scroller.scrollTop = scroller.scrollHeight
+  }, [])
+  useComposerHeightPublish(draftComposerRef, {
+    active: !draftExpanded,
+    onHeightChange: handleDraftComposerHeightChange,
+  })
 
   // Reset transient panel-local UI when the panel switches to another stream —
   // otherwise an open label picker would retarget to the new stream and apply
@@ -576,10 +585,9 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                 draftPortalTargetRef.current
               )}
             <div
-              className={
-                draftExpanded ? "hidden flex-1 flex-col overflow-y-auto" : "flex flex-1 flex-col overflow-y-auto"
-              }
-              style={{ paddingBottom: "var(--composer-height, 0px)" }}
+              ref={draftScrollRef}
+              className={draftExpanded ? "hidden" : "absolute inset-x-0 top-0 flex flex-col overflow-y-auto"}
+              style={{ bottom: "var(--composer-height, 0px)" }}
             >
               {parentMessage && (
                 <ThreadParentMessage

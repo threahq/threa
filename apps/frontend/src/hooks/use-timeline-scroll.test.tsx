@@ -101,16 +101,33 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
 })
 
 describe("useTimelineScroll — scroll position", () => {
-  it("scrollToBottom pins scrollTop to scrollHeight (footer-spacer-inclusive bottom)", () => {
-    // Browser-clamped scrollTop=scrollHeight lands at the true bottom INCLUDING
-    // the composer footer spacer below virtua's items, so the last message sits
-    // above the composer (not behind it). Deliberately not virtua's
-    // scrollToIndex, which aligns to the item and ignores the trailing spacer.
+  it("scrollToBottom pins scrollTop to scrollHeight (composer-inset bottom)", () => {
+    // Browser-clamped scrollTop=scrollHeight lands at the true native bottom.
+    // The scroller viewport itself is inset above the composer, so the last
+    // message sits above the composer (not behind it). Deliberately not virtua's
+    // scrollToIndex, which aligns to an item without accounting for viewport chrome.
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.scrollToBottom({ force: true }))
     expect(el.scrollTop).toBe(5000)
+  })
+
+  it("renders the last item on initial scroll without adding composer height as a virtualizer offset", () => {
+    const scrollToIndex = vi.fn()
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    el.style.setProperty("--composer-height", "70px")
+
+    function Probe() {
+      const api = useTimelineScroll(opts({ itemCount: 3, getFirstKey: () => "e1" }))
+      api.scrollerRef.current = el
+      api.listRef.current = { scrollToIndex } as unknown as NonNullable<HookApi["listRef"]["current"]>
+      return null
+    }
+
+    render(<Probe />)
+
+    expect(scrollToIndex).toHaveBeenCalledWith(2, { align: "end" })
   })
 
   it("a programmatic pin keeps follow armed — its own scroll event reads as no movement", () => {
@@ -245,11 +262,11 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isScrolledFarFromBottom).toBe(false)
   })
 
-  it("stays following when only the composer footer spacer sits below the fold", () => {
-    // The footer spacer (composer height) is dead space at the bottom; the last
-    // message resting just above it is "at the bottom", so follow must NOT
-    // disarm — otherwise the initial scroll strands ~a composer height short and
-    // keyboard-follow (gated on follow) breaks.
+  it("stays following when a composer-inset correction leaves the tail just below the fold", () => {
+    // A composer height correction can temporarily leave about one composer
+    // height between the viewport and the native bottom before the ResizeObserver
+    // re-pins. That gap is layout-only, so follow must NOT disarm — otherwise
+    // keyboard/composer follow (gated on follow) breaks.
     const userInteractedAtRef = { current: 0 }
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4130 })
@@ -259,7 +276,7 @@ describe("useTimelineScroll — scroll position", () => {
     act(() => harness.current.handleScroll())
     expect(harness.current.isFollowingTailRef.current).toBe(true)
 
-    // The user scrolling a real amount past the spacer DOES disarm.
+    // The user scrolling a real amount past that correction band DOES disarm.
     userInteractedAtRef.current = performance.now()
     el.scrollTop = 3500
     act(() => harness.current.handleScroll())
@@ -353,7 +370,7 @@ describe("useTimelineScroll — observer attaches when the scroller mounts late"
       expect(observers[0].targets).toContain(content)
 
       // Keyboard opens → scroller resizes → observer fires. Following (default at
-      // mount), it pins the tail synchronously to the footer-inclusive bottom.
+      // mount), it pins the tail synchronously to the composer-inset bottom.
       expect(harness.current.isFollowingTailRef.current).toBe(true)
       expect(el.scrollTop).toBe(1000)
       act(() => observers[0].cb([], observers[0] as unknown as ResizeObserver))

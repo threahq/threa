@@ -107,7 +107,7 @@ describe("useComposerHeightPublish", () => {
     const ro = installManualResizeObserver()
     try {
       const onHeightChange = vi.fn()
-      // Footer already rendered at 80px (persisted `:root` fallback); the
+      // Timeline already reserved 80px (persisted `:root` fallback); the
       // composer measures the same 80px (pinned in beforeEach) — seed silently.
       render(<Harness onHeightChange={onHeightChange} zoneHeight="80px" />)
       expect(onHeightChange).not.toHaveBeenCalled()
@@ -116,14 +116,14 @@ describe("useComposerHeightPublish", () => {
     }
   })
 
-  it("fires on the initial measure when the persisted footer height was wrong", () => {
+  it("fires on the initial measure when the persisted composer height was wrong", () => {
     const ro = installManualResizeObserver()
     try {
       const onHeightChange = vi.fn()
-      // Footer first painted at 120px (stale persisted value), but the actual
-      // composer measures 80px: the spacer will shrink after mount, so the
-      // virtualized list must re-anchor (last message would otherwise park too
-      // high). The same drift the other direction hides the last message.
+      // Timeline first reserved 120px (stale persisted value), but the actual
+      // composer measures 80px: the scroller will resize after mount, so the
+      // timeline must re-anchor (last message would otherwise park too high).
+      // The same drift the other direction hides the last message.
       // This fires from a layout effect (pre-paint), flagged `initial: true` so
       // the timeline corrects it synchronously instead of debouncing.
       render(<Harness onHeightChange={onHeightChange} zoneHeight="120px" />)

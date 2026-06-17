@@ -15,9 +15,10 @@ import "./index.css"
 // mounts so resume tracking is live from the first lifecycle transition.
 installCrashRecovery()
 
-// Apply the last-observed composer height to `:root` so the timeline's footer
-// spacer paints at roughly the correct size on first render. The composer's
-// own ResizeObserver overwrites the variable on the editor zone once mounted.
+// Apply the last-observed composer height to `:root` so the timeline scroll
+// viewport starts roughly docked above the composer on first render. The
+// composer's own ResizeObserver overwrites the variable on the editor zone once
+// mounted.
 applyPersistedComposerHeight()
 
 navigator.serviceWorker?.addEventListener("message", (event) => {

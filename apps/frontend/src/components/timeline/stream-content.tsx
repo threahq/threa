@@ -991,6 +991,8 @@ export function StreamContent({
     resetKey: streamId,
   })
 
+  const draftScrollRef = useRef<HTMLDivElement | null>(null)
+
   // Unified API regardless of scroll mode
   const scrollContainerRef = useVirtualized ? virtuosoScrollerRef : plainScrollRef
   const isScrolledFarFromBottom = useVirtualized ? virtualIsScrolledFar : plainIsScrolledFar
@@ -998,29 +1000,33 @@ export function StreamContent({
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
 
   // Correct the bottom anchor on the composer's *first* measurement, before
-  // paint. The list first scrolled to LAST against the approximate persisted
-  // footer height; when the real composer differs (cold boot with a restored
-  // draft, density/zoom change) the footer spacer resizes, so we re-pin
-  // synchronously in the same frame the list reveals — no visible jump.
+  // paint. The timeline first anchored against the approximate persisted
+  // composer inset; when the real composer differs (cold boot with a restored
+  // draft, density/zoom change), re-pin synchronously in the same frame the
+  // list reveals — no visible jump.
   //
   // Runtime composer changes (focus expand, blur collapse, attachment chips,
-  // the 200ms height transition) are deliberately NOT handled here: the footer
-  // spacer lives inside the timeline's content wrapper, so the scroll hook's
-  // content ResizeObserver already re-pins the tail when it resizes. virtua owns
-  // its scroll position now (unlike Virtuoso, which froze on footer growth), so
-  // one mechanism covers it. virtualScrollToBottom self-guards on the follow
-  // flag, so the initial correction is a no-op unless parked at the live tail.
+  // the 200ms height transition) are deliberately NOT handled here: changing the
+  // composer inset resizes the scroller itself, and the scroll hooks' viewport
+  // ResizeObservers already re-pin the tail when it resizes. scrollToBottom
+  // self-guards on the follow flag, so the initial correction is a no-op unless
+  // parked at the live tail.
   //
-  // Called through a ref so the handler identity stays stable: virtualScrollToBottom
-  // is rebuilt on every itemCount change, and a changing prop would re-render
-  // the memoized MessageInput on every new message (the exact churn that memo
-  // exists to prevent).
-  const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
-  virtualScrollToBottomRef.current = virtualScrollToBottom
+  // Called through a ref so the handler identity stays stable: scrollToBottom is
+  // rebuilt as timeline state changes, and a changing prop would re-render the
+  // memoized MessageInput on every new message (the exact churn that memo exists
+  // to prevent).
+  const scrollToBottomRef = useRef(scrollToBottom)
+  scrollToBottomRef.current = scrollToBottom
   const handleComposerHeightChange = useCallback(
     (_px: number, opts: { initial: boolean }) => {
       if (opts.initial && !skipInitialScroll && !isJumpMode) {
-        virtualScrollToBottomRef.current({ force: true })
+        const draftScroller = draftScrollRef.current
+        if (draftScroller) {
+          draftScroller.scrollTop = draftScroller.scrollHeight
+          return
+        }
+        scrollToBottomRef.current({ force: true })
       }
     },
     [isJumpMode, skipInitialScroll]
@@ -1584,8 +1590,9 @@ export function StreamContent({
               )}
               {isDraft && (
                 <div
-                  className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
-                  style={{ paddingBottom: "var(--composer-height, 0px)" }}
+                  ref={draftScrollRef}
+                  className="absolute inset-x-0 top-0 overflow-y-auto overflow-x-hidden overscroll-y-contain"
+                  style={{ bottom: "var(--composer-height, 0px)" }}
                 >
                   {hasDraftPendingEvents ? (
                     <EventList
@@ -1678,11 +1685,11 @@ export function StreamContent({
                 <div
                   ref={plainScrollRef}
                   className={cn(
-                    "h-full overflow-y-auto overflow-x-hidden overscroll-y-contain",
+                    "absolute inset-x-0 top-0 overflow-y-auto overflow-x-hidden overscroll-y-contain",
                     (isSearchOpen || batchMode) && "pt-11",
                     batchMode && "select-none"
                   )}
-                  style={{ paddingBottom: "var(--composer-height, 0px)" }}
+                  style={{ bottom: "var(--composer-height, 0px)" }}
                   data-suppress-pull-refresh="true"
                   onScroll={plainHandleScroll}
                   {...batchPointerHandlers}
@@ -1808,6 +1815,7 @@ export function StreamContent({
                   streamId={streamId}
                   channelName={stream?.slug ?? stream?.displayName ?? ""}
                   onJoined={handleJoined}
+                  onHeightChange={handleComposerHeightChange}
                 />
               </div>
             )}
@@ -1828,7 +1836,7 @@ export function StreamContent({
                 disabled={isArchived || isSystem}
                 disabledReason={disabledReason}
                 autoFocus={autoFocus}
-                onComposerHeightChange={useVirtualized ? handleComposerHeightChange : undefined}
+                onComposerHeightChange={handleComposerHeightChange}
               />
             )}
           </div>
@@ -2241,8 +2249,11 @@ function TimelineMessageList({
       <div
         key={streamId}
         ref={registerScroller}
-        className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
-        style={{ overflowAnchor: "none" }}
+        className={cn(
+          "absolute inset-x-0 top-0 overflow-y-auto overflow-x-hidden overscroll-y-contain",
+          batch?.enabled && "select-none"
+        )}
+        style={{ bottom: "var(--composer-height, 0px)", overflowAnchor: "none" }}
         data-suppress-pull-refresh="true"
         onScroll={handleScroll}
         {...batchPointerHandlers}
@@ -2276,7 +2287,6 @@ function TimelineMessageList({
               </div>
             ))}
           </Virtualizer>
-          <ComposerFooterSpacer />
         </div>
       </div>
       <StreamDateHeader
@@ -2294,12 +2304,7 @@ function TimelineMessageList({
   )
 }
 
-// Spacer reserving room for the floating composer pill, so the most recent
-// message sits visually offset above the pill at rest and the at-bottom edge
-// accounts for the composer's height.
 const StreamHeaderSpacer = () => <div className="h-3 sm:h-6" aria-hidden />
-
-const ComposerFooterSpacer = () => <div aria-hidden style={{ height: "var(--composer-height, 0px)" }} />
 
 // 44px scrollable spacer reserved at the top while the search or batch-selection
 // bar is open. Both bars render `absolute top-0` outside the scroller; this

@@ -14,10 +14,9 @@ const SETTLE_STABLE_FRAMES = 3
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
- * editor zone and reserved by the timeline's footer spacer. The last message
- * sitting just above that spacer IS visually "at the bottom", so at-bottom math
- * must treat the spacer as dead space — otherwise the list reads ~a composer
- * height short of the bottom and wrongly disarms follow.
+ * editor zone. The scroller is inset above that composer; while the inset is
+ * being corrected, at-bottom math treats up to one composer-height of distance
+ * as tail-adjacent so follow does not detach from layout-only movement.
  */
 function readComposerHeight(el: HTMLElement): number {
   const raw = getComputedStyle(el).getPropertyValue("--composer-height")
@@ -80,7 +79,7 @@ interface UseTimelineScrollReturn {
   isInitialSettling: boolean
   /** True while parked at the live tail (auto-following new output). */
   isFollowingTailRef: React.MutableRefObject<boolean>
-  /** Imperatively scroll to the very bottom (the composer-spacer edge). */
+  /** Imperatively scroll to the very bottom of the composer-inset viewport. */
   scrollToBottom: (options?: { force?: boolean; behavior?: ScrollBehavior }) => void
   /** Disable auto-follow (e.g. when a deep-link jump takes over). */
   disableAutoScroll: () => void
@@ -104,10 +103,10 @@ interface UseTimelineScrollReturn {
  *  1. **One idempotent pin.** Staying glued to the tail means exactly one thing:
  *     `scrollTop = scrollHeight`. Every event that can change geometry while
  *     following — content growth (new message, media decode, virtua measuring),
- *     the footer spacer resizing as the composer expands/collapses, the viewport
- *     shrinking as the keyboard opens — funnels through `pinToBottom`, observed
- *     by a single `ResizeObserver`. They cannot fight because they all target
- *     the same place; re-pinning is a no-op once already pinned.
+ *     the composer inset resizing as the composer expands/collapses, the
+ *     viewport shrinking as the keyboard opens — funnels through `pinToBottom`,
+ *     observed by a single `ResizeObserver`. They cannot fight because they all
+ *     target the same place; re-pinning is a no-op once already pinned.
  *
  *  2. **Our own pins are invisible to the scroll-up detector.** `pinToBottom`
  *     updates the scroll-up baseline (`prevScrollTop`) synchronously with the
@@ -221,11 +220,9 @@ export function useTimelineScroll({
   prevCountRef.current = itemCount
 
   // The single pin. Go to the absolute bottom: scrollTop = scrollHeight is
-  // browser-clamped to the true maximum, which includes the composer footer
-  // spacer below virtua's items — so the last message lands *above* the
-  // composer, not behind it. (Deliberately NOT virtua's scrollToIndex: it aligns
-  // to the item and can't see the trailing footer spacer, so it parks the last
-  // message at the very bottom edge, under the composer.)
+  // browser-clamped to the true maximum. The scroller viewport itself is inset
+  // above the composer, so the native bottom already lands the last message
+  // clear of the floating pill.
   //
   // Updating the scroll-up baseline in the same statement is load-bearing: the
   // `scroll` event this write triggers then reads `top === prevTop`, so
@@ -358,10 +355,9 @@ export function useTimelineScroll({
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
-    // The composer footer spacer is dead space at the very bottom; the last
-    // message resting just above it counts as "at the bottom". Without this
-    // allowance the list lands ~a composer height short on first load and
-    // disarms follow, which also kills keyboard-follow (gated on follow armed).
+    // The composer inset can change before the browser/observer has completed
+    // the matching pin. Treat that transient gap as tail-adjacent so a layout
+    // correction does not detach follow; genuine scroll-up still detaches below.
     const composerH = readComposerHeight(el)
     const atBottom = distanceFromBottom <= AT_BOTTOM_PX + composerH
     // A deliberate user scroll-up — the scrollTop actually moved toward the top
@@ -398,11 +394,9 @@ export function useTimelineScroll({
   // On a cold load virtua has only measured the top window; the rest are size
   // estimates, so scrollTop = scrollHeight alone undershoots (the "lands a
   // couple pages up" bug). scrollToIndex(last) makes virtua render + measure the
-  // bottom region. Passing offset = the composer footer-spacer height lands it
-  // at the footer-INCLUSIVE bottom, so the last message sits above the composer.
-  // virtua re-applies that target as items measure, and the cold-load settle
-  // (settleToBottom) re-pins each frame behind the skeleton mask until the
-  // height — composer spacer included — converges.
+  // bottom region, then the native pin lands on the scroller's composer-inset
+  // bottom. virtua re-applies that target as items measure, and the cold-load
+  // settle re-pins each frame behind the skeleton mask until the height converges.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
     const el = scrollerRef.current
@@ -410,7 +404,7 @@ export function useTimelineScroll({
     isFollowingTailRef.current = true
     didInitialScrollRef.current = true
     try {
-      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
+      listRef.current?.scrollToIndex(itemCount - 1, { align: "end" })
     } catch {
       // Not-yet-measured list can throw; the pin + settle still converge.
     }
@@ -419,11 +413,11 @@ export function useTimelineScroll({
   }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom])
 
   // The one observer that keeps the tail glued. Two observed targets:
-  //  - content (contentRef): grows on a live append, on media decoding, as
-  //    virtua measures real heights, and as the footer spacer resizes when the
-  //    composer expands/collapses. While following → pin.
-  //  - viewport (scrollerRef): shrinks/grows as the mobile keyboard opens/closes
-  //    (AppShell is sized to --viewport-height; see useVisualViewport). While
+  //  - content (contentRef): grows on a live append, on media decoding, and as
+  //    virtua measures real heights. While following → pin.
+  //  - viewport (scrollerRef): shrinks/grows as the composer inset changes and
+  //    as the mobile keyboard opens/closes (AppShell is sized to
+  //    --viewport-height; see useVisualViewport). While
   //    following → pin; while reading → shift scrollTop by the height delta so
   //    the row under the user's eyes stays put as the visible area changes.
   //
