@@ -126,5 +126,8 @@ export function useInviteActor(workspaceId: string, streamId: string) {
     [workspaceId, streamId, queryClient, session.status, session.keyId, session.publicKey]
   )
 
-  return { invite, isInviting }
+  // Wrapping the SSK to the new actor needs the owner's unlocked credentials.
+  // Callers gate the invite affordance on this so the actor is never recorded
+  // unwrapped (a member that lists with access but can't decrypt).
+  return { invite, isInviting, isUnlocked: session.status === "unlocked" }
 }
