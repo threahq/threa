@@ -6,7 +6,14 @@ import { SW_MSG_NOTIFICATION_CLICK, SW_MSG_SUBSCRIPTION_CHANGED } from "./lib/sw
 import { setNotificationIntent } from "./lib/notification-intent"
 import { hydrateCollapseCache } from "./lib/markdown/collapse-cache"
 import { applyPersistedComposerHeight } from "./lib/composer-height-storage"
+import { installCrashRecovery } from "./lib/crash-recovery"
 import "./index.css"
+
+// Catch uncaught errors that wedge the app after the PWA returns from the
+// background (e.g. resuming after "Open in Firefox") and reload instead of
+// leaving a dead window that needs a manual restart. Installed before React
+// mounts so resume tracking is live from the first lifecycle transition.
+installCrashRecovery()
 
 // Apply the last-observed composer height to `:root` so the timeline's footer
 // spacer paints at roughly the correct size on first render. The composer's
