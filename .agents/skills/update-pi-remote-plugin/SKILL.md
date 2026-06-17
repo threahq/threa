@@ -7,15 +7,26 @@ description: Keep the Threa Pi remote-control extension in `extensions/pi-remote
 
 The canonical Threa Pi remote adapter currently lives at:
 
-- `extensions/pi-remote/src/threa-remote.ts`
-- tests: `extensions/pi-remote/src/threa-remote.test.ts`
-- package manifest: `extensions/pi-remote/package.json`
+- `extensions/pi-remote/src/threa-remote.ts` — the adapter
+- `extensions/pi-remote/src/crypto.ts` — **vendored** subset of `@threa/crypto` for the sealed (E2E) path
+- tests: `extensions/pi-remote/src/threa-remote.test.ts`, `threa-remote.sealed.test.ts`, `crypto.parity.test.ts`
+- package manifest + lockfile: `extensions/pi-remote/package.json`, `extensions/pi-remote/bun.lock`
 
 The local install target for real use is typically a package directory:
 
 - `~/.pi/agent/extensions/threa-remote/`
 
 Do not edit the installed copy first. Update the repo copy, verify it, then copy the package directory/install dependencies/reload locally if requested.
+
+This extension is **self-contained**, not a Bun workspace member (like its sibling `extensions/claude-code-remote`). It declares its own `dependencies` (`socket.io-client`, `@hpke/core`, `@hpke/dhkem-x25519`, `ulid`) and commits its own `bun.lock`, because at the user's machine it is installed standalone (`cp` + `npm install`) where the private `@threa/*` workspace packages don't resolve. Run `bun install` from `extensions/pi-remote/` after changing deps. It has **no typecheck script** — `threa-remote.ts` imports types from the global `@earendil-works/pi-coding-agent`, which isn't an installed dependency, so `tsc` can't resolve it in-repo (`bun test` runs fine because type-only imports are erased).
+
+## Sealed (E2E) external-bot path
+
+The harness can serve an end-to-end-encrypted scratchpad: when the owner has invited the bot as an E2E actor and the `externalSealedDelivery` policy is on, a winning claim carries a `sealedContext` (`SealedTurnContext`) instead of the plaintext `context`. Design: `docs/plans/agent-runtimes-unification-redesign.md` §2.6 (binding forward-compat rules). The enclave (`apps/enclave/`) is the reference sealed runner.
+
+- **BIK (Bot Identity Key):** a per-install X25519 keypair persisted at `~/.pi/agent/threa-remote-bik.json` (mode 0600), generated lazily by `ensureBik()`. Its `publicKey`/`publicKeyId` ride **every** `bot:hello` AND HTTP presence write — the backend overwrites the BIK on a presence write that omits it, so a heartbeat without it would clear what `bot:hello` registered.
+- **Vendored crypto:** `crypto.ts` is a faithful copy of `packages/crypto`'s `{encoding,hpke,stream-key,envelope,sealed-payload}` subset. It uses the **noble** X25519 KEM (`@hpke/dhkem-x25519`), NOT `@hpke/core`'s native KEM — Bun's WebCrypto lacks X25519 `deriveBits`, so native encap/decap throw there; noble works in any runtime and is RFC-9180-interoperable with the owner's native KEM. `crypto.parity.test.ts` asserts byte-parity against the canonical `@threa/crypto` (relative import) — keep them in sync; if the canonical AAD layout or envelope version changes, mirror it here or the owner can't open the bot's sealed replies.
+- **Wire:** unwrap the SSK from `sealedContext.wraps` (AAD `buildWrapAad`, recipient = BIK id, stream id = `rootStreamId`); open the trigger/history; seal replies/steps under the SSK with `buildMessageAad({ streamId: rootStreamId, messageId|stepId, senderId: reply.senderId })`. Sealed callbacks authorize with the `X-Threa-Callback-Token` header (the claim's `callbackToken`), NOT body `instanceId`/`claimToken`. Steps POST to `/sealed-steps`, completion to `/sealed-complete`; `/renew` and `/fail` are shared (they auth by claim token, which a sealed claim still returns). Attachments aren't shipped on the sealed path yet — completion strips `THREA_ATTACH:` directives rather than uploading plaintext to S3.
 
 ## Required context
 
@@ -30,9 +41,11 @@ Do not edit the installed copy first. Update the repo copy, verify it, then copy
    - `apps/backend/src/features/public-api/schemas.ts`
    - `apps/backend/src/features/public-api/handlers.ts`
    - `apps/backend/src/routes.ts` around `/bot-runtime/*` and `/bot-invocations/*`
-   - `apps/backend/src/features/bot-runtimes/`
-   - `packages/types/src/constants.ts` around bot runtime/invocation constants
+   - `apps/backend/src/features/bot-runtimes/` (incl. the `bot:hello` socket handler + BIK fields)
+   - `packages/types/src/constants.ts` around bot runtime/invocation constants (`THREA_CALLBACK_TOKEN_HEADER`)
+   - For the sealed path: `apps/backend/src/features/public-api/sealed-turn-context.ts`, the `SealedTurnContext`/`SealedReply`/`SealedStep`/`SealedComplete` types in `packages/types/src/api.ts`, and `packages/crypto/src/` (the source of truth the vendored `crypto.ts` mirrors)
 4. Compare against product intent:
+   - `docs/plans/agent-runtimes-unification-redesign.md` §2.6 for the sealed (E2E) external-bot rules
    - `docs/plans/pi-remote-protocol-implementation.md`
    - `docs/plans/interactive-bot-scratchpads.md` only if behavior is unclear
 
@@ -58,15 +71,22 @@ Verify the adapter still:
 - Stops polling and marks presence offline on final `session_shutdown`; reload shutdown should reconnect automatically.
 - Does not poll arbitrary stream messages as the work trigger. Threa-owned invocation rows are the trigger.
 
+For the sealed (E2E) path, also verify:
+
+- Registers the BIK (`publicKey`/`publicKeyId`) on `bot:hello` and on every HTTP presence write (never let a heartbeat clear it).
+- Detects `sealedContext` on a claim and routes through the sealed wire (decrypt trigger/history, seal replies/steps, `/sealed-steps` + `/sealed-complete` with the `X-Threa-Callback-Token` header) instead of the plaintext endpoints.
+- Never sends decrypted content to a plaintext endpoint, a cleartext field, or an error/`statusText` string on a sealed turn.
+- Keeps `crypto.ts` byte-compatible with `@threa/crypto` (the parity test must pass) and on the noble KEM.
+
 ## Verification
 
-Run the focused test:
+Run the suite from the extension directory (it resolves the standalone `node_modules`):
 
 ```bash
-bun test ./extensions/pi-remote/src/threa-remote.test.ts
+cd extensions/pi-remote && bun test
 ```
 
-If you changed backend API contracts, also run the relevant backend tests and/or typecheck. At minimum, inspect the route schemas and explain why the plugin request/response shapes still match.
+This covers the adapter, the sealed-path behavior, and the `crypto.parity.test.ts` drift guard against `@threa/crypto`. If you changed backend API contracts, also run the relevant backend tests and/or typecheck. At minimum, inspect the route schemas and explain why the plugin request/response shapes still match.
 
 Optional local smoke check when Pi is available:
 

@@ -15,7 +15,7 @@ npm install
 
 Then run `/reload` in Pi.
 
-The package declares `socket.io-client` because the `/bot` WebSocket transport is required. Pi discovers the extension through `package.json`:
+The package declares `socket.io-client` (the `/bot` WebSocket transport) plus `@hpke/core` + `@hpke/dhkem-x25519` and `ulid` (the sealed end-to-end-encrypted scratchpad path — see `src/crypto.ts`, a vendored subset of the repo's `@threa/crypto`). Pi discovers the extension through `package.json`:
 
 ```json
 {

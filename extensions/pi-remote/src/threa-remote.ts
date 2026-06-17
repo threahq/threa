@@ -14,6 +14,7 @@ import {
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { io as openSocket, type Socket } from "socket.io-client"
+import { ulid } from "ulid"
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -21,8 +22,33 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent"
+import {
+  base64ToBytes,
+  buildMessageAad,
+  buildWrapAad,
+  bytesToBase64,
+  exportPrivateKey,
+  exportPublicKey,
+  generateKeyPair,
+  importRecipientPrivateKey,
+  openMessageAsString,
+  parseSealedPayload,
+  sealMessage,
+  serializeSealedPayload,
+  unwrapStreamKey,
+  type StreamEnvelope,
+} from "./crypto"
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
+// The Bot Identity Key (BIK): a per-install X25519 keypair the harness registers
+// so an owner can wrap an E2E scratchpad's stream key to it (N-7 / design §2.6).
+// Persisted separately from the config (private key material, mode 0600) and
+// stable across restarts — the owner's wraps target its `publicKeyId`, so
+// rotating it would orphan every wrap. Generated lazily on first presence write.
+const BIK_PATH = join(homedir(), ".pi", "agent", "threa-remote-bik.json")
+// Per-claim secret (model A) the backend hands a sealed turn in `sealedContext`;
+// echoed on every sealed callback so the backend can bind it to that session.
+const THREA_CALLBACK_TOKEN_HEADER = "X-Threa-Callback-Token"
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
@@ -125,6 +151,8 @@ type ConfigPatch = Pick<
 type ClaimedInvocation = {
   id: string
   activeStreamId: string
+  /** Root stream that owns the E2E key — the AAD stream id for sealed wraps/messages. */
+  rootStreamId?: string
   sourceMessageId: string
   promptMarkdown: string
   claimToken: string
@@ -133,6 +161,66 @@ type ClaimedInvocation = {
   trigger?: string
   requiredCapability?: string
   metadata?: Record<string, unknown>
+  /** Present on a sealed (E2E) claim; absent on plaintext. The bot opens it with its BIK. */
+  sealedContext?: SealedTurnContext
+  /** Derived from `sealedContext` at claim time; carries the SSK + binding for sealing replies/steps. */
+  sealing?: SealingState
+}
+
+/** One SSK wrap addressed to this bot's BIK (wire shape from the claim's `sealedContext`). */
+interface SskWrap {
+  keyGeneration: number
+  wrapEnc: string
+  wrapCt: string
+}
+
+/** One SSK-sealed message: base64 ciphertext + its envelope (wire shape). */
+interface SealedMessage {
+  ciphertext: string
+  envelope: StreamEnvelope
+}
+
+/**
+ * The sealed work handed to an owner-granted external bot on a winning claim
+ * when the delivery verdict is `sealed`. Mirrors `@threa/types`' `SealedTurnContext`
+ * (which this standalone extension can't import). The backend never decrypts:
+ * it ships ciphertext + SSK wraps addressed to this bot's BIK; the bot unwraps
+ * with its identity private key, opens history/prompt, runs its turn, and seals
+ * each reply/step back under the same SSK.
+ */
+interface SealedTurnContext {
+  callbackToken: string
+  wraps: SskWrap[]
+  history: (SealedMessage & { role: "user" | "assistant"; sequence: string })[]
+  prompt: SealedMessage
+  reply: { keyGeneration: number; senderId: string }
+  trigger?: { messageId: string; authorName: string; authorType: string; createdAt: string }
+}
+
+/** Everything a sealed turn needs to seal its replies/steps back under the stream key. */
+interface SealingState {
+  /** Root stream id — bound into every wrap/message/step AAD. */
+  streamId: string
+  replyKeyGeneration: number
+  replySenderId: string
+  /** The recovered SSK for `replyKeyGeneration`; replies and steps seal under it. */
+  replySsk: Uint8Array
+  callbackToken: string
+  /** Decrypted prior-message context, formatted for the prompt (no plaintext fetch on E2E). */
+  contextText: string
+}
+
+/** This install's registered Bot Identity Key — held in memory; private key never re-exported once loaded. */
+interface BotIdentityKey {
+  publicKeyId: string
+  publicKeyBase64: string
+  privateKey: CryptoKey
+}
+
+interface PersistedBik {
+  publicKeyId: string
+  publicKey: string
+  privateKey: string
 }
 
 interface AttachmentSummary {
@@ -194,6 +282,7 @@ let botWsConnected = false
 let botWsHint: WsHint | undefined
 let lastBotWsSummary: string | undefined
 let lastWsResolveAttemptAt = 0
+let bik: BotIdentityKey | undefined
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -360,6 +449,184 @@ function saveConfig(): void {
   } finally {
     release()
   }
+}
+
+// ── Bot Identity Key (BIK) ────────────────────────────────────────────────────
+
+function loadPersistedBik(): PersistedBik | undefined {
+  if (!existsSync(BIK_PATH)) return undefined
+  try {
+    const parsed = JSON.parse(readFileSync(BIK_PATH, "utf8")) as Partial<PersistedBik>
+    if (
+      typeof parsed?.publicKeyId === "string" &&
+      typeof parsed.publicKey === "string" &&
+      typeof parsed.privateKey === "string"
+    ) {
+      return { publicKeyId: parsed.publicKeyId, publicKey: parsed.publicKey, privateKey: parsed.privateKey }
+    }
+  } catch (error) {
+    console.error(`Failed to parse ${BIK_PATH}: ${String(error)}`)
+  }
+  return undefined
+}
+
+async function createBik(): Promise<BotIdentityKey> {
+  const pair = await generateKeyPair()
+  const publicKey = await exportPublicKey(pair.publicKey)
+  const privateKey = await exportPrivateKey(pair.privateKey)
+  const record: PersistedBik = {
+    publicKeyId: `bik_${ulid()}`,
+    publicKey: bytesToBase64(publicKey),
+    privateKey: bytesToBase64(privateKey),
+  }
+  mkdirSync(dirname(BIK_PATH), { recursive: true })
+  writeFileSync(BIK_PATH, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+  return { publicKeyId: record.publicKeyId, publicKeyBase64: record.publicKey, privateKey: pair.privateKey }
+}
+
+/**
+ * Load (or generate + persist) this install's BIK, caching it for the process.
+ * Idempotent and cheap after the first call. A corrupt file falls back to a
+ * fresh key rather than wedging — the owner just re-invites against the new id.
+ */
+async function ensureBik(): Promise<BotIdentityKey> {
+  if (bik) return bik
+  const loaded = loadPersistedBik()
+  if (loaded) {
+    try {
+      bik = {
+        publicKeyId: loaded.publicKeyId,
+        publicKeyBase64: loaded.publicKey,
+        privateKey: await importRecipientPrivateKey(base64ToBytes(loaded.privateKey)),
+      }
+      return bik
+    } catch (error) {
+      console.error(`Failed to import BIK from ${BIK_PATH}; generating a fresh one: ${String(error)}`)
+    }
+  }
+  bik = await createBik()
+  return bik
+}
+
+function bikPresenceFields(): { publicKey: string; publicKeyId: string } | Record<string, never> {
+  // A presence/hello write OVERWRITES the BIK by default backend-side, so every
+  // such write must carry the cached key or a heartbeat would clear what hello
+  // registered (backend `bot_runtime_instances` upsert, `retainBik` is server-only).
+  return bik ? { publicKey: bik.publicKeyBase64, publicKeyId: bik.publicKeyId } : {}
+}
+
+// ── sealed turn crypto (pure; no module state or I/O) ─────────────────────────
+
+/**
+ * Open a sealed claim with this bot's BIK: recover the SSK for every generation
+ * the backend wrapped to us (AAD-bound to our key id), open the trigger + prior
+ * history, and return the decrypted prompt plus the {@link SealingState} the turn
+ * seals replies/steps with. `streamId` is the E2E root stream — wraps and the
+ * owner's message AAD both bind to it. A wrap or history row we can't open is
+ * skipped (a generation predating our invite), never fatal; a missing reply or
+ * prompt key is fatal (the turn can't be served).
+ */
+async function openSealedTurnContext(
+  sealed: SealedTurnContext,
+  identity: BotIdentityKey,
+  streamId: string
+): Promise<{ promptMarkdown: string; sealing: SealingState }> {
+  const sskByGeneration = new Map<number, Uint8Array>()
+  for (const wrap of sealed.wraps) {
+    try {
+      sskByGeneration.set(
+        wrap.keyGeneration,
+        await unwrapStreamKey({
+          enc: base64ToBytes(wrap.wrapEnc),
+          ct: base64ToBytes(wrap.wrapCt),
+          recipientPrivateKey: identity.privateKey,
+          aad: buildWrapAad({ streamId, keyGeneration: wrap.keyGeneration, recipientKeyId: identity.publicKeyId }),
+        })
+      )
+    } catch {
+      // A wrap for a generation we weren't invited to — skip it, open what we can.
+    }
+  }
+
+  const promptSsk = sskByGeneration.get(sealed.prompt.envelope.keyGeneration)
+  if (!promptSsk) throw new Error("Sealed claim: no SSK wrap for the prompt's key generation")
+  const promptRaw = await openMessageAsString({
+    key: promptSsk,
+    envelope: sealed.prompt.envelope,
+    ciphertext: base64ToBytes(sealed.prompt.ciphertext),
+  })
+  const promptMarkdown = parseSealedPayload(promptRaw).contentMarkdown
+
+  const replySsk = sskByGeneration.get(sealed.reply.keyGeneration)
+  if (!replySsk) throw new Error("Sealed claim: no SSK wrap for the reply's key generation")
+
+  const historyLines: string[] = []
+  for (const item of sealed.history) {
+    const ssk = sskByGeneration.get(item.envelope.keyGeneration)
+    if (!ssk) continue
+    try {
+      const raw = await openMessageAsString({
+        key: ssk,
+        envelope: item.envelope,
+        ciphertext: base64ToBytes(item.ciphertext),
+      })
+      historyLines.push(`- ${item.role}: ${parseSealedPayload(raw).contentMarkdown}`)
+    } catch {
+      continue
+    }
+  }
+  const contextText =
+    historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : ""
+
+  return {
+    promptMarkdown,
+    sealing: {
+      streamId,
+      replyKeyGeneration: sealed.reply.keyGeneration,
+      replySenderId: sealed.reply.senderId,
+      replySsk,
+      callbackToken: sealed.callbackToken,
+      contextText,
+    },
+  }
+}
+
+/** Seal a reply under the stream key, bound to a fresh `msg_…` id — the sealed `/complete` body. */
+async function sealReplyWith(
+  sealing: SealingState,
+  markdown: string
+): Promise<{ messageId: string; ciphertext: string; envelope: StreamEnvelope }> {
+  const messageId = `msg_${ulid()}`
+  const sealed = await sealMessage({
+    key: sealing.replySsk,
+    keyGeneration: sealing.replyKeyGeneration,
+    payload: serializeSealedPayload(markdown),
+    aad: buildMessageAad({ streamId: sealing.streamId, messageId, senderId: sealing.replySenderId }),
+  })
+  return { messageId, ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
+}
+
+/** Seal one trace step under the stream key, bound to a fresh `step_…` id — the sealed `/steps` body. */
+async function sealStepWith(
+  sealing: SealingState,
+  stepType: string,
+  content: string
+): Promise<{ stepId: string; stepType: string; ciphertext: string; envelope: StreamEnvelope } | null> {
+  const trimmed = truncateForTrace(content)
+  if (!trimmed) return null
+  const stepId = `step_${ulid()}`
+  const sealed = await sealMessage({
+    key: sealing.replySsk,
+    keyGeneration: sealing.replyKeyGeneration,
+    payload: serializeSealedPayload(trimmed),
+    aad: buildMessageAad({ streamId: sealing.streamId, messageId: stepId, senderId: sealing.replySenderId }),
+  })
+  return { stepId, stepType, ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
+}
+
+/** Error text for a sealed `/fail`: class name only, never the message — it could echo decrypted content. */
+function scrubSealedError(error: unknown): string {
+  return error instanceof Error ? error.name || "Error" : "Error"
 }
 
 // Server `bot:hello` schema constrains `instanceId` to `^[A-Za-z0-9_-]+$`
@@ -616,6 +883,9 @@ async function heartbeat(
   ctx?: ExtensionContext
 ): Promise<void> {
   if (!config) return
+  // Carry the BIK on every presence write — the backend overwrites it by default,
+  // so a heartbeat without it would clear the key `bot:hello` registered.
+  await ensureBik().catch(() => undefined)
   const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`, {
     method: "POST",
@@ -628,6 +898,7 @@ async function heartbeat(
       acceptingInvocations: status === "available",
       capabilities: buildRuntimeCapabilities(ctx),
       statusText,
+      ...bikPresenceFields(),
     }),
   })
 }
@@ -701,6 +972,7 @@ function buildBotHelloPayload(ctx: ExtensionContext, sinceCursor: string | undef
     supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
     capabilities: buildRuntimeCapabilities(ctx),
     ...(sinceCursor ? { sinceCursor } : {}),
+    ...bikPresenceFields(),
   }
 }
 
@@ -735,7 +1007,7 @@ function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
   socket.on("connect", () => {
     botWsConnected = true
     noteWsDebug(ctx, `connect ${socket.id ?? ""}`)
-    sendBotHello(pi, ctx)
+    void sendBotHello(pi, ctx)
   })
 
   socket.on("disconnect", (reason) => {
@@ -766,7 +1038,7 @@ function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
   socket.on("bot:resync", (payload: unknown) => {
     const reason = isObject(payload) && typeof payload.reason === "string" ? payload.reason : ""
     noteWsDebug(ctx, `resync ${reason}`)
-    sendBotHello(pi, ctx)
+    void sendBotHello(pi, ctx)
   })
 }
 
@@ -776,8 +1048,12 @@ function formatHelloAckDetails(details: unknown): string {
   return parts.length > 0 ? ` (${parts.join("; ")})` : ""
 }
 
-function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
+async function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!botSocket || !config) return
+  // Register the BIK in the handshake so an owner can wrap an E2E stream key to
+  // it; ensured before building the payload so `bikPresenceFields()` is populated.
+  await ensureBik().catch(() => undefined)
+  if (!botSocket) return
   const sessionLink = getCurrentSessionLink(ctx)
   const payload = buildBotHelloPayload(ctx, sessionLink?.wsCursor)
   botSocket.emit("bot:hello", payload, (ack: unknown) => {
@@ -856,6 +1132,10 @@ async function recordInvocationTraceStep(
   statusText?: string
 ): Promise<void> {
   if (!config) return
+  if (invocation.sealing) {
+    await recordSealedInvocationStep(invocation, stepType, content)
+    return
+  }
   const trimmed = truncateForTrace(content)
   if (!trimmed) return
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/steps`, {
@@ -867,6 +1147,28 @@ async function recordInvocationTraceStep(
       content: trimmed,
       statusText: statusText?.trim().slice(0, 160),
     }),
+  }).catch(() => undefined)
+}
+
+/**
+ * Sealed sibling of the plaintext `/steps` write: seal the trace content under
+ * the stream key and POST to `/sealed-steps`, authorized by the callback token
+ * (the server stores ciphertext it can't read). Best-effort like the plaintext
+ * step — a trace hiccup never blocks the turn. `statusText` is dropped: it's
+ * cleartext derived from the turn, so it can't ride an E2E callback.
+ */
+async function recordSealedInvocationStep(
+  invocation: ClaimedInvocation,
+  stepType: string,
+  content: string
+): Promise<void> {
+  if (!config || !invocation.sealing) return
+  const body = await sealStepWith(invocation.sealing, stepType, content)
+  if (!body) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-steps`, {
+    method: "POST",
+    headers: { [THREA_CALLBACK_TOKEN_HEADER]: invocation.sealing.callbackToken },
+    body: JSON.stringify(body),
   }).catch(() => undefined)
 }
 
@@ -1515,11 +1817,42 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
         ? `claimed ${body.data.id} in ${Date.now() - startedAt}ms`
         : `no invocation in ${Date.now() - startedAt}ms`
     )
-    return body.data ? { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) } : null
+    if (!body.data) return null
+    const invocation: ClaimedInvocation = { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) }
+    if (!invocation.sealedContext) return invocation
+    try {
+      return await hydrateSealedClaim(invocation)
+    } catch (error) {
+      // The claim was won but the sealed context won't open (a BIK/wrap race, or
+      // a key we no longer hold). Fail it loudly so it's released now rather than
+      // looping on TTL recycle; the error text is generic (no decrypted content).
+      emitPollDebug(ctx, `sealed hydrate failed for ${invocation.id}: ${scrubSealedError(error)}`)
+      await failInvocation(invocation, "Failed to open the sealed turn").catch(() => undefined)
+      return null
+    }
   } catch (error) {
     emitPollDebug(ctx, `failed after ${Date.now() - startedAt}ms: ${summarizeError(error)}`)
     throw error
   }
+}
+
+/**
+ * Decrypt a sealed (E2E) claim's `sealedContext` with this bot's BIK: recover the
+ * stream key, open the trigger + history, and store the {@link SealingState} so
+ * the rest of the turn runs identically to a plaintext one — the decrypted
+ * trigger becomes `promptMarkdown`, replies/steps seal back under the stream key.
+ */
+async function hydrateSealedClaim(invocation: ClaimedInvocation): Promise<ClaimedInvocation> {
+  const sealed = invocation.sealedContext
+  if (!sealed) return invocation
+  const identity = await ensureBik()
+  // E2E key material is owned by the root stream; wraps and the owner's message
+  // AAD both bind to it (`activeStreamId` falls back only for a stream with no thread).
+  const streamId = invocation.rootStreamId ?? invocation.activeStreamId
+  const { promptMarkdown, sealing } = await openSealedTurnContext(sealed, identity, streamId)
+  invocation.promptMarkdown = promptMarkdown
+  invocation.sealing = sealing
+  return invocation
 }
 
 type RuntimeCommandMetadata = { id: string; name: string; args: string; executionKind: "bot-runtime" }
@@ -1580,33 +1913,72 @@ async function completeInvocationWithMarkdown(
 ): Promise<void> {
   if (!config) return
   await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: getInvocationInstanceId(invocation),
-      claimToken: invocation.claimToken,
-      finalMessageMarkdown,
-      metadata: {
-        "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": getInvocationInstanceId(invocation),
-        "pi.remote.sessionControl": "true",
-      },
-    }),
-  })
+  if (invocation.sealing) {
+    await completeSealedInvocation(invocation, finalMessageMarkdown)
+  } else {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId: getInvocationInstanceId(invocation),
+        claimToken: invocation.claimToken,
+        finalMessageMarkdown,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": getInvocationInstanceId(invocation),
+          "pi.remote.sessionControl": "true",
+        },
+      }),
+    })
+  }
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx).catch(() => undefined)
+}
+
+/**
+ * Sealed sibling of the plaintext `/complete`: seal the reply (or send
+ * `noResponse`) and POST to `/sealed-complete`, authorized by the callback token.
+ * `THREA_ATTACH:` directives are stripped, not uploaded — attachment bytes can't
+ * ride the E2E path yet, so leaking them to plaintext S3 would defeat the seal.
+ */
+async function completeSealedInvocation(invocation: ClaimedInvocation, finalMessageMarkdown: string): Promise<void> {
+  if (!config || !invocation.sealing) return
+  const { markdown, paths } = extractAttachmentDirectives(finalMessageMarkdown.trim())
+  if (markdown === NO_RESPONSE_MARKER || markdown.length === 0) {
+    await postSealedComplete(invocation, { noResponse: true })
+    return
+  }
+  const note = paths.length > 0 ? "\n\n_(Attachments aren't supported in encrypted scratchpads yet.)_" : ""
+  const reply = await sealReplyWith(invocation.sealing, `${markdown}${note}`)
+  await postSealedComplete(invocation, { reply })
+}
+
+async function postSealedComplete(
+  invocation: ClaimedInvocation,
+  body: { reply: { messageId: string; ciphertext: string; envelope: StreamEnvelope } } | { noResponse: true }
+): Promise<void> {
+  if (!config || !invocation.sealing) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
+    method: "POST",
+    headers: { [THREA_CALLBACK_TOKEN_HEADER]: invocation.sealing.callbackToken },
+    body: JSON.stringify(body),
+  })
 }
 
 async function buildInvocationPrompt(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext
 ): Promise<{ prompt: string; cursor?: string; context: string }> {
-  const { context, cursor } = await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx)).catch(
-    (error): { context: string; cursor?: string } => {
-      ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
-      return { context: "" }
-    }
-  )
+  // Sealed turn: context is the history we already decrypted at claim time. Never
+  // call the plaintext messages API on an E2E stream — it only returns ciphertext,
+  // and the decrypted prior turns must not round-trip through the server.
+  const { context, cursor } = invocation.sealing
+    ? { context: invocation.sealing.contextText, cursor: undefined }
+    : await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx)).catch(
+        (error): { context: string; cursor?: string } => {
+          ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
+          return { context: "" }
+        }
+      )
   return {
     context,
     cursor,
@@ -2466,6 +2838,10 @@ async function prepareFinalMarkdown(
 
 async function completeInvocationNoResponse(invocation: ClaimedInvocation): Promise<void> {
   if (!config) return
+  if (invocation.sealing) {
+    await postSealedComplete(invocation, { noResponse: true }).catch(() => undefined)
+    return
+  }
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
@@ -2484,12 +2860,16 @@ async function completeInvocationNoResponse(invocation: ClaimedInvocation): Prom
 
 async function failInvocation(invocation: ClaimedInvocation, error: unknown): Promise<void> {
   if (!config) return
+  // `/fail` is shared (it authorizes by claim token, present on a sealed claim too);
+  // only the error text is scrubbed to a class name so a sealed turn can't leak
+  // decrypted content in the failure reason.
+  const errorMessage = invocation.sealing ? scrubSealedError(error) : String(error).slice(0, 1000)
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
     body: JSON.stringify({
       instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
-      errorMessage: String(error).slice(0, 1000),
+      errorMessage,
     }),
   }).catch(() => undefined)
 }
@@ -2498,24 +2878,30 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   if (!config || !pending) return
   const invocation = pending
   const steered = steeredInvocations
-  const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
-  const noResponse = finalMarkdown === NO_RESPONSE_MARKER
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: getInvocationInstanceId(invocation),
-      claimToken: invocation.claimToken,
-      ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
-      metadata: {
-        "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": getInvocationInstanceId(invocation),
-        ...(noResponse && { "pi.remote.noResponse": "true" }),
-        ...(uploadedAttachments.length > 0 && {
-          "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
-        }),
-      },
-    }),
-  })
+  if (invocation.sealing) {
+    // Seal the reply rather than uploading attachments/posting plaintext — the
+    // server only ever sees ciphertext for this turn.
+    await completeSealedInvocation(invocation, markdown)
+  } else {
+    const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
+    const noResponse = finalMarkdown === NO_RESPONSE_MARKER
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId: getInvocationInstanceId(invocation),
+        claimToken: invocation.claimToken,
+        ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": getInvocationInstanceId(invocation),
+          ...(noResponse && { "pi.remote.noResponse": "true" }),
+          ...(uploadedAttachments.length > 0 && {
+            "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
+          }),
+        },
+      }),
+    })
+  }
   await Promise.all(steered.map((item) => completeInvocationNoResponse(item.invocation)))
   advanceStreamCursor(invocation, ctx, pendingContextCursor)
   for (const item of steered) advanceStreamCursor(item.invocation, ctx, item.cursor)
@@ -2561,6 +2947,10 @@ export const __testing = {
   describeToolCall,
   formatToolCallTrace,
   formatToolResultTrace,
+  openSealedTurnContext,
+  sealReplyWith,
+  sealStepWith,
+  scrubSealedError,
   buildClaimInvocationPayload,
   buildPersistedConfig,
   buildRuntimeCapabilities,
