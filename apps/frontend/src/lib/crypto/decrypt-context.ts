@@ -22,7 +22,7 @@ import type { DecryptMessageOpts } from "./message-envelope"
  */
 
 /** A session that can actually open sealed content: unlocked, with keys in memory. */
-export interface UnlockedSession extends E2eSessionState {
+interface UnlockedSession extends E2eSessionState {
   status: "unlocked"
   privateKey: CryptoKey
   keyId: string
