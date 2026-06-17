@@ -34,6 +34,7 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
+const ACTIVE_SCRATCHPAD_CAPABILITY = "active-scratchpad"
 const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload", "shell"] as const
 const SHELL_TIMEOUT_MS = 60_000
 // 32K chars per stream — large enough for typical output, small enough to avoid
@@ -1374,8 +1375,34 @@ function getRuntimeCommand(invocation: ClaimedInvocation): RuntimeCommandMetadat
   return { id: value.id, name: value.name, args: value.args, executionKind: "bot-runtime" }
 }
 
+function parseSessionControlCommand(promptMarkdown: string): { name: string; args: string } | null {
+  const trimmed = promptMarkdown.trim()
+  const match = trimmed.match(/^\/([\w-]+)(?:\s+(.*))?$/s)
+  if (!match) return null
+  const name = match[1].toLowerCase()
+  if (!SESSION_CONTROL_COMMANDS.includes(name as PiSessionControlCommandName)) return null
+  return { name, args: (match[2] ?? "").trim() }
+}
+
+function resolveSessionControlCommand(invocation: ClaimedInvocation): RuntimeCommandMetadata | null {
+  const runtimeCommand = getRuntimeCommand(invocation)
+  if (runtimeCommand) return runtimeCommand
+  const canParseFromPrompt =
+    invocation.requiredCapability === SESSION_CONTROL_CAPABILITY ||
+    invocation.requiredCapability === ACTIVE_SCRATCHPAD_CAPABILITY
+  if (!canParseFromPrompt) return null
+  const parsed = parseSessionControlCommand(invocation.promptMarkdown)
+  if (!parsed) return null
+  return {
+    id: invocation.sourceMessageId,
+    name: parsed.name,
+    args: parsed.args,
+    executionKind: "bot-runtime",
+  }
+}
+
 function isSessionControlInvocation(invocation: ClaimedInvocation): boolean {
-  return invocation.requiredCapability === SESSION_CONTROL_CAPABILITY || getRuntimeCommand(invocation) !== null
+  return resolveSessionControlCommand(invocation) !== null
 }
 
 function normalizeThinkingLevel(input: string): ThinkingLevel | null {
@@ -1826,7 +1853,7 @@ async function handleSessionControlInvocation(
   ctx: ExtensionContext,
   invocation: ClaimedInvocation
 ): Promise<void> {
-  const command = getRuntimeCommand(invocation)
+  const command = resolveSessionControlCommand(invocation)
   if (!command) {
     await failInvocation(invocation, "Missing runtime command metadata")
     return
@@ -2310,6 +2337,8 @@ export const __testing = {
   buildClaimInvocationPayload,
   buildRuntimeCapabilities,
   getRuntimeCommand,
+  parseSessionControlCommand,
+  resolveSessionControlCommand,
   normalizeThinkingLevel,
   migrateSessionState,
   buildScratchpadUrl,

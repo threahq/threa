@@ -114,6 +114,91 @@ describe("Pi remote trace safety", () => {
     ).toEqual({ id: "cmd_1", name: "thinking", args: "high", executionKind: "bot-runtime" })
   })
 
+  test("parses session-control commands from prompt markdown", () => {
+    expect(__testing.parseSessionControlCommand("/model ")).toEqual({ name: "model", args: "" })
+    expect(__testing.parseSessionControlCommand("/model anthropic/claude-sonnet-4-6")).toEqual({
+      name: "model",
+      args: "anthropic/claude-sonnet-4-6",
+    })
+    expect(__testing.parseSessionControlCommand("  /thinking high  ")).toEqual({ name: "thinking", args: "high" })
+    expect(__testing.parseSessionControlCommand("/shell echo hello")).toEqual({ name: "shell", args: "echo hello" })
+  })
+
+  test("rejects prompts that do not look like session-control commands", () => {
+    expect(__testing.parseSessionControlCommand("/remote-control status")).toBeNull()
+    expect(__testing.parseSessionControlCommand("not a command")).toBeNull()
+    expect(__testing.parseSessionControlCommand("I tried /model but it failed")).toBeNull()
+    expect(__testing.parseSessionControlCommand("/")).toBeNull()
+  })
+
+  test("resolves session-control command from metadata when present", () => {
+    const invocation = {
+      id: "binv_1",
+      activeStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "/model ",
+      claimToken: "claim",
+      claimExpiresAt: null,
+      requiredCapability: "active-scratchpad",
+      metadata: { command: { id: "cmd_1", name: "thinking", args: "high", executionKind: "bot-runtime" } },
+    }
+    expect(__testing.resolveSessionControlCommand(invocation)).toEqual({
+      id: "cmd_1",
+      name: "thinking",
+      args: "high",
+      executionKind: "bot-runtime",
+    })
+  })
+
+  test("falls back to parsing prompt for active-scratchpad invocations", () => {
+    const invocation = {
+      id: "binv_1",
+      activeStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "/model ",
+      claimToken: "claim",
+      claimExpiresAt: null,
+      requiredCapability: "active-scratchpad",
+    }
+    expect(__testing.resolveSessionControlCommand(invocation)).toEqual({
+      id: "msg_1",
+      name: "model",
+      args: "",
+      executionKind: "bot-runtime",
+    })
+  })
+
+  test("does not treat mention invocations as session-control commands", () => {
+    const invocation = {
+      id: "binv_1",
+      activeStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "/model ",
+      claimToken: "claim",
+      claimExpiresAt: null,
+      requiredCapability: "mentionable",
+    }
+    expect(__testing.resolveSessionControlCommand(invocation)).toBeNull()
+  })
+
+  test("falls back to parsing prompt for session-control invocations missing metadata", () => {
+    const invocation = {
+      id: "binv_1",
+      activeStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      promptMarkdown: "/thinking high",
+      claimToken: "claim",
+      claimExpiresAt: null,
+      requiredCapability: "session-control",
+    }
+    expect(__testing.resolveSessionControlCommand(invocation)).toEqual({
+      id: "msg_1",
+      name: "thinking",
+      args: "high",
+      executionKind: "bot-runtime",
+    })
+  })
+
   test("normalizes thinking level aliases", () => {
     expect(__testing.normalizeThinkingLevel("x-high")).toBe("xhigh")
     expect(__testing.normalizeThinkingLevel("none")).toBe("off")
