@@ -18,6 +18,7 @@ import type {
   UpsertDraftResponse,
 } from "@threa/types"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { isResolvedDraftEcho } from "./draft-resolution-guard"
 
 /**
  * Stage 3 draft sync — wires the local-first draft store (Stage 2) to the
@@ -382,6 +383,14 @@ export async function applyDraftUpserted(
 ): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
+
+  // A draft this device just resolved-on-send wins: the echo of our own last
+  // push, or a reconnect bootstrap that re-seeds the still-present server row
+  // before the `resolve_draft` op drains, would otherwise resurrect the just-sent
+  // draft (as a stash entry, or — racing the local teardown — back into the
+  // composer). Drop the echo at or below the resolved version; a strictly newer
+  // version is a genuine edit from another device and still applies (no-loss).
+  if (isResolvedDraftEcho(draft.id, draft.version)) return
 
   // A queued local delete wins: the user discarded this draft here and its
   // `delete_draft` op (not yet drained) will remove the server row. Until then,
