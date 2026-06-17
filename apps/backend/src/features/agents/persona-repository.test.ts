@@ -45,7 +45,7 @@ describe("PersonaRepository built-in agent config", () => {
       status: "active",
     })
     expect(persona?.systemPrompt).toContain("You are Ariadne")
-    expect(persona?.enabledTools).toContain(AgentToolNames.GITHUB_GET_PULL_REQUEST)
+    expect(persona?.enabledTools).toContain(AgentToolNames.GITHUB_PULLS)
     expect(persona?.createdAt.toISOString()).toBe(BUILT_IN_AGENT_CONFIG_TIMESTAMP.toISOString())
   })
 

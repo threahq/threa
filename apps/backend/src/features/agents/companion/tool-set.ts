@@ -16,21 +16,13 @@ import {
   createDescribeMemoTool,
   createReactToMessageTool,
   createWorkspaceResearchTool,
-  createGithubListReposTool,
-  createGithubListBranchesTool,
-  createGithubListCommitsTool,
-  createGithubGetCommitTool,
-  createGithubListPullRequestsTool,
-  createGithubGetPullRequestTool,
-  createGithubListPrFilesTool,
-  createGithubGetFileContentsTool,
-  createGithubSearchCodeTool,
-  createGithubListWorkflowRunsTool,
-  createGithubGetWorkflowRunTool,
-  createGithubListReleasesTool,
-  createGithubGetReleaseTool,
-  createGithubSearchIssuesTool,
-  createGithubGetIssueTool,
+  createGithubReposTool,
+  createGithubCommitsTool,
+  createGithubPullsTool,
+  createGithubContentTool,
+  createGithubWorkflowsTool,
+  createGithubReleasesTool,
+  createGithubIssuesTool,
   createLinearListIssuesTool,
   createLinearGetIssueTool,
   createLinearListProjectsTool,
@@ -138,45 +130,13 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_REPOS) ? createGithubListReposTool(github) : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_BRANCHES)
-      ? createGithubListBranchesTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_COMMITS)
-      ? createGithubListCommitsTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_GET_COMMIT) ? createGithubGetCommitTool(github) : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_PULL_REQUESTS)
-      ? createGithubListPullRequestsTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_GET_PULL_REQUEST)
-      ? createGithubGetPullRequestTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_PR_FILES)
-      ? createGithubListPrFilesTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_GET_FILE_CONTENTS)
-      ? createGithubGetFileContentsTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_SEARCH_CODE)
-      ? createGithubSearchCodeTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_WORKFLOW_RUNS)
-      ? createGithubListWorkflowRunsTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_GET_WORKFLOW_RUN)
-      ? createGithubGetWorkflowRunTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_LIST_RELEASES)
-      ? createGithubListReleasesTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_GET_RELEASE)
-      ? createGithubGetReleaseTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_SEARCH_ISSUES)
-      ? createGithubSearchIssuesTool(github)
-      : null,
-    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_GET_ISSUE) ? createGithubGetIssueTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_REPOS) ? createGithubReposTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_COMMITS) ? createGithubCommitsTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_PULLS) ? createGithubPullsTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_CONTENT) ? createGithubContentTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_WORKFLOWS) ? createGithubWorkflowsTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_RELEASES) ? createGithubReleasesTool(github) : null,
+    github && isToolEnabled(enabledTools, AgentToolNames.GITHUB_ISSUES) ? createGithubIssuesTool(github) : null,
 
     // Linear tools (workspace-scoped via installed Linear OAuth app; read-only)
     linear && isToolEnabled(enabledTools, AgentToolNames.LINEAR_LIST_ISSUES)
