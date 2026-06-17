@@ -156,6 +156,44 @@ export const recordInvocationStepSchema = z.object({
   statusText: z.string().max(200).optional(),
 })
 
+// These base64 fields are persisted verbatim and only decrypted later (in the
+// owner's browser), so decodability is validated at the boundary — malformed
+// base64 that slips through becomes a permanently unreadable step. Mirrors the
+// enclave's sealed-step validation (session-handlers.ts).
+const sealedStreamEnvelopeSchema = z.object({
+  v: z.number(),
+  keyGeneration: z.number().int().min(0),
+  iv: z.base64().min(1),
+  aad: z.base64().min(1),
+})
+
+// One sealed trace step a sealed-capable bot harness finalized (the external
+// sibling of the enclave's `/steps`). `stepType` + `messageId` + timing are
+// clear; the content is ciphertext the server can't read (INV-E7). Auth is the
+// bot API key + the neutral callback token header, not body fields — the body is
+// exactly the `SealedStep` wire shape.
+export const recordSealedInvocationStepSchema = z.object({
+  stepId: z.string().min(1).max(128),
+  stepType: z.enum(AGENT_STEP_TYPES),
+  messageId: z.string().min(1).max(128).optional(),
+  ciphertext: z.base64().min(1),
+  envelope: sealedStreamEnvelopeSchema,
+  durationMs: z.number().int().min(0).optional(),
+})
+
+// One in-flight sealed trace step *start* (the external sibling of the enclave's
+// `/steps/started`). Content is sealed when already known (reasoning/reply) and
+// absent for tools whose result isn't known yet, so ciphertext + envelope are
+// optional here; a matching `recordSealedInvocationStep` finalizes the same
+// `stepId` in place.
+export const startSealedInvocationStepSchema = z.object({
+  stepId: z.string().min(1).max(128),
+  stepType: z.enum(AGENT_STEP_TYPES),
+  messageId: z.string().min(1).max(128).optional(),
+  ciphertext: z.base64().min(1).optional(),
+  envelope: sealedStreamEnvelopeSchema.optional(),
+})
+
 export const listMessagesSchema = z
   .object({
     before: z.string().regex(/^\d+$/, "must be a numeric sequence").optional(),

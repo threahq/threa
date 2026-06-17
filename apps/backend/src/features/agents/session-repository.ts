@@ -739,6 +739,13 @@ export const AgentSessionRepository = {
       messageId?: string
       completedAt?: Date
       /**
+       * Scope the update to one session so a caller-controlled `stepId` can only
+       * touch a step of the session it owns. The public bot sealed-step callback
+       * passes the authorized session id (the step id is fully caller-supplied
+       * there); omitted on the trusted internal enclave path, where it no-ops.
+       */
+      sessionId?: string
+      /**
        * Guard against overwriting a finalized step. A mid-run substep snapshot can
        * race a finalize (`/steps`): network reordering or a retry can land the
        * snapshot after completion, clobbering the final content with a partial one.
@@ -759,6 +766,7 @@ export const AgentSessionRepository = {
           message_id = COALESCE(${params.messageId ?? null}, message_id),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
         WHERE id = ${stepId}
+          AND (${params.sessionId ?? null}::text IS NULL OR session_id = ${params.sessionId ?? null})
           ${sql.raw(params.requireRunning ? "AND completed_at IS NULL" : "")}
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
       `

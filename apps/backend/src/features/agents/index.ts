@@ -113,6 +113,7 @@ export { AgentConfigOverrideRepository } from "./agent-config-override-repositor
 export type { AgentConfigOverride } from "./agent-config-override-repository"
 
 export { hashCallbackToken } from "./callback-token"
+export { assertSessionRunning, verifyCallbackToken, assertReplyKeyGeneration } from "./sealed-session-guards"
 
 export { AgentSessionRepository, SessionStatuses } from "./session-repository"
 export type {
