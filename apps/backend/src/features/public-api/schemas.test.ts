@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { upsertPresenceSchema } from "./schemas"
+import { createRuntimeSessionSchema, upsertPresenceSchema } from "./schemas"
 
 const BASE = {
   runtimeKind: "pi-local" as const,
@@ -39,5 +39,23 @@ describe("upsertPresenceSchema BIK registration", () => {
       publicKeyId: "bik_short",
     })
     expect(result.success).toBe(false)
+  })
+})
+
+describe("createRuntimeSessionSchema runtimeKind", () => {
+  const base = {
+    instanceId: "inst_1",
+    runtimeSessionId: "sess_1",
+    displayName: "Claude Code - threa",
+  }
+
+  it("accepts the session-linking runtime kinds", () => {
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local" }).success).toBe(true)
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "claude-code-channel" }).success).toBe(true)
+  })
+
+  it("rejects link-free kinds that have no business creating a session", () => {
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "openclaw" }).success).toBe(false)
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "custom" }).success).toBe(false)
   })
 })

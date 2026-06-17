@@ -263,4 +263,20 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
       expect.objectContaining({ actorId: "bot_1", trigger: "active-scratchpad" })
     )
   })
+
+  it("posts the Claude Code channel notice and skips dispatch when an unlinked claude-code-channel bot is active", async () => {
+    const { createInvocation, createMessage } = setupActiveScratchpad({
+      instance: { runtimeKind: "claude-code-channel" },
+    })
+
+    await runProcessMessageCreated(plainUserMessage)
+
+    expect(createInvocation).not.toHaveBeenCalled()
+    expect(createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contentMarkdown: expect.stringContaining("Claude Code with the Threa channel"),
+        metadata: { "bot_runtime.notice": "missing_session_link" },
+      })
+    )
+  })
 })

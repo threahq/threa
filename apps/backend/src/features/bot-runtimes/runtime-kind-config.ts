@@ -1,11 +1,12 @@
 /**
  * Per-runtime-kind dispatch policy for the active-scratchpad path.
  *
- * Pi drives long-lived local sessions, so its active-scratchpad turns must be
- * pinned to an explicit session link (created via Pi's `/remote-control`
- * flow) — without one we post a notice telling the user how to link. Other
- * kinds never create session links; their invocations dispatch untargeted and
- * any live instance of the bot may claim them.
+ * Pi and the Claude Code channel drive long-lived local sessions, so their
+ * active-scratchpad turns must be pinned to an explicit session link (created
+ * via Pi's `/remote-control` flow or the Claude Code channel's startup) —
+ * without one we post a notice telling the user how to link. Other kinds never
+ * create session links; their invocations dispatch untargeted and any live
+ * instance of the bot may claim them.
  */
 
 import type { BotRuntimeKind } from "@threa/types"
@@ -26,7 +27,11 @@ const BOT_RUNTIME_KIND_CONFIGS: Record<BotRuntimeKind, BotRuntimeKindConfig> = {
   },
   hermes: { sessionLinking: "none" },
   openclaw: { sessionLinking: "none" },
-  "claude-code-channel": { sessionLinking: "none" },
+  "claude-code-channel": {
+    sessionLinking: "required",
+    missingSessionLinkNotice: (botName) =>
+      `**${botName} is not linked to this scratchpad.** Start Claude Code with the Threa channel (\`claude --channels …\`) to link a session.`,
+  },
   custom: { sessionLinking: "none" },
 }
 

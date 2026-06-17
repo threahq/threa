@@ -486,18 +486,32 @@ export const BotRuntimeSessionLinkRepository = {
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 
+  // A runtime client is identified by (instanceId, runtimeSessionId). Session-create
+  // callers pass `runtimeKind` so reuse matches the link of the kind being created —
+  // the unique key includes runtime_kind, so two kinds can hold the same instance/
+  // session pair. Rename callers omit it to match that runtime identity across kinds;
+  // `ORDER BY updated_at DESC LIMIT 1` keeps the kindless case deterministic.
   async findActiveByRuntimeSession(
     db: Querier,
     params: {
       workspaceId: string
       botId: string
-      runtimeKind: BotRuntimeKind
       instanceId: string
       runtimeSessionId: string
+      runtimeKind?: BotRuntimeKind
     }
   ): Promise<BotRuntimeSessionLink | null> {
+    const kind = params.runtimeKind ?? null
     const result = await db.query<BotRuntimeSessionLinkRow>(
-      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND runtime_kind = ${params.runtimeKind} AND instance_id = ${params.instanceId} AND runtime_session_id = ${params.runtimeSessionId} AND status = 'active'`
+      sql`SELECT * FROM bot_runtime_session_links
+        WHERE workspace_id = ${params.workspaceId}
+          AND bot_id = ${params.botId}
+          AND instance_id = ${params.instanceId}
+          AND runtime_session_id = ${params.runtimeSessionId}
+          AND status = 'active'
+          AND (${kind}::text IS NULL OR runtime_kind = ${kind})
+        ORDER BY updated_at DESC
+        LIMIT 1`
     )
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
