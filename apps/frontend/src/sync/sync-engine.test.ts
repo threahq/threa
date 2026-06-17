@@ -1286,13 +1286,21 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     // The flush failure forces a full snapshot reseed (bootstrap called a 2nd time)
     // so the dropped counter state can't sit stale across slim reconnects.
-    await vi.waitFor(() => {
-      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
-    })
+    // Explicit timeouts: this is the heaviest case in the file (buffered drain +
+    // reseed + IDB persist) and tips past vi.waitFor's 1s default under CI load.
+    await vi.waitFor(
+      () => {
+        expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(2)
+      },
+      { timeout: 5000 }
+    )
 
-    await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_resumed")).toBeDefined()
-    })
+    await vi.waitFor(
+      async () => {
+        expect(await db.workspaceUsers.get("user_resumed")).toBeDefined()
+      },
+      { timeout: 5000 }
+    )
     expect(errorSpy).toHaveBeenCalledWith(
       "Sync catch-up batch flush failed",
       expect.objectContaining({ workspaceId: "ws_1" })
