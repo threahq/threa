@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { CalendarDays, ChevronDown, ChevronLeft } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
@@ -30,6 +30,11 @@ interface StreamDateHeaderProps {
 export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRef }: StreamDateHeaderProps) {
   const [open, setOpen] = useState(false)
   const [showCalendar, setShowCalendar] = useState(false)
+  // Touch-drag start Y for forwarding a touch scroll begun on the pill to the
+  // scroller (the touch equivalent of onWheel — a touch starting on the
+  // pointer-events-auto button would otherwise be trapped and not scroll the
+  // timeline on mobile). A tap doesn't move, so it never scrolls.
+  const touchStartY = useRef<number | null>(null)
 
   if (dayStartMs == null) return null
   const label = formatDayDivider(new Date(dayStartMs))
@@ -58,17 +63,32 @@ export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRe
           <button
             type="button"
             aria-label={`Jump to date — showing ${label}`}
+            // Drop out of the tab order while faded out — otherwise keyboard
+            // focus lands on an invisible control with a focus ring.
+            tabIndex={visible ? undefined : -1}
             // Forward wheel to the scroller (see scrollerRef doc): without this,
             // wheeling over the pill leaves the timeline stuck. Skipped while the
             // jump menu is open so the popover handles its own scroll.
             onWheel={(e) => {
               if (!open) scrollerRef?.current?.scrollBy({ top: e.deltaY })
             }}
+            onTouchStart={(e) => {
+              touchStartY.current = open ? null : (e.touches[0]?.clientY ?? null)
+            }}
+            onTouchMove={(e) => {
+              if (touchStartY.current == null) return
+              const y = e.touches[0]?.clientY ?? touchStartY.current
+              scrollerRef?.current?.scrollBy({ top: touchStartY.current - y })
+              touchStartY.current = y
+            }}
+            onTouchEnd={() => {
+              touchStartY.current = null
+            }}
             className={cn(
               // A faded-out pill must not capture clicks or wheel — drop pointer
               // events so they reach the scroller beneath it.
               visible ? "pointer-events-auto" : "pointer-events-none",
-              "inline-flex items-center gap-1 rounded-full border bg-background/95 px-3 py-1",
+              "inline-flex items-center gap-1 rounded-full border bg-background/95 px-3 py-1.5",
               "text-xs font-medium text-muted-foreground shadow-sm backdrop-blur",
               "transition-colors hover:bg-accent hover:text-foreground",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
@@ -78,7 +98,7 @@ export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRe
             <ChevronDown className="h-3 w-3 -mr-0.5 opacity-60" aria-hidden />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="center" className="w-56 p-0">
+        <PopoverContent align="center" className="w-64 p-0">
           {showCalendar ? (
             <div>
               <button
