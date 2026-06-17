@@ -84,7 +84,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
   const labels = useWorkspaceLabels(workspaceId)
   const labelAssignments = useWorkspaceLabelAssignments(workspaceId)
-  const { createDraft } = useDraftScratchpads(workspaceId)
+  const { createScratchpad } = useDraftScratchpads(workspaceId)
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
   const { drafts: allDrafts } = useAllDrafts(workspaceId)
@@ -302,7 +302,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const handleCreateScratchpad = async () => {
     try {
-      const draftId = await createDraft("on")
+      const draftId = await createScratchpad("on")
       collapseOnMobile()
       navigate(`/w/${workspaceId}/s/${draftId}`)
     } catch {
@@ -359,7 +359,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   }
 
   const handleCreateQuickNote = async () => {
-    const draftId = await createDraft("off")
+    const draftId = await createScratchpad("off")
     collapseOnMobile()
     navigate(`/w/${workspaceId}/s/${draftId}`)
   }

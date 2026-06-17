@@ -158,8 +158,8 @@ export interface UseStreamOrDraftReturn {
 function useDraftStream(workspaceId: string, streamId: string, enabled: boolean): UseStreamOrDraftReturn {
   const navigate = useNavigate()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
-  const { getDraft, updateDraft, deleteDraft } = useDraftScratchpads(workspaceId)
-  const draft = enabled ? getDraft(streamId) : undefined
+  const { getScratchpad, updateScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
+  const draft = enabled ? getScratchpad(streamId) : undefined
 
   const stream: VirtualStream | undefined = draft
     ? {
@@ -179,15 +179,15 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
 
   const rename = useCallback(
     async (newName: string) => {
-      await updateDraft(streamId, { displayName: newName })
+      await updateScratchpad(streamId, { displayName: newName })
     },
-    [streamId, updateDraft]
+    [streamId, updateScratchpad]
   )
 
   const archive = useCallback(async () => {
-    await deleteDraft(streamId)
+    await deleteScratchpad(streamId)
     navigate(`/w/${workspaceId}`)
-  }, [deleteDraft, streamId, workspaceId, navigate])
+  }, [deleteScratchpad, streamId, workspaceId, navigate])
 
   useEffect(() => {
     return onDraftPromoted((promotion) => {

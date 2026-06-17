@@ -6,16 +6,16 @@ import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import * as draftHook from "@/hooks/use-draft-scratchpads"
 import { DraftAgentSettings } from "./draft-agent-settings"
 
-const updateDraft = vi.fn()
+const updateScratchpad = vi.fn()
 
 beforeEach(() => {
-  updateDraft.mockReset()
+  updateScratchpad.mockReset()
   vi.spyOn(draftHook, "useDraftScratchpads").mockReturnValue({
-    drafts: [],
-    createDraft: vi.fn(),
-    updateDraft,
-    deleteDraft: vi.fn(),
-    getDraft: vi.fn(),
+    scratchpads: [],
+    createScratchpad: vi.fn(),
+    updateScratchpad,
+    deleteScratchpad: vi.fn(),
+    getScratchpad: vi.fn(),
   } as unknown as ReturnType<typeof draftHook.useDraftScratchpads>)
 })
 
@@ -43,7 +43,7 @@ describe("DraftAgentSettings", () => {
 
     await userEvent.click(screen.getByRole("radio", { name: /quiet/i }))
 
-    expect(updateDraft).toHaveBeenCalledWith("draft_1", { companionMode: "off" })
+    expect(updateScratchpad).toHaveBeenCalledWith("draft_1", { companionMode: "off" })
   })
 
   it("writes a restricted (empty) policy to the draft when restriction is turned on", async () => {
@@ -51,7 +51,7 @@ describe("DraftAgentSettings", () => {
 
     await userEvent.click(screen.getByRole("switch", { name: /restrict tool access/i }))
 
-    expect(updateDraft).toHaveBeenCalledWith("draft_1", { allowedToolCategories: [] })
+    expect(updateScratchpad).toHaveBeenCalledWith("draft_1", { allowedToolCategories: [] })
   })
 
   it("only offers the categories the workspace has configured", () => {

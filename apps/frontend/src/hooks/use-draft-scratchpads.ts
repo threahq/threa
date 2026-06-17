@@ -19,40 +19,40 @@ export function isDraftId(id: string): boolean {
 }
 
 export function useDraftScratchpads(workspaceId: string) {
-  const drafts = useDraftScratchpadsFromStore(workspaceId)
+  const scratchpads = useDraftScratchpadsFromStore(workspaceId)
 
-  const createDraft = useCallback(
+  const createScratchpad = useCallback(
     async (companionMode: CompanionMode = "on"): Promise<string> => {
       const id = generateDraftId()
-      const draft: DraftScratchpad = {
+      const scratchpad: DraftScratchpad = {
         id,
         workspaceId,
         displayName: null,
         companionMode,
         createdAt: Date.now(),
       }
-      await db.draftScratchpads.add(draft)
-      upsertDraftScratchpadInCache(workspaceId, draft)
+      await db.draftScratchpads.add(scratchpad)
+      upsertDraftScratchpadInCache(workspaceId, scratchpad)
       return id
     },
     [workspaceId]
   )
 
-  const updateDraft = useCallback(
+  const updateScratchpad = useCallback(
     async (
       id: string,
       data: Partial<Pick<DraftScratchpad, "displayName" | "companionMode" | "allowedToolCategories">>
     ) => {
       await db.draftScratchpads.update(id, data)
-      const existingDraft = drafts.find((draft) => draft.id === id)
-      if (existingDraft) {
-        upsertDraftScratchpadInCache(workspaceId, { ...existingDraft, ...data })
+      const existing = scratchpads.find((scratchpad) => scratchpad.id === id)
+      if (existing) {
+        upsertDraftScratchpadInCache(workspaceId, { ...existing, ...data })
       }
     },
-    [drafts, workspaceId]
+    [scratchpads, workspaceId]
   )
 
-  const deleteDraft = useCallback(
+  const deleteScratchpad = useCallback(
     async (id: string) => {
       await db.draftScratchpads.delete(id)
       deleteDraftScratchpadFromCache(workspaceId, id)
@@ -62,18 +62,18 @@ export function useDraftScratchpads(workspaceId: string) {
     [workspaceId]
   )
 
-  const getDraft = useCallback(
+  const getScratchpad = useCallback(
     (id: string): DraftScratchpad | undefined => {
-      return drafts?.find((d) => d.id === id)
+      return scratchpads?.find((s) => s.id === id)
     },
-    [drafts]
+    [scratchpads]
   )
 
   return {
-    drafts,
-    createDraft,
-    updateDraft,
-    deleteDraft,
-    getDraft,
+    scratchpads,
+    createScratchpad,
+    updateScratchpad,
+    deleteScratchpad,
+    getScratchpad,
   }
 }

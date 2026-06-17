@@ -24,15 +24,15 @@ export function DraftAgentSettings({
   allowedToolCategories,
   configuredCategories,
 }: DraftAgentSettingsProps) {
-  const { updateDraft } = useDraftScratchpads(workspaceId)
+  const { updateScratchpad } = useDraftScratchpads(workspaceId)
 
   return (
     <AgentSettingsPanel
       companionMode={companionMode}
-      onCompanionModeChange={(mode) => updateDraft(draftId, { companionMode: mode })}
+      onCompanionModeChange={(mode) => updateScratchpad(draftId, { companionMode: mode })}
       toolPolicy={{
         value: allowedToolCategories,
-        onChange: (next) => updateDraft(draftId, { allowedToolCategories: next }),
+        onChange: (next) => updateScratchpad(draftId, { allowedToolCategories: next }),
         configuredCategories,
         e2e: false,
       }}

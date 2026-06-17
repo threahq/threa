@@ -51,7 +51,7 @@ export function ScratchpadItem({
 }: ScratchpadItemProps) {
   const navigate = useNavigate()
   const archiveStream = useArchiveStream(workspaceId)
-  const { deleteDraft } = useDraftScratchpads(workspaceId)
+  const { deleteScratchpad } = useDraftScratchpads(workspaceId)
   const { getActorName } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { collapseOnMobile } = useSidebar()
@@ -75,7 +75,7 @@ export function ScratchpadItem({
 
   const handleArchive = useCallback(async () => {
     if (isDraft) {
-      await deleteDraft(streamWithPreview.id)
+      await deleteScratchpad(streamWithPreview.id)
       // Drafts are fully deleted — navigate away if viewing
       if (isActive) {
         navigate(`/w/${workspaceId}`)
@@ -84,7 +84,7 @@ export function ScratchpadItem({
       // Real streams stay viewable as read-only after archival
       await archiveStream.mutateAsync(streamWithPreview.id)
     }
-  }, [archiveStream, deleteDraft, isActive, isDraft, navigate, streamWithPreview.id, workspaceId])
+  }, [archiveStream, deleteScratchpad, isActive, isDraft, navigate, streamWithPreview.id, workspaceId])
 
   const actions = useMemo<SidebarActionItem[]>(
     () => [

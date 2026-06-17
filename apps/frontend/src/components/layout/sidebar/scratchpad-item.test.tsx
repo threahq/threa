@@ -13,7 +13,7 @@ import * as sidebarActionsModule from "./sidebar-actions"
 
 const collapseOnMobile = vi.fn()
 const archiveStream = vi.fn(async () => {})
-const deleteDraft = vi.fn(async () => {})
+const deleteScratchpad = vi.fn(async () => {})
 const openStreamSettings = vi.fn()
 
 function LocationEcho() {
@@ -69,7 +69,7 @@ describe("ScratchpadItem", () => {
     vi.restoreAllMocks()
     collapseOnMobile.mockReset()
     archiveStream.mockReset()
-    deleteDraft.mockReset()
+    deleteScratchpad.mockReset()
     openStreamSettings.mockReset()
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
@@ -89,7 +89,7 @@ describe("ScratchpadItem", () => {
       mutateAsync: archiveStream,
     } as unknown as ReturnType<typeof hooksModule.useArchiveStream>)
     vi.spyOn(hooksModule, "useDraftScratchpads").mockReturnValue({
-      deleteDraft,
+      deleteScratchpad,
     } as unknown as ReturnType<typeof hooksModule.useDraftScratchpads>)
     vi.spyOn(hooksModule, "useStreamOrDraft").mockImplementation(() => {
       throw new Error("ScratchpadItem should not call useStreamOrDraft")
@@ -276,7 +276,7 @@ describe("ScratchpadItem", () => {
     fireEvent.click(screen.getByText("Delete"))
 
     await waitFor(() => {
-      expect(deleteDraft).toHaveBeenCalledWith("draft_scratchpad_1")
+      expect(deleteScratchpad).toHaveBeenCalledWith("draft_scratchpad_1")
       expect(screen.getByTestId("location").textContent).toBe("/w/workspace_1")
     })
     expect(archiveStream).not.toHaveBeenCalled()
