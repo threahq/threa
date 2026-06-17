@@ -20,11 +20,12 @@ import {
 import { X, UserPlus, BotIcon } from "lucide-react"
 import { useAddStreamMember, useRemoveStreamMember, streamKeys } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useInviteActor } from "@/hooks/use-invite-actor"
 import { useStreamService } from "@/contexts"
 import { botsApi } from "@/api/bots"
 import { useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
 import { hasPermission } from "@/lib/permissions"
-import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type StreamMember } from "@threa/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamMember } from "@threa/types"
 import { toast } from "sonner"
 
 interface MembersTabProps {
@@ -203,7 +204,12 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
       {canManageBots && (
         <>
           <Separator />
-          <StreamBotsSection workspaceId={workspaceId} streamId={streamId} readOnly={botsReadOnly} />
+          <StreamBotsSection
+            workspaceId={workspaceId}
+            streamId={streamId}
+            readOnly={botsReadOnly}
+            stream={bootstrap?.stream}
+          />
         </>
       )}
 
@@ -225,17 +231,26 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
   )
 }
 
-function StreamBotsSection({
+export function StreamBotsSection({
   workspaceId,
   streamId,
   readOnly,
+  stream,
 }: {
   workspaceId: string
   streamId: string
   readOnly?: boolean
+  stream?: Stream
 }) {
   const queryClient = useQueryClient()
   const allBots = useWorkspaceBots(workspaceId)
+  const { invite, isInviting } = useInviteActor(workspaceId, streamId)
+
+  // On an E2E scratchpad the stream key must be wrapped to the bot before it can
+  // participate; that grant is the owner's deliberate act, so it goes behind a
+  // confirm instead of the silent plaintext grant.
+  const isE2e = stream?.e2eEnabled === true
+  const [pendingGrantBot, setPendingGrantBot] = useState<(typeof allBots)[number] | null>(null)
 
   const streamBotsQueryKey = ["stream-bots", workspaceId, streamId]
   const { data: grantedBotIds = [] } = useQuery({
@@ -259,12 +274,42 @@ function StreamBotsSection({
   const grantMutation = useMutation({
     mutationFn: (botId: string) => botsApi.grantStreamAccess(workspaceId, botId, streamId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: streamBotsQueryKey }),
+    onError: () => toast.error("Failed to add bot"),
   })
 
   const revokeMutation = useMutation({
     mutationFn: (botId: string) => botsApi.revokeStreamAccess(workspaceId, botId, streamId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: streamBotsQueryKey }),
   })
+
+  const handleSelectBot = useCallback(
+    (bot: (typeof allBots)[number]) => {
+      if (isE2e) {
+        setPendingGrantBot(bot)
+      } else {
+        grantMutation.mutate(bot.id)
+      }
+    },
+    [isE2e, grantMutation]
+  )
+
+  const confirmE2eGrant = useCallback(async () => {
+    if (!pendingGrantBot) return
+    const bot = pendingGrantBot
+    setPendingGrantBot(null)
+    try {
+      const alreadyActor = stream?.e2eActors?.some((a) => a.kind === "bot" && a.actorId === bot.id) ?? false
+      // Roll + wrap the stream key to the bot so it can decrypt. Skipped when the
+      // actor row already exists (re-granting after a channel revoke) — a second
+      // invite would 409. A locked session records the actor unwrapped and warns
+      // (handled inside useInviteActor); the re-key happens when next unlocked.
+      if (!alreadyActor) await invite("bot", bot.id)
+      // Standing channel grant so the bot lists here and can write back its turn.
+      await grantMutation.mutateAsync(bot.id)
+    } catch {
+      // invite() and the grant mutation each surface their own error toast.
+    }
+  }, [pendingGrantBot, stream?.e2eActors, invite, grantMutation])
 
   return (
     <div className="space-y-3">
@@ -309,14 +354,14 @@ function StreamBotsSection({
         <SearchableSelect
           items={availableToGrant}
           value={null}
-          onChange={(bot) => grantMutation.mutate(bot.id)}
+          onChange={handleSelectBot}
           getKey={(b) => b.id}
           getKeywords={(b) => [b.name, b.slug ?? "", b.slug ? `@${b.slug}` : ""].filter(Boolean)}
           placeholder={availableToGrant.length === 0 ? "All bots have access" : "Add bot..."}
           searchPlaceholder="Search bots..."
           emptyMessage="No matching bots"
           triggerIcon={BotIcon}
-          disabled={availableToGrant.length === 0 || grantMutation.isPending}
+          disabled={availableToGrant.length === 0 || grantMutation.isPending || isInviting}
           showAvailableCount
           availableLabel={(n) => `${n} ${n === 1 ? "bot" : "bots"} available`}
           renderItem={(bot) => (
@@ -328,6 +373,24 @@ function StreamBotsSection({
           )}
         />
       )}
+
+      <ResponsiveAlertDialog open={pendingGrantBot !== null} onOpenChange={(open) => !open && setPendingGrantBot(null)}>
+        <ResponsiveAlertDialogContent>
+          <ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogTitle>
+              Add {pendingGrantBot?.name} to this encrypted scratchpad?
+            </ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogDescription>
+              This bot will be able to read every message in this end-to-end encrypted scratchpad. Only add bots you
+              trust with this conversation.
+            </ResponsiveAlertDialogDescription>
+          </ResponsiveAlertDialogHeader>
+          <ResponsiveAlertDialogFooter>
+            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+            <ResponsiveAlertDialogAction onClick={confirmE2eGrant}>Add bot</ResponsiveAlertDialogAction>
+          </ResponsiveAlertDialogFooter>
+        </ResponsiveAlertDialogContent>
+      </ResponsiveAlertDialog>
     </div>
   )
 }
