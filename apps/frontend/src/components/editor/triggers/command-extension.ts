@@ -21,6 +21,14 @@ export const MEMO_SEARCH_SLASH_ACTION = "memo-search"
  */
 export const GIPHY_SLASH_ACTION = "giphy"
 
+/**
+ * Client-action id for the synthetic "snippet" slash entry. Inserts no chip —
+ * selecting it removes the typed `/snippet` and the React layer (see
+ * `useCommandSuggestion`) opens the snippet editor. The saved snippet becomes a
+ * file attachment, so nothing reaches the backend command pipeline. Frontend-only.
+ */
+export const SNIPPET_SLASH_ACTION = "snippet"
+
 export interface CommandNodeAttrs {
   name: string
   /**
@@ -69,9 +77,9 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
       editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
       return true
     }
-    // The "giphy" entry inserts no chip — drop the typed `/giphy` here; the
-    // React command wrapper opens the picker once the pick is handled.
-    if (item.clientActionId === GIPHY_SLASH_ACTION) {
+    // The "giphy" and "snippet" entries insert no chip — drop the typed slash
+    // here; the React command wrapper opens the picker/editor once handled.
+    if (item.clientActionId === GIPHY_SLASH_ACTION || item.clientActionId === SNIPPET_SLASH_ACTION) {
       editor.chain().focus().deleteRange(range).run()
       return true
     }

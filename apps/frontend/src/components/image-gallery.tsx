@@ -31,6 +31,7 @@ import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
 import { PdfViewer } from "@/components/gallery/pdf-viewer"
+import { TextViewer } from "@/components/gallery/text-viewer"
 import { fetchTextContent } from "@/components/gallery/use-text-content"
 
 export type GalleryItem =
@@ -39,6 +40,7 @@ export type GalleryItem =
   | { type: "markdown"; url: string; filename: string; attachmentId: string }
   | { type: "html"; url: string; filename: string; attachmentId: string }
   | { type: "pdf"; url: string; filename: string; attachmentId: string }
+  | { type: "text"; url: string; filename: string; attachmentId: string }
 
 const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   image: "Image",
@@ -46,6 +48,15 @@ const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   markdown: "Markdown document",
   html: "HTML document",
   pdf: "PDF document",
+  text: "Text document",
+}
+
+// Copy means different things per slide: the rendered image bytes vs. the
+// underlying text. Plain text isn't "source" the way markdown/html are.
+function copyLabelForType(type: GalleryItem["type"] | undefined): string {
+  if (type === "image") return "Copy image"
+  if (type === "text") return "Copy text"
+  return "Copy source"
 }
 
 // Sidebar thumbnails are 124px wide — long filenames (URLs, slugs with the
@@ -146,6 +157,16 @@ function GalleryMediaContent({
     }
     return <PdfViewer url={current.url} filename={current.filename} />
   }
+  if (current.type === "text") {
+    if (!isActive) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <FileText className="h-10 w-10 text-white/30" />
+        </div>
+      )
+    }
+    return <TextViewer url={current.url} filename={current.filename} />
+  }
   if (current.type === "video") {
     // Non-active video slides show poster so the <video> element doesn't load
     if (!isActive) {
@@ -235,7 +256,7 @@ function GalleryMediaContent({
 }
 
 function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
-  if (item.type === "markdown" || item.type === "html" || item.type === "pdf") {
+  if (item.type === "markdown" || item.type === "html" || item.type === "pdf" || item.type === "text") {
     const Icon = item.type === "html" ? Globe : FileText
     return (
       <div className="w-full h-20 min-w-0 flex flex-col items-center justify-center gap-1 bg-white/5 px-1">
@@ -539,7 +560,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     let ok = false
     if (current.type === "image") {
       ok = await copyImage(current.url)
-    } else if (current.type === "markdown" || current.type === "html") {
+    } else if (current.type === "markdown" || current.type === "html" || current.type === "text") {
       try {
         const text = await fetchTextContent(current.url)
         await navigator.clipboard.writeText(text)
@@ -554,8 +575,9 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
   }, [current])
 
-  const canCopy = current?.type === "image" || current?.type === "markdown" || current?.type === "html"
-  const copyLabel = current?.type === "image" ? "Copy image" : "Copy source"
+  const canCopy =
+    current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text"
+  const copyLabel = copyLabelForType(current?.type)
   const canToggleRaw = current?.type === "markdown" || current?.type === "html"
 
   useEffect(() => {

@@ -1,5 +1,24 @@
-import { Archive, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
+import { Archive, FileCode2, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
+import { queueSnippetRequest } from "@/stores/snippet-request-store"
 import type { Command } from "./commands"
+
+/**
+ * Open the snippet editor in the current stream's composer. The composer lives
+ * in a separate React tree, so the request is handed off through the
+ * snippet-request store (consumed in `message-input`). Shared by real streams
+ * and draft scratchpads — both have a composer to attach to.
+ */
+const createSnippetCommand: Command = {
+  id: "stream-create-snippet",
+  label: "Create snippet",
+  icon: FileCode2,
+  keywords: ["snippet", "code", "paste", "attach", "text", "file", "current stream"],
+  action: ({ currentStreamId, closeDialog }) => {
+    if (!currentStreamId) return
+    closeDialog()
+    queueSnippetRequest(currentStreamId)
+  },
+}
 
 /**
  * Commands that act on the stream currently in view. `use-command-items` only
@@ -10,6 +29,7 @@ import type { Command } from "./commands"
  * are deleted via `draftStreamCommands` instead.
  */
 export const streamCommands: Command[] = [
+  createSnippetCommand,
   {
     id: "stream-settings",
     label: "Open stream settings",
@@ -53,8 +73,10 @@ export const streamCommands: Command[] = [
   },
 ]
 
-/** Draft scratchpads have no server-side settings/files/labels — only deletion. */
+/** Draft scratchpads have no server-side settings/files/labels — only snippet
+ *  creation (the draft has a composer) and deletion. */
 export const draftStreamCommands: Command[] = [
+  createSnippetCommand,
   {
     id: "stream-delete-draft",
     label: "Delete this draft",

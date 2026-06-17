@@ -25,6 +25,7 @@ const MockRichEditor = forwardRef<
     insertMention: () => void
     insertSlash: () => void
     insertEmoji: () => void
+    openSnippetEditor: () => void
     getEditor: () => MockEditorInstance | null
   },
   {
@@ -62,6 +63,7 @@ const MockRichEditor = forwardRef<
       insertMention: () => undefined,
       insertSlash: () => undefined,
       insertEmoji: () => undefined,
+      openSnippetEditor: () => undefined,
       getEditor: () => editorInstance,
     }),
     [editorInstance]

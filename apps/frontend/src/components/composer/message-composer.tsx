@@ -127,6 +127,8 @@ export interface ComposerControlHandle {
   focus(): void
   focusAfterQuoteReply(): void
   getEditor(): Editor | null
+  /** Open the snippet editor in this composer (e.g. from the command palette). */
+  openSnippetEditor(): void
 }
 
 export interface MessageComposerProps {
@@ -563,6 +565,12 @@ export function MessageComposer({
         requestAnimationFrame(() => richEditorRef.current?.focusAfterQuoteReply())
       },
       getEditor: () => richEditorRef.current?.getEditor() ?? null,
+      // Mirror focus(): on mobile the editor only mounts once focused, so reveal
+      // it first, then open the snippet editor on the next frame.
+      openSnippetEditor: () => {
+        setMobileFocused(true)
+        requestAnimationFrame(() => richEditorRef.current?.openSnippetEditor())
+      },
     }
     return () => {
       composerRef.current = null

@@ -5,7 +5,7 @@ import type { Editor } from "@tiptap/react"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
-import { MEMO_SEARCH_SLASH_ACTION, GIPHY_SLASH_ACTION } from "./command-extension"
+import { MEMO_SEARCH_SLASH_ACTION, GIPHY_SLASH_ACTION, SNIPPET_SLASH_ACTION } from "./command-extension"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
 import { streamKeys } from "@/hooks/use-streams"
@@ -71,6 +71,19 @@ const GIPHY_SLASH_ITEM: CommandItem = {
 }
 
 /**
+ * Discovery shortcut for creating a snippet attachment. Like the memo/giphy
+ * entries it inserts no chip — selecting it removes the typed `/snippet` and the
+ * React layer (see `renderList`) opens the snippet editor. Inline placement so
+ * it's reachable mid-message too.
+ */
+const SNIPPET_SLASH_ITEM: CommandItem = {
+  name: "snippet",
+  description: "Attach a block of text or code",
+  clientActionId: SNIPPET_SLASH_ACTION,
+  placement: "inline",
+}
+
+/**
  * Client-action commands (e.g. `/discuss-with-ariadne`) still insert a chip
  * into the composer via the normal suggestion flow; routing to the client
  * handler happens at composer-send time (`message-input.tsx`) so the user
@@ -80,17 +93,23 @@ const GIPHY_SLASH_ITEM: CommandItem = {
 export function useCommandSuggestion({
   includeMemoSearch = false,
   includeGiphy = false,
+  includeSnippet = false,
   onOpenGiphy,
+  onOpenSnippet,
 }: {
   includeMemoSearch?: boolean
   includeGiphy?: boolean
+  includeSnippet?: boolean
   onOpenGiphy?: () => void
+  onOpenSnippet?: () => void
 } = {}) {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   // Held in a ref so the `renderList` callback stays referentially stable (the
   // TipTap extension captures it once) even as the host re-renders.
   const onOpenGiphyRef = useRef(onOpenGiphy)
   onOpenGiphyRef.current = onOpenGiphy
+  const onOpenSnippetRef = useRef(onOpenSnippet)
+  onOpenSnippetRef.current = onOpenSnippet
   const metadata = useWorkspaceMetadata(workspaceId)
   const queryClient = useQueryClient()
   const streamBootstrapKey = workspaceId && streamId ? streamKeys.bootstrap(workspaceId, streamId) : null
@@ -121,9 +140,10 @@ export function useCommandSuggestion({
     return [
       ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),
       ...(includeGiphy ? [GIPHY_SLASH_ITEM] : []),
+      ...(includeSnippet ? [SNIPPET_SLASH_ITEM] : []),
       ...serverCommands,
     ]
-  }, [metadata?.commands, streamBootstrap?.commands, streamId, includeMemoSearch, includeGiphy])
+  }, [metadata?.commands, streamBootstrap?.commands, streamId, includeMemoSearch, includeGiphy, includeSnippet])
 
   const renderList = useCallback(
     (props: {
@@ -139,6 +159,7 @@ export function useCommandSuggestion({
       const command = (item: CommandItem) => {
         props.command(item)
         if (item.clientActionId === GIPHY_SLASH_ACTION) onOpenGiphyRef.current?.()
+        if (item.clientActionId === SNIPPET_SLASH_ACTION) onOpenSnippetRef.current?.()
       }
       return <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={command} />
     },

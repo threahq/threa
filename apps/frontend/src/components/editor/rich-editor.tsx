@@ -55,6 +55,8 @@ export interface RichEditorHandle {
   insertMention(): void
   insertSlash(): void
   insertEmoji(): void
+  /** Open the snippet editor with an empty draft anchored at the caret. */
+  openSnippetEditor(): void
   /** Append a committed dictation span at the caret. */
   insertTranscribedText(text: string): void
   /** Show the live (uncommitted) dictation hypothesis as a caret ghost; empty string clears it. */
@@ -259,6 +261,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const [snippetDraft, setSnippetDraft] = useState<{ text: string; filename: string } | null>(null)
   const snippetInsertPosRef = useRef<number | null>(null)
   const snippetCountRef = useRef(0)
+  // Snippet creation needs an upload handler to attach through, same as the
+  // paste path; gate the `/snippet` command on it too.
+  const snippetEnabled = !!onFileUpload && enableCommands
+
+  // Open the snippet editor with an empty draft, anchored at the caret so the
+  // chip lands where it would for a paste. Shared by the `/snippet` command and
+  // the command-palette action (exposed on the imperative handle below).
+  const openSnippetEditor = useCallback(() => {
+    const editorInstance = editorRef.current
+    if (!editorInstance || !onFileUploadRef.current) return
+    snippetInsertPosRef.current = editorInstance.state.selection.from
+    snippetCountRef.current += 1
+    setSnippetDraft({ text: "", filename: defaultSnippetFilename(snippetCountRef.current) })
+  }, [])
 
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
@@ -268,7 +284,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
     includeGiphy: giphyEnabled,
+    includeSnippet: snippetEnabled,
     onOpenGiphy: () => setGiphyOpen(true),
+    onOpenSnippet: openSnippetEditor,
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 
@@ -1003,6 +1021,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertMention: handleMentionClick,
       insertSlash: handleSlashClick,
       insertEmoji: handleEmojiClick,
+      openSnippetEditor,
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,
@@ -1018,6 +1037,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       handleMentionClick,
       handleSlashClick,
       handleEmojiClick,
+      openSnippetEditor,
       insertTranscribedText,
       setDictationInterim,
       insertDictationChunk,

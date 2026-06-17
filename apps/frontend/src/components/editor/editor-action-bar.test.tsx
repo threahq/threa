@@ -11,6 +11,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
     insertMention: vi.fn(),
     insertSlash: vi.fn(),
     insertEmoji: vi.fn(),
+    openSnippetEditor: vi.fn(),
     insertTranscribedText: vi.fn(),
     setDictationInterim: vi.fn(),
     insertDictationChunk: vi.fn(),

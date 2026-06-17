@@ -103,7 +103,7 @@ export function SnippetEditorDialog({
               <div>
                 <ResponsiveDialogTitle className="text-base">Add as snippet</ResponsiveDialogTitle>
                 <ResponsiveDialogDescription className="text-xs mt-0.5">
-                  This is too long to paste inline — it'll be attached as a file you can edit first.
+                  Attach a block of text or code as a file you can edit before sending.
                 </ResponsiveDialogDescription>
               </div>
             </div>

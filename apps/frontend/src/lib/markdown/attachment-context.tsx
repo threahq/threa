@@ -2,7 +2,12 @@ import { createContext, useContext, useCallback, useState, type ReactNode } from
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { useMediaGallery } from "@/contexts"
-import { isHtmlAttachment, isMarkdownAttachment, isPdfAttachment } from "@/lib/attachment-kind"
+import {
+  isHtmlAttachment,
+  isMarkdownAttachment,
+  isPdfAttachment,
+  isTextPreviewableAttachment,
+} from "@/lib/attachment-kind"
 
 interface Attachment {
   id: string
@@ -52,7 +57,10 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
       // download while the sibling chip previews, which felt inconsistent.
       const isPreviewableDocument =
         !attachment.processingStatus &&
-        (isMarkdownAttachment(attachment) || isHtmlAttachment(attachment) || isPdfAttachment(attachment))
+        (isMarkdownAttachment(attachment) ||
+          isHtmlAttachment(attachment) ||
+          isPdfAttachment(attachment) ||
+          isTextPreviewableAttachment(attachment))
 
       try {
         if (metaKey) {

@@ -27,6 +27,7 @@ import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, type QuoteReplyData } from "./quote-reply-context"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
+import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent } from "@threa/types"
@@ -410,6 +411,18 @@ function MessageInputComponent({
       unsubscribe()
       cancelPendingRaf()
     }
+  }, [streamId])
+
+  // Open the snippet editor when the command palette requests one for this
+  // stream. Same hand-off shape as shares: consume on mount (request queued
+  // before this composer existed) and subscribe so a request fired while we're
+  // mounted reaches us without a remount.
+  useEffect(() => {
+    const open = () => composerFocusRef.current?.openSnippetEditor()
+    if (consumeSnippetRequest(streamId)) open()
+    return subscribeSnippetRequest(streamId, () => {
+      if (consumeSnippetRequest(streamId)) open()
+    })
   }, [streamId])
 
   const [error, setError] = useState<string | null>(null)
