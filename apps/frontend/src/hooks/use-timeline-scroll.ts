@@ -159,6 +159,8 @@ export function useTimelineScroll({
   // off-screen. Revisits are already measured, so this reveals immediately.
   // Deep-link mounts drive their own jump, so they are never masked.
   const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
+  const isInitialSettlingRef = useRef(isInitialSettling)
+  isInitialSettlingRef.current = isInitialSettling
 
   // Auto-follow the live tail. Seeded false for deep-link mounts so we don't
   // snap to bottom before the jump positions on its target.
@@ -358,12 +360,15 @@ export function useTimelineScroll({
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
-    // The composer footer spacer is dead space at the very bottom; the last
-    // message resting just above it counts as "at the bottom". Without this
-    // allowance the list lands ~a composer height short on first load and
-    // disarms follow, which also kills keyboard-follow (gated on follow armed).
+    // The composer footer spacer is dead space at the very bottom. During the
+    // initial cold-load settle we keep the generous composer-height band so a
+    // slightly-undershoot landing doesn't disarm follow before convergence; once
+    // settled, only a genuinely flush position (within AT_BOTTOM_PX) counts as
+    // "at the bottom". This prevents a small scroll-up — e.g. to read context
+    // while typing — from being treated as still following, which then snaps
+    // back when the composer grows.
     const composerH = readComposerHeight(el)
-    const atBottom = distanceFromBottom <= AT_BOTTOM_PX + composerH
+    const atBottom = distanceFromBottom <= AT_BOTTOM_PX + (isInitialSettlingRef.current ? composerH : 0)
     // A deliberate user scroll-up — the scrollTop actually moved toward the top
     // AND a real gesture (wheel/trackpad/touch/key) is in play — must detach
     // even when we are still inside the at-bottom band, or a light nudge gets

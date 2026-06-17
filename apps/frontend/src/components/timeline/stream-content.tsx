@@ -989,6 +989,10 @@ export function StreamContent({
     isFetchingOlder,
     isFetchingNewer,
     resetKey: streamId,
+    // Only treat the user as "at the bottom" when they are essentially flush.
+    // A small scroll-up to reference older messages while typing should not be
+    // snapped back when the composer grows.
+    bottomThreshold: 4,
   })
 
   // Unified API regardless of scroll mode
@@ -1003,27 +1007,50 @@ export function StreamContent({
   // draft, density/zoom change) the footer spacer resizes, so we re-pin
   // synchronously in the same frame the list reveals — no visible jump.
   //
-  // Runtime composer changes (focus expand, blur collapse, attachment chips,
-  // the 200ms height transition) are deliberately NOT handled here: the footer
-  // spacer lives inside the timeline's content wrapper, so the scroll hook's
-  // content ResizeObserver already re-pins the tail when it resizes. virtua owns
-  // its scroll position now (unlike Virtuoso, which froze on footer growth), so
-  // one mechanism covers it. virtualScrollToBottom self-guards on the follow
-  // flag, so the initial correction is a no-op unless parked at the live tail.
+  // Runtime composer changes are also re-pinned here for plain scroll and for
+  // draft scrollers: their spacing is applied via padding-bottom on the scroll
+  // container itself, so the timeline's content ResizeObserver does not see it.
+  // The virtualized timeline still relies on its footer-spacer ResizeObserver,
+  // but calling scrollToBottom again is harmless because it self-guards on the
+  // follow flag.
   //
-  // Called through a ref so the handler identity stays stable: virtualScrollToBottom
-  // is rebuilt on every itemCount change, and a changing prop would re-render
-  // the memoized MessageInput on every new message (the exact churn that memo
-  // exists to prevent).
+  // Called through refs so the handler identity stays stable: the scroll-to-bottom
+  // helpers are rebuilt as timeline state changes, and a changing prop would
+  // re-render the memoized MessageInput on every new message (the exact churn
+  // that memo exists to prevent).
   const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
   virtualScrollToBottomRef.current = virtualScrollToBottom
+  const plainScrollToBottomRef = useRef(plainScrollToBottom)
+  plainScrollToBottomRef.current = plainScrollToBottom
+  const draftScrollRef = useRef<HTMLDivElement | null>(null)
   const handleComposerHeightChange = useCallback(
     (_px: number, opts: { initial: boolean }) => {
-      if (opts.initial && !skipInitialScroll && !isJumpMode) {
-        virtualScrollToBottomRef.current({ force: true })
+      if (skipInitialScroll || isJumpMode) return
+      const rePin = () => {
+        const draftScroller = draftScrollRef.current
+        if (draftScroller) {
+          // Drafts: only snap if the user is already parked at the bottom.
+          if (opts.initial || draftScroller.scrollTop + draftScroller.clientHeight >= draftScroller.scrollHeight - 10) {
+            draftScroller.scrollTop = draftScroller.scrollHeight
+          }
+          return
+        }
+        // Main timeline: force on initial correction (cold-load anchor fix),
+        // but respect the follow flag for runtime composer growth so a user
+        // scrolled up to read history isn't yanked back to the tail.
+        if (useVirtualized) {
+          virtualScrollToBottomRef.current({ force: opts.initial })
+        } else {
+          plainScrollToBottomRef.current({ force: opts.initial })
+        }
+      }
+      if (opts.initial) {
+        rePin()
+      } else {
+        requestAnimationFrame(rePin)
       }
     },
-    [isJumpMode, skipInitialScroll]
+    [isJumpMode, skipInitialScroll, useVirtualized]
   )
 
   // Scroll to a specific message and keep re-scrolling until the target
@@ -1584,6 +1611,7 @@ export function StreamContent({
               )}
               {isDraft && (
                 <div
+                  ref={draftScrollRef}
                   className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
                   style={{ paddingBottom: "var(--composer-height, 0px)" }}
                 >
@@ -1808,6 +1836,7 @@ export function StreamContent({
                   streamId={streamId}
                   channelName={stream?.slug ?? stream?.displayName ?? ""}
                   onJoined={handleJoined}
+                  onHeightChange={handleComposerHeightChange}
                 />
               </div>
             )}

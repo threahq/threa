@@ -10,19 +10,19 @@ interface JoinChannelBarProps {
   streamId: string
   channelName: string
   onJoined: (membership: StreamMember) => void
+  onHeightChange?: (px: number, opts: { initial: boolean }) => void
 }
 
-export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined }: JoinChannelBarProps) {
+export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined, onHeightChange }: JoinChannelBarProps) {
   const [isJoining, setIsJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // The join bar stands in for the composer for non-members, so it must own
-  // `--composer-height` while it's mounted: the timeline's footer spacer sizes
-  // the gap below the last message from that variable, and the composer that
-  // would otherwise set it is not rendered for non-members. Without this the
-  // spacer keeps the stale height a prior composer left behind and the bar
-  // floats over the messages instead of docking flush at the bottom.
+  // `--composer-height` while it's mounted: the timeline scroller docks above
+  // that variable, and the composer that would otherwise set it is not rendered
+  // for non-members. Without this the scroller keeps the stale height a prior
+  // composer left behind and the bar can float over messages.
   const selfRef = useRef<HTMLDivElement | null>(null)
-  useComposerHeightPublish(selfRef)
+  useComposerHeightPublish(selfRef, { onHeightChange })
 
   const handleJoin = async () => {
     setIsJoining(true)
