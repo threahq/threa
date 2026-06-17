@@ -10,7 +10,19 @@
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
-import { botApiPost, createBot, createBotKey, createWorkspace, loginAs, sendMessage, TestClient } from "../client"
+import {
+  botApiGet,
+  botApiPost,
+  botUploadFile,
+  createBot,
+  createBotKey,
+  createWorkspace,
+  loginAs,
+  sendMessage,
+  sendMessageWithAttachments,
+  TestClient,
+  uploadAttachment,
+} from "../client"
 
 setDefaultTimeout(60_000)
 
@@ -29,6 +41,32 @@ interface ClaimedInvocationData {
   claimToken: string
   promptMarkdown: string
   requiredCapability: string
+}
+
+interface ListedMessage {
+  id: string
+  content: string
+  attachments?: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }>
+}
+
+async function claimInvocation(
+  client: TestClient,
+  workspaceId: string,
+  apiKey: string,
+  body: Record<string, unknown>
+): Promise<ClaimedInvocationData> {
+  for (let i = 0; i < 30; i++) {
+    const res = await botApiPost<{ data: ClaimedInvocationData | null }>(
+      client,
+      workspaceId,
+      "/bot-invocations/claim",
+      apiKey,
+      body
+    )
+    if (res.status === 200 && res.data.data) return res.data.data
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  throw new Error("no invocation claimed within the poll window")
 }
 
 describe("claude-code-channel runtime sessions", () => {
@@ -165,5 +203,143 @@ describe("claude-code-channel runtime sessions", () => {
     )
     expect(completed.status).toBe(200)
     expect(completed.data.data.message?.content).toContain("forty-two")
+  })
+
+  // The channel discovers inbound attachments by listing recent stream messages
+  // (the claim context omits attachment metadata) and downloads them with its
+  // bot key. This pins both reads the extension relies on.
+  test("inbound: a user's attachment is listed for the channel and downloadable", async () => {
+    const client = new TestClient()
+    await loginAs(client, `cc-in-${testRunId}@test.com`, "CC Inbound User")
+    const workspace = await createWorkspace(client, `CC Inbound WS ${testRunId}`)
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `CCIN ${testRunId}`,
+      slug: `ccin-${testRunId}`,
+      traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
+      WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
+      WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ,
+    ])
+
+    const session = await botApiPost<{ data: SessionLinkData }>(client, workspace.id, "/bot-runtime/sessions", apiKey, {
+      runtimeKind: "claude-code-channel",
+      instanceId: `ccin-inst-${testRunId}`,
+      runtimeSessionId: `ccin-sess-${testRunId}`,
+      displayName: "Claude Code - in",
+      localCwd: "/tmp/threa-cc-in",
+    })
+    const streamId = session.data.data.activeStreamId
+
+    const attachment = await uploadAttachment(client, workspace.id, {
+      content: "hello attachment",
+      filename: "notes.txt",
+      mimeType: "text/plain",
+    })
+    await sendMessageWithAttachments(client, workspace.id, streamId, "Please read notes.txt", [attachment.id])
+
+    const listed = await botApiGet<{ data: ListedMessage[] }>(
+      client,
+      workspace.id,
+      `/streams/${streamId}/messages?limit=30`,
+      apiKey
+    )
+    expect(listed.status).toBe(200)
+    const withAttachment = listed.data.data.find((message) => (message.attachments?.length ?? 0) > 0)
+    expect(withAttachment).toBeTruthy()
+    expect(withAttachment!.attachments![0]).toMatchObject({
+      id: attachment.id,
+      filename: "notes.txt",
+      mimeType: "text/plain",
+    })
+
+    const urlRes = await botApiGet<{ data: { url: string } }>(
+      client,
+      workspace.id,
+      `/attachments/${attachment.id}/url`,
+      apiKey
+    )
+    expect(urlRes.status).toBe(200)
+    expect(typeof urlRes.data.data.url).toBe("string")
+  })
+
+  // The channel turns a `THREA_ATTACH:` directive into an upload plus an
+  // `[name](attachment:<id>)` link in the reply; the backend associates the
+  // upload with the posted message purely from that link.
+  test("outbound: an uploaded file is attached to the reply via an attachment link", async () => {
+    const client = new TestClient()
+    await loginAs(client, `cc-out-${testRunId}@test.com`, "CC Outbound User")
+    const workspace = await createWorkspace(client, `CC Outbound WS ${testRunId}`)
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `CCOUT ${testRunId}`,
+      slug: `ccout-${testRunId}`,
+      traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+    })
+    const apiKey = await createBotKey(client, workspace.id, bot.id, [
+      WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
+      WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
+      WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
+      WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE,
+    ])
+
+    const instanceId = `ccout-inst-${testRunId}`
+    const runtimeSessionId = `ccout-sess-${testRunId}`
+    const session = await botApiPost<{ data: SessionLinkData }>(client, workspace.id, "/bot-runtime/sessions", apiKey, {
+      runtimeKind: "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      displayName: "Claude Code - out",
+      localCwd: "/tmp/threa-cc-out",
+    })
+    const streamId = session.data.data.activeStreamId
+
+    await sendMessage(client, workspace.id, streamId, "send me a file")
+    const claimed = await claimInvocation(client, workspace.id, apiKey, {
+      runtimeKind: "claude-code-channel",
+      instanceId,
+      runtimeSessionId,
+      supportedCapabilities: ["active-scratchpad", "mentionable"],
+      claimTtlSeconds: 120,
+    })
+
+    const upload = await botUploadFile<{ data: { id: string; filename: string } }>(client, workspace.id, apiKey, {
+      content: "generated output",
+      filename: "result.txt",
+      mimeType: "text/plain",
+    })
+    expect(upload.status).toBe(201)
+    const attachmentId = upload.data.data.id
+
+    const completed = await botApiPost<{ data: { message: { id: string; content: string } | null } }>(
+      client,
+      workspace.id,
+      `/bot-invocations/${claimed.id}/complete`,
+      apiKey,
+      {
+        instanceId,
+        claimToken: claimed.claimToken,
+        finalMessageMarkdown: `Here is the file\n\n[result.txt](attachment:${attachmentId})`,
+      }
+    )
+    expect(completed.status).toBe(200)
+    expect(completed.data.data.message?.content).toContain("Here is the file")
+
+    const listed = await botApiGet<{ data: ListedMessage[] }>(
+      client,
+      workspace.id,
+      `/streams/${streamId}/messages?limit=30`,
+      apiKey
+    )
+    const replyMessage = listed.data.data.find((message) =>
+      (message.attachments ?? []).some((attachment) => attachment.id === attachmentId)
+    )
+    expect(replyMessage).toBeTruthy()
   })
 })

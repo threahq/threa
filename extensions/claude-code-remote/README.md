@@ -26,7 +26,8 @@ In Threa: **Workspace settings → Bots**.
    - `messages:read`
    - `messages:write` (only needed for permission relay)
    - `streams:read`
-   - `attachments:read`
+   - `attachments:read` (download attachments posted in the scratchpad)
+   - `attachments:write` (send local files back with `THREA_ATTACH:`)
 3. Copy the key (`threa_bk_…`, shown once) and your workspace id (`ws_…`).
 
 The bot must be **personal**: the session-link endpoint that creates the scratchpad and makes the bot its active actor rejects shared bots. Linking auto-repairs the `active-scratchpad` trait if you forgot it.
@@ -98,6 +99,20 @@ claude --dangerously-load-development-channels server:threa --dangerously-skip-p
 
 Only do that in a directory you trust. Also consider pre-allowing the `mcp__threa__reply` tool so posting replies never prompts.
 
+## Attachments
+
+Attachments cross in both directions, mirroring `pi-remote`.
+
+**Inbound.** When a message you send carries attachments, the channel downloads them into `.threa-attachments/<invocation_id>/` under the working directory and lists each local path in the channel event, so Claude can read the files straight from disk. Discovery is best-effort: if the bot key lacks `attachments:read` (or the fetch fails), the prompt still reaches Claude without the files.
+
+**Outbound.** To send a local file back, Claude adds a line to its reply:
+
+```
+THREA_ATTACH: ./reports/out.png
+```
+
+The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve against the working directory) and rewrites the line into an `[out.png](attachment:…)` link the reply carries into the scratchpad. An upload that fails is reported inline rather than dropping the reply.
+
 ## Configuration reference
 
 | Env var                    | Config key         | Default                | Meaning                                         |
@@ -129,7 +144,6 @@ bun run typecheck
 
 ## Roadmap (parity with `pi-remote`)
 
-- **Attachments, both directions** — download attachments posted in the scratchpad into the working directory so Claude can read them, and send local files back as attachments on the reply (Pi does this with a `THREA_ATTACH: <path>` directive that uploads the file and rewrites it to an attachment link). This is the main remaining gap.
 - Per-tool trace steps — a channel can't observe Claude's tool calls, so matching Pi's rich trace needs a different mechanism than Pi's lifecycle hooks.
 
 ## Troubleshooting

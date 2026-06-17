@@ -86,6 +86,14 @@ The channel exposes one tool, `reply(invocation_id, text)`. Claude is told (via 
 
 The `reply` tool is the only path back to Threa, which is why the instructions insist on it. As a safety net, an in-flight invocation that is never answered is force-closed after `replyTimeoutMs` (default 30 minutes) with a short notice, so a session can't get wedged in `busy` forever.
 
+## Attachments
+
+Attachments cross in both directions, but the claim response doesn't carry them, so each direction needs a little extra work.
+
+**Inbound (scratchpad → working directory).** The claim's hydrated history is text only — no attachment metadata, and the trigger message itself isn't in it. So before pushing the event, the channel lists the recent messages of the invocation's stream (`GET /streams/:id/messages`), picks the attachments on the source message plus any on the history Claude is being shown, downloads each into `.threa-attachments/<invocation_id>/` under the working directory (via a short-lived signed URL from `GET /attachments/:id/url`), and appends a manifest of local paths to the channel content. Claude reads the files straight from disk. The whole step is best-effort: a key without `attachments:read`, or any download failure, is logged and the prompt still goes through without the files.
+
+**Outbound (working directory → scratchpad).** The `reply` tool's text may contain `THREA_ATTACH: <path>` lines. Before completing the invocation, the channel strips those lines, uploads each file (`POST /attachments`, multipart), and appends `[name](attachment:<id>)` links to the reply markdown. The backend associates the uploads with the posted message purely from those links — there is no separate attachment-ids field on `complete`. A failed upload is reported inline rather than dropping the reply.
+
 ## Permission relay: approving tools from Threa
 
 When Claude calls a tool that needs approval and you're not at the terminal, the session would normally stall. The channel opts into permission relay (`claude/channel/permission`). The loop:
@@ -113,10 +121,10 @@ The local terminal dialog stays open the whole time, so whichever answer arrives
 | Trace detail                              | Rich per-tool steps (it hooks Pi's tool events)           | One "working" step (a channel can't see Claude's tool calls)         |
 | Session control (`/compact`, `/model`, …) | Yes                                                       | No (a channel can't drive Claude's session)                          |
 | Permission prompts                        | N/A (Pi runs the model in-process)                        | Relayed into the scratchpad as messages                              |
+| Attachments                               | Downloads inbound, `THREA_ATTACH:` uploads outbound       | Same, but inbound needs an extra stream-messages fetch to find them  |
 | Backend changes                           | None                                                      | Small — `claude-code-channel` made a first-class linked runtime kind |
 
 ## Limits today
 
 - Single "working" trace step rather than a per-tool trace.
-- Threa attachments aren't downloaded into the working directory.
 - No session-control commands (a channel can't drive Claude's host session).

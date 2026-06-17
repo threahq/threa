@@ -24,6 +24,19 @@ export interface ExternalHistoryMessage {
   createdAt: string
 }
 
+export interface AttachmentSummary {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+}
+
+/** The slice of `GET /streams/:id/messages` we consume — id plus any attachments. */
+export interface StreamMessageSummary {
+  id: string
+  attachments?: AttachmentSummary[]
+}
+
 export interface ClaimedInvocation {
   id: string
   workspaceId: string
@@ -94,6 +107,9 @@ export class ThreaClient {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    // A FormData body must keep its multipart boundary header, which fetch sets
+    // only when Content-Type is left unset — so never force JSON on uploads.
+    const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
     let response: Response
     try {
       response = await fetch(`${this.base}${path}`, {
@@ -101,7 +117,7 @@ export class ThreaClient {
         signal: controller.signal,
         headers: {
           Authorization: `Bearer ${this.opts.apiKey}`,
-          "Content-Type": "application/json",
+          ...(isFormData ? {} : { "Content-Type": "application/json" }),
           ...init?.headers,
         },
       })
@@ -188,5 +204,29 @@ export class ThreaClient {
       method: "POST",
       body: JSON.stringify(body),
     })
+  }
+
+  /** Recent messages for a stream, newest-window first. Used to discover inbound attachments (the claim context omits them). Requires `messages:read` + `streams:read`. */
+  async listStreamMessages(streamId: string, query: { limit?: number } = {}): Promise<StreamMessageSummary[]> {
+    const suffix = query.limit ? `?limit=${query.limit}` : ""
+    const body = await this.request<{ data: StreamMessageSummary[] }>(
+      this.workspacePath(`/streams/${streamId}/messages${suffix}`)
+    )
+    return body.data
+  }
+
+  /** Short-lived signed download URL for an attachment. Requires `attachments:read`. */
+  async getAttachmentDownloadUrl(attachmentId: string): Promise<string> {
+    const body = await this.request<{ data: { url: string } }>(this.workspacePath(`/attachments/${attachmentId}/url`))
+    return body.data.url
+  }
+
+  /** Upload a file (multipart `file` field) and return its summary. Requires `attachments:write`. */
+  async uploadAttachment(form: FormData): Promise<AttachmentSummary> {
+    const body = await this.request<{ data: AttachmentSummary }>(this.workspacePath("/attachments"), {
+      method: "POST",
+      body: form,
+    })
+    return body.data
   }
 }

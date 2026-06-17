@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import { io as openSocket, type Socket } from "socket.io-client"
 import { z } from "zod"
+import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
 import type { ThreaChannelConfig } from "./config"
 import {
   buildBotSocketUrl,
@@ -25,6 +26,9 @@ const WS_BACKSTOP_POLL_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20
 const MAX_CONTEXT_MESSAGES = 12
 const MAX_MESSAGE_CHARS = 2_000
+// Recent messages to scan for inbound attachments. The trigger message is always
+// the newest, so this comfortably covers it plus the history Claude is shown.
+const ATTACHMENT_SCAN_LIMIT = 30
 
 /** "y abcde" / "yes abcde" / "n abcde" / "no abcde". The id alphabet skips 'l' (Claude Code's convention). */
 export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -83,6 +87,8 @@ export function buildInstructions(permissionRelay: boolean): string {
     "- Do the work it asks for in this session, against the real files.",
     "- Then call the `reply` tool exactly once, passing the `invocation_id` from that event's tag and your answer as `text`. The reply tool is the ONLY way your answer reaches the user, and it closes the request on Threa — so always reply, even with a short acknowledgement.",
     "- One reply per invocation_id. If several events arrive together, reply to each by its own id.",
+    "",
+    "Attachments. If a message has attachments, the channel downloads them into the working directory and lists each local path under the event — read them from those paths. To send a local file back, add a line `THREA_ATTACH: path/to/file` to your reply text (one per file; paths resolve against the working directory); the channel uploads it and replaces the line with an attachment link.",
   ]
   if (permissionRelay) {
     lines.push(
@@ -96,6 +102,9 @@ export function buildInstructions(permissionRelay: boolean): string {
 interface Inflight {
   invocation: ClaimedInvocation
   deadline: ReturnType<typeof setTimeout>
+  // The reply after THREA_ATTACH uploads, cached when a complete() fails so the
+  // retry reuses the same uploads instead of orphaning a fresh copy each time.
+  prepared?: { markdown: string; attachmentIds: string[] }
 }
 
 function log(message: string): void {
@@ -333,14 +342,38 @@ export class ChannelServer {
         statusText: "Working in Claude Code…",
       })
       .catch(() => undefined)
+    const content = await this.buildChannelContent(invocation)
     await this.notify("notifications/claude/channel", {
-      content: formatInvocationContent(invocation),
+      content,
       meta: {
         invocation_id: invocation.id,
         stream_id: invocation.responseStreamId,
         source_message_id: invocation.sourceMessageId,
       },
     })
+  }
+
+  /** The prompt + history Claude reads, with any downloaded attachments appended as a manifest. */
+  private async buildChannelContent(invocation: ClaimedInvocation): Promise<string> {
+    const base = formatInvocationContent(invocation)
+    // Best-effort: a discovery/download failure (e.g. a key without
+    // attachments:read) must never block the prompt from reaching Claude.
+    try {
+      const downloaded = await downloadInboundAttachments(this.client, {
+        streamId: invocation.activeStreamId,
+        sourceMessageId: invocation.sourceMessageId,
+        contextMessageIds: (invocation.context?.messages ?? []).map((message) => message.messageId),
+        invocationId: invocation.id,
+        cwd: process.cwd(),
+        scanLimit: ATTACHMENT_SCAN_LIMIT,
+        log,
+      })
+      const manifest = formatInboundAttachmentManifest(downloaded)
+      return manifest ? `${base}\n\n${manifest}` : base
+    } catch (error) {
+      log(`inbound attachment scan failed: ${this.summarize(error)}`)
+      return base
+    }
   }
 
   // --- Reply ----------------------------------------------------------------
@@ -364,18 +397,31 @@ export class ChannelServer {
     // Clear the entry (and its deadline) before awaiting complete(), so the
     // reply-timeout can't fire mid-await and double-complete the invocation.
     this.clearInflight(invocationId)
+    // Reuse a prior attempt's uploads (cached on a complete() failure) so a
+    // retry doesn't re-upload every THREA_ATTACH file and orphan the first copy.
+    let prepared = entry.prepared
     try {
+      if (!prepared) {
+        // Upload any THREA_ATTACH files first; the reply markdown carries
+        // attachment: links the backend associates with the posted message.
+        const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
+        prepared = { markdown, attachmentIds: uploaded.map((a) => a.id) }
+      }
       await this.client.complete(invocationId, {
         instanceId: this.config.instanceId,
         claimToken: entry.invocation.claimToken,
-        finalMessageMarkdown: text,
-        metadata: { "cc.channel.invocationId": invocationId, "cc.channel.instanceId": this.config.instanceId },
+        finalMessageMarkdown: prepared.markdown,
+        metadata: {
+          "cc.channel.invocationId": invocationId,
+          "cc.channel.instanceId": this.config.instanceId,
+          ...(prepared.attachmentIds.length > 0 && { "cc.channel.attachmentIds": prepared.attachmentIds.join(",") }),
+        },
       })
     } catch (error) {
       // Re-arm (with a fresh deadline) so Claude can retry the reply. Safe from
       // double-complete because the original deadline was already cleared.
       const deadline = setTimeout(() => void this.onReplyTimeout(invocationId), this.config.replyTimeoutMs)
-      this.inflight.set(invocationId, { invocation: entry.invocation, deadline })
+      this.inflight.set(invocationId, { invocation: entry.invocation, deadline, prepared })
       await this.syncPresence()
       return {
         isError: true,
