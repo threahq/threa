@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react"
-import { FileCode2 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { ChevronDown, FileCode2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -11,7 +17,13 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { SNIPPET_FALLBACK_FILENAME, snippetFormatForFilename } from "./snippet-paste"
+import {
+  SNIPPET_FALLBACK_FILENAME,
+  SNIPPET_FORMAT_OPTIONS,
+  snippetFormatByKey,
+  snippetFormatForFilename,
+  withSnippetFormatExtension,
+} from "./snippet-paste"
 
 interface SnippetEditorDialogProps {
   open: boolean
@@ -67,8 +79,8 @@ export function SnippetEditorDialog({
 
   const trimmedFilename = filename.trim()
   const canSave = text.length > 0 && trimmedFilename.length > 0
-  // Reads off the live filename (not the original sniff) so the badge always
-  // matches the extension that will actually be attached.
+  // Reads off the live filename (not the original sniff) so the format control
+  // always reflects the extension that will actually be attached.
   const format = snippetFormatForFilename(trimmedFilename || SNIPPET_FALLBACK_FILENAME)
 
   const handleSave = () => {
@@ -124,13 +136,42 @@ export function SnippetEditorDialog({
               placeholder={SNIPPET_FALLBACK_FILENAME}
               className="flex-1 text-sm font-mono"
             />
-            <Badge
-              variant="secondary"
-              className="shrink-0 justify-center min-w-24 font-normal pointer-events-none select-none"
-            >
-              <span className="sr-only">Detected format: </span>
-              {format.label}
-            </Badge>
+            {/* The sniff is a guess; this dropdown lets the user correct it.
+                Picking a format rewrites the filename extension so the filename
+                stays the single source of truth for the badge label and mime. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-10 shrink-0 justify-between gap-1.5 min-w-28 font-normal"
+                >
+                  <span className="sr-only">Snippet format: </span>
+                  {format.label}
+                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[var(--radix-dropdown-menu-trigger-width)]">
+                <DropdownMenuRadioGroup
+                  value={format.key}
+                  onValueChange={(key) =>
+                    setFilename(
+                      withSnippetFormatExtension(trimmedFilename || SNIPPET_FALLBACK_FILENAME, snippetFormatByKey(key))
+                    )
+                  }
+                >
+                  {SNIPPET_FORMAT_OPTIONS.map((option) => (
+                    <DropdownMenuRadioItem key={option.key} value={option.key} className="cursor-pointer">
+                      {option.label}
+                      <span className="ml-auto pl-4 text-xs text-muted-foreground tabular-nums">
+                        .{option.extension}
+                      </span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           {/* wrap="off": long lines scroll horizontally so code keeps its
               column layout rather than reflowing. */}

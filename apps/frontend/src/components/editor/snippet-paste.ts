@@ -49,6 +49,26 @@ const SNIPPET_FORMATS: Record<SnippetFormatKey, SnippetFormat> = {
   yaml: { key: "yaml", extension: "yaml", mimeType: "application/x-yaml", label: "YAML" },
 }
 
+/**
+ * Every format the snippet editor can be set to, in picker order. The dialog's
+ * format dropdown renders these so a user can override a wrong sniff; plain text
+ * leads as the safe default the detector falls back to.
+ */
+export const SNIPPET_FORMAT_OPTIONS: readonly SnippetFormat[] = [
+  SNIPPET_FORMATS.text,
+  SNIPPET_FORMATS.json,
+  SNIPPET_FORMATS.yaml,
+  SNIPPET_FORMATS.xml,
+  SNIPPET_FORMATS.html,
+  SNIPPET_FORMATS.csv,
+  SNIPPET_FORMATS.markdown,
+]
+
+/** Look up a format by its key; falls back to plain text for unknown keys. */
+export function snippetFormatByKey(key: string): SnippetFormat {
+  return SNIPPET_FORMATS[key as SnippetFormatKey] ?? SNIPPET_FORMATS.text
+}
+
 const EXTENSION_TO_FORMAT: Record<string, SnippetFormat> = {
   txt: SNIPPET_FORMATS.text,
   json: SNIPPET_FORMATS.json,
@@ -78,6 +98,20 @@ function extensionOf(filename: string): string {
  */
 export function snippetFormatForFilename(filename: string): SnippetFormat {
   return EXTENSION_TO_FORMAT[extensionOf(filename)] ?? SNIPPET_FORMATS.text
+}
+
+/**
+ * Rewrite a filename so its extension matches the chosen format, keeping the
+ * filename the single source of truth (so the badge and mime stay in sync). The
+ * base name is preserved; a missing or trailing-dot name falls back to
+ * `snippet` so the result is always a usable `name.ext`.
+ */
+export function withSnippetFormatExtension(filename: string, format: SnippetFormat): string {
+  const trimmed = filename.trim()
+  const dot = trimmed.lastIndexOf(".")
+  const hasExtension = dot > 0 && dot < trimmed.length - 1
+  const base = (hasExtension ? trimmed.slice(0, dot) : trimmed).replace(/\.+$/, "") || "snippet"
+  return `${base}.${format.extension}`
 }
 
 /** Mime type for the attachment, derived from the final filename's extension. */
