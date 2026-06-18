@@ -99,4 +99,16 @@ describe("MemoAccumulatorHandler memory gate", () => {
 
     expect(queue).not.toHaveBeenCalled()
   })
+
+  it("skips queueing when a thread's root stream is gone", async () => {
+    // Root deleted: findById returns the thread but null for the root. Don't
+    // queue an orphan against a non-existent top-level stream.
+    const thread = makeStream({ id: "stream_thread", type: StreamTypes.THREAD, rootStreamId: "stream_root" })
+    const { handler, queue, activity } = arrange((id) => (id === "stream_thread" ? thread : null))
+
+    await handler.run(conversationEvent("stream_thread"))
+
+    expect(queue).not.toHaveBeenCalled()
+    expect(activity).not.toHaveBeenCalled()
+  })
 })

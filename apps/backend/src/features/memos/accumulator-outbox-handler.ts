@@ -71,7 +71,13 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       // (both ride processBatch, which never runs without queued items).
       const topLevelStream =
         topLevelStreamId === streamId ? stream : await StreamRepository.findById(client, topLevelStreamId)
-      if (topLevelStream?.memoryMode === MemoryModes.OFF) {
+      if (!topLevelStream) {
+        // Thread whose root stream is gone: nothing to attribute memos to, so
+        // don't queue an orphan. Mirrors the stream-not-found guard above.
+        logger.warn({ streamId: topLevelStreamId }, "Top-level stream not found for memo accumulator")
+        return
+      }
+      if (topLevelStream.memoryMode === MemoryModes.OFF) {
         logger.debug(
           { workspaceId, streamId: topLevelStreamId },
           "Memory automation off for stream — skipping memo queue"
