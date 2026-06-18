@@ -190,6 +190,21 @@ describe("Public API — OpenAPI Spec Validation", () => {
     }
   })
 
+  test("spec declares every tag its operations use", () => {
+    // The reference site renders groups from spec.tags; an operation tag missing
+    // from that array reads as an undescribed group and was silently dropped by
+    // the old hardcoded allowlist. Keep the declaration exhaustive.
+    const specPath = resolve(import.meta.dirname!, "../../../../docs/public-api/openapi.json")
+    const spec = JSON.parse(readFileSync(specPath, "utf-8"))
+
+    const declared = new Set<string>((spec.tags ?? []).map((t: { name: string }) => t.name))
+    const usedTags = new Set<string>()
+    for (const route of PUBLIC_API_ROUTES) for (const tag of route.tags ?? []) usedTags.add(tag)
+
+    const undeclared = [...usedTags].filter((tag) => !declared.has(tag))
+    expect(undeclared).toEqual([])
+  })
+
   describe("Response shape validation", () => {
     test("GET /streams returns data matching streamSchema", async () => {
       const res = await apiRequest("GET", `/api/v1/workspaces/${ctx.workspaceId}/streams`, ctx.allScopesKey)

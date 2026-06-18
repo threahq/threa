@@ -1240,10 +1240,17 @@ a {
     position: fixed;
     top: 52px;
     left: 0;
-    bottom: 0;
     z-index: 35;
     width: min(82vw, 320px);
-    height: auto;
+    /* dvh, not bottom:0 — on mobile the dynamic browser toolbar sits over the
+       bottom of the layout viewport, so a `bottom: 0` box extends behind it and
+       its tail (a long group like Bot invocations) becomes unreachable. An
+       explicit dvh-based height bounds the drawer to what's actually visible and
+       makes it its own scroll container. */
+    height: calc(100dvh - 52px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     padding: 26px 22px 40px;
     background: hsl(var(--paper));
     border-right: 1px solid hsl(var(--line));

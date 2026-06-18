@@ -19,31 +19,16 @@ const WORKSPACE_PREFIX = "/api/v1/workspaces/{workspaceId}"
 // would fire a literal "/workspaces/{workspaceId}/…" request.
 const RUN_PREFIX = "/api/v1/workspaces/{{workspaceId}}"
 
-// Tag order and descriptions. The spec declares only the first five; the bot and
-// identity tags are described here so the reference reads in a sensible order.
-const TAG_ORDER = [
-  "Identity",
-  "Streams",
-  "Messages",
-  "Memos",
-  "Attachments",
-  "Users",
-  "Bot runtimes",
-  "Bot invocations",
-]
-const declared: Record<string, string> = Object.fromEntries(
-  (spec.tags ?? []).map((t: { name: string; description?: string }) => [t.name, t.description ?? ""]),
+// Group order and descriptions come straight from the spec's tag declaration —
+// the generator emits every tag it uses, in reading order — so a newly added
+// group (e.g. Labels) surfaces here without editing this page. The list below is
+// derived, not hardcoded; that is the whole point: nothing the spec describes can
+// be silently dropped from the reference.
+const declaredTags: { name: string; description?: string }[] = spec.tags ?? []
+const tagOrder = declaredTags.map((t) => t.name)
+const TAG_DESC: Record<string, string> = Object.fromEntries(
+  declaredTags.map((t) => [t.name, t.description ?? ""]),
 )
-const TAG_DESC: Record<string, string> = {
-  Identity: "Confirm who a key belongs to and list the bots you own.",
-  Streams: declared.Streams,
-  Messages: declared.Messages,
-  Memos: declared.Memos,
-  Attachments: declared.Attachments,
-  Users: declared.Users,
-  "Bot runtimes": "Register a runtime and keep its presence alive so it can be assigned work.",
-  "Bot invocations": "Claim, renew, step through, complete, or fail the work a bot is summoned to do.",
-}
 
 // Runnable, read-only endpoints that need only workspace scope (no real resource
 // id). Everything else shows a copyable curl without a Run button, so the docs
@@ -89,12 +74,22 @@ for (const [path, item] of Object.entries(spec.paths as Record<string, Record<st
   }
 }
 
-const groups = TAG_ORDER.map((tag) => ({
-  tag,
-  slug: tag.toLowerCase().replace(/\s+/g, "-"),
-  desc: TAG_DESC[tag],
-  ops: ops.filter((o) => o.tag === tag),
-})).filter((g) => g.ops.length > 0)
+// Render the spec's declared order first, then append any tag that appears on an
+// operation but isn't declared (sorted, so it's stable) — an undeclared tag is a
+// generator gap, not a reason to hide its endpoints.
+const usedTags = [...new Set(ops.map((o) => o.tag))]
+const orderedTags = [
+  ...tagOrder.filter((t) => usedTags.includes(t)),
+  ...usedTags.filter((t) => !tagOrder.includes(t)).sort(),
+]
+const groups = orderedTags
+  .map((tag) => ({
+    tag,
+    slug: tag.toLowerCase().replace(/\s+/g, "-"),
+    desc: TAG_DESC[tag],
+    ops: ops.filter((o) => o.tag === tag),
+  }))
+  .filter((g) => g.ops.length > 0)
 
 // Worked examples that use each group's endpoints. The reference describes
 // the wire; the recipe shows the task — link them so a reader who lands on
@@ -119,6 +114,7 @@ const TAG_HINT: Record<string, string> = {
   Memos: "memo",
   Attachments: "attachment",
   Users: "user",
+  Labels: "label",
   "Bot runtimes": "bot",
   "Bot invocations": "invocation",
 }
