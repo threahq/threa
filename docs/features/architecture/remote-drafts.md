@@ -3,7 +3,7 @@ title: Remote Drafts
 status: shipped
 audience: internal
 kind: subsystem
-invariants: [INV-20, INV-4, INV-7, INV-53]
+invariants: [INV-20, INV-4, INV-7, INV-53, INV-56, INV-58]
 entry_points:
   - apps/backend/src/features/drafts/service.ts
   - apps/backend/src/db/migrations/20260613130739_drafts.sql
