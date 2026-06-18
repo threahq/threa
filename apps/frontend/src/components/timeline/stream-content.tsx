@@ -1218,12 +1218,15 @@ export function StreamContent({
     }
   }, [])
 
-  // Set when a jump (deep-link `?m=` or out-of-window search) has loaded a new
-  // event window and the target still needs to be scrolled into view. Stays
-  // set until scrollToMessage actually engages its own resilient refine loop
+  // Set when a jump (deep-link `?m=`, out-of-window search, or date picker) has
+  // loaded a new event window and the target still needs to be scrolled into
+  // view. Stays set until scrollToMessage engages its own resilient refine loop
   // — see the convergent driver below for why a one-shot attempt isn't enough.
   const pendingScrollTarget = useRef<string | null>(null)
   const pendingScrollRafRef = useRef(0)
+  // Date jumps learn the anchor after the window fetch has already scheduled
+  // state updates, so a ref write alone can miss the effect's dependency tick.
+  const [pendingScrollRequestVersion, setPendingScrollRequestVersion] = useState(0)
 
   // When a search result is selected, navigate to that message.
   // If the message is already in the loaded events, just scroll to it in the DOM —
@@ -1274,14 +1277,17 @@ export function StreamContent({
           return
         }
       }
+      resetShiftBaseline()
       const anchorId = await jumpToEventByDate(new Date(targetDayMs).toISOString())
       if (anchorId) {
         pendingScrollTarget.current = anchorId
+        setPendingScrollRequestVersion((version) => version + 1)
       } else {
+        pendingScrollTarget.current = null
         toast.info("No messages on or after that date")
       }
     },
-    [events, disableAutoScroll, scrollToMessage, jumpToEventByDate]
+    [events, disableAutoScroll, scrollToMessage, jumpToEventByDate, resetShiftBaseline]
   )
 
   // Highlight search matches in the DOM via CSS Custom Highlight API
@@ -1293,10 +1299,10 @@ export function StreamContent({
   )
   // Convergent post-jump scroll driver.
   //
-  // A deep-link/search jump is not a single observable React transition: the
-  // window swap updates `events`, then the `holdForDeepLink` skeleton
-  // releases, then <Virtuoso> (re)mounts and only *then* attaches its
-  // scroller — and the target row may be virtualized out or transiently
+  // A post-jump scroll is not a single observable React transition: the window
+  // swap updates `events`; deep links may then wait for `holdForDeepLink`; then
+  // <Virtuoso> (re)mounts and only *then* attaches its scroller — and the
+  // target row may be virtualized out or transiently
   // grouped for the first few frames. The previous one-shot
   // `requestAnimationFrame(scrollToMessage)` + unconditional
   // `pendingScrollTarget = null` frequently fired into a not-yet-mounted
@@ -1374,7 +1380,7 @@ export function StreamContent({
         pendingScrollRafRef.current = 0
       }
     }
-  }, [events, isLoading, scrollToMessage, useVirtualized, setDeepLinkGaveUp])
+  }, [events, isLoading, scrollToMessage, useVirtualized, setDeepLinkGaveUp, pendingScrollRequestVersion])
 
   // Jump to highlighted message if it's not in the current event window.
   // The guard uses location.key so repeat clicks on the same message link
