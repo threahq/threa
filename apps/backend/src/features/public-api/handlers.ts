@@ -154,7 +154,7 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
     ...(stream.slug != null && { slug: stream.slug }),
     ...(stream.description != null && { description: stream.description }),
     visibility: stream.visibility,
-    memoryMode: stream.memoryMode ?? "auto",
+    memoryMode: stream.memoryMode ?? MemoryModes.AUTO,
     ...(stream.parentStreamId != null && { parentStreamId: stream.parentStreamId }),
     ...(stream.rootStreamId != null && { rootStreamId: stream.rootStreamId }),
     ...(stream.parentMessageId != null && { parentMessageId: stream.parentMessageId }),
