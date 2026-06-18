@@ -6,6 +6,7 @@ import {
   type LabelMember,
   type LabelAssignment,
   type LabelableResourceType,
+  type LabelActorType,
   type Visibility,
 } from "@threa/types"
 
@@ -13,6 +14,7 @@ interface LabelRow {
   id: string
   workspace_id: string
   visibility: string
+  creator_actor_type: string
   creator_user_id: string
   name: string
   slug: string
@@ -26,19 +28,21 @@ interface LabelRow {
 
 interface LabelMemberRow {
   label_id: string
+  actor_type: string
   user_id: string
   workspace_id: string
   joined_at: Date
 }
 
 const LABEL_COLUMNS =
-  "id, workspace_id, visibility, creator_user_id, name, slug, color, emoji, description, created_at, updated_at, archived_at"
+  "id, workspace_id, visibility, creator_actor_type, creator_user_id, name, slug, color, emoji, description, created_at, updated_at, archived_at"
 
 function mapRow(row: LabelRow): Label {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
     visibility: row.visibility as Visibility,
+    creatorActorType: row.creator_actor_type as LabelActorType,
     creatorUserId: row.creator_user_id,
     name: row.name,
     slug: row.slug,
@@ -54,6 +58,7 @@ function mapRow(row: LabelRow): Label {
 function mapMemberRow(row: LabelMemberRow): LabelMember {
   return {
     labelId: row.label_id,
+    actorType: row.actor_type as LabelActorType,
     userId: row.user_id,
     workspaceId: row.workspace_id,
     joinedAt: row.joined_at.toISOString(),
@@ -64,6 +69,7 @@ export interface InsertLabelParams {
   id: string
   workspaceId: string
   visibility: Visibility
+  creatorActorType: LabelActorType
   creatorUserId: string
   name: string
   slug: string
@@ -84,12 +90,13 @@ export const LabelRepository = {
   async insert(db: Querier, params: InsertLabelParams): Promise<Label> {
     const result = await db.query<LabelRow>(sql`
       INSERT INTO labels (
-        id, workspace_id, visibility, creator_user_id, name, slug, color, emoji, description
+        id, workspace_id, visibility, creator_actor_type, creator_user_id, name, slug, color, emoji, description
       )
       VALUES (
         ${params.id},
         ${params.workspaceId},
         ${params.visibility},
+        ${params.creatorActorType},
         ${params.creatorUserId},
         ${params.name},
         ${params.slug},
@@ -247,13 +254,16 @@ export const LabelMemberRepository = {
    * Idempotent join (INV-20). Returns the membership row; ON CONFLICT keeps
    * the original `joined_at` so re-joining doesn't churn the timestamp.
    */
-  async join(db: Querier, params: { labelId: string; userId: string; workspaceId: string }): Promise<LabelMember> {
+  async join(
+    db: Querier,
+    params: { labelId: string; actorType: LabelActorType; userId: string; workspaceId: string }
+  ): Promise<LabelMember> {
     const result = await db.query<LabelMemberRow>(sql`
-      INSERT INTO label_members (label_id, user_id, workspace_id)
-      VALUES (${params.labelId}, ${params.userId}, ${params.workspaceId})
+      INSERT INTO label_members (label_id, actor_type, user_id, workspace_id)
+      VALUES (${params.labelId}, ${params.actorType}, ${params.userId}, ${params.workspaceId})
       ON CONFLICT (label_id, user_id) DO UPDATE
-        SET workspace_id = EXCLUDED.workspace_id
-      RETURNING label_id, user_id, workspace_id, joined_at
+        SET workspace_id = EXCLUDED.workspace_id, actor_type = EXCLUDED.actor_type
+      RETURNING label_id, actor_type, user_id, workspace_id, joined_at
     `)
     return mapMemberRow(result.rows[0]!)
   },
@@ -278,7 +288,7 @@ export const LabelMemberRepository = {
 
   async listForUser(db: Querier, workspaceId: string, userId: string): Promise<LabelMember[]> {
     const result = await db.query<LabelMemberRow>(sql`
-      SELECT label_id, user_id, workspace_id, joined_at
+      SELECT label_id, actor_type, user_id, workspace_id, joined_at
       FROM label_members
       WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
     `)
@@ -298,6 +308,7 @@ interface LabelAssignmentRow {
   label_id: string
   resource_type: string
   resource_id: string
+  actor_type: string
   user_id: string
   workspace_id: string
   assigned_at: Date
@@ -308,13 +319,14 @@ function mapAssignmentRow(row: LabelAssignmentRow): LabelAssignment {
     labelId: row.label_id,
     resourceType: row.resource_type as LabelableResourceType,
     resourceId: row.resource_id,
+    actorType: row.actor_type as LabelActorType,
     userId: row.user_id,
     workspaceId: row.workspace_id,
     assignedAt: row.assigned_at.toISOString(),
   }
 }
 
-const ASSIGNMENT_COLUMNS = "label_id, resource_type, resource_id, user_id, workspace_id, assigned_at"
+const ASSIGNMENT_COLUMNS = "label_id, resource_type, resource_id, actor_type, user_id, workspace_id, assigned_at"
 
 /**
  * A {@link LabelAssignment} carrying its label's visibility. `listForViewer`
@@ -334,18 +346,29 @@ export interface AssignmentKey {
   userId: string
 }
 
+export interface InsertAssignmentParams extends AssignmentKey {
+  actorType: LabelActorType
+}
+
 export const LabelAssignmentRepository = {
   /**
    * Idempotent assign (INV-20). ON CONFLICT keeps the original `assigned_at` so
    * re-applying the same label doesn't churn the timestamp, and still returns
    * the row.
    */
-  async assign(db: Querier, params: AssignmentKey): Promise<LabelAssignment> {
+  async assign(db: Querier, params: InsertAssignmentParams): Promise<LabelAssignment> {
     const result = await db.query<LabelAssignmentRow>(sql`
-      INSERT INTO label_assignments (label_id, resource_type, resource_id, user_id, workspace_id)
-      VALUES (${params.labelId}, ${params.resourceType}, ${params.resourceId}, ${params.userId}, ${params.workspaceId})
+      INSERT INTO label_assignments (label_id, resource_type, resource_id, actor_type, user_id, workspace_id)
+      VALUES (
+        ${params.labelId},
+        ${params.resourceType},
+        ${params.resourceId},
+        ${params.actorType},
+        ${params.userId},
+        ${params.workspaceId}
+      )
       ON CONFLICT (workspace_id, resource_type, resource_id, label_id, user_id) DO UPDATE
-        SET assigned_at = label_assignments.assigned_at
+        SET assigned_at = label_assignments.assigned_at, actor_type = EXCLUDED.actor_type
       RETURNING ${sql.raw(ASSIGNMENT_COLUMNS)}
     `)
     return mapAssignmentRow(result.rows[0]!)

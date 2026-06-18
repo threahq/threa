@@ -766,6 +766,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       labelId: "label_1",
       resourceType: "stream",
       resourceId: "stream_1",
+      actorType: "user",
       userId: "member_1",
       assignedAt: new Date().toISOString(),
     }

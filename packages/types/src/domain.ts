@@ -14,6 +14,7 @@ import type {
   StreamType,
   Visibility,
   LabelableResourceType,
+  LabelActorType,
   CompanionMode,
   MemoryMode,
   AuthorType,
@@ -352,11 +353,18 @@ export interface BotRuntimeManifest {
  * Slugs collide on `(workspaceId, slug)` for public and on
  * `(workspaceId, creatorUserId, slug)` for private (DB enforces via partial
  * unique indexes, ignoring archived rows).
+ *
+ * `creatorActorType` + `creatorUserId` identify the creator. For a user-created
+ * label `creatorActorType` is `"user"` and `creatorUserId` is a UserId; for a
+ * bot-created label (public API) it is `"bot"` and `creatorUserId` carries the
+ * bot id. The id alone is unambiguous (user/bot ids never collide), so existing
+ * `creatorUserId === currentUserId` viewer checks stay correct.
  */
 export interface Label {
   id: string
   workspaceId: string
   visibility: Visibility
+  creatorActorType: LabelActorType
   creatorUserId: string
   name: string
   slug: string
@@ -375,6 +383,8 @@ export interface Label {
  */
 export interface LabelMember {
   labelId: string
+  /** Discriminator for `userId`: `"user"` (a UserId) or `"bot"` (a bot id). */
+  actorType: LabelActorType
   userId: string
   workspaceId: string
   joinedAt: string
@@ -391,9 +401,21 @@ export interface LabelAssignment {
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string
+  /** Discriminator for `userId`: `"user"` (a UserId) or `"bot"` (a bot id). */
+  actorType: LabelActorType
   userId: string
   workspaceId: string
   assignedAt: string
+}
+
+/**
+ * The actor that creates, joins, or applies a label — a workspace user or a bot
+ * (the latter only reachable through the public API). `id` is a UserId when
+ * `type` is `"user"` and a bot id when `"bot"`.
+ */
+export interface LabelActor {
+  type: LabelActorType
+  id: string
 }
 
 /**

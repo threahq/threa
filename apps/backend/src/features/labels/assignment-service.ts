@@ -1,18 +1,27 @@
 import type { Pool, PoolClient } from "pg"
-import { LabelableResourceTypes, Visibilities, type LabelAssignment, type LabelableResourceType } from "@threa/types"
+import {
+  LabelableResourceTypes,
+  LabelActorTypes,
+  Visibilities,
+  type LabelActor,
+  type LabelAssignment,
+  type LabelableResourceType,
+} from "@threa/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { listAccessibleStreamIds } from "../streams"
+import type { BotChannelService } from "../api-keys"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 
 interface LabelAssignmentServiceDeps {
   pool: Pool
+  botChannelService: BotChannelService
 }
 
 export interface AssignLabelParams {
   workspaceId: string
-  userId: string
+  actor: LabelActor
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string
@@ -34,39 +43,47 @@ export interface AssignLabelParams {
  */
 export class LabelAssignmentService {
   private readonly pool: Pool
+  private readonly botChannelService: BotChannelService
 
   constructor(deps: LabelAssignmentServiceDeps) {
     this.pool = deps.pool
+    this.botChannelService = deps.botChannelService
   }
 
   /**
    * The viewer's full assignment set for bootstrap/list: the shared pool of
    * public-label assignments on resources they can access, plus their own
-   * private-label rows. Every public stream row — including ones the viewer
-   * applied themselves — is gated through the canonical stream-access helper,
-   * so a public label on a channel the viewer can no longer reach never
-   * resurfaces (resource types without an access rule are dropped). Private
-   * rows are the viewer's own organizational layer and skip the resource gate.
+   * private-label rows. Stream rows are gated through the viewer's own access
+   * model so a label on a channel they can no longer reach never resurfaces
+   * (resource types without an access rule are dropped).
+   *
+   * A user's private rows are their own organizational layer and skip the gate
+   * — a user always sees their own private labels regardless of current stream
+   * access. A bot has no such standing layer: it reaches streams only through
+   * channel grants, so its private rows are gated like its public ones, and a
+   * revoked grant drops them too.
    */
-  async listForViewer(workspaceId: string, userId: string): Promise<LabelAssignment[]> {
-    const candidates = await LabelAssignmentRepository.listVisibleCandidates(this.pool, workspaceId, userId)
+  async listForViewer(workspaceId: string, actor: LabelActor): Promise<LabelAssignment[]> {
+    const candidates = await LabelAssignmentRepository.listVisibleCandidates(this.pool, workspaceId, actor.id)
 
-    const ownPrivateRows: LabelAssignment[] = []
-    const publicStreamRows: LabelAssignment[] = []
+    const ungatedRows: LabelAssignment[] = []
+    const gatedStreamRows: LabelAssignment[] = []
     for (const { labelVisibility, ...assignment } of candidates) {
-      if (labelVisibility === Visibilities.PRIVATE) ownPrivateRows.push(assignment)
-      else if (assignment.resourceType === LabelableResourceTypes.STREAM) publicStreamRows.push(assignment)
+      if (labelVisibility === Visibilities.PRIVATE && actor.type !== LabelActorTypes.BOT) {
+        ungatedRows.push(assignment)
+      } else if (assignment.resourceType === LabelableResourceTypes.STREAM) {
+        gatedStreamRows.push(assignment)
+      }
     }
 
-    if (publicStreamRows.length === 0) return ownPrivateRows
+    if (gatedStreamRows.length === 0) return ungatedRows
 
-    const accessible = await listAccessibleStreamIds(
-      this.pool,
+    const accessible = await this.accessibleStreamIds(
       workspaceId,
-      userId,
-      publicStreamRows.map((a) => a.resourceId)
+      actor,
+      gatedStreamRows.map((a) => a.resourceId)
     )
-    return [...ownPrivateRows, ...publicStreamRows.filter((a) => accessible.has(a.resourceId))]
+    return [...ungatedRows, ...gatedStreamRows.filter((a) => accessible.has(a.resourceId))]
   }
 
   async assign(params: AssignLabelParams): Promise<LabelAssignment> {
@@ -78,7 +95,7 @@ export class LabelAssignmentService {
       // You can apply any label you can see: your own private labels, or any
       // public label in the workspace. Someone else's private label is invisible
       // to you, so report not-found rather than leak its existence.
-      if (label.visibility === Visibilities.PRIVATE && label.creatorUserId !== params.userId) {
+      if (label.visibility === Visibilities.PRIVATE && label.creatorUserId !== params.actor.id) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
 
@@ -89,12 +106,13 @@ export class LabelAssignmentService {
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        userId: params.userId,
+        actorType: params.actor.type,
+        userId: params.actor.id,
       })
 
       await OutboxRepository.insert(client, "label:assigned", {
         workspaceId: params.workspaceId,
-        targetUserId: label.visibility === Visibilities.PUBLIC ? null : params.userId,
+        targetUserId: label.visibility === Visibilities.PUBLIC ? null : params.actor.id,
         assignment,
       })
 
@@ -109,7 +127,7 @@ export class LabelAssignmentService {
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        userId: params.userId,
+        userId: params.actor.id,
       })
       if (!removed) return
 
@@ -120,11 +138,11 @@ export class LabelAssignmentService {
 
       await OutboxRepository.insert(client, "label:unassigned", {
         workspaceId: params.workspaceId,
-        targetUserId: label?.visibility === Visibilities.PUBLIC ? null : params.userId,
+        targetUserId: label?.visibility === Visibilities.PUBLIC ? null : params.actor.id,
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        userId: params.userId,
+        userId: params.actor.id,
       })
     })
   }
@@ -139,9 +157,46 @@ export class LabelAssignmentService {
    */
   private async assertResourceAccess(client: PoolClient, params: AssignLabelParams): Promise<void> {
     if (params.resourceType === LabelableResourceTypes.STREAM) {
-      const accessible = await listAccessibleStreamIds(client, params.workspaceId, params.userId, [params.resourceId])
-      if (accessible.has(params.resourceId)) return
+      if (await this.canReachStream(client, params.actor, params.workspaceId, params.resourceId)) return
     }
     throw new HttpError("Resource not found", { status: 404, code: "RESOURCE_NOT_FOUND" })
+  }
+
+  /**
+   * Single-resource reachability for the write gate — a point query per actor
+   * model (a bot: one EXISTS on its grant; a user: membership/visibility). The
+   * read gate uses the bulk {@link accessibleStreamIds} instead, since it filters
+   * a whole candidate set at once.
+   */
+  private async canReachStream(
+    client: PoolClient,
+    actor: LabelActor,
+    workspaceId: string,
+    streamId: string
+  ): Promise<boolean> {
+    if (actor.type === LabelActorTypes.BOT) {
+      return this.botChannelService.isStreamAccessibleForBot(workspaceId, actor.id, streamId)
+    }
+    const accessible = await listAccessibleStreamIds(client, workspaceId, actor.id, [streamId])
+    return accessible.has(streamId)
+  }
+
+  /**
+   * The subset of `candidateIds` the actor can reach, by the actor's own access
+   * model: a user resolves through stream membership/visibility, a bot through
+   * its channel grants. Backs the read gate (`listForViewer`), which filters a
+   * whole candidate set; the write gate uses {@link canReachStream} for its
+   * single-resource check.
+   */
+  private async accessibleStreamIds(
+    workspaceId: string,
+    actor: LabelActor,
+    candidateIds: string[]
+  ): Promise<Set<string>> {
+    if (actor.type === LabelActorTypes.BOT) {
+      const granted = new Set(await this.botChannelService.getAccessibleStreamIdsForBot(workspaceId, actor.id))
+      return new Set(candidateIds.filter((id) => granted.has(id)))
+    }
+    return listAccessibleStreamIds(this.pool, workspaceId, actor.id, candidateIds)
   }
 }

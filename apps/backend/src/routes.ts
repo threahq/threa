@@ -767,6 +767,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     botRuntimeService,
     streamService,
     eventService,
+    labelService,
+    labelAssignmentService,
     pool,
     io: deps.io,
   })
@@ -945,6 +947,61 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.USERS_READ),
     publicApi.listUsers
+  )
+
+  app.get(
+    "/api/v1/workspaces/:workspaceId/labels",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_READ),
+    publicApi.listLabels
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/labels",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.createLabel
+  )
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.updateLabel
+  )
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.deleteLabel
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId/join",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.joinLabel
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId/leave",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.leaveLabel
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId/promote",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.promoteLabel
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId/assignments",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.assignLabel
+  )
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/labels/:labelId/assignments",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.unassignLabel
   )
 
   // Identity — no scope check. Authentication alone is sufficient for a key

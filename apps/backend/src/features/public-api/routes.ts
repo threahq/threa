@@ -16,6 +16,9 @@ import {
   STREAM_TYPES,
   MEMORY_MODES,
   AUTHOR_TYPES,
+  VISIBILITY_OPTIONS,
+  LABEL_ACTOR_TYPES,
+  LABELABLE_RESOURCE_TYPES,
   MEMO_TYPES,
   KNOWLEDGE_TYPES,
   PROCESSING_STATUSES,
@@ -47,6 +50,9 @@ import {
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
   completeSealedInvocationSchema,
+  createLabelSchema,
+  updateLabelSchema,
+  labelAssignmentSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -130,6 +136,53 @@ const userSchema = z.object({
   email: z.string(),
   avatarUrl: z.string().optional(),
   role: z.string(),
+})
+
+// A label and its owning/applying actor. `creatorActorType` + `creatorActorId`
+// (and `actorType` + `actorId` on members/assignments) identify the actor: a
+// user (the id is a UserId) or a bot (the id is a bot id). The public wire uses
+// actor-explicit field names so a bot-owned label is never mistaken for a user's.
+const labelSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  visibility: z.enum(VISIBILITY_OPTIONS),
+  creatorActorType: z.enum(LABEL_ACTOR_TYPES),
+  creatorActorId: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  color: z.string(),
+  emoji: z.string().nullable(),
+  description: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  archivedAt: z.string().datetime().nullable(),
+})
+
+const labelMemberSchema = z.object({
+  labelId: z.string(),
+  actorType: z.enum(LABEL_ACTOR_TYPES),
+  actorId: z.string(),
+  workspaceId: z.string(),
+  joinedAt: z.string().datetime(),
+})
+
+const labelAssignmentResponseSchema = z.object({
+  labelId: z.string(),
+  resourceType: z.enum(LABELABLE_RESOURCE_TYPES),
+  resourceId: z.string(),
+  actorType: z.enum(LABEL_ACTOR_TYPES),
+  actorId: z.string(),
+  workspaceId: z.string(),
+  assignedAt: z.string().datetime(),
+})
+
+// The label catalog visible to the key: all public labels plus the actor's own
+// private labels, their memberships, and the assignments they can see on
+// reachable resources. Mirrors the internal bootstrap bundle.
+const labelCatalogSchema = z.object({
+  labels: z.array(labelSchema),
+  memberships: z.array(labelMemberSchema),
+  assignments: z.array(labelAssignmentResponseSchema),
 })
 
 // Bot wire schema is a discriminated union so the type/ownerUserId invariant
@@ -473,6 +526,14 @@ const attachmentIdParam = {
   required: true,
   schema: { type: "string" as const },
   description: "Attachment ID (prefixed ULID)",
+}
+
+const labelIdParam = {
+  name: "labelId",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Label ID (prefixed ULID)",
 }
 
 const callbackTokenHeaderParam = {
@@ -912,6 +973,129 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
 
   {
     method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/labels",
+    operationId: "listLabels",
+    summary: "List labels",
+    description:
+      "The label catalog visible to this key: all public labels plus the key actor's own private labels, " +
+      "their memberships, and assignments on reachable resources.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_READ],
+    parameters: [workspaceIdParam],
+    responseSchema: dataEnvelope(labelCatalogSchema),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/labels",
+    operationId: "createLabel",
+    summary: "Create a label",
+    description: "Create a label owned by the key actor (a user or a bot).",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: createLabelSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(labelSchema),
+    successStatus: 201,
+  },
+  {
+    method: "patch",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}",
+    operationId: "updateLabel",
+    summary: "Update a label",
+    description: "Update a label the key actor created.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    requestSchema: updateLabelSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(labelSchema),
+    canReturn404: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}",
+    operationId: "deleteLabel",
+    summary: "Delete a label",
+    description: "Archive a label the key actor created and remove its memberships and assignments.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    responseSchema: z.void(),
+    successStatus: 204,
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/join",
+    operationId: "joinLabel",
+    summary: "Join a public label",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    responseSchema: dataEnvelope(labelMemberSchema),
+    successStatus: 201,
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/leave",
+    operationId: "leaveLabel",
+    summary: "Leave a label",
+    description: "Drop the key actor's membership. The last member leaving archives the label.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    responseSchema: z.void(),
+    successStatus: 204,
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/promote",
+    operationId: "promoteLabel",
+    summary: "Promote a private label to public",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    responseSchema: dataEnvelope(labelSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/assignments",
+    operationId: "assignLabel",
+    summary: "Apply a label to a resource",
+    description:
+      "Attach a label to a resource the key actor can reach. `resourceType` is the polymorphic target " +
+      "(`stream` today) so the same endpoint labels any future resource without a wire change.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    requestSchema: labelAssignmentSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(labelAssignmentResponseSchema),
+    successStatus: 201,
+    canReturn404: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/assignments",
+    operationId: "unassignLabel",
+    summary: "Remove a label from a resource",
+    description: "Remove the key actor's own assignment of a label from a resource.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam, labelIdParam],
+    requestSchema: labelAssignmentSchema,
+    requestIn: "query",
+    responseSchema: z.void(),
+    successStatus: 204,
+    canReturn404: true,
+  },
+
+  {
+    method: "get",
     path: "/api/v1/workspaces/{workspaceId}/me",
     operationId: "getMe",
     summary: "Get the authenticated principal",
@@ -956,6 +1140,10 @@ export {
   attachmentUploadSchema,
   attachmentDetailsSchema,
   attachmentUrlSchema,
+  labelSchema,
+  labelMemberSchema,
+  labelAssignmentResponseSchema,
+  labelCatalogSchema,
   errorSchema,
 }
 
@@ -973,3 +1161,7 @@ export type WireAttachmentSearchResult = z.infer<typeof attachmentSearchResultSc
 export type WireAttachmentUpload = z.infer<typeof attachmentUploadSchema>
 export type WireAttachmentDetails = z.infer<typeof attachmentDetailsSchema>
 export type WireAttachmentUrl = z.infer<typeof attachmentUrlSchema>
+export type WireLabel = z.infer<typeof labelSchema>
+export type WireLabelMember = z.infer<typeof labelMemberSchema>
+export type WireLabelAssignment = z.infer<typeof labelAssignmentResponseSchema>
+export type WireLabelCatalog = z.infer<typeof labelCatalogSchema>

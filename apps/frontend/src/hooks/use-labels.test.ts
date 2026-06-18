@@ -15,6 +15,7 @@ function makeLabel(overrides: Partial<Label> & { id: string }): Label {
   return {
     workspaceId: WORKSPACE_ID,
     visibility: "private",
+    creatorActorType: "user",
     creatorUserId: "user_me",
     name: "Sample",
     slug: "sample",
@@ -31,6 +32,7 @@ function makeLabel(overrides: Partial<Label> & { id: string }): Label {
 function makeMember(overrides: Partial<LabelMember> & { labelId: string; userId: string }): LabelMember {
   return {
     workspaceId: WORKSPACE_ID,
+    actorType: "user",
     joinedAt: new Date().toISOString(),
     ...overrides,
   }
@@ -42,6 +44,7 @@ function makeAssignment(
   return {
     workspaceId: WORKSPACE_ID,
     resourceType: "stream",
+    actorType: "user",
     userId: "user_me",
     assignedAt: new Date().toISOString(),
     ...overrides,

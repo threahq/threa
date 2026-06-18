@@ -18,6 +18,8 @@ import {
   EXTRACTION_CONTENT_TYPES,
   AGENT_STEP_TYPES,
   SOURCE_TYPES,
+  VISIBILITY_OPTIONS,
+  LABELABLE_RESOURCE_TYPES,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
@@ -65,6 +67,42 @@ export const listStreamsSchema = z.object({
   query: z.string().optional(),
   after: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+})
+
+const LABEL_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
+
+export const createLabelSchema = z.object({
+  name: z.string().min(1).max(100),
+  visibility: z.enum(VISIBILITY_OPTIONS),
+  color: z.string().regex(LABEL_COLOR_PATTERN, "color must be a #RRGGBB hex string"),
+  emoji: z.string().max(32).nullable().optional(),
+  description: z.string().max(500).nullable().optional(),
+})
+
+export const updateLabelSchema = z
+  .object({
+    name: z.string().min(1).max(100).optional(),
+    color: z.string().regex(LABEL_COLOR_PATTERN, "color must be a #RRGGBB hex string").optional(),
+    emoji: z.string().max(32).nullable().optional(),
+    description: z.string().max(500).nullable().optional(),
+  })
+  .refine(
+    (d) => d.name !== undefined || d.color !== undefined || d.emoji !== undefined || d.description !== undefined,
+    {
+      message: "At least one field must be provided",
+    }
+  )
+
+export const labelIdParamSchema = z.object({
+  labelId: z.string().min(1).max(64),
+})
+
+// Apply/remove a label to/from a resource. `resourceType` is the polymorphic
+// target ("stream" today); the API is deliberately not stream-specific so
+// messages/users/attachments can be labeled without a new endpoint.
+export const labelAssignmentSchema = z.object({
+  resourceType: z.enum(LABELABLE_RESOURCE_TYPES),
+  resourceId: z.string().min(1).max(64),
 })
 
 export const upsertPresenceSchema = z

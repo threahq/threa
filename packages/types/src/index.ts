@@ -236,6 +236,10 @@ export {
   E2E_KEY_WRAP_RECIPIENT_KINDS,
   type E2eKeyWrapRecipientKind,
   E2eKeyWrapRecipientKinds,
+  // Label actors (user / bot)
+  LABEL_ACTOR_TYPES,
+  type LabelActorType,
+  LabelActorTypes,
 } from "./constants"
 
 // Markdown → plain-text stripping for preview surfaces (shared FE/BE, INV-60)
@@ -262,6 +266,7 @@ export type {
   Label,
   LabelMember,
   LabelAssignment,
+  LabelActor,
   Message,
   ThreadSummary,
   MessageVersion,

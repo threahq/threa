@@ -107,6 +107,8 @@ function arrange(
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService: { completeInvocationInTransaction } as unknown as PublicApiDeps["botRuntimeService"],
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })

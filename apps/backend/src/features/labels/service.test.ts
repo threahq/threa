@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { Visibilities, type Label } from "@threa/types"
+import { LabelActorTypes, Visibilities, type Label } from "@threa/types"
 import { LabelService } from "./service"
 import { LabelRepository, LabelMemberRepository, LabelAssignmentRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -8,6 +8,7 @@ import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
 const USER_ID = "usr_1"
+const USER_ACTOR = { type: LabelActorTypes.USER, id: USER_ID } as const
 const LABEL_ID = "label_1"
 const NOW = "2026-05-28T12:00:00.000Z"
 
@@ -16,6 +17,7 @@ function fakeLabel(overrides: Partial<Label> = {}): Label {
     id: LABEL_ID,
     workspaceId: WORKSPACE_ID,
     visibility: Visibilities.PUBLIC,
+    creatorActorType: LabelActorTypes.USER,
     creatorUserId: USER_ID,
     name: "Priority",
     slug: "priority",
@@ -45,7 +47,7 @@ describe("LabelService.archive", () => {
     const assignmentCleanup = spyOn(LabelAssignmentRepository, "deleteAllForLabel").mockResolvedValue(undefined)
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.archive({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+    await service.archive({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
 
     expect(assignmentCleanup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
   })
@@ -57,7 +59,7 @@ describe("LabelService.archive", () => {
     const assignmentCleanup = spyOn(LabelAssignmentRepository, "deleteAllForLabel").mockResolvedValue(undefined)
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.archive({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+    await service.archive({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
 
     expect(assignmentCleanup).not.toHaveBeenCalled()
   })
@@ -72,6 +74,7 @@ describe("LabelService.create", () => {
     spyOn(LabelRepository, "insert").mockResolvedValue(fakeLabel({ visibility: Visibilities.PRIVATE }))
     const join = spyOn(LabelMemberRepository, "join").mockResolvedValue({
       labelId: LABEL_ID,
+      actorType: LabelActorTypes.USER,
       userId: USER_ID,
       workspaceId: WORKSPACE_ID,
       joinedAt: NOW,
@@ -80,7 +83,7 @@ describe("LabelService.create", () => {
 
     await service.create({
       workspaceId: WORKSPACE_ID,
-      userId: USER_ID,
+      actor: USER_ACTOR,
       name: "Secret",
       visibility: Visibilities.PRIVATE,
       color: "#ff0000",
@@ -113,7 +116,7 @@ describe("LabelService.leave", () => {
     const assignmentCleanup = spyOn(LabelAssignmentRepository, "deleteAllForLabel").mockResolvedValue(undefined)
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.leave({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+    await service.leave({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
 
     expect(archive).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
     expect(assignmentCleanup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
@@ -132,7 +135,7 @@ describe("LabelService.leave", () => {
     const archive = spyOn(LabelRepository, "archive").mockResolvedValue(true)
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.leave({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+    await service.leave({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
 
     expect(archive).not.toHaveBeenCalled()
     expect(outbox).toHaveBeenCalledWith(
@@ -149,7 +152,7 @@ describe("LabelService.leave", () => {
     const count = spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(0)
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.leave({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+    await service.leave({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
 
     expect(count).not.toHaveBeenCalled()
     expect(outbox).not.toHaveBeenCalled()

@@ -42,6 +42,8 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<type
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService: {} as PublicApiDeps["botRuntimeService"],
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io: {} as PublicApiDeps["io"],
     ...overrides,

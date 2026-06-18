@@ -84,6 +84,15 @@ Or discover via `GET /api/v1/workspaces/{workspaceId}/streams`.
 | POST | `/workspaces/{ws}/attachments/search` | `attachments:read` | |
 | GET | `/workspaces/{ws}/attachments/{attachmentId}` | `attachments:read` | |
 | GET | `/workspaces/{ws}/attachments/{attachmentId}/url` | `attachments:read` | Short-lived signed URL. |
+| GET | `/workspaces/{ws}/labels` | `labels:read` | The visible label catalog: `{labels, memberships, assignments}`. |
+| POST | `/workspaces/{ws}/labels` | `labels:write` | Create a label. **201**. Body `{name, visibility:"public"\|"private", color:"#RRGGBB", emoji?, description?}`. |
+| PATCH | `/workspaces/{ws}/labels/{labelId}` | `labels:write` | Edit a label you created. Body any of `{name, color, emoji, description}`. |
+| DELETE | `/workspaces/{ws}/labels/{labelId}` | `labels:write` | Archive a label you created (drops its memberships + assignments). **204**. |
+| POST | `/workspaces/{ws}/labels/{labelId}/join` | `labels:write` | Join a public label. **201**. |
+| POST | `/workspaces/{ws}/labels/{labelId}/leave` | `labels:write` | Leave a label (last member out archives it). **204**. |
+| POST | `/workspaces/{ws}/labels/{labelId}/promote` | `labels:write` | Promote a private label to public. |
+| POST | `/workspaces/{ws}/labels/{labelId}/assignments` | `labels:write` | Apply a label to a resource. **201**. Body `{resourceType:"stream", resourceId}`. |
+| DELETE | `/workspaces/{ws}/labels/{labelId}/assignments` | `labels:write` | Remove your assignment. **204**. Query `?resourceType=stream&resourceId=…`. |
 
 ### Send-message body (`sendMessageSchema`)
 

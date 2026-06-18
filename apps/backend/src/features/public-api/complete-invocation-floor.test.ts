@@ -115,6 +115,8 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService,
     botRuntimeService,
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })

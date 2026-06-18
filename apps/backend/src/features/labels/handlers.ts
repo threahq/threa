@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { VISIBILITY_OPTIONS, LABELABLE_RESOURCE_TYPES } from "@threa/types"
+import { VISIBILITY_OPTIONS, LABELABLE_RESOURCE_TYPES, LabelActorTypes } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import type { LabelService } from "./service"
 import type { LabelAssignmentService } from "./assignment-service"
@@ -45,7 +45,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const [labels, memberships, assignments] = await Promise.all([
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
-        labelAssignmentService.listForViewer(workspaceId, userId),
+        labelAssignmentService.listForViewer(workspaceId, { type: LabelActorTypes.USER, id: userId }),
       ])
       res.json({ labels, memberships, assignments })
     },
@@ -61,7 +61,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
 
       const label = await labelService.create({
         workspaceId,
-        userId,
+        actor: { type: LabelActorTypes.USER, id: userId },
         name: parsed.data.name,
         visibility: parsed.data.visibility,
         color: parsed.data.color,
@@ -83,7 +83,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
 
       const label = await labelService.update({
         workspaceId,
-        userId,
+        actor: { type: LabelActorTypes.USER, id: userId },
         labelId,
         name: parsed.data.name,
         color: parsed.data.color,
@@ -97,7 +97,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const labelId = req.params.labelId!
-      await labelService.archive({ workspaceId, userId, labelId })
+      await labelService.archive({ workspaceId, actor: { type: LabelActorTypes.USER, id: userId }, labelId })
       res.json({ ok: true })
     },
 
@@ -105,7 +105,11 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const labelId = req.params.labelId!
-      const member = await labelService.join({ workspaceId, userId, labelId })
+      const member = await labelService.join({
+        workspaceId,
+        actor: { type: LabelActorTypes.USER, id: userId },
+        labelId,
+      })
       res.status(201).json({ member })
     },
 
@@ -113,7 +117,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const labelId = req.params.labelId!
-      await labelService.leave({ workspaceId, userId, labelId })
+      await labelService.leave({ workspaceId, actor: { type: LabelActorTypes.USER, id: userId }, labelId })
       res.json({ ok: true })
     },
 
@@ -121,7 +125,11 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const labelId = req.params.labelId!
-      const label = await labelService.promote({ workspaceId, userId, labelId })
+      const label = await labelService.promote({
+        workspaceId,
+        actor: { type: LabelActorTypes.USER, id: userId },
+        labelId,
+      })
       res.json({ label })
     },
 
@@ -137,7 +145,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
 
       const assignment = await labelAssignmentService.assign({
         workspaceId,
-        userId,
+        actor: { type: LabelActorTypes.USER, id: userId },
         labelId,
         resourceType: parsed.data.resourceType,
         resourceId: parsed.data.resourceId,
@@ -157,7 +165,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
 
       await labelAssignmentService.unassign({
         workspaceId,
-        userId,
+        actor: { type: LabelActorTypes.USER, id: userId },
         labelId,
         resourceType: parsed.data.resourceType,
         resourceId: parsed.data.resourceId,

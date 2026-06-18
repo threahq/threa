@@ -128,6 +128,8 @@ function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[]; 
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService,
     botRuntimeService,
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io: {} as PublicApiDeps["io"],
   })

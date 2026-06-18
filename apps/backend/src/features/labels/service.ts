@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { Visibilities, type Label, type LabelMember, type Visibility } from "@threa/types"
+import { Visibilities, type Label, type LabelActor, type LabelMember, type Visibility } from "@threa/types"
 import { generateSlug, generateUniqueSlug } from "@threa/backend-common"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -13,7 +13,7 @@ interface LabelServiceDeps {
 
 export interface CreateLabelParams {
   workspaceId: string
-  userId: string
+  actor: LabelActor
   name: string
   visibility: Visibility
   color: string
@@ -23,7 +23,7 @@ export interface CreateLabelParams {
 
 export interface UpdateLabelParams {
   workspaceId: string
-  userId: string
+  actor: LabelActor
   labelId: string
   name?: string
   color?: string
@@ -63,7 +63,7 @@ export class LabelService {
       const slug = await generateUniqueSlug(baseSlug, (candidate) =>
         this.slugExists(client, {
           workspaceId: params.workspaceId,
-          userId: params.userId,
+          userId: params.actor.id,
           visibility: params.visibility,
           slug: candidate,
         })
@@ -74,7 +74,8 @@ export class LabelService {
         id,
         workspaceId: params.workspaceId,
         visibility: params.visibility,
-        creatorUserId: params.userId,
+        creatorActorType: params.actor.type,
+        creatorUserId: params.actor.id,
         name: trimmedName,
         slug,
         color: params.color,
@@ -88,13 +89,14 @@ export class LabelService {
       // "My Labels" view and real-time fan-out.
       const member = await LabelMemberRepository.join(client, {
         labelId: id,
-        userId: params.userId,
+        actorType: params.actor.type,
+        userId: params.actor.id,
         workspaceId: params.workspaceId,
       })
 
       await OutboxRepository.insert(client, "label:created", {
         workspaceId: params.workspaceId,
-        targetUserId: params.visibility === Visibilities.PRIVATE ? params.userId : null,
+        targetUserId: params.visibility === Visibilities.PRIVATE ? params.actor.id : null,
         label,
       })
 
@@ -102,7 +104,7 @@ export class LabelService {
       // is creator-scoped regardless of label visibility.
       await OutboxRepository.insert(client, "label:member_joined", {
         workspaceId: params.workspaceId,
-        targetUserId: params.userId,
+        targetUserId: params.actor.id,
         member,
       })
 
@@ -116,7 +118,7 @@ export class LabelService {
       if (!existing || existing.archivedAt) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
-      if (existing.creatorUserId !== params.userId) {
+      if (existing.creatorUserId !== params.actor.id) {
         throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
       }
 
@@ -164,13 +166,13 @@ export class LabelService {
     })
   }
 
-  async archive(params: { workspaceId: string; userId: string; labelId: string }): Promise<void> {
+  async archive(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<void> {
     await withTransaction(this.pool, async (client) => {
       const existing = await LabelRepository.findById(client, params.workspaceId, params.labelId)
       if (!existing || existing.archivedAt) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
-      if (existing.creatorUserId !== params.userId) {
+      if (existing.creatorUserId !== params.actor.id) {
         throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
       }
 
@@ -199,7 +201,7 @@ export class LabelService {
     })
   }
 
-  async join(params: { workspaceId: string; userId: string; labelId: string }): Promise<LabelMember> {
+  async join(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<LabelMember> {
     return withTransaction(this.pool, async (client) => {
       // Lock the label row so a join can't race the last-member-leave archival:
       // either we observe the archived label and reject, or we add our member
@@ -214,13 +216,14 @@ export class LabelService {
 
       const member = await LabelMemberRepository.join(client, {
         labelId: params.labelId,
-        userId: params.userId,
+        actorType: params.actor.type,
+        userId: params.actor.id,
         workspaceId: params.workspaceId,
       })
 
       await OutboxRepository.insert(client, "label:member_joined", {
         workspaceId: params.workspaceId,
-        targetUserId: params.userId,
+        targetUserId: params.actor.id,
         member,
       })
 
@@ -228,7 +231,7 @@ export class LabelService {
     })
   }
 
-  async leave(params: { workspaceId: string; userId: string; labelId: string }): Promise<void> {
+  async leave(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<void> {
     await withTransaction(this.pool, async (client) => {
       // Lock the label row so concurrent leaves serialize: the last-member
       // check below must not race two callers into both seeing a survivor
@@ -243,7 +246,7 @@ export class LabelService {
       // no-ops here via `removed === false`.
       const removed = await LabelMemberRepository.leave(client, {
         labelId: params.labelId,
-        userId: params.userId,
+        userId: params.actor.id,
       })
       if (!removed) return
 
@@ -259,9 +262,9 @@ export class LabelService {
 
       await OutboxRepository.insert(client, "label:member_left", {
         workspaceId: params.workspaceId,
-        targetUserId: params.userId,
+        targetUserId: params.actor.id,
         labelId: params.labelId,
-        userId: params.userId,
+        userId: params.actor.id,
       })
     })
   }
@@ -271,13 +274,13 @@ export class LabelService {
    * the partial index, so we pre-check here to return a friendly error before
    * the UPDATE fires.
    */
-  async promote(params: { workspaceId: string; userId: string; labelId: string }): Promise<Label> {
+  async promote(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<Label> {
     return withTransaction(this.pool, async (client) => {
       const existing = await LabelRepository.findById(client, params.workspaceId, params.labelId)
       if (!existing || existing.archivedAt) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
-      if (existing.creatorUserId !== params.userId) {
+      if (existing.creatorUserId !== params.actor.id) {
         throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
       }
       if (existing.visibility !== Visibilities.PRIVATE) {
@@ -302,7 +305,8 @@ export class LabelService {
       // carry in the member_joined event below.
       const member = await LabelMemberRepository.join(client, {
         labelId: promoted.id,
-        userId: params.userId,
+        actorType: params.actor.type,
+        userId: params.actor.id,
         workspaceId: params.workspaceId,
       })
 
@@ -325,7 +329,7 @@ export class LabelService {
       })
       await OutboxRepository.insert(client, "label:member_joined", {
         workspaceId: params.workspaceId,
-        targetUserId: params.userId,
+        targetUserId: params.actor.id,
         member,
       })
 

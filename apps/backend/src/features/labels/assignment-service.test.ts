@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { LabelableResourceTypes, Visibilities, type Label, type LabelAssignment, type Visibility } from "@threa/types"
+import {
+  LabelActorTypes,
+  LabelableResourceTypes,
+  Visibilities,
+  type Label,
+  type LabelAssignment,
+  type Visibility,
+} from "@threa/types"
 import { LabelAssignmentService } from "./assignment-service"
 import { LabelRepository, LabelAssignmentRepository, type VisibleAssignmentCandidate } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -9,6 +16,7 @@ import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
 const USER_ID = "usr_1"
+const USER_ACTOR = { type: LabelActorTypes.USER, id: USER_ID } as const
 const OTHER_USER_ID = "usr_2"
 const LABEL_ID = "label_1"
 const RESOURCE_ID = "stream_1"
@@ -19,6 +27,7 @@ function fakeLabel(overrides: Partial<Label> = {}): Label {
     id: LABEL_ID,
     workspaceId: WORKSPACE_ID,
     visibility: Visibilities.PUBLIC,
+    creatorActorType: LabelActorTypes.USER,
     creatorUserId: USER_ID,
     name: "Priority",
     slug: "priority",
@@ -37,6 +46,7 @@ function fakeAssignment(overrides: Partial<LabelAssignment> = {}): LabelAssignme
     labelId: LABEL_ID,
     resourceType: LabelableResourceTypes.STREAM,
     resourceId: RESOURCE_ID,
+    actorType: LabelActorTypes.USER,
     userId: USER_ID,
     workspaceId: WORKSPACE_ID,
     assignedAt: NOW,
@@ -58,12 +68,12 @@ function stripVisibility(candidate: VisibleAssignmentCandidate): LabelAssignment
 
 function setupService() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-  return new LabelAssignmentService({ pool: {} as any })
+  return new LabelAssignmentService({ pool: {} as any, botChannelService: {} as any })
 }
 
 const assignParams = {
   workspaceId: WORKSPACE_ID,
-  userId: USER_ID,
+  actor: USER_ACTOR,
   labelId: LABEL_ID,
   resourceType: LabelableResourceTypes.STREAM,
   resourceId: RESOURCE_ID,
@@ -145,6 +155,30 @@ describe("LabelAssignmentService.assign", () => {
     expect(assignSpy).not.toHaveBeenCalled()
     expect(outboxSpy).not.toHaveBeenCalled()
   })
+
+  it("gates a bot's assign through a single isStreamAccessibleForBot point query, not the bulk fetch", async () => {
+    const BOT_ID = "bot_1"
+    const isStreamAccessibleForBot = mock(() => Promise.resolve(false))
+    const getAccessibleStreamIdsForBot = mock(() => Promise.resolve([] as string[]))
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    const service = new LabelAssignmentService({
+      pool: {} as any,
+      botChannelService: { isStreamAccessibleForBot, getAccessibleStreamIdsForBot } as any,
+    })
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
+    const assignSpy = spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(fakeAssignment())
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await expect(
+      service.assign({ ...assignParams, actor: { type: LabelActorTypes.BOT, id: BOT_ID } })
+    ).rejects.toMatchObject({ status: 404 })
+
+    expect(isStreamAccessibleForBot).toHaveBeenCalledWith(WORKSPACE_ID, BOT_ID, RESOURCE_ID)
+    // The write gate must not fall back to the unbounded all-public-streams fetch.
+    expect(getAccessibleStreamIdsForBot).not.toHaveBeenCalled()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(outboxSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe("LabelAssignmentService.unassign", () => {
@@ -209,7 +243,7 @@ describe("LabelAssignmentService.listForViewer", () => {
     spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([ownPrivate])
     const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds")
 
-    const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
+    const result = await service.listForViewer(WORKSPACE_ID, USER_ACTOR)
 
     expect(result).toEqual([stripVisibility(ownPrivate)])
     expect(accessSpy).not.toHaveBeenCalled()
@@ -234,7 +268,7 @@ describe("LabelAssignmentService.listForViewer", () => {
     ])
     const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_visible"]))
 
-    const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
+    const result = await service.listForViewer(WORKSPACE_ID, USER_ACTOR)
 
     // Own private row kept unconditionally; own public row on the unreachable
     // stream is dropped just like another user's hidden row.
@@ -244,5 +278,36 @@ describe("LabelAssignmentService.listForViewer", () => {
       "stream_visible",
       "stream_hidden",
     ])
+  })
+
+  it("gates a bot's own private rows through its channel grants (no ungated layer for bots)", async () => {
+    const BOT_ID = "bot_1"
+    const botActor = { type: LabelActorTypes.BOT, id: BOT_ID } as const
+    const botChannelService = {
+      getAccessibleStreamIdsForBot: mock(() => Promise.resolve(["stream_granted"])),
+    }
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    const service = new LabelAssignmentService({ pool: {} as any, botChannelService: botChannelService as any })
+
+    const privateGranted = fakeCandidate({
+      labelVisibility: Visibilities.PRIVATE,
+      userId: BOT_ID,
+      resourceId: "stream_granted",
+    })
+    const privateRevoked = fakeCandidate({
+      labelVisibility: Visibilities.PRIVATE,
+      userId: BOT_ID,
+      resourceId: "stream_revoked",
+    })
+    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([privateGranted, privateRevoked])
+    // The user stream-access helper must not be consulted for a bot.
+    const userAccessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds")
+
+    const result = await service.listForViewer(WORKSPACE_ID, botActor)
+
+    // The revoked-grant row drops even though it's the bot's own private label.
+    expect(result).toEqual([stripVisibility(privateGranted)])
+    expect(botChannelService.getAccessibleStreamIdsForBot).toHaveBeenCalledWith(WORKSPACE_ID, BOT_ID)
+    expect(userAccessSpy).not.toHaveBeenCalled()
   })
 })

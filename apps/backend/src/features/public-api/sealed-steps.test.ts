@@ -101,6 +101,8 @@ function arrange(sessionOverride?: Partial<AgentSession>) {
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService: {} as PublicApiDeps["botRuntimeService"],
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io,
   })
