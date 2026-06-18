@@ -141,6 +141,26 @@ describe("BotRuntimeInstanceRepository.upsertPresence", () => {
   })
 })
 
+describe("BotRuntimeInstanceRepository.markOffline", () => {
+  afterEach(() => mock.restore())
+
+  it("does not overwrite a newer heartbeat after the socket disconnect", async () => {
+    const captured: Captured = { text: null, values: null }
+    const disconnectedAt = new Date("2026-06-18T12:00:00.000Z")
+    const db = createQuerier(captured, [])
+
+    await BotRuntimeInstanceRepository.markOffline(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      disconnectedAt,
+    })
+
+    expect(captured.text).toContain("last_seen_at <=")
+    expect(captured.values).toContain(disconnectedAt)
+  })
+})
+
 describe("BotRuntimeInstanceRepository.findLiveWithKeyForBot", () => {
   afterEach(() => mock.restore())
 
