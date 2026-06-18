@@ -23,7 +23,7 @@ export interface BotSocketRegistryOptions {
    * (the row must persist so `target_instance_id`-pinned invocations remain
    * routable on reconnect — see the plan doc for the rationale).
    */
-  onInstanceOffline?: (key: BotSocketKey) => void | Promise<void>
+  onInstanceOffline?: (key: BotSocketKey, disconnectedAt: Date) => void | Promise<void>
 }
 
 /**
@@ -37,7 +37,7 @@ export class BotSocketRegistry {
   private byInstance = new Map<string, Set<Socket>>()
   private graceTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private graceMs: number
-  private onInstanceOffline?: (key: BotSocketKey) => void | Promise<void>
+  private onInstanceOffline?: (key: BotSocketKey, disconnectedAt: Date) => void | Promise<void>
 
   constructor(options: BotSocketRegistryOptions = {}) {
     this.graceMs = options.graceMs ?? 30_000
@@ -80,13 +80,14 @@ export class BotSocketRegistry {
     const k = this.keyOf(key)
     const existing = this.graceTimers.get(k)
     if (existing) clearTimeout(existing)
+    const disconnectedAt = new Date()
     const timer = setTimeout(() => {
       this.graceTimers.delete(k)
       // Double-check inside the timer fire: a reconnect race could have put
       // sockets back without us seeing it (e.g. if graceMs is 0 in tests).
       if (this.byInstance.has(k)) return
       Promise.resolve()
-        .then(() => this.onInstanceOffline?.(key))
+        .then(() => this.onInstanceOffline?.(key, disconnectedAt))
         .catch((err: unknown) => {
           logger.error({ err, ...key }, "bot-socket-registry: onInstanceOffline callback failed")
         })

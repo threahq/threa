@@ -74,7 +74,9 @@ describe("BotSocketRegistry", () => {
     expect(onInstanceOffline).not.toHaveBeenCalled()
     await new Promise((r) => setTimeout(r, 60))
     expect(onInstanceOffline).toHaveBeenCalledTimes(1)
-    expect(onInstanceOffline).toHaveBeenCalledWith(key)
+    const calls = onInstanceOffline.mock.calls as unknown as Array<[typeof key, Date]>
+    expect(calls[0]?.[0]).toEqual(key)
+    expect(calls[0]?.[1]).toBeInstanceOf(Date)
     reg.dispose()
   })
 

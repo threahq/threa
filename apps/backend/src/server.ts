@@ -668,9 +668,9 @@ export async function startServer(): Promise<ServerInstance> {
     // row offline so `target_instance_id`-pinned invocations stop being
     // routed to a dead runtime.
     graceMs: 30_000,
-    onInstanceOffline: async (key) => {
+    onInstanceOffline: async (key, disconnectedAt) => {
       try {
-        await BotRuntimeInstanceRepository.markOffline(pools.main, key)
+        await BotRuntimeInstanceRepository.markOffline(pools.main, { ...key, disconnectedAt })
       } catch (err) {
         logger.error({ err, ...key }, "markOffline failed after grace window")
       }
