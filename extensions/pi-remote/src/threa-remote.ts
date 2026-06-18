@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { io as openSocket, type Socket } from "socket.io-client"
@@ -230,13 +230,111 @@ function readConfig(): Config | undefined {
   return stored ? validateConfig(stored) : undefined
 }
 
+// Cross-process lock for `~/.pi/agent/threa-remote.json` so two Pi instances
+// sharing the file can't interleave a read-merge-write and clobber each
+// other's `linkedSessions` entry. Mirrors pi's own `FileSettingsStorage`
+// `acquireLockSyncWithRetry` (which locks `settings.json` the same way) but
+// uses a zero-dependency O_EXCL lockfile instead of pulling `proper-lockfile`
+// into this runtime-loaded package. If the lock can't be acquired the save is
+// skipped (never an unlocked RMW — that would reintroduce the clobber), and
+// the owning instance's next save self-heals.
+const CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
+const CONFIG_LOCK_MAX_ATTEMPTS = 10
+const CONFIG_LOCK_DELAY_MS = 25
+
+function acquireConfigLockSync(): (() => void) | undefined {
+  for (let attempt = 1; attempt <= CONFIG_LOCK_MAX_ATTEMPTS; attempt++) {
+    let fd: number | undefined
+    try {
+      // O_EXCL + O_CREAT: the open succeeds only for the creator of the file,
+// giving us an exclusive cross-process lock. `wx` flag = O_EXCL|O_CREAT|O_WRONLY.
+      fd = openSync(CONFIG_LOCK_PATH, "wx")
+      const release = (): void => {
+        try {
+          closeSync(fd!)
+          unlinkSync(CONFIG_LOCK_PATH)
+        } catch {
+          // Already cleaned up by another path; nothing to do.
+        }
+      }
+      return release
+    } catch (error) {
+      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : undefined
+      if (code !== "EEXIST") {
+        // Unexpected error (permissions, disk full, …) — skip this save
+        // rather than perform an unlocked RMW (INV-20).
+        console.error(`Threa remote: config lock acquire failed; skipping save: ${String(error)}`)
+        return undefined
+      }
+      // EEXIST: another instance holds the lock. Stale-lock guard: if the lock
+      // file is older than a few seconds, the holder likely crashed — reclaim it.
+      try {
+        const stats = statSync(CONFIG_LOCK_PATH)
+        if (Date.now() - stats.mtimeMs > 5000) {
+          unlinkSync(CONFIG_LOCK_PATH)
+          continue // retry immediately on next iteration
+        }
+      } catch {
+        // Lock vanished between EEXIST and stat — retry.
+        continue
+      }
+      if (attempt < CONFIG_LOCK_MAX_ATTEMPTS) {
+        const start = Date.now()
+        while (Date.now() - start < CONFIG_LOCK_DELAY_MS) {
+          // Synchronous spin — mirrors pi's settings lock; keep the RMW
+          // critical section simple to reason about (no async reentrancy).
+        }
+      }
+    }
+  }
+  // Timed out waiting — skip this save rather than write unlocked (INV-20).
+  console.error("Threa remote: config lock timed out; skipping save")
+  return undefined
+}
+
 function saveConfig(): void {
   if (!config) return
   const persisted: Config = { ...config }
+  // Keep a copy because `persisted.streamCursors` is removed from the
+  // canonical write shape before the legacy cursor merge below.
+  const inMemoryStreamCursors = persisted.streamCursors
   delete persisted.enabled
   delete persisted.streamCursors
   mkdirSync(dirname(CONFIG_PATH), { recursive: true })
-  writeFileSync(CONFIG_PATH, `${JSON.stringify(persisted, null, 2)}\n`)
+  // Hold the cross-process lock across the entire read-merge-write so a
+  // concurrent Pi instance can't read a pre-merge snapshot and then overwrite
+  // this instance's just-merged `linkedSessions`/`streamCursors` (INV-20).
+  // If the lock can't be acquired, skip — never write unlocked (INV-20).
+  const release = acquireConfigLockSync()
+  if (!release) return
+  try {
+    // Merge with whatever is on disk so concurrent Pi instances (each owning a
+    // distinct `linkedSessions` key, keyed by runtimeSessionId) don't clobber
+    // each other's links. Without this, a read-modify-write from instance A
+    // overwrites instance B's `linkedSessions` entry because A only has its own
+    // link in memory. This instance's own keys win over stale on-disk copies.
+    // Non-mergeable fields (baseUrl/workspaceId/apiKey/...) keep the in-memory
+    // (just-edited) value.
+    const onDisk = readStoredConfig()
+    if (onDisk?.linkedSessions && persisted.linkedSessions) {
+      const merged = { ...onDisk.linkedSessions, ...persisted.linkedSessions }
+      persisted.linkedSessions = merged
+    }
+    // Legacy global cursors: merge either side. They've been migrated into
+    // per-link `streamCursors` by `migrateSessionState`, so this branch only
+    // matters for upgraded installs that still carry the global map on disk.
+    if (onDisk?.streamCursors || inMemoryStreamCursors) {
+      const mergedCursors = { ...(onDisk?.streamCursors ?? {}), ...(inMemoryStreamCursors ?? {}) }
+      persisted.streamCursors = mergedCursors
+    }
+    // Atomic write via temp + rename so a crash or a concurrent reader never
+    // sees a half-written file.
+    const tmp = `${CONFIG_PATH}.${process.pid}.tmp`
+    writeFileSync(tmp, `${JSON.stringify(persisted, null, 2)}\n`)
+    renameSync(tmp, CONFIG_PATH)
+  } finally {
+    release()
+  }
 }
 
 // Server `bot:hello` schema constrains `instanceId` to `^[A-Za-z0-9_-]+$`
@@ -422,9 +520,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!response.ok) {
-    // Do not read the response body here. Server/proxy failures can return huge
-    // HTML documents; surfacing those in Pi eats context and memory.
-    throw new Error(`Threa API ${response.status}: ${response.statusText}`)
+    // Surface the server's JSON error (Zod `fieldErrors`, `code`, ...) when the
+    // API itself rejects the request, so a 400 is debuggable instead of a bare
+    // "Bad Request". Guard against huge HTML proxy/CGI error pages: only read
+    // the body for JSON responses and cap it, so a 502 from a reverse proxy
+    // still can't dump a megabyte of markup into Pi.
+    let detail = ""
+    const contentType = response.headers.get("content-type") ?? ""
+    if (contentType.includes("application/json")) {
+      try {
+        const body = await response.text()
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(body)
+        } catch {
+          parsed = null
+        }
+        if (parsed && typeof parsed === "object") {
+          const err = parsed as Record<string, unknown>
+          const parts = [
+            typeof err.error === "string" ? err.error : "",
+            typeof err.code === "string" ? `[${err.code}]` : "",
+            err.details ? `details=${JSON.stringify(err.details)}` : "",
+          ].filter(Boolean)
+          detail = parts.join(" ")
+        }
+        if (!detail) detail = body.replace(/\s+/g, " ").trim()
+      } catch {
+        detail = ""
+      }
+    }
+    detail = detail.slice(0, 500)
+    throw new Error(
+      `Threa API ${response.status}: ${response.statusText}${detail ? ` — ${detail}` : ""}`
+    )
   }
   return (await response.json()) as T
 }
