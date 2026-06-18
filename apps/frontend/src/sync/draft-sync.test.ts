@@ -337,15 +337,18 @@ describe("enqueueDraftUpsert / enqueueDraftDelete", () => {
     expect(dels.filter((o) => o.payload.draftId === "draft_x")).toHaveLength(1)
   })
 
-  it("enqueueDraftResolve drops a queued push and adds a CAS resolve carrying expectedVersion", async () => {
+  it("enqueueDraftResolve keeps a queued push as the in-flight echo marker", async () => {
     await enqueueDraftUpsert(workspaceId, "draft_x")
+    const upserts = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const writeId = upserts.find((o) => o.payload.draftId === "draft_x")?.payload.writeId
     await enqueueDraftResolve(workspaceId, "draft_x", 3)
 
-    expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
+    expect(await hasPendingDraftUpsert("draft_x")).toBe(true)
     const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
     const forDraft = resolves.filter((o) => o.payload.draftId === "draft_x")
     expect(forDraft).toHaveLength(1)
     expect(forDraft[0]?.payload.expectedVersion).toBe(3)
+    expect(forDraft[0]?.payload.supersededWriteIds).toEqual([writeId])
   })
 })
 
@@ -483,6 +486,22 @@ describe("executeDraftUpsert", () => {
     expect(dels.filter((o) => o.payload.draftId === "draft_x")).toHaveLength(1)
   })
 
+  it("CAS-resolves the ghost server row when the draft was sent mid-push", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2 }))
+    await enqueueDraftResolve(workspaceId, "draft_x", 2)
+    const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      return { draft: wireDraft({ id: "draft_x", version: 3 }), split: false }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    expect(await db.drafts.get("draft_x")).toBeUndefined()
+    expect(await db.pendingOperations.where("type").equals("delete_draft").count()).toBe(0)
+    const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+    expect(resolves.filter((o) => o.payload.draftId === "draft_x" && o.payload.expectedVersion === 3)).toHaveLength(1)
+  })
+
   it("deletes the split server row when the original was discarded mid-push", async () => {
     await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
     const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => {
@@ -494,6 +513,38 @@ describe("executeDraftUpsert", () => {
 
     const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
     expect(dels.filter((o) => o.payload.draftId === "draft_new")).toHaveLength(1)
+  })
+
+  it("removes a split ghost locally when its socket echo won the race", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      await db.drafts.put(localDraft({ id: "draft_new", baseVersion: 1 }))
+      return { draft: wireDraft({ id: "draft_new", version: 1 }), split: true, originalId: "draft_x" }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    expect(await db.drafts.get("draft_new")).toBeUndefined()
+    const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(dels.filter((o) => o.payload.draftId === "draft_new")).toHaveLength(1)
+  })
+
+  it("CAS-resolves a split ghost when the original was sent mid-push", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    await enqueueDraftResolve(workspaceId, "draft_x", 1)
+    const upsert = vi.fn(async (): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      await db.drafts.put(localDraft({ id: "draft_new", baseVersion: 1 }))
+      return { draft: wireDraft({ id: "draft_new", version: 1 }), split: true, originalId: "draft_x" }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    expect(await db.drafts.get("draft_new")).toBeUndefined()
+    expect(await db.pendingOperations.where("type").equals("delete_draft").count()).toBe(0)
+    const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+    expect(resolves.filter((o) => o.payload.draftId === "draft_new" && o.payload.expectedVersion === 1)).toHaveLength(1)
   })
 })
 
@@ -508,12 +559,21 @@ describe("executeDraftDelete", () => {
 describe("executeDraftResolve", () => {
   it("delegates a CAS resolve carrying expectedVersion to the service", async () => {
     const resolve = vi.fn(async () => ({ resolved: true }))
-    await executeDraftResolve(workspaceId, "draft_x", 5, {
-      upsert: vi.fn(),
-      resolve,
-      delete: vi.fn(),
-    } as unknown as DraftsServiceLike)
-    expect(resolve).toHaveBeenCalledWith(workspaceId, "draft_x", { expectedVersion: 5 })
+    await executeDraftResolve(
+      workspaceId,
+      "draft_x",
+      5,
+      {
+        upsert: vi.fn(),
+        resolve,
+        delete: vi.fn(),
+      } as unknown as DraftsServiceLike,
+      ["write_sent"]
+    )
+    expect(resolve).toHaveBeenCalledWith(workspaceId, "draft_x", {
+      expectedVersion: 5,
+      supersededWriteIds: ["write_sent"],
+    })
   })
 
   it("propagates a declined resolve (drift) without throwing — the drifted copy survives", async () => {
@@ -614,6 +674,37 @@ describe("resolve-on-send is authoritative against inbound echoes (no resurrecti
     await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 2 }) }, workspaceId)
 
     expect((await db.drafts.get("draft_server1"))?.baseVersion).toBe(2)
+  })
+
+  it("does not apply a newer echo while this device still has the sent upsert in flight", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_server1")
+    await enqueueDraftResolve(workspaceId, "draft_server1", 1)
+
+    await applyDraftUpserted({ workspaceId, targetUserId: userId, draft: wireDraft({ version: 2 }) }, workspaceId)
+
+    expect(await db.drafts.get("draft_server1")).toBeUndefined()
+  })
+
+  it("CAS-resolves a split echo whose write id belongs to a sent draft", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_server1")
+    const upserts = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const writeId = upserts.find((o) => o.payload.draftId === "draft_server1")?.payload.writeId as string
+    await enqueueDraftResolve(workspaceId, "draft_server1", 1)
+
+    await applyDraftUpserted(
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ id: "draft_split", version: 1, lastClientWriteId: writeId }),
+      },
+      workspaceId
+    )
+
+    expect(await db.drafts.get("draft_split")).toBeUndefined()
+    const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+    expect(
+      resolves.filter((op) => op.payload.draftId === "draft_split" && op.payload.expectedVersion === 1)
+    ).toHaveLength(1)
   })
 })
 

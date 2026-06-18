@@ -39,6 +39,7 @@ const upsertSchema = z
 
 const resolveSchema = z.object({
   expectedVersion: z.number().int().min(1),
+  supersededWriteIds: z.array(z.string().min(1)).optional(),
 })
 
 interface Dependencies {
@@ -106,6 +107,7 @@ export function createDraftsHandlers({ draftsService }: Dependencies) {
         userId,
         id,
         expectedVersion: parsed.data.expectedVersion,
+        supersededWriteIds: parsed.data.supersededWriteIds ?? [],
       })
       res.json(result)
     },

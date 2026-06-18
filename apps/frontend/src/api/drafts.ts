@@ -35,10 +35,10 @@ export const draftsApi = {
   },
 
   /**
-   * Resolve-on-send: CAS soft-delete guarded by `expectedVersion`. The server
-   * removes the draft only if its version still matches, so a copy that drifted
-   * since the send started survives as a stash entry instead of being
-   * collaterally destroyed (`response.resolved` is false in that case).
+   * Resolve-on-send: CAS soft-delete guarded by `expectedVersion` plus this
+   * device's superseded write ids. Unrelated drift survives as a stash entry
+   * instead of being collaterally destroyed (`response.resolved` is false in
+   * that case).
    */
   async resolve(workspaceId: string, id: string, input: ResolveDraftInput): Promise<ResolveDraftResponse> {
     return api.post<ResolveDraftResponse>(`/api/workspaces/${workspaceId}/drafts/${id}/resolve`, input)

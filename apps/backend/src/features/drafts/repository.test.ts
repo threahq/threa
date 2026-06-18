@@ -167,7 +167,7 @@ describe("DraftsRepository.casUpdate", () => {
 describe("DraftsRepository.softDeleteCas", () => {
   afterEach(() => mock.restore())
 
-  it("tombstones only when the version matches so a drifted copy survives", async () => {
+  it("tombstones on a matching version or superseded write id so unrelated drift survives", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured)
 
@@ -176,27 +176,35 @@ describe("DraftsRepository.softDeleteCas", () => {
       userId: "usr_1",
       id: "draft_01",
       expectedVersion: 2,
+      supersededWriteIds: ["write_sent"],
     })
 
     expect(captured.text).toContain("deleted_at = NOW()")
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).toContain("version =")
+    expect(captured.text).toContain("last_client_write_id = ANY")
     expect(captured.values).toContain(2)
+    expect(captured.values).toContainEqual(["write_sent"])
   })
 })
 
 describe("DraftsRepository.softDelete", () => {
   afterEach(() => mock.restore())
 
-  it("tombstones unconditionally (explicit discard) without a version guard", async () => {
+  it("plants a negative tombstone so a delete that wins the race against first insert still sticks", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured)
 
     await DraftsRepository.softDelete(db, "ws_1", "usr_1", "draft_01")
 
+    expect(captured.text).toContain("INSERT INTO drafts")
+    expect(captured.text).toContain("ON CONFLICT (id) DO UPDATE")
     expect(captured.text).toContain("deleted_at = NOW()")
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).not.toContain("AND version =")
+    expect(captured.values).toContain("draft_01")
+    expect(captured.values).toContain("ws_1")
+    expect(captured.values).toContain("usr_1")
   })
 })
 

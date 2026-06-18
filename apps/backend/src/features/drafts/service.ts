@@ -40,6 +40,7 @@ export interface ResolveDraftParams {
   userId: string
   id: string
   expectedVersion: number
+  supersededWriteIds?: string[]
 }
 
 export interface DeleteDraftParams {
@@ -112,6 +113,14 @@ export class DraftsService {
       // The id already exists — lock it and decide update vs split.
       const existing = await DraftsRepository.findByIdForUpdate(client, params.workspaceId, params.userId, params.id)
 
+      // (a2) A never-confirmed draft's first push can land after resolve/discard
+      // planted a negative tombstone for the id. The content was already sent or
+      // thrown away, so drop the late insert rather than splitting it into a live
+      // zombie. Confirmed drift (expectedVersion > 0) still splits below.
+      if (existing && existing.deletedAt && params.expectedVersion === 0) {
+        return { draft: toDraftView(existing), split: false }
+      }
+
       // (b) Lost-ack retry of a write we already accepted — return as-is. Gated
       // on a LIVE row: if the draft was resolved (tombstoned) after this write
       // landed, the writeId still matches but the row is gone, so we must not
@@ -161,10 +170,10 @@ export class DraftsService {
 
   /**
    * Clear a draft on successful send (resolve-on-send). CAS-guarded by
-   * `expectedVersion` so a copy that drifted since the send started survives as
-   * a stash entry instead of being collaterally deleted. On a match, soft-delete
-   * and emit `draft:deleted`; on drift, leave the row and report `resolved:
-   * false`.
+   * `expectedVersion`, with this device's superseded write ids as a lost-ack
+   * escape hatch, so unrelated drift survives as a stash entry instead of being
+   * collaterally deleted. On a match, soft-delete and emit `draft:deleted`; on
+   * drift, leave the row and report `resolved: false`.
    */
   async resolve(params: ResolveDraftParams): Promise<{ resolved: boolean }> {
     return withTransaction(this.pool, async (client) => {
@@ -173,6 +182,7 @@ export class DraftsService {
         userId: params.userId,
         id: params.id,
         expectedVersion: params.expectedVersion,
+        supersededWriteIds: params.supersededWriteIds ?? [],
       })
       if (!deleted) {
         // Either drifted (version moved on) or already gone — keep the row.

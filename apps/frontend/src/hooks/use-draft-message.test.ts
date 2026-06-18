@@ -451,6 +451,43 @@ describe("useDraftMessage", () => {
       expect(scoped).toHaveLength(0)
     })
 
+    it("a stale debounced save that already read the loaded row does NOT restash it after send", async () => {
+      await db.drafts.put({
+        id: "draft_confirmed",
+        workspaceId,
+        scope: draftKey,
+        contentJson: makeDoc("sent message"),
+        attachments: [],
+        baseVersion: 2,
+        clientUpdatedAt: Date.now(),
+      })
+      await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
+
+      const observedResolveSeq = getScopeResolveSeq(draftKey)
+      const realGet = db.drafts.get.bind(db.drafts)
+      let injectedResolve = false
+      vi.spyOn(db.drafts, "get").mockImplementation((async (key: string) => {
+        const row = await realGet(key)
+        if (key === "draft_confirmed" && !injectedResolve) {
+          injectedResolve = true
+          await resolveLoadedDraft(workspaceId, draftKey)
+        }
+        return row
+      }) as never)
+
+      await upsertLoadedDraft(
+        workspaceId,
+        draftKey,
+        { contentJson: makeDoc("sent message"), attachments: [] },
+        undefined,
+        { observedResolveSeq }
+      )
+
+      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      const scoped = (await db.drafts.toArray()).filter((d) => d.scope === draftKey)
+      expect(scoped).toHaveLength(0)
+    })
+
     it("allows a fresh save started AFTER the send to create a new draft", async () => {
       await db.drafts.put({
         id: "draft_confirmed",

@@ -3,9 +3,10 @@ import type { Draft } from "./repository"
 
 /**
  * Wire shape for a draft row. `version` is the optimistic-lock value the client
- * sends back as `expectedVersion` on the next push. The internal-only fields
- * (`lastClientWriteId`, `deletedAt`) never cross the boundary — idempotency and
- * tombstones are server bookkeeping. Drafts are rendered directly from
+ * sends back as `expectedVersion` on the next push. Tombstones remain server
+ * bookkeeping; `lastClientWriteId` crosses the boundary only so a device that
+ * just sent the draft can suppress/delete its own lost-ack echoes without
+ * mistaking them for another device's drift. Drafts are rendered directly from
  * `contentJson` (or decrypted `ciphertext` for E2E), so the row IS the draft.
  */
 export function toDraftView(row: Draft): DraftView {
@@ -25,6 +26,7 @@ export function toDraftView(row: Draft): DraftView {
     e2eVersion: row.e2eVersion,
     version: row.version,
     clientUpdatedAt: row.clientUpdatedAt.toISOString(),
+    lastClientWriteId: row.lastClientWriteId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }

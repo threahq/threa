@@ -70,7 +70,8 @@ Content takes one of two shapes. A plaintext draft carries `content_json` and a 
 triple with the plaintext columns null, sealed to the stream key before it ever leaves
 the device (E2EE-4, "no plaintext at rest"). `deleted_at` is a soft-delete tombstone so
 a removal on one device propagates to the others, and `last_client_write_id` is a
-per-push idempotency key (see below).
+per-push idempotency key (see below). That write id is exposed back to the owner only so
+the device that just sent a draft can recognize its own late echo.
 
 ### The split-on-drift upsert
 
@@ -144,10 +145,16 @@ Sending a message clears its draft, but a send is not a discard. If another devi
 edited the draft after this send started, an unconditional delete would destroy that
 work. So the send path calls `resolve`, not `delete`:
 `POST /drafts/:id/resolve` soft-deletes **only if** `version` still matches
-`expectedVersion` (`DraftsService.resolve`, `service.ts:169`). On drift the server keeps
-the row and reports `resolved: false`, and the drifted copy survives as a stash entry.
-Explicit discard (stashing away, emptying the composer, deleting from the Drafts view)
-keeps the unconditional `delete`, which is idempotent on an already-gone row.
+`expectedVersion`, or if the row's `last_client_write_id` is one this send already
+superseded (`DraftsService.resolve`, `service.ts:169`). On unrelated drift the server
+keeps the row and reports `resolved: false`, and the drifted copy survives as a stash
+entry. Explicit discard (stashing away, emptying the composer, deleting from the Drafts
+view) keeps the unconditional `delete`, which is idempotent on an already-gone row.
+Never-confirmed drafts (`baseVersion = 0`) also use `delete`: there is no server version
+to CAS against. To make delete-before-insert ordering safe, `DraftsRepository.softDelete`
+plants a negative tombstone even when the row is absent; a late first upsert
+(`expectedVersion = 0`) that collides with that tombstone is dropped rather than split
+into a live zombie.
 
 ### The resolution guard stops a sent draft from coming back
 
@@ -159,15 +166,20 @@ two ways to close both. `markScopeResolved(scope)` runs as the first statement o
 resolve, before the async teardown, so the create branch of `upsertLoadedDraft` refuses a
 just-resolved scope regardless of how Dexie interleaves the reads. `markDraftResolved(id,
 version)` lets inbound apply drop an echo at or below the resolved version, while a
-strictly newer version still applies as a real edit from another device (no loss). The
-guard lifts the instant the user re-engages (a keystroke or an attachment), so the next
-message starts a fresh draft.
+strictly newer version still applies as a real edit from another device unless its
+`last_client_write_id` is one this send already superseded (no loss). The guard lifts
+the instant the user re-engages (a keystroke or an attachment), so the next message
+starts a fresh draft.
 
 Because the guard is in-memory, it does not survive a page reload. PR #993 made the
 suppression durable by reading the queued `resolve_draft` ops directly
 (`pendingDraftResolveVersion`): a bootstrap after reload drops rows at or below the
 version still queued for resolve, so a sent draft cannot bootstrap back as a stash entry
-across a reconnect.
+across a reconnect. A resolve also keeps any queued `upsert_draft` op as an in-flight
+write marker until the queue observes the locally deleted row, and copies its `writeId`
+onto the resolve op so a lost-ack write can still be tombstoned if it reached the
+server. Otherwise that write's version-newer socket echo can look like real drift and
+re-seed the just-sent content.
 
 ### Thread re-pointing: drafts follow their message
 
