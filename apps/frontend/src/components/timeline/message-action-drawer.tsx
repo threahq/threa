@@ -184,7 +184,7 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
                     <span className="truncate font-normal text-muted-foreground/70">{authorStatus.text}</span>
                   )}
                 </div>
-                <div className="text-sm text-foreground/80 line-clamp-2 leading-snug pr-6">
+                <div className="text-sm text-foreground/80 line-clamp-2 leading-snug pr-6 max-h-[2.75rem] overflow-hidden">
                   <MarkdownContent content={context.contentMarkdown} />
                 </div>
                 {context.onQuoteReplyWithSnippet && (
@@ -218,7 +218,10 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
               </div>
             )}
 
-            <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
+            <div
+              data-vaul-no-drag
+              className="flex-1 min-h-0 overflow-y-auto px-2 pb-[max(12px,env(safe-area-inset-bottom))]"
+            >
               {groupedActions.map((item) => (
                 <DrawerActionItem
                   key={item.kind === "single" ? item.action.id : item.members[0].id}
