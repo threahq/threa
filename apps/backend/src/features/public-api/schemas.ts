@@ -92,6 +92,10 @@ export const updateLabelSchema = z
     }
   )
 
+export const labelIdParamSchema = z.object({
+  labelId: z.string().min(1).max(64),
+})
+
 // Apply/remove a label to/from a resource. `resourceType` is the polymorphic
 // target ("stream" today); the API is deliberately not stream-specific so
 // messages/users/attachments can be labeled without a new endpoint.

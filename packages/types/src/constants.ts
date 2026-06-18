@@ -31,12 +31,12 @@ export const LabelableResourceTypes = {
   STREAM: "stream",
 } as const satisfies Record<string, LabelableResourceType>
 
-// The actor that owns/applies a label. Labels were originally user-only; public
-// API keys made bots first-class label actors too (a shared bot has no owning
-// user, so it can't be reduced to a UserId). `actorType` is the discriminator
-// and the companion id column (`creator_user_id` / `user_id`) carries the
-// actor's id — a UserId when "user", a bot id when "bot". User and bot ids are
-// globally unique prefixed ULIDs, so the id alone never collides across types.
+// The actor that owns/applies a label — a workspace user or a bot. A shared bot
+// has no owning user, so label ownership can't be reduced to a UserId.
+// `actorType` is the discriminator and the companion id column (`creator_user_id`
+// / `user_id`) carries the actor's id — a UserId when "user", a bot id when
+// "bot". User and bot ids are globally unique prefixed ULIDs, so the id alone
+// never collides across types.
 export const LABEL_ACTOR_TYPES = ["user", "bot"] as const
 export type LabelActorType = (typeof LABEL_ACTOR_TYPES)[number]
 

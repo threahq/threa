@@ -255,4 +255,35 @@ describe("LabelAssignmentService.listForViewer", () => {
       "stream_hidden",
     ])
   })
+
+  it("gates a bot's own private rows through its channel grants (no ungated layer for bots)", async () => {
+    const BOT_ID = "bot_1"
+    const botActor = { type: LabelActorTypes.BOT, id: BOT_ID } as const
+    const botChannelService = {
+      getAccessibleStreamIdsForBot: mock(() => Promise.resolve(["stream_granted"])),
+    }
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    const service = new LabelAssignmentService({ pool: {} as any, botChannelService: botChannelService as any })
+
+    const privateGranted = fakeCandidate({
+      labelVisibility: Visibilities.PRIVATE,
+      userId: BOT_ID,
+      resourceId: "stream_granted",
+    })
+    const privateRevoked = fakeCandidate({
+      labelVisibility: Visibilities.PRIVATE,
+      userId: BOT_ID,
+      resourceId: "stream_revoked",
+    })
+    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([privateGranted, privateRevoked])
+    // The user stream-access helper must not be consulted for a bot.
+    const userAccessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds")
+
+    const result = await service.listForViewer(WORKSPACE_ID, botActor)
+
+    // The revoked-grant row drops even though it's the bot's own private label.
+    expect(result).toEqual([stripVisibility(privateGranted)])
+    expect(botChannelService.getAccessibleStreamIdsForBot).toHaveBeenCalledWith(WORKSPACE_ID, BOT_ID)
+    expect(userAccessSpy).not.toHaveBeenCalled()
+  })
 })
