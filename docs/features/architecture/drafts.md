@@ -1,5 +1,5 @@
 ---
-title: Remote Drafts
+title: Drafts
 status: shipped
 audience: internal
 kind: subsystem
@@ -27,12 +27,12 @@ related:
 
 ## The gist
 
-A draft used to be local-only: the composer auto-saved to IndexedDB and kept manual
-stash entries, but none of it left the device, so a reply you started on your phone
-was invisible on your laptop. Remote drafts make a draft a first-class entity. One
-row per composer payload, written to IndexedDB first, then mirrored to a backend
-`drafts` table so it roams to the author's other devices over the same `user:{userId}`
-socket room that delivers their private events.
+A draft is one first-class row per composer payload: the in-progress message for a
+single scope (a stream, or a not-yet-threaded parent message). The composer writes it to
+IndexedDB first so it never blocks on the network, then mirrors it to a backend `drafts`
+table, so the draft roams to the author's other devices over the same `user:{userId}`
+socket room that carries their private events. A reply you start on your phone shows up
+in the same composer on your laptop.
 
 The whole design turns on one rule: **local wins, and on a conflict we split, never
 overwrite.** Two devices editing the same draft is the dangerous case. The naive fix
