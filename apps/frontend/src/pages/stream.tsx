@@ -32,7 +32,14 @@ import {
   type SidebarActionItem,
 } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
-import { useStreamOrDraft, useStreamError, usePanelLayout, isDmDraftId, useTypeToFocus } from "@/hooks"
+import {
+  useStreamOrDraft,
+  useStreamError,
+  usePanelLayout,
+  isDmDraftId,
+  useTypeToFocus,
+  useActiveBotPresence,
+} from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { usePanel, useSidebar } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
@@ -52,7 +59,7 @@ import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
-import { CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
+import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
@@ -191,6 +198,9 @@ export function StreamPage() {
 
   const isScratchpad = stream?.type === StreamTypes.SCRATCHPAD
   const isEncryptedScratchpad = isScratchpad && !!stream?.e2eEnabled
+  // An external agent (e.g. a Pi remote bot runtime) attached to this
+  // scratchpad. Drives the "External" pill state and its connection dot.
+  const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
   const isArchived = stream?.archivedAt != null
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
@@ -324,9 +334,14 @@ export function StreamPage() {
     }
   }
 
-  // Scratchpad mode indicator. Three shapes share one pill slot:
+  // Scratchpad mode indicator. Four shapes share one pill slot:
   //   - Encrypted (E2E): Lock + "Encrypted" — companion mode is locked off
-  //     server-side (INV-E1), so the lock is the more meaningful signal.
+  //     server-side (INV-E1), and the unlock affordance only renders while
+  //     locked, so this pill is the persistent encryption signal: it wins.
+  //   - External: connection dot + "External" — an external agent (e.g. a Pi
+  //     remote bot runtime) is attached. The dot is green when the runtime is
+  //     connected (available/busy), grey otherwise. Replaces the old floating
+  //     status strip so the live status sits in the header, not over the timeline.
   //   - Companion: Sparkles + "Companion" — Ariadne replies to new messages.
   //   - Quiet: Moon + "Quiet" — silent capture, no AI replies.
   // Drafts get an inert variant because the settings dialog reads from caches
@@ -338,35 +353,51 @@ export function StreamPage() {
   let companionModeIndicator: React.ReactNode = null
   if (stream && isScratchpad) {
     const isEncrypted = !!stream.e2eEnabled
-    const isOn = !isEncrypted && stream.companionMode === CompanionModes.ON
+    const isExternal = !isEncrypted && !!activeBotPresence
+    const isOn = !isEncrypted && !isExternal && stream.companionMode === CompanionModes.ON
+    const externalConnected =
+      activeBotPresence?.presence?.status === BotRuntimeStatuses.AVAILABLE ||
+      activeBotPresence?.presence?.status === BotRuntimeStatuses.BUSY
 
-    let Icon: typeof Sparkles
+    let leadingVisual: React.ReactNode
     let modeLabel: string
     let pillVariant: string
     let hoverVariant: string
-    let iconTint: string
     let interactiveAria: string
 
     if (isEncrypted) {
-      Icon = Lock
+      leadingVisual = <Lock className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
       modeLabel = "Encrypted"
       pillVariant = "border-border bg-secondary text-foreground"
       hoverVariant = "hover:bg-accent"
-      iconTint = "text-muted-foreground"
       interactiveAria = "End-to-end encrypted. Companion and tool settings."
+    } else if (isExternal) {
+      leadingVisual = (
+        <span
+          className={cn(
+            "inline-block size-2 shrink-0 rounded-full",
+            externalConnected ? "bg-emerald-500" : "bg-muted-foreground/40"
+          )}
+          aria-hidden="true"
+        />
+      )
+      modeLabel = "External"
+      pillVariant = "border-border bg-secondary text-foreground"
+      hoverVariant = "hover:bg-accent"
+      interactiveAria = externalConnected
+        ? "External agent connected. Click to change companion mode and tool access."
+        : "External agent attached, not connected. Click to change companion mode and tool access."
     } else if (isOn) {
-      Icon = Sparkles
+      leadingVisual = <Sparkles className="h-3 w-3 text-primary" aria-hidden="true" />
       modeLabel = "Companion"
       pillVariant = "border-primary/30 bg-primary/5 text-foreground"
       hoverVariant = "hover:bg-primary/10"
-      iconTint = "text-primary"
       interactiveAria = "Companion is on. Click to change companion mode and tool access."
     } else {
-      Icon = Moon
+      leadingVisual = <Moon className="h-3 w-3" aria-hidden="true" />
       modeLabel = "Quiet"
       pillVariant = "border-border bg-secondary text-muted-foreground"
       hoverVariant = "hover:bg-accent hover:text-foreground"
-      iconTint = ""
       interactiveAria = "Quiet mode. Click to change companion mode and tool access."
     }
 
@@ -389,7 +420,7 @@ export function StreamPage() {
               hoverVariant
             )}
           >
-            <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
+            {leadingVisual}
             <span>{modeLabel}</span>
             <ChevronDown className="h-3 w-3 -mr-0.5 opacity-60" aria-hidden="true" />
           </button>
