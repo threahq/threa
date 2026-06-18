@@ -150,6 +150,11 @@ superseded (`DraftsService.resolve`, `service.ts:169`). On unrelated drift the s
 keeps the row and reports `resolved: false`, and the drifted copy survives as a stash
 entry. Explicit discard (stashing away, emptying the composer, deleting from the Drafts
 view) keeps the unconditional `delete`, which is idempotent on an already-gone row.
+Never-confirmed drafts (`baseVersion = 0`) also use `delete`: there is no server version
+to CAS against. To make delete-before-insert ordering safe, `DraftsRepository.softDelete`
+plants a negative tombstone even when the row is absent; a late first upsert
+(`expectedVersion = 0`) that collides with that tombstone is dropped rather than split
+into a live zombie.
 
 ### The resolution guard stops a sent draft from coming back
 

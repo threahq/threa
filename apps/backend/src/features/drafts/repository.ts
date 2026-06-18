@@ -292,20 +292,24 @@ export const DraftsRepository = {
   },
 
   /**
-   * Unconditional soft-delete for explicit discard (no CAS) — the user threw
-   * the draft away, so drift doesn't matter. Idempotent on an already-deleted
-   * row. Returns the row when it tombstoned, `null` when it was missing.
+   * Unconditional soft-delete for explicit discard and resolve-on-send of a
+   * never-confirmed draft (no CAS). Plants a negative tombstone when the id has
+   * not been seen yet, so a delete that reaches the server before the draft's
+   * first insert still wins the race. Returns the row when this call tombstoned
+   * it (live row transitioned, or negative marker inserted) and `null` when the
+   * row was already tombstoned.
    */
   async softDelete(db: Querier, workspaceId: string, userId: string, id: string): Promise<Draft | null> {
     const result = await db.query<DraftRow>(sql`
-      UPDATE drafts SET
+      INSERT INTO drafts (id, workspace_id, user_id, scope, client_updated_at, deleted_at)
+      VALUES (${id}, ${workspaceId}, ${userId}, '', NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE SET
         deleted_at = NOW(),
         updated_at = NOW(),
-        version = version + 1
-      WHERE id = ${id}
-        AND workspace_id = ${workspaceId}
-        AND user_id = ${userId}
-        AND deleted_at IS NULL
+        version = drafts.version + 1
+      WHERE drafts.workspace_id = ${workspaceId}
+        AND drafts.user_id = ${userId}
+        AND drafts.deleted_at IS NULL
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null

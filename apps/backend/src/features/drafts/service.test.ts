@@ -128,6 +128,25 @@ describe("DraftsService.upsert", () => {
     expect(result.draft.id).toBe("draft_split")
   })
 
+  it("drops a fresh insert landing on a tombstone without splitting", async () => {
+    const service = setupService()
+    const insertIfAbsent = spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValue(null)
+    spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
+      fakeDraft({ version: 1, lastClientWriteId: null, deletedAt: NOW })
+    )
+    const casUpdate = spyOn(DraftsRepository, "casUpdate")
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.upsert({ ...baseUpsertParams(), writeId: "write_late", expectedVersion: 0 })
+
+    expect(result.split).toBe(false)
+    expect(result.originalId).toBeUndefined()
+    expect(result.draft.id).toBe(DRAFT_ID)
+    expect(insertIfAbsent).toHaveBeenCalledTimes(1)
+    expect(casUpdate).not.toHaveBeenCalled()
+    expect(outbox).not.toHaveBeenCalled()
+  })
+
   it("does NOT return a tombstoned row as live on a writeId match — splits instead", async () => {
     // A resolve raced in after the original write landed: the writeId still
     // matches, but the row is soft-deleted. Branch (b) must not hand it back as
@@ -193,6 +212,34 @@ describe("DraftsService.resolve", () => {
     })
 
     expect(result.resolved).toBe(false)
+    expect(outbox).not.toHaveBeenCalled()
+  })
+})
+
+describe("DraftsService.delete", () => {
+  afterEach(() => mock.restore())
+
+  it("publishes draft:deleted when softDelete tombstones or plants a negative marker", async () => {
+    const service = setupService()
+    spyOn(DraftsRepository, "softDelete").mockResolvedValue(fakeDraft({ deletedAt: NOW }))
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.delete({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: DRAFT_ID })
+
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "draft:deleted",
+      expect.objectContaining({ targetUserId: USER_ID, draftId: DRAFT_ID })
+    )
+  })
+
+  it("does not publish when the row was already tombstoned", async () => {
+    const service = setupService()
+    spyOn(DraftsRepository, "softDelete").mockResolvedValue(null)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.delete({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: DRAFT_ID })
+
     expect(outbox).not.toHaveBeenCalled()
   })
 })

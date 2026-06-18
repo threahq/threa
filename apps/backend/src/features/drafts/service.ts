@@ -113,6 +113,14 @@ export class DraftsService {
       // The id already exists — lock it and decide update vs split.
       const existing = await DraftsRepository.findByIdForUpdate(client, params.workspaceId, params.userId, params.id)
 
+      // (a2) A never-confirmed draft's first push can land after resolve/discard
+      // planted a negative tombstone for the id. The content was already sent or
+      // thrown away, so drop the late insert rather than splitting it into a live
+      // zombie. Confirmed drift (expectedVersion > 0) still splits below.
+      if (existing && existing.deletedAt && params.expectedVersion === 0) {
+        return { draft: toDraftView(existing), split: false }
+      }
+
       // (b) Lost-ack retry of a write we already accepted — return as-is. Gated
       // on a LIVE row: if the draft was resolved (tombstoned) after this write
       // landed, the writeId still matches but the row is gone, so we must not
