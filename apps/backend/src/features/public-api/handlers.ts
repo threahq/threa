@@ -43,6 +43,7 @@ import {
   AuthorTypes,
   BotInvocationCapabilities,
   BotRuntimeKinds,
+  MemoryModes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   PI_TOOL_TRACE_FORMAT,
   PI_TOOL_TRACE_SECTION_LABELS,
@@ -153,6 +154,7 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
     ...(stream.slug != null && { slug: stream.slug }),
     ...(stream.description != null && { description: stream.description }),
     visibility: stream.visibility,
+    memoryMode: stream.memoryMode ?? "auto",
     ...(stream.parentStreamId != null && { parentStreamId: stream.parentStreamId }),
     ...(stream.rootStreamId != null && { rootStreamId: stream.rootStreamId }),
     ...(stream.parentMessageId != null && { parentMessageId: stream.parentMessageId }),
@@ -1021,6 +1023,11 @@ export function createPublicApiHandlers({
       const stream = await streamService.createScratchpad({
         workspaceId: req.workspaceId!,
         displayName: data.displayName,
+        // Coding-agent build sessions (pi-local / claude-code-channel) default
+        // to memory off — their turns are implementation churn, not durable
+        // knowledge, so GAM extraction there is noise. Callers can opt in with
+        // `memoryMode: "auto"`.
+        memoryMode: data.memoryMode ?? MemoryModes.OFF,
         createdBy: bot.ownerUserId,
       })
       await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)

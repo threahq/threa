@@ -23,6 +23,7 @@ import {
   StreamTypes,
   Visibilities,
   CompanionModes,
+  MemoryModes,
   E2eKeyWrapRecipientKinds,
   type E2eActorKind,
   type StreamType,
@@ -49,7 +50,7 @@ import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../encl
 // leaves (db + types only). Same lesson as the BIK schema in lib/schemas.
 import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
 import { BotRepository } from "../public-api/bot-repository"
-import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
+import { streamTypeSchema, visibilitySchema, companionModeSchema, memoryModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 import { StreamPoliciesRepository } from "./policy-repository"
 
@@ -62,6 +63,7 @@ const createScratchpadParamsSchema = z.object({
   createdBy: z.string(),
   companionMode: companionModeSchema.optional(),
   companionPersonaId: z.string().optional(),
+  memoryMode: memoryModeSchema.optional(),
 })
 
 /**
@@ -123,6 +125,7 @@ const createStreamParamsSchema = z.object({
   visibility: visibilitySchema.optional(),
   companionMode: companionModeSchema.optional(),
   companionPersonaId: z.string().optional(),
+  memoryMode: memoryModeSchema.optional(),
   parentStreamId: z.string().optional(),
   parentMessageId: z.string().optional(),
   memberIds: z.array(z.string()).optional(),
@@ -369,6 +372,7 @@ export class StreamService {
           description: params.description,
           companionMode: params.companionMode,
           companionPersonaId: params.companionPersonaId,
+          memoryMode: params.memoryMode,
           createdBy: params.createdBy,
           contextBag: params.contextBag,
           e2e: params.e2e,
@@ -414,6 +418,7 @@ export class StreamService {
         visibility: Visibilities.PRIVATE,
         companionMode: params.companionMode ?? CompanionModes.OFF,
         companionPersonaId: params.companionPersonaId,
+        memoryMode: params.memoryMode,
         createdBy: params.createdBy,
       })
 
@@ -579,6 +584,10 @@ export class StreamService {
         rootStream?.type === StreamTypes.SCRATCHPAD ? rootStream.companionMode : CompanionModes.OFF
       const inheritedCompanionPersonaId =
         rootStream?.type === StreamTypes.SCRATCHPAD ? (rootStream.companionPersonaId ?? undefined) : undefined
+      // Threads carry no memory setting of their own — the memo gate resolves to
+      // the root (INV-62) — but copy the root's value onto the thread row at
+      // creation so the persisted row matches its effective behavior.
+      const inheritedMemoryMode = rootStream?.memoryMode ?? MemoryModes.AUTO
 
       const { stream, created } = await StreamRepository.insertThreadOrFind(client, {
         id,
@@ -590,6 +599,7 @@ export class StreamService {
         visibility: inheritedVisibility,
         companionMode: inheritedCompanionMode,
         companionPersonaId: inheritedCompanionPersonaId,
+        memoryMode: inheritedMemoryMode,
         createdBy: params.createdBy,
       })
 

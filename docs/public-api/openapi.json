@@ -1042,7 +1042,8 @@
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
-                  "localCwd": { "type": "string", "maxLength": 1000 }
+                  "localCwd": { "type": "string", "maxLength": 1000 },
+                  "memoryMode": { "type": "string", "enum": ["auto", "off"] }
                 },
                 "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
                 "additionalProperties": false
@@ -2542,13 +2543,18 @@
                           "slug": { "type": "string" },
                           "description": { "type": "string" },
                           "visibility": { "type": "string" },
+                          "memoryMode": {
+                            "type": "string",
+                            "enum": ["auto", "off"],
+                            "description": "GAM memory automation gate: 'auto' extracts memos, 'off' disables it"
+                          },
                           "parentStreamId": { "type": "string" },
                           "rootStreamId": { "type": "string" },
                           "parentMessageId": { "type": "string" },
                           "createdAt": { "type": "string", "format": "date-time" },
                           "archivedAt": { "type": "string", "format": "date-time" }
                         },
-                        "required": ["id", "type", "displayName", "visibility", "createdAt"],
+                        "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                         "additionalProperties": false
                       }
                     },
@@ -2627,13 +2633,18 @@
                         "slug": { "type": "string" },
                         "description": { "type": "string" },
                         "visibility": { "type": "string" },
+                        "memoryMode": {
+                          "type": "string",
+                          "enum": ["auto", "off"],
+                          "description": "GAM memory automation gate: 'auto' extracts memos, 'off' disables it"
+                        },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
                         "parentMessageId": { "type": "string" },
                         "createdAt": { "type": "string", "format": "date-time" },
                         "archivedAt": { "type": "string", "format": "date-time" }
                       },
-                      "required": ["id", "type", "displayName", "visibility", "createdAt"],
+                      "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
                     }
                   },

@@ -144,6 +144,7 @@ export interface InsertStreamParams {
   rootStreamId?: string
   companionMode?: CompanionMode
   companionPersonaId?: string
+  memoryMode?: MemoryMode
   uniquenessKey?: string
   createdBy: string
 }
@@ -623,7 +624,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -637,6 +638,7 @@ export const StreamRepository = {
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
+        ${params.memoryMode ?? "auto"},
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
@@ -657,7 +659,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -671,6 +673,7 @@ export const StreamRepository = {
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
+        ${params.memoryMode ?? "auto"},
         ${params.uniquenessKey},
         ${params.createdBy}
       )
@@ -703,7 +706,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -717,6 +720,7 @@ export const StreamRepository = {
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
+        ${params.memoryMode ?? "auto"},
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )

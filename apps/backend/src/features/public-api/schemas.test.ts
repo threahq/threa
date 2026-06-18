@@ -58,4 +58,16 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "openclaw" }).success).toBe(false)
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "custom" }).success).toBe(false)
   })
+
+  it("accepts an optional memoryMode and rejects unknown values", () => {
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", memoryMode: "off" }).success).toBe(
+      true
+    )
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", memoryMode: "auto" }).success).toBe(
+      true
+    )
+    expect(
+      createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", memoryMode: "disabled" }).success
+    ).toBe(false)
+  })
 })

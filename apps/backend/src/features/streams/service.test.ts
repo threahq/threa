@@ -520,6 +520,26 @@ describe("StreamService.createThread (via create)", () => {
     )
   })
 
+  test("inherits memoryMode from the root stream", async () => {
+    mockFindById.mockReset().mockResolvedValue({ ...parentStream, memoryMode: "off" } as never)
+    mockMessageFindById.mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_channel",
+      authorType: "user",
+      authorId: "member_author",
+    } as never)
+
+    await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_channel",
+      parentMessageId: "msg_1",
+      createdBy: "member_creator",
+    })
+
+    expect(mockInsertThreadOrFind).toHaveBeenCalledWith({}, expect.objectContaining({ memoryMode: "off" }))
+  })
+
   test("does not emit stream:member_added when author is the thread creator", async () => {
     mockMessageFindById.mockResolvedValue({
       id: "msg_1",

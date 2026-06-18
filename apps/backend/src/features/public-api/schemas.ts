@@ -12,6 +12,7 @@ import {
   BOT_RUNTIME_STATUSES,
   BOT_TRAITS,
   STREAM_TYPES,
+  MEMORY_MODES,
   MEMO_TYPES,
   KNOWLEDGE_TYPES,
   EXTRACTION_CONTENT_TYPES,
@@ -92,6 +93,9 @@ export const createRuntimeSessionSchema = z.object({
   runtimeSessionId: z.string().min(1).max(256),
   displayName: z.string().min(1).max(100),
   localCwd: z.string().max(1000).optional(),
+  // Defaults to 'off' server-side for these coding-agent scratchpads; send
+  // 'auto' to opt the session's scratchpad into GAM memory extraction.
+  memoryMode: z.enum(MEMORY_MODES).optional(),
 })
 
 export const renameRuntimeSessionSchema = z.object({
