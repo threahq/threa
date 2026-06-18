@@ -45,10 +45,8 @@ export function MessageEditForm({
   const queryClient = useQueryClient()
   const messageService = useMessageService()
   const isMobile = useIsMobile()
-  // While this form is mounted, the `data-inline-edit` wrapper below is visible
-  // in the DOM; the mobile stream composer hides itself via a CSS `:has()` rule
-  // (see apps/frontend/src/index.css). That makes composer visibility purely
-  // DOM-derived — it cannot desynchronise from the actual edit-surface lifecycle.
+  // The `data-inline-edit` wrapper below drives the mobile composer visibility
+  // through the body-level inline-edit presence attribute.
   const [contentJson, setContentJson] = useState<JSONContent>(initialContentJson ?? EMPTY_DOC)
   const [isSaving, setIsSaving] = useState(false)
   const [docEditorOpen, setDocEditorOpen] = useState(false)

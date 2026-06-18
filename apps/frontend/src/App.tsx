@@ -8,8 +8,11 @@ import {
 } from "./contexts"
 import { router } from "./routes"
 import { TooltipProvider } from "./components/ui/tooltip"
+import { useInlineEditPresenceAttribute } from "./hooks/use-inline-edit-presence-attribute"
 
 export function App() {
+  useInlineEditPresenceAttribute()
+
   return (
     <AuthProvider>
       <AccountScopeProvider>

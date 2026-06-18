@@ -32,11 +32,8 @@ export function UnsentMessageEditForm({
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
   const isMobile = useIsMobile()
-  // The mobile stream composer hides itself via a CSS `:has()` rule whenever a
-  // `[data-inline-edit]` element (rendered below) is present in the DOM — see
-  // apps/frontend/src/index.css. This keeps composer visibility purely
-  // DOM-derived instead of carrying a ref-counted React state that could leak
-  // across hydration races or virtualisation cycles.
+  // The `data-inline-edit` wrapper below drives the mobile composer visibility
+  // through the body-level inline-edit presence attribute.
 
   const [contentJson, setContentJson] = useState<JSONContent>(initialContentJson ?? EMPTY_DOC)
   const [isSaving, setIsSaving] = useState(false)

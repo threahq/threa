@@ -198,17 +198,9 @@
      Applied to main content rather than #root to avoid double-counting
      with visualViewport height adjustments. */
 
-  /* Hide the mobile stream composer while any inline edit surface is mounted.
-     `body:has()` descends into portals (vaul renders its Drawer under
-     document.body), so this matches whenever a MessageEditForm or
-     UnsentMessageEditForm is in the DOM — on mobile only, gated by the
-     breakpoint. Visibility is therefore DOM-derived (impossible to leak) and
-     automatically reverses the instant the edit surface unmounts, regardless
-     of how or why (cancel, save, virtualization, navigation, crash). Previous
-     approaches used a ref-counted React context that drifted across hydration
-     races and left the composer stuck hidden. */
+  /* Hide the mobile stream composer while an inline edit surface is mounted. */
   @media (max-width: 639px) {
-    body:has([data-inline-edit]) [data-message-composer-root] {
+    body[data-inline-edit-active] [data-message-composer-root] {
       display: none;
     }
   }
