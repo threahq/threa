@@ -252,6 +252,9 @@ export async function pendingDraftResolveVersion(draftId: string): Promise<numbe
 }
 
 async function hasPendingSupersededWriteId(writeId: string): Promise<boolean> {
+  // Intentionally scan all pending resolves, not only the inbound draft id: a
+  // server-side split echo arrives under a fresh draft id, but carries the
+  // original resolve op's superseded write id.
   const ops = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
   return ops.some(
     (op) =>

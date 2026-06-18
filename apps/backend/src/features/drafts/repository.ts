@@ -302,6 +302,7 @@ export const DraftsRepository = {
   async softDelete(db: Querier, workspaceId: string, userId: string, id: string): Promise<Draft | null> {
     const result = await db.query<DraftRow>(sql`
       INSERT INTO drafts (id, workspace_id, user_id, scope, client_updated_at, deleted_at)
+      -- Empty scope is a tombstone-only sentinel; real draft scopes are never blank.
       VALUES (${id}, ${workspaceId}, ${userId}, '', NOW(), NOW())
       ON CONFLICT (id) DO UPDATE SET
         deleted_at = NOW(),
