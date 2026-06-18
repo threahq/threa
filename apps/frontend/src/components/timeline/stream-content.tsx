@@ -248,6 +248,43 @@ export function shouldShowOlderSkeletons(args: {
   return args.currentOldestEventId === args.trackedOldestEventId
 }
 
+/**
+ * Resolve a date jump against the currently loaded window: return the message
+ * id to scroll to directly, or `null` when the caller must fetch a fresh window
+ * around the date.
+ *
+ * The trap this guards is `events.find(day >= target)`: when the target day is
+ * older than everything loaded — the user is parked at the live tail and jumps
+ * weeks back — *every* loaded message satisfies `day >= target`, so the first
+ * match is the oldest loaded row, not the day's first message. The jump then
+ * looks like it just nudges the scroll up a little instead of relocating to the
+ * date, and no fetch ever happens.
+ *
+ * The in-window scroll is correct only when the loaded window straddles the
+ * target day: either a loaded message sits strictly before it (so the first
+ * on-or-after match is the true anchor with nothing earlier missing), or the
+ * stream has no older history left to fetch (the window already starts at the
+ * beginning). Otherwise the earliest on-or-after-target message may live below
+ * the loaded window, so we return `null` and the caller fetches.
+ */
+export function resolveDateJumpAnchor(args: {
+  events: Array<Pick<StreamEvent, "eventType" | "createdAt" | "payload">>
+  targetDayMs: number
+  hasOlderEvents: boolean
+}): string | null {
+  const { events, targetDayMs, hasOlderEvents } = args
+  let sawEarlierMessage = false
+  for (const event of events) {
+    if (event.eventType !== "message_created" && event.eventType !== "companion_response") continue
+    if (localStartOfDayMs(new Date(event.createdAt)) >= targetDayMs) {
+      if (!sawEarlierMessage && hasOlderEvents) return null
+      return (event.payload as { messageId?: string })?.messageId ?? null
+    }
+    sawEarlierMessage = true
+  }
+  return null
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -1264,18 +1301,12 @@ export function StreamContent({
     async (date: Date) => {
       userInteractedAtRef.current = 0
       const targetDayMs = localStartOfDayMs(date)
-      const loaded = events.find((event) => {
-        if (event.eventType !== "message_created" && event.eventType !== "companion_response") return false
-        return localStartOfDayMs(new Date(event.createdAt)) >= targetDayMs
-      })
       disableAutoScroll()
-      if (loaded) {
-        const messageId = (loaded.payload as { messageId?: string })?.messageId
-        if (messageId) {
-          pendingScrollTarget.current = null
-          scrollToMessage(messageId)
-          return
-        }
+      const inWindowMessageId = resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents })
+      if (inWindowMessageId) {
+        pendingScrollTarget.current = null
+        scrollToMessage(inWindowMessageId)
+        return
       }
       resetShiftBaseline()
       const anchorId = await jumpToEventByDate(new Date(targetDayMs).toISOString())
@@ -1287,7 +1318,7 @@ export function StreamContent({
         toast.info("No messages on or after that date")
       }
     },
-    [events, disableAutoScroll, scrollToMessage, jumpToEventByDate, resetShiftBaseline]
+    [events, hasOlderEvents, disableAutoScroll, scrollToMessage, jumpToEventByDate, resetShiftBaseline]
   )
 
   // Highlight search matches in the DOM via CSS Custom Highlight API
