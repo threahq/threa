@@ -32,7 +32,13 @@ import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
-import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
+import {
+  streamTypeSchema,
+  visibilitySchema,
+  companionModeSchema,
+  memoryModeSchema,
+  notificationLevelSchema,
+} from "../../lib/schemas"
 
 const createStreamSchema = z
   .object({
@@ -134,6 +140,7 @@ const updateStreamSchema = z
       .optional(),
     description: z.string().max(500).optional(),
     visibility: visibilitySchema.optional(),
+    memoryMode: memoryModeSchema.optional(),
     // Optional encrypted name. Strict base64 so a malformed ciphertext can't be
     // decoded to garbage by the permissive Buffer.from. `null` on both clears the
     // sealed name (rename without a fresh seal); a ciphertext without its
@@ -304,8 +311,13 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
   [StreamTypes.THREAD]: {
     slug: "Threads inherit slug and visibility from parent",
     visibility: "Threads inherit slug and visibility from parent",
+    memoryMode: "Threads inherit memory settings from their parent",
   },
-  [StreamTypes.DM]: null,
+  [StreamTypes.DM]: {
+    displayName: "Direct messages have no editable name",
+    slug: "Direct messages have no slug",
+    visibility: "Direct messages are always private",
+  },
   [StreamTypes.SYSTEM]: null,
 }
 
@@ -624,7 +636,7 @@ export function createStreamHandlers({
 
       const data = validateRequest(schema, req.body)
 
-      const { displayName, slug, description, visibility, sealedNameCiphertext, sealedNameEnvelope } = data
+      const { displayName, slug, description, visibility, memoryMode, sealedNameCiphertext, sealedNameEnvelope } = data
 
       // Schema guarantees one of: both set, both null (clear), or both omitted.
       let sealedName: { ciphertext: string; envelope: unknown } | null | undefined
@@ -639,6 +651,7 @@ export function createStreamHandlers({
         slug,
         description,
         visibility,
+        memoryMode,
         sealedName,
       })
       res.json({ stream: updated })

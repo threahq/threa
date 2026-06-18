@@ -235,6 +235,7 @@ function toWorkspaceBootstrapStream(stream: CachedStream): WorkspaceBootstrap["s
     rootStreamId: stream.rootStreamId,
     companionMode: stream.companionMode,
     companionPersonaId: stream.companionPersonaId,
+    memoryMode: stream.memoryMode,
     createdBy: stream.createdBy,
     createdAt: stream.createdAt,
     updatedAt: stream.updatedAt,

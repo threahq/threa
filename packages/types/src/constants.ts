@@ -39,6 +39,19 @@ export const CompanionModes = {
   ON: "on",
 } as const satisfies Record<string, CompanionMode>
 
+// Per-stream gate for GAM memory automation (memo extraction + passive to-do
+// capture). `auto` runs the pipeline as usual; `off` excludes the stream so a
+// high-volume scratchpad (e.g. a coding-agent build session) can opt out of
+// indexing. Threads inherit from their root stream; the memo accumulator reads
+// the flag on the resolved top-level stream.
+export const MEMORY_MODES = ["auto", "off"] as const
+export type MemoryMode = (typeof MEMORY_MODES)[number]
+
+export const MemoryModes = {
+  AUTO: "auto",
+  OFF: "off",
+} as const satisfies Record<string, MemoryMode>
+
 export const CONTENT_FORMATS = ["plaintext", "markdown"] as const
 export type ContentFormat = (typeof CONTENT_FORMATS)[number]
 

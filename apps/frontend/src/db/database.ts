@@ -74,6 +74,7 @@ export interface CachedStream {
   rootStreamId: string | null
   companionMode: "off" | "on"
   companionPersonaId: string | null
+  memoryMode?: "auto" | "off"
   createdBy: string
   createdAt: string
   updatedAt: string

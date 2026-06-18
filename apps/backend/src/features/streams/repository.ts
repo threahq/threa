@@ -1,9 +1,17 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { AuthorType, StreamType, Visibility, CompanionMode, ThreadSummary, E2eActor } from "@threa/types"
+import type {
+  AuthorType,
+  StreamType,
+  Visibility,
+  CompanionMode,
+  MemoryMode,
+  ThreadSummary,
+  E2eActor,
+} from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
-export type { StreamType, Visibility, CompanionMode, ArchiveStatus }
+export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }
 
 interface StreamRow {
   id: string
@@ -18,6 +26,7 @@ interface StreamRow {
   root_stream_id: string | null
   companion_mode: string
   companion_persona_id: string | null
+  memory_mode: string
   created_by: string
   created_at: Date
   updated_at: Date
@@ -93,6 +102,13 @@ export interface Stream {
   rootStreamId: string | null
   companionMode: CompanionMode
   companionPersonaId: string | null
+  /**
+   * GAM memory automation gate. `mapRowToStream` always sets it from the
+   * `NOT NULL DEFAULT 'auto'` column, so it is present on every stream read
+   * from the DB; optional only so test fixtures that predate it still typecheck.
+   * Readers treat an absent value as `"auto"`.
+   */
+  memoryMode?: MemoryMode
   createdBy: string
   createdAt: Date
   updatedAt: Date
@@ -128,6 +144,7 @@ export interface InsertStreamParams {
   rootStreamId?: string
   companionMode?: CompanionMode
   companionPersonaId?: string
+  memoryMode?: MemoryMode
   uniquenessKey?: string
   createdBy: string
 }
@@ -141,6 +158,7 @@ export interface UpdateStreamParams {
   visibility?: Visibility
   companionMode?: CompanionMode
   companionPersonaId?: string | null
+  memoryMode?: MemoryMode
   archivedAt?: Date | null
   displayNameGeneratedAt?: Date | null
 }
@@ -178,6 +196,7 @@ function mapRowToStream(row: StreamRow): Stream {
     rootStreamId: row.root_stream_id,
     companionMode: row.companion_mode as CompanionMode,
     companionPersonaId: row.companion_persona_id,
+    memoryMode: row.memory_mode as MemoryMode,
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -226,7 +245,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 const SELECT_FIELDS = `
   id, workspace_id, type, display_name, slug, description, visibility,
   parent_stream_id, parent_message_id, root_stream_id,
-  companion_mode, companion_persona_id,
+  companion_mode, companion_persona_id, memory_mode,
   created_by, created_at, updated_at, archived_at, display_name_generated_at
 `
 
@@ -236,7 +255,7 @@ const SELECT_FIELDS = `
 const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.visibility,
   s.parent_stream_id, s.parent_message_id, s.root_stream_id,
-  s.companion_mode, s.companion_persona_id,
+  s.companion_mode, s.companion_persona_id, s.memory_mode,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
   e.name_ciphertext AS e2e_name_ciphertext,
@@ -605,7 +624,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -619,6 +638,7 @@ export const StreamRepository = {
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
+        ${params.memoryMode ?? "auto"},
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
@@ -639,7 +659,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -653,6 +673,7 @@ export const StreamRepository = {
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
+        ${params.memoryMode ?? "auto"},
         ${params.uniquenessKey},
         ${params.createdBy}
       )
@@ -685,7 +706,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, slug, description, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
-        companion_mode, companion_persona_id, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -699,6 +720,7 @@ export const StreamRepository = {
         ${params.rootStreamId ?? null},
         ${params.companionMode ?? "off"},
         ${params.companionPersonaId ?? null},
+        ${params.memoryMode ?? "auto"},
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
@@ -747,6 +769,10 @@ export const StreamRepository = {
     if (params.companionPersonaId !== undefined) {
       sets.push(`companion_persona_id = $${paramIndex++}`)
       values.push(params.companionPersonaId)
+    }
+    if (params.memoryMode !== undefined) {
+      sets.push(`memory_mode = $${paramIndex++}`)
+      values.push(params.memoryMode)
     }
     if (params.archivedAt !== undefined) {
       sets.push(`archived_at = $${paramIndex++}`)

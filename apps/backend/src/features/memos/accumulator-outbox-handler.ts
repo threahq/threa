@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import { StreamStateRepository, StreamRepository } from "../streams"
 import { PendingItemRepository } from "./pending-item-repository"
 import { pendingItemId } from "../../lib/id"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes, MemoryModes } from "@threa/types"
 import { logger } from "../../lib/logger"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { withClient } from "../../db"
@@ -64,6 +64,26 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       }
 
       const topLevelStreamId = stream.type === StreamTypes.THREAD ? (stream.rootStreamId ?? streamId) : streamId
+
+      // Per-stream opt-out (INV-62 inheritance): memory automation is gated on
+      // the resolved top-level stream, so a thread follows its root. `off`
+      // excludes the stream from memo extraction *and* passive to-do capture
+      // (both ride processBatch, which never runs without queued items).
+      const topLevelStream =
+        topLevelStreamId === streamId ? stream : await StreamRepository.findById(client, topLevelStreamId)
+      if (!topLevelStream) {
+        // Thread whose root stream is gone: nothing to attribute memos to, so
+        // don't queue an orphan. Mirrors the stream-not-found guard above.
+        logger.warn({ streamId: topLevelStreamId }, "Top-level stream not found for memo accumulator")
+        return
+      }
+      if (topLevelStream.memoryMode === MemoryModes.OFF) {
+        logger.debug(
+          { workspaceId, streamId: topLevelStreamId },
+          "Memory automation off for stream — skipping memo queue"
+        )
+        return
+      }
 
       await PendingItemRepository.queue(client, [
         {

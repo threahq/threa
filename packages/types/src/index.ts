@@ -20,6 +20,10 @@ export {
   COMPANION_MODES,
   type CompanionMode,
   CompanionModes,
+  // Memory automation modes
+  MEMORY_MODES,
+  type MemoryMode,
+  MemoryModes,
   // Content formats
   CONTENT_FORMATS,
   type ContentFormat,

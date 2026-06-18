@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Switch } from "@/components/ui/switch"
 import { VisibilityPicker } from "@/components/ui/visibility-picker"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
@@ -25,6 +26,7 @@ import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import {
   StreamTypes,
   Visibilities,
+  MemoryModes,
   NOTIFICATION_CONFIG,
   type Stream,
   type StreamType,
@@ -109,6 +111,13 @@ export function GeneralTab({
 
   if (isChannel || isDm) {
     sections.push(<DescriptionSection key="description" workspaceId={workspaceId} stream={stream} />)
+  }
+
+  // Memory automation is a per-stream gate on GAM extraction. Threads inherit
+  // from their root and system streams are read-only; every other type that
+  // produces memos (channels, scratchpads, DMs) gets the toggle.
+  if (isChannel || isScratchpad || isDm) {
+    sections.push(<MemorySection key="memory" workspaceId={workspaceId} stream={stream} />)
   }
 
   if (isSystem) {
@@ -422,6 +431,41 @@ function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stre
           </Button>
         )}
         <span className="text-xs text-muted-foreground ml-auto">{description.length}/500</span>
+      </div>
+    </div>
+  )
+}
+
+function MemorySection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+  const updateMutation = useUpdateStream(workspaceId, stream.id)
+  // Absent on legacy cached rows synced before this shipped; treat as auto.
+  const memoryOn = (stream.memoryMode ?? MemoryModes.AUTO) === MemoryModes.AUTO
+
+  const handleChange = (checked: boolean) => {
+    const memoryMode = checked ? MemoryModes.AUTO : MemoryModes.OFF
+    if (memoryMode === (stream.memoryMode ?? MemoryModes.AUTO)) return
+    // Success is silent (INV-63) — the switch reflects the new state itself.
+    updateMutation.mutate({ memoryMode }, { onError: () => toast.error("Failed to update memory setting") })
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 space-y-1">
+          <Label htmlFor="memory-automation" className="text-sm font-medium">
+            Automatic memory
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            Extract and save knowledge from this stream's conversations. Turn off for high-volume streams where captured
+            memories add noise.
+          </p>
+        </div>
+        <Switch
+          id="memory-automation"
+          checked={memoryOn}
+          onCheckedChange={handleChange}
+          disabled={updateMutation.isPending}
+        />
       </div>
     </div>
   )
