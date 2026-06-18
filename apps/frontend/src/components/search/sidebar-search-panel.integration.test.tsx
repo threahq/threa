@@ -449,6 +449,9 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
   describe("add-filter menu", () => {
     async function openFilterMenu(user: ReturnType<typeof userEvent.setup>) {
+      await waitFor(() => {
+        expect(screen.getByLabelText("Search messages")).toHaveFocus()
+      })
       await user.click(screen.getByRole("button", { name: /add search filter/i }))
       await waitFor(() => {
         expect(screen.getByText("From user")).toBeInTheDocument()
