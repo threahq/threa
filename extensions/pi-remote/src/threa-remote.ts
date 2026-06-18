@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { io as openSocket, type Socket } from "socket.io-client"
@@ -236,7 +236,27 @@ function saveConfig(): void {
   delete persisted.enabled
   delete persisted.streamCursors
   mkdirSync(dirname(CONFIG_PATH), { recursive: true })
-  writeFileSync(CONFIG_PATH, `${JSON.stringify(persisted, null, 2)}\n`)
+  // Merge with whatever is on disk so concurrent Pi instances (each owning a
+  // distinct `linkedSessions` key, keyed by runtimeSessionId) don't clobber
+  // each other's links. Without this, a read-modify-write from instance A
+  // overwrites instance B's `linkedSessions` entry because A only has its own
+  // link in memory. This instance's own keys win over stale on-disk copies.
+  // Non-mergeable fields (baseUrl/workspaceId/apiKey/...) keep the in-memory
+  // (just-edited) value.
+  const onDisk = readStoredConfig()
+  if (onDisk?.linkedSessions && persisted.linkedSessions) {
+    const merged = { ...onDisk.linkedSessions, ...persisted.linkedSessions }
+    persisted.linkedSessions = merged
+  }
+  if (onDisk?.streamCursors && persisted.streamCursors) {
+    const mergedCursors = { ...onDisk.streamCursors, ...persisted.streamCursors }
+    persisted.streamCursors = mergedCursors
+  }
+  // Atomic write via temp + rename so a crash or a concurrent reader never
+  // sees a half-written file, and concurrent writers don't interleave.
+  const tmp = `${CONFIG_PATH}.${process.pid}.tmp`
+  writeFileSync(tmp, `${JSON.stringify(persisted, null, 2)}\n`)
+  renameSync(tmp, CONFIG_PATH)
 }
 
 // Server `bot:hello` schema constrains `instanceId` to `^[A-Za-z0-9_-]+$`
@@ -422,9 +442,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!response.ok) {
-    // Do not read the response body here. Server/proxy failures can return huge
-    // HTML documents; surfacing those in Pi eats context and memory.
-    throw new Error(`Threa API ${response.status}: ${response.statusText}`)
+    // Surface the server's JSON error (Zod `fieldErrors`, `code`, ...) when the
+    // API itself rejects the request, so a 400 is debuggable instead of a bare
+    // "Bad Request". Guard against huge HTML proxy/CGI error pages: only read
+    // the body for JSON responses and cap it, so a 502 from a reverse proxy
+    // still can't dump a megabyte of markup into Pi.
+    let detail = ""
+    const contentType = response.headers.get("content-type") ?? ""
+    if (contentType.includes("application/json")) {
+      try {
+        const body = await response.text()
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(body)
+        } catch {
+          parsed = null
+        }
+        if (parsed && typeof parsed === "object") {
+          const err = parsed as Record<string, unknown>
+          const parts = [
+            typeof err.error === "string" ? err.error : "",
+            typeof err.code === "string" ? `[${err.code}]` : "",
+            err.details ? `details=${JSON.stringify(err.details)}` : "",
+          ].filter(Boolean)
+          detail = parts.join(" ")
+        }
+        if (!detail) detail = body.replace(/\s+/g, " ").trim()
+      } catch {
+        detail = ""
+      }
+    }
+    detail = detail.slice(0, 500)
+    throw new Error(
+      `Threa API ${response.status}: ${response.statusText}${detail ? ` — ${detail}` : ""}`
+    )
   }
   return (await response.json()) as T
 }
