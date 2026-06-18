@@ -635,6 +635,13 @@ export interface CachedLabel {
   id: string
   workspaceId: string
   visibility: "public" | "private"
+  /**
+   * Whether `creatorUserId` is a user or a bot (bots can own labels via the
+   * public API). Optional so rows cached before this field existed still read;
+   * absent is treated as `"user"`. Not indexed — viewer bucketing keys off the
+   * id, which never collides across actor types.
+   */
+  creatorActorType?: "user" | "bot"
   creatorUserId: string
   name: string
   slug: string
@@ -658,6 +665,8 @@ export interface CachedLabelMembership {
   id: string
   workspaceId: string
   labelId: string
+  /** Whether `userId` is a user or a bot. Optional for back-compat; absent ⇒ `"user"`. */
+  actorType?: "user" | "bot"
   userId: string
   joinedAt: string
   _cachedAt: number
@@ -678,6 +687,8 @@ export interface CachedLabelAssignment {
   labelId: string
   resourceType: string
   resourceId: string
+  /** Whether `userId` is a user or a bot. Optional for back-compat; absent ⇒ `"user"`. */
+  actorType?: "user" | "bot"
   userId: string
   assignedAt: string
   _cachedAt: number

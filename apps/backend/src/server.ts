@@ -478,7 +478,6 @@ export async function startServer(): Promise<ServerInstance> {
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
-  const labelAssignmentService = new LabelAssignmentService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
   // reserved DB capacity isolated from background workers. Subscription CRUD
   // endpoints also use this pool — low volume, plenty of headroom.
@@ -537,6 +536,10 @@ export async function startServer(): Promise<ServerInstance> {
   // WorkOS validates API keys in production, stub in dev.
   const apiKeyService = config.useStubAuth ? new StubApiKeyService() : new WorkosApiKeyService(config.workos)
   const botChannelService = new BotChannelService({ pool })
+  // Constructed after botChannelService: applying a label to a stream reuses the
+  // actor's own access model, so the assignment service resolves bot reachability
+  // through channel grants (users resolve through stream membership).
+  const labelAssignmentService = new LabelAssignmentService({ pool, botChannelService })
 
   // User-scoped API keys are managed by Threa, not WorkOS.
   const userApiKeyService = new UserApiKeyServiceImpl(pool)

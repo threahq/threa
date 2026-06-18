@@ -35,9 +35,9 @@ describe("WORKSPACE_PERMISSIONS catalog", () => {
     }
   })
 
-  test("catalog has exactly 14 permissions", () => {
-    expect(WORKSPACE_PERMISSIONS).toHaveLength(14)
-    expect(SCOPE_VALUES.size).toBe(14)
+  test("catalog has exactly 20 permissions", () => {
+    expect(WORKSPACE_PERMISSIONS).toHaveLength(20)
+    expect(SCOPE_VALUES.size).toBe(20)
   })
 })
 
@@ -65,6 +65,8 @@ describe("WORKSPACE_ROLE_DEFINITIONS", () => {
     expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL)).toBe(true)
     expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE)).toBe(true)
     expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE)).toBe(true)
+    expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.LABELS_READ)).toBe(true)
+    expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE)).toBe(true)
 
     expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_SHARED)).toBe(false)
     expect(slugs.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE)).toBe(false)
@@ -92,10 +94,10 @@ describe("WORKSPACE_ROLE_DEFINITIONS", () => {
     }
   })
 
-  test("absolute permission counts (member=9, admin=13, owner=14)", () => {
-    expect(getRole(WORKSPACE_ROLE_SLUGS.MEMBER).permissions).toHaveLength(9)
-    expect(getRole(WORKSPACE_ROLE_SLUGS.ADMIN).permissions).toHaveLength(13)
-    expect(getRole(WORKSPACE_ROLE_SLUGS.OWNER).permissions).toHaveLength(14)
+  test("absolute permission counts (member=11, admin=19, owner=20)", () => {
+    expect(getRole(WORKSPACE_ROLE_SLUGS.MEMBER).permissions).toHaveLength(11)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.ADMIN).permissions).toHaveLength(19)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.OWNER).permissions).toHaveLength(20)
   })
 })
 

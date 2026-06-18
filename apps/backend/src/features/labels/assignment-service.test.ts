@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { LabelableResourceTypes, Visibilities, type Label, type LabelAssignment, type Visibility } from "@threa/types"
+import {
+  LabelActorTypes,
+  LabelableResourceTypes,
+  Visibilities,
+  type Label,
+  type LabelAssignment,
+  type Visibility,
+} from "@threa/types"
 import { LabelAssignmentService } from "./assignment-service"
 import { LabelRepository, LabelAssignmentRepository, type VisibleAssignmentCandidate } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -9,6 +16,7 @@ import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
 const USER_ID = "usr_1"
+const USER_ACTOR = { type: LabelActorTypes.USER, id: USER_ID } as const
 const OTHER_USER_ID = "usr_2"
 const LABEL_ID = "label_1"
 const RESOURCE_ID = "stream_1"
@@ -19,6 +27,7 @@ function fakeLabel(overrides: Partial<Label> = {}): Label {
     id: LABEL_ID,
     workspaceId: WORKSPACE_ID,
     visibility: Visibilities.PUBLIC,
+    creatorActorType: LabelActorTypes.USER,
     creatorUserId: USER_ID,
     name: "Priority",
     slug: "priority",
@@ -37,6 +46,7 @@ function fakeAssignment(overrides: Partial<LabelAssignment> = {}): LabelAssignme
     labelId: LABEL_ID,
     resourceType: LabelableResourceTypes.STREAM,
     resourceId: RESOURCE_ID,
+    actorType: LabelActorTypes.USER,
     userId: USER_ID,
     workspaceId: WORKSPACE_ID,
     assignedAt: NOW,
@@ -58,12 +68,12 @@ function stripVisibility(candidate: VisibleAssignmentCandidate): LabelAssignment
 
 function setupService() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-  return new LabelAssignmentService({ pool: {} as any })
+  return new LabelAssignmentService({ pool: {} as any, botChannelService: {} as any })
 }
 
 const assignParams = {
   workspaceId: WORKSPACE_ID,
-  userId: USER_ID,
+  actor: USER_ACTOR,
   labelId: LABEL_ID,
   resourceType: LabelableResourceTypes.STREAM,
   resourceId: RESOURCE_ID,
@@ -209,7 +219,7 @@ describe("LabelAssignmentService.listForViewer", () => {
     spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([ownPrivate])
     const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds")
 
-    const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
+    const result = await service.listForViewer(WORKSPACE_ID, USER_ACTOR)
 
     expect(result).toEqual([stripVisibility(ownPrivate)])
     expect(accessSpy).not.toHaveBeenCalled()
@@ -234,7 +244,7 @@ describe("LabelAssignmentService.listForViewer", () => {
     ])
     const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_visible"]))
 
-    const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
+    const result = await service.listForViewer(WORKSPACE_ID, USER_ACTOR)
 
     // Own private row kept unconditionally; own public row on the unreachable
     // stream is dropped just like another user's hidden row.

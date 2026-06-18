@@ -36,11 +36,17 @@ import {
   type AttachmentService,
   toAttachmentSummary,
 } from "../attachments"
+import type { LabelService, LabelAssignmentService } from "../labels"
 import { BotRepository, type Bot } from "./bot-repository"
 import {
   AgentSessionStatuses,
   AttachmentSafetyStatuses,
   AuthorTypes,
+  LabelActorTypes,
+  type Label,
+  type LabelActor,
+  type LabelAssignment,
+  type LabelMember,
   BotInvocationCapabilities,
   BotRuntimeKinds,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
@@ -108,6 +114,9 @@ import type {
   WireAttachmentDetails,
   WireAttachmentUrl,
   WireAttachmentUpload,
+  WireLabel,
+  WireLabelMember,
+  WireLabelAssignment,
 } from "./routes"
 import {
   publicSearchSchema,
@@ -132,6 +141,9 @@ import {
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
   completeSealedInvocationSchema,
+  createLabelSchema,
+  updateLabelSchema,
+  labelAssignmentSchema,
 } from "./schemas"
 
 // Same opaque placeholder the enclave reply path and the user-send path store for
@@ -196,6 +208,61 @@ function serializeMessage(
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
   }
+}
+
+// Label domain dates are already ISO strings on the wire shape; the only
+// translation is exposing the actor with explicit `actorType`/`actorId` field
+// names (the persisted column carries the actor id under the legacy `userId`).
+function serializeLabel(label: Label): WireLabel {
+  return {
+    id: label.id,
+    workspaceId: label.workspaceId,
+    visibility: label.visibility,
+    creatorActorType: label.creatorActorType,
+    creatorActorId: label.creatorUserId,
+    name: label.name,
+    slug: label.slug,
+    color: label.color,
+    emoji: label.emoji,
+    description: label.description,
+    createdAt: label.createdAt,
+    updatedAt: label.updatedAt,
+    archivedAt: label.archivedAt,
+  }
+}
+
+function serializeLabelMember(member: LabelMember): WireLabelMember {
+  return {
+    labelId: member.labelId,
+    actorType: member.actorType,
+    actorId: member.userId,
+    workspaceId: member.workspaceId,
+    joinedAt: member.joinedAt,
+  }
+}
+
+function serializeLabelAssignment(assignment: LabelAssignment): WireLabelAssignment {
+  return {
+    labelId: assignment.labelId,
+    resourceType: assignment.resourceType,
+    resourceId: assignment.resourceId,
+    actorType: assignment.actorType,
+    actorId: assignment.userId,
+    workspaceId: assignment.workspaceId,
+    assignedAt: assignment.assignedAt,
+  }
+}
+
+/**
+ * The label actor behind the request: the owning user for a user-scoped key, or
+ * the bot for a bot-scoped key. Labels created/applied this way are attributed
+ * to that actor (a shared bot has no owning user, so it can't be reduced to a
+ * UserId — INV-50).
+ */
+function resolveLabelActor(req: Request): LabelActor {
+  if (req.userApiKey) return { type: LabelActorTypes.USER, id: req.user!.id }
+  if (req.botApiKey) return { type: LabelActorTypes.BOT, id: req.botApiKey.botId }
+  throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
 }
 
 export function serializeBot(bot: Bot): WireBot {
@@ -541,6 +608,8 @@ export interface PublicApiDeps {
   botRuntimeService: BotRuntimeService
   streamService: StreamService
   eventService: EventService
+  labelService: LabelService
+  labelAssignmentService: LabelAssignmentService
   pool: Pool
   io: Server
 }
@@ -654,6 +723,8 @@ export function createPublicApiHandlers({
   botRuntimeService,
   streamService,
   eventService,
+  labelService,
+  labelAssignmentService,
   pool,
   io,
 }: PublicApiDeps) {
@@ -2241,6 +2312,111 @@ export function createPublicApiHandlers({
 
       const bots = await BotRepository.listByOwner(pool, workspaceId, userId, { traits })
       res.json({ data: bots.map(serializeBot) })
+    },
+
+    async listLabels(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const [labels, memberships, assignments] = await Promise.all([
+        labelService.listVisibleTo(workspaceId, actor.id),
+        labelService.listMembershipsForUser(workspaceId, actor.id),
+        labelAssignmentService.listForViewer(workspaceId, actor),
+      ])
+      res.json({
+        data: {
+          labels: labels.map(serializeLabel),
+          memberships: memberships.map(serializeLabelMember),
+          assignments: assignments.map(serializeLabelAssignment),
+        },
+      })
+    },
+
+    async createLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const body = validateRequest(createLabelSchema, req.body)
+      const label = await labelService.create({
+        workspaceId,
+        actor,
+        name: body.name,
+        visibility: body.visibility,
+        color: body.color,
+        emoji: body.emoji ?? null,
+        description: body.description ?? null,
+      })
+      res.status(201).json({ data: serializeLabel(label) })
+    },
+
+    async updateLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const body = validateRequest(updateLabelSchema, req.body)
+      const label = await labelService.update({
+        workspaceId,
+        actor,
+        labelId: req.params.labelId!,
+        name: body.name,
+        color: body.color,
+        emoji: body.emoji,
+        description: body.description,
+      })
+      res.json({ data: serializeLabel(label) })
+    },
+
+    async deleteLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      await labelService.archive({ workspaceId, actor, labelId: req.params.labelId! })
+      res.status(204).end()
+    },
+
+    async joinLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const member = await labelService.join({ workspaceId, actor, labelId: req.params.labelId! })
+      res.status(201).json({ data: serializeLabelMember(member) })
+    },
+
+    async leaveLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      await labelService.leave({ workspaceId, actor, labelId: req.params.labelId! })
+      res.status(204).end()
+    },
+
+    async promoteLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const label = await labelService.promote({ workspaceId, actor, labelId: req.params.labelId! })
+      res.json({ data: serializeLabel(label) })
+    },
+
+    async assignLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const body = validateRequest(labelAssignmentSchema, req.body)
+      const assignment = await labelAssignmentService.assign({
+        workspaceId,
+        actor,
+        labelId: req.params.labelId!,
+        resourceType: body.resourceType,
+        resourceId: body.resourceId,
+      })
+      res.status(201).json({ data: serializeLabelAssignment(assignment) })
+    },
+
+    async unassignLabel(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const actor = resolveLabelActor(req)
+      const query = validateRequest(labelAssignmentSchema, req.query)
+      await labelAssignmentService.unassign({
+        workspaceId,
+        actor,
+        labelId: req.params.labelId!,
+        resourceType: query.resourceType,
+        resourceId: query.resourceId,
+      })
+      res.status(204).end()
     },
   }
 }

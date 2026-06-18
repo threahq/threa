@@ -24,6 +24,7 @@ import {
   parseJwtPermissions,
   permissionsForRole,
   WORKSPACE_PERMISSION_SCOPES,
+  LabelActorTypes,
   type WorkspacePermissionSlug,
 } from "@threa/types"
 
@@ -172,7 +173,7 @@ export function createWorkspaceHandlers({
         streamService.listDmPeers(workspaceId, userId),
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
-        labelAssignmentService.listForViewer(workspaceId, userId),
+        labelAssignmentService.listForViewer(workspaceId, { type: LabelActorTypes.USER, id: userId }),
         // Which agent tool categories the workspace has tooling for — drives the
         // scratchpad tool-policy picker (including the at-creation control, which
         // has no stream bootstrap yet).

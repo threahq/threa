@@ -1,18 +1,27 @@
 import type { Pool, PoolClient } from "pg"
-import { LabelableResourceTypes, Visibilities, type LabelAssignment, type LabelableResourceType } from "@threa/types"
+import {
+  LabelableResourceTypes,
+  LabelActorTypes,
+  Visibilities,
+  type LabelActor,
+  type LabelAssignment,
+  type LabelableResourceType,
+} from "@threa/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { listAccessibleStreamIds } from "../streams"
+import type { BotChannelService } from "../api-keys"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 
 interface LabelAssignmentServiceDeps {
   pool: Pool
+  botChannelService: BotChannelService
 }
 
 export interface AssignLabelParams {
   workspaceId: string
-  userId: string
+  actor: LabelActor
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string
@@ -34,9 +43,11 @@ export interface AssignLabelParams {
  */
 export class LabelAssignmentService {
   private readonly pool: Pool
+  private readonly botChannelService: BotChannelService
 
   constructor(deps: LabelAssignmentServiceDeps) {
     this.pool = deps.pool
+    this.botChannelService = deps.botChannelService
   }
 
   /**
@@ -48,8 +59,8 @@ export class LabelAssignmentService {
    * resurfaces (resource types without an access rule are dropped). Private
    * rows are the viewer's own organizational layer and skip the resource gate.
    */
-  async listForViewer(workspaceId: string, userId: string): Promise<LabelAssignment[]> {
-    const candidates = await LabelAssignmentRepository.listVisibleCandidates(this.pool, workspaceId, userId)
+  async listForViewer(workspaceId: string, actor: LabelActor): Promise<LabelAssignment[]> {
+    const candidates = await LabelAssignmentRepository.listVisibleCandidates(this.pool, workspaceId, actor.id)
 
     const ownPrivateRows: LabelAssignment[] = []
     const publicStreamRows: LabelAssignment[] = []
@@ -60,10 +71,9 @@ export class LabelAssignmentService {
 
     if (publicStreamRows.length === 0) return ownPrivateRows
 
-    const accessible = await listAccessibleStreamIds(
-      this.pool,
+    const accessible = await this.accessibleStreamIds(
       workspaceId,
-      userId,
+      actor,
       publicStreamRows.map((a) => a.resourceId)
     )
     return [...ownPrivateRows, ...publicStreamRows.filter((a) => accessible.has(a.resourceId))]
@@ -78,7 +88,7 @@ export class LabelAssignmentService {
       // You can apply any label you can see: your own private labels, or any
       // public label in the workspace. Someone else's private label is invisible
       // to you, so report not-found rather than leak its existence.
-      if (label.visibility === Visibilities.PRIVATE && label.creatorUserId !== params.userId) {
+      if (label.visibility === Visibilities.PRIVATE && label.creatorUserId !== params.actor.id) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
 
@@ -89,12 +99,13 @@ export class LabelAssignmentService {
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        userId: params.userId,
+        actorType: params.actor.type,
+        userId: params.actor.id,
       })
 
       await OutboxRepository.insert(client, "label:assigned", {
         workspaceId: params.workspaceId,
-        targetUserId: label.visibility === Visibilities.PUBLIC ? null : params.userId,
+        targetUserId: label.visibility === Visibilities.PUBLIC ? null : params.actor.id,
         assignment,
       })
 
@@ -109,7 +120,7 @@ export class LabelAssignmentService {
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        userId: params.userId,
+        userId: params.actor.id,
       })
       if (!removed) return
 
@@ -120,11 +131,11 @@ export class LabelAssignmentService {
 
       await OutboxRepository.insert(client, "label:unassigned", {
         workspaceId: params.workspaceId,
-        targetUserId: label?.visibility === Visibilities.PUBLIC ? null : params.userId,
+        targetUserId: label?.visibility === Visibilities.PUBLIC ? null : params.actor.id,
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,
-        userId: params.userId,
+        userId: params.actor.id,
       })
     })
   }
@@ -139,9 +150,29 @@ export class LabelAssignmentService {
    */
   private async assertResourceAccess(client: PoolClient, params: AssignLabelParams): Promise<void> {
     if (params.resourceType === LabelableResourceTypes.STREAM) {
-      const accessible = await listAccessibleStreamIds(client, params.workspaceId, params.userId, [params.resourceId])
+      const accessible = await this.accessibleStreamIds(params.workspaceId, params.actor, [params.resourceId], client)
       if (accessible.has(params.resourceId)) return
     }
     throw new HttpError("Resource not found", { status: 404, code: "RESOURCE_NOT_FOUND" })
+  }
+
+  /**
+   * The subset of `candidateIds` the actor can reach, by the actor's own access
+   * model: a user resolves through stream membership/visibility, a bot through
+   * its channel grants. Shared by the read gate (`listForViewer`) and the write
+   * gate (`assertResourceAccess`) so a bot can only label and only see labels on
+   * streams it has actually been granted.
+   */
+  private async accessibleStreamIds(
+    workspaceId: string,
+    actor: LabelActor,
+    candidateIds: string[],
+    client?: PoolClient
+  ): Promise<Set<string>> {
+    if (actor.type === LabelActorTypes.BOT) {
+      const granted = new Set(await this.botChannelService.getAccessibleStreamIdsForBot(workspaceId, actor.id))
+      return new Set(candidateIds.filter((id) => granted.has(id)))
+    }
+    return listAccessibleStreamIds(client ?? this.pool, workspaceId, actor.id, candidateIds)
   }
 }

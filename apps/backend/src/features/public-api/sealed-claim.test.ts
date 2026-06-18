@@ -168,6 +168,8 @@ function arrangeSealedClaim(params: {
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService,
+    labelService: {} as PublicApiDeps["labelService"],
+    labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
     pool: {} as PublicApiDeps["pool"],
     io: {} as PublicApiDeps["io"],
   })
