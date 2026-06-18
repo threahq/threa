@@ -235,8 +235,9 @@ function readConfig(): Config | undefined {
 // other's `linkedSessions` entry. Mirrors pi's own `FileSettingsStorage`
 // `acquireLockSyncWithRetry` (which locks `settings.json` the same way) but
 // uses a zero-dependency O_EXCL lockfile instead of pulling `proper-lockfile`
-// into this runtime-loaded package. Best-effort: a lock failure is logged and
-// the write still proceeds (no data is worse than a racy write).
+// into this runtime-loaded package. If the lock can't be acquired the save is
+// skipped (never an unlocked RMW — that would reintroduce the clobber), and
+// the owning instance's next save self-heals.
 const CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
 const CONFIG_LOCK_MAX_ATTEMPTS = 10
 const CONFIG_LOCK_DELAY_MS = 25
@@ -260,9 +261,9 @@ function acquireConfigLockSync(): (() => void) | undefined {
     } catch (error) {
       const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : undefined
       if (code !== "EEXIST") {
-        // Unexpected error (permissions, disk full, …) — don't wedge the
-        // extension; fall through to a best-effort unlocked write.
-        console.error(`Threa remote: config lock acquire failed: ${String(error)}`)
+        // Unexpected error (permissions, disk full, …) — skip this save
+        // rather than perform an unlocked RMW (INV-20).
+        console.error(`Threa remote: config lock acquire failed; skipping save: ${String(error)}`)
         return undefined
       }
       // EEXIST: another instance holds the lock. Stale-lock guard: if the lock
@@ -286,17 +287,16 @@ function acquireConfigLockSync(): (() => void) | undefined {
       }
     }
   }
-  // Timed out waiting — best-effort unlocked write.
-  console.error("Threa remote: config lock timed out; writing unlocked")
+  // Timed out waiting — skip this save rather than write unlocked (INV-20).
+  console.error("Threa remote: config lock timed out; skipping save")
   return undefined
 }
 
 function saveConfig(): void {
   if (!config) return
   const persisted: Config = { ...config }
-  // Capture the in-memory legacy cursors BEFORE deleting the field below —
-  // otherwise the `streamCursors` merge branch sees `persisted.streamCursors`
-  // as undefined and never runs (the prior version of this merge was dead).
+  // Keep a copy because `persisted.streamCursors` is removed from the
+  // canonical write shape before the legacy cursor merge below.
   const inMemoryStreamCursors = persisted.streamCursors
   delete persisted.enabled
   delete persisted.streamCursors
@@ -304,7 +304,9 @@ function saveConfig(): void {
   // Hold the cross-process lock across the entire read-merge-write so a
   // concurrent Pi instance can't read a pre-merge snapshot and then overwrite
   // this instance's just-merged `linkedSessions`/`streamCursors` (INV-20).
+  // If the lock can't be acquired, skip — never write unlocked (INV-20).
   const release = acquireConfigLockSync()
+  if (!release) return
   try {
     // Merge with whatever is on disk so concurrent Pi instances (each owning a
     // distinct `linkedSessions` key, keyed by runtimeSessionId) don't clobber
@@ -331,7 +333,7 @@ function saveConfig(): void {
     writeFileSync(tmp, `${JSON.stringify(persisted, null, 2)}\n`)
     renameSync(tmp, CONFIG_PATH)
   } finally {
-    release?.()
+    release()
   }
 }
 
