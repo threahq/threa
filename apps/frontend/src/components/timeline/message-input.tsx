@@ -781,12 +781,8 @@ function MessageInputComponent({
           portalTargetRef.current
         )}
 
-      {/* Inline composer — hidden while expanded. Mobile inline editing is handled
-          via CSS: `body:has([data-inline-edit])` matches whenever a MessageEditForm or
-          UnsentMessageEditForm is mounted (including vaul drawer portals, which live
-          under document.body), so the composer is hidden purely from DOM presence.
-          This replaces a previous ref-counted React state mechanism that was prone to
-          leaks across hydration races and virtualization cycles. */}
+      {/* Inline composer — hidden while expanded. Mobile inline editing hides the
+          composer via the body-level inline-edit presence attribute. */}
       <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
