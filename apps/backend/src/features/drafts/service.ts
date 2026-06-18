@@ -112,6 +112,20 @@ export class DraftsService {
       // The id already exists — lock it and decide update vs split.
       const existing = await DraftsRepository.findByIdForUpdate(client, params.workspaceId, params.userId, params.id)
 
+      // (a2) Fresh insert (expectedVersion 0 → a never-confirmed draft) landing on
+      // a tombstone of its own id: the draft's first push reached the server AFTER
+      // its resolve-on-send or explicit discard already tombstoned the id (the
+      // durable negative marker `softDelete` plants even when the delete wins the
+      // race). The content is NOT lost — it was sent as a message or thrown away —
+      // so DROP the insert: no live row, and no split (a split would just mint the
+      // same zombie under a new id). This is the read side of the
+      // delete-before-insert fix. A non-fresh write (expectedVersion > 0) onto a
+      // tombstone is a confirmed draft edited on another device before it saw the
+      // delete — genuine drift, which still splits below (no-loss).
+      if (existing && existing.deletedAt && params.expectedVersion === 0) {
+        return { draft: toDraftView(existing), split: false }
+      }
+
       // (b) Lost-ack retry of a write we already accepted — return as-is. Gated
       // on a LIVE row: if the draft was resolved (tombstoned) after this write
       // landed, the writeId still matches but the row is gone, so we must not

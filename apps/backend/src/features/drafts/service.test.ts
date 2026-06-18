@@ -128,6 +128,30 @@ describe("DraftsService.upsert", () => {
     expect(result.draft.id).toBe("draft_split")
   })
 
+  it("DROPS a fresh insert (expectedVersion 0) landing on a tombstone — no live row, no split", async () => {
+    // The delete-before-insert race: a never-confirmed draft's first push reaches
+    // the server AFTER resolve-on-send / discard already tombstoned the id. The
+    // content became a message (or was thrown away), so the late insert must be
+    // dropped rather than reviving a zombie or splitting a duplicate.
+    const service = setupService()
+    const insertIfAbsent = spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValue(null)
+    spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
+      fakeDraft({ version: 2, lastClientWriteId: "write_old", deletedAt: NOW })
+    )
+    const casUpdate = spyOn(DraftsRepository, "casUpdate")
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.upsert({ ...baseUpsertParams(), writeId: "write_new", expectedVersion: 0 })
+
+    expect(result.split).toBe(false)
+    expect(result.originalId).toBeUndefined()
+    expect(result.draft.id).toBe(DRAFT_ID)
+    // Only the original-id insert attempt ran; no split insert, no CAS, no echo.
+    expect(insertIfAbsent).toHaveBeenCalledTimes(1)
+    expect(casUpdate).not.toHaveBeenCalled()
+    expect(outbox).not.toHaveBeenCalled()
+  })
+
   it("does NOT return a tombstoned row as live on a writeId match — splits instead", async () => {
     // A resolve raced in after the original write landed: the writeId still
     // matches, but the row is soft-deleted. Branch (b) must not hand it back as
@@ -188,6 +212,34 @@ describe("DraftsService.resolve", () => {
     })
 
     expect(result.resolved).toBe(false)
+    expect(outbox).not.toHaveBeenCalled()
+  })
+})
+
+describe("DraftsService.delete", () => {
+  afterEach(() => mock.restore())
+
+  it("publishes draft:deleted when softDelete tombstones (incl. a freshly planted negative marker)", async () => {
+    const service = setupService()
+    spyOn(DraftsRepository, "softDelete").mockResolvedValue(fakeDraft({ deletedAt: NOW }))
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.delete({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: DRAFT_ID })
+
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "draft:deleted",
+      expect.objectContaining({ targetUserId: USER_ID, draftId: DRAFT_ID })
+    )
+  })
+
+  it("is a silent no-op when the row was already tombstoned (softDelete returns null)", async () => {
+    const service = setupService()
+    spyOn(DraftsRepository, "softDelete").mockResolvedValue(null)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.delete({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: DRAFT_ID })
+
     expect(outbox).not.toHaveBeenCalled()
   })
 })

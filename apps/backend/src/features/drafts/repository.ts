@@ -283,20 +283,37 @@ export const DraftsRepository = {
   },
 
   /**
-   * Unconditional soft-delete for explicit discard (no CAS) — the user threw
-   * the draft away, so drift doesn't matter. Idempotent on an already-deleted
-   * row. Returns the row when it tombstoned, `null` when it was missing.
+   * Unconditional soft-delete for explicit discard / resolve-on-send of a
+   * never-confirmed draft (no CAS) — the content is sent or thrown away, so
+   * drift doesn't matter. Idempotent on an already-deleted row.
+   *
+   * Crucially this PLANTS A NEGATIVE TOMBSTONE when the id has not been seen yet:
+   * a discard/resolve and the draft's first insert are two independent requests,
+   * and on a slow mobile link the delete can reach the server BEFORE the insert.
+   * A plain `UPDATE … WHERE id = …` would match zero rows and vanish, so the
+   * late insert would then create a live, orphaned "zombie" draft byte-identical
+   * to the message just sent (the delete-before-insert race). Inserting the
+   * tombstone here makes the id collide on the late insert, where the service
+   * drops it (`upsert` branch for a fresh write onto a tombstone). The marker
+   * carries no scope/content — it only has to exist so the insert loses the race
+   * regardless of arrival order or whether the client survived to compensate.
+   *
+   * Returns the row when THIS call tombstoned it — a live row transitioned, or a
+   * negative marker planted for an unseen id (the service publishes
+   * `draft:deleted` for both) — and `null` when it was already a tombstone
+   * (idempotent no-op, nothing to publish).
    */
   async softDelete(db: Querier, workspaceId: string, userId: string, id: string): Promise<Draft | null> {
     const result = await db.query<DraftRow>(sql`
-      UPDATE drafts SET
+      INSERT INTO drafts (id, workspace_id, user_id, scope, client_updated_at, deleted_at)
+      VALUES (${id}, ${workspaceId}, ${userId}, '', NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE SET
         deleted_at = NOW(),
         updated_at = NOW(),
-        version = version + 1
-      WHERE id = ${id}
-        AND workspace_id = ${workspaceId}
-        AND user_id = ${userId}
-        AND deleted_at IS NULL
+        version = drafts.version + 1
+      WHERE drafts.deleted_at IS NULL
+        AND drafts.workspace_id = ${workspaceId}
+        AND drafts.user_id = ${userId}
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null

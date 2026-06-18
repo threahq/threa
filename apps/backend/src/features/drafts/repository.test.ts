@@ -198,6 +198,21 @@ describe("DraftsRepository.softDelete", () => {
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).not.toContain("AND version =")
   })
+
+  it("plants a negative tombstone (INSERT … ON CONFLICT) so a delete that wins the race against the insert still sticks", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured)
+
+    await DraftsRepository.softDelete(db, "ws_1", "usr_1", "draft_01")
+
+    // The delete and the draft's first insert are independent requests; if the
+    // delete arrives first it must leave a row to collide with, not vanish.
+    expect(captured.text).toContain("INSERT INTO drafts")
+    expect(captured.text).toContain("ON CONFLICT (id) DO UPDATE")
+    expect(captured.values).toContain("draft_01")
+    expect(captured.values).toContain("ws_1")
+    expect(captured.values).toContain("usr_1")
+  })
 })
 
 describe("DraftsRepository.rescopeByScope", () => {
