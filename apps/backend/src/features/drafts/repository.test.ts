@@ -167,7 +167,7 @@ describe("DraftsRepository.casUpdate", () => {
 describe("DraftsRepository.softDeleteCas", () => {
   afterEach(() => mock.restore())
 
-  it("tombstones only when the version matches so a drifted copy survives", async () => {
+  it("tombstones on a matching version or superseded write id so unrelated drift survives", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured)
 
@@ -176,12 +176,15 @@ describe("DraftsRepository.softDeleteCas", () => {
       userId: "usr_1",
       id: "draft_01",
       expectedVersion: 2,
+      supersededWriteIds: ["write_sent"],
     })
 
     expect(captured.text).toContain("deleted_at = NOW()")
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).toContain("version =")
+    expect(captured.text).toContain("last_client_write_id = ANY")
     expect(captured.values).toContain(2)
+    expect(captured.values).toContainEqual(["write_sent"])
   })
 })
 

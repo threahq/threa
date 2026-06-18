@@ -1890,6 +1890,8 @@ export interface Draft {
   version: number
   /** Authoring device's wall clock for the last edit; drives recency ordering. */
   clientUpdatedAt: string
+  /** Last accepted write id; lets the authoring device suppress its own sent-write echoes. */
+  lastClientWriteId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -1935,12 +1937,16 @@ export interface UpsertDraftResponse {
  * Wire body for `POST /drafts/:id/resolve` (clear-on-send). CAS-guarded by
  * `expectedVersion`: the draft is removed only if it still matches, so a copy
  * that drifted since the send started survives as a stash entry instead of
- * being collaterally deleted. A lost-ack retry re-runs the same version CAS:
- * the row is already tombstoned, so it returns `resolved: false` with the draft
- * gone either way — no idempotency key is needed on this path.
+ * being collaterally deleted. `supersededWriteIds` lets the server also remove
+ * this device's own lost-ack upsert if it landed after send began, without
+ * deleting unrelated drift. A lost-ack retry re-runs the same resolve: the row
+ * is already tombstoned, so it returns `resolved: false` with the draft gone
+ * either way.
  */
 export interface ResolveDraftInput {
   expectedVersion: number
+  /** Write ids from this device's sent draft upserts that may have landed after send began. */
+  supersededWriteIds?: string[]
 }
 
 export interface ResolveDraftResponse {

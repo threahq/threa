@@ -157,7 +157,7 @@ describe("DraftsService.resolve", () => {
 
   it("soft-deletes on a version match and publishes draft:deleted", async () => {
     const service = setupService()
-    spyOn(DraftsRepository, "softDeleteCas").mockResolvedValue(fakeDraft({ deletedAt: NOW }))
+    const softDelete = spyOn(DraftsRepository, "softDeleteCas").mockResolvedValue(fakeDraft({ deletedAt: NOW }))
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     const result = await service.resolve({
@@ -165,9 +165,14 @@ describe("DraftsService.resolve", () => {
       userId: USER_ID,
       id: DRAFT_ID,
       expectedVersion: 1,
+      supersededWriteIds: ["write_sent"],
     })
 
     expect(result.resolved).toBe(true)
+    expect(softDelete).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ expectedVersion: 1, supersededWriteIds: ["write_sent"] })
+    )
     expect(outbox).toHaveBeenCalledWith(
       expect.anything(),
       "draft:deleted",

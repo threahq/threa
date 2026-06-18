@@ -37,6 +37,10 @@ export function getDraftMessageKey(
 
 const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.env.VITE_DRAFT_DEBOUNCE_MS) : 500
 
+function isStaleObservedResolve(scope: string, observedResolveSeq: number | undefined): boolean {
+  return observedResolveSeq !== undefined && getScopeResolveSeq(scope) > observedResolveSeq
+}
+
 /** Resolve the draft id currently checked out into the composer for a scope. */
 async function getLoadedDraftId(scope: string): Promise<string | null> {
   const row = await db.composerLoaded.get(scope)
@@ -150,8 +154,14 @@ export async function upsertLoadedDraft(
     }
   }
 
+  let persisted = false
   if (existing) {
-    await db.drafts.put(row)
+    await db.transaction("rw", db.drafts, async () => {
+      if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return
+      await db.drafts.put(row)
+      persisted = true
+    })
+    if (!persisted || isStaleObservedResolve(scope, opts?.observedResolveSeq)) return row
     upsertDraftInCache(workspaceId, row)
   } else {
     // No loaded draft for this scope → this save would CREATE one and check it
@@ -163,17 +173,16 @@ export async function upsertLoadedDraft(
     // by the time the cleared pointer routes us here the bumped seq is visible.
     // Only the debounced save passes `observedResolveSeq`; every other create
     // path (share-target, attachments, fresh first keystroke) is unaffected.
-    if (opts?.observedResolveSeq !== undefined && getScopeResolveSeq(scope) > opts.observedResolveSeq) {
-      return row
-    }
-    // A brand-new loaded draft: write the row and its loaded pointer together so
-    // a live reader never observes the draft before the pointer lands — otherwise
-    // the just-created draft flashes into its own stash list for a tick (it isn't
-    // filtered out as "loaded" until the pointer exists).
+    // Check inside the write transaction too: a stale save may have already read
+    // the old loaded row before resolve-on-send deleted it, and writing that row
+    // afterward would stash an identical copy of the sent message.
     await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+      if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return
       await db.drafts.put(row)
       await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+      persisted = true
     })
+    if (!persisted || isStaleObservedResolve(scope, opts?.observedResolveSeq)) return row
     upsertLoadedDraftInCache(workspaceId, row, scope)
   }
 

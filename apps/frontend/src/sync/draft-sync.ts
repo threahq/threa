@@ -237,7 +237,8 @@ export async function hasPendingDraftDelete(draftId: string): Promise<boolean> {
  * draft, if that resolve is queued but has not drained yet. While this persisted
  * op exists, inbound/bootstrap rows at or below the expected version are stale
  * echoes of an already-sent draft and must not be re-created. Strictly newer
- * rows still apply so another device's drifted edit survives (no-loss).
+ * rows apply unless their write id is one this resolve superseded, so another
+ * device's drifted edit survives (no-loss).
  */
 export async function pendingDraftResolveVersion(draftId: string): Promise<number | undefined> {
   const ops = await pendingDraftOps("resolve_draft", draftId)
@@ -248,6 +249,14 @@ export async function pendingDraftResolveVersion(draftId: string): Promise<numbe
     version = version === undefined ? expected : Math.max(version, expected)
   }
   return version
+}
+
+async function hasPendingSupersededWriteId(writeId: string): Promise<boolean> {
+  const ops = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
+  return ops.some(
+    (op) =>
+      Array.isArray(op.payload.supersededWriteIds) && op.payload.supersededWriteIds.some((value) => value === writeId)
+  )
 }
 
 /**
@@ -298,12 +307,17 @@ export async function enqueueDraftDelete(workspaceId: string, draftId: string): 
 }
 
 /**
- * Enqueue a CAS clear-on-send for a draft (resolve-on-send) and drop any queued
- * push or delete for it. `expectedVersion` is the last server-confirmed version
- * (`baseVersion`); the server removes the row only if it still matches, so a
- * copy that drifted on another device survives as a stash entry. Use only when
- * the draft reached the server (`baseVersion > 0`); for a never-synced draft
- * call `cancelPendingDraftUpsert` — there is nothing on the server to resolve.
+ * Enqueue a CAS clear-on-send for a draft (resolve-on-send). `expectedVersion`
+ * is the last server-confirmed version (`baseVersion`); the server removes the
+ * row only if it still matches, so a copy that drifted on another device
+ * survives as a stash entry. Any queued upsert is deliberately kept as an
+ * in-flight-write marker: its socket echo may be version-newer than the resolve
+ * CAS, but it is still this device's just-sent content and must not re-seed a
+ * stash entry before the cleanup path runs. Its write id is also copied onto the
+ * resolve op so a lost-ack write that reached the server can be tombstoned
+ * without deleting unrelated drift. Use only when the draft reached the server
+ * (`baseVersion > 0`); never-confirmed sends go through `enqueueDraftDelete` so
+ * a late first upsert is cleaned up.
  */
 export async function enqueueDraftResolve(
   workspaceId: string,
@@ -311,8 +325,11 @@ export async function enqueueDraftResolve(
   expectedVersion: number
 ): Promise<void> {
   await db.transaction("rw", db.pendingOperations, async () => {
+    const pendingUpserts = await pendingDraftOps("upsert_draft", draftId)
+    const supersededWriteIds = pendingUpserts
+      .map((op) => op.payload.writeId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
     const stale = [
-      ...(await pendingDraftOps("upsert_draft", draftId)),
       ...(await pendingDraftOps("resolve_draft", draftId)),
       ...(await pendingDraftOps("delete_draft", draftId)),
     ]
@@ -321,7 +338,7 @@ export async function enqueueDraftResolve(
       id: operationId(),
       workspaceId,
       type: "resolve_draft",
-      payload: { draftId, expectedVersion },
+      payload: { draftId, expectedVersion, supersededWriteIds },
       createdAt: Date.now(),
       retryCount: 0,
     })
@@ -378,15 +395,15 @@ export async function syncDraftResolution(
  * Apply an inbound `draft:upserted` (another device's edit, or an echo of our
  * own confirmed write):
  *
- *  - No local row → accept the server row.
+ *  - No local row and no pending local op → accept the server row.
  *  - `version <= baseVersion` → stale echo (usually our own write returning);
  *    ignore.
- *  - Newer server version, unpushed local edits exist → IGNORE. The server is
- *    the single authority on drift: our queued push will reach it and it splits
- *    CAS-safely (executeDraftUpsert then migrates our local id). Resolving the
- *    drift here too would fork our OWN in-flight write — its echo can arrive
- *    before the push's HTTP ack records `baseVersion`, and a local split would
- *    then mint a duplicate of the draft we are editing.
+ *  - Pending local edits (even if the row was just removed by send) → IGNORE.
+ *    The server is the single authority on drift: our queued push reaches it and
+ *    splits CAS-safely (`executeDraftUpsert` then migrates our local id).
+ *    Resolving the drift here too would fork our OWN in-flight write — its echo
+ *    can arrive before the push's HTTP ack records `baseVersion`; a local split
+ *    would then mint a duplicate of the draft we are editing.
  *  - Newer server version, no unpushed edits → accept (preserving local
  *    attachment metadata the wire row lacks). When the scope also changed
  *    (thread re-pointing — the target message became a thread), the draft moves
@@ -397,7 +414,8 @@ export async function applyDraftUpserted(
   expectedWorkspaceId: string,
   pendingUpsertIds?: ReadonlySet<string>,
   pendingDeleteIds?: ReadonlySet<string>,
-  pendingResolveVersions?: ReadonlyMap<string, number>
+  pendingResolveVersions?: ReadonlyMap<string, number>,
+  pendingSupersededWriteIds?: ReadonlySet<string>
 ): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
@@ -417,6 +435,18 @@ export async function applyDraftUpserted(
   const pendingResolveVersion = pendingResolveVersions?.get(draft.id) ?? (await pendingDraftResolveVersion(draft.id))
   if (pendingResolveVersion !== undefined && draft.version <= pendingResolveVersion) return
 
+  // A version-newer row with one of our superseded write ids is not another
+  // device's drift; it is this device's sent draft write landing late (possibly
+  // under a split id). CAS-resolve it at the version we observed.
+  const lastWriteId = draft.lastClientWriteId ?? null
+  const ownSentWrite = lastWriteId
+    ? (pendingSupersededWriteIds?.has(lastWriteId) ?? (await hasPendingSupersededWriteId(lastWriteId)))
+    : false
+  if (ownSentWrite) {
+    await enqueueDraftResolve(expectedWorkspaceId, draft.id, draft.version)
+    return
+  }
+
   // A queued local delete wins: the user discarded this draft here and its
   // `delete_draft` op (not yet drained) will remove the server row. Until then,
   // accepting an echo or a bootstrap re-seed would resurrect the row the user
@@ -425,6 +455,14 @@ export async function applyDraftUpserted(
   const deleting = pendingDeleteIds ? pendingDeleteIds.has(draft.id) : await hasPendingDraftDelete(draft.id)
   if (deleting) return
 
+  // Unpushed local edits → leave them; the pending push lets the server arbitrate
+  // (the pending set, passed by bootstrap, avoids a per-draft op-table scan). The
+  // row may already be gone locally when the pending write belongs to a draft we
+  // just sent; in that case the op is still an in-flight echo marker and must
+  // suppress a server re-seed until the queue observes the missing row.
+  const dirty = pendingUpsertIds ? pendingUpsertIds.has(draft.id) : await hasPendingDraftUpsert(draft.id)
+  if (dirty) return
+
   const local = await db.drafts.get(draft.id)
   if (!local) {
     await putLocalDraft(cachedDraftFromWire(draft))
@@ -432,11 +470,6 @@ export async function applyDraftUpserted(
   }
 
   if (draft.version <= (local.baseVersion ?? 0)) return
-
-  // Unpushed local edits → leave them; the pending push lets the server arbitrate
-  // (the pending set, passed by bootstrap, avoids a per-draft op-table scan).
-  const dirty = pendingUpsertIds ? pendingUpsertIds.has(draft.id) : await hasPendingDraftUpsert(draft.id)
-  if (dirty) return
 
   // Clean locally — accept the server row, keeping any local attachment metadata
   // (an echo of our own confirmed push matches it). A changed scope (thread
@@ -502,11 +535,18 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
   const pendingUpsertIds = new Set(upsertOps.map((op) => op.payload.draftId as string))
   const pendingDeleteIds = new Set(deleteOps.map((op) => op.payload.draftId as string))
   const pendingResolveVersions = new Map<string, number>()
+  const pendingSupersededWriteIds = new Set<string>()
   for (const op of resolveOps) {
     const draftId = op.payload.draftId as string
     const expectedVersion = Number(op.payload.expectedVersion)
-    if (!Number.isFinite(expectedVersion)) continue
-    pendingResolveVersions.set(draftId, Math.max(pendingResolveVersions.get(draftId) ?? 0, expectedVersion))
+    if (Number.isFinite(expectedVersion)) {
+      pendingResolveVersions.set(draftId, Math.max(pendingResolveVersions.get(draftId) ?? 0, expectedVersion))
+    }
+    if (Array.isArray(op.payload.supersededWriteIds)) {
+      for (const value of op.payload.supersededWriteIds) {
+        if (typeof value === "string") pendingSupersededWriteIds.add(value)
+      }
+    }
   }
   for (const draft of drafts) {
     await applyDraftUpserted(
@@ -514,7 +554,8 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
       workspaceId,
       pendingUpsertIds,
       pendingDeleteIds,
-      pendingResolveVersions
+      pendingResolveVersions,
+      pendingSupersededWriteIds
     )
   }
 
@@ -590,9 +631,15 @@ export async function executeDraftUpsert(
     // The original id's divergent server row arrives via its own socket event.
     const current = await db.drafts.get(draftId)
     if (!current) {
-      // Discarded locally while the push was in flight — the server still minted
-      // a fresh row for our (now-gone) content; delete it so it can't resurrect.
-      await enqueueDraftDelete(workspaceId, res.draft.id)
+      // Removed locally while the push was in flight. A sent draft gets a CAS
+      // cleanup at the version this push created; an explicit discard keeps the
+      // unconditional delete semantics.
+      await deleteLocalDraft(workspaceId, res.draft.id)
+      if ((await pendingDraftResolveVersion(draftId)) !== undefined) {
+        await enqueueDraftResolve(workspaceId, res.draft.id, res.draft.version)
+      } else {
+        await enqueueDraftDelete(workspaceId, res.draft.id)
+      }
       return
     }
     await migrateLocalDraftId(workspaceId, draftId, {
@@ -611,10 +658,10 @@ export async function executeDraftUpsert(
   // Happy path — confirm our row at the returned version without clobbering any
   // content typed since the push (only the version basis advances). The
   // existence check and the write share one transaction so a concurrent local
-  // discard can't slip between them and have us re-create a row the user just
-  // deleted; if the row is gone, the server now holds a draft the user threw
-  // away, so we delete it (otherwise it resurrects on the next pull — the
-  // "ghost draft" race).
+  // removal can't slip between them and have us re-create a row the user just
+  // cleared; if the row is gone, the server now holds stale content and we queue
+  // the matching cleanup (CAS resolve for sends, unconditional delete for
+  // discards) so it cannot resurrect on the next pull.
   let confirmed: CachedDraft | undefined
   await db.transaction("rw", db.drafts, async () => {
     const current = await db.drafts.get(draftId)
@@ -623,7 +670,11 @@ export async function executeDraftUpsert(
     await db.drafts.put(confirmed)
   })
   if (!confirmed) {
-    await enqueueDraftDelete(workspaceId, draftId)
+    if ((await pendingDraftResolveVersion(draftId)) !== undefined) {
+      await enqueueDraftResolve(workspaceId, draftId, res.draft.version)
+    } else {
+      await enqueueDraftDelete(workspaceId, draftId)
+    }
     return
   }
   if (hasSeededDraftCache(workspaceId)) upsertDraftInCache(workspaceId, confirmed)
@@ -631,21 +682,22 @@ export async function executeDraftUpsert(
 
 /**
  * Resolve a draft on the backend after its message sent (operation-queue replay
- * of `resolve_draft`). CAS-guarded by `expectedVersion`: the server keeps a
- * drifted copy (`resolved: false`) rather than deleting it, and that copy
- * re-syncs as a stash entry on the next bootstrap. Either outcome is terminal
- * for this op — the local row is already gone — so the response is informational
- * and nothing more runs locally. Throws (network) so the queue retries; resolve
- * is idempotent (a re-run hits an already-tombstoned row and returns
- * `resolved: false`), so no idempotency key is needed.
+ * of `resolve_draft`). CAS-guarded by `expectedVersion` plus superseded write
+ * ids: the server keeps unrelated drift (`resolved: false`) rather than deleting
+ * it, and that copy re-syncs as a stash entry on the next bootstrap. Either
+ * outcome is terminal for this op — the local row is already gone — so the
+ * response is informational and nothing more runs locally. Throws (network) so
+ * the queue retries; resolve is idempotent (a re-run hits an already-tombstoned
+ * row and returns `resolved: false`), so no idempotency key is needed.
  */
 export async function executeDraftResolve(
   workspaceId: string,
   draftId: string,
   expectedVersion: number,
-  service: DraftsServiceLike
+  service: DraftsServiceLike,
+  supersededWriteIds: string[] = []
 ): Promise<void> {
-  await service.resolve(workspaceId, draftId, { expectedVersion })
+  await service.resolve(workspaceId, draftId, { expectedVersion, supersededWriteIds })
 }
 
 /** Push a draft deletion to the backend (operation-queue replay of `delete_draft`). */

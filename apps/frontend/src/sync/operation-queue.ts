@@ -234,11 +234,15 @@ async function executeOperation(
       // a drafts service this context is local-only — drop the op (a throw would
       // retry forever, never reaching a service).
       if (!draftsService) break
+      const supersededWriteIds = Array.isArray(payload.supersededWriteIds)
+        ? payload.supersededWriteIds.filter((id): id is string => typeof id === "string")
+        : []
       await executeDraftResolve(
         workspaceId,
         payload.draftId as string,
         payload.expectedVersion as number,
-        draftsService
+        draftsService,
+        supersededWriteIds
       )
       break
     }

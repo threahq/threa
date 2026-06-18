@@ -223,15 +223,23 @@ export const DraftsRepository = {
   },
 
   /**
-   * CAS soft-delete for resolve-on-send and explicit discard. Tombstones the
-   * row only when `version` still matches, so a copy that drifted since the
-   * send started survives as a stash entry instead of being collaterally
-   * destroyed. Returns the tombstoned row on success, `null` on version drift.
+   * CAS soft-delete for resolve-on-send. Tombstones the row when `version` still
+   * matches, or when its last write id is one this device already superseded by
+   * sending the message. Unrelated drift survives as a stash entry instead of
+   * being collaterally destroyed. Returns the tombstoned row on success, `null`
+   * on version drift.
    */
   async softDeleteCas(
     db: Querier,
-    params: { workspaceId: string; userId: string; id: string; expectedVersion: number }
+    params: {
+      workspaceId: string
+      userId: string
+      id: string
+      expectedVersion: number
+      supersededWriteIds?: string[]
+    }
   ): Promise<Draft | null> {
+    const supersededWriteIds = params.supersededWriteIds ?? []
     const result = await db.query<DraftRow>(sql`
       UPDATE drafts SET
         deleted_at = NOW(),
@@ -241,7 +249,8 @@ export const DraftsRepository = {
         AND workspace_id = ${params.workspaceId}
         AND user_id = ${params.userId}
         AND deleted_at IS NULL
-        AND version = ${params.expectedVersion}
+        AND (version = ${params.expectedVersion}
+          OR (${supersededWriteIds.length > 0} AND last_client_write_id = ANY(${supersededWriteIds})))
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
