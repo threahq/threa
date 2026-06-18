@@ -97,4 +97,21 @@ describe("GeneralTab automatic-memory toggle", () => {
     renderTab(scratchpad({ memoryMode: undefined }), vi.fn())
     expect(screen.getByRole("switch", { name: /automatic memory/i })).toBeChecked()
   })
+
+  it("shows the toggle on a DM and toggles it", async () => {
+    const stream = scratchpad({
+      id: "stream_dm",
+      type: StreamTypes.DM,
+      displayName: null,
+      memoryMode: MemoryModes.AUTO,
+    })
+    const update = vi.fn().mockResolvedValue({ ...stream, memoryMode: MemoryModes.OFF })
+
+    renderTab(stream, update)
+
+    await userEvent.click(screen.getByRole("switch", { name: /automatic memory/i }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update).toHaveBeenCalledWith(WS, stream.id, { memoryMode: MemoryModes.OFF })
+  })
 })

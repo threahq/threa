@@ -313,7 +313,11 @@ const disallowedUpdateFields: Record<StreamType, Record<string, string> | null> 
     visibility: "Threads inherit slug and visibility from parent",
     memoryMode: "Threads inherit memory settings from their parent",
   },
-  [StreamTypes.DM]: null,
+  [StreamTypes.DM]: {
+    displayName: "Direct messages have no editable name",
+    slug: "Direct messages have no slug",
+    visibility: "Direct messages are always private",
+  },
   [StreamTypes.SYSTEM]: null,
 }
 

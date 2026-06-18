@@ -174,6 +174,64 @@ describe("createStreamHandlers.updateToolPolicy", () => {
   })
 })
 
+describe("createStreamHandlers.update — DM memoryMode", () => {
+  const dm = { id: "stream_dm", workspaceId: "ws_1", type: "dm", createdBy: "user_a" }
+
+  function makeRes() {
+    const captured: { status: number; body: unknown } = { status: 200, body: undefined }
+    const res = {
+      status(code: number) {
+        captured.status = code
+        return res
+      },
+      json(body: unknown) {
+        captured.body = body
+        return res
+      },
+    }
+    return { res: res as unknown as Response, captured }
+  }
+
+  function makeHandlers(streamService: Partial<StreamService>) {
+    return createStreamHandlers({ streamService } as unknown as Parameters<typeof createStreamHandlers>[0])
+  }
+
+  function makeReq(body: unknown): Request {
+    return {
+      user: { id: "user_a" },
+      workspaceId: "ws_1",
+      params: { streamId: "stream_dm" },
+      body,
+    } as unknown as Request
+  }
+
+  it("lets a DM participant toggle memoryMode", async () => {
+    const updateStream = mock(async (_id: string, data: { memoryMode?: string }) => ({ ...dm, ...data }))
+    const handlers = makeHandlers({
+      validateStreamAccess: mock(async () => dm) as unknown as StreamService["validateStreamAccess"],
+      updateStream: updateStream as unknown as StreamService["updateStream"],
+    })
+    const { res, captured } = makeRes()
+
+    await handlers.update(makeReq({ memoryMode: "off" }), res)
+
+    expect(updateStream).toHaveBeenCalledWith("stream_dm", expect.objectContaining({ memoryMode: "off" }))
+    expect(captured.body).toEqual({ stream: expect.objectContaining({ memoryMode: "off" }) })
+  })
+
+  it("still rejects a DM visibility change and never writes", async () => {
+    const updateStream = mock(async () => dm)
+    const handlers = makeHandlers({
+      validateStreamAccess: mock(async () => dm) as unknown as StreamService["validateStreamAccess"],
+      updateStream: updateStream as unknown as StreamService["updateStream"],
+    })
+    const { res } = makeRes()
+
+    await expect(handlers.update(makeReq({ visibility: "public" }), res)).rejects.toMatchObject({ status: 400 })
+    expect(updateStream).not.toHaveBeenCalled()
+  })
+})
+
 describe("createStreamHandlers.create — allowedToolCategories", () => {
   function makeRes() {
     const captured: { status: number; body: unknown } = { status: 200, body: undefined }

@@ -114,9 +114,9 @@ export function GeneralTab({
   }
 
   // Memory automation is a per-stream gate on GAM extraction. Threads inherit
-  // from their root; DMs and system streams reject general updates
-  // (STREAM_IMMUTABLE), so the toggle lives on the updatable memo producers.
-  if (isChannel || isScratchpad) {
+  // from their root and system streams are read-only; every other type that
+  // produces memos (channels, scratchpads, DMs) gets the toggle.
+  if (isChannel || isScratchpad || isDm) {
     sections.push(<MemorySection key="memory" workspaceId={workspaceId} stream={stream} />)
   }
 
