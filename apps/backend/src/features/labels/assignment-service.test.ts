@@ -155,6 +155,30 @@ describe("LabelAssignmentService.assign", () => {
     expect(assignSpy).not.toHaveBeenCalled()
     expect(outboxSpy).not.toHaveBeenCalled()
   })
+
+  it("gates a bot's assign through a single isStreamAccessibleForBot point query, not the bulk fetch", async () => {
+    const BOT_ID = "bot_1"
+    const isStreamAccessibleForBot = mock(() => Promise.resolve(false))
+    const getAccessibleStreamIdsForBot = mock(() => Promise.resolve([] as string[]))
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    const service = new LabelAssignmentService({
+      pool: {} as any,
+      botChannelService: { isStreamAccessibleForBot, getAccessibleStreamIdsForBot } as any,
+    })
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
+    const assignSpy = spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(fakeAssignment())
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await expect(
+      service.assign({ ...assignParams, actor: { type: LabelActorTypes.BOT, id: BOT_ID } })
+    ).rejects.toMatchObject({ status: 404 })
+
+    expect(isStreamAccessibleForBot).toHaveBeenCalledWith(WORKSPACE_ID, BOT_ID, RESOURCE_ID)
+    // The write gate must not fall back to the unbounded all-public-streams fetch.
+    expect(getAccessibleStreamIdsForBot).not.toHaveBeenCalled()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(outboxSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe("LabelAssignmentService.unassign", () => {

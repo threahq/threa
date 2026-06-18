@@ -157,29 +157,46 @@ export class LabelAssignmentService {
    */
   private async assertResourceAccess(client: PoolClient, params: AssignLabelParams): Promise<void> {
     if (params.resourceType === LabelableResourceTypes.STREAM) {
-      const accessible = await this.accessibleStreamIds(params.workspaceId, params.actor, [params.resourceId], client)
-      if (accessible.has(params.resourceId)) return
+      if (await this.canReachStream(client, params.actor, params.workspaceId, params.resourceId)) return
     }
     throw new HttpError("Resource not found", { status: 404, code: "RESOURCE_NOT_FOUND" })
   }
 
   /**
+   * Single-resource reachability for the write gate — a point query per actor
+   * model (a bot: one EXISTS on its grant; a user: membership/visibility). The
+   * read gate uses the bulk {@link accessibleStreamIds} instead, since it filters
+   * a whole candidate set at once.
+   */
+  private async canReachStream(
+    client: PoolClient,
+    actor: LabelActor,
+    workspaceId: string,
+    streamId: string
+  ): Promise<boolean> {
+    if (actor.type === LabelActorTypes.BOT) {
+      return this.botChannelService.isStreamAccessibleForBot(workspaceId, actor.id, streamId)
+    }
+    const accessible = await listAccessibleStreamIds(client, workspaceId, actor.id, [streamId])
+    return accessible.has(streamId)
+  }
+
+  /**
    * The subset of `candidateIds` the actor can reach, by the actor's own access
    * model: a user resolves through stream membership/visibility, a bot through
-   * its channel grants. Shared by the read gate (`listForViewer`) and the write
-   * gate (`assertResourceAccess`) so a bot can only label and only see labels on
-   * streams it has actually been granted.
+   * its channel grants. Backs the read gate (`listForViewer`), which filters a
+   * whole candidate set; the write gate uses {@link canReachStream} for its
+   * single-resource check.
    */
   private async accessibleStreamIds(
     workspaceId: string,
     actor: LabelActor,
-    candidateIds: string[],
-    client?: PoolClient
+    candidateIds: string[]
   ): Promise<Set<string>> {
     if (actor.type === LabelActorTypes.BOT) {
       const granted = new Set(await this.botChannelService.getAccessibleStreamIdsForBot(workspaceId, actor.id))
       return new Set(candidateIds.filter((id) => granted.has(id)))
     }
-    return listAccessibleStreamIds(client ?? this.pool, workspaceId, actor.id, candidateIds)
+    return listAccessibleStreamIds(this.pool, workspaceId, actor.id, candidateIds)
   }
 }
