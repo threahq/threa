@@ -1490,10 +1490,13 @@ export function StreamContent({
     streamId,
     isLoading,
     highlightMessageId,
-    // Until a read source has hydrated, lastReadEventId is not authoritative;
-    // gate the unread computation so a not-yet-known read position can't latch
-    // a divider on the first message (which would then stick for the session).
-    readStateResolved: idbStream !== undefined || membership !== undefined,
+    // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
+    // while the read sources (stream row / membership) are still hydrating. Gate
+    // on that so a not-yet-known read position can't be read as "all unread" and
+    // latch a divider on the first message (which would then stick for the
+    // session). `idbStream` alone isn't enough — its denormalized copy can be a
+    // stale null while the authoritative membership value is still loading.
+    readStateResolved: lastReadEventId !== undefined,
   })
 
   const queryClient = useQueryClient()
