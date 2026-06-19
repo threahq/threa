@@ -34,13 +34,22 @@ Content: {{CONTENT}}
 ## Attachments
 Some messages above may include an indented \`[attachment <filename> (<kind>)]:\` block beneath them. That block is the extracted text of the attachment — the transcript for audio/video, OCR text for an image, the parsed body for a PDF/Word/Excel, etc. Treat that extracted text as **part of the message's content** when judging topic continuity: a voice memo whose transcript is about onboarding is an onboarding message even if its written content is empty. Pay particular attention to the new message's attachments, since a short or empty written body is often a wrapper around the real payload that lives in the attachment.
 
+## Explicit reply
+{{REPLY_CONTEXT}}
+
+When the new message explicitly quote-replies an earlier message, that is a deliberate user action and the STRONGEST available signal of continuity: default to assigning the new message (as primary) to the conversation the quoted message belongs to. Override this only when the new message's own content clearly opens a different topic — quoting a message while explicitly changing the subject ("unrelated, but…"). A reply that merely reacts, agrees, asks a follow-up, or builds on the quoted message stays in the quoted message's conversation. The quoted message's conversation is listed in Active Conversations above, so you can always assign to it.
+
 ## Choosing a conversation
-First decide whether this message continues an existing conversation or starts a new one. Assign it to an existing conversation (as primary) only when it genuinely continues that topic — judge by:
+First decide whether this message continues an existing conversation or starts a new one. Judge by:
+- Explicit references: does it quote, reply to, or build on something in a conversation? (See "Explicit reply" above — a quote-reply is decisive.)
 - Topic continuity: does it advance the same subject the conversation is about? Use the attachment-extracted text as content here too.
-- Explicit references: does it reply to, quote, or build on something in that conversation?
 - Recency and flow: does it read as the next turn of an active back-and-forth?
 
-Start a NEW conversation (primary assignment with conversationId=null) when the message opens a topic that no active conversation covers — a new question, a new subject, or an unrelated aside. A short or ambiguous message that doesn't clearly continue any listed conversation is a new conversation, not a default into the most recent one. Do not attach a message to a conversation whose status is "resolved" unless it directly reopens that exact topic; a new topic after a resolved conversation is a new conversation. When in doubt between extending a stale/resolved conversation and starting fresh, start fresh.
+Prefer continuing the active exchange. Conversation is a back-and-forth between participants: a short reply, agreement, reaction, joke, or follow-up from EITHER participant ("samma här", "haha", "100%", ":fire:", "what?", "nice") continues the current exchange — it does not start its own conversation, and which participant sent it is irrelevant. Both sides of one live exchange belong in the SAME conversation; never split an exchange so one participant's turns sit in a different conversation than the other's.
+
+Start a NEW conversation (primary assignment with conversationId=null) only when the message clearly opens a topic no active conversation covers — a distinct new question, subject, or unrelated aside that does not read as the next turn of any listed exchange. Do not attach a message to a conversation whose status is "resolved" unless it directly reopens that exact topic.
+
+You don't need full certainty up front. When a short or ambiguous message plausibly continues the active exchange, keep it there rather than spawning a singleton — if a later message reveals it actually began a new topic, the reassignment mechanism below will split it out then. Early continuity that settles is better than fragmentation that never recovers.
 
 ## Multi-membership
 A message can belong to more than one conversation. If this new message clearly continues two different ongoing threads (e.g. a single ping that references two topics), assign it to both. Pick the conversation it MOST continues as primary; the others are secondaries. Most messages have only a primary assignment — only return secondaries when the message genuinely advances two distinct conversations.
@@ -51,7 +60,11 @@ If this new message reveals that one or more of the *Recent Messages* or message
 - The new message reopens a conversation that was prematurely marked resolved.
 - The new message shows two adjacent conversations are actually the same topic — move the smaller one into the larger.
 
-Reassignment is *the* mechanism for fixing classification mistakes. Use it whenever the new message gives you evidence the prior placement was wrong. Do not be conservative — moving a message to where it now clearly belongs is better than leaving it stranded.
+Reassignment is *the* mechanism for fixing classification mistakes, and it works in both directions — it is how conversations settle as more context arrives:
+- MERGE: the new message shows two threads are really one topic, or that an earlier message belongs with the current exchange — move it in.
+- SPLIT: the new message reveals that recent messages lumped into the current conversation were actually the start of a separate topic — move them into a different (or brand-new) conversation. This is the correction for having earlier leaned toward continuity: if you kept a short message in an exchange and now see it opened its own topic, split it out here.
+
+Use it whenever the new message gives you evidence the prior placement was wrong. Do not be conservative — moving a message to where it now clearly belongs is better than leaving it stranded.
 
 ## Output Requirements
 - assignments: Array of {conversationId, isPrimary}. At least one entry with isPrimary=true. conversationId=null means "create a new conversation" (set newConversationTopic).

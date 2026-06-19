@@ -33,6 +33,34 @@ export function collectMentionSlugs(content: JSONContent): string[] {
 }
 
 /**
+ * Message IDs this document explicitly quote-replies to, read from the
+ * `quoteReply` node attrs (so it works for any language/script — no markdown
+ * pattern matching, INV-54). Dedupes preserving first-seen order.
+ */
+export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "quoteReply") {
+      const messageId = node.attrs?.messageId
+      if (typeof messageId === "string" && messageId.length > 0 && !seen.has(messageId)) {
+        seen.add(messageId)
+        ordered.push(messageId)
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ordered
+}
+
+/**
  * Skips `uploading`/`error` nodes to mirror the markdown serializer's omission
  * rule (markdown.ts), and dedupes preserving first-seen order.
  */

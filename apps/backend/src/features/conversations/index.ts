@@ -15,6 +15,7 @@ export type {
   CompletenessUpdate,
   MessageAssignment,
   Reassignment,
+  ReplyTarget,
 } from "./boundary-extraction/types"
 export {
   BOUNDARY_EXTRACTION_MODEL_ID,

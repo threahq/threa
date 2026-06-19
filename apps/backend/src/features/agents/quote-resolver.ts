@@ -1,5 +1,5 @@
 import type { Querier } from "../../db"
-import type { JSONContent } from "@threa/types"
+import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { MessageRepository, type Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository } from "./persona-repository"
@@ -82,7 +82,7 @@ export async function resolveQuoteReplies(
   // Walk seeds to get depth-0 frontier (= depth-1 precursors, since the seed is 0 hops).
   let frontier: string[] = []
   for (const seed of input.seedMessages) {
-    const quotedIds = extractQuoteReplyMessageIds(seed.contentJson)
+    const quotedIds = collectQuoteReplyMessageIds(seed.contentJson)
     for (const quotedId of quotedIds) {
       if (visited.has(quotedId)) {
         logger.debug({ messageId: seed.id, quotedId, reason: "cycle" }, "Quote resolution skipped reference")
@@ -117,7 +117,7 @@ export async function resolveQuoteReplies(
     const nextFrontier: string[] = []
     for (const [id, message] of fetched) {
       resolved.set(id, message)
-      const quotedIds = extractQuoteReplyMessageIds(message.contentJson)
+      const quotedIds = collectQuoteReplyMessageIds(message.contentJson)
       for (const quotedId of quotedIds) {
         if (visited.has(quotedId)) {
           logger.debug({ messageId: id, quotedId, reason: "cycle" }, "Quote resolution skipped reference")
@@ -170,7 +170,7 @@ export function renderMessageWithQuoteContext(
   const base = message.contentMarkdown
   if (depth >= maxDepth) return base
 
-  const quotedIds = extractQuoteReplyMessageIds(message.contentJson)
+  const quotedIds = collectQuoteReplyMessageIds(message.contentJson)
   if (quotedIds.length === 0) return base
 
   const blocks: string[] = [base]
@@ -212,27 +212,6 @@ export function extractAppendedQuoteContext(rendered: string, base: string): str
   // Strip the base prefix and the "\n\n" separator we inserted in the renderer
   const tail = rendered.slice(base.length)
   return tail.startsWith("\n\n") ? tail.slice(2) : tail
-}
-
-function extractQuoteReplyMessageIds(content: JSONContent): string[] {
-  const ids: string[] = []
-  walkJsonNodes(content, (node) => {
-    if (node.type === "quoteReply") {
-      const messageId = node.attrs?.messageId
-      if (typeof messageId === "string" && messageId.length > 0) {
-        ids.push(messageId)
-      }
-    }
-  })
-  return ids
-}
-
-function walkJsonNodes(node: JSONContent, visit: (node: JSONContent) => void): void {
-  visit(node)
-  if (!node.content) return
-  for (const child of node.content) {
-    walkJsonNodes(child, visit)
-  }
 }
 
 async function resolveAuthorNamesForMessages(

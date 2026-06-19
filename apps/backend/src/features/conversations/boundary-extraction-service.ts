@@ -13,7 +13,9 @@ import type {
   CompletenessUpdate,
   MessageAssignment,
   Reassignment,
+  ReplyTarget,
 } from "./boundary-extraction/types"
+import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
 import { conversationId } from "../../lib/id"
 import { ConversationStatuses, StreamTypes } from "@threa/types"
@@ -95,6 +97,21 @@ export class BoundaryExtractionService {
         allContextMessageIds
       )
 
+      // Resolve explicit quote-replies to a strong continuity signal (INV-54:
+      // structural attrs, not markdown heuristics). A quote-reply is a
+      // deliberate user action, so the conversation that owns the quoted message
+      // must be a candidate even when it scrolled out of the surrounding-message
+      // window — otherwise the model can't assign to it. Scoped to this stream:
+      // conversations are per-stream, so a quote into another stream has no valid
+      // target here and is dropped.
+      const { replyTargets, quotedConversations } = await this.resolveReplyTargets(
+        client,
+        workspaceId,
+        stream.id,
+        message
+      )
+      const candidateConversations = mergeConversationsById(relevantConversations, quotedConversations)
+
       let parentMessageConversations: Conversation[] = []
       if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
         parentMessageConversations = await ConversationRepository.findByMessageId(
@@ -106,7 +123,7 @@ export class BoundaryExtractionService {
 
       const contextMessageIdSet = new Set(allContextMessageIds)
       const activeConversations = this.buildConversationSummaries(
-        relevantConversations,
+        candidateConversations,
         allContextMessages,
         contextMessageIdSet
       )
@@ -127,11 +144,12 @@ export class BoundaryExtractionService {
         activeConversations,
         streamType: stream.type,
         parentMessageConversations: parentConversations,
+        replyTargets: replyTargets.length > 0 ? replyTargets : undefined,
         workspaceId: stream.workspaceId,
       }
 
       const validUpdateTargets = new Set<string>([
-        ...relevantConversations.map((c) => c.id),
+        ...candidateConversations.map((c) => c.id),
         ...parentMessageConversations.map((c) => c.id),
       ])
 
@@ -525,6 +543,50 @@ export class BoundaryExtractionService {
       }
     })
   }
+
+  private async resolveReplyTargets(
+    client: PoolClient,
+    workspaceId: string,
+    streamId: string,
+    message: Message
+  ): Promise<{ replyTargets: ReplyTarget[]; quotedConversations: Conversation[] }> {
+    const quotedMessageIds = collectQuoteReplyMessageIds(message.contentJson)
+    if (quotedMessageIds.length === 0) return { replyTargets: [], quotedConversations: [] }
+
+    const quotedMessages = await MessageRepository.findByIdsInStreams(client, quotedMessageIds, [streamId])
+    if (quotedMessages.size === 0) return { replyTargets: [], quotedConversations: [] }
+
+    const primariesByMessageId = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, [
+      ...quotedMessages.keys(),
+    ])
+
+    const replyTargets: ReplyTarget[] = []
+    const quotedConversations: Conversation[] = []
+    for (const quotedMessageId of quotedMessageIds) {
+      const quotedMessage = quotedMessages.get(quotedMessageId)
+      if (!quotedMessage) continue
+      const conv = primariesByMessageId.get(quotedMessageId)
+      if (!conv) continue
+      replyTargets.push({
+        quotedMessageId,
+        conversationId: conv.id,
+        topicSummary: conv.topicSummary,
+        snippet: quotedMessage.contentMarkdown.slice(0, 100),
+      })
+      quotedConversations.push(conv)
+    }
+    return { replyTargets, quotedConversations }
+  }
+}
+
+/** Append `extra` conversations not already present in `primary`, deduped by id. */
+function mergeConversationsById(primary: Conversation[], extra: Conversation[]): Conversation[] {
+  if (extra.length === 0) return primary
+  const byId = new Map<string, Conversation>(primary.map((c) => [c.id, c]))
+  for (const c of extra) {
+    if (!byId.has(c.id)) byId.set(c.id, c)
+  }
+  return [...byId.values()]
 }
 
 /**

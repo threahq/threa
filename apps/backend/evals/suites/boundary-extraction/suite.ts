@@ -93,6 +93,7 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
       status: c.status ?? "active",
       contextMessageIds: [],
     })),
+    replyTargets: input.replyTargets,
     streamType: input.streamType || "scratchpad",
     workspaceId,
   }

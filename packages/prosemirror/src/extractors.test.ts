@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threa/types"
-import { collectAttachmentReferenceIds, collectMentionSlugs } from "./extractors"
+import { collectAttachmentReferenceIds, collectMentionSlugs, collectQuoteReplyMessageIds } from "./extractors"
+
+const quoteReply = (messageId: string): JSONContent => ({
+  type: "quoteReply",
+  attrs: { messageId, snippet: "quoted text", authorId: "usr_x", streamId: "stream_x", actorType: "user" },
+})
 
 const mention = (slug: string): JSONContent => ({
   type: "mention",
@@ -106,6 +111,55 @@ describe("collectAttachmentReferenceIds", () => {
     }
 
     expect(collectAttachmentReferenceIds(doc)).toEqual(["attach_real"])
+  })
+})
+
+describe("collectQuoteReplyMessageIds", () => {
+  it("returns quoted message ids in document order across nested blocks", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        quoteReply("msg_a"),
+        { type: "paragraph", content: [{ type: "text", text: "håller med" }] },
+        {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: [quoteReply("msg_b")] }],
+        },
+      ],
+    }
+
+    expect(collectQuoteReplyMessageIds(doc)).toEqual(["msg_a", "msg_b"])
+  })
+
+  it("dedupes repeats while preserving first-seen order", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [quoteReply("msg_a"), quoteReply("msg_b"), quoteReply("msg_a")],
+    }
+
+    expect(collectQuoteReplyMessageIds(doc)).toEqual(["msg_a", "msg_b"])
+  })
+
+  it("ignores quoteReply nodes with missing or empty messageId", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "quoteReply", attrs: { snippet: "no id" } },
+        { type: "quoteReply", attrs: { messageId: "" } },
+        quoteReply("msg_real"),
+      ],
+    }
+
+    expect(collectQuoteReplyMessageIds(doc)).toEqual(["msg_real"])
+  })
+
+  it("returns empty array for documents without quote replies", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "hello" }] }],
+    }
+
+    expect(collectQuoteReplyMessageIds(doc)).toEqual([])
   })
 })
 

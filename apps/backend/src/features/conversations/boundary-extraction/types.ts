@@ -103,6 +103,21 @@ export interface AttachmentExtractContext {
   fullText: string | null
 }
 
+/**
+ * An explicit quote-reply the new message makes, resolved to the conversation
+ * that owns the quoted message as primary. This is a deliberate user action, so
+ * the prompt treats it as strong (overridable) evidence the new message
+ * continues `conversationId`. Only quotes whose target has a primary
+ * conversation appear here; the quoted conversation is guaranteed to be in
+ * `activeConversations` so the model can actually assign to it.
+ */
+export interface ReplyTarget {
+  quotedMessageId: string
+  conversationId: string
+  topicSummary: string | null
+  snippet: string
+}
+
 export interface ExtractionContext {
   newMessage: Message
   recentMessages: Message[]
@@ -110,6 +125,8 @@ export interface ExtractionContext {
   streamType: string
   /** For threads: conversations containing the parent message (in the parent channel) */
   parentMessageConversations?: ConversationSummary[]
+  /** Conversations the new message explicitly quote-replies into (strong continuity signal). */
+  replyTargets?: ReplyTarget[]
   /**
    * Extracted text from attachments, keyed by message id. Includes the new
    * message and any recent/context messages whose attachments produced a
