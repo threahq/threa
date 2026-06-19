@@ -23,7 +23,7 @@ function createResponse(): Response {
   return res
 }
 
-function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknown }) {
+function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknown; sessionStatus?: string }) {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
   spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Pi", archivedAt: null } as never)
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
@@ -31,9 +31,9 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
 
   spyOn(AgentSessionRepository, "findById").mockResolvedValue({
     id: "binv_1",
-    status: AgentSessionStatuses.RUNNING,
+    status: params.sessionStatus ?? AgentSessionStatuses.RUNNING,
   } as never)
-  spyOn(AgentSessionRepository, "completeSession").mockResolvedValue({
+  const completeSession = spyOn(AgentSessionRepository, "completeSession").mockResolvedValue({
     id: "binv_1",
     createdAt: new Date("2026-06-11T09:00:00.000Z"),
     completedAt: new Date("2026-06-11T09:00:05.000Z"),
@@ -128,7 +128,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     body: { instanceId: "inst_1", claimToken: "tok_1", finalMessageMarkdown: "High tide is at 14:32." },
   } as unknown as Request
 
-  return { handlers, req, emitted, appendStep, insertEvent, createMessageInTransaction }
+  return { handlers, req, emitted, appendStep, insertEvent, createMessageInTransaction, completeSession }
 }
 
 describe("completeBotInvocation synthesized-trace floor", () => {
@@ -186,6 +186,29 @@ describe("completeBotInvocation synthesized-trace floor", () => {
     const completedEvent = insertEvent.mock.calls[0]?.[1] as unknown as { payload: Record<string, unknown> }
     expect(completedEvent.payload).toMatchObject({ stepCount: 1 })
     expect(emitted.filter((e) => e.event === "agent_session:step:completed")).toHaveLength(0)
+  })
+})
+
+describe("completeBotInvocation orphan recovery", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  // A long-running turn can be marked FAILED by orphan-session-cleanup's
+  // stale-heartbeat scan while it is in fact alive (the claim is still being
+  // renewed). When it later completes successfully its trace must end COMPLETED,
+  // not stay stuck red — completion recovers the orphan false-positive.
+  it("recovers a FAILED (orphaned) session to completed when the turn finishes", async () => {
+    const { handlers, req, emitted, completeSession } = arrangeCompletion({
+      existingSteps: [{ id: "step_1", stepType: AgentStepTypes.TOOL_CALL }],
+      sessionStatus: AgentSessionStatuses.FAILED,
+    })
+
+    await handlers.completeBotInvocation(req, createResponse())
+
+    expect(completeSession).toHaveBeenCalledTimes(1)
+    expect(completeSession.mock.calls[0]?.[2]).toMatchObject({ recoverFromFailed: true })
+    expect(emitted.some((e) => e.event === "agent_session:completed")).toBe(true)
   })
 })
 

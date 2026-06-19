@@ -1315,6 +1315,15 @@ export function createPublicApiHandlers({
         claimTtlSeconds: data.claimTtlSeconds,
       })
       if (!renewed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      // A claim renewal is the external runtime's liveness signal between trace
+      // steps. Bot invocations reuse the invocation id as the agent session id,
+      // so bump the session heartbeat too — otherwise a long-running turn that
+      // renews its claim but goes longer than orphan-session-cleanup's stale
+      // threshold without POSTing /steps is falsely marked orphaned (FAILED)
+      // while it is in fact alive. Mirrors the enclave's session-heartbeat
+      // callback and the in-process companion's heartbeat interval. No-ops for
+      // session-control invocations, which create no agent session.
+      await AgentSessionRepository.updateHeartbeat(pool, req.params.invocationId)
       res.json({
         data: {
           invocationId: renewed.id,
@@ -1665,12 +1674,19 @@ export function createPublicApiHandlers({
           })
         }
         const session = await AgentSessionRepository.findById(client, completed.id)
-        if (session?.status === AgentSessionStatuses.RUNNING) {
+        // RUNNING is the happy path; FAILED is recoverable here. Reaching this
+        // point means the claim was still valid (findActiveClaimForUpdate above
+        // succeeded), so the only way the session is FAILED is an orphan
+        // false-positive from cleanup's stale-heartbeat scan — the turn really
+        // did finish and send its reply, so finalize it COMPLETED rather than
+        // leaving the trace stuck red.
+        if (session?.status === AgentSessionStatuses.RUNNING || session?.status === AgentSessionStatuses.FAILED) {
           const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
           const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
             lastSeenSequence: latestSequence ?? 0n,
             responseMessageId: message?.id ?? null,
             sentMessageIds: message ? [message.id] : [],
+            recoverFromFailed: true,
           })
           if (finalizedSession) {
             let steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
