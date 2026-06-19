@@ -64,6 +64,8 @@ export {
   type DraftPreviewInput,
 } from "./use-decrypted-draft-previews"
 
+export { useActiveBotPresence, type ActiveBotPresence } from "./use-active-bot-presence"
+
 export { useStreamSocket } from "./use-stream-socket"
 
 export { useMessageQueue } from "./use-message-queue"

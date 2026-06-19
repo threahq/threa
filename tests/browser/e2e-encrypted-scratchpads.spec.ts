@@ -38,7 +38,7 @@ test.describe("E2E encrypted scratchpads", () => {
     // Created and unlocked: the gate yields to the timeline, and the header shows
     // the "Encrypted" pill. The gate's locked copy must NOT be present.
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0)
-    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
 
     // Rename while unlocked → the new name shows in the header. Clicking the
     // header title swaps in an Input with the "Scratchpad name" placeholder.
@@ -82,7 +82,7 @@ test.describe("E2E encrypted scratchpads", () => {
     const trustDevice = setup.locator("#e2e-setup-trust-device")
     if (await trustDevice.isChecked()) await trustDevice.uncheck()
     await setup.getByRole("button", { name: "Enable encryption" }).click()
-    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
 
     await page.reload()
     await expect(page.getByText("This scratchpad is encrypted")).toBeVisible({ timeout: 15_000 })
@@ -98,7 +98,7 @@ test.describe("E2E encrypted scratchpads", () => {
 
     // The deferred create runs after unlock → a fresh encrypted scratchpad opens.
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0, { timeout: 15_000 })
-    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
   })
 
   test("an attached image round-trips: encrypt on send, decrypt-and-render on view", async ({ page }) => {
@@ -119,7 +119,7 @@ test.describe("E2E encrypted scratchpads", () => {
     const trustDevice = setup.locator("#e2e-setup-trust-device")
     if (await trustDevice.isChecked()) await trustDevice.uncheck()
     await setup.getByRole("button", { name: "Enable encryption" }).click()
-    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
 
     // Paste a 1x1 PNG into the composer → it's encrypted client-side and the
     // ciphertext uploaded; the chip confirms the upload completed.
@@ -179,7 +179,7 @@ test.describe("E2E encrypted scratchpads", () => {
     const trustDevice = setup.locator("#e2e-setup-trust-device")
     if (await trustDevice.isChecked()) await trustDevice.uncheck()
     await setup.getByRole("button", { name: "Enable encryption" }).click()
-    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
 
     // Send a message. On the wire this is sealed — the server stores ciphertext
     // plus a zero-width placeholder, never this token — so any later search hit
