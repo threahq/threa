@@ -1577,18 +1577,23 @@ export function StreamContent({
       const target = event.target as HTMLElement | null
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
       if (isInput) return
-      // An open Radix overlay (move dialog, dropdown, popover) consumes Escape to
-      // dismiss itself; it listens in the capture phase and does not stop
-      // propagation, so without this our bubble-phase handler would ALSO mark the
-      // stream read and jump to the tail on the same keypress. The popper wrapper
-      // is only in the DOM while an overlay is open (no forceMount), so this never
-      // suppresses Escape spuriously.
-      if (
+      // An open Radix overlay that owns Escape (move dialog, dropdown, the
+      // reaction popover) listens in the capture phase and does not stop
+      // propagation, so without this our bubble-phase handler would ALSO mark
+      // the stream read and jump to the tail on the same keypress. Dialogs and
+      // menus match by role; other popovers match the popper wrapper (only in
+      // the DOM while open — no forceMount). Hover-only tooltips render in a
+      // popper wrapper too but never own Escape, so a tooltip showing on a
+      // hovered message must not block the shortcut — skip wrappers whose
+      // content is a tooltip.
+      const overlayOwnsEscape =
         document.querySelector(
-          '[role="dialog"][data-state="open"],[role="alertdialog"][data-state="open"],[role="menu"][data-state="open"],[data-radix-popper-content-wrapper]'
+          '[role="dialog"][data-state="open"],[role="alertdialog"][data-state="open"],[role="menu"][data-state="open"]'
+        ) != null ||
+        Array.from(document.querySelectorAll("[data-radix-popper-content-wrapper]")).some(
+          (wrapper) => wrapper.querySelector('[role="tooltip"]') == null
         )
-      )
-        return
+      if (overlayOwnsEscape) return
       const lastLoadedEventId = lastLoadedEventIdRef.current
       if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
       dismissUnreadDivider()
