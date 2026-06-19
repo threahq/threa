@@ -511,22 +511,33 @@ async function createBik(): Promise<BotIdentityKey> {
  * Idempotent and cheap after the first call. A corrupt file falls back to a
  * fresh key rather than wedging — the owner just re-invites against the new id.
  */
+let bikInFlight: Promise<BotIdentityKey> | undefined
+
 async function ensureBik(): Promise<BotIdentityKey> {
   if (bik) return bik
-  const loaded = loadPersistedBik()
-  if (loaded) {
-    try {
-      bik = {
-        publicKeyId: loaded.publicKeyId,
-        publicKeyBase64: loaded.publicKey,
-        privateKey: await importRecipientPrivateKey(base64ToBytes(loaded.privateKey)),
+  // Serialize first-time creation: two concurrent callers (a heartbeat and the
+  // bot:hello, say) would otherwise each mint a keypair past the `if (bik)` check
+  // and register a different one — orphaning whichever the owner wrapped to.
+  // Share one in-flight promise so only one key is ever created; cleared on
+  // settle so a transient failure retries on the next call.
+  bikInFlight ??= (async () => {
+    const loaded = loadPersistedBik()
+    if (loaded) {
+      try {
+        return {
+          publicKeyId: loaded.publicKeyId,
+          publicKeyBase64: loaded.publicKey,
+          privateKey: await importRecipientPrivateKey(base64ToBytes(loaded.privateKey)),
+        }
+      } catch (error) {
+        console.error(`Failed to import BIK from ${BIK_PATH}; generating a fresh one: ${String(error)}`)
       }
-      return bik
-    } catch (error) {
-      console.error(`Failed to import BIK from ${BIK_PATH}; generating a fresh one: ${String(error)}`)
     }
-  }
-  bik = await createBik()
+    return createBik()
+  })().finally(() => {
+    bikInFlight = undefined
+  })
+  bik = await bikInFlight
   return bik
 }
 
@@ -2008,12 +2019,15 @@ async function completeInvocationWithMarkdown(
 async function completeSealedInvocation(invocation: ClaimedInvocation, finalMessageMarkdown: string): Promise<void> {
   if (!config || !invocation.sealing) return
   const { markdown, paths } = extractAttachmentDirectives(finalMessageMarkdown.trim())
-  if (markdown === NO_RESPONSE_MARKER || markdown.length === 0) {
+  const unsupportedAttachments = paths.length > 0
+  // Only a genuine empty turn is a no-response. An attachment-only reply still
+  // gets sealed so the owner hears why nothing was attached (not silent).
+  if (markdown === NO_RESPONSE_MARKER || (markdown.length === 0 && !unsupportedAttachments)) {
     await postSealedComplete(invocation, { noResponse: true })
     return
   }
-  const note = paths.length > 0 ? "\n\n_(Attachments aren't supported in encrypted scratchpads yet.)_" : ""
-  const reply = await sealReplyWith(invocation.sealing, `${markdown}${note}`)
+  const note = unsupportedAttachments ? "_(Attachments aren't supported in encrypted scratchpads yet.)_" : ""
+  const reply = await sealReplyWith(invocation.sealing, [markdown, note].filter(Boolean).join("\n\n"))
   await postSealedComplete(invocation, { reply })
 }
 
@@ -2051,7 +2065,11 @@ async function buildInvocationPrompt(
       `Remote Threa invocation ${invocation.id}.`,
       `Source message: ${invocation.sourceMessageId}`,
       "Respond normally; the extension will post your final answer back to Threa.",
-      "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
+      // Sealed completion strips `THREA_ATTACH:` (attachment bytes can't ride the
+      // E2E path yet), so don't advertise it on a sealed turn.
+      invocation.sealing
+        ? "This is an encrypted scratchpad; file attachments aren't supported yet — describe any local files in your reply instead."
+        : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
       invocation.promptMarkdown,

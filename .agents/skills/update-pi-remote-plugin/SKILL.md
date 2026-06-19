@@ -18,7 +18,7 @@ The local install target for real use is typically a package directory:
 
 Do not edit the installed copy first. Update the repo copy, verify it, then copy the package directory/install dependencies/reload locally if requested.
 
-This extension is **self-contained**, not a Bun workspace member (like its sibling `extensions/claude-code-remote`). It declares its own `dependencies` (`socket.io-client`, `@hpke/core`, `@hpke/dhkem-x25519`, `ulid`) and commits its own `bun.lock`, because at the user's machine it is installed standalone (`cp` + `npm install`) where the private `@threa/*` workspace packages don't resolve. Run `bun install` from `extensions/pi-remote/` after changing deps. It has **no typecheck script** — `threa-remote.ts` imports types from the global `@earendil-works/pi-coding-agent`, which isn't an installed dependency, so `tsc` can't resolve it in-repo (`bun test` runs fine because type-only imports are erased).
+This extension is **self-contained**, not a Bun workspace member (like its sibling `extensions/claude-code-remote`). It declares its own `dependencies` (`socket.io-client`, `@hpke/core`, `@hpke/dhkem-x25519`, `ulid`) and commits its own `bun.lock`, because at the user's machine it is installed standalone (copied, then deps installed per the extension README) where the private `@threa/*` workspace packages don't resolve. In-repo, run `bun install` from `extensions/pi-remote/` after changing deps. It has **no typecheck script** — `threa-remote.ts` imports types from the global `@earendil-works/pi-coding-agent`, which isn't an installed dependency, so `tsc` can't resolve it in-repo (`bun test` runs fine because type-only imports are erased).
 
 ## Sealed (E2E) external-bot path
 
