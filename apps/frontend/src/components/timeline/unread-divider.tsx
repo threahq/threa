@@ -1,8 +1,9 @@
 interface UnreadDividerProps {
-  isFading?: boolean
+  /** Once dimmed the line settles from red to muted gray but stays in place. */
+  isDimmed?: boolean
 }
 
-export function UnreadDivider({ isFading }: UnreadDividerProps) {
+export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
   return (
     <div
       // The line sits in the gap *above* the first-unread item. With
@@ -11,13 +12,17 @@ export function UnreadDivider({ isFading }: UnreadDividerProps) {
       // gap (heads `pt-3`, agent cards `py-3` — both 12px). A negative offset
       // would push the line up into the previous message's last line, since the
       // only clearance above the wrapper edge is the previous row's 2px `pb-0.5`.
-      className={`absolute left-0 right-0 top-1.5 -translate-y-1/2 z-10 flex items-center gap-3 pointer-events-none transition-opacity duration-500 ${
-        isFading ? "opacity-0" : "opacity-100"
+      //
+      // The divider never unmounts within a reading session: it transitions
+      // color (red → muted) rather than opacity, so it keeps reserving its row
+      // and never shifts layout when it settles (INV-21).
+      className={`absolute left-0 right-0 top-1.5 -translate-y-1/2 z-10 flex items-center gap-3 pointer-events-none transition-colors duration-500 ${
+        isDimmed ? "text-muted-foreground" : "text-destructive"
       }`}
     >
-      <div className="flex-1 border-t border-destructive" />
-      <span className="text-xs font-medium text-destructive bg-background px-2">New</span>
-      <div className="flex-1 border-t border-destructive" />
+      <div className="flex-1 border-t border-current" />
+      <span className="text-xs font-medium bg-background px-2">New</span>
+      <div className="flex-1 border-t border-current" />
     </div>
   )
 }

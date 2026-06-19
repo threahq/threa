@@ -24,39 +24,65 @@ function makeMessageEvent(id: string, actorId: string) {
 }
 
 describe("useUnreadDivider", () => {
-  it("clears the displayed divider when the stream becomes read after mount", async () => {
+  it("keeps the divider in place after the stream becomes read, then dims it", async () => {
+    vi.useFakeTimers()
+    try {
+      const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
+
+      const { result, rerender } = renderHook(
+        ({ lastReadEventId }: { lastReadEventId: string | null | undefined }) =>
+          useUnreadDivider({
+            events,
+            lastReadEventId,
+            currentUserId: "me",
+            streamId: "stream_1",
+          }),
+        {
+          initialProps: { lastReadEventId: null as string | null | undefined },
+        }
+      )
+
+      rerender({ lastReadEventId: null })
+      expect(result.current.dividerEventId).toBe("event_1")
+      expect(result.current.isDimmed).toBe(false)
+
+      // Auto-mark-as-read clears the live unread, but the divider stays latched
+      // at its position for the rest of the reading session.
+      rerender({ lastReadEventId: "event_2" })
+      expect(result.current.firstUnreadEventId).toBeUndefined()
+      expect(result.current.dividerEventId).toBe("event_1")
+      expect(result.current.isDimmed).toBe(false)
+
+      // After the dim delay it settles to gray but remains present.
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      expect(result.current.dividerEventId).toBe("event_1")
+      expect(result.current.isDimmed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("resets the divider when switching streams", () => {
     const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
 
     const { result, rerender } = renderHook(
-      ({ lastReadEventId }: { lastReadEventId: string | null | undefined }) =>
+      ({ streamId }: { streamId: string }) =>
         useUnreadDivider({
           events,
-          lastReadEventId,
+          lastReadEventId: null,
           currentUserId: "me",
-          streamId: "stream_1",
+          streamId,
         }),
-      {
-        initialProps: { lastReadEventId: null as string | null | undefined },
-      }
+      { initialProps: { streamId: "stream_1" } }
     )
 
-    await act(async () => {
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    rerender({ lastReadEventId: null })
-    await act(async () => {
-      await Promise.resolve()
-    })
     expect(result.current.dividerEventId).toBe("event_1")
 
-    rerender({ lastReadEventId: "event_2" })
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(result.current.firstUnreadEventId).toBeUndefined()
+    rerender({ streamId: "stream_2" })
     expect(result.current.dividerEventId).toBeUndefined()
+    expect(result.current.isDimmed).toBe(false)
   })
 
   it("latches off scroll-to-first-unread once a stream is deep-linked, even after the ?m= param clears", () => {

@@ -36,7 +36,7 @@ interface EventListProps {
   streamId: string
   highlightMessageId?: string | null
   firstUnreadEventId?: string
-  isDividerFading?: boolean
+  isDividerDimmed?: boolean
   agentActivity?: Map<string, MessageAgentActivity>
   /** Hide session group cards (used in channels where responses go to threads) */
   hideSessionCards?: boolean
@@ -516,7 +516,7 @@ export interface TimelineItemRenderContext {
   streamId: string
   highlightMessageId?: string | null
   firstUnreadEventId?: string
-  isDividerFading?: boolean
+  isDividerDimmed?: boolean
   agentActivity?: Map<string, MessageAgentActivity>
   hideSessionCards?: boolean
   newMessageIds?: Set<string>
@@ -597,7 +597,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
 
   return (
     <>
-      {showUnreadDivider && <UnreadDivider isFading={ctx.isDividerFading} />}
+      {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
       {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
         <div className="px-3 sm:px-6">
@@ -731,7 +731,7 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     p.workspaceId !== n.workspaceId ||
     p.streamId !== n.streamId ||
     p.hideSessionCards !== n.hideSessionCards ||
-    p.isDividerFading !== n.isDividerFading ||
+    p.isDividerDimmed !== n.isDividerDimmed ||
     p.onAbortResearch !== n.onAbortResearch
   ) {
     return false
@@ -802,7 +802,7 @@ export function EventList({
   streamId,
   highlightMessageId,
   firstUnreadEventId,
-  isDividerFading,
+  isDividerDimmed,
   agentActivity,
   hideSessionCards,
   newMessageIds,
@@ -885,7 +885,7 @@ export function EventList({
     streamId,
     highlightMessageId,
     firstUnreadEventId,
-    isDividerFading,
+    isDividerDimmed,
     agentActivity,
     hideSessionCards,
     newMessageIds,
