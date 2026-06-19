@@ -7,6 +7,14 @@ import { SW_MSG_CLEAR_NOTIFICATIONS } from "../lib/sw-messages"
 interface UseAutoMarkAsReadOptions {
   enabled?: boolean
   debounceMs?: number
+  /**
+   * When true, `lastEventId` is the bottom of what the viewer has seen, not the
+   * tail of the loaded window — unread messages remain below the fold. The read
+   * pointer advances to `lastEventId`, but the unread badge is NOT optimistically
+   * zeroed; the server `stream:read` round-trip sets the true remaining count
+   * (Slack-style progressive read). Defaults false: mark fully read as before.
+   */
+  partial?: boolean
 }
 
 /**
@@ -16,6 +24,10 @@ interface UseAutoMarkAsReadOptions {
  * Checks unread counts, mention counts, AND activity counts — the mark-as-read API
  * clears all of these, so this must fire when any is elevated (e.g., activity arrives
  * via the outbox handler while viewing the stream).
+ *
+ * `lastEventId` is the furthest event the viewer has actually scrolled into
+ * view (see `useLastSeenEvent`), not the last loaded event — read state never
+ * runs ahead of what the user has seen.
  */
 export function useAutoMarkAsRead(
   workspaceId: string,
@@ -23,18 +35,24 @@ export function useAutoMarkAsRead(
   lastEventId: string | undefined,
   options: UseAutoMarkAsReadOptions = {}
 ) {
-  const { enabled = true, debounceMs = 500 } = options
+  const { enabled = true, debounceMs = 500, partial = false } = options
   const { markAsRead, getUnreadCount } = useUnreadCounts(workspaceId)
   const { getActivityCount } = useActivityCounts(workspaceId)
   const { isActive } = usePageActivity()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastMarkedRef = useRef<string | null>(null)
+  // Track the partial-ness of the last mark so a partial→full transition at the
+  // SAME event (viewer scrolled partway, then on to the tail) re-fires to clear
+  // the badge optimistically instead of waiting on the server round-trip.
+  const lastMarkedPartialRef = useRef<boolean | null>(null)
 
   // Use refs to avoid stale closure in setTimeout callback
   const streamIdRef = useRef(streamId)
   const lastEventIdRef = useRef(lastEventId)
+  const partialRef = useRef(partial)
   streamIdRef.current = streamId
   lastEventIdRef.current = lastEventId
+  partialRef.current = partial
 
   useEffect(() => {
     if (!enabled || !lastEventId || !isActive) return
@@ -44,11 +62,12 @@ export function useAutoMarkAsRead(
 
     if (unreadCount === 0 && activityCount === 0) return
 
-    // Skip if already marked this event AND no pending activities to clear.
-    // Activities can arrive via activity:created while we're viewing the stream
-    // (the outbox handler is async), so we must re-fire markAsRead to clear
-    // them even if lastEventId hasn't changed.
-    if (lastMarkedRef.current === lastEventId && activityCount === 0) return
+    // Skip if already marked this event at the same partial-ness AND no pending
+    // activities to clear. Activities can arrive via activity:created while we're
+    // viewing the stream (the outbox handler is async), so we must re-fire to
+    // clear them even if lastEventId hasn't changed; likewise a partial→full
+    // transition at the same event must re-fire to clear the badge.
+    if (lastMarkedRef.current === lastEventId && lastMarkedPartialRef.current === partial && activityCount === 0) return
 
     if (timerRef.current) {
       clearTimeout(timerRef.current)
@@ -60,8 +79,9 @@ export function useAutoMarkAsRead(
       const currentStreamId = streamIdRef.current
       const currentLastEventId = lastEventIdRef.current
       if (currentLastEventId) {
-        markAsRead(currentStreamId, currentLastEventId)
+        markAsRead(currentStreamId, currentLastEventId, { partial: partialRef.current })
         lastMarkedRef.current = currentLastEventId
+        lastMarkedPartialRef.current = partialRef.current
         // Dismiss any push notification for this stream — the user is reading it
         navigator.serviceWorker?.controller?.postMessage({
           type: SW_MSG_CLEAR_NOTIFICATIONS,
@@ -75,5 +95,5 @@ export function useAutoMarkAsRead(
         clearTimeout(timerRef.current)
       }
     }
-  }, [enabled, streamId, lastEventId, debounceMs, markAsRead, getUnreadCount, getActivityCount, isActive])
+  }, [enabled, streamId, lastEventId, partial, debounceMs, markAsRead, getUnreadCount, getActivityCount, isActive])
 }

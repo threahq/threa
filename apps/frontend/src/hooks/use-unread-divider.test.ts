@@ -111,6 +111,25 @@ describe("useUnreadDivider", () => {
     expect(result.current.dividerEventId).toBe("event_9")
   })
 
+  it("hides the latched divider once dismissed, and re-shows it on a fresh stream", () => {
+    const { result, rerender } = renderHook(
+      ({ streamId, events }: { streamId: string; events: ReturnType<typeof makeMessageEvent>[] }) =>
+        useUnreadDivider({ events, lastReadEventId: null, currentUserId: "me", streamId, readStateResolved: true }),
+      { initialProps: { streamId: "stream_1", events: [makeMessageEvent("event_1", "other")] } }
+    )
+
+    expect(result.current.dividerEventId).toBe("event_1")
+
+    // Escape "escapes the unread block".
+    act(() => result.current.dismiss())
+    expect(result.current.dividerEventId).toBeUndefined()
+
+    // A different stream with unread shows its divider again (dismissal is
+    // scoped to the stream it happened in).
+    rerender({ streamId: "stream_2", events: [makeMessageEvent("event_9", "other")] })
+    expect(result.current.dividerEventId).toBe("event_9")
+  })
+
   it("shows no divider when switching to an already-read stream", () => {
     const { result, rerender } = renderHook(
       ({

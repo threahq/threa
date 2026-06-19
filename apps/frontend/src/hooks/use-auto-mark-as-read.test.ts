@@ -84,7 +84,7 @@ describe("useAutoMarkAsRead", () => {
       vi.advanceTimersByTime(500)
     })
 
-    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123")
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: false })
     expect(mockPostMessage).toHaveBeenCalledWith({
       type: SW_MSG_CLEAR_NOTIFICATIONS,
       streamId: "stream_123",
@@ -155,10 +155,44 @@ describe("useAutoMarkAsRead", () => {
       vi.advanceTimersByTime(500)
     })
 
-    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123")
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: false })
     expect(mockPostMessage).toHaveBeenCalledWith({
       type: SW_MSG_CLEAR_NOTIFICATIONS,
       streamId: "stream_123",
     })
+  })
+
+  it("passes partial through so a mid-window read does not zero the badge", () => {
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123", { partial: true }))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: true })
+  })
+
+  it("re-fires a full mark when partial flips to false at the same event (scrolled on to the tail)", () => {
+    const { rerender } = renderHook(
+      ({ partial }) => useAutoMarkAsRead("ws_123", "stream_123", "event_123", { partial }),
+      {
+        initialProps: { partial: true },
+      }
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: true })
+
+    rerender({ partial: false })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    // Same event, now full — must re-fire so the badge clears optimistically
+    // rather than waiting on the server round-trip.
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: false })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })
 })

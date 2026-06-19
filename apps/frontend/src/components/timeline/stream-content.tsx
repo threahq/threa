@@ -12,7 +12,10 @@ import {
   useStreamBootstrap,
   useWorkspaceUserId,
   useAutoMarkAsRead,
+  useLastSeenEvent,
+  useUnreadCounts,
   useUnreadDivider,
+  useIsMobile,
   useNewMessageIndicator,
   useAgentActivity,
   useAbortResearch,
@@ -61,6 +64,7 @@ import {
   itemDayStartMs,
   findFirstMessageId,
   findMessageItemIndex,
+  findEventItemIndex,
   getTimelineItemKey,
   filterVisibleItems,
   OLDER_SKELETON_ITEMS,
@@ -970,6 +974,25 @@ export function StreamContent({
   // (new message, link preview, virtua measuring) must not disarm follow.
   const userInteractedAtRef = useRef(0)
 
+  // Initial scroll target for the land-at-first-unread path. Updated each render
+  // once the unread divider has computed (below), read lazily by
+  // useTimelineScroll's cold-load layout effect. A ref because the divider is
+  // computed after this call; the getter is stable so it doesn't churn the
+  // effect.
+  const initialUnreadIndexRef = useRef<number | null>(null)
+  const getInitialScrollIndex = useCallback(() => initialUnreadIndexRef.current, [])
+
+  // The cold-load scroll waits for the read position so it lands on first-unread
+  // vs the bottom only once. This timeout is the floor: if the read position
+  // never resolves (e.g. a non-member preview with no membership row), land at
+  // the bottom anyway rather than hold the skeleton mask up forever.
+  const [readGateTimedOut, setReadGateTimedOut] = useState(false)
+  useEffect(() => {
+    setReadGateTimedOut(false)
+    const timer = setTimeout(() => setReadGateTimedOut(true), 1000)
+    return () => clearTimeout(timer)
+  }, [streamId])
+
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
@@ -990,6 +1013,10 @@ export function StreamContent({
     skipInitialScroll,
     isJumpMode,
     userInteractedAtRef,
+    // Wait for the read position before the cold-load scroll decides
+    // unread-vs-bottom; only the virtualized timeline lands on first unread.
+    readStateResolved: !useVirtualized || lastReadEventId !== undefined || readGateTimedOut,
+    getInitialScrollIndex: useVirtualized ? getInitialScrollIndex : undefined,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the
@@ -1471,9 +1498,22 @@ export function StreamContent({
     clearSearch()
   }, [streamId, exitJumpMode, clearSearch])
 
-  // Auto-mark stream as read when viewing
-  const lastEventId = events.length > 0 ? events[events.length - 1].id : undefined
-  useAutoMarkAsRead(workspaceId, streamId, lastEventId, { enabled: !isDraft && !isLoading && !isJumpMode })
+  // Auto-mark stream as read when viewing. Read state never runs ahead of what
+  // the viewer has actually scrolled into view: mark up to the bottom-most seen
+  // row (Slack-style progressive read), not the tail of the loaded window. When
+  // the viewer is not at the live tail the mark is partial — the badge keeps the
+  // unread still below the fold (see useAutoMarkAsRead / markAsRead partial).
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
+  const { lastSeenEventId, atLastRow } = useLastSeenEvent({
+    scrollContainerRef,
+    events: displayEvents,
+    streamId,
+    enabled: autoMarkEnabled,
+  })
+  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
+
+  const isMobile = useIsMobile()
+  const { markAsRead } = useUnreadCounts(workspaceId)
 
   // Track live-arriving messages from other users for brief "new" indicator.
   const newMessageIds = useNewMessageIndicator(events, currentWorkspaceUserId ?? undefined, streamId, lastReadEventId)
@@ -1483,13 +1523,22 @@ export function StreamContent({
   // hide from this stream's render (e.g. thread membership rows) — otherwise
   // the divider can target an event id that never matches a rendered row and
   // silently fails to show.
-  const { dividerEventId, isDimmed: isDividerDimmed } = useUnreadDivider({
+  const {
+    firstUnreadEventId,
+    dividerEventId,
+    isDimmed: isDividerDimmed,
+    dismiss: dismissUnreadDivider,
+  } = useUnreadDivider({
     events: displayEvents,
     lastReadEventId,
     currentUserId: currentWorkspaceUserId ?? undefined,
     streamId,
     isLoading,
     highlightMessageId,
+    // The virtualized timeline lands on first unread through useTimelineScroll's
+    // cold-load settle (precise on an unmeasured list); only the plain thread
+    // scroller still needs the divider's own scrollIntoView.
+    scrollToUnread: !useVirtualized,
     // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
     // while the read sources (stream row / membership) are still hydrating. Gate
     // on that so a not-yet-known read position can't be read as "all unread" and
@@ -1498,6 +1547,54 @@ export function StreamContent({
     // stale null while the authoritative membership value is still loading.
     readStateResolved: lastReadEventId !== undefined,
   })
+
+  // Feed the cold-load landing target: the item index of the first unread row,
+  // or null to land at the bottom. Read lazily by useTimelineScroll's layout
+  // effect once read state resolves. A deep-link (?m=) drives its own scroll, so
+  // never override it with the unread target.
+  initialUnreadIndexRef.current =
+    firstUnreadEventId && !highlightMessageId ? findEventItemIndex(visibleItems, firstUnreadEventId) : null
+
+  // Escape "escapes the unread block" (desktop, Slack's Esc-marks-channel-read):
+  // mark the stream fully read, dismiss the persistent unread divider, and
+  // resume tailing the live bottom. Scoped to when the divider is actually shown
+  // so it never swallows Escape elsewhere; the composer/editor keep their own
+  // Escape via the isInput guard, and search owns Escape while open.
+  useEffect(() => {
+    if (isMobile || isDraft || !dividerEventId || isSearchOpen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      const target = event.target as HTMLElement | null
+      const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
+      if (isInput) return
+      // An open Radix overlay (move dialog, dropdown, popover) consumes Escape to
+      // dismiss itself; it listens in the capture phase and does not stop
+      // propagation, so without this our bubble-phase handler would ALSO mark the
+      // stream read and jump to the tail on the same keypress.
+      if (
+        document.querySelector(
+          '[role="dialog"][data-state="open"],[role="alertdialog"][data-state="open"],[role="menu"][data-state="open"],[data-radix-popper-content-wrapper]'
+        )
+      )
+        return
+      const lastLoadedEventId = events.length > 0 ? events[events.length - 1].id : undefined
+      if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
+      dismissUnreadDivider()
+      scrollToBottom({ force: true })
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [
+    isMobile,
+    isDraft,
+    dividerEventId,
+    isSearchOpen,
+    events,
+    markAsRead,
+    streamId,
+    dismissUnreadDivider,
+    scrollToBottom,
+  ])
 
   const queryClient = useQueryClient()
   const isPublicChannel = stream?.type === StreamTypes.CHANNEL && stream?.visibility === Visibilities.PUBLIC

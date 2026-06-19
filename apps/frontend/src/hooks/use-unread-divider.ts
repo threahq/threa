@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import type { StreamEvent } from "@threa/types"
 import { useScrollToElement } from "./use-scroll-to-element"
 
@@ -38,6 +38,11 @@ interface UseUnreadDividerResult {
   dividerEventId: string | undefined
   /** Whether the divider has settled to its muted (gray) resting state */
   isDimmed: boolean
+  /**
+   * Dismiss the latched divider for the rest of this reading session (Escape
+   * "escapes the unread block"). Stays dismissed until the stream changes.
+   */
+  dismiss: () => void
 }
 
 /**
@@ -96,7 +101,13 @@ export function useUnreadDivider({
   if (!latchRef.current.eventId && firstUnreadEventId) {
     latchRef.current.eventId = firstUnreadEventId
   }
-  const displayedUnreadId = latchRef.current.eventId
+
+  // Explicit dismissal (Escape). A latched divider has no clear-on-read, so a
+  // separate flag overrides it; reset on stream change so re-entering a stream
+  // with unread shows the divider again.
+  const [dismissedStreamId, setDismissedStreamId] = useState<string | undefined>(undefined)
+  const dismiss = useCallback(() => setDismissedStreamId(streamId), [streamId])
+  const displayedUnreadId = dismissedStreamId === streamId ? undefined : latchRef.current.eventId
 
   // Hold the divider red on (re)latch, then settle it to gray after a few
   // seconds. Keyed on the latched id so an auto-mark-as-read that clears the
@@ -134,5 +145,6 @@ export function useUnreadDivider({
     firstUnreadEventId,
     dividerEventId: displayedUnreadId,
     isDimmed,
+    dismiss,
   }
 }
