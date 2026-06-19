@@ -480,9 +480,20 @@ function loadPersistedBik(): PersistedBik | undefined {
 }
 
 async function createBik(): Promise<BotIdentityKey> {
-  const pair = await generateKeyPair()
-  const publicKey = await exportPublicKey(pair.publicKey)
-  const privateKey = await exportPrivateKey(pair.privateKey)
+  let pair: CryptoKeyPair
+  let publicKey: Uint8Array
+  let privateKey: Uint8Array
+  try {
+    pair = await generateKeyPair()
+    publicKey = await exportPublicKey(pair.publicKey)
+    privateKey = await exportPrivateKey(pair.privateKey)
+  } catch (error) {
+    // Catastrophic (WebCrypto without X25519, say): no BIK, so the bot runs
+    // plaintext-only. Log loudly (INV-11) — a silent failure here would leave
+    // sealed turns mysteriously unservable with no clue why.
+    console.error(`Threa remote: failed to generate a BIK; sealed scratchpads are unavailable: ${String(error)}`)
+    throw error
+  }
   const record: PersistedBik = {
     publicKeyId: `bik_${ulid()}`,
     publicKey: bytesToBase64(publicKey),
@@ -491,10 +502,7 @@ async function createBik(): Promise<BotIdentityKey> {
   // Persist best-effort: a write failure (disk full, permissions) must not stop
   // the bot from using this key for the session — it's still registered on
   // hello/presence and serves sealed turns; only restart-stability (a `publicKeyId`
-  // that survives a restart) is lost. Logged, never silent, so the cause is
-  // diagnosable. `ensureBik` therefore only fails if key *generation* itself does,
-  // in which case the bot runs plaintext-only (no BIK on presence), which is the
-  // correct degradation.
+  // that survives a restart) is lost.
   try {
     mkdirSync(dirname(BIK_PATH), { recursive: true })
     writeFileSync(BIK_PATH, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
