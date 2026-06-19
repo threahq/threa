@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import type { Socket } from "socket.io-client"
 import { QueryClient } from "@tanstack/react-query"
-import { SyncEngine, isSyncEngineCurrent } from "./sync-engine"
+import { SyncEngine, isSyncEngineCurrent, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -983,6 +983,48 @@ describe("SyncEngine sync cursor (active mode)", () => {
     // connect one (so nothing from the pruned span is silently skipped).
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("500"))
     await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
+    engine.destroy()
+  })
+
+  it("collapses a large catch-up gap into one full bootstrap instead of replaying entry by entry", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // A reconnect after a long offline window: the first page comes back at the
+    // collapse threshold, so the engine heals the whole workspace with one
+    // atomic snapshot (cursor jumps to head, a fresh bootstrap fires) rather than
+    // dispatching every missed entry through the live handlers and trickling the
+    // sidebar/badges in one by one.
+    const bigPage = Array.from({ length: CATCHUP_COLLAPSE_THRESHOLD }, (_, i) =>
+      userAddedEntry(String(11 + i), `user_${i}`)
+    )
+    const catchUp = vi.fn().mockResolvedValue({ entries: bigPage, head: "5000" })
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("5000"))
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
+    // The big page's entries were NOT replayed one by one — collapsing skips the
+    // per-entry handler dispatch entirely, so no handler IDB write landed.
+    expect(await db.workspaceUsers.get("user_0")).toBeUndefined()
+    engine.destroy()
+  })
+
+  it("replays a small catch-up gap through the live handlers without collapsing", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // A handful of missed entries stays on the per-entry replay path — cheap, and
+    // it avoids an extra full-snapshot fetch. The bootstrap is only the connect
+    // one (no collapse fallback), and the entries' handler writes land.
+    const smallPage = Array.from({ length: 3 }, (_, i) => userAddedEntry(String(11 + i), `small_user_${i}`))
+    const catchUp = vi.fn().mockResolvedValueOnce({ entries: smallPage, head: "13" }).mockResolvedValue(emptyPage("13"))
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("small_user_2")).toBeDefined())
+    expect(engine.getSyncCursor()).toBe("13")
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
     engine.destroy()
   })
 

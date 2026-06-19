@@ -80,6 +80,24 @@ const MAX_CATCHUP_PAGES = 20
 const CATCHUP_PAGE_LIMIT = 500
 
 /**
+ * Above this many missed entries on the first catch-up page, heal the whole
+ * workspace with one atomic snapshot instead of replaying the gap entry by
+ * entry. Replay drives the live handlers per entry — each missed stream, draft,
+ * membership and read advances its own cache + IDB write and re-renders the
+ * sidebar/badges alone — so a long offline window (a laptop asleep for days)
+ * visibly trickles streams in, archives them, flips unread counts and flies
+ * drafts in and out one at a time over many seconds. The forced full bootstrap
+ * applies the entire workspace in a single settle (one IDB transaction + one
+ * `setQueryData`), so a large gap lands at its final state at once.
+ *
+ * Tuned to separate a brief blip (a handful of entries — cheap to replay, no
+ * extra full-snapshot fetch) from a real catch-up. A page at or below
+ * `CATCHUP_PAGE_LIMIT` keeps the existing per-entry replay (with counters and
+ * previews still coalesced by the catch-up batch).
+ */
+export const CATCHUP_COLLAPSE_THRESHOLD = 200
+
+/**
  * How long a heartbeat-detected lag must persist before it triggers catch-up.
  * The server reads the head from the log and sequence-before-emit means the
  * matching emits can still be in flight when the heartbeat lands — during
@@ -1198,6 +1216,31 @@ export class SyncEngine {
           // drain (truncation by MAX_CATCHUP_PAGES is healed the same way).
           this.noteSeenHead(response.head)
           break
+        }
+
+        // A large gap heals faster and without the trickle by collapsing to one
+        // atomic snapshot rather than replaying every missed entry through the
+        // live handlers (see CATCHUP_COLLAPSE_THRESHOLD). Only the FIRST page
+        // decides (pages === 0) — once entries have been applied, finish the
+        // replay rather than re-fetch and re-apply. The mechanics mirror the
+        // below-floor branch exactly: jump the cursor to head (the snapshot owns
+        // everything <= head), record the head as seen, bound the resume splice
+        // at head, and force a full bootstrap. Read-before-stamp holds — head was
+        // read before the bootstrap fires, so the snapshot is a lower bound and
+        // the splice drops only buffered events the snapshot already covers.
+        if (pages === 0 && response.entries.length >= CATCHUP_COLLAPSE_THRESHOLD) {
+          console.info("Sync catch-up gap large; collapsing to a full bootstrap", {
+            workspaceId: this.workspaceId,
+            trigger,
+            cursorBefore,
+            head: response.head,
+            firstPageEntries: response.entries.length,
+          })
+          cursorStore.advance(response.head)
+          this.noteSeenHead(response.head)
+          appliedThrough = BigInt(response.head)
+          void this.runBootstrap(true, { forceFull: true })
+          return
         }
 
         pages += 1
