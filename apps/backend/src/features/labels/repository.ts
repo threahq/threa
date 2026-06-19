@@ -123,11 +123,17 @@ export const LabelRepository = {
       )
       ON CONFLICT (workspace_id, creator_user_id, slug) WHERE archived_at IS NULL
       DO UPDATE SET
-        name = EXCLUDED.name,
+        -- name is the label's identity (its slug derives from it), so a
+        -- slug-equivalent caller addressing an existing label must not silently
+        -- rename it: only appearance fields the caller explicitly set change, and
+        -- updated_at advances only when one actually does. Renames go through
+        -- updateLabel by id.
         color = CASE WHEN ${params.overwriteColor} THEN EXCLUDED.color ELSE labels.color END,
         emoji = CASE WHEN ${params.overwriteEmoji} THEN EXCLUDED.emoji ELSE labels.emoji END,
         description = CASE WHEN ${params.overwriteDescription} THEN EXCLUDED.description ELSE labels.description END,
-        updated_at = NOW()
+        updated_at = CASE
+          WHEN ${params.overwriteColor} OR ${params.overwriteEmoji} OR ${params.overwriteDescription}
+          THEN NOW() ELSE labels.updated_at END
       RETURNING ${sql.raw(LABEL_COLUMNS)}, (xmax = 0) AS inserted
     `)
     const row = result.rows[0]!
