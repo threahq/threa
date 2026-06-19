@@ -5,7 +5,9 @@ import {
   computeScrollEdges,
   shouldPrefetchOlderHistory,
   shouldShowOlderSkeletons,
+  resolveDateJumpAnchor,
 } from "./stream-content"
+import { localStartOfDayMs } from "@/lib/dates"
 
 const DEADLINE = 4000
 
@@ -296,5 +298,82 @@ describe("shouldShowOlderSkeletons", () => {
         appearDelayElapsed: true,
       })
     ).toBe(false)
+  })
+})
+
+describe("resolveDateJumpAnchor", () => {
+  // Build a message event whose local day is `daysFromTarget` away from a fixed
+  // reference day, using mid-day timestamps so timezone never straddles a day
+  // boundary. The target day is the reference day itself.
+  const REF = new Date(2026, 0, 15, 12, 0, 0) // Jan 15 2026, noon local
+  const targetDayMs = localStartOfDayMs(REF)
+  const dayMs = 24 * 60 * 60 * 1000
+  const msg = (id: string, daysFromTarget: number) => ({
+    eventType: "message_created" as const,
+    createdAt: new Date(targetDayMs + daysFromTarget * dayMs + 12 * 60 * 60 * 1000).toISOString(),
+    payload: { messageId: id },
+  })
+
+  it("scrolls directly when a loaded message sits strictly before the target day", () => {
+    // Window straddles the day: Jan 14 is before, Jan 15/16 are on-or-after, so
+    // the first on-or-after match is the genuine anchor.
+    const events = [msg("m_before", -1), msg("m_anchor", 0), msg("m_after", 1)]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBe("m_anchor")
+  })
+
+  it("fetches when every loaded message is newer than the target and older history exists", () => {
+    // The regression: parked at the live tail (all messages on/after the target),
+    // a find-first match would return the oldest loaded row. Must fetch instead.
+    const events = [msg("m_oldest_loaded", 5), msg("m_mid", 6), msg("m_newest", 7)]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
+  })
+
+  it("scrolls to the first message when the window is the start of the stream (no older history)", () => {
+    // No older events to fetch — the first loaded message IS the earliest
+    // on-or-after the target, even though nothing precedes it in the window.
+    const events = [msg("m_first", 2), msg("m_next", 3)]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: false })).toBe("m_first")
+  })
+
+  it("fetches when no loaded message lands on or after the target day", () => {
+    // Jumping forward of everything loaded (e.g. scrolled up in old history,
+    // then picked today): no in-window match, so fetch a fresh window.
+    const events = [msg("m_a", -10), msg("m_b", -9)]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: false })).toBeNull()
+  })
+
+  it("ignores non-message events when locating the anchor", () => {
+    const events = [
+      { eventType: "member_joined" as const, createdAt: new Date(targetDayMs - 5 * dayMs).toISOString(), payload: {} },
+      msg("m_before", -1),
+      {
+        eventType: "member_added" as const,
+        createdAt: new Date(targetDayMs + 12 * 60 * 60 * 1000).toISOString(),
+        payload: {},
+      },
+      msg("m_anchor", 0),
+    ]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBe("m_anchor")
+  })
+
+  it("treats companion responses as anchors", () => {
+    const events = [
+      msg("m_before", -1),
+      {
+        eventType: "companion_response" as const,
+        createdAt: new Date(targetDayMs + 12 * 60 * 60 * 1000).toISOString(),
+        payload: { messageId: "m_companion" },
+      },
+    ]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBe("m_companion")
+  })
+
+  it("fetches when the in-window match carries no messageId in its payload", () => {
+    const events = [
+      msg("m_before", -1),
+      { eventType: "message_created" as const, createdAt: REF.toISOString(), payload: {} },
+    ]
+    expect(resolveDateJumpAnchor({ events, targetDayMs, hasOlderEvents: true })).toBeNull()
   })
 })
