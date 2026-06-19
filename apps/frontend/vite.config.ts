@@ -132,9 +132,10 @@ export default defineConfig({
     },
   },
   test: {
-    // Two projects so the Node build-script tests under scripts/ don't drag in
-    // the jsdom UI bootstrap (./src/test/setup.ts → @/db, localStorage, DOM
-    // polyfills) that has nothing to do with a filesystem script.
+    // Two projects so the Node build-script and Pages-Function tests don't drag
+    // in the jsdom UI bootstrap (./src/test/setup.ts → @/db, localStorage, DOM
+    // polyfills) that has nothing to do with a filesystem script or an edge
+    // function.
     projects: [
       {
         extends: true,
@@ -149,10 +150,10 @@ export default defineConfig({
       {
         extends: true,
         test: {
-          name: "scripts",
+          name: "node",
           globals: true,
           environment: "node",
-          include: ["scripts/**/*.test.ts"],
+          include: ["scripts/**/*.test.ts", "functions/**/*.test.ts"],
         },
       },
     ],

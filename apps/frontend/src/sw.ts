@@ -8,30 +8,24 @@ import {
   SW_MSG_SUBSCRIPTION_CHANGED,
   SW_MSG_CLEAR_NOTIFICATIONS,
   SW_MSG_QUEUE_BOOTSTRAP_SYNC,
-  SW_MSG_RELOAD_FRESH,
+  SW_MSG_SKIP_WAITING,
   SHARE_TARGET_CACHE,
 } from "./lib/sw-messages"
 
 declare const self: ServiceWorkerGlobalScope
 
-/**
- * One-shot: serve the next app-shell navigation from the network instead of the
- * cache-first precache. Set by the "new version" reload (SW_MSG_RELOAD_FRESH)
- * so the reload fetches the freshly-deployed index.html — the precache here is
- * still the *old* build until the new SW installs and claims, so a plain
- * cache-first reload would just re-serve the old client. In-memory is fine: the
- * page reloads within milliseconds of the ack, so the flag never needs to
- * survive an SW restart, and if it somehow does reset we fall back to the safe
- * cache-first path (no worse than before).
- */
-let serveNextNavFromNetwork = false
-
+// A freshly-installed SW stays parked in `waiting` (no auto-skipWaiting on
+// install) until the user accepts the in-app update toast, which posts
+// SW_MSG_SKIP_WAITING. Activating immediately + clients.claim() used to swap the
+// precache out from under a still-running old page (the focus/poll-driven update
+// check installs the new SW within seconds of a deploy), so the page's next lazy
+// import() of *its own* chunk missed the now-replaced precache, fell through to
+// the network, and 404'd because that build was no longer live — bricking the
+// tab. Parking the new SW keeps each tab on its own build's worker + precache
+// for its whole life; the swap happens only on the user-driven reload.
 self.addEventListener("message", (event) => {
-  if (event.data?.type !== SW_MSG_RELOAD_FRESH) return
-  serveNextNavFromNetwork = true
-  // Ack so the page reloads only once the flag is set, guaranteeing the
-  // navigation that follows is the one served from the network.
-  event.ports[0]?.postMessage({ ok: true })
+  if (event.data?.type !== SW_MSG_SKIP_WAITING) return
+  void self.skipWaiting()
 })
 
 /** Extend NotificationOptions with properties supported by browsers but missing from TS lib types. */
@@ -60,9 +54,9 @@ const AVATAR_CACHE = "threa-avatars-v1"
 const AVATAR_PATH_RE = /^\/api\/workspaces\/[^/]+\/(?:users|bots)\/[^/]+\/avatar\//
 const AVATAR_CACHE_MAX_ENTRIES = 300
 
-// Activate new service worker immediately so users get fresh code
-// without needing to close all tabs.
-self.addEventListener("install", () => self.skipWaiting())
+// No install listener: the new SW must NOT skipWaiting on its own (see the
+// SW_MSG_SKIP_WAITING handler above). It activates only when the open page
+// accepts the update and posts that message, then reloads onto it.
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
@@ -98,9 +92,9 @@ cleanupOutdatedCaches()
 // HTML against build-B's now-missing assets — the post-deploy "unstyled page"
 // failure (where _redirects' `/* /index.html 200` SPA fallback serves HTML in
 // place of deleted asset URLs, so React never mounts). Zero network on the
-// boot critical path; post-deploy freshness comes from the SW update
-// lifecycle (skipWaiting/clients.claim above) surfaced by the in-app
-// version.json update toast.
+// boot critical path; post-deploy freshness comes from the parked-SW update
+// lifecycle (SW_MSG_SKIP_WAITING above) surfaced by the in-app version.json
+// update toast.
 self.addEventListener("fetch", (event) => {
   // Only app-shell GET navigations belong here. Web Share Target launches use
   // a POST navigation to /share, which must fall through to the handler below.
@@ -121,21 +115,10 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     (async () => {
-      // One-shot network-first: the user clicked "Reload" on the new-version
-      // toast. Fetch the freshly-deployed shell so the reload lands on the new
-      // build instead of this (old) SW's precached shell. Falls through to the
-      // precache if the network fails (offline) so the reload still yields a
-      // working app.
-      if (serveNextNavFromNetwork) {
-        serveNextNavFromNetwork = false
-        try {
-          return await fetch(event.request)
-        } catch {
-          // Offline — fall through to the precached shell below.
-        }
-      }
       // matchPrecache resolves workbox's revisioned cache key, so this is the
-      // exact index.html that ships with the precached asset bundle.
+      // exact index.html that ships with this SW's precached asset bundle. Each
+      // tab keeps its own build's SW until the user-driven update reload, so this
+      // shell always matches the chunks the running page will import.
       const precached = await matchPrecache("/index.html")
       if (precached) return precached
       // First ever launch / precache unavailable — go to network.

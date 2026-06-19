@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadForUpdate, shouldNotifyUpdate, RELOAD_FRESH_ACK_TIMEOUT_MS } from "./use-app-update"
-import { SW_MSG_RELOAD_FRESH } from "@/lib/sw-messages"
+import { reloadForUpdate, shouldNotifyUpdate, RELOAD_FALLBACK_TIMEOUT_MS } from "./use-app-update"
+import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
 
 const RUNNING = "abc1234"
 
@@ -33,11 +33,26 @@ describe("reloadForUpdate", () => {
   const swDescriptor = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
   let reloadSpy: ReturnType<typeof vi.fn>
 
-  const setController = (controller: unknown): void => {
-    Object.defineProperty(navigator, "serviceWorker", {
-      configurable: true,
-      value: { controller, addEventListener: vi.fn() },
-    })
+  type Waiting = { postMessage: ReturnType<typeof vi.fn> }
+  type Registration = { waiting: Waiting | null; update: ReturnType<typeof vi.fn> }
+
+  /**
+   * Stub navigator.serviceWorker. `registration: undefined` models getRegistration
+   * resolving with no registration; a registration with `waiting: null` models no
+   * parked worker. `fire("controllerchange")` invokes captured listeners so a test
+   * can simulate the new worker taking control.
+   */
+  const setServiceWorker = (opts: { registration?: Registration }) => {
+    const listeners: Record<string, Array<() => void>> = {}
+    const sw = {
+      getRegistration: vi.fn(async () => opts.registration),
+      addEventListener: vi.fn((type: string, cb: () => void) => {
+        ;(listeners[type] ??= []).push(cb)
+      }),
+      fire: (type: string) => listeners[type]?.forEach((cb) => cb()),
+    }
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: sw })
+    return sw
   }
 
   beforeEach(() => {
@@ -60,41 +75,40 @@ describe("reloadForUpdate", () => {
     }
   })
 
-  it("reloads immediately when no SW controls the page (navigation already hits network)", async () => {
-    setController(null)
+  it("reloads immediately when no worker is waiting, even after nudging update", async () => {
+    const update = vi.fn(async () => {})
+    setServiceWorker({ registration: { waiting: null, update } })
+
     await reloadForUpdate()
+
+    expect(update).toHaveBeenCalledOnce()
     expect(reloadSpy).toHaveBeenCalledOnce()
   })
 
-  it("asks the controlling SW for a fresh navigation, then reloads once it acks", async () => {
-    let received: { type: string } | undefined
-    const controller = {
-      postMessage: vi.fn((message: { type: string }, transfer?: Transferable[]) => {
-        received = message
-        // Mimic the SW: ack on the transferred port so the reload proceeds.
-        const port = transfer?.[0] as MessagePort | undefined
-        port?.postMessage({ ok: true })
-      }),
-    }
-    setController(controller)
+  it("activates the parked worker and reloads once it takes control", async () => {
+    const waiting = { postMessage: vi.fn() }
+    const update = vi.fn(async () => {})
+    const sw = setServiceWorker({ registration: { waiting, update } })
 
     await reloadForUpdate()
 
-    expect(controller.postMessage).toHaveBeenCalledOnce()
-    expect(received).toEqual({ type: SW_MSG_RELOAD_FRESH })
-    await vi.waitFor(() => expect(reloadSpy).toHaveBeenCalledOnce())
-  })
-
-  it("reloads anyway when the SW never acks (wedged worker can't strand Reload)", async () => {
-    vi.useFakeTimers()
-    // Controller that swallows the message without acking.
-    setController({ postMessage: vi.fn() })
-
-    const promise = reloadForUpdate()
+    expect(update).not.toHaveBeenCalled() // already waiting — no need to nudge
+    expect(waiting.postMessage).toHaveBeenCalledWith({ type: SW_MSG_SKIP_WAITING })
     expect(reloadSpy).not.toHaveBeenCalled()
 
-    await vi.advanceTimersByTimeAsync(RELOAD_FRESH_ACK_TIMEOUT_MS)
-    await promise
+    sw.fire("controllerchange")
+    expect(reloadSpy).toHaveBeenCalledOnce()
+  })
+
+  it("reloads anyway when the worker never claims (wedged worker can't strand Reload)", async () => {
+    vi.useFakeTimers()
+    const waiting = { postMessage: vi.fn() }
+    setServiceWorker({ registration: { waiting, update: vi.fn(async () => {}) } })
+
+    await reloadForUpdate()
+    expect(reloadSpy).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(RELOAD_FALLBACK_TIMEOUT_MS)
     expect(reloadSpy).toHaveBeenCalledOnce()
   })
 })
