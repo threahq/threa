@@ -1009,6 +1009,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     const deps = makeActiveDeps(catchUp)
     const engine = new SyncEngine(deps)
     const applyWindow = trackApplyWindow()
+    const invalidateSpy = vi.spyOn(deps.queryClient, "invalidateQueries")
 
     await engine.onConnect(asSocket(new MockSocket()))
 
@@ -1017,6 +1018,12 @@ describe("SyncEngine sync cursor (active mode)", () => {
     // The big page's entries were NOT replayed one by one — collapsing skips the
     // per-entry handler dispatch entirely, so no handler IDB write landed.
     expect(await db.workspaceUsers.get("user_0")).toBeUndefined()
+    // Skipping replay means the replay-healed lists (saved/scheduled/activity,
+    // which the bootstrap doesn't re-derive) must be invalidated so an open view
+    // refetches instead of sitting stale.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["saved"] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["scheduled"] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["activity"] })
     // Collapsing re-derives via the (already atomic) bootstrap, so it never opens
     // a replay apply-window.
     applyWindow.stop()
