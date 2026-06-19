@@ -23,6 +23,7 @@ import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch } from "./catch-up-batch"
+import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -1143,6 +1144,14 @@ export class SyncEngine {
     // — live behavior.
     let appliedThrough: bigint | null = null
 
+    // Opened the first time this run applies replayed entries (see
+    // beginApplyWindow): holds the reactive read layer steady so the sidebar,
+    // badges, memberships and drafts paint the replay's FINAL state once when it
+    // closes instead of trickling per entry. Not opened for an empty page or a
+    // collapse-to-bootstrap (the snapshot already lands atomically). Closed in
+    // the finally, so a throw or early return can never strand it open.
+    let applyWindowOpen = false
+
     // Counter and preview updates replayed below fold into this batch (via the
     // handlers' getCatchUpBatch) instead of writing per-entry, so the
     // unread/activity badges and the activity-sorted sidebar paint the final
@@ -1243,6 +1252,15 @@ export class SyncEngine {
           return
         }
 
+        // Committed to replaying this page (not collapsing): hold the reactive
+        // read layer steady for the whole replay so every batched store hook
+        // re-reads once on close instead of once per entry. Idempotent — opened
+        // on the first applied page and kept open across subsequent pages.
+        if (!applyWindowOpen) {
+          beginApplyWindow()
+          applyWindowOpen = true
+        }
+
         pages += 1
         fetched += response.entries.length
         for (const entry of response.entries) {
@@ -1310,6 +1328,12 @@ export class SyncEngine {
         const through = appliedThrough
         await gate.resume((_eventType, syncId) => through === null || syncId > through)
       }
+
+      // Release the held read layer last — after the batch flush AND the resume
+      // splice have written — so the one re-read every batched hook does on close
+      // reflects the replay's final state plus the spliced live events together.
+      // Unconditional (even on destroy/throw) so the window never strands open.
+      if (applyWindowOpen) endApplyWindow()
     }
   }
 
