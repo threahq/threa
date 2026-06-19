@@ -159,6 +159,10 @@ export function StreamPage() {
   // its locked/unlock state then anyway).
   const currentUserId = useWorkspaceUserId(workspaceId ?? "")
   const e2eUnlocked = useE2eSession(workspaceId ?? "", currentUserId ?? "").status === "unlocked"
+  // An external agent (e.g. a Pi remote bot runtime) attached to this
+  // scratchpad. Drives the "External" pill state and its connection dot.
+  // Called here (above the early returns below) to keep hook order stable.
+  const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -198,9 +202,6 @@ export function StreamPage() {
 
   const isScratchpad = stream?.type === StreamTypes.SCRATCHPAD
   const isEncryptedScratchpad = isScratchpad && !!stream?.e2eEnabled
-  // An external agent (e.g. a Pi remote bot runtime) attached to this
-  // scratchpad. Drives the "External" pill state and its connection dot.
-  const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
   const isArchived = stream?.archivedAt != null
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
@@ -340,8 +341,8 @@ export function StreamPage() {
   //     locked, so this pill is the persistent encryption signal: it wins.
   //   - External: connection dot + "External" — an external agent (e.g. a Pi
   //     remote bot runtime) is attached. The dot is green when the runtime is
-  //     connected (available/busy), grey otherwise. Replaces the old floating
-  //     status strip so the live status sits in the header, not over the timeline.
+  //     connected (available/busy), grey otherwise. Lives in the header so the
+  //     live status doesn't float over the timeline and collide with the date pill.
   //   - Companion: Sparkles + "Companion" — Ariadne replies to new messages.
   //   - Quiet: Moon + "Quiet" — silent capture, no AI replies.
   // Drafts get an inert variant because the settings dialog reads from caches
