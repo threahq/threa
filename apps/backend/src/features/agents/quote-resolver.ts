@@ -103,7 +103,7 @@ export async function resolveQuoteReplies(
       }
     }
 
-    const fetched = await MessageRepository.findByIdsInStreams(db, toFetch, streamIdsArray)
+    const fetched = await MessageRepository.findByIdsInStreams(db, workspaceId, toFetch, streamIdsArray)
 
     for (const requestedId of toFetch) {
       if (!fetched.has(requestedId)) {

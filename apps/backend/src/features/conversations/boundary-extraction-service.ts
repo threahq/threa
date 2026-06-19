@@ -553,7 +553,7 @@ export class BoundaryExtractionService {
     const quotedMessageIds = collectQuoteReplyMessageIds(message.contentJson)
     if (quotedMessageIds.length === 0) return { replyTargets: [], quotedConversations: [] }
 
-    const quotedMessages = await MessageRepository.findByIdsInStreams(client, quotedMessageIds, [streamId])
+    const quotedMessages = await MessageRepository.findByIdsInStreams(client, workspaceId, quotedMessageIds, [streamId])
     if (quotedMessages.size === 0) return { replyTargets: [], quotedConversations: [] }
 
     const primariesByMessageId = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, [

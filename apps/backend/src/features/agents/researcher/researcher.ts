@@ -1244,6 +1244,7 @@ Each query must have:
         if (enriched.length > 0) {
           const seedMessageMap = await MessageRepository.findByIdsInStreams(
             client,
+            workspaceId,
             enriched.map((e) => e.id),
             accessibleStreamIds
           )
