@@ -50,6 +50,41 @@ function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
 // Build OpenAPI 3.0 document
 // ---------------------------------------------------------------------------
 
+// Tag order + descriptions for the reference. Every tag a route declares must
+// have an entry here. The spec emits the entries that are actually in use, so a
+// newly added group surfaces in the rendered reference without editing the docs
+// site; a route that introduces an undescribed tag fails the build loudly
+// (INV-11) instead of shipping a group with no heading.
+const TAG_DEFS: { name: string; description: string }[] = [
+  { name: "Identity", description: "Confirm who a key belongs to and list the bots you own." },
+  { name: "Streams", description: "List and inspect streams (channels, scratchpads, threads)" },
+  { name: "Messages", description: "Read, send, update, and delete messages" },
+  { name: "Memos", description: "Search preserved workspace knowledge and inspect memo provenance" },
+  { name: "Attachments", description: "Search attachments, inspect extracted content, and fetch download URLs" },
+  { name: "Users", description: "List workspace users" },
+  { name: "Labels", description: "List, create, edit, archive, join, and apply workspace labels" },
+  {
+    name: "Bot runtimes",
+    description: "Register a runtime and keep its presence alive so it can be assigned work.",
+  },
+  {
+    name: "Bot invocations",
+    description: "Claim, renew, step through, complete, or fail the work a bot is summoned to do.",
+  },
+]
+
+function buildTags() {
+  const used = new Set<string>()
+  for (const route of PUBLIC_API_ROUTES) for (const tag of route.tags ?? []) used.add(tag)
+  const undescribed = [...used].filter((tag) => !TAG_DEFS.some((d) => d.name === tag))
+  if (undescribed.length > 0) {
+    throw new Error(
+      `Public API routes declare tags with no description (add them to TAG_DEFS in generate-api-docs.ts): ${undescribed.join(", ")}`
+    )
+  }
+  return TAG_DEFS.filter((d) => used.has(d.name))
+}
+
 function buildSpec() {
   const paths: Record<string, Record<string, unknown>> = {}
 
@@ -229,13 +264,7 @@ function buildSpec() {
         },
       },
     },
-    tags: [
-      { name: "Streams", description: "List and inspect streams (channels, scratchpads, threads)" },
-      { name: "Messages", description: "Read, send, update, and delete messages" },
-      { name: "Memos", description: "Search preserved workspace knowledge and inspect memo provenance" },
-      { name: "Attachments", description: "Search attachments, inspect extracted content, and fetch download URLs" },
-      { name: "Users", description: "List workspace users" },
-    ],
+    tags: buildTags(),
   }
 }
 

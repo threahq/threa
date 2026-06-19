@@ -4550,10 +4550,20 @@
     }
   },
   "tags": [
+    { "name": "Identity", "description": "Confirm who a key belongs to and list the bots you own." },
     { "name": "Streams", "description": "List and inspect streams (channels, scratchpads, threads)" },
     { "name": "Messages", "description": "Read, send, update, and delete messages" },
     { "name": "Memos", "description": "Search preserved workspace knowledge and inspect memo provenance" },
     { "name": "Attachments", "description": "Search attachments, inspect extracted content, and fetch download URLs" },
-    { "name": "Users", "description": "List workspace users" }
+    { "name": "Users", "description": "List workspace users" },
+    { "name": "Labels", "description": "List, create, edit, archive, join, and apply workspace labels" },
+    {
+      "name": "Bot runtimes",
+      "description": "Register a runtime and keep its presence alive so it can be assigned work."
+    },
+    {
+      "name": "Bot invocations",
+      "description": "Claim, renew, step through, complete, or fail the work a bot is summoned to do."
+    }
   ]
 }
