@@ -364,6 +364,9 @@ export function StreamPage() {
     let pillVariant: string
     let hoverVariant: string
     let interactiveAria: string
+    // Encrypted collapses to a bare lock — the word "Encrypted" is redundant
+    // next to it and the header is tight. The other states keep their label.
+    let iconOnly = false
 
     if (isEncrypted) {
       leadingVisual = <Lock className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
@@ -371,6 +374,7 @@ export function StreamPage() {
       pillVariant = "border-border bg-secondary text-foreground"
       hoverVariant = "hover:bg-accent"
       interactiveAria = "End-to-end encrypted. Companion and tool settings."
+      iconOnly = true
     } else if (isExternal) {
       leadingVisual = (
         <span
@@ -401,7 +405,10 @@ export function StreamPage() {
       interactiveAria = "Quiet mode. Click to change companion mode and tool access."
     }
 
-    const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+    const pillBase = cn(
+      "inline-flex items-center gap-1 rounded-full border py-0.5 text-xs font-semibold",
+      iconOnly ? "px-1.5" : "px-2.5"
+    )
 
     // One in-flow popover for both drafts and live scratchpads: companion mode
     // and (owner-only) tool access. The trailing chevron + hover state make the
@@ -421,8 +428,12 @@ export function StreamPage() {
             )}
           >
             {leadingVisual}
-            <span>{modeLabel}</span>
-            <ChevronDown className="h-3 w-3 -mr-0.5 opacity-60" aria-hidden="true" />
+            {!iconOnly && (
+              <>
+                <span>{modeLabel}</span>
+                <ChevronDown className="h-3 w-3 -mr-0.5 opacity-60" aria-hidden="true" />
+              </>
+            )}
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-80">
