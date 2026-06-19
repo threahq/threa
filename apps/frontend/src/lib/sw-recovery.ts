@@ -85,20 +85,25 @@ export async function runSwRecovery(options?: { force?: boolean; bustUrls?: stri
     sessionStorage.setItem(LAST_ATTEMPT_KEY, String(Date.now()))
   }
 
-  const tasks: Promise<unknown>[] = []
+  // Clear SW-owned state before cache-busting HTTP-cache entries. The current
+  // page can remain controlled until the reload, so doing these in parallel can
+  // let Workbox answer the cache-bust fetch from CacheStorage before deletion.
   if ("serviceWorker" in navigator) {
-    tasks.push(navigator.serviceWorker.getRegistrations().then((regs) => Promise.all(regs.map((r) => r.unregister()))))
+    await navigator.serviceWorker
+      .getRegistrations()
+      .then((regs) => Promise.all(regs.map((r) => r.unregister())))
+      .catch(() => {})
   }
   if ("caches" in window) {
-    tasks.push(caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))))
+    await caches
+      .keys()
+      .then((names) => Promise.all(names.map((n) => caches.delete(n))))
+      .catch(() => {})
   }
   // Overwrite any immutable-cached bad responses in the browser HTTP cache.
   // Always bust the app shell; bust the specific failing chunk when we have it.
   const bustUrls = new Set(["/index.html", ...(options?.bustUrls ?? [])])
-  for (const url of bustUrls) {
-    tasks.push(fetch(url, { cache: "reload" }).catch(() => {}))
-  }
-  await Promise.all(tasks).catch(() => {})
+  await Promise.all([...bustUrls].map((url) => fetch(url, { cache: "reload" }).catch(() => {})))
   window.location.reload()
   return true
 }

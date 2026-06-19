@@ -6,10 +6,9 @@
  * moment a new build ships every previous build's content-hashed
  * /assets/*.js chunk 404s. A tab still running the old build then fails any
  * lazy `import()` it hasn't loaded yet ("Failed to fetch dynamically imported
- * module") — and because the SPA `_redirects` fallback answers that 404 with
- * index.html (200) under the immutable `/assets/*` cache header, the bad
- * response sticks until the SW lifecycle swaps builds. That is the stale-deploy
- * crash lib/sw-recovery.ts exists to clean up after.
+ * module"). Older deployments could also cache the HTML app shell under the
+ * missing asset URL, which is the stale-deploy crash lib/sw-recovery.ts exists
+ * to clean up after.
  *
  * This keeps a rolling window of recent builds' assets and folds them back into
  * the new `dist/` before deploy, so an old tab can keep loading its own chunks

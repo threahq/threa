@@ -52,7 +52,6 @@ jobs:
         run: bun run --cwd apps/frontend build
 
       - name: Fold retained assets into dist
-        continue-on-error: true
         run: bun apps/frontend/scripts/retain-assets.ts
 
       - name: Save retained assets
@@ -332,7 +331,6 @@ jobs:
         run: bun run --cwd apps/frontend build
 
       - name: Fold retained assets into dist
-        continue-on-error: true
         run: bun apps/frontend/scripts/retain-assets.ts
 
       - name: Save retained assets

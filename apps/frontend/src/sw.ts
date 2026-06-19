@@ -96,8 +96,8 @@ cleanupOutdatedCaches()
 // precache manifest pins index.html and the content-hashed JS/CSS it
 // references to the same build, so a returning launch can never get build-A's
 // HTML against build-B's now-missing assets — the post-deploy "unstyled page"
-// failure (where _redirects' `/* /index.html 200` SPA fallback serves HTML in
-// place of deleted asset URLs, so React never mounts). Zero network on the
+// failure where an asset URL is answered with HTML instead of JS/CSS, so React
+// never mounts. Zero network on the
 // boot critical path; post-deploy freshness comes from the SW update
 // lifecycle (skipWaiting/clients.claim above) surfaced by the in-app
 // version.json update toast.

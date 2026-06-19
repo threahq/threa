@@ -195,8 +195,8 @@
             })
           )
           // Missing styles can also mean an immutable-cached bad /assets/*.css
-          // (the SPA index.html fallback served as text/html and pinned for a
-          // year — see public/_headers). That lives in the browser HTTP cache,
+          // from an older deploy where HTML was served at an asset URL and
+          // pinned for a year. That lives in the browser HTTP cache,
           // which the unregister + caches.delete above can't evict and
           // location.reload() won't revalidate. Re-fetch the shell and its
           // asset URLs with `cache: "reload"` to bypass and overwrite them.
