@@ -24,6 +24,31 @@ function makeMessageEvent(id: string, actorId: string) {
 }
 
 describe("useUnreadDivider", () => {
+  it("does not latch a divider until the read position is resolved", () => {
+    // Events are present but the viewer's read position has not hydrated yet.
+    // Guessing here would latch the first message as unread and stick it for
+    // the session; the divider must wait until readStateResolved flips true.
+    const events = [makeMessageEvent("event_1", "other")]
+    const { result, rerender } = renderHook(
+      ({ readStateResolved, lastReadEventId }: { readStateResolved: boolean; lastReadEventId: string | null }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved,
+        }),
+      { initialProps: { readStateResolved: false, lastReadEventId: null as string | null } }
+    )
+
+    expect(result.current.firstUnreadEventId).toBeUndefined()
+    expect(result.current.dividerEventId).toBeUndefined()
+
+    // Read position resolves and the message is already read → still no divider.
+    rerender({ readStateResolved: true, lastReadEventId: "event_1" })
+    expect(result.current.dividerEventId).toBeUndefined()
+  })
+
   it("keeps the divider in place after the stream becomes read, then dims it", async () => {
     vi.useFakeTimers()
     try {

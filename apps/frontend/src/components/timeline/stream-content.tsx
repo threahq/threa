@@ -1490,6 +1490,10 @@ export function StreamContent({
     streamId,
     isLoading,
     highlightMessageId,
+    // Until a read source has hydrated, lastReadEventId is not authoritative;
+    // gate the unread computation so a not-yet-known read position can't latch
+    // a divider on the first message (which would then stick for the session).
+    readStateResolved: idbStream !== undefined || membership !== undefined,
   })
 
   const queryClient = useQueryClient()

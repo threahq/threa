@@ -20,6 +20,14 @@ interface UseUnreadDividerOptions {
   highlightMessageId?: string | null
   /** Whether content is still loading */
   isLoading?: boolean
+  /**
+   * Whether the viewer's read position is known yet. While false (membership /
+   * stream row still hydrating) `lastReadEventId` is not authoritative, so we
+   * must not treat the first message as unread — doing so would latch a divider
+   * that then sticks for the session (the divider persists; there is no
+   * clear-on-read to undo a bad guess).
+   */
+  readStateResolved?: boolean
 }
 
 interface UseUnreadDividerResult {
@@ -49,9 +57,10 @@ export function useUnreadDivider({
   scrollToUnread = true,
   highlightMessageId,
   isLoading = false,
+  readStateResolved = true,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
   const firstUnreadEventId = useMemo(() => {
-    if (events.length === 0) return undefined
+    if (events.length === 0 || !readStateResolved) return undefined
 
     const startIndex = lastReadEventId ? events.findIndex((e) => e.id === lastReadEventId) + 1 : 0
 
@@ -69,7 +78,7 @@ export function useUnreadDivider({
     }
 
     return undefined
-  }, [events, lastReadEventId, currentUserId])
+  }, [events, lastReadEventId, currentUserId, readStateResolved])
 
   // Latch the first unread position for this stream and hold it for the whole
   // reading session. Done in render (not an effect) so it's immune to effect
