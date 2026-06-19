@@ -132,10 +132,30 @@ export default defineConfig({
     },
   },
   test: {
-    globals: true,
-    environment: "jsdom",
-    setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}"],
+    // Two projects so the Node build-script tests under scripts/ don't drag in
+    // the jsdom UI bootstrap (./src/test/setup.ts → @/db, localStorage, DOM
+    // polyfills) that has nothing to do with a filesystem script.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "frontend",
+          globals: true,
+          environment: "jsdom",
+          setupFiles: ["./src/test/setup.ts"],
+          include: ["src/**/*.test.{ts,tsx}"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "scripts",
+          globals: true,
+          environment: "node",
+          include: ["scripts/**/*.test.ts"],
+        },
+      },
+    ],
   },
   server: {
     host: "0.0.0.0",
