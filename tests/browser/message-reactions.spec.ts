@@ -293,15 +293,20 @@ test.describe("Message Reactions", () => {
       const joinStreamRes = await ctxB.page.request.post(`/api/dev/workspaces/${workspaceId}/streams/${streamId}/join`)
       expect(joinStreamRes.ok()).toBeTruthy()
 
-      // User A: send a message
+      // User B: send the message. A message you authored is never "unread" to
+      // you, so it can't latch a divider on its own — which keeps this test
+      // about the one thing it guards: a reaction is an invisible event and must
+      // not anchor the divider. (Using another user's message would latch a
+      // real, now-persistent divider for that message regardless of the
+      // reaction, and reading it across a full reload is racy.)
       const messageContent = `Unread divider test ${testId}`
-      const sendRes = await ctxA.page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+      const sendRes = await ctxB.page.request.post(`/api/workspaces/${workspaceId}/messages`, {
         data: { streamId, content: messageContent },
       })
       expect(sendRes.ok()).toBeTruthy()
       const { message } = (await sendRes.json()) as { message: { id: string } }
 
-      // User B: open the channel, see the message, then explicitly mark as read via API
+      // User B: open the channel and see the message.
       await ctxB.page.goto(`/w/${workspaceId}/s/${streamId}`)
       const timelineMessage = ctxB.page
         .getByRole("main")
@@ -310,23 +315,11 @@ test.describe("Message Reactions", () => {
         .first()
       await expect(timelineMessage).toBeVisible({ timeout: 10000 })
 
-      // Get the last event ID from bootstrap and mark as read directly
-      const bootstrapRes = await ctxB.page.request.get(`/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap`)
-      expect(bootstrapRes.ok()).toBeTruthy()
-      const { data: bootstrap } = (await bootstrapRes.json()) as {
-        data: { events: Array<{ id: string }> }
-      }
-      const lastEventId = bootstrap.events[bootstrap.events.length - 1].id
-      const markReadRes = await ctxB.page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/read`, {
-        data: { lastEventId },
-      })
-      expect(markReadRes.ok()).toBeTruthy()
-
       // User B: navigate away from the stream
       await ctxB.page.goto(`/w/${workspaceId}`)
       await ctxB.page.waitForURL(`**/w/${workspaceId}`, { timeout: 10000 })
 
-      // User A: add a reaction to the message while User B is away
+      // User A: react to B's message while B is away
       const reactRes = await ctxA.page.request.post(`/api/workspaces/${workspaceId}/messages/${message.id}/reactions`, {
         data: { emoji: "👍" },
       })
@@ -336,8 +329,11 @@ test.describe("Message Reactions", () => {
       await ctxB.page.goto(`/w/${workspaceId}/s/${streamId}`)
       await expect(timelineMessage).toBeVisible({ timeout: 10000 })
 
-      // The "New" unread divider should NOT appear — reactions are not new messages
-      // Check immediately after navigation settles, before the divider could auto-dismiss
+      // The "New" unread divider must NOT appear: a reaction is an invisible
+      // event that never anchors the divider, and B's own message is never
+      // unread to B. If reactions ever stopped being skipped, A's reaction would
+      // be the first unread event here and the divider would show — so this
+      // still guards the invariant.
       const unreadDivider = ctxB.page.getByRole("main").getByText("New", { exact: true })
       await expect(unreadDivider).not.toBeVisible({ timeout: 3000 })
 

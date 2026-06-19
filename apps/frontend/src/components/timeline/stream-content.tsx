@@ -1483,13 +1483,20 @@ export function StreamContent({
   // hide from this stream's render (e.g. thread membership rows) — otherwise
   // the divider can target an event id that never matches a rendered row and
   // silently fails to show.
-  const { dividerEventId, isFading: isDividerFading } = useUnreadDivider({
+  const { dividerEventId, isDimmed: isDividerDimmed } = useUnreadDivider({
     events: displayEvents,
     lastReadEventId,
     currentUserId: currentWorkspaceUserId ?? undefined,
     streamId,
     isLoading,
     highlightMessageId,
+    // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
+    // while the read sources (stream row / membership) are still hydrating. Gate
+    // on that so a not-yet-known read position can't be read as "all unread" and
+    // latch a divider on the first message (which would then stick for the
+    // session). `idbStream` alone isn't enough — its denormalized copy can be a
+    // stale null while the authoritative membership value is still loading.
+    readStateResolved: lastReadEventId !== undefined,
   })
 
   const queryClient = useQueryClient()
@@ -1685,7 +1692,7 @@ export function StreamContent({
                     streamId={streamId}
                     highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
                     firstUnreadEventId={dividerEventId}
-                    isDividerFading={isDividerFading}
+                    isDividerDimmed={isDividerDimmed}
                     agentActivity={agentActivity}
                     hideSessionCards={isChannel}
                     newMessageIds={newMessageIds}
@@ -1758,7 +1765,7 @@ export function StreamContent({
                     streamId={streamId}
                     highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
                     firstUnreadEventId={dividerEventId}
-                    isDividerFading={isDividerFading}
+                    isDividerDimmed={isDividerDimmed}
                     agentActivity={agentActivity}
                     hideSessionCards={isChannel}
                     newMessageIds={newMessageIds}
@@ -1905,7 +1912,7 @@ function TimelineMessageList({
   streamId,
   highlightMessageId,
   firstUnreadEventId,
-  isDividerFading,
+  isDividerDimmed,
   agentActivity,
   hideSessionCards,
   newMessageIds,
@@ -1956,7 +1963,7 @@ function TimelineMessageList({
   streamId: string
   highlightMessageId?: string | null
   firstUnreadEventId?: string
-  isDividerFading?: boolean
+  isDividerDimmed?: boolean
   agentActivity?: Map<string, import("@/hooks").MessageAgentActivity>
   hideSessionCards?: boolean
   newMessageIds?: Set<string>
@@ -2022,7 +2029,7 @@ function TimelineMessageList({
       streamId,
       highlightMessageId,
       firstUnreadEventId,
-      isDividerFading,
+      isDividerDimmed,
       agentActivity,
       hideSessionCards,
       newMessageIds,
@@ -2039,7 +2046,7 @@ function TimelineMessageList({
       streamId,
       highlightMessageId,
       firstUnreadEventId,
-      isDividerFading,
+      isDividerDimmed,
       agentActivity,
       hideSessionCards,
       newMessageIds,

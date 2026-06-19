@@ -20,6 +20,15 @@ interface UseUnreadDividerOptions {
   highlightMessageId?: string | null
   /** Whether content is still loading */
   isLoading?: boolean
+  /**
+   * Whether the viewer's read position is known yet. While false (membership /
+   * stream row still hydrating) `lastReadEventId` is not authoritative, so we
+   * must not treat the first message as unread — doing so would latch a divider
+   * that then sticks for the session (the divider persists; there is no
+   * clear-on-read to undo a bad guess). Defaults to false: a caller must
+   * affirmatively say the read position is resolved before any divider latches.
+   */
+  readStateResolved?: boolean
 }
 
 interface UseUnreadDividerResult {
@@ -27,16 +36,19 @@ interface UseUnreadDividerResult {
   firstUnreadEventId: string | undefined
   /** The event ID where the divider should be shown, or undefined if hidden */
   dividerEventId: string | undefined
-  /** Whether the divider is currently fading out */
-  isFading: boolean
+  /** Whether the divider has settled to its muted (gray) resting state */
+  isDimmed: boolean
 }
 
 /**
  * Hook to manage the "New" unread divider display state.
  *
  * - Calculates the first unread event from another user
- * - Shows the divider for 3 seconds, then fades out over 500ms
- * - Resets when switching streams
+ * - Latches the divider at that position and keeps it there for the whole
+ *   reading session: it starts red, dims to gray after a few seconds, but
+ *   stays physically present until the user switches streams. Auto-mark-as-read
+ *   clearing `firstUnreadEventId` does NOT remove it.
+ * - Resets when switching streams (re-entering a now-read stream shows nothing)
  */
 export function useUnreadDivider({
   events,
@@ -46,9 +58,10 @@ export function useUnreadDivider({
   scrollToUnread = true,
   highlightMessageId,
   isLoading = false,
+  readStateResolved = false,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
   const firstUnreadEventId = useMemo(() => {
-    if (events.length === 0) return undefined
+    if (events.length === 0 || !readStateResolved) return undefined
 
     const startIndex = lastReadEventId ? events.findIndex((e) => e.id === lastReadEventId) + 1 : 0
 
@@ -66,56 +79,35 @@ export function useUnreadDivider({
     }
 
     return undefined
-  }, [events, lastReadEventId, currentUserId])
+  }, [events, lastReadEventId, currentUserId, readStateResolved])
 
-  // Track displayed divider separately - shows for 3 seconds then fades out
-  const [displayedUnreadId, setDisplayedUnreadId] = useState<string | undefined>(undefined)
-  const [isFading, setIsFading] = useState(false)
-  const hasShownDivider = useRef(false)
-  const previousStreamId = useRef(streamId)
+  // Latch the first unread position for this stream and hold it for the whole
+  // reading session. Done in render (not an effect) so it's immune to effect
+  // ordering: switching to a stream that already has unread data changes
+  // `streamId` and `firstUnreadEventId` in the same commit, and an effect-based
+  // latch+reset pair would clear the ref after the latch ran and never re-fire.
+  // The ref resets on stream change, then captures the first non-empty
+  // `firstUnreadEventId`; auto-mark-as-read later clearing the live unread does
+  // not move or drop it.
+  const latchRef = useRef<{ streamId: string; eventId: string | undefined }>({ streamId, eventId: undefined })
+  if (latchRef.current.streamId !== streamId) {
+    latchRef.current = { streamId, eventId: undefined }
+  }
+  if (!latchRef.current.eventId && firstUnreadEventId) {
+    latchRef.current.eventId = firstUnreadEventId
+  }
+  const displayedUnreadId = latchRef.current.eventId
 
+  // Hold the divider red on (re)latch, then settle it to gray after a few
+  // seconds. Keyed on the latched id so an auto-mark-as-read that clears the
+  // live unread mid-countdown can't cancel the timer and strand it on red.
+  const [isDimmed, setIsDimmed] = useState(false)
   useEffect(() => {
-    if (firstUnreadEventId && !hasShownDivider.current) {
-      setDisplayedUnreadId(firstUnreadEventId)
-      setIsFading(false)
-      hasShownDivider.current = true
-
-      const fadeTimer = setTimeout(() => {
-        setIsFading(true)
-      }, 3000)
-
-      // Remove after fade completes (500ms transition)
-      const removeTimer = setTimeout(() => {
-        setDisplayedUnreadId(undefined)
-        setIsFading(false)
-      }, 3500)
-
-      return () => {
-        clearTimeout(fadeTimer)
-        clearTimeout(removeTimer)
-      }
-    }
-  }, [firstUnreadEventId])
-
-  useEffect(() => {
-    if (firstUnreadEventId) return
-
-    // If the stream is now considered read, remove any divider immediately.
-    // Otherwise a lastReadEventId update can cancel the pending fade/remove
-    // timers from the previous effect and leave a stale divider rendered
-    // until remount.
-    setDisplayedUnreadId(undefined)
-    setIsFading(false)
-    hasShownDivider.current = false
-  }, [firstUnreadEventId])
-
-  useEffect(() => {
-    if (previousStreamId.current === streamId) return
-    previousStreamId.current = streamId
-    hasShownDivider.current = false
-    setDisplayedUnreadId(undefined)
-    setIsFading(false)
-  }, [streamId])
+    setIsDimmed(false)
+    if (!displayedUnreadId) return
+    const dimTimer = setTimeout(() => setIsDimmed(true), 3000)
+    return () => clearTimeout(dimTimer)
+  }, [displayedUnreadId])
 
   // Latch deep-link mode per stream. The `?m=` param is auto-cleared from the
   // URL ~3s after a deep-link lands, flipping highlightMessageId to null.
@@ -141,6 +133,6 @@ export function useUnreadDivider({
   return {
     firstUnreadEventId,
     dividerEventId: displayedUnreadId,
-    isFading,
+    isDimmed,
   }
 }
