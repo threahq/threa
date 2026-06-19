@@ -464,4 +464,98 @@ Any ideas what's causing this?`,
       minConfidence: 0.7,
     },
   },
+
+  // Quote-reply: explicit reply continues the quoted message's conversation,
+  // even when a different conversation is the most recent one in the stream.
+  {
+    id: "reply-quote-continues-quoted-conv-001",
+    name: "Reply: quote-reply joins quoted message's conversation, not the most recent",
+    input: {
+      newMessage: {
+        authorId: "user_def456",
+        authorType: "user",
+        contentMarkdown: "samma här, kör på det",
+      },
+      activeConversations: [
+        {
+          id: "conv_buss",
+          topicSummary: "Buss nio imorgon",
+          messageCount: 8,
+          lastMessagePreview: "samma här",
+          participantIds: ["user_abc123", "user_def456"],
+          completenessScore: 3,
+        },
+        {
+          id: "conv_gpt",
+          topicSummary: "gpt down?",
+          messageCount: 2,
+          lastMessagePreview: "nvm, fungerar nu",
+          participantIds: ["user_abc123", "user_def456"],
+          completenessScore: 5,
+        },
+      ],
+      recentMessages: [
+        { authorId: "user_abc123", authorType: "user", contentMarkdown: "wtf. gpt down?" },
+        { authorId: "user_def456", authorType: "user", contentMarkdown: "nvm, fungerar nu" },
+      ],
+      replyTargets: [
+        {
+          quotedMessageId: "msg_buss_last",
+          conversationId: "conv_buss",
+          topicSummary: "Buss nio imorgon",
+          snippet: "Kan kika lite på vilka uteserveringar som kan verka rimliga",
+        },
+      ],
+      streamType: "dm",
+      category: "reply",
+    },
+    expectedOutput: {
+      // The quote-reply targets conv_buss; it must win over the more recent conv_gpt.
+      expectConversationId: "conv_buss",
+      minConfidence: 0.7,
+    },
+  },
+
+  // Continuity: a short acknowledgement from the OTHER participant continues the
+  // active exchange rather than spawning its own singleton conversation.
+  {
+    id: "continuity-short-ack-001",
+    name: "Continuity: short reply continues active back-and-forth",
+    input: {
+      newMessage: {
+        authorId: "user_def456",
+        authorType: "user",
+        contentMarkdown: ":fire: tokens",
+      },
+      activeConversations: [
+        {
+          id: "conv_exsules",
+          topicSummary: "exsules API/GraphQL",
+          messageCount: 6,
+          lastMessagePreview: "mer att AI blir förvirrad och slösar tokens lol",
+          participantIds: ["user_abc123", "user_def456"],
+          completenessScore: 3,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_abc123",
+          authorType: "user",
+          contentMarkdown: "finns bara en remote, just nu dock",
+        },
+        {
+          authorId: "user_abc123",
+          authorType: "user",
+          contentMarkdown: "mer att AI blir förvirrad och slösar tokens lol",
+        },
+      ],
+      streamType: "dm",
+      category: "continuity",
+    },
+    expectedOutput: {
+      // ":fire: tokens" reacts to the "slösar tokens" line — stays in the exchange.
+      expectConversationId: "conv_exsules",
+      minConfidence: 0.6,
+    },
+  },
 ]

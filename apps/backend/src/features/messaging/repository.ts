@@ -265,18 +265,26 @@ export const MessageRepository = {
   },
 
   /**
-   * Fetch messages by ID, restricted to a set of accessible streams and excluding
-   * soft-deleted rows. Used by quote-reply resolution where the quoted message ID
-   * comes from untrusted client content (`content_json.attrs.messageId`) and must
-   * be filtered against the caller's access scope.
+   * Fetch messages by ID, scoped to a workspace AND a set of accessible streams,
+   * excluding soft-deleted rows. Used by quote-reply resolution where the quoted
+   * message ID comes from untrusted client content (`content_json.attrs.messageId`)
+   * and must be filtered against the caller's access scope. The explicit
+   * `workspace_id` predicate (joined through `streams`) satisfies INV-8 even if a
+   * caller passes a stream id outside the workspace.
    */
-  async findByIdsInStreams(db: Querier, ids: string[], streamIds: string[]): Promise<Map<string, Message>> {
+  async findByIdsInStreams(
+    db: Querier,
+    workspaceId: string,
+    ids: string[],
+    streamIds: string[]
+  ): Promise<Map<string, Message>> {
     if (ids.length === 0 || streamIds.length === 0) return new Map()
 
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
       WHERE id = ANY(${ids})
         AND stream_id = ANY(${streamIds})
+        AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
         AND deleted_at IS NULL
     `)
 

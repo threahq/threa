@@ -127,10 +127,22 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
     const newMessageAttachmentSection =
       newMessageAtts.length > 0 ? `\n${this.renderAttachments(newMessageAtts, NEW_MESSAGE_ATTACHMENT_CHARS)}` : ""
 
+    const replyTargets = context.replyTargets ?? []
+    const replySection =
+      replyTargets.length > 0
+        ? replyTargets
+            .map(
+              (t) =>
+                `- Quote-replies message [${t.quotedMessageId}], which is PRIMARY in conversation ${t.conversationId} ("${t.topicSummary ?? "No topic yet"}"). Quoted text: "${t.snippet}"`
+            )
+            .join("\n")
+        : "None — this message does not quote-reply anything."
+
     return BOUNDARY_EXTRACTION_PROMPT.replace("{{CONVERSATIONS}}", convSection)
       .replace("{{RECENT_MESSAGES}}", recentSection || "No recent messages.")
       .replace("{{AUTHOR}}", `${context.newMessage.authorType}:${context.newMessage.authorId.slice(-8)}`)
       .replace("{{CONTENT}}", context.newMessage.contentMarkdown + newMessageAttachmentSection)
+      .replace("{{REPLY_CONTEXT}}", replySection)
   }
 
   private renderAttachments(attachments: AttachmentExtractContext[], maxChars: number): string {

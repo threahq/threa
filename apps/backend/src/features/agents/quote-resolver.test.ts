@@ -54,7 +54,7 @@ function createMessage(overrides: Partial<Message> & { id: string }): Message {
   return { ...base, ...overrides }
 }
 
-const mockFindByIdsInStreams = mock((_db: Querier, _ids: string[], _streamIds: string[]) =>
+const mockFindByIdsInStreams = mock((_db: Querier, _workspaceId: string, _ids: string[], _streamIds: string[]) =>
   Promise.resolve(new Map<string, Message>())
 )
 const mockFindUsersByIds = mock(() => Promise.resolve([] as { id: string; name: string }[]))
@@ -95,7 +95,7 @@ describe("resolveQuoteReplies", () => {
     expect(resolved.size).toBe(1)
     expect(resolved.get("msg_B")?.id).toBe("msg_B")
     expect(mockFindByIdsInStreams).toHaveBeenCalledTimes(1)
-    expect(mockFindByIdsInStreams.mock.calls[0][1]).toEqual(["msg_B"])
+    expect(mockFindByIdsInStreams.mock.calls[0][2]).toEqual(["msg_B"])
   })
 
   test("follows a depth chain up to maxDepth=5", async () => {
@@ -180,7 +180,7 @@ describe("resolveQuoteReplies", () => {
 
     expect([...resolved.keys()]).toEqual(["msg_B"])
     expect(mockFindByIdsInStreams).toHaveBeenCalledTimes(1)
-    expect(mockFindByIdsInStreams.mock.calls[0][1]).toEqual(["msg_B"])
+    expect(mockFindByIdsInStreams.mock.calls[0][2]).toEqual(["msg_B"])
   })
 
   test("multiple distinct precursors in one message are all resolved", async () => {
@@ -203,7 +203,7 @@ describe("resolveQuoteReplies", () => {
     })
 
     expect([...resolved.keys()].sort()).toEqual(["msg_B", "msg_C"])
-    expect(mockFindByIdsInStreams.mock.calls[0][1]).toEqual(["msg_B", "msg_C"])
+    expect(mockFindByIdsInStreams.mock.calls[0][2]).toEqual(["msg_B", "msg_C"])
   })
 
   test("access-denied or soft-deleted precursors are filtered at the SQL layer", async () => {
@@ -229,7 +229,7 @@ describe("resolveQuoteReplies", () => {
       accessibleStreamIds: new Set(["stream_main", "stream_other"]),
     })
 
-    const streamIdsArg = mockFindByIdsInStreams.mock.calls[0][2]
+    const streamIdsArg = mockFindByIdsInStreams.mock.calls[0][3]
     expect(new Set(streamIdsArg)).toEqual(new Set(["stream_main", "stream_other"]))
   })
 
@@ -238,7 +238,7 @@ describe("resolveQuoteReplies", () => {
     const manyQuotes = Array.from({ length: 10 }, (_, i) => quoteReplyNode(`msg_B${i}`))
     const seed = createMessage({ id: "msg_A", contentJson: doc(...manyQuotes) })
     // Only return the first 3 (simulating the cap)
-    mockFindByIdsInStreams.mockImplementation((_db, ids) => {
+    mockFindByIdsInStreams.mockImplementation((_db, _workspaceId, ids) => {
       const result = new Map<string, Message>()
       for (const id of ids) {
         result.set(id, createMessage({ id, contentMarkdown: `body ${id}` }))
@@ -254,7 +254,7 @@ describe("resolveQuoteReplies", () => {
 
     expect(resolved.size).toBe(3)
     // Only the first 3 IDs should have been fetched
-    expect(mockFindByIdsInStreams.mock.calls[0][1]).toEqual(["msg_B0", "msg_B1", "msg_B2"])
+    expect(mockFindByIdsInStreams.mock.calls[0][2]).toEqual(["msg_B0", "msg_B1", "msg_B2"])
   })
 
   test("batch resolves author names for all precursors", async () => {

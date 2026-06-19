@@ -28,6 +28,18 @@ export interface EvalMessage {
 }
 
 /**
+ * One explicit quote-reply the new message makes, already resolved to the
+ * conversation that owns the quoted message (the production service does this
+ * resolution from `content_json`; evals provide it directly).
+ */
+export interface EvalReplyTarget {
+  quotedMessageId: string
+  conversationId: string
+  topicSummary: string | null
+  snippet: string
+}
+
+/**
  * Input for boundary extraction evaluation.
  */
 export interface BoundaryExtractionInput {
@@ -37,10 +49,12 @@ export interface BoundaryExtractionInput {
   recentMessages?: EvalMessage[]
   /** Active conversations in the stream */
   activeConversations?: EvalConversationSummary[]
+  /** Conversations the new message explicitly quote-replies (strong continuity signal) */
+  replyTargets?: EvalReplyTarget[]
   /** Stream type (channel, scratchpad, thread, dm) */
   streamType?: string
   /** Category for organizing test cases */
-  category?: "new-topic" | "continue-existing" | "topic-shift" | "resolution" | "ambiguous"
+  category?: "new-topic" | "continue-existing" | "topic-shift" | "resolution" | "ambiguous" | "reply" | "continuity"
 }
 
 /**
