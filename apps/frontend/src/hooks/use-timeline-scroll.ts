@@ -100,8 +100,10 @@ interface UseTimelineScrollReturn {
   isInitialSettling: boolean
   /** True while parked at the live tail (auto-following new output). */
   isFollowingTailRef: React.MutableRefObject<boolean>
-  /** Imperatively scroll to the very bottom (the composer-spacer edge). */
-  scrollToBottom: (options?: { force?: boolean; behavior?: ScrollBehavior }) => void
+  /** Imperatively scroll to the very bottom (the composer-spacer edge).
+   *  `resumeTail` additionally ends the cold-load first-unread follow-suppression
+   *  (Escape / Jump-to-latest); a plain `force` geometry re-pin must not. */
+  scrollToBottom: (options?: { force?: boolean; resumeTail?: boolean; behavior?: ScrollBehavior }) => void
   /** Disable auto-follow (e.g. when a deep-link jump takes over). */
   disableAutoScroll: () => void
   /** Attach to virtua's `onScroll` (and/or call after a native scroll). */
@@ -290,14 +292,16 @@ export function useTimelineScroll({
   }, [])
 
   const scrollToBottom = useCallback(
-    (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
+    (options?: { force?: boolean; resumeTail?: boolean; behavior?: ScrollBehavior }) => {
       if (!options?.force && !isFollowingTailRef.current) return
       isFollowingTailRef.current = true
-      // An explicit jump to the tail (Escape "resume tail", Jump-to-latest) ends
+      // Only an explicit tail resume (Escape "resume tail", Jump-to-latest) ends
       // the unread-landing follow-suppression; without this the scroll's own
       // handleScroll would read landedOnUnread and re-disarm the follow we just
-      // armed, so new messages would stop pinning to the bottom.
-      landedOnUnreadRef.current = false
+      // armed, so new messages would stop pinning to the bottom. A plain forced
+      // geometry correction (e.g. the composer's first-measure re-pin) must NOT
+      // clear it, or it would cancel the cold-load first-unread landing.
+      if (options?.resumeTail) landedOnUnreadRef.current = false
       setIsScrolledFarFromBottom(false)
       const el = scrollerRef.current
       if (!el) return

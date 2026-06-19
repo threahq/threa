@@ -1503,7 +1503,10 @@ export function StreamContent({
   // row (Slack-style progressive read), not the tail of the loaded window. When
   // the viewer is not at the live tail the mark is partial — the badge keeps the
   // unread still below the fold (see useAutoMarkAsRead / markAsRead partial).
-  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
+  // Held off until the cold-load settle reveals the rows: the timeline DOM is
+  // populated behind the skeleton mask during the settle, so scanning it then
+  // would mark rows read the viewer hasn't actually seen yet.
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && !(useVirtualized && virtualIsInitialSettling)
   const { lastSeenEventId, atLastRow } = useLastSeenEvent({
     scrollContainerRef,
     events: displayEvents,
@@ -1589,7 +1592,7 @@ export function StreamContent({
       const lastLoadedEventId = lastLoadedEventIdRef.current
       if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
       dismissUnreadDivider()
-      scrollToBottom({ force: true })
+      scrollToBottom({ force: true, resumeTail: true })
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
@@ -1632,10 +1635,10 @@ export function StreamContent({
       // mis-detected as a real prepend.
       resetShiftBaseline()
       requestAnimationFrame(() => {
-        scrollToBottom({ force: true })
+        scrollToBottom({ force: true, resumeTail: true })
       })
     } else {
-      scrollToBottom({ force: true })
+      scrollToBottom({ force: true, resumeTail: true })
     }
   }, [isJumpMode, exitJumpMode, resetShiftBaseline, scrollToBottom])
 
