@@ -48,7 +48,7 @@ describe("runWithShutdownWatchdog", () => {
       resolveShutdown = resolve
     })
 
-    void runWithShutdownWatchdog({
+    const watchdog = runWithShutdownWatchdog({
       shutdown: () => shutdownPromise,
       timeoutMs: 100,
       onComplete,
@@ -62,7 +62,7 @@ describe("runWithShutdownWatchdog", () => {
 
     // A shutdown that finally settles after the deadline must not double-fire.
     resolveShutdown()
-    await Promise.resolve()
+    await watchdog
     expect(onComplete).not.toHaveBeenCalled()
     expect(onTimeout).toHaveBeenCalledTimes(1)
   })

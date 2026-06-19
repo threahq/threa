@@ -13,7 +13,9 @@ const { server, stop, fastShutdown } = await startServer()
 // blocks on an unreachable Postgres — that wedged the process half-dead for ~24
 // min in the 2026-06-19 disk-full incident (no exit, no logs, no supervisor
 // restart). Past this deadline we force-exit so the supervisor restarts us.
-const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 15_000
+const configuredShutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS)
+const SHUTDOWN_TIMEOUT_MS =
+  Number.isFinite(configuredShutdownTimeoutMs) && configuredShutdownTimeoutMs > 0 ? configuredShutdownTimeoutMs : 15_000
 
 if (fastShutdown) {
   logger.info("Fast shutdown enabled - graceful shutdown disabled")
