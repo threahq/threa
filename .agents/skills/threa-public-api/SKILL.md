@@ -207,6 +207,11 @@ const items = [
   /* build your messages here */
 ]
 
+if (items.length === 0) {
+  console.error("No items to send")
+  process.exit(1)
+}
+
 const pf = await post(items[0], "seed-0")
 if (!pf.ok) {
   console.error(`pre-flight failed ${pf.status}: ${pf.body}`)

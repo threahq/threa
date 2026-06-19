@@ -146,7 +146,11 @@ export class LabelAssignmentService {
     resourceId: string
   }): Promise<void> {
     await withTransaction(this.pool, async (client) => {
-      const slug = generateSlug(params.name.trim()) || "label"
+      const trimmedName = params.name.trim()
+      if (trimmedName.length === 0) {
+        throw new HttpError("Label name is required", { status: 400, code: "VALIDATION_ERROR" })
+      }
+      const slug = generateSlug(trimmedName) || "label"
       const label = await LabelRepository.findByOwnerSlug(client, params.workspaceId, params.actor.id, slug)
       if (!label) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })

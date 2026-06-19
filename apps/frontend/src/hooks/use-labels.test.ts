@@ -70,6 +70,19 @@ describe("reconcileLabels", () => {
     expect(labels.map((l) => l.id)).toEqual(["lbl_kept"])
   })
 
+  it("preserves a row written after the fetch started (socket race)", async () => {
+    const fetchStartedAt = Date.now()
+    // A `label:*` socket handler wrote this row while the HTTP snapshot was in
+    // flight, so the snapshot can't know about it — its _cachedAt is newer than
+    // the fetch start and it must survive the prune.
+    await db.labels.put({ ...makeLabel({ id: "lbl_socket", name: "Socket" }), _cachedAt: fetchStartedAt + 5_000 })
+
+    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_snapshot" })], [], fetchStartedAt)
+
+    const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).toArray()
+    expect(labels.map((l) => l.id).sort()).toEqual(["lbl_snapshot", "lbl_socket"])
+  })
+
   it("only touches the targeted workspace", async () => {
     // Seed an unrelated workspace's row — it should survive reconciliation
     // for WORKSPACE_ID.

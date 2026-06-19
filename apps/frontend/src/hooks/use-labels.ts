@@ -97,22 +97,32 @@ async function removeAssignment(
  * from the response are deleted; rows in the response are upserted. Mirrors the
  * stream-sync / saved-sync reconciliation so labels archived while we were
  * offline don't linger in the catalog.
+ *
+ * `staleBefore` guards against a `label:*` socket write that lands while the
+ * HTTP snapshot is in flight: only rows cached before the fetch started are
+ * pruned, so a newer socket-written row the snapshot can't know about survives
+ * (same `_cachedAt < cutoff` rule the bootstrap stale-sweep uses).
  */
 export async function reconcileLabels(
   workspaceId: string,
   labels: Label[],
-  assignments: LabelAssignment[]
+  assignments: LabelAssignment[],
+  staleBefore = Date.now()
 ): Promise<void> {
   const labelIds = new Set(labels.map((l) => l.id))
   const assignmentKeys = new Set(
     assignments.map((a) => assignmentId(a.workspaceId, a.resourceType, a.resourceId, a.labelId, a.userId))
   )
 
-  const existingLabels = await db.labels.where("workspaceId").equals(workspaceId).primaryKeys()
-  const existingAssignments = await db.labelAssignments.where("workspaceId").equals(workspaceId).primaryKeys()
+  const existingLabels = await db.labels.where("workspaceId").equals(workspaceId).toArray()
+  const existingAssignments = await db.labelAssignments.where("workspaceId").equals(workspaceId).toArray()
 
-  const labelsToDelete = (existingLabels as string[]).filter((id) => !labelIds.has(id))
-  const assignmentsToDelete = (existingAssignments as string[]).filter((key) => !assignmentKeys.has(key))
+  const labelsToDelete = existingLabels
+    .filter((row) => row._cachedAt < staleBefore && !labelIds.has(row.id))
+    .map((row) => row.id)
+  const assignmentsToDelete = existingAssignments
+    .filter((row) => row._cachedAt < staleBefore && !assignmentKeys.has(row.id))
+    .map((row) => row.id)
 
   await db.transaction("rw", db.labels, db.labelAssignments, async () => {
     if (labelsToDelete.length > 0) await db.labels.bulkDelete(labelsToDelete)
@@ -136,8 +146,9 @@ export function useLabelsSync(workspaceId: string) {
   return useQuery({
     queryKey: labelKeys.list(workspaceId),
     queryFn: async () => {
+      const fetchStartedAt = Date.now()
       const res = await labelService.list(workspaceId)
-      await reconcileLabels(workspaceId, res.labels, res.assignments)
+      await reconcileLabels(workspaceId, res.labels, res.assignments, fetchStartedAt)
       return res
     },
     staleTime: Infinity,

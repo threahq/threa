@@ -266,6 +266,22 @@ describe("LabelAssignmentService.unassignByName", () => {
       })
     ).rejects.toMatchObject({ status: 404 })
   })
+
+  it("rejects a blank name before falling back to the default slug", async () => {
+    const service = setupService()
+    const lookup = spyOn(LabelRepository, "findByOwnerSlug")
+
+    await expect(
+      service.unassignByName({
+        workspaceId: WORKSPACE_ID,
+        actor: USER_ACTOR,
+        name: "   ",
+        resourceType: LabelableResourceTypes.STREAM,
+        resourceId: RESOURCE_ID,
+      })
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(lookup).not.toHaveBeenCalled()
+  })
 })
 
 describe("LabelAssignmentService.listForViewer", () => {
