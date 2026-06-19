@@ -47,7 +47,7 @@ test.describe("E2E biometric unlock", () => {
 
     // Created + unlocked: gate yields, Encrypted pill shows.
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0)
-    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
 
     // Reload: biometric-gated, so the full-page gate returns.
     await page.reload()
@@ -55,7 +55,10 @@ test.describe("E2E biometric unlock", () => {
 
     // Unlock → provider opens the biometric modal (device is webauthnProtected) →
     // the assertion is auto-verified by the virtual authenticator.
-    await page.getByRole("button", { name: /^Unlock$/ }).first().click()
+    await page
+      .getByRole("button", { name: /^Unlock$/ })
+      .first()
+      .click()
     const bio = page.getByRole("dialog")
     await expect(bio.getByRole("heading", { name: "Unlock with biometrics" })).toBeVisible({ timeout: 10_000 })
     await bio.getByRole("button", { name: /Unlock with biometrics/i }).click()
