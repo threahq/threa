@@ -595,9 +595,8 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
     }
   }
 
-  return (
+  const rowContent = (
     <>
-      {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
       {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
         <div className="px-3 sm:px-6">
@@ -644,6 +643,17 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         </div>
       )}
       {eventNode}
+    </>
+  )
+
+  return (
+    <>
+      {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
+      {/* The first-unread row gets extra top padding so the absolutely-positioned
+          divider has room to breathe above the message instead of crowding it.
+          Only wrap when the divider shows so every other row keeps its spacing
+          and DOM shape. */}
+      {showUnreadDivider ? <div className="pt-3">{rowContent}</div> : rowContent}
     </>
   )
 }
