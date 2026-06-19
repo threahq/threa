@@ -301,7 +301,15 @@ test.describe("Message Reactions", () => {
       expect(sendRes.ok()).toBeTruthy()
       const { message } = (await sendRes.json()) as { message: { id: string } }
 
-      // User B: open the channel, see the message, then explicitly mark as read via API
+      // User B: open the channel and let the *client* mark it read. The read
+      // must go through the app (which updates client-side read state), not a
+      // raw API call — a server-only read leaves the client convinced the
+      // message is still unread, so it shows its own divider. Wait for the
+      // app's own read POST to confirm the client caught up.
+      const clientReadLanded = ctxB.page.waitForResponse(
+        (res) => res.url().includes(`/streams/${streamId}/read`) && res.request().method() === "POST" && res.ok(),
+        { timeout: 15000 }
+      )
       await ctxB.page.goto(`/w/${workspaceId}/s/${streamId}`)
       const timelineMessage = ctxB.page
         .getByRole("main")
@@ -309,18 +317,7 @@ test.describe("Message Reactions", () => {
         .filter({ hasText: messageContent })
         .first()
       await expect(timelineMessage).toBeVisible({ timeout: 10000 })
-
-      // Get the last event ID from bootstrap and mark as read directly
-      const bootstrapRes = await ctxB.page.request.get(`/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap`)
-      expect(bootstrapRes.ok()).toBeTruthy()
-      const { data: bootstrap } = (await bootstrapRes.json()) as {
-        data: { events: Array<{ id: string }> }
-      }
-      const lastEventId = bootstrap.events[bootstrap.events.length - 1].id
-      const markReadRes = await ctxB.page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/read`, {
-        data: { lastEventId },
-      })
-      expect(markReadRes.ok()).toBeTruthy()
+      await clientReadLanded
 
       // User B: navigate away from the stream
       await ctxB.page.goto(`/w/${workspaceId}`)
@@ -336,8 +333,10 @@ test.describe("Message Reactions", () => {
       await ctxB.page.goto(`/w/${workspaceId}/s/${streamId}`)
       await expect(timelineMessage).toBeVisible({ timeout: 10000 })
 
-      // The "New" unread divider should NOT appear — reactions are not new messages
-      // Check immediately after navigation settles, before the divider could auto-dismiss
+      // The "New" unread divider must NOT appear: the message was already read
+      // client-side, and a reaction is an invisible event that never anchors the
+      // divider. (The divider now persists for the session, so this asserts it
+      // genuinely never showed — not that it auto-dismissed.)
       const unreadDivider = ctxB.page.getByRole("main").getByText("New", { exact: true })
       await expect(unreadDivider).not.toBeVisible({ timeout: 3000 })
 
