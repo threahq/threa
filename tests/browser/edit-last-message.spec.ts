@@ -145,6 +145,14 @@ test.describe("Edit last message (ArrowUp)", () => {
       })
     }
 
+    // Mark the stream read for User A before reloading. The cold-load scroll now
+    // lands on the first unread message (Slack-style); with the 20 fillers
+    // unread, User A would land near the top with their first message in view.
+    // This test needs that first message scrolled OFF-screen so ArrowUp can pull
+    // it back, which is the at-the-tail state a viewer who has read the channel
+    // gets — so read it first, then reload lands at the bottom.
+    await userA.page.request.post(`/api/workspaces/${workspaceId}/streams/read-all`)
+
     // ── User A: hard-reload to get a fresh bootstrap with filler messages ──
     // Navigate to about:blank first to fully teardown React state (TanStack cache,
     // hook state), then navigate to the stream URL. This gets a clean bootstrap from

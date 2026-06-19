@@ -1552,8 +1552,9 @@ export function StreamContent({
   // or null to land at the bottom. Read lazily by useTimelineScroll's layout
   // effect once read state resolves. A deep-link (?m=) drives its own scroll, so
   // never override it with the unread target.
-  initialUnreadIndexRef.current =
-    firstUnreadEventId && !highlightMessageId ? findEventItemIndex(visibleItems, firstUnreadEventId) : null
+  const firstUnreadItemIndex =
+    firstUnreadEventId && !highlightMessageId ? findEventItemIndex(visibleItems, firstUnreadEventId) : -1
+  initialUnreadIndexRef.current = firstUnreadItemIndex >= 0 ? firstUnreadItemIndex : null
 
   // Escape "escapes the unread block" (desktop, Slack's Esc-marks-channel-read):
   // mark the stream fully read, dismiss the persistent unread divider, and
