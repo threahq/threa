@@ -44,6 +44,43 @@ describe("Pi remote trace safety", () => {
     expect(trace).not.toContain("secret")
   })
 
+  // `full = true` is only ever passed on a sealed (E2EE) turn (see
+  // `shouldEmitFullTrace`), where the step content is ciphertext the server
+  // can't read — so the full command/patch/output is safe to include and more
+  // useful to the owner. The plaintext path keeps the redactions above.
+  test("includes the real shell command in a sealed (full) tool_call trace", () => {
+    const trace = __testing.formatToolCallTrace(
+      { toolName: "bash", toolCallId: "call_1", input: { command: "rg --files | head" } } as never,
+      true
+    )
+    expect(trace).toContain("rg --files | head")
+    expect(trace).not.toContain("omitted for safety")
+  })
+
+  test("includes the real write contents in a sealed (full) tool_call trace", () => {
+    const trace = __testing.formatToolCallTrace(
+      {
+        toolName: "edit",
+        toolCallId: "call_1",
+        input: { path: "src/config.ts", newText: "export const X = 1" },
+      } as never,
+      true
+    )
+    expect(trace).toContain("src/config.ts")
+    expect(trace).toContain("export const X = 1")
+    expect(trace).not.toContain("omitted for safety")
+  })
+
+  test("includes the real tool output in a sealed (full) tool_result trace", () => {
+    const trace = __testing.formatToolResultTrace(
+      { toolName: "bash", toolCallId: "call_1", isError: false, content: "line one\nline two" } as never,
+      true
+    )
+    expect(trace).toContain("line one")
+    expect(trace).toContain("line two")
+    expect(trace).not.toContain("omitted for safety")
+  })
+
   test("migrates legacy global enabled and stream cursors into session links", () => {
     const migrated = __testing.migrateSessionState({
       baseUrl: "https://app.threa.io",

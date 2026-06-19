@@ -108,6 +108,15 @@ type Config = {
   preferredModels?: string[]
   /** Label name to assign to scratchpads created by this Pi instance. */
   defaultLabel?: string
+  /**
+   * Send full, unredacted trace steps (real shell commands, file contents, tool
+   * output) on a sealed (E2EE) turn. Safe because sealed step content is
+   * ciphertext the server can't read, so it gives the owner more detail without
+   * giving the server anything. Defaults to ON for sealed turns; has no effect on
+   * a plaintext turn, which always redacts (the server would see it in the clear).
+   * Set to `false` to keep sealed traces redacted too.
+   */
+  sealedFullTrace?: boolean
   /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
@@ -145,7 +154,7 @@ type WorkspaceConfigResponse = {
 
 type ConfigPatch = Pick<
   Config,
-  "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels" | "defaultLabel"
+  "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels" | "defaultLabel" | "sealedFullTrace"
 >
 
 type ClaimedInvocation = {
@@ -1332,13 +1341,32 @@ function safeToolArgumentSummary(event: ToolCallEvent): string {
   return `Arguments for ${toolName} omitted for safety.`
 }
 
-function formatToolCallTrace(event: ToolCallEvent): string {
+/**
+ * The real, unredacted tool arguments — used ONLY on a sealed (E2EE) turn, where
+ * the step content is ciphertext the server can't read, so the owner sees exactly
+ * what the agent did (the shell command, the file path + contents, the patch, the
+ * search pattern) without the server gaining anything. `formatStructuredToolTrace`
+ * truncates the result to the trace cap. The plaintext path never calls this — see
+ * `safeToolArgumentSummary` and `shouldEmitFullTrace`.
+ */
+function fullToolArgumentSummary(event: ToolCallEvent): string {
+  const input = "input" in event ? event.input : undefined
+  if (input === undefined) return "(no arguments)"
+  if (typeof input === "string") return input
+  try {
+    return JSON.stringify(input, null, 2)
+  } catch {
+    return String(input)
+  }
+}
+
+function formatToolCallTrace(event: ToolCallEvent, full = false): string {
   return formatStructuredToolTrace({
     headline: describeToolCall(event).replace(/…$/, ""),
     sections: [
       {
         label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
-        body: safeToolArgumentSummary(event),
+        body: full ? fullToolArgumentSummary(event) : safeToolArgumentSummary(event),
         lang: null,
       },
     ],
@@ -1352,18 +1380,34 @@ function summarizeToolOutput(output: string): string {
   return `Tool output omitted for safety. Captured locally: ${text.length} characters across ${lines} ${lines === 1 ? "line" : "lines"}.`
 }
 
-function formatToolResultTrace(event: ToolResultEvent): string {
+function formatToolResultTrace(event: ToolResultEvent, full = false): string {
   const call = pendingToolCalls.get(event.toolCallId)
   const output = textFromToolContent(event.content)
   const sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }> = []
+  // Sealed: ship the real output (and error output) — it's encrypted. Plaintext:
+  // omit it for safety; the server sees this in the clear.
+  const redactedBody = event.isError
+    ? `${summarizeToolOutput(output)} Error details omitted for safety.`
+    : summarizeToolOutput(output)
   sections.push({
     label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
-    body: event.isError
-      ? `${summarizeToolOutput(output)} Error details omitted for safety.`
-      : summarizeToolOutput(output),
+    body: full ? output.trim() || "Tool produced no textual output." : redactedBody,
     lang: null,
   })
   return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${safeToolName(event.toolName)}`, sections })
+}
+
+/**
+ * Whether to emit full, unredacted tool args/output for this invocation's trace
+ * steps. Only ever true on a sealed (E2EE) turn — the step content is ciphertext
+ * the server can't read, so full detail gives the owner more without giving the
+ * server anything (the point of E2EE traces). A plaintext turn ALWAYS redacts:
+ * its steps reach the server in the clear, so full detail there is a liability,
+ * and the toggle cannot turn it on. `config.sealedFullTrace` only lets a user opt
+ * sealed traces back to redacted; it defaults to full.
+ */
+function shouldEmitFullTrace(invocation: ClaimedInvocation | undefined): boolean {
+  return invocation?.sealing !== undefined && config?.sealedFullTrace !== false
 }
 
 function sanitizeTraceText(text: string): string {
@@ -1575,6 +1619,10 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       defaultDisplayName: existing?.defaultDisplayName ?? "",
       defaultLabel: existing?.defaultLabel ?? "",
       preferredModels: existing?.preferredModels ?? [],
+      // Full (unredacted) trace steps on encrypted scratchpads — safe because the
+      // content is end-to-end encrypted (the server can't read it). Set false to
+      // keep sealed traces redacted; plaintext scratchpads always redact.
+      sealedFullTrace: existing?.sealedFullTrace ?? true,
     },
     null,
     2
@@ -1607,6 +1655,9 @@ function parseConfigPatch(text: string): ConfigPatch {
   ) {
     throw new Error("preferredModels must be an array of strings")
   }
+  if (candidate.sealedFullTrace !== undefined && typeof candidate.sealedFullTrace !== "boolean") {
+    throw new Error("sealedFullTrace must be a boolean")
+  }
   const { baseUrl, workspaceId, apiKey } = candidate as ConfigPatch
   return {
     baseUrl: baseUrl.trim(),
@@ -1616,6 +1667,7 @@ function parseConfigPatch(text: string): ConfigPatch {
     defaultDisplayName: candidate.defaultDisplayName?.trim() || undefined,
     defaultLabel: candidate.defaultLabel?.trim() || undefined,
     preferredModels: candidate.preferredModels?.map((value) => value.trim()).filter((value) => value.length > 0),
+    sealedFullTrace: candidate.sealedFullTrace,
   }
 }
 
@@ -3143,14 +3195,14 @@ export default function (pi: ExtensionAPI): void {
     if (!pending) return
     const description = describeToolCall(event)
     pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, "") })
-    await recordTraceStep("tool_call", formatToolCallTrace(event), description)
+    await recordTraceStep("tool_call", formatToolCallTrace(event, shouldEmitFullTrace(pending)), description)
   })
 
   pi.on("tool_result", async (event) => {
     if (!pending) return
     await recordTraceStep(
       event.isError ? "tool_error" : "tool_call",
-      formatToolResultTrace(event),
+      formatToolResultTrace(event, shouldEmitFullTrace(pending)),
       event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
     )
     pendingToolCalls.delete(event.toolCallId)
