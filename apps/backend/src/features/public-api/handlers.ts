@@ -43,6 +43,7 @@ import {
   AttachmentSafetyStatuses,
   AuthorTypes,
   LabelActorTypes,
+  LabelableResourceTypes,
   type Label,
   type LabelActor,
   type LabelAssignment,
@@ -1110,6 +1111,24 @@ export function createPublicApiHandlers({
         createdBy: bot.ownerUserId,
       })
       await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
+
+      if (data.labelName) {
+        try {
+          await labelAssignmentService.assignByName({
+            workspaceId: req.workspaceId!,
+            actor: { type: LabelActorTypes.USER, id: bot.ownerUserId },
+            name: data.labelName,
+            resourceType: LabelableResourceTypes.STREAM,
+            resourceId: stream.id,
+          })
+        } catch (err) {
+          logger.warn(
+            { err, workspaceId: req.workspaceId!, streamId: stream.id, labelName: data.labelName },
+            "Failed to assign optional runtime session label"
+          )
+        }
+      }
+
       const link = await withTransaction(pool, async (client) => {
         await botRuntimeService.repairBotTraitsInTransaction(client, {
           workspaceId: req.workspaceId!,

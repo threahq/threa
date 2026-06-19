@@ -70,4 +70,12 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
       createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", memoryMode: "disabled" }).success
     ).toBe(false)
   })
+
+  it("accepts an optional label name", () => {
+    const parsed = createRuntimeSessionSchema.parse({ ...base, runtimeKind: "pi-local", labelName: " Pi remote " })
+    expect(parsed.labelName).toBe("Pi remote")
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local", labelName: "   " }).success).toBe(
+      false
+    )
+  })
 })
