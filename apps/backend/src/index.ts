@@ -5,8 +5,17 @@ initLangfuse()
 import { startServer } from "./server"
 import { logger } from "./lib/logger"
 import { classifyGlobalCrash, serializeCrashReason } from "./lib/crash-policy"
+import { runWithShutdownWatchdog } from "./lib/graceful-shutdown"
 
 const { server, stop, fastShutdown } = await startServer()
+
+// Hard ceiling on graceful shutdown. `stop()` drains the pools, and `pool.end()`
+// blocks on an unreachable Postgres — that wedged the process half-dead for ~24
+// min in the 2026-06-19 disk-full incident (no exit, no logs, no supervisor
+// restart). Past this deadline we force-exit so the supervisor restarts us.
+const configuredShutdownTimeoutMs = Number(process.env.SHUTDOWN_TIMEOUT_MS)
+const SHUTDOWN_TIMEOUT_MS =
+  Number.isFinite(configuredShutdownTimeoutMs) && configuredShutdownTimeoutMs > 0 ? configuredShutdownTimeoutMs : 15_000
 
 if (fastShutdown) {
   logger.info("Fast shutdown enabled - graceful shutdown disabled")
@@ -22,9 +31,22 @@ async function shutdown(code: number) {
     process.exit(code)
   }
 
-  await stop()
-  await shutdownLangfuse()
-  process.exit(code)
+  await runWithShutdownWatchdog({
+    timeoutMs: SHUTDOWN_TIMEOUT_MS,
+    shutdown: async () => {
+      try {
+        await stop()
+        await shutdownLangfuse()
+      } catch (err) {
+        logger.error({ err }, "Error during graceful shutdown")
+      }
+    },
+    onComplete: () => process.exit(code),
+    onTimeout: () => {
+      logger.fatal({ timeoutMs: SHUTDOWN_TIMEOUT_MS }, "Graceful shutdown timed out — forcing exit")
+      process.exit(code)
+    },
+  })
 }
 
 process.on("SIGTERM", () => shutdown(0))
