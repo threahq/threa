@@ -488,8 +488,21 @@ async function createBik(): Promise<BotIdentityKey> {
     publicKey: bytesToBase64(publicKey),
     privateKey: bytesToBase64(privateKey),
   }
-  mkdirSync(dirname(BIK_PATH), { recursive: true })
-  writeFileSync(BIK_PATH, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+  // Persist best-effort: a write failure (disk full, permissions) must not stop
+  // the bot from using this key for the session — it's still registered on
+  // hello/presence and serves sealed turns; only restart-stability (a `publicKeyId`
+  // that survives a restart) is lost. Logged, never silent, so the cause is
+  // diagnosable. `ensureBik` therefore only fails if key *generation* itself does,
+  // in which case the bot runs plaintext-only (no BIK on presence), which is the
+  // correct degradation.
+  try {
+    mkdirSync(dirname(BIK_PATH), { recursive: true })
+    writeFileSync(BIK_PATH, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+  } catch (error) {
+    console.error(
+      `Threa remote: failed to persist BIK to ${BIK_PATH}; using an in-memory key this session: ${String(error)}`
+    )
+  }
   return { publicKeyId: record.publicKeyId, publicKeyBase64: record.publicKey, privateKey: pair.privateKey }
 }
 
