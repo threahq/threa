@@ -1,12 +1,18 @@
-import { describe, expect, it, mock } from "bun:test"
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import { LabelActorTypes, LabelableResourceTypes } from "@threa/types"
 import type { Label, LabelAssignment } from "@threa/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
+import { BotRepository } from "./bot-repository"
 
-// The public label handlers resolve a label actor from the key (user vs bot) and
-// pass it through to the shared label services, then serialize with explicit
-// `actorType`/`actorId` wire fields. These tests pin that contract without a DB.
+// The public label handlers resolve the owning user from the key — a user key
+// owns its own labels; a personal bot key owns labels for its owner (a bot never
+// owns labels itself, and a shared bot can't apply them). These tests pin that
+// contract without a DB.
+
+function personalBot(ownerUserId: string) {
+  return { id: "bot_1", workspaceId: "ws_1", type: "personal", ownerUserId, archivedAt: null } as never
+}
 
 interface CapturedResponse {
   res: Response
@@ -103,6 +109,8 @@ function botRequest(extra: Partial<Request> = {}): Request {
 }
 
 describe("public API label handlers", () => {
+  afterEach(() => mock.restore())
+
   it("upserts a label by name attributed to the user actor for a user key", async () => {
     const upsertByName = mock((_params: unknown) => Promise.resolve(fakeLabel()))
     const handlers = createHandlers({
@@ -121,9 +129,10 @@ describe("public API label handlers", () => {
     })
   })
 
-  it("upserts a label attributed to the bot actor for a bot key", async () => {
+  it("attributes a personal bot key's label to the bot's owner, not the bot", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
     const upsertByName = mock((_params: unknown) =>
-      Promise.resolve(fakeLabel({ creatorActorType: LabelActorTypes.BOT, creatorUserId: "bot_1" }))
+      Promise.resolve(fakeLabel({ creatorActorType: LabelActorTypes.USER, creatorUserId: "usr_owner" }))
     )
     const handlers = createHandlers({
       labelService: { upsertByName } as unknown as PublicApiDeps["labelService"],
@@ -132,19 +141,43 @@ describe("public API label handlers", () => {
 
     await handlers.createLabel(botRequest({ body: { name: "Priority" } }), cap.res)
 
+    // The label is owned by the bot's owner user — never the bot itself.
     expect(upsertByName).toHaveBeenCalledWith(
-      expect.objectContaining({ actor: { type: LabelActorTypes.BOT, id: "bot_1" } })
+      expect.objectContaining({ actor: { type: LabelActorTypes.USER, id: "usr_owner" } })
     )
     expect(cap.body()).toMatchObject({
-      data: { creatorActorType: LabelActorTypes.BOT, creatorActorId: "bot_1" },
+      data: { creatorActorType: LabelActorTypes.USER, creatorActorId: "usr_owner" },
     })
   })
 
-  it("applies a label by name and returns the resolved label plus assignment", async () => {
+  it("rejects a shared bot key (no owner to label for)", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue({
+      id: "bot_1",
+      workspaceId: "ws_1",
+      type: "shared",
+      ownerUserId: null,
+      archivedAt: null,
+    } as never)
+    const upsertByName = mock((_params: unknown) => Promise.resolve(fakeLabel()))
+    const handlers = createHandlers({
+      labelService: { upsertByName } as unknown as PublicApiDeps["labelService"],
+    })
+
+    await expect(
+      handlers.createLabel(botRequest({ body: { name: "Priority" } }), createResponse().res)
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "PERSONAL_BOT_REQUIRED",
+    })
+    expect(upsertByName).not.toHaveBeenCalled()
+  })
+
+  it("applies a personal bot's label-by-name on behalf of its owner", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
     const assignByName = mock((_params: unknown) =>
       Promise.resolve({
-        label: fakeLabel({ creatorActorType: LabelActorTypes.BOT, creatorUserId: "bot_1" }),
-        assignment: fakeAssignment({ actorType: LabelActorTypes.BOT, userId: "bot_1" }),
+        label: fakeLabel({ creatorActorType: LabelActorTypes.USER, creatorUserId: "usr_owner" }),
+        assignment: fakeAssignment({ actorType: LabelActorTypes.USER, userId: "usr_owner" }),
       })
     )
     const handlers = createHandlers({
@@ -159,7 +192,7 @@ describe("public API label handlers", () => {
 
     expect(assignByName).toHaveBeenCalledWith(
       expect.objectContaining({
-        actor: { type: LabelActorTypes.BOT, id: "bot_1" },
+        actor: { type: LabelActorTypes.USER, id: "usr_owner" },
         name: "Priority",
         resourceType: "stream",
         resourceId: "stream_1",
@@ -168,8 +201,8 @@ describe("public API label handlers", () => {
     expect(cap.status()).toBe(201)
     expect(cap.body()).toMatchObject({
       data: {
-        label: { creatorActorType: LabelActorTypes.BOT, creatorActorId: "bot_1" },
-        assignment: { actorType: LabelActorTypes.BOT, actorId: "bot_1", resourceId: "stream_1" },
+        label: { creatorActorType: LabelActorTypes.USER, creatorActorId: "usr_owner" },
+        assignment: { actorType: LabelActorTypes.USER, actorId: "usr_owner", resourceId: "stream_1" },
       },
     })
   })
