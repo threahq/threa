@@ -145,14 +145,6 @@ test.describe("Edit last message (ArrowUp)", () => {
       })
     }
 
-    // Mark the stream read for User A before reloading. The cold-load scroll now
-    // lands on the first unread message (Slack-style); with the 20 fillers
-    // unread, User A would land near the top with their first message in view.
-    // This test needs that first message scrolled OFF-screen so ArrowUp can pull
-    // it back, which is the at-the-tail state a viewer who has read the channel
-    // gets — so read it first, then reload lands at the bottom.
-    await userA.page.request.post(`/api/workspaces/${workspaceId}/streams/read-all`)
-
     // ── User A: hard-reload to get a fresh bootstrap with filler messages ──
     // Navigate to about:blank first to fully teardown React state (TanStack cache,
     // hook state), then navigate to the stream URL. This gets a clean bootstrap from
@@ -164,10 +156,17 @@ test.describe("Edit last message (ArrowUp)", () => {
     const lastFillerEl = userA.page.getByRole("main").locator(".message-item").getByText(`${fillerText} #20`).first()
     await expect(lastFillerEl).toBeVisible({ timeout: 15000 })
 
-    // After bootstrap + initial auto-scroll, the latest message should be in viewport
-    // and User A's first message should be scrolled off-screen
+    // Cold load now lands on the first unread message (Slack-style), so with the
+    // 20 unread fillers User A starts near the top with their own first message in
+    // view. Scroll to the live tail so it goes off-screen — the precondition for
+    // the ArrowUp scroll-into-view below. Retry the scroll-then-check: until the
+    // cold-load settle converges it can re-pin the first-unread row back to the
+    // top, so a single scroll can be undone.
     const firstMessageEl = userA.page.getByRole("main").locator(".message-item").getByText(firstMessage).first()
-    await expect(firstMessageEl).not.toBeInViewport({ timeout: 5000 })
+    await expect(async () => {
+      await lastFillerEl.scrollIntoViewIfNeeded()
+      await expect(firstMessageEl).not.toBeInViewport()
+    }).toPass({ timeout: 10000 })
 
     // Press ArrowUp in the empty composer: the inline edit form opens AND the
     // off-screen target scrolls into view. Both are re-issued under load — the
