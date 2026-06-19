@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { LabelableResourceTypes, Visibilities } from "@threa/types"
+import { LabelableResourceTypes } from "@threa/types"
 import { ServicesProvider, type LabelService } from "@/contexts"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -14,14 +14,12 @@ import type { CachedLabel, CachedLabelAssignment } from "@/hooks"
 
 const WORKSPACE_ID = "ws_1"
 const ME = "user_me"
-const OTHER = "user_other"
 const RESOURCE_ID = "stream_1"
 const NOW = "2026-05-28T12:00:00.000Z"
 
 function label(overrides: Partial<CachedLabel> & Pick<CachedLabel, "id" | "name">): CachedLabel {
   return {
     workspaceId: WORKSPACE_ID,
-    visibility: Visibilities.PUBLIC,
     creatorUserId: ME,
     slug: overrides.name.toLowerCase(),
     color: "#3366ff",
@@ -85,38 +83,32 @@ describe("LabelPicker", () => {
 
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
       { id: ME, workosUserId: "workos_me" },
-      { id: OTHER, workosUserId: "workos_other" },
     ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
-    vi.spyOn(workspaceStoreModule, "useWorkspaceLabelMemberships").mockReturnValue(
-      [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabelMemberships>
-    )
-    // "Mine": a public label I applied. "Shared": a public label only another
-    // user applied to this stream — it lives in the shared pool but I have not
-    // tagged it myself.
+    // Two of the viewer's own labels: "Mine" is applied to this stream,
+    // "Unapplied" is not.
     vi.spyOn(workspaceStoreModule, "useWorkspaceLabels").mockReturnValue([
       label({ id: "label_mine", name: "Mine" }),
-      label({ id: "label_shared", name: "Shared" }),
+      label({ id: "label_unapplied", name: "Unapplied" }),
     ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabels>)
     vi.spyOn(workspaceStoreModule, "useWorkspaceLabelAssignments").mockReturnValue([
       assignment("label_mine", ME),
-      assignment("label_shared", OTHER),
     ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabelAssignments>)
   })
 
-  it("checks only labels the viewer applied, not every label in the shared pool", () => {
+  it("checks only labels applied to this resource", () => {
     mountPicker()
 
     expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
-    expect(screen.getByRole("checkbox", { name: "Shared" })).not.toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Unapplied" })).not.toBeChecked()
   })
 
-  it("assigns the viewer's own attribution when checking a pool label they have not applied", async () => {
+  it("assigns when checking a label not yet applied", async () => {
     mountPicker()
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Shared" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Unapplied" }))
 
     await waitFor(() =>
-      expect(assign).toHaveBeenCalledWith(WORKSPACE_ID, "label_shared", {
+      expect(assign).toHaveBeenCalledWith(WORKSPACE_ID, "label_unapplied", {
         resourceType: LabelableResourceTypes.STREAM,
         resourceId: RESOURCE_ID,
       })
@@ -124,7 +116,7 @@ describe("LabelPicker", () => {
     expect(unassign).not.toHaveBeenCalled()
   })
 
-  it("removes the viewer's attribution when unchecking a label they applied", async () => {
+  it("removes the assignment when unchecking an applied label", async () => {
     mountPicker()
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Mine" }))
@@ -144,10 +136,10 @@ describe("LabelPicker", () => {
     assign.mockReturnValue(new Promise(() => {}))
     mountPicker()
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Shared" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Unapplied" }))
 
     expect(await screen.findByRole("status", { name: "Saving" })).toBeInTheDocument()
-    expect(screen.queryByRole("checkbox", { name: "Shared" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("checkbox", { name: "Unapplied" })).not.toBeInTheDocument()
     // The untouched row keeps its checkbox — pending is tracked per label.
     expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
   })
@@ -157,20 +149,20 @@ describe("LabelPicker", () => {
     assign.mockRejectedValue(new Error("network down"))
     mountPicker()
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Shared" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Unapplied" }))
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Failed to apply label"))
     // The failed toggle left the box unchecked — nothing was persisted.
-    expect(screen.getByRole("checkbox", { name: "Shared" })).not.toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Unapplied" })).not.toBeChecked()
   })
 
   it("filters the list by the search query", () => {
     mountPicker()
 
-    fireEvent.change(screen.getByRole("textbox", { name: /search labels/i }), { target: { value: "shar" } })
+    fireEvent.change(screen.getByRole("textbox", { name: /search labels/i }), { target: { value: "unap" } })
 
     expect(screen.queryByRole("checkbox", { name: "Mine" })).not.toBeInTheDocument()
-    expect(screen.getByRole("checkbox", { name: "Shared" })).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Unapplied" })).toBeInTheDocument()
   })
 
   it("disables the checkboxes while offline", () => {
@@ -178,7 +170,7 @@ describe("LabelPicker", () => {
     mountPicker()
 
     expect(screen.getByRole("checkbox", { name: "Mine" })).toBeDisabled()
-    expect(screen.getByRole("checkbox", { name: "Shared" })).toBeDisabled()
+    expect(screen.getByRole("checkbox", { name: "Unapplied" })).toBeDisabled()
   })
 
   describe("mobile", () => {
@@ -190,7 +182,7 @@ describe("LabelPicker", () => {
       mountPicker()
 
       expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
-      expect(screen.getByRole("checkbox", { name: "Shared" })).not.toBeChecked()
+      expect(screen.getByRole("checkbox", { name: "Unapplied" })).not.toBeChecked()
       expect(screen.getByRole("textbox", { name: /search labels/i })).not.toHaveFocus()
     })
   })

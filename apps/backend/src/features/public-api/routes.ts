@@ -16,7 +16,6 @@ import {
   STREAM_TYPES,
   MEMORY_MODES,
   AUTHOR_TYPES,
-  VISIBILITY_OPTIONS,
   LABEL_ACTOR_TYPES,
   LABELABLE_RESOURCE_TYPES,
   MEMO_TYPES,
@@ -52,7 +51,8 @@ import {
   completeSealedInvocationSchema,
   createLabelSchema,
   updateLabelSchema,
-  labelAssignmentSchema,
+  assignLabelByNameSchema,
+  unassignLabelByNameSchema,
 } from "./schemas"
 
 // Response schemas — the single source of truth for public API wire shapes.
@@ -138,14 +138,13 @@ const userSchema = z.object({
   role: z.string(),
 })
 
-// A label and its owning/applying actor. `creatorActorType` + `creatorActorId`
-// (and `actorType` + `actorId` on members/assignments) identify the actor: a
-// user (the id is a UserId) or a bot (the id is a bot id). The public wire uses
-// actor-explicit field names so a bot-owned label is never mistaken for a user's.
+// A label and its owning actor. `creatorActorType` + `creatorActorId` (and
+// `actorType` + `actorId` on assignments) identify the actor: a user (the id is
+// a UserId) or a bot (the id is a bot id). The public wire uses actor-explicit
+// field names so a bot-owned label is never mistaken for a user's.
 const labelSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
-  visibility: z.enum(VISIBILITY_OPTIONS),
   creatorActorType: z.enum(LABEL_ACTOR_TYPES),
   creatorActorId: z.string(),
   name: z.string(),
@@ -158,14 +157,6 @@ const labelSchema = z.object({
   archivedAt: z.string().datetime().nullable(),
 })
 
-const labelMemberSchema = z.object({
-  labelId: z.string(),
-  actorType: z.enum(LABEL_ACTOR_TYPES),
-  actorId: z.string(),
-  workspaceId: z.string(),
-  joinedAt: z.string().datetime(),
-})
-
 const labelAssignmentResponseSchema = z.object({
   labelId: z.string(),
   resourceType: z.enum(LABELABLE_RESOURCE_TYPES),
@@ -176,13 +167,18 @@ const labelAssignmentResponseSchema = z.object({
   assignedAt: z.string().datetime(),
 })
 
-// The label catalog visible to the key: all public labels plus the actor's own
-// private labels, their memberships, and the assignments they can see on
-// reachable resources. Mirrors the internal bootstrap bundle.
+// The key actor's label catalog: their own labels plus the assignments they can
+// see on reachable resources. Mirrors the internal bootstrap bundle.
 const labelCatalogSchema = z.object({
   labels: z.array(labelSchema),
-  memberships: z.array(labelMemberSchema),
   assignments: z.array(labelAssignmentResponseSchema),
+})
+
+// The result of applying a label by name: the resolved (found-or-created) label
+// and the assignment that attached it.
+const labelAssignmentResultSchema = z.object({
+  label: labelSchema,
+  assignment: labelAssignmentResponseSchema,
 })
 
 // Bot wire schema is a discriminated union so the type/ownerUserId invariant
@@ -976,9 +972,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/labels",
     operationId: "listLabels",
     summary: "List labels",
-    description:
-      "The label catalog visible to this key: all public labels plus the key actor's own private labels, " +
-      "their memberships, and assignments on reachable resources.",
+    description: "The key actor's labels (every label is private to its owner) and their resource assignments.",
     tags: ["Labels"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_READ],
     parameters: [workspaceIdParam],
@@ -988,8 +982,11 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/labels",
     operationId: "createLabel",
-    summary: "Create a label",
-    description: "Create a label owned by the key actor (a user or a bot).",
+    summary: "Create or update a label by name",
+    description:
+      "Find-or-create a label owned by the key actor (a user or a bot), keyed by its name. Posting an " +
+      "existing name returns that label and applies any appearance fields supplied — labels are identified " +
+      "by their text, so this is idempotent.",
     tags: ["Labels"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
     parameters: [workspaceIdParam],
@@ -997,6 +994,39 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "body",
     responseSchema: dataEnvelope(labelSchema),
     successStatus: 201,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/labels/assignments",
+    operationId: "assignLabel",
+    summary: "Apply a label to a resource by name",
+    description:
+      "Attach a label to a resource the key actor can reach, identifying the label by its text: the label " +
+      "is found-or-created for the actor, then assigned. `resourceType` is the polymorphic target (`stream` " +
+      "today) so the same endpoint labels any future resource without a wire change.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: assignLabelByNameSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(labelAssignmentResultSchema),
+    successStatus: 201,
+    canReturn404: true,
+  },
+  {
+    method: "delete",
+    path: "/api/v1/workspaces/{workspaceId}/labels/assignments",
+    operationId: "unassignLabel",
+    summary: "Remove a label from a resource by name",
+    description: "Remove the key actor's assignment of a label (identified by its text) from a resource.",
+    tags: ["Labels"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: unassignLabelByNameSchema,
+    requestIn: "query",
+    responseSchema: z.void(),
+    successStatus: 204,
+    canReturn404: true,
   },
   {
     method: "patch",
@@ -1017,78 +1047,10 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}",
     operationId: "deleteLabel",
     summary: "Delete a label",
-    description: "Archive a label the key actor created and remove its memberships and assignments.",
+    description: "Archive a label the key actor created and remove its assignments.",
     tags: ["Labels"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
     parameters: [workspaceIdParam, labelIdParam],
-    responseSchema: z.void(),
-    successStatus: 204,
-    canReturn404: true,
-  },
-  {
-    method: "post",
-    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/join",
-    operationId: "joinLabel",
-    summary: "Join a public label",
-    tags: ["Labels"],
-    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
-    parameters: [workspaceIdParam, labelIdParam],
-    responseSchema: dataEnvelope(labelMemberSchema),
-    successStatus: 201,
-    canReturn404: true,
-  },
-  {
-    method: "post",
-    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/leave",
-    operationId: "leaveLabel",
-    summary: "Leave a label",
-    description: "Drop the key actor's membership. The last member leaving archives the label.",
-    tags: ["Labels"],
-    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
-    parameters: [workspaceIdParam, labelIdParam],
-    responseSchema: z.void(),
-    successStatus: 204,
-    canReturn404: true,
-  },
-  {
-    method: "post",
-    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/promote",
-    operationId: "promoteLabel",
-    summary: "Promote a private label to public",
-    tags: ["Labels"],
-    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
-    parameters: [workspaceIdParam, labelIdParam],
-    responseSchema: dataEnvelope(labelSchema),
-    canReturn404: true,
-  },
-  {
-    method: "post",
-    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/assignments",
-    operationId: "assignLabel",
-    summary: "Apply a label to a resource",
-    description:
-      "Attach a label to a resource the key actor can reach. `resourceType` is the polymorphic target " +
-      "(`stream` today) so the same endpoint labels any future resource without a wire change.",
-    tags: ["Labels"],
-    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
-    parameters: [workspaceIdParam, labelIdParam],
-    requestSchema: labelAssignmentSchema,
-    requestIn: "body",
-    responseSchema: dataEnvelope(labelAssignmentResponseSchema),
-    successStatus: 201,
-    canReturn404: true,
-  },
-  {
-    method: "delete",
-    path: "/api/v1/workspaces/{workspaceId}/labels/{labelId}/assignments",
-    operationId: "unassignLabel",
-    summary: "Remove a label from a resource",
-    description: "Remove the key actor's own assignment of a label from a resource.",
-    tags: ["Labels"],
-    scopes: [WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE],
-    parameters: [workspaceIdParam, labelIdParam],
-    requestSchema: labelAssignmentSchema,
-    requestIn: "query",
     responseSchema: z.void(),
     successStatus: 204,
     canReturn404: true,
@@ -1141,8 +1103,8 @@ export {
   attachmentDetailsSchema,
   attachmentUrlSchema,
   labelSchema,
-  labelMemberSchema,
   labelAssignmentResponseSchema,
+  labelAssignmentResultSchema,
   labelCatalogSchema,
   errorSchema,
 }
@@ -1162,6 +1124,5 @@ export type WireAttachmentUpload = z.infer<typeof attachmentUploadSchema>
 export type WireAttachmentDetails = z.infer<typeof attachmentDetailsSchema>
 export type WireAttachmentUrl = z.infer<typeof attachmentUrlSchema>
 export type WireLabel = z.infer<typeof labelSchema>
-export type WireLabelMember = z.infer<typeof labelMemberSchema>
 export type WireLabelAssignment = z.infer<typeof labelAssignmentResponseSchema>
 export type WireLabelCatalog = z.infer<typeof labelCatalogSchema>

@@ -1,24 +1,35 @@
-import type { Pool } from "pg"
-import { Visibilities, type Label, type LabelActor, type LabelMember, type Visibility } from "@threa/types"
+import type { Pool, PoolClient } from "pg"
+import type { Label, LabelActor } from "@threa/types"
 import { generateSlug, generateUniqueSlug } from "@threa/backend-common"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { labelId } from "../../lib/id"
-import { LabelRepository, LabelMemberRepository, LabelAssignmentRepository } from "./repository"
+import { LabelRepository, LabelAssignmentRepository } from "./repository"
 
 interface LabelServiceDeps {
   pool: Pool
 }
 
+/** Fallback swatch for labels created via the name-based API without a color. */
+export const DEFAULT_LABEL_COLOR = "#64748b"
+
 export interface CreateLabelParams {
   workspaceId: string
   actor: LabelActor
   name: string
-  visibility: Visibility
   color: string
   emoji: string | null
   description: string | null
+}
+
+export interface UpsertLabelByNameParams {
+  workspaceId: string
+  actor: LabelActor
+  name: string
+  color?: string
+  emoji?: string | null
+  description?: string | null
 }
 
 export interface UpdateLabelParams {
@@ -32,10 +43,11 @@ export interface UpdateLabelParams {
 }
 
 /**
- * Label lifecycle: creation, edits (creator-only on public), soft-archive,
- * join/leave, private→public promotion. Routes all writes through the outbox
- * so the real-time fan-out is consistent (INV-4): private events target the
- * creator only, public events go workspace-wide.
+ * Label lifecycle: creation, edits, soft-archive. Every label is private to its
+ * creating actor, so all writes route through the outbox to the owner's user
+ * room only (INV-4). The label's text is its external identity — `upsertByName`
+ * resolves a name to the actor's single matching label (find-or-create), so
+ * callers never juggle ids.
  */
 export class LabelService {
   private readonly pool: Pool
@@ -44,12 +56,8 @@ export class LabelService {
     this.pool = deps.pool
   }
 
-  async listVisibleTo(workspaceId: string, userId: string): Promise<Label[]> {
-    return LabelRepository.listVisibleTo(this.pool, workspaceId, userId)
-  }
-
-  async listMembershipsForUser(workspaceId: string, userId: string): Promise<LabelMember[]> {
-    return LabelMemberRepository.listForUser(this.pool, workspaceId, userId)
+  async listForActor(workspaceId: string, actorId: string): Promise<Label[]> {
+    return LabelRepository.listForActor(this.pool, workspaceId, actorId)
   }
 
   async create(params: CreateLabelParams): Promise<Label> {
@@ -61,19 +69,12 @@ export class LabelService {
     return withTransaction(this.pool, async (client) => {
       const baseSlug = generateSlug(trimmedName) || "label"
       const slug = await generateUniqueSlug(baseSlug, (candidate) =>
-        this.slugExists(client, {
-          workspaceId: params.workspaceId,
-          userId: params.actor.id,
-          visibility: params.visibility,
-          slug: candidate,
-        })
+        LabelRepository.slugExists(client, params.workspaceId, params.actor.id, candidate)
       )
 
-      const id = labelId()
       const label = await LabelRepository.insert(client, {
-        id,
+        id: labelId(),
         workspaceId: params.workspaceId,
-        visibility: params.visibility,
         creatorActorType: params.actor.type,
         creatorUserId: params.actor.id,
         name: trimmedName,
@@ -83,33 +84,56 @@ export class LabelService {
         description: params.description,
       })
 
-      // Every label — public or private — gets a creator membership row so
-      // "joined" is one uniform concept across the model. `creator_user_id`
-      // still drives edit/archive/promote permissions; membership drives the
-      // "My Labels" view and real-time fan-out.
-      const member = await LabelMemberRepository.join(client, {
-        labelId: id,
-        actorType: params.actor.type,
-        userId: params.actor.id,
-        workspaceId: params.workspaceId,
-      })
-
-      await OutboxRepository.insert(client, "label:created", {
-        workspaceId: params.workspaceId,
-        targetUserId: params.visibility === Visibilities.PRIVATE ? params.actor.id : null,
-        label,
-      })
-
-      // Member events are always delivered to the affected member only, so this
-      // is creator-scoped regardless of label visibility.
-      await OutboxRepository.insert(client, "label:member_joined", {
-        workspaceId: params.workspaceId,
-        targetUserId: params.actor.id,
-        member,
-      })
-
+      await this.emitUpserted(client, "label:created", label)
       return label
     })
+  }
+
+  /**
+   * Find-or-create the actor's label for `name` (slug-matched). Appearance
+   * fields overwrite the existing row only when explicitly provided, so a bare
+   * assign-by-name reuses the label untouched. Emits `label:created` when a new
+   * row is born, `label:updated` otherwise — both owner-scoped.
+   */
+  async upsertByName(params: UpsertLabelByNameParams): Promise<Label> {
+    return withTransaction(this.pool, async (client) => {
+      const { label } = await this.upsertByNameWithin(client, params)
+      return label
+    })
+  }
+
+  /**
+   * The transactional core of {@link upsertByName}, reusable by the assign-by-
+   * name flow so the upsert and the assignment commit together. Emits the right
+   * label event and returns whether the row was created.
+   */
+  async upsertByNameWithin(
+    client: PoolClient,
+    params: UpsertLabelByNameParams
+  ): Promise<{ label: Label; inserted: boolean }> {
+    const trimmedName = params.name.trim()
+    if (trimmedName.length === 0) {
+      throw new HttpError("Label name is required", { status: 400, code: "VALIDATION_ERROR" })
+    }
+    const slug = generateSlug(trimmedName) || "label"
+
+    const { label, inserted } = await LabelRepository.upsertByName(client, {
+      id: labelId(),
+      workspaceId: params.workspaceId,
+      creatorActorType: params.actor.type,
+      creatorUserId: params.actor.id,
+      name: trimmedName,
+      slug,
+      color: params.color ?? DEFAULT_LABEL_COLOR,
+      emoji: params.emoji ?? null,
+      description: params.description ?? null,
+      overwriteColor: params.color !== undefined,
+      overwriteEmoji: params.emoji !== undefined,
+      overwriteDescription: params.description !== undefined,
+    })
+
+    await this.emitUpserted(client, inserted ? "label:created" : "label:updated", label)
+    return { label, inserted }
   }
 
   async update(params: UpdateLabelParams): Promise<Label> {
@@ -134,13 +158,7 @@ export class LabelService {
         // no-op name edit on a suffixed slug would silently bump the suffix.
         if (baseSlug !== existing.slug) {
           nextSlug = await generateUniqueSlug(baseSlug, (candidate) =>
-            this.slugExists(client, {
-              workspaceId: existing.workspaceId,
-              userId: existing.creatorUserId,
-              visibility: existing.visibility,
-              slug: candidate,
-              excludeLabelId: existing.id,
-            })
+            LabelRepository.slugExists(client, existing.workspaceId, existing.creatorUserId, candidate, existing.id)
           )
         }
       }
@@ -156,12 +174,7 @@ export class LabelService {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
 
-      await OutboxRepository.insert(client, "label:updated", {
-        workspaceId: params.workspaceId,
-        targetUserId: updated.visibility === Visibilities.PRIVATE ? updated.creatorUserId : null,
-        label: updated,
-      })
-
+      await this.emitUpserted(client, "label:updated", updated)
       return updated
     })
   }
@@ -176,174 +189,31 @@ export class LabelService {
         throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
       }
 
-      await this.archiveCascade(client, existing)
-    })
-  }
+      const archived = await LabelRepository.archive(client, existing.workspaceId, existing.id)
+      if (!archived) return
 
-  /**
-   * Soft-archive a label and tear down everything that hangs off it: member
-   * rows, resource assignments, and a `label:deleted` event. Shared by the
-   * creator-initiated `archive` and the last-member `leave` path. No per-row
-   * unassign events — `label:deleted` already tells clients the label is gone
-   * and they skip orphaned assignments on render. No-op if already archived.
-   */
-  private async archiveCascade(client: import("pg").PoolClient, label: Label): Promise<void> {
-    const archived = await LabelRepository.archive(client, label.workspaceId, label.id)
-    if (!archived) return
+      // Tear down assignments in the same transaction so no chip outlives its
+      // label. No per-row unassign events — `label:deleted` already tells the
+      // owner's client the label is gone and it drops orphaned assignments.
+      await LabelAssignmentRepository.deleteAllForLabel(client, existing.workspaceId, existing.id)
 
-    await LabelMemberRepository.deleteAllForLabel(client, label.id)
-    await LabelAssignmentRepository.deleteAllForLabel(client, label.workspaceId, label.id)
-
-    await OutboxRepository.insert(client, "label:deleted", {
-      workspaceId: label.workspaceId,
-      targetUserId: label.visibility === Visibilities.PRIVATE ? label.creatorUserId : null,
-      labelId: label.id,
-    })
-  }
-
-  async join(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<LabelMember> {
-    return withTransaction(this.pool, async (client) => {
-      // Lock the label row so a join can't race the last-member-leave archival:
-      // either we observe the archived label and reject, or we add our member
-      // before leave's count runs and it sees us as a survivor (INV-20).
-      const existing = await LabelRepository.findByIdForUpdate(client, params.workspaceId, params.labelId)
-      if (!existing || existing.archivedAt) {
-        throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
-      }
-      if (existing.visibility !== Visibilities.PUBLIC) {
-        throw new HttpError("Cannot join a private label", { status: 400, code: "LABEL_NOT_PUBLIC" })
-      }
-
-      const member = await LabelMemberRepository.join(client, {
-        labelId: params.labelId,
-        actorType: params.actor.type,
-        userId: params.actor.id,
-        workspaceId: params.workspaceId,
-      })
-
-      await OutboxRepository.insert(client, "label:member_joined", {
-        workspaceId: params.workspaceId,
-        targetUserId: params.actor.id,
-        member,
-      })
-
-      return member
-    })
-  }
-
-  async leave(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<void> {
-    await withTransaction(this.pool, async (client) => {
-      // Lock the label row so concurrent leaves serialize: the last-member
-      // check below must not race two callers into both seeing a survivor
-      // (orphaned label) or both archiving (INV-20).
-      const existing = await LabelRepository.findByIdForUpdate(client, params.workspaceId, params.labelId)
-      if (!existing) {
-        throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
-      }
-
-      // No explicit visibility gate: a private label only ever has its creator
-      // as a member (join() rejects private labels), so a non-creator's leave
-      // no-ops here via `removed === false`.
-      const removed = await LabelMemberRepository.leave(client, {
-        labelId: params.labelId,
-        userId: params.actor.id,
-      })
-      if (!removed) return
-
-      // The last member out archives the label so no ownerless label lingers in
-      // the workspace (and, for a private label, leaving is its deletion).
-      // Clients learn of this via the `label:deleted` emitted by archiveCascade
-      // — deliberately not `label:member_left`, since the whole label is gone.
-      const remaining = await LabelMemberRepository.countForLabel(client, params.workspaceId, params.labelId)
-      if (remaining === 0) {
-        await this.archiveCascade(client, existing)
-        return
-      }
-
-      await OutboxRepository.insert(client, "label:member_left", {
-        workspaceId: params.workspaceId,
-        targetUserId: params.actor.id,
-        labelId: params.labelId,
-        userId: params.actor.id,
-      })
-    })
-  }
-
-  /**
-   * One-way private → public promotion. The DB still enforces uniqueness via
-   * the partial index, so we pre-check here to return a friendly error before
-   * the UPDATE fires.
-   */
-  async promote(params: { workspaceId: string; actor: LabelActor; labelId: string }): Promise<Label> {
-    return withTransaction(this.pool, async (client) => {
-      const existing = await LabelRepository.findById(client, params.workspaceId, params.labelId)
-      if (!existing || existing.archivedAt) {
-        throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
-      }
-      if (existing.creatorUserId !== params.actor.id) {
-        throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
-      }
-      if (existing.visibility !== Visibilities.PRIVATE) {
-        throw new HttpError("Label is already public", { status: 409, code: "LABEL_ALREADY_PUBLIC" })
-      }
-
-      const collision = await LabelRepository.publicSlugExists(client, params.workspaceId, existing.slug)
-      if (collision) {
-        throw new HttpError("A public label with this slug already exists", {
-          status: 409,
-          code: "LABEL_SLUG_TAKEN",
-        })
-      }
-
-      const promoted = await LabelRepository.promoteToPublic(client, params.workspaceId, params.labelId)
-      if (!promoted) {
-        throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
-      }
-
-      // The creator already has a membership row (every label gets one at
-      // create time), so this join is idempotent — it just re-reads the row to
-      // carry in the member_joined event below.
-      const member = await LabelMemberRepository.join(client, {
-        labelId: promoted.id,
-        actorType: params.actor.type,
-        userId: params.actor.id,
-        workspaceId: params.workspaceId,
-      })
-
-      // We emit `label:deleted` to the creator's private channel (so their
-      // private view drops the now-stale user-scoped row, membership included)
-      // and a workspace-wide `label:created` so everyone picks up the public
-      // row. A single `label:updated` could not switch routing because the old
-      // row was user-scoped and the new row is workspace-scoped. The
-      // `label:member_joined` below then re-adds the creator's membership that
-      // `label:deleted` cleared on their client.
       await OutboxRepository.insert(client, "label:deleted", {
-        workspaceId: params.workspaceId,
+        workspaceId: existing.workspaceId,
         targetUserId: existing.creatorUserId,
-        labelId: promoted.id,
+        labelId: existing.id,
       })
-      await OutboxRepository.insert(client, "label:created", {
-        workspaceId: params.workspaceId,
-        targetUserId: null,
-        label: promoted,
-      })
-      await OutboxRepository.insert(client, "label:member_joined", {
-        workspaceId: params.workspaceId,
-        targetUserId: params.actor.id,
-        member,
-      })
-
-      return promoted
     })
   }
 
-  /** Slug-collision predicate for `generateUniqueSlug`, scoped by visibility. */
-  private slugExists(
-    client: import("pg").PoolClient,
-    params: { workspaceId: string; userId: string; visibility: Visibility; slug: string; excludeLabelId?: string }
-  ): Promise<boolean> {
-    return params.visibility === Visibilities.PUBLIC
-      ? LabelRepository.publicSlugExists(client, params.workspaceId, params.slug, params.excludeLabelId)
-      : LabelRepository.privateSlugExists(client, params.workspaceId, params.userId, params.slug, params.excludeLabelId)
+  private async emitUpserted(
+    client: PoolClient,
+    eventType: "label:created" | "label:updated",
+    label: Label
+  ): Promise<void> {
+    await OutboxRepository.insert(client, eventType, {
+      workspaceId: label.workspaceId,
+      targetUserId: label.creatorUserId,
+      label,
+    })
   }
 }

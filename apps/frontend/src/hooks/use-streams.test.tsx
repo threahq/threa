@@ -61,7 +61,6 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
     unreadActivityCount: 0,
     mutedStreamIds: [],
     labels: [],
-    labelMemberships: [],
     labelAssignments: [],
     viewerPermissions: [],
     sidebarConfig: DEFAULT_SIDEBAR_CONFIG,

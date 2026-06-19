@@ -32,9 +32,9 @@ HTTP Bearer. Two keys are pre-provisioned in the runtime env — pick the one
 that matches the environment you actually want to hit (do not paste keys
 into committed files or chat — read from the env var):
 
-| Env | Base URL var | Workspace var | Key var | Scopes |
-| --- | ------------ | ------------- | ------- | ------ |
-| Staging | _(use `https://staging.threa.io` directly)_ | _(from app URL)_ | `$THREA_STAGING_TOKEN` | read + write |
+| Env        | Base URL var                                      | Workspace var                   | Key var                         | Scopes        |
+| ---------- | ------------------------------------------------- | ------------------------------- | ------------------------------- | ------------- |
+| Staging    | _(use `https://staging.threa.io` directly)_       | _(from app URL)_                | `$THREA_STAGING_TOKEN`          | read + write  |
 | Production | `$THREA_PROD_BASE_URL` (= `https://app.threa.io`) | `$THREA_PROD_DEFAULT_WORKSPACE` | `$THREA_PROD_READ_ONLY_API_KEY` | **read-only** |
 
 ```bash
@@ -65,34 +65,31 @@ Or discover via `GET /api/v1/workspaces/{workspaceId}/streams`.
 
 ## Endpoints
 
-| Method | Path | Scope | Notes |
-| ------ | ---- | ----- | ----- |
-| POST | `/workspaces/{ws}/streams/{stream}/messages` | `messages:write` | Send a message. **201**. Body below. |
-| GET | `/workspaces/{ws}/streams/{stream}/messages` | `messages:read` | List messages. Query: `before`/`after` (numeric sequence, at most one), `limit≤100` (default 50). |
-| PATCH | `/workspaces/{ws}/messages/{messageId}` | `messages:write` | Edit a message you sent via API. Body `{content}`. |
-| DELETE | `/workspaces/{ws}/messages/{messageId}` | `messages:write` | Delete a message you sent via API. **204**. |
-| POST | `/workspaces/{ws}/messages/search` | `messages:search` | Body `{query, semantic?, exact?, streams?, type?, before?, after?, limit≤50}`. |
-| POST | `/workspaces/{ws}/messages/find-by-metadata` | `messages:read` | Body `{metadata:{k:v,…}, streamId?, limit≤100}`. AND-containment — the dedup primitive. |
-| GET | `/workspaces/{ws}/streams` | `streams:read` | Query: `type?`, `query?`, `after?`, `limit≤200`. Paginated. |
-| GET | `/workspaces/{ws}/streams/{stream}` | `streams:read` | One stream. |
-| GET | `/workspaces/{ws}/streams/{stream}/members` | `streams:read` | Paginated. |
-| GET | `/workspaces/{ws}/users` | `users:read` | Query: `query?`, `after?`, `limit≤200`. |
-| GET | `/workspaces/{ws}/me` | _(none)_ | Identify the principal behind the key. Use to verify a key works. |
-| GET | `/workspaces/{ws}/me/bots` | _(none)_ | User keys only — lists caller's personal bots. |
-| POST | `/workspaces/{ws}/memos/search` | `memos:read` | |
-| GET | `/workspaces/{ws}/memos/{memoId}` | `memos:read` | |
-| POST | `/workspaces/{ws}/attachments/search` | `attachments:read` | |
-| GET | `/workspaces/{ws}/attachments/{attachmentId}` | `attachments:read` | |
-| GET | `/workspaces/{ws}/attachments/{attachmentId}/url` | `attachments:read` | Short-lived signed URL. |
-| GET | `/workspaces/{ws}/labels` | `labels:read` | The visible label catalog: `{labels, memberships, assignments}`. |
-| POST | `/workspaces/{ws}/labels` | `labels:write` | Create a label. **201**. Body `{name, visibility:"public"\|"private", color:"#RRGGBB", emoji?, description?}`. |
-| PATCH | `/workspaces/{ws}/labels/{labelId}` | `labels:write` | Edit a label you created. Body any of `{name, color, emoji, description}`. |
-| DELETE | `/workspaces/{ws}/labels/{labelId}` | `labels:write` | Archive a label you created (drops its memberships + assignments). **204**. |
-| POST | `/workspaces/{ws}/labels/{labelId}/join` | `labels:write` | Join a public label. **201**. |
-| POST | `/workspaces/{ws}/labels/{labelId}/leave` | `labels:write` | Leave a label (last member out archives it). **204**. |
-| POST | `/workspaces/{ws}/labels/{labelId}/promote` | `labels:write` | Promote a private label to public. |
-| POST | `/workspaces/{ws}/labels/{labelId}/assignments` | `labels:write` | Apply a label to a resource. **201**. Body `{resourceType:"stream", resourceId}`. |
-| DELETE | `/workspaces/{ws}/labels/{labelId}/assignments` | `labels:write` | Remove your assignment. **204**. Query `?resourceType=stream&resourceId=…`. |
+| Method | Path                                              | Scope              | Notes                                                                                                                                                                                                |
+| ------ | ------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/workspaces/{ws}/streams/{stream}/messages`      | `messages:write`   | Send a message. **201**. Body below.                                                                                                                                                                 |
+| GET    | `/workspaces/{ws}/streams/{stream}/messages`      | `messages:read`    | List messages. Query: `before`/`after` (numeric sequence, at most one), `limit≤100` (default 50).                                                                                                    |
+| PATCH  | `/workspaces/{ws}/messages/{messageId}`           | `messages:write`   | Edit a message you sent via API. Body `{content}`.                                                                                                                                                   |
+| DELETE | `/workspaces/{ws}/messages/{messageId}`           | `messages:write`   | Delete a message you sent via API. **204**.                                                                                                                                                          |
+| POST   | `/workspaces/{ws}/messages/search`                | `messages:search`  | Body `{query, semantic?, exact?, streams?, type?, before?, after?, limit≤50}`.                                                                                                                       |
+| POST   | `/workspaces/{ws}/messages/find-by-metadata`      | `messages:read`    | Body `{metadata:{k:v,…}, streamId?, limit≤100}`. AND-containment — the dedup primitive.                                                                                                              |
+| GET    | `/workspaces/{ws}/streams`                        | `streams:read`     | Query: `type?`, `query?`, `after?`, `limit≤200`. Paginated.                                                                                                                                          |
+| GET    | `/workspaces/{ws}/streams/{stream}`               | `streams:read`     | One stream.                                                                                                                                                                                          |
+| GET    | `/workspaces/{ws}/streams/{stream}/members`       | `streams:read`     | Paginated.                                                                                                                                                                                           |
+| GET    | `/workspaces/{ws}/users`                          | `users:read`       | Query: `query?`, `after?`, `limit≤200`.                                                                                                                                                              |
+| GET    | `/workspaces/{ws}/me`                             | _(none)_           | Identify the principal behind the key. Use to verify a key works.                                                                                                                                    |
+| GET    | `/workspaces/{ws}/me/bots`                        | _(none)_           | User keys only — lists caller's personal bots.                                                                                                                                                       |
+| POST   | `/workspaces/{ws}/memos/search`                   | `memos:read`       |                                                                                                                                                                                                      |
+| GET    | `/workspaces/{ws}/memos/{memoId}`                 | `memos:read`       |                                                                                                                                                                                                      |
+| POST   | `/workspaces/{ws}/attachments/search`             | `attachments:read` |                                                                                                                                                                                                      |
+| GET    | `/workspaces/{ws}/attachments/{attachmentId}`     | `attachments:read` |                                                                                                                                                                                                      |
+| GET    | `/workspaces/{ws}/attachments/{attachmentId}/url` | `attachments:read` | Short-lived signed URL.                                                                                                                                                                              |
+| GET    | `/workspaces/{ws}/labels`                         | `labels:read`      | The key actor's label catalog: `{labels, assignments}`. Every label is private to its owner.                                                                                                         |
+| POST   | `/workspaces/{ws}/labels`                         | `labels:write`     | Create-or-update a label **by name** (idempotent). **201**. Body `{name, color?:"#RRGGBB", emoji?, description?}`. Posting an existing name returns it, applying any appearance fields given.        |
+| POST   | `/workspaces/{ws}/labels/assignments`             | `labels:write`     | Apply a label to a resource **by name** (finds-or-creates it, then assigns). **201**. Body `{name, color?, emoji?, description?, resourceType:"stream", resourceId}`. Returns `{label, assignment}`. |
+| DELETE | `/workspaces/{ws}/labels/assignments`             | `labels:write`     | Remove a label (by name) from a resource. **204**. Query `?name=…&resourceType=stream&resourceId=…`.                                                                                                 |
+| PATCH  | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Edit a label you created. Body any of `{name, color, emoji, description}`.                                                                                                                           |
+| DELETE | `/workspaces/{ws}/labels/{labelId}`               | `labels:write`     | Archive a label you created (drops its assignments). **204**.                                                                                                                                        |
 
 ### Send-message body (`sendMessageSchema`)
 
@@ -177,9 +174,13 @@ stable `clientMessageId` per item so a re-run is idempotent.
 ```ts
 // bun run seed.ts   (reads $THREA_STAGING_TOKEN from env; never hardcode keys)
 const TOKEN = process.env.THREA_STAGING_TOKEN
-if (!TOKEN) { console.error("THREA_STAGING_TOKEN required"); process.exit(1) }
+if (!TOKEN) {
+  console.error("THREA_STAGING_TOKEN required")
+  process.exit(1)
+}
 
-const WS = "ws_…", STREAM = "stream_…"
+const WS = "ws_…",
+  STREAM = "stream_…"
 const URL = `https://staging.threa.io/api/v1/workspaces/${WS}/streams/${STREAM}/messages`
 
 async function post(content: string, clientMessageId: string) {
@@ -190,7 +191,10 @@ async function post(content: string, clientMessageId: string) {
         headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
         body: JSON.stringify({ content, clientMessageId }),
       })
-      if (res.status === 429) { await Bun.sleep(2000 * 2 ** attempt); continue }
+      if (res.status === 429) {
+        await Bun.sleep(2000 * 2 ** attempt)
+        continue
+      }
       return { ok: res.ok, status: res.status, body: await res.text() }
     } catch (e) {
       await Bun.sleep(2000 * 2 ** attempt)
@@ -199,10 +203,15 @@ async function post(content: string, clientMessageId: string) {
   return { ok: false, status: 0, body: "exhausted retries" }
 }
 
-const items = [/* build your messages here */]
+const items = [
+  /* build your messages here */
+]
 
 const pf = await post(items[0], "seed-0")
-if (!pf.ok) { console.error(`pre-flight failed ${pf.status}: ${pf.body}`); process.exit(1) }
+if (!pf.ok) {
+  console.error(`pre-flight failed ${pf.status}: ${pf.body}`)
+  process.exit(1)
+}
 
 for (let i = 1; i < items.length; i++) {
   await Bun.sleep(1500) // ≥1.5s → under the 60/min per-key cap

@@ -31,7 +31,6 @@ export type {
   CachedScheduledMessage,
   CachedE2eKey,
   CachedLabel,
-  CachedLabelMembership,
   CachedLabelAssignment,
   CachedE2eDeviceKey,
 } from "./database"

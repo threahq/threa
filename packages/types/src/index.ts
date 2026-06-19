@@ -264,7 +264,6 @@ export type {
   BotRuntimeManifest,
   StreamMember,
   Label,
-  LabelMember,
   LabelAssignment,
   LabelActor,
   Message,
@@ -496,8 +495,6 @@ export type {
   UpdateLabelInput,
   LabelUpsertedPayload,
   LabelDeletedPayload,
-  LabelMemberJoinedPayload,
-  LabelMemberLeftPayload,
   LabelAssignedPayload,
   LabelUnassignedPayload,
   // Emojis

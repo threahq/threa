@@ -2,33 +2,17 @@ import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { useLabelService } from "@/contexts"
-import { db, type CachedLabel, type CachedLabelMembership, type CachedLabelAssignment, type CachedStream } from "@/db"
-import {
-  useWorkspaceLabels,
-  useWorkspaceLabelMemberships,
-  useWorkspaceLabelAssignments,
-  useWorkspaceStreams,
-} from "@/stores/workspace-store"
+import { db, type CachedLabel, type CachedLabelAssignment, type CachedStream } from "@/db"
+import { useWorkspaceLabels, useWorkspaceLabelAssignments, useWorkspaceStreams } from "@/stores/workspace-store"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
-import { LabelableResourceTypes, Visibilities } from "@threa/types"
-import type {
-  CreateLabelInput,
-  Label,
-  LabelAssignment,
-  LabelableResourceType,
-  LabelMember,
-  UpdateLabelInput,
-} from "@threa/types"
+import { LabelableResourceTypes } from "@threa/types"
+import type { CreateLabelInput, Label, LabelAssignment, LabelableResourceType, UpdateLabelInput } from "@threa/types"
 
-export type { CachedLabel, CachedLabelMembership, CachedLabelAssignment }
+export type { CachedLabel, CachedLabelAssignment }
 
 export const labelKeys = {
   all: ["labels"] as const,
   list: (workspaceId: string) => ["labels", workspaceId] as const,
-}
-
-function membershipId(workspaceId: string, labelId: string, userId: string): string {
-  return `${workspaceId}:${labelId}:${userId}`
 }
 
 /**
@@ -71,7 +55,6 @@ function labelToCached(label: Label): CachedLabel {
   return {
     id: label.id,
     workspaceId: label.workspaceId,
-    visibility: label.visibility,
     creatorActorType: label.creatorActorType,
     creatorUserId: label.creatorUserId,
     name: label.name,
@@ -86,39 +69,12 @@ function labelToCached(label: Label): CachedLabel {
   }
 }
 
-function memberToCached(member: LabelMember): CachedLabelMembership {
-  return {
-    id: membershipId(member.workspaceId, member.labelId, member.userId),
-    workspaceId: member.workspaceId,
-    labelId: member.labelId,
-    actorType: member.actorType,
-    userId: member.userId,
-    joinedAt: member.joinedAt,
-    _cachedAt: Date.now(),
-  }
-}
-
 async function persistLabel(label: Label): Promise<void> {
   await db.labels.put(labelToCached(label))
 }
 
-async function removeLabel(workspaceId: string, labelId: string): Promise<void> {
-  await db.transaction("rw", db.labels, db.labelMemberships, async () => {
-    await db.labels.delete(labelId)
-    const memberIds = await db.labelMemberships.where("labelId").equals(labelId).primaryKeys()
-    if (memberIds.length > 0) {
-      await db.labelMemberships.bulkDelete(memberIds as string[])
-    }
-  })
-  void workspaceId
-}
-
-async function persistMembership(member: LabelMember): Promise<void> {
-  await db.labelMemberships.put(memberToCached(member))
-}
-
-async function removeMembership(workspaceId: string, labelId: string, userId: string): Promise<void> {
-  await db.labelMemberships.delete(membershipId(workspaceId, labelId, userId))
+async function removeLabel(_workspaceId: string, labelId: string): Promise<void> {
+  await db.labels.delete(labelId)
 }
 
 async function persistAssignment(assignment: LabelAssignment): Promise<void> {
@@ -136,38 +92,32 @@ async function removeAssignment(
 }
 
 /**
- * Reconcile the workspace's cached labels + memberships with the authoritative
+ * Reconcile the workspace's cached labels + assignments with the authoritative
  * server response. Rows that exist in IDB for this workspace but are missing
- * from the response are deleted; rows in the response are upserted. Mirrors
- * the stream-sync / saved-sync reconciliation so labels that were archived
- * while we were offline don't linger in the catalog.
+ * from the response are deleted; rows in the response are upserted. Mirrors the
+ * stream-sync / saved-sync reconciliation so labels archived while we were
+ * offline don't linger in the catalog.
  */
 export async function reconcileLabels(
   workspaceId: string,
   labels: Label[],
-  memberships: LabelMember[],
   assignments: LabelAssignment[]
 ): Promise<void> {
   const labelIds = new Set(labels.map((l) => l.id))
-  const memberKeys = new Set(memberships.map((m) => membershipId(m.workspaceId, m.labelId, m.userId)))
   const assignmentKeys = new Set(
     assignments.map((a) => assignmentId(a.workspaceId, a.resourceType, a.resourceId, a.labelId, a.userId))
   )
 
   const existingLabels = await db.labels.where("workspaceId").equals(workspaceId).primaryKeys()
-  const existingMembers = await db.labelMemberships.where("workspaceId").equals(workspaceId).primaryKeys()
   const existingAssignments = await db.labelAssignments.where("workspaceId").equals(workspaceId).primaryKeys()
 
   const labelsToDelete = (existingLabels as string[]).filter((id) => !labelIds.has(id))
-  const membersToDelete = (existingMembers as string[]).filter((key) => !memberKeys.has(key))
   const assignmentsToDelete = (existingAssignments as string[]).filter((key) => !assignmentKeys.has(key))
 
-  await db.transaction("rw", db.labels, db.labelMemberships, db.labelAssignments, async () => {
+  await db.transaction("rw", db.labels, db.labelAssignments, async () => {
     if (labelsToDelete.length > 0) await db.labels.bulkDelete(labelsToDelete)
-    if (membersToDelete.length > 0) await db.labelMemberships.bulkDelete(membersToDelete)
     if (assignmentsToDelete.length > 0) await db.labelAssignments.bulkDelete(assignmentsToDelete)
     if (labels.length > 0) await db.labels.bulkPut(labels.map(labelToCached))
-    if (memberships.length > 0) await db.labelMemberships.bulkPut(memberships.map(memberToCached))
     if (assignments.length > 0) await db.labelAssignments.bulkPut(assignments.map(assignmentToCached))
   })
 }
@@ -175,10 +125,10 @@ export async function reconcileLabels(
 /**
  * Refresh-on-mount server fetch. The render source is always IDB via the
  * workspace store; this background fetch keeps it warm and reconciles entries
- * that were created/archived while we were offline. Labels are part of the
- * workspace bootstrap, so first paint never blocks on this. Returns the query
- * so a detail view can tell "still settling" apart from "genuinely absent"
- * (a cold deep-link lands before bootstrap populates the cache).
+ * created/archived while we were offline. Labels are part of the workspace
+ * bootstrap, so first paint never blocks on this. Returns the query so a detail
+ * view can tell "still settling" apart from "genuinely absent" (a cold
+ * deep-link lands before bootstrap populates the cache).
  */
 export function useLabelsSync(workspaceId: string) {
   const labelService = useLabelService()
@@ -187,17 +137,17 @@ export function useLabelsSync(workspaceId: string) {
     queryKey: labelKeys.list(workspaceId),
     queryFn: async () => {
       const res = await labelService.list(workspaceId)
-      await reconcileLabels(workspaceId, res.labels, res.memberships, res.assignments)
+      await reconcileLabels(workspaceId, res.labels, res.assignments)
       return res
     },
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
     // Explicit false (the v5 default is true): with staleTime Infinity a
-    // reconnect refetch only ever fires for a query invalidated while
-    // offline, and the only invalidators of this key are the label mutations
-    // below — which can't run offline. Reconnect healing lives elsewhere:
-    // active-mode catch-up replays `label:*` events through the gate-registered
+    // reconnect refetch only ever fires for a query invalidated while offline,
+    // and the only invalidators of this key are the label mutations below —
+    // which can't run offline. Reconnect healing lives elsewhere: active-mode
+    // catch-up replays `label:*` events through the gate-registered
     // workspace-sync handlers, the same path that heals every other
     // workspace-scoped projection into IDB (the render source).
     refetchOnReconnect: false,
@@ -208,70 +158,19 @@ export function useLabelsSync(workspaceId: string) {
 export interface LabelViewerContext {
   /** Workspace-scoped user id (UserId) of the current viewer. */
   currentUserId: string | null
-  /** Labels the viewer authored (private or public). */
-  mine: CachedLabel[]
-  /**
-   * The viewer's usable catalog: labels they authored plus public labels they
-   * explicitly joined, sorted by name. This is the set offered when applying a
-   * label to a resource, and the "Your labels" grid on the catalog page.
-   */
+  /** The viewer's active labels, sorted by name. This is the whole catalog. */
   myLabels: CachedLabel[]
-  /** Public labels in this workspace, sorted by name. Includes ones the viewer joined or created. */
-  publicLabels: CachedLabel[]
-  /** Public labels the viewer has not joined and did not create. */
-  discoverable: CachedLabel[]
-  /**
-   * labelIds the viewer has a membership row for (every label they created or
-   * joined now has one). Only consulted to bucket public labels created by
-   * *others*; the viewer's own labels are bucketed via `creatorUserId`.
-   */
-  joinedLabelIds: Set<string>
-  rawLabels: CachedLabel[]
-  rawMemberships: CachedLabelMembership[]
 }
 
-/**
- * Bucket the workspace's labels into the views the Labels page needs. Private
- * labels are only visible to their creator (bootstrap already enforces this on
- * the wire). Public labels are visible to everyone in the workspace; "joined"
- * means the viewer has a `LabelMember` row, "discoverable" is the rest. Every
- * label now carries a creator membership row, so the viewer's own labels are
- * bucketed via `creatorUserId` (into `mine`) and their membership row is not
- * consulted for them.
- */
+/** The viewer's labels for the catalog page and the picker. */
 export function useLabelsView(workspaceId: string): LabelViewerContext {
   const labels = useWorkspaceLabels(workspaceId)
-  const memberships = useWorkspaceLabelMemberships(workspaceId)
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
 
   return useMemo(() => {
-    const joinedLabelIds = new Set<string>()
-    if (currentUserId) {
-      for (const m of memberships) {
-        if (m.userId === currentUserId) joinedLabelIds.add(m.labelId)
-      }
-    }
-
-    const active = labels.filter((l) => !l.archivedAt)
-    const byName = (a: CachedLabel, b: CachedLabel) => a.name.localeCompare(b.name)
-
-    const mine = active.filter((l) => l.creatorUserId === currentUserId).sort(byName)
-    const publicLabels = active.filter((l) => l.visibility === Visibilities.PUBLIC).sort(byName)
-    const discoverable = publicLabels.filter((l) => l.creatorUserId !== currentUserId && !joinedLabelIds.has(l.id))
-    const joinedPublic = publicLabels.filter((l) => l.creatorUserId !== currentUserId && joinedLabelIds.has(l.id))
-    const myLabels = [...mine, ...joinedPublic].sort(byName)
-
-    return {
-      currentUserId,
-      mine,
-      myLabels,
-      publicLabels,
-      discoverable,
-      joinedLabelIds,
-      rawLabels: labels,
-      rawMemberships: memberships,
-    }
-  }, [labels, memberships, currentUserId])
+    const myLabels = labels.filter((l) => !l.archivedAt).sort((a, b) => a.name.localeCompare(b.name))
+    return { currentUserId, myLabels }
+  }, [labels, currentUserId])
 }
 
 export function useCreateLabel(workspaceId: string) {
@@ -314,63 +213,18 @@ export function useDeleteLabel(workspaceId: string) {
   })
 }
 
-export function useJoinLabel(workspaceId: string) {
-  const labelService = useLabelService()
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: (labelId: string) => labelService.join(workspaceId, labelId),
-    onSuccess: (member) => {
-      void persistMembership(member)
-      queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
-    },
-  })
-}
-
-export function useLeaveLabel(workspaceId: string) {
-  const labelService = useLabelService()
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({ labelId, userId }: { labelId: string; userId: string }) =>
-      labelService.leave(workspaceId, labelId).then(() => ({ labelId, userId })),
-    onSuccess: ({ labelId, userId }) => {
-      void removeMembership(workspaceId, labelId, userId)
-      queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
-    },
-  })
-}
-
-export function usePromoteLabel(workspaceId: string) {
-  const labelService = useLabelService()
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: (labelId: string) => labelService.promote(workspaceId, labelId),
-    onSuccess: (label) => {
-      void persistLabel(label)
-      queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
-    },
-  })
-}
-
 export interface ResourceLabelState {
-  /** Active (non-archived) labels applied to this resource by anyone in the shared pool, sorted by name. */
+  /** Active (non-archived) labels applied to this resource by the viewer, sorted by name. */
   labels: CachedLabel[]
-  /** Every labelId applied to this resource by any user — drives chips/overview (the shared pool). */
-  assignedLabelIds: Set<string>
-  /** labelIds the current viewer applied — drives the picker's checked state ("I tagged it"). */
+  /** labelIds the viewer applied to this resource — drives the picker's checked state. */
   myLabelIds: Set<string>
 }
 
 /**
  * Labels applied to one resource. Generic over `resourceType` — a stream today,
- * anything labelable later. The assignment cache is a shared pool: a public
- * label carries every member's attribution row, while a private label carries
- * only the viewer's. `assignedLabelIds` is the whole pool (what chips/overview
- * show); `myLabelIds` is the viewer's own rows (the picker checkmark = "I
- * tagged it"). Assignments whose label is gone or archived are dropped (the row
- * may briefly outlive its label after a delete).
+ * anything labelable later. Assignments are owner-scoped, so this is the
+ * viewer's own set. Assignments whose label is gone or archived are dropped (a
+ * row may briefly outlive its label after a delete).
  */
 export function useResourceLabelAssignments(
   workspaceId: string,
@@ -379,24 +233,21 @@ export function useResourceLabelAssignments(
 ): ResourceLabelState {
   const assignments = useWorkspaceLabelAssignments(workspaceId)
   const labels = useWorkspaceLabels(workspaceId)
-  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
 
   return useMemo(() => {
     const labelById = new Map(labels.map((l) => [l.id, l]))
     const applied: CachedLabel[] = []
-    const assignedLabelIds = new Set<string>()
     const myLabelIds = new Set<string>()
     for (const assignment of assignments) {
       if (assignment.resourceType !== resourceType || assignment.resourceId !== resourceId) continue
       const label = labelById.get(assignment.labelId)
       if (!label || label.archivedAt) continue
-      if (!assignedLabelIds.has(label.id)) applied.push(label)
-      assignedLabelIds.add(label.id)
-      if (assignment.userId === currentUserId) myLabelIds.add(label.id)
+      if (!myLabelIds.has(label.id)) applied.push(label)
+      myLabelIds.add(label.id)
     }
     applied.sort((a, b) => a.name.localeCompare(b.name))
-    return { labels: applied, assignedLabelIds, myLabelIds }
-  }, [assignments, labels, resourceType, resourceId, currentUserId])
+    return { labels: applied, myLabelIds }
+  }, [assignments, labels, resourceType, resourceId])
 }
 
 export interface AssignLabelInput {
@@ -450,10 +301,10 @@ function streamActivityTime(stream: CachedStream): number {
 /**
  * The streams carrying a label, newest activity first. Pure so it's unit-tested
  * directly (INV-39). Mirrors the sidebar label section: a stream matches when an
- * assignment row in the viewer's accessible pool ties it to this label; archived
- * streams and assignment rows for other resource types are dropped. Threads are
- * streams, so a labeled thread surfaces here exactly like any other stream — the
- * landing page is the one place that lists them together.
+ * assignment row ties it to this label; archived streams and assignment rows for
+ * other resource types are dropped. Threads are streams, so a labeled thread
+ * surfaces here exactly like any other stream — the landing page is the one
+ * place that lists them together.
  */
 export function selectLabelStreams(
   assignments: CachedLabelAssignment[],

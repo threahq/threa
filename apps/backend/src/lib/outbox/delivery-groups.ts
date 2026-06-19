@@ -1,6 +1,5 @@
 import type { Server } from "socket.io"
 import {
-  LabelableResourceTypes,
   StreamTypes,
   Visibilities,
   WORKSPACE_PERMISSION_SCOPES,
@@ -26,12 +25,9 @@ import {
   type MessagesMovedOutboxPayload,
   type LabelUpsertedOutboxPayload,
   type LabelDeletedOutboxPayload,
-  type LabelMemberJoinedOutboxPayload,
-  type LabelMemberLeftOutboxPayload,
   type LabelAssignedOutboxPayload,
   type LabelUnassignedOutboxPayload,
 } from "./repository"
-import { logger } from "../logger"
 
 /**
  * A delivery group names the audience of a client-routed outbox event,
@@ -234,46 +230,21 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return payload.streamId ? [streamGroup(payload.streamId)] : [WORKSPACE_GROUP]
   }
 
-  // Labels: `targetUserId` is the visibility discriminator — private-label
-  // events are viewer-scoped, public-label events go workspace-wide.
+  // Labels are owner-scoped: every label event (upsert, delete, assign,
+  // unassign) is delivered to the owning actor's user room only.
   if (isOneOfOutboxEventType(event, ["label:created", "label:updated"])) {
     const payload = event.payload as LabelUpsertedOutboxPayload
-    return payload.targetUserId ? [userGroup(payload.targetUserId)] : [WORKSPACE_GROUP]
+    return [userGroup(payload.targetUserId)]
   }
 
   if (isOutboxEventType(event, "label:deleted")) {
     const payload = event.payload as LabelDeletedOutboxPayload
-    return payload.targetUserId ? [userGroup(payload.targetUserId)] : [WORKSPACE_GROUP]
-  }
-
-  if (isOneOfOutboxEventType(event, ["label:member_joined", "label:member_left"])) {
-    const payload = event.payload as LabelMemberJoinedOutboxPayload | LabelMemberLeftOutboxPayload
     return [userGroup(payload.targetUserId)]
   }
 
-  // Assignments follow the label's visibility: private rows to the creator;
-  // public rows scoped to the resource's own audience (a public label on a
-  // private channel reaches exactly its members, identical to a message).
   if (isOneOfOutboxEventType(event, ["label:assigned", "label:unassigned"])) {
     const payload = event.payload as LabelAssignedOutboxPayload | LabelUnassignedOutboxPayload
-    if (payload.targetUserId) {
-      return [userGroup(payload.targetUserId)]
-    }
-    const { resourceType, resourceId } = "assignment" in payload ? payload.assignment : payload
-    if (resourceType === LabelableResourceTypes.STREAM) {
-      return [streamGroup(resourceId)]
-    }
-    // Every labelable resource type must map to a delivery group here, or its
-    // public assignments would neither broadcast nor reach the sync log. The
-    // `never` assignment enforces that at build time; we log rather than throw
-    // because this runs in the outbox dispatcher, where a throw stalls the
-    // cursor and blocks every later event.
-    const unmapped: never = resourceType
-    logger.error(
-      { eventType: event.eventType, resourceType: unmapped, resourceId },
-      "delivery groups: no mapping for public-label resource type"
-    )
-    return []
+    return [userGroup(payload.targetUserId)]
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

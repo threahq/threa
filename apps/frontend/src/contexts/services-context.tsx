@@ -103,9 +103,6 @@ export interface LabelService {
   create: typeof labelsApi.create
   update: typeof labelsApi.update
   delete: typeof labelsApi.delete
-  join: typeof labelsApi.join
-  leave: typeof labelsApi.leave
-  promote: typeof labelsApi.promote
   assign: typeof labelsApi.assign
   unassign: typeof labelsApi.unassign
 }

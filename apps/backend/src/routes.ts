@@ -572,9 +572,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/labels", ...authed, label.create)
   app.patch("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.update)
   app.delete("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.delete)
-  app.post("/api/workspaces/:workspaceId/labels/:labelId/join", ...authed, label.join)
-  app.post("/api/workspaces/:workspaceId/labels/:labelId/leave", ...authed, label.leave)
-  app.post("/api/workspaces/:workspaceId/labels/:labelId/promote", ...authed, label.promote)
   app.post("/api/workspaces/:workspaceId/labels/:labelId/assignments", ...authed, label.assign)
   app.delete("/api/workspaces/:workspaceId/labels/:labelId/assignments", ...authed, label.unassign)
 
@@ -961,6 +958,20 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
     publicApi.createLabel
   )
+  // Name-based assignment routes are registered before the `/:labelId` CRUD
+  // routes so the literal `assignments` segment isn't captured as a label id.
+  app.post(
+    "/api/v1/workspaces/:workspaceId/labels/assignments",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.assignLabel
+  )
+  app.delete(
+    "/api/v1/workspaces/:workspaceId/labels/assignments",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
+    publicApi.unassignLabel
+  )
   app.patch(
     "/api/v1/workspaces/:workspaceId/labels/:labelId",
     ...publicMiddleware,
@@ -972,36 +983,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
     publicApi.deleteLabel
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId/join",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.joinLabel
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId/leave",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.leaveLabel
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId/promote",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.promoteLabel
-  )
-  app.post(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId/assignments",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.assignLabel
-  )
-  app.delete(
-    "/api/v1/workspaces/:workspaceId/labels/:labelId/assignments",
-    ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.LABELS_WRITE),
-    publicApi.unassignLabel
   )
 
   // Identity — no scope check. Authentication alone is sufficient for a key

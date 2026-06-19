@@ -1,14 +1,11 @@
-import { useMemo, useState, type FormEvent } from "react"
+import { useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, Tag, Plus, Globe, Lock, Trash2, Pencil, LogOut } from "lucide-react"
+import { ArrowLeft, Tag, Plus, Trash2, Pencil } from "lucide-react"
 import { toast } from "sonner"
-import { Visibilities } from "@threa/types"
-import type { Visibility } from "@threa/types"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { VisibilityPicker } from "@/components/ui/visibility-picker"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -33,23 +30,12 @@ import { useIsOnline } from "@/components/layout/connection-status"
 import { cn } from "@/lib/utils"
 import { hexToRgba } from "@/lib/labels"
 import { stripMarkdownToInline } from "@/lib/markdown"
-import {
-  useCreateLabel,
-  useDeleteLabel,
-  useJoinLabel,
-  useLabelsSync,
-  useLabelsView,
-  useLeaveLabel,
-  usePromoteLabel,
-  type CachedLabel,
-  type LabelViewerContext,
-} from "@/hooks"
+import { useCreateLabel, useDeleteLabel, useLabelsSync, useLabelsView, type CachedLabel } from "@/hooks"
 import { ColorRow, EmojiField, Field, LabelEditForm, PRESET_COLORS } from "@/components/labels/label-edit-form"
 
 /**
- * Route is `/w/:workspaceId/labels`. A single "Your labels" catalog (labels you
- * created plus public labels you joined). Creating — and adopting an existing
- * public label — happens in an overlay, not a separate page.
+ * Route is `/w/:workspaceId/labels`. A single "Your labels" catalog — every
+ * label is private to you. Creating happens in an overlay, not a separate page.
  */
 export function LabelsPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -61,8 +47,7 @@ export function LabelsPage() {
 
 function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
   useLabelsSync(workspaceId)
-  const view = useLabelsView(workspaceId)
-  const { myLabels, currentUserId } = view
+  const { myLabels } = useLabelsView(workspaceId)
   const [addOpen, setAddOpen] = useState(false)
 
   return (
@@ -88,14 +73,14 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
         <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
           <SectionIntro
             title="Your labels"
-            subtitle="Organize scratchpads, threads, and people with color and emoji. Private labels are yours alone; public ones are workspace-wide."
+            subtitle="Organize scratchpads, threads, and people with color and emoji. Labels are yours alone."
           />
 
           {myLabels.length === 0 ? (
             <EmptyState
               icon={Tag}
               title="No labels yet"
-              body="Create your first label to start grouping the things you save, or join a public one your workspace already uses."
+              body="Create your first label to start grouping the things you save."
               action={
                 <Button className="gap-1.5" onClick={() => setAddOpen(true)}>
                   <Plus className="h-4 w-4" />
@@ -106,51 +91,37 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <AddLabelTile onClick={() => setAddOpen(true)} />
-              {myLabels.map((label) =>
-                label.creatorUserId === currentUserId ? (
-                  <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />
-                ) : (
-                  <JoinedLabelCard
-                    key={label.id}
-                    workspaceId={workspaceId}
-                    label={label}
-                    userId={currentUserId ?? ""}
-                  />
-                )
-              )}
+              {myLabels.map((label) => (
+                <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />
+              ))}
             </div>
           )}
         </main>
       </ScrollArea>
 
-      <AddLabelDialog workspaceId={workspaceId} view={view} open={addOpen} onOpenChange={setAddOpen} />
+      <AddLabelDialog workspaceId={workspaceId} open={addOpen} onOpenChange={setAddOpen} />
     </div>
   )
 }
 
 function AddLabelDialog({
   workspaceId,
-  view,
   open,
   onOpenChange,
 }: {
   workspaceId: string
-  view: LabelViewerContext
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const isOnline = useIsOnline()
   const createMutation = useCreateLabel(workspaceId)
-  const joinMutation = useJoinLabel(workspaceId)
   const [name, setName] = useState("")
-  const [visibility, setVisibility] = useState<Visibility>(Visibilities.PRIVATE)
   const [color, setColor] = useState<string>(PRESET_COLORS[5])
   const [emoji, setEmoji] = useState<string>("")
   const [description, setDescription] = useState("")
 
   const reset = () => {
     setName("")
-    setVisibility(Visibilities.PRIVATE)
     setColor(PRESET_COLORS[5])
     setEmoji("")
     setDescription("")
@@ -161,19 +132,12 @@ function AddLabelDialog({
     onOpenChange(next)
   }
 
-  const query = name.trim().toLowerCase()
-  const joinMatches = useMemo(() => {
-    if (!query) return view.discoverable
-    return view.discoverable.filter((l) => l.name.toLowerCase().includes(query))
-  }, [view.discoverable, query])
-
   const handleCreate = (e: FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
     createMutation.mutate(
       {
         name: name.trim(),
-        visibility,
         color,
         emoji: emoji.trim() || null,
         description: description.trim() || null,
@@ -187,15 +151,6 @@ function AddLabelDialog({
     )
   }
 
-  const handleJoin = (label: CachedLabel) => {
-    joinMutation.mutate(label.id, {
-      onSuccess: () => {
-        handleOpenChange(false)
-      },
-      onError: () => toast.error("Could not join label"),
-    })
-  }
-
   return (
     <ResponsiveDialog open={open} onOpenChange={handleOpenChange} disableSnapPoints>
       <ResponsiveDialogContent
@@ -204,9 +159,7 @@ function AddLabelDialog({
       >
         <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
           <ResponsiveDialogTitle>Add a label</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>
-            Join a public label your workspace already uses, or create a new one.
-          </ResponsiveDialogDescription>
+          <ResponsiveDialogDescription>Create a label to organize your streams.</ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
         <form onSubmit={handleCreate} className="flex min-h-0 flex-1 flex-col">
@@ -226,36 +179,6 @@ function AddLabelDialog({
                 maxLength={80}
                 autoFocus
               />
-            </Field>
-
-            {joinMatches.length > 0 && (
-              <div>
-                <SubsectionHeading title={query ? "Matching public labels" : "Public labels you can join"} />
-                <div className="space-y-1.5">
-                  {joinMatches.map((label) => (
-                    <JoinMatchRow
-                      key={label.id}
-                      label={label}
-                      disabled={!isOnline || joinMutation.isPending}
-                      onJoin={() => handleJoin(label)}
-                    />
-                  ))}
-                </div>
-                <div className="mt-4 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span className="h-px flex-1 bg-border" />
-                  <span>or create a new label</span>
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-              </div>
-            )}
-
-            <Field label="Visibility" htmlFor="label-visibility">
-              <VisibilityPicker value={visibility} onChange={setVisibility} />
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {visibility === Visibilities.PUBLIC
-                  ? "Visible to everyone in the workspace. Members join to subscribe. You can't undo this."
-                  : "Only you can see this label. You can promote it to public later."}
-              </p>
             </Field>
 
             <Field label="Color" htmlFor="label-color">
@@ -292,62 +215,18 @@ function AddLabelDialog({
   )
 }
 
-function JoinMatchRow({ label, disabled, onJoin }: { label: CachedLabel; disabled: boolean; onJoin: () => void }) {
-  return (
-    <div
-      className="flex items-center gap-2.5 rounded-lg border bg-card px-2.5 py-2"
-      style={{ borderLeft: `3px solid ${label.color}` }}
-    >
-      <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-base"
-        style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
-        aria-hidden
-      >
-        {label.emoji ?? <Tag className="h-3.5 w-3.5" />}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium leading-tight">{label.name}</p>
-        <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-          <Globe className="h-3 w-3" />
-          <span>Public</span>
-        </div>
-      </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="h-7 shrink-0 px-3 text-xs"
-        onClick={onJoin}
-        disabled={disabled}
-      >
-        Join
-      </Button>
-    </div>
-  )
-}
-
 function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: CachedLabel }) {
   const isOnline = useIsOnline()
   const [editing, setEditing] = useState(false)
-  const [confirmKind, setConfirmKind] = useState<"delete" | "promote" | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const deleteMutation = useDeleteLabel(workspaceId)
-  const promoteMutation = usePromoteLabel(workspaceId)
 
   const handleDelete = () => {
     deleteMutation.mutate(label.id, {
       onSuccess: () => {
-        setConfirmKind(null)
+        setConfirmDelete(false)
       },
       onError: () => toast.error("Could not delete label"),
-    })
-  }
-
-  const handlePromote = () => {
-    promoteMutation.mutate(label.id, {
-      onSuccess: () => {
-        setConfirmKind(null)
-      },
-      onError: () => toast.error("Could not promote label"),
     })
   }
 
@@ -369,23 +248,11 @@ function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: Ca
             <Pencil className="h-3 w-3" />
             Edit
           </Button>
-          {label.visibility === Visibilities.PRIVATE && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 gap-1.5 px-2 text-xs"
-              onClick={() => setConfirmKind("promote")}
-              disabled={!isOnline || promoteMutation.isPending}
-            >
-              <Globe className="h-3 w-3" />
-              Make public
-            </Button>
-          )}
           <Button
             size="sm"
             variant="ghost"
             className="h-7 gap-1.5 px-2 text-xs text-destructive hover:text-destructive"
-            onClick={() => setConfirmKind("delete")}
+            onClick={() => setConfirmDelete(true)}
             disabled={!isOnline || deleteMutation.isPending}
           >
             <Trash2 className="h-3 w-3" />
@@ -395,70 +262,31 @@ function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: Ca
       </LabelSwatchCard>
 
       <ResponsiveAlertDialog
-        open={confirmKind !== null}
+        open={confirmDelete}
         onOpenChange={(open) => {
-          if (!open) setConfirmKind(null)
+          if (!open) setConfirmDelete(false)
         }}
       >
         <ResponsiveAlertDialogContent>
           <ResponsiveAlertDialogHeader>
-            <ResponsiveAlertDialogTitle>
-              {confirmKind === "delete" ? `Delete “${label.name}”?` : `Make “${label.name}” public?`}
-            </ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogTitle>Delete “{label.name}”?</ResponsiveAlertDialogTitle>
             <ResponsiveAlertDialogDescription>
-              {confirmKind === "delete"
-                ? "It will be archived and removed for everyone who joined. You can't undo this."
-                : "Anyone in the workspace will be able to find and join this label. You can't switch it back to private."}
+              It will be archived and removed from everything it's applied to. You can't undo this.
             </ResponsiveAlertDialogDescription>
           </ResponsiveAlertDialogHeader>
           <ResponsiveAlertDialogFooter>
             <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
             <ResponsiveAlertDialogAction
-              onClick={confirmKind === "delete" ? handleDelete : handlePromote}
-              disabled={deleteMutation.isPending || promoteMutation.isPending}
-              className={
-                confirmKind === "delete"
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  : undefined
-              }
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {confirmKind === "delete" ? "Delete" : "Make public"}
+              Delete
             </ResponsiveAlertDialogAction>
           </ResponsiveAlertDialogFooter>
         </ResponsiveAlertDialogContent>
       </ResponsiveAlertDialog>
     </>
-  )
-}
-
-function JoinedLabelCard({ workspaceId, label, userId }: { workspaceId: string; label: CachedLabel; userId: string }) {
-  const isOnline = useIsOnline()
-  const leaveMutation = useLeaveLabel(workspaceId)
-
-  const handleLeave = () => {
-    leaveMutation.mutate(
-      { labelId: label.id, userId },
-      {
-        onError: () => toast.error("Could not leave label"),
-      }
-    )
-  }
-
-  return (
-    <LabelSwatchCard workspaceId={workspaceId} label={label}>
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 px-2 text-xs"
-          onClick={handleLeave}
-          disabled={!isOnline || leaveMutation.isPending}
-        >
-          <LogOut className="h-3 w-3" />
-          Leave
-        </Button>
-      </div>
-    </LabelSwatchCard>
   )
 }
 
@@ -490,14 +318,6 @@ function LabelSwatchCard({
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-sm font-semibold leading-tight group-hover:underline">{label.name}</h3>
-              <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                {label.visibility === Visibilities.PUBLIC ? (
-                  <Globe className="h-3 w-3" />
-                ) : (
-                  <Lock className="h-3 w-3" />
-                )}
-                <span>{label.visibility === Visibilities.PUBLIC ? "Public" : "Private"}</span>
-              </div>
             </div>
           </div>
           {label.description && (
@@ -534,10 +354,6 @@ function SectionIntro({ title, subtitle }: { title: string; subtitle: string }) 
       <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
     </div>
   )
-}
-
-function SubsectionHeading({ title }: { title: string }) {
-  return <h3 className="mb-2 text-sm font-semibold">{title}</h3>
 }
 
 function EmptyState({

@@ -18,7 +18,6 @@ import {
   EXTRACTION_CONTENT_TYPES,
   AGENT_STEP_TYPES,
   SOURCE_TYPES,
-  VISIBILITY_OPTIONS,
   LABELABLE_RESOURCE_TYPES,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
@@ -71,10 +70,13 @@ export const listStreamsSchema = z.object({
 
 const LABEL_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 
+// Create-or-update a label by name. Labels are owned per actor and keyed by
+// their text, so this is idempotent: posting an existing name returns that
+// label, applying any appearance fields provided. `color` is optional — the
+// server picks a default for a brand-new label.
 export const createLabelSchema = z.object({
   name: z.string().min(1).max(100),
-  visibility: z.enum(VISIBILITY_OPTIONS),
-  color: z.string().regex(LABEL_COLOR_PATTERN, "color must be a #RRGGBB hex string"),
+  color: z.string().regex(LABEL_COLOR_PATTERN, "color must be a #RRGGBB hex string").optional(),
   emoji: z.string().max(32).nullable().optional(),
   description: z.string().max(500).nullable().optional(),
 })
@@ -97,10 +99,22 @@ export const labelIdParamSchema = z.object({
   labelId: z.string().min(1).max(64),
 })
 
-// Apply/remove a label to/from a resource. `resourceType` is the polymorphic
-// target ("stream" today); the API is deliberately not stream-specific so
-// messages/users/attachments can be labeled without a new endpoint.
-export const labelAssignmentSchema = z.object({
+// Apply a label to a resource by its text. The label is found-or-created for the
+// key actor (appearance fields apply on create / when given), then attached.
+// `resourceType` is the polymorphic target ("stream" today) so the API isn't
+// stream-specific.
+export const assignLabelByNameSchema = z.object({
+  name: z.string().min(1).max(100),
+  color: z.string().regex(LABEL_COLOR_PATTERN, "color must be a #RRGGBB hex string").optional(),
+  emoji: z.string().max(32).nullable().optional(),
+  description: z.string().max(500).nullable().optional(),
+  resourceType: z.enum(LABELABLE_RESOURCE_TYPES),
+  resourceId: z.string().min(1).max(64),
+})
+
+// Remove a label from a resource by its text.
+export const unassignLabelByNameSchema = z.object({
+  name: z.string().min(1).max(100),
   resourceType: z.enum(LABELABLE_RESOURCE_TYPES),
   resourceId: z.string().min(1).max(64),
 })

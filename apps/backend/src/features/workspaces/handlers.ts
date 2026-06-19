@@ -155,7 +155,6 @@ export function createWorkspaceHandlers({
         sidebarConfig,
         dmPeers,
         labels,
-        labelMemberships,
         labelAssignments,
         configuredToolCategories,
       ] = await Promise.all([
@@ -171,8 +170,7 @@ export function createWorkspaceHandlers({
         platformAdminService.hasAccess(workspaceId, req.user!.workosUserId),
         sidebarConfigService.getConfig(workspaceId, userId),
         streamService.listDmPeers(workspaceId, userId),
-        labelService.listVisibleTo(workspaceId, userId),
-        labelService.listMembershipsForUser(workspaceId, userId),
+        labelService.listForActor(workspaceId, userId),
         labelAssignmentService.listForViewer(workspaceId, { type: LabelActorTypes.USER, id: userId }),
         // Which agent tool categories the workspace has tooling for — drives the
         // scratchpad tool-policy picker (including the at-creation control, which
@@ -266,7 +264,6 @@ export function createWorkspaceHandlers({
           featureFlags,
           sidebarConfig,
           labels,
-          labelMemberships,
           labelAssignments,
           invitations,
           viewerPermissions,

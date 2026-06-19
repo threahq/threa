@@ -639,27 +639,7 @@ describe("BroadcastHandler", () => {
     expect(resyncEmits.every((e) => e.namespace === "/bot")).toBe(true)
   })
 
-  it("fans out a public label:assigned (null targetUserId) to the resource's stream room", async () => {
-    const event = makeEvent(1n, "label:assigned", {
-      workspaceId: "ws_1",
-      targetUserId: null,
-      assignment: { labelId: "label_1", resourceType: "stream", resourceId: "stream_1", userId: "usr_bob" },
-    })
-
-    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
-
-    const { handler, emitChains } = createHandler()
-    handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
-
-    expect(emitChains).toContainEqual({
-      room: "ws:ws_1:stream:stream_1",
-      eventType: "label:assigned",
-      payload: event.payload,
-    })
-  })
-
-  it("routes a private label:assigned to the creator's user room", async () => {
+  it("routes a label:assigned to the owning actor's user room", async () => {
     const event = makeEvent(1n, "label:assigned", {
       workspaceId: "ws_1",
       targetUserId: "usr_alice",
@@ -679,10 +659,10 @@ describe("BroadcastHandler", () => {
     })
   })
 
-  it("fans out a public label:unassigned (null targetUserId) to the resource's stream room", async () => {
+  it("routes a label:unassigned to the owning actor's user room", async () => {
     const event = makeEvent(1n, "label:unassigned", {
       workspaceId: "ws_1",
-      targetUserId: null,
+      targetUserId: "usr_bob",
       labelId: "label_1",
       resourceType: "stream",
       resourceId: "stream_1",
@@ -696,7 +676,7 @@ describe("BroadcastHandler", () => {
     await new Promise((r) => setTimeout(r, 300))
 
     expect(emitChains).toContainEqual({
-      room: "ws:ws_1:stream:stream_1",
+      room: "ws:ws_1:user:usr_bob",
       eventType: "label:unassigned",
       payload: event.payload,
     })

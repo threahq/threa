@@ -46,7 +46,6 @@ import {
   type Label,
   type LabelActor,
   type LabelAssignment,
-  type LabelMember,
   BotInvocationCapabilities,
   BotRuntimeKinds,
   MemoryModes,
@@ -116,7 +115,6 @@ import type {
   WireAttachmentUrl,
   WireAttachmentUpload,
   WireLabel,
-  WireLabelMember,
   WireLabelAssignment,
 } from "./routes"
 import {
@@ -144,7 +142,8 @@ import {
   completeSealedInvocationSchema,
   createLabelSchema,
   updateLabelSchema,
-  labelAssignmentSchema,
+  assignLabelByNameSchema,
+  unassignLabelByNameSchema,
   labelIdParamSchema,
 } from "./schemas"
 
@@ -220,7 +219,6 @@ function serializeLabel(label: Label): WireLabel {
   return {
     id: label.id,
     workspaceId: label.workspaceId,
-    visibility: label.visibility,
     creatorActorType: label.creatorActorType,
     creatorActorId: label.creatorUserId,
     name: label.name,
@@ -231,16 +229,6 @@ function serializeLabel(label: Label): WireLabel {
     createdAt: label.createdAt,
     updatedAt: label.updatedAt,
     archivedAt: label.archivedAt,
-  }
-}
-
-function serializeLabelMember(member: LabelMember): WireLabelMember {
-  return {
-    labelId: member.labelId,
-    actorType: member.actorType,
-    actorId: member.userId,
-    workspaceId: member.workspaceId,
-    joinedAt: member.joinedAt,
   }
 }
 
@@ -2325,15 +2313,13 @@ export function createPublicApiHandlers({
     async listLabels(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const actor = resolveLabelActor(req)
-      const [labels, memberships, assignments] = await Promise.all([
-        labelService.listVisibleTo(workspaceId, actor.id),
-        labelService.listMembershipsForUser(workspaceId, actor.id),
+      const [labels, assignments] = await Promise.all([
+        labelService.listForActor(workspaceId, actor.id),
         labelAssignmentService.listForViewer(workspaceId, actor),
       ])
       res.json({
         data: {
           labels: labels.map(serializeLabel),
-          memberships: memberships.map(serializeLabelMember),
           assignments: assignments.map(serializeLabelAssignment),
         },
       })
@@ -2343,14 +2329,13 @@ export function createPublicApiHandlers({
       const workspaceId = req.workspaceId!
       const actor = resolveLabelActor(req)
       const body = validateRequest(createLabelSchema, req.body)
-      const label = await labelService.create({
+      const label = await labelService.upsertByName({
         workspaceId,
         actor,
         name: body.name,
-        visibility: body.visibility,
         color: body.color,
-        emoji: body.emoji ?? null,
-        description: body.description ?? null,
+        emoji: body.emoji,
+        description: body.description,
       })
       res.status(201).json({ data: serializeLabel(label) })
     },
@@ -2380,54 +2365,31 @@ export function createPublicApiHandlers({
       res.status(204).end()
     },
 
-    async joinLabel(req: Request, res: Response) {
-      const workspaceId = req.workspaceId!
-      const actor = resolveLabelActor(req)
-      const { labelId } = validateRequest(labelIdParamSchema, req.params)
-      const member = await labelService.join({ workspaceId, actor, labelId })
-      res.status(201).json({ data: serializeLabelMember(member) })
-    },
-
-    async leaveLabel(req: Request, res: Response) {
-      const workspaceId = req.workspaceId!
-      const actor = resolveLabelActor(req)
-      const { labelId } = validateRequest(labelIdParamSchema, req.params)
-      await labelService.leave({ workspaceId, actor, labelId })
-      res.status(204).end()
-    },
-
-    async promoteLabel(req: Request, res: Response) {
-      const workspaceId = req.workspaceId!
-      const actor = resolveLabelActor(req)
-      const { labelId } = validateRequest(labelIdParamSchema, req.params)
-      const label = await labelService.promote({ workspaceId, actor, labelId })
-      res.json({ data: serializeLabel(label) })
-    },
-
     async assignLabel(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const actor = resolveLabelActor(req)
-      const { labelId } = validateRequest(labelIdParamSchema, req.params)
-      const body = validateRequest(labelAssignmentSchema, req.body)
-      const assignment = await labelAssignmentService.assign({
+      const body = validateRequest(assignLabelByNameSchema, req.body)
+      const { label, assignment } = await labelAssignmentService.assignByName({
         workspaceId,
         actor,
-        labelId,
+        name: body.name,
+        color: body.color,
+        emoji: body.emoji,
+        description: body.description,
         resourceType: body.resourceType,
         resourceId: body.resourceId,
       })
-      res.status(201).json({ data: serializeLabelAssignment(assignment) })
+      res.status(201).json({ data: { label: serializeLabel(label), assignment: serializeLabelAssignment(assignment) } })
     },
 
     async unassignLabel(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const actor = resolveLabelActor(req)
-      const { labelId } = validateRequest(labelIdParamSchema, req.params)
-      const query = validateRequest(labelAssignmentSchema, req.query)
-      await labelAssignmentService.unassign({
+      const query = validateRequest(unassignLabelByNameSchema, req.query)
+      await labelAssignmentService.unassignByName({
         workspaceId,
         actor,
-        labelId,
+        name: query.name,
         resourceType: query.resourceType,
         resourceId: query.resourceId,
       })
