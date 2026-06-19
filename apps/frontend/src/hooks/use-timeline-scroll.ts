@@ -293,6 +293,11 @@ export function useTimelineScroll({
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
       if (!options?.force && !isFollowingTailRef.current) return
       isFollowingTailRef.current = true
+      // An explicit jump to the tail (Escape "resume tail", Jump-to-latest) ends
+      // the unread-landing follow-suppression; without this the scroll's own
+      // handleScroll would read landedOnUnread and re-disarm the follow we just
+      // armed, so new messages would stop pinning to the bottom.
+      landedOnUnreadRef.current = false
       setIsScrolledFarFromBottom(false)
       const el = scrollerRef.current
       if (!el) return

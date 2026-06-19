@@ -1556,6 +1556,12 @@ export function StreamContent({
     firstUnreadEventId && !highlightMessageId ? findEventItemIndex(visibleItems, firstUnreadEventId) : -1
   initialUnreadIndexRef.current = firstUnreadItemIndex >= 0 ? firstUnreadItemIndex : null
 
+  // Read the last loaded event from a ref so the Escape listener below doesn't
+  // re-attach on every live message (the events array is a fresh reference each
+  // append).
+  const lastLoadedEventIdRef = useRef<string | undefined>(undefined)
+  lastLoadedEventIdRef.current = events.length > 0 ? events[events.length - 1].id : undefined
+
   // Escape "escapes the unread block" (desktop, Slack's Esc-marks-channel-read):
   // mark the stream fully read, dismiss the persistent unread divider, and
   // resume tailing the live bottom. Scoped to when the divider is actually shown
@@ -1571,31 +1577,23 @@ export function StreamContent({
       // An open Radix overlay (move dialog, dropdown, popover) consumes Escape to
       // dismiss itself; it listens in the capture phase and does not stop
       // propagation, so without this our bubble-phase handler would ALSO mark the
-      // stream read and jump to the tail on the same keypress.
+      // stream read and jump to the tail on the same keypress. The popper wrapper
+      // is only in the DOM while an overlay is open (no forceMount), so this never
+      // suppresses Escape spuriously.
       if (
         document.querySelector(
           '[role="dialog"][data-state="open"],[role="alertdialog"][data-state="open"],[role="menu"][data-state="open"],[data-radix-popper-content-wrapper]'
         )
       )
         return
-      const lastLoadedEventId = events.length > 0 ? events[events.length - 1].id : undefined
+      const lastLoadedEventId = lastLoadedEventIdRef.current
       if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
       dismissUnreadDivider()
       scrollToBottom({ force: true })
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [
-    isMobile,
-    isDraft,
-    dividerEventId,
-    isSearchOpen,
-    events,
-    markAsRead,
-    streamId,
-    dismissUnreadDivider,
-    scrollToBottom,
-  ])
+  }, [isMobile, isDraft, dividerEventId, isSearchOpen, markAsRead, streamId, dismissUnreadDivider, scrollToBottom])
 
   const queryClient = useQueryClient()
   const isPublicChannel = stream?.type === StreamTypes.CHANNEL && stream?.visibility === Visibilities.PUBLIC
