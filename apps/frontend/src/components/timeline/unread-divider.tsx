@@ -13,9 +13,8 @@ export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
       // would push the line up into the previous message's last line, since the
       // only clearance above the wrapper edge is the previous row's 2px `pb-0.5`.
       //
-      // The divider never unmounts within a reading session: it transitions
-      // color (red → muted) rather than opacity, so it keeps reserving its row
-      // and never shifts layout when it settles (INV-21).
+      // Color, not opacity: the line keeps reserving its row as it settles, so
+      // nothing shifts when it dims (INV-21).
       className={`absolute left-0 right-0 top-1.5 -translate-y-1/2 z-10 flex items-center gap-3 pointer-events-none transition-colors duration-500 ${
         isDimmed ? "text-muted-foreground" : "text-destructive"
       }`}

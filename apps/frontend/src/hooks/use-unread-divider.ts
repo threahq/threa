@@ -25,7 +25,8 @@ interface UseUnreadDividerOptions {
    * stream row still hydrating) `lastReadEventId` is not authoritative, so we
    * must not treat the first message as unread — doing so would latch a divider
    * that then sticks for the session (the divider persists; there is no
-   * clear-on-read to undo a bad guess).
+   * clear-on-read to undo a bad guess). Defaults to false: a caller must
+   * affirmatively say the read position is resolved before any divider latches.
    */
   readStateResolved?: boolean
 }
@@ -57,7 +58,7 @@ export function useUnreadDivider({
   scrollToUnread = true,
   highlightMessageId,
   isLoading = false,
-  readStateResolved = true,
+  readStateResolved = false,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
   const firstUnreadEventId = useMemo(() => {
     if (events.length === 0 || !readStateResolved) return undefined

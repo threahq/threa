@@ -61,6 +61,7 @@ describe("useUnreadDivider", () => {
             lastReadEventId,
             currentUserId: "me",
             streamId: "stream_1",
+            readStateResolved: true,
           }),
         {
           initialProps: { lastReadEventId: null as string | null | undefined },
@@ -99,6 +100,7 @@ describe("useUnreadDivider", () => {
           lastReadEventId: null,
           currentUserId: "me",
           streamId,
+          readStateResolved: true,
         }),
       { initialProps: { streamId: "stream_1", events: [makeMessageEvent("event_1", "other")] } }
     )
@@ -119,7 +121,7 @@ describe("useUnreadDivider", () => {
         streamId: string
         events: ReturnType<typeof makeMessageEvent>[]
         lastReadEventId: string | null
-      }) => useUnreadDivider({ events, lastReadEventId, currentUserId: "me", streamId }),
+      }) => useUnreadDivider({ events, lastReadEventId, currentUserId: "me", streamId, readStateResolved: true }),
       {
         initialProps: {
           streamId: "stream_1",
@@ -160,6 +162,7 @@ describe("useUnreadDivider", () => {
           currentUserId: "me",
           streamId,
           highlightMessageId,
+          readStateResolved: true,
         }),
       { initialProps: { highlightMessageId: "msg_event_1" as string | null, streamId: "stream_1" } }
     )
@@ -193,6 +196,7 @@ describe("useUnreadDivider", () => {
         currentUserId: "me",
         streamId: "stream_1",
         highlightMessageId: null,
+        readStateResolved: true,
       })
     )
 
