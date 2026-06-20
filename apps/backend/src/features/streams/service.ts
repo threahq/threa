@@ -1702,6 +1702,47 @@ export class StreamService {
     })
   }
 
+  /**
+   * Mark a message (and everything after it) unread — Slack's "mark as unread".
+   * The read pointer lands on the message immediately before the target, so the
+   * target becomes the first unread row. Emits `stream:read_set` (not
+   * `stream:read`) because this can move the pointer BACKWARD: clients apply the
+   * ordinal as a plain set rather than max-merging, letting unread rise.
+   *
+   * Mention/activity counts are left as-is — restoring the badges for the
+   * re-unread range is a deliberate follow-up.
+   */
+  async markUnread(
+    workspaceId: string,
+    streamId: string,
+    memberId: string,
+    messageId: string
+  ): Promise<StreamMember | null> {
+    return withTransaction(this.pool, async (client) => {
+      const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
+      if (!messageEvent) return null
+
+      const previous = await StreamEventRepository.findPreviousMessageEvent(client, streamId, messageEvent.sequence)
+      const lastReadEventId = previous?.id ?? null
+      const lastReadOrdinal = previous
+        ? await StreamEventRepository.countMessagesThrough(client, streamId, previous.sequence)
+        : 0
+
+      const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId })
+      if (membership) {
+        await OutboxRepository.insert(client, "stream:read_set", {
+          workspaceId,
+          authorId: memberId,
+          streamId,
+          lastReadEventId,
+          lastReadSequence: (previous?.sequence ?? 0n).toString(),
+          lastReadOrdinal,
+        })
+      }
+      return membership
+    })
+  }
+
   async markAllAsRead(workspaceId: string, memberId: string): Promise<string[]> {
     return withTransaction(this.pool, async (client) => {
       const memberships = await StreamMemberRepository.list(client, { memberId })

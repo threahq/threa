@@ -39,6 +39,7 @@ export type OutboxEventType =
   | "stream:unarchived"
   | "stream:display_name_updated"
   | "stream:read"
+  | "stream:read_set"
   | "stream:read_all"
   | "stream:notification_level_updated"
   | "stream:activity"
@@ -444,6 +445,23 @@ export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
   lastReadOrdinal: number
 }
 
+/**
+ * Read-pointer SET (author-scoped). Unlike `stream:read`, which advances the
+ * read position monotonically (the client MAX-merges its ordinal), this is an
+ * authoritative set emitted by an explicit "mark as unread" and may move the
+ * pointer BACKWARD. Clients apply the ordinal as a plain set so unread can rise.
+ * `lastReadEventId` is null when the pointer lands before the first message.
+ */
+export interface StreamReadSetOutboxPayload extends WorkspaceScopedPayload {
+  authorId: string
+  streamId: string
+  lastReadEventId: string | null
+  /** The read pointer's per-stream sequence (bigint as string; "0" when before the first message). */
+  lastReadSequence: string
+  /** Message ordinal of the read pointer; clients derive unread as latestOrdinal - lastReadOrdinal. */
+  lastReadOrdinal: number
+}
+
 // Notification-level event payload (author-scoped — the mute/notify choice is
 // the acting user's own per-stream preference, so it reaches only their other
 // sessions, mirroring stream:read).
@@ -748,6 +766,7 @@ export interface OutboxEventPayloadMap {
   "stream:member_removed": StreamMemberRemovedOutboxPayload
   "stream:memos_captured": StreamMemosCapturedOutboxPayload
   "stream:read": StreamReadOutboxPayload
+  "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
   "stream:notification_level_updated": StreamNotificationLevelUpdatedOutboxPayload
   "stream:activity": StreamActivityOutboxPayload
@@ -874,6 +893,7 @@ export function isStreamScopedEvent(event: OutboxEvent): event is OutboxEvent<St
 /** Events that are author-scoped (only visible to the author) */
 export type AuthorScopedEventType =
   | "stream:read"
+  | "stream:read_set"
   | "stream:read_all"
   | "stream:notification_level_updated"
   | "user_preferences:updated"
@@ -882,6 +902,7 @@ export type AuthorScopedEventType =
 
 const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
   "stream:read",
+  "stream:read_set",
   "stream:read_all",
   "stream:notification_level_updated",
   "link_preview:dismissed",
