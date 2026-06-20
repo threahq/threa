@@ -51,6 +51,17 @@ describe("apply window gate", () => {
     act(() => vi.advanceTimersByTime(5_000))
     expect(isApplyWindowOpen()).toBe(false)
   })
+
+  it("does not push the watchdog deadline out on a nested begin", () => {
+    vi.useFakeTimers()
+    beginApplyWindow() // arms the 5s watchdog at depth 1
+    act(() => vi.advanceTimersByTime(3_000))
+    beginApplyWindow() // nested (depth 2) — must NOT re-arm and extend the deadline
+    act(() => vi.advanceTimersByTime(2_000)) // 5s total since the FIRST open
+    // Fires 5s from the first open regardless of the nested begin; a re-arming
+    // watchdog would have reset to t=8s and still be open here.
+    expect(isApplyWindowOpen()).toBe(false)
+  })
 })
 
 describe("useBatchedValue", () => {
