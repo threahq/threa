@@ -11,10 +11,6 @@ const USER_SCROLL_GRACE_MS = 300
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
-/** Context (px) revealed above the first-unread row when landing on it, so the
- *  unread divider and a sliver of the prior message show rather than the
- *  unread message sitting flush against the top edge. */
-const UNREAD_LANDING_TOP_GAP = 56
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
@@ -58,22 +54,6 @@ interface UseTimelineScrollOptions {
    * is the secondary signal for touch/wheel that hasn't yet moved scrollTop.
    */
   userInteractedAtRef?: React.MutableRefObject<number>
-  /**
-   * Whether the viewer's read position is known yet. The initial scroll waits
-   * for this so the land-at-first-unread vs land-at-bottom decision is made
-   * once, correctly: deciding before read state resolves would land at the
-   * bottom and then a late correction would fight the cold-load settle. The
-   * skeleton mask stays up during the (brief, IDB-backed) wait, so there is no
-   * flash. Defaults true so callers without unread semantics are unaffected.
-   */
-  readStateResolved?: boolean
-  /**
-   * Resolve the item index to land on at cold load instead of the bottom — the
-   * first unread row (Slack parity). Returns null to land at the bottom as
-   * usual. Evaluated lazily inside the initial-scroll layout effect, after the
-   * unread divider has computed for the same render.
-   */
-  getInitialScrollIndex?: () => number | null
 }
 
 interface UseTimelineScrollReturn {
@@ -100,10 +80,8 @@ interface UseTimelineScrollReturn {
   isInitialSettling: boolean
   /** True while parked at the live tail (auto-following new output). */
   isFollowingTailRef: React.MutableRefObject<boolean>
-  /** Imperatively scroll to the very bottom (the composer-spacer edge).
-   *  `resumeTail` additionally ends the cold-load first-unread follow-suppression
-   *  (Escape / Jump-to-latest); a plain `force` geometry re-pin must not. */
-  scrollToBottom: (options?: { force?: boolean; resumeTail?: boolean; behavior?: ScrollBehavior }) => void
+  /** Imperatively scroll to the very bottom (the composer-spacer edge). */
+  scrollToBottom: (options?: { force?: boolean; behavior?: ScrollBehavior }) => void
   /** Disable auto-follow (e.g. when a deep-link jump takes over). */
   disableAutoScroll: () => void
   /** Attach to virtua's `onScroll` (and/or call after a native scroll). */
@@ -149,8 +127,6 @@ export function useTimelineScroll({
   skipInitialScroll = false,
   isJumpMode = false,
   userInteractedAtRef,
-  readStateResolved = true,
-  getInitialScrollIndex,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -190,13 +166,6 @@ export function useTimelineScroll({
   // snap to bottom before the jump positions on its target.
   const isFollowingTailRef = useRef(!skipInitialScroll)
 
-  // True while the cold-load settle is holding the first-unread row near the
-  // top. The settle's programmatic pins fire `scroll`, and if first-unread is
-  // within the at-bottom band (only a few unread), handleScroll would re-arm
-  // follow and the ResizeObserver would then fight the pin and snap to the
-  // bottom. Suppress the re-arm until a genuine user gesture clears this.
-  const landedOnUnreadRef = useRef(false)
-
   // Prepend detection. Comparing the first row's key across renders tells us an
   // older page landed (or the window trimmed from the start); virtua's `shift`
   // then holds the viewport from the end.
@@ -233,7 +202,6 @@ export function useTimelineScroll({
     prevScrollHeightRef.current = 0
     didInitialScrollRef.current = false
     isFollowingTailRef.current = !skipInitialScroll
-    landedOnUnreadRef.current = false
     // Re-mask for the new stream's cold-load settle (a no-op when it converges
     // instantly, e.g. revisiting an already-measured stream).
     setIsInitialSettling(!skipInitialScroll)
@@ -274,34 +242,10 @@ export function useTimelineScroll({
     prevScrollHeightRef.current = el.scrollHeight
   }, [])
 
-  // Pin the first-unread row near the top while virtua measures real heights —
-  // the cold-load analogue of pinToBottom for the land-at-unread path. Re-asks
-  // virtua to place the target each frame so the row doesn't drift as estimates
-  // resolve, and syncs the scroll-up baseline so this programmatic write is not
-  // mistaken for a user scroll.
-  const pinToIndex = useCallback((index: number) => {
-    const el = scrollerRef.current
-    if (!el) return
-    try {
-      listRef.current?.scrollToIndex(index, { align: "start", offset: -UNREAD_LANDING_TOP_GAP })
-    } catch {
-      // Not-yet-measured list can throw; the next frame retries.
-    }
-    prevScrollTopRef.current = el.scrollTop
-    prevScrollHeightRef.current = el.scrollHeight
-  }, [])
-
   const scrollToBottom = useCallback(
-    (options?: { force?: boolean; resumeTail?: boolean; behavior?: ScrollBehavior }) => {
+    (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
       if (!options?.force && !isFollowingTailRef.current) return
       isFollowingTailRef.current = true
-      // Only an explicit tail resume (Escape "resume tail", Jump-to-latest) ends
-      // the unread-landing follow-suppression; without this the scroll's own
-      // handleScroll would read landedOnUnread and re-disarm the follow we just
-      // armed, so new messages would stop pinning to the bottom. A plain forced
-      // geometry correction (e.g. the composer's first-measure re-pin) must NOT
-      // clear it, or it would cancel the cold-load first-unread landing.
-      if (options?.resumeTail) landedOnUnreadRef.current = false
       setIsScrolledFarFromBottom(false)
       const el = scrollerRef.current
       if (!el) return
@@ -332,60 +276,63 @@ export function useTimelineScroll({
   // A real user gesture aborts immediately (reveal + stop) so we never trap a
   // user who wants to scroll during a slow settle. Pinning here is the same
   // idempotent pinToBottom the ResizeObserver uses, so the two never disagree.
-  const settle = useCallback((pin: () => void, maxMs: number) => {
-    initialSettleCleanupRef.current?.()
-    const el = scrollerRef.current
-    if (!el) {
-      setIsInitialSettling(false)
-      return
-    }
-    const start = performance.now()
-    let aborted = false
-    let revealed = false
-    let lastHeight = -1
-    let stableFrames = 0
-    const reveal = () => {
-      if (!revealed) {
-        revealed = true
+  const settleToBottom = useCallback(
+    (maxMs: number) => {
+      initialSettleCleanupRef.current?.()
+      const el = scrollerRef.current
+      if (!el) {
         setIsInitialSettling(false)
-      }
-    }
-    const cleanup = () => {
-      aborted = true
-      reveal()
-      if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
-      initialSettleRafRef.current = 0
-      el.removeEventListener("wheel", cleanup)
-      el.removeEventListener("touchmove", cleanup)
-      el.removeEventListener("pointerdown", cleanup)
-      el.removeEventListener("keydown", cleanup)
-      initialSettleCleanupRef.current = null
-    }
-    initialSettleCleanupRef.current = cleanup
-    el.addEventListener("wheel", cleanup, { passive: true })
-    el.addEventListener("touchmove", cleanup, { passive: true })
-    el.addEventListener("pointerdown", cleanup, { passive: true })
-    el.addEventListener("keydown", cleanup)
-
-    const tick = () => {
-      if (aborted) return
-      pin()
-      const height = el.scrollHeight
-      if (height === lastHeight) stableFrames += 1
-      else {
-        stableFrames = 0
-        lastHeight = height
-      }
-      // Converged (height steady) or capped → reveal and hand off to the
-      // ResizeObserver, which keeps the tail pinned for any later growth.
-      if (stableFrames >= SETTLE_STABLE_FRAMES || performance.now() - start >= maxMs) {
-        cleanup()
         return
       }
+      const start = performance.now()
+      let aborted = false
+      let revealed = false
+      let lastHeight = -1
+      let stableFrames = 0
+      const reveal = () => {
+        if (!revealed) {
+          revealed = true
+          setIsInitialSettling(false)
+        }
+      }
+      const cleanup = () => {
+        aborted = true
+        reveal()
+        if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
+        initialSettleRafRef.current = 0
+        el.removeEventListener("wheel", cleanup)
+        el.removeEventListener("touchmove", cleanup)
+        el.removeEventListener("pointerdown", cleanup)
+        el.removeEventListener("keydown", cleanup)
+        initialSettleCleanupRef.current = null
+      }
+      initialSettleCleanupRef.current = cleanup
+      el.addEventListener("wheel", cleanup, { passive: true })
+      el.addEventListener("touchmove", cleanup, { passive: true })
+      el.addEventListener("pointerdown", cleanup, { passive: true })
+      el.addEventListener("keydown", cleanup)
+
+      const tick = () => {
+        if (aborted) return
+        pinToBottom()
+        const height = el.scrollHeight
+        if (height === lastHeight) stableFrames += 1
+        else {
+          stableFrames = 0
+          lastHeight = height
+        }
+        // Converged (height steady) or capped → reveal and hand off to the
+        // ResizeObserver, which keeps the tail pinned for any later growth.
+        if (stableFrames >= SETTLE_STABLE_FRAMES || performance.now() - start >= maxMs) {
+          cleanup()
+          return
+        }
+        initialSettleRafRef.current = requestAnimationFrame(tick)
+      }
       initialSettleRafRef.current = requestAnimationFrame(tick)
-    }
-    initialSettleRafRef.current = requestAnimationFrame(tick)
-  }, [])
+    },
+    [pinToBottom]
+  )
 
   const handleScroll = useCallback(() => {
     const el = scrollerRef.current
@@ -431,16 +378,12 @@ export function useTimelineScroll({
     // stays armed through a keyboard open. Content growth never lowers scrollTop,
     // and our own pins sync prevTop, so neither reads as scrolledUp.
     const userScrolledUp = scrolledUp && userGestured
-    // A genuine gesture ends the unread-landing hold: the user has taken over,
-    // so reaching the tail may re-arm follow normally from here.
-    if (userGestured) landedOnUnreadRef.current = false
     if (atBottom && !userScrolledUp) {
       // Reaching the tail re-arms follow — except in jump mode, where the user
-      // is anchored on a deep-linked message, and during the unread landing,
-      // where a transient atBottom from the settle's pin must not yank a reader
-      // off a near-bottom unread row to the live tail. Sub-threshold jitter (no
+      // is anchored on a deep-linked message and a transient atBottom from
+      // reflow must never yank them to the live tail. Sub-threshold jitter (no
       // gesture) re-arms here too, so it never detaches.
-      isFollowingTailRef.current = !isJumpMode && !landedOnUnreadRef.current
+      isFollowingTailRef.current = !isJumpMode
     } else if (scrolledUp || userGestured) {
       // The user scrolled away from the bottom (past the band, or a deliberate
       // nudge inside it). Content growth (new message, link preview, virtua
@@ -463,48 +406,22 @@ export function useTimelineScroll({
   // bottom region. Passing offset = the composer footer-spacer height lands it
   // at the footer-INCLUSIVE bottom, so the last message sits above the composer.
   // virtua re-applies that target as items measure, and the cold-load settle
-  // re-pins each frame behind the skeleton mask until the height — composer
-  // spacer included — converges.
+  // (settleToBottom) re-pins each frame behind the skeleton mask until the
+  // height — composer spacer included — converges.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
-    // Wait until the read position is known so land-at-unread vs land-at-bottom
-    // is decided once. The skeleton mask stays up during the brief wait.
-    if (!readStateResolved) return
     const el = scrollerRef.current
     if (!el) return
-    didInitialScrollRef.current = true
-
-    const unreadIndex = getInitialScrollIndex?.() ?? null
-    if (unreadIndex !== null && unreadIndex >= 0) {
-      // Land on the first unread row and do NOT follow the tail — new messages
-      // must not yank the reader off the unread boundary down to the bottom.
-      isFollowingTailRef.current = false
-      landedOnUnreadRef.current = true
-      setIsScrolledFarFromBottom(true)
-      pinToIndex(unreadIndex)
-      settle(() => pinToIndex(unreadIndex), 2000)
-      return
-    }
-
     isFollowingTailRef.current = true
-    landedOnUnreadRef.current = false
+    didInitialScrollRef.current = true
     try {
       listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
     } catch {
       // Not-yet-measured list can throw; the pin + settle still converge.
     }
     pinToBottom()
-    settle(pinToBottom, 2000)
-  }, [
-    itemCount,
-    skipInitialScroll,
-    resetKey,
-    readStateResolved,
-    getInitialScrollIndex,
-    pinToBottom,
-    pinToIndex,
-    settle,
-  ])
+    settleToBottom(2000)
+  }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom])
 
   // The one observer that keeps the tail glued. Two observed targets:
   //  - content (contentRef): grows on a live append, on media decoding, as

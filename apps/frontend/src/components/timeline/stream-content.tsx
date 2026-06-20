@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
-import { MessageSquare, ArrowDown, X, Move, Loader2, Check } from "lucide-react"
+import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -974,25 +974,6 @@ export function StreamContent({
   // (new message, link preview, virtua measuring) must not disarm follow.
   const userInteractedAtRef = useRef(0)
 
-  // Initial scroll target for the land-at-first-unread path. Updated each render
-  // once the unread divider has computed (below), read lazily by
-  // useTimelineScroll's cold-load layout effect. A ref because the divider is
-  // computed after this call; the getter is stable so it doesn't churn the
-  // effect.
-  const initialUnreadIndexRef = useRef<number | null>(null)
-  const getInitialScrollIndex = useCallback(() => initialUnreadIndexRef.current, [])
-
-  // The cold-load scroll waits for the read position so it lands on first-unread
-  // vs the bottom only once. This timeout is the floor: if the read position
-  // never resolves (e.g. a non-member preview with no membership row), land at
-  // the bottom anyway rather than hold the skeleton mask up forever.
-  const [readGateTimedOut, setReadGateTimedOut] = useState(false)
-  useEffect(() => {
-    setReadGateTimedOut(false)
-    const timer = setTimeout(() => setReadGateTimedOut(true), 1000)
-    return () => clearTimeout(timer)
-  }, [streamId])
-
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
@@ -1013,10 +994,6 @@ export function StreamContent({
     skipInitialScroll,
     isJumpMode,
     userInteractedAtRef,
-    // Wait for the read position before the cold-load scroll decides
-    // unread-vs-bottom; only the virtualized timeline lands on first unread.
-    readStateResolved: !useVirtualized || lastReadEventId !== undefined || readGateTimedOut,
-    getInitialScrollIndex: useVirtualized ? getInitialScrollIndex : undefined,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the
@@ -1506,28 +1483,32 @@ export function StreamContent({
   // Held off until the cold-load settle reveals the rows: the timeline DOM is
   // populated behind the skeleton mask during the settle, so scanning it then
   // would mark rows read the viewer hasn't actually seen yet.
-  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && !(useVirtualized && virtualIsInitialSettling)
-  const { lastSeenEventId, atLastRow } = useLastSeenEvent({
+  // Auto-mark stream as read when viewing. The stream opens at the live bottom;
+  // read state advances only through the contiguous run the viewer scrolls
+  // through from where they left off (see useLastSeenEvent), so the unread above
+  // the fold stays unread until they go up to it (or press Escape). A not-at-tail
+  // mark is partial — the badge keeps the remaining unread (markAsRead partial).
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
+  const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
     events: displayEvents,
     streamId,
+    lastReadEventId,
     enabled: autoMarkEnabled,
   })
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
 
   const isMobile = useIsMobile()
-  const { markAsRead } = useUnreadCounts(workspaceId)
+  const { markAsRead, getUnreadCount } = useUnreadCounts(workspaceId)
+  const unreadCount = getUnreadCount(streamId)
 
   // Track live-arriving messages from other users for brief "new" indicator.
   const newMessageIds = useNewMessageIndicator(events, currentWorkspaceUserId ?? undefined, streamId, lastReadEventId)
 
-  // Unread divider state management (also handles scroll-to-first-unread).
-  // Pass `displayEvents` so the divider's first-unread search skips events we
-  // hide from this stream's render (e.g. thread membership rows) — otherwise
-  // the divider can target an event id that never matches a rendered row and
-  // silently fails to show.
+  // Unread divider state — a bookmark line at the first unread message. The
+  // stream opens at the bottom (no auto-scroll to unread); the viewer reaches
+  // the divider via the "N new" jump button or by scrolling up.
   const {
-    firstUnreadEventId,
     dividerEventId,
     isDimmed: isDividerDimmed,
     dismiss: dismissUnreadDivider,
@@ -1538,10 +1519,8 @@ export function StreamContent({
     streamId,
     isLoading,
     highlightMessageId,
-    // The virtualized timeline lands on first unread through useTimelineScroll's
-    // cold-load settle (precise on an unmeasured list); only the plain thread
-    // scroller still needs the divider's own scrollIntoView.
-    scrollToUnread: !useVirtualized,
+    // Never auto-scroll to the unread line — opening lands at the live bottom.
+    scrollToUnread: false,
     // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
     // while the read sources (stream row / membership) are still hydrating. Gate
     // on that so a not-yet-known read position can't be read as "all unread" and
@@ -1550,14 +1529,6 @@ export function StreamContent({
     // stale null while the authoritative membership value is still loading.
     readStateResolved: lastReadEventId !== undefined,
   })
-
-  // Feed the cold-load landing target: the item index of the first unread row,
-  // or null to land at the bottom. Read lazily by useTimelineScroll's layout
-  // effect once read state resolves. A deep-link (?m=) drives its own scroll, so
-  // never override it with the unread target.
-  const firstUnreadItemIndex =
-    firstUnreadEventId && !highlightMessageId ? findEventItemIndex(visibleItems, firstUnreadEventId) : -1
-  initialUnreadIndexRef.current = firstUnreadItemIndex >= 0 ? firstUnreadItemIndex : null
 
   // Read the last loaded event from a ref so the Escape listener below doesn't
   // re-attach on every live message (the events array is a fresh reference each
@@ -1597,7 +1568,7 @@ export function StreamContent({
       const lastLoadedEventId = lastLoadedEventIdRef.current
       if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
       dismissUnreadDivider()
-      scrollToBottom({ force: true, resumeTail: true })
+      scrollToBottom({ force: true })
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
@@ -1640,12 +1611,34 @@ export function StreamContent({
       // mis-detected as a real prepend.
       resetShiftBaseline()
       requestAnimationFrame(() => {
-        scrollToBottom({ force: true, resumeTail: true })
+        scrollToBottom({ force: true })
       })
     } else {
-      scrollToBottom({ force: true, resumeTail: true })
+      scrollToBottom({ force: true })
     }
   }, [isJumpMode, exitJumpMode, resetShiftBaseline, scrollToBottom])
+
+  // Jump up to the first unread (the "New" divider) and stop following the tail
+  // so a live message doesn't yank the reader back down. Lands the divider near
+  // the top with a little context above so the run reads from the top.
+  const scrollToFirstUnread = useCallback(() => {
+    if (!dividerEventId) return
+    disableAutoScroll()
+    if (useVirtualized) {
+      const idx = findEventItemIndex(visibleItems, dividerEventId)
+      if (idx < 0) return
+      try {
+        listRef.current?.scrollToIndex(idx, { align: "start", offset: -56 })
+      } catch {
+        // A not-yet-measured virtua list can throw; the row is already rendered
+        // by the time this button is clickable, so this is best-effort.
+      }
+    } else {
+      scrollContainerRef.current
+        ?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(dividerEventId)}"]`)
+        ?.scrollIntoView({ block: "start" })
+    }
+  }, [dividerEventId, useVirtualized, visibleItems, listRef, disableAutoScroll, scrollContainerRef])
 
   const editLastMessageCtxWithScroll = useMemo(
     () => ({ ...editLastMessageCtx, scrollToMessage }),
@@ -1899,6 +1892,24 @@ export function StreamContent({
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                   Jump to latest
+                </Button>
+              </div>
+            )}
+            {/* "N new messages" jump — shown when unread sits above the viewport.
+              Jumps up to the "New" divider so the viewer can read from there. */}
+            {unreadAboveViewport && unreadCount > 0 && !batchMode && (
+              <div
+                className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
+                style={{ top: isSearchOpen ? "3.5rem" : "0.5rem" }}
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="pointer-events-auto shadow-lg gap-1.5"
+                  onClick={scrollToFirstUnread}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                  {unreadCount} new message{unreadCount === 1 ? "" : "s"}
                 </Button>
               </div>
             )}
