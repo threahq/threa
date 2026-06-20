@@ -156,12 +156,11 @@ test.describe("Edit last message (ArrowUp)", () => {
     const lastFillerEl = userA.page.getByRole("main").locator(".message-item").getByText(`${fillerText} #20`).first()
     await expect(lastFillerEl).toBeVisible({ timeout: 15000 })
 
-    // Cold load now lands on the first unread message (Slack-style), so with the
-    // 20 unread fillers User A starts near the top with their own first message in
-    // view. Scroll to the live tail so it goes off-screen — the precondition for
-    // the ArrowUp scroll-into-view below. Retry the scroll-then-check: until the
-    // cold-load settle converges it can re-pin the first-unread row back to the
-    // top, so a single scroll can be undone.
+    // Cold load opens at the live bottom (the tail), so with the 20 fillers after
+    // it User A's first message is already off-screen above. Re-assert that via a
+    // scroll-to-tail — the precondition for the ArrowUp scroll-into-view below —
+    // and retry the scroll-then-check so a settle still converging its final
+    // scroll position can't leave a single scroll undone.
     const firstMessageEl = userA.page.getByRole("main").locator(".message-item").getByText(firstMessage).first()
     await expect(async () => {
       await lastFillerEl.scrollIntoViewIfNeeded()

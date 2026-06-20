@@ -1476,14 +1476,6 @@ export function StreamContent({
     clearSearch()
   }, [streamId, exitJumpMode, clearSearch])
 
-  // Auto-mark stream as read when viewing. Read state never runs ahead of what
-  // the viewer has actually scrolled into view: mark up to the bottom-most seen
-  // row (Slack-style progressive read), not the tail of the loaded window. When
-  // the viewer is not at the live tail the mark is partial — the badge keeps the
-  // unread still below the fold (see useAutoMarkAsRead / markAsRead partial).
-  // Held off until the cold-load settle reveals the rows: the timeline DOM is
-  // populated behind the skeleton mask during the settle, so scanning it then
-  // would mark rows read the viewer hasn't actually seen yet.
   // Auto-mark stream as read when viewing. The stream opens at the live bottom;
   // read state advances only through the contiguous run the viewer scrolls
   // through from where they left off (see useLastSeenEvent), so the unread above
@@ -1897,12 +1889,14 @@ export function StreamContent({
               </div>
             )}
             {/* "N new messages" jump — shown when unread sits above the viewport.
-              Jumps up to the "New" divider so the viewer can read from there. */}
-            {unreadAboveViewport && unreadCount > 0 && !batchMode && (
+              Jumps up to the "New" divider so the viewer can read from there.
+              Hidden while search is open: jumping the timeline would yank it out
+              from under the active search-result navigation, and the Escape
+              mark-read shortcut is gated on `!isSearchOpen` too. */}
+            {unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen && (
               <div
                 // Sits clearly below the floating date pill (top-2, ~30px tall)
-                // and the search bar (when open) so the top-center affordances
-                // never overlap.
+                // so the top-center affordances never overlap.
                 className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
                 style={{ top: "3.5rem" }}
               >
