@@ -1099,34 +1099,18 @@ export function createPublicApiHandlers({
         })
       }
 
-      const stream = await streamService.createScratchpad({
+      const { link, stream } = await botRuntimeService.createLinkedScratchpadSession({
         workspaceId: req.workspaceId!,
+        botId: bot.id,
+        ownerUserId: bot.ownerUserId,
+        runtimeKind: data.runtimeKind,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
         displayName: data.displayName,
-        // Coding-agent build sessions (pi-local / claude-code-channel) default
-        // to memory off — their turns are implementation churn, not durable
-        // knowledge, so GAM extraction there is noise. Callers can opt in with
-        // `memoryMode: "auto"`.
-        memoryMode: data.memoryMode ?? MemoryModes.OFF,
-        createdBy: bot.ownerUserId,
-      })
-      await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
-      const link = await withTransaction(pool, async (client) => {
-        await botRuntimeService.repairBotTraitsInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          botId: bot.id,
-          traits: requiredRuntimeTraits,
-        })
-        return botRuntimeService.createOrLinkPiRemoteSessionInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          botId: bot.id,
-          runtimeKind: data.runtimeKind,
-          instanceId: data.instanceId,
-          runtimeSessionId: data.runtimeSessionId,
-          rootStreamId: stream.id,
-          activeStreamId: stream.id,
-          linkedBy: bot.ownerUserId,
-          metadata: { displayName: data.displayName, localCwd: data.localCwd ?? null },
-        })
+        localCwd: data.localCwd,
+        memoryMode: data.memoryMode,
+        labelName: data.labelName,
+        traits: requiredRuntimeTraits,
       })
 
       res.json({

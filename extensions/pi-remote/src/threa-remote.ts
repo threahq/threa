@@ -1,6 +1,16 @@
 import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { io as openSocket, type Socket } from "socket.io-client"
@@ -68,6 +78,8 @@ type Config = {
   defaultDisplayName?: string
   /** Pinned model identifiers (`provider/id`) rendered first by /model. */
   preferredModels?: string[]
+  /** Label name to assign to scratchpads created by this Pi instance. */
+  defaultLabel?: string
   /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
@@ -105,7 +117,7 @@ type WorkspaceConfigResponse = {
 
 type ConfigPatch = Pick<
   Config,
-  "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels"
+  "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels" | "defaultLabel"
 >
 
 type ClaimedInvocation = {
@@ -195,6 +207,13 @@ function validateConfig(value: unknown): Config | undefined {
     console.error(`Invalid ${CONFIG_PATH}: missing or invalid ${invalidFields.join(", ")}`)
     return undefined
   }
+  if (candidate.defaultLabel !== undefined) {
+    if (typeof candidate.defaultLabel !== "string") {
+      console.error(`Invalid ${CONFIG_PATH}: defaultLabel must be a string`)
+      return undefined
+    }
+    candidate.defaultLabel = candidate.defaultLabel.trim() || undefined
+  }
   return migrateSessionState(candidate as Config)
 }
 
@@ -247,7 +266,7 @@ function acquireConfigLockSync(): (() => void) | undefined {
     let fd: number | undefined
     try {
       // O_EXCL + O_CREAT: the open succeeds only for the creator of the file,
-// giving us an exclusive cross-process lock. `wx` flag = O_EXCL|O_CREAT|O_WRONLY.
+      // giving us an exclusive cross-process lock. `wx` flag = O_EXCL|O_CREAT|O_WRONLY.
       fd = openSync(CONFIG_LOCK_PATH, "wx")
       const release = (): void => {
         try {
@@ -259,7 +278,10 @@ function acquireConfigLockSync(): (() => void) | undefined {
       }
       return release
     } catch (error) {
-      const code = typeof error === "object" && error !== null && "code" in error ? String((error as { code: unknown }).code) : undefined
+      const code =
+        typeof error === "object" && error !== null && "code" in error
+          ? String((error as { code: unknown }).code)
+          : undefined
       if (code !== "EEXIST") {
         // Unexpected error (permissions, disk full, …) — skip this save
         // rather than perform an unlocked RMW (INV-20).
@@ -551,9 +573,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       }
     }
     detail = detail.slice(0, 500)
-    throw new Error(
-      `Threa API ${response.status}: ${response.statusText}${detail ? ` — ${detail}` : ""}`
-    )
+    throw new Error(`Threa API ${response.status}: ${response.statusText}${detail ? ` — ${detail}` : ""}`)
   }
   return (await response.json()) as T
 }
@@ -1101,6 +1121,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
         runtimeSessionId,
         displayName,
         localCwd: ctx.cwd,
+        ...(config.defaultLabel && { labelName: config.defaultLabel }),
       }),
     }
   )
@@ -1247,6 +1268,7 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       // a custom prefix (e.g. "Work Pi") can set it here and the dirname will
       // still be appended.
       defaultDisplayName: existing?.defaultDisplayName ?? "",
+      defaultLabel: existing?.defaultLabel ?? "",
       preferredModels: existing?.preferredModels ?? [],
     },
     null,
@@ -1271,6 +1293,9 @@ function parseConfigPatch(text: string): ConfigPatch {
   if (candidate.defaultDisplayName !== undefined && typeof candidate.defaultDisplayName !== "string") {
     throw new Error("defaultDisplayName must be a string")
   }
+  if (candidate.defaultLabel !== undefined && typeof candidate.defaultLabel !== "string") {
+    throw new Error("defaultLabel must be a string")
+  }
   if (
     candidate.preferredModels !== undefined &&
     (!Array.isArray(candidate.preferredModels) || candidate.preferredModels.some((value) => typeof value !== "string"))
@@ -1284,6 +1309,7 @@ function parseConfigPatch(text: string): ConfigPatch {
     apiKey: apiKey.trim(),
     pollMs: candidate.pollMs,
     defaultDisplayName: candidate.defaultDisplayName?.trim() || undefined,
+    defaultLabel: candidate.defaultLabel?.trim() || undefined,
     preferredModels: candidate.preferredModels?.map((value) => value.trim()).filter((value) => value.length > 0),
   }
 }
@@ -2135,8 +2161,8 @@ function textFromAgentMessages(messages: unknown): string {
     // Same rationale as `resolveFinalText`: the final assistant message is the
     // answer; earlier ones are per-step narration that belongs in the trace,
     // not concatenated into the reply.
-    .at(-1)?.text
-    .trim()
+    .at(-1)
+    ?.text.trim()
   if (assistant) return assistant
   return (
     captured
@@ -2749,7 +2775,11 @@ export default function (pi: ExtensionAPI): void {
       // error, non-assistant text) where there is no preceding thinking step.
       if (pendingAssistantTexts.length === 0) {
         const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
-        await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
+        await recordTraceStep(
+          "message_sent",
+          `Final response:\n\n${sanitizeTraceText(traceFinalText)}`,
+          "Sent response"
+        )
       }
       await completePending(finalText, ctx)
       setRemoteStatus(ctx, "Threa remote: linked")

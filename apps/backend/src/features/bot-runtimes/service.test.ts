@@ -466,6 +466,100 @@ describe("BotRuntimeService outbox emission", () => {
     })
   })
 
+  describe("createLinkedScratchpadSession", () => {
+    it("creates the scratchpad, bot grant, label, and session link in one transaction", async () => {
+      patchWithTransaction()
+      const streamService = {
+        createScratchpadInTransaction: mock(() => Promise.resolve({ id: "stream_1" })),
+        addBotToStreamOn: mock(() => Promise.resolve()),
+      }
+      const labelAssignmentService = {
+        assignByNameInTransaction: mock(() => Promise.resolve({})),
+      }
+      spyOn(BotRuntimeService.prototype, "repairBotTraitsInTransaction").mockResolvedValue(undefined)
+      const createLinkSpy = spyOn(
+        BotRuntimeService.prototype,
+        "createOrLinkPiRemoteSessionInTransaction"
+      ).mockResolvedValue({
+        id: "brsl_1",
+        rootStreamId: "stream_1",
+        activeStreamId: "stream_1",
+        runtimeSessionId: "sess_1",
+      } as never)
+      const service = new BotRuntimeService({
+        pool: fakePool,
+        streamService: streamService as never,
+        labelAssignmentService: labelAssignmentService as never,
+      })
+
+      const result = await service.createLinkedScratchpadSession({
+        workspaceId: "ws_1",
+        botId: "bot_1",
+        ownerUserId: "usr_owner",
+        runtimeKind: "pi-local",
+        instanceId: "inst_1",
+        runtimeSessionId: "sess_1",
+        displayName: "Pi remote - threa",
+        localCwd: "/repo/threa",
+        labelName: "Pi remote",
+        traits: ["active-scratchpad"],
+      })
+
+      expect(streamService.createScratchpadInTransaction).toHaveBeenCalledWith(
+        fakeQuerier,
+        expect.objectContaining({ workspaceId: "ws_1", displayName: "Pi remote - threa", createdBy: "usr_owner" })
+      )
+      expect(streamService.addBotToStreamOn).toHaveBeenCalledWith(fakeQuerier, "stream_1", "bot_1", "ws_1", "usr_owner")
+      expect(labelAssignmentService.assignByNameInTransaction).toHaveBeenCalledWith(
+        fakeQuerier,
+        expect.objectContaining({ name: "Pi remote", resourceId: "stream_1" })
+      )
+      expect(createLinkSpy).toHaveBeenCalledWith(
+        fakeQuerier,
+        expect.objectContaining({
+          rootStreamId: "stream_1",
+          activeStreamId: "stream_1",
+          linkedBy: "usr_owner",
+          metadata: { displayName: "Pi remote - threa", localCwd: "/repo/threa" },
+        })
+      )
+      expect(result.link.id).toBe("brsl_1")
+      expect(result.stream.id).toBe("stream_1")
+    })
+
+    it("rejects and lets the transaction roll back when label assignment fails", async () => {
+      patchWithTransaction()
+      const streamService = {
+        createScratchpadInTransaction: mock(() => Promise.resolve({ id: "stream_1" })),
+        addBotToStreamOn: mock(() => Promise.resolve()),
+      }
+      const labelAssignmentService = {
+        assignByNameInTransaction: mock(() => Promise.reject(new Error("boom"))),
+      }
+      const createLinkSpy = spyOn(BotRuntimeService.prototype, "createOrLinkPiRemoteSessionInTransaction")
+      const service = new BotRuntimeService({
+        pool: fakePool,
+        streamService: streamService as never,
+        labelAssignmentService: labelAssignmentService as never,
+      })
+
+      await expect(
+        service.createLinkedScratchpadSession({
+          workspaceId: "ws_1",
+          botId: "bot_1",
+          ownerUserId: "usr_owner",
+          runtimeKind: "pi-local",
+          instanceId: "inst_1",
+          runtimeSessionId: "sess_1",
+          displayName: "Pi remote - threa",
+          labelName: "Pi remote",
+          traits: ["active-scratchpad"],
+        })
+      ).rejects.toThrow("boom")
+
+      expect(createLinkSpy).not.toHaveBeenCalled()
+    })
+  })
   describe("requestResyncInTransaction", () => {
     it("rejects instanceId without botId", async () => {
       const service = new BotRuntimeService({ pool: fakePool })

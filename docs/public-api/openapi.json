@@ -1043,7 +1043,8 @@
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
                   "localCwd": { "type": "string", "maxLength": 1000 },
-                  "memoryMode": { "type": "string", "enum": ["auto", "off"] }
+                  "memoryMode": { "type": "string", "enum": ["auto", "off"] },
+                  "labelName": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "\\S" }
                 },
                 "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
                 "additionalProperties": false
