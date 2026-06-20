@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { createPortal } from "react-dom"
+import { cn } from "@/lib/utils"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useCoarsePointer } from "@/hooks/use-pointer"
 
@@ -32,33 +33,38 @@ interface PreviewAnchorProps {
 interface UseStreamTitlePreviewResult {
   /** Spread onto the truncated element. `null` on a fine pointer (no-op). */
   anchorProps: PreviewAnchorProps | null
-  /** The grown-name overlay; render it anywhere (portals to the body). */
+  /** The grown-name overlay; render it anywhere (it portals itself). */
   overlay: ReactNode
 }
 
-// The grown label, measured at press time: the label's own left edge plus the
-// enclosing title bar's vertical extent and right edge, so the name fills the
-// bar and covers the controls to its right rather than floating as a card.
-interface PreviewBox {
+// Where and how to grow, measured at press time. When the label sits inside a
+// title bar (<header>) the overlay portals into that bar as an absolute child —
+// so it IS the bar, inheriting its exact height/background and escaping the
+// inner overflow-hidden wrappers — spanning from the name to the bar's right
+// edge. Without a bar ancestor it falls back to a viewport-fixed box.
+interface PreviewAnchor {
+  target: HTMLElement
+  inBar: boolean
+  /** Name's left: relative to the bar when inBar, else the viewport. */
   left: number
+  /** Viewport top / label height — used only by the fixed fallback. */
   top: number
   height: number
-  right: number
 }
 
 /**
  * Touch-only press-and-hold preview of a truncated label. Returns props to
- * spread onto the truncated element and an overlay that grows the full name in
- * place out of that element's position, overlaying its surroundings, then
- * collapses on release. A popover below would sit under the thumb; growing in
- * place keeps the revealed text beside the finger. No-op on fine pointers,
- * where width / hover tooltips already cover it.
+ * spread onto the truncated element and an overlay that expands the title bar in
+ * place: the full name grows out of the label's position, fills the bar, and
+ * covers the controls to its right, then collapses on release. A popover below
+ * would sit under the thumb; growing the bar keeps the revealed text where the
+ * eye already is. No-op on fine pointers, where width / hover tooltips cover it.
  */
 export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult {
   const isTouch = useCoarsePointer()
-  const [box, setBox] = useState<PreviewBox | null>(null)
+  const [anchor, setAnchor] = useState<PreviewAnchor | null>(null)
   const anchorRef = useRef<HTMLElement | null>(null)
-  const setAnchor = useCallback<React.RefCallback<HTMLElement>>((node) => {
+  const setAnchorEl = useCallback<React.RefCallback<HTMLElement>>((node) => {
     anchorRef.current = node
   }, [])
   // True between long-press firing and the trailing synthetic click, so we can
@@ -71,25 +77,35 @@ export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult
       firedRef.current = true
       const el = anchorRef.current
       if (!el) return
-      const label = el.getBoundingClientRect()
-      // Both title bars (stream header, side-panel header) are <header>; grow to
-      // fill it. Fall back to the label's own box when there's no bar ancestor.
-      const bar = el.closest("header")?.getBoundingClientRect()
-      setBox({
-        left: label.left,
-        top: bar?.top ?? label.top,
-        height: bar?.height ?? label.height,
-        right: bar?.right ?? window.innerWidth,
-      })
+      const labelRect = el.getBoundingClientRect()
+      // Both title bars (stream header, side-panel header) are <header>.
+      const bar = el.closest("header")
+      if (bar) {
+        setAnchor({
+          target: bar,
+          inBar: true,
+          left: labelRect.left - bar.getBoundingClientRect().left,
+          top: 0,
+          height: 0,
+        })
+      } else {
+        setAnchor({
+          target: document.body,
+          inBar: false,
+          left: labelRect.left,
+          top: labelRect.top,
+          height: labelRect.height,
+        })
+      }
     },
     enabled: isTouch,
   })
 
   if (!isTouch) return { anchorProps: null, overlay: null }
 
-  const close = () => setBox(null)
+  const close = () => setAnchor(null)
   const anchorProps: PreviewAnchorProps = {
-    ref: setAnchor,
+    ref: setAnchorEl,
     onTouchStart: (e) => {
       firedRef.current = false
       longPress.handlers.onTouchStart(e)
@@ -113,30 +129,36 @@ export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult
     },
   }
 
-  const left = box ? box.left - PAD_PX : 0
+  const left = anchor ? Math.max(anchor.left - PAD_PX, 0) : 0
   const overlay =
-    box &&
+    anchor &&
     createPortal(
       <div
-        // Styled as the bar itself (opaque bg, no card chrome) so it reads as
-        // the title eating the bar and hiding the controls underneath, not a
-        // floating popover. pointer-events-none: the finger is still down on
-        // the label; the overlay must never intercept the touch / its release.
-        className="pointer-events-none fixed z-50 flex items-center bg-background px-3 text-foreground origin-left animate-in fade-in-0 zoom-in-95 duration-150"
+        // bg-background + no card chrome so it reads as the bar expanding, not a
+        // floating label. pointer-events-none: the finger is still down on the
+        // label; the overlay must never intercept the touch / its release.
+        className={cn(
+          "pointer-events-none flex items-center bg-background text-foreground origin-left animate-in fade-in-0 zoom-in-95 duration-150",
+          // In-bar: absolute child of the <header>, pinned top + right so it
+          // fills the bar height and covers everything from the name rightward.
+          anchor.inBar ? "absolute right-0 top-0 z-10" : "fixed z-50"
+        )}
         style={{
           left,
-          top: box.top,
-          minHeight: box.height,
-          // Cover at least to the bar's right edge (hiding the controls), but
-          // grow wider when the name needs it; wrap only past the viewport.
-          minWidth: Math.max(box.right - left, 0),
-          width: "max-content",
-          maxWidth: `calc(100vw - ${Math.max(left, 0)}px - 0.5rem)`,
+          paddingLeft: PAD_PX,
+          paddingRight: 16,
+          ...(anchor.inBar
+            ? { minHeight: "100%" }
+            : {
+                top: anchor.top,
+                minHeight: anchor.height,
+                maxWidth: `calc(100vw - ${left}px)`,
+              }),
         }}
       >
         <span className="break-words text-base font-semibold">{name}</span>
       </div>,
-      document.body
+      anchor.target
     )
 
   return { anchorProps, overlay }

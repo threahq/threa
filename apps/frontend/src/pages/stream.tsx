@@ -523,7 +523,7 @@ export function StreamPage() {
 
   const mainStreamContent = (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center justify-between border-b px-4">
+      <header className="relative flex h-12 items-center justify-between border-b px-4">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <SidebarToggle location="page" />
           {headerTitle}

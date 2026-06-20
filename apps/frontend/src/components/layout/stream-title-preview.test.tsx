@@ -108,6 +108,29 @@ describe("StreamTitlePreview", () => {
 
     expect(screen.getAllByText(LONG_NAME)).toHaveLength(1)
   })
+
+  it("grows inside the enclosing title bar (<header>), not as a detached overlay", () => {
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+    render(
+      <header data-testid="bar">
+        <StreamTitlePreview name={LONG_NAME}>
+          <h1 className="truncate">{LONG_NAME}</h1>
+        </StreamTitlePreview>
+      </header>
+    )
+
+    const title = screen.getByRole("heading", { name: LONG_NAME })
+    touchStart(title)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    // Both the original title and the grown copy live inside the bar.
+    const bar = screen.getByTestId("bar")
+    const within = bar.querySelectorAll(`*`)
+    const matches = Array.from(within).filter((el) => el.textContent === LONG_NAME)
+    expect(matches.length).toBeGreaterThanOrEqual(2)
+  })
 })
 
 // The thread-panel breadcrumb step composes the preview's anchor props through
