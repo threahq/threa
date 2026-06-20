@@ -1,14 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from "react"
-import {
-  Breadcrumb,
-  BreadcrumbList,
-  BreadcrumbItem,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { Breadcrumb, BreadcrumbList, BreadcrumbItem, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { AncestorBreadcrumbItem } from "./breadcrumb-helpers"
+import { AncestorBreadcrumbItem, CurrentBreadcrumbItem } from "./breadcrumb-helpers"
 import { BreadcrumbEllipsisDropdown } from "./breadcrumb-ellipsis-dropdown"
 import type { StreamType } from "@threa/types"
 
@@ -178,14 +171,7 @@ export function ResponsiveBreadcrumbs({
           ) : (
             renderAncestors()
           )}
-          <BreadcrumbItem style={{ maxWidth: currentMaxWidth }}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <BreadcrumbPage className="truncate">{currentLabel}</BreadcrumbPage>
-              </TooltipTrigger>
-              <TooltipContent>{currentLabel}</TooltipContent>
-            </Tooltip>
-          </BreadcrumbItem>
+          <CurrentBreadcrumbItem label={currentLabel} maxWidth={currentMaxWidth} />
         </BreadcrumbList>
       </Breadcrumb>
     </div>

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act, fireEvent, render, screen } from "@/test"
 import * as pointerModule from "@/hooks/use-pointer"
 import { StreamTitlePreview } from "./stream-title-preview"
+import { CurrentBreadcrumbItem } from "@/components/thread/breadcrumb-helpers"
 
 const LONG_NAME = "A very long stream name that the header truncates"
 
@@ -105,6 +106,39 @@ describe("StreamTitlePreview", () => {
       vi.advanceTimersByTime(500)
     })
 
+    expect(screen.getAllByText(LONG_NAME)).toHaveLength(1)
+  })
+})
+
+// The thread-panel breadcrumb step composes the preview's anchor props through
+// Radix `asChild` slots (Tooltip → BreadcrumbPage). This guards that the
+// long-press handlers and ref survive that composition and still reveal/hide.
+describe("CurrentBreadcrumbItem (breadcrumb step preview)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it("reveals the full label on long press and hides it on release (touch)", () => {
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+    render(<CurrentBreadcrumbItem label={LONG_NAME} maxWidth={120} />)
+
+    const step = screen.getByText(LONG_NAME)
+    expect(screen.getAllByText(LONG_NAME)).toHaveLength(1)
+
+    touchStart(step)
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(screen.getAllByText(LONG_NAME)).toHaveLength(2)
+
+    act(() => {
+      fireEvent.touchEnd(step)
+    })
     expect(screen.getAllByText(LONG_NAME)).toHaveLength(1)
   })
 })
