@@ -164,6 +164,50 @@ curl -sS -X POST \
   -d '{"content":"hello from the API","clientMessageId":"oneoff-1"}'
 ```
 
+### Labels (by name)
+
+Labels are addressed by their text, not an id — there is no "look up the id
+first" step. Every label is private to the key's actor (a user key labels for
+the user; a personal bot key labels for its owner).
+
+```bash
+BASE="https://staging.threa.io/api/v1/workspaces/<ws>"
+AUTH="Authorization: Bearer $THREA_STAGING_TOKEN"
+JSON="Content-Type: application/json"
+
+# Create or update a label by name (idempotent). Omit color/emoji/description
+# to just ensure it exists; pass them to set/overwrite its appearance.
+curl -sS -X POST "$BASE/labels" \
+  -H "$AUTH" \
+  -H "$JSON" \
+  -d '{
+    "name": "coding",
+    "color": "#64748b",
+    "emoji": "💻",
+    "description": "Pi remote scratchpads"
+  }'
+
+# Apply a label to a stream by name (finds-or-creates the label, then assigns).
+# A bare assign reuses an existing "coding" untouched; include color/emoji to
+# also set its appearance. Returns { label, assignment }.
+curl -sS -X POST "$BASE/labels/assignments" \
+  -H "$AUTH" \
+  -H "$JSON" \
+  -d '{
+    "name": "coding",
+    "resourceType": "stream",
+    "resourceId": "stream_..."
+  }'
+
+# Remove a label from a stream by name (query params, not a body). 204.
+curl -sS -X DELETE \
+  "$BASE/labels/assignments?name=coding&resourceType=stream&resourceId=stream_..." \
+  -H "$AUTH"
+
+# List the key actor's labels and their assignments.
+curl -s "$BASE/labels" -H "$AUTH" | jq '.'
+```
+
 ### Bulk send (the reusable pattern)
 
 For seeding/load/realism runs, use a Bun script — `fetch` is built in. The
