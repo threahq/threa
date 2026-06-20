@@ -667,6 +667,17 @@ export class SyncEngine {
 
         // Write to TanStack cache (bridge for coordinated-loading, sidebar loading/error)
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
+
+        // Cold-boot single bootstrap: this first-connect snapshot is the
+        // authority for everything <= its sync head (read-before-stamp on the
+        // backend). Jump the cursor there so the catch-up that runs next sees no
+        // gap — otherwise a stale cursor persisted from a prior session makes
+        // catch-up collapse the gap into a SECOND full bootstrap. Reconnects are
+        // excluded: their cursor marks the disconnect window catch-up must heal.
+        if (!_isReconnect && this.eventGate && bootstrap.syncHead) {
+          this.syncLogCursor?.advance(bootstrap.syncHead)
+          this.noteSeenHead(bootstrap.syncHead)
+        }
       }
 
       this.lastWorkspaceError = null
