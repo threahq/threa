@@ -72,7 +72,8 @@ export function ErrorBoundary() {
   }
 
   const handleHardReload = () => {
-    void runSwRecovery({ force: true })
+    const bustUrl = chunkUrlFromError(error)
+    void runSwRecovery({ force: true, bustUrls: bustUrl ? [bustUrl] : undefined })
   }
 
   const errorText = formatError(error)

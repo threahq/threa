@@ -174,26 +174,47 @@
             }
 
             // The poison is usually in the *browser HTTP cache*, not the SW
-            // caches above: a hashed /assets/* URL fetched mid-deploy gets the
-            // index.html SPA fallback stamped `immutable, max-age=1yr`, which
-            // never revalidates and survives the unregister + clear above.
-            // Re-fetch the shell and its asset URLs with `cache: "reload"` to
-            // bypass and overwrite those entries. (A lazily-imported chunk that
-            // isn't referenced in index.html is handled on the next load: the
-            // counter reset below restores the app's auto-recovery budget so its
-            // error boundary can bust that chunk too.)
+            // caches above: older deploys could serve index.html at a hashed
+            // /assets/* URL stamped `immutable, max-age=1yr`, which never
+            // revalidates and survives the unregister + clear above.
+            // Re-fetch the shell, SW manifest, and every current asset URL with
+            // `cache: "reload"` to bypass and overwrite those entries. Lazy
+            // route chunks are usually listed only in sw.js, not index.html.
             try {
+              function assetUrlsFrom(text) {
+                var urls = []
+                var re = /["'(](\/?assets\/[^"')\s]+)/g
+                var match
+                while ((match = re.exec(text))) {
+                  urls.push(match[1].charAt(0) === "/" ? match[1] : "/" + match[1])
+                }
+                return urls
+              }
+
+              async function fetchBatches(urls, size) {
+                for (var i = 0; i < urls.length; i += size) {
+                  await Promise.all(
+                    urls.slice(i, i + size).map(function (u) {
+                      return fetch(u, { cache: "reload" }).catch(function () {})
+                    })
+                  )
+                }
+              }
+
               var shell = await fetch("/index.html", { cache: "reload" })
               var html = await shell.text()
-              var assetUrls = (html.match(/\/assets\/[^"')\s]+/g) || []).filter(function (u, i, a) {
-                return a.indexOf(u) === i
-              })
-              await Promise.all(
-                assetUrls.map(function (u) {
-                  return fetch(u, { cache: "reload" }).catch(function () {})
+              var sw = await fetch("/sw.js", { cache: "reload" })
+              var swText = await sw.text()
+              var seen = {}
+              var assetUrls = assetUrlsFrom(html)
+                .concat(assetUrlsFrom(swText))
+                .filter(function (u) {
+                  if (seen[u]) return false
+                  seen[u] = true
+                  return true
                 })
-              )
-              setStatus("Re-fetched shell + " + assetUrls.length + " asset(s) from network.")
+              await fetchBatches(assetUrls, 8)
+              setStatus("Re-fetched shell, service worker + " + assetUrls.length + " asset(s) from network.")
             } catch (e) {
               // Offline or fetch unsupported — the unregister/clear above still
               // helps, and the next load's error boundary will retry.

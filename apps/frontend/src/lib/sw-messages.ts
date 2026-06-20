@@ -19,12 +19,11 @@ export const SW_MSG_CLEAR_NOTIFICATIONS = "CLEAR_NOTIFICATIONS"
 export const SW_MSG_QUEUE_BOOTSTRAP_SYNC = "QUEUE_BOOTSTRAP_SYNC"
 
 /**
- * Posted from the app to the SW (the controlling worker) to serve the *next*
- * navigation from the network instead of the cache-first precache shell. Used by
- * the "new version" reload so the reload lands on the freshly-deployed build
- * rather than the old build the current SW precached.
+ * Posted from the app to a waiting SW to activate it after the user accepts the
+ * update toast. New workers stay parked until this message so an open tab keeps
+ * the worker and precache that match its running JS.
  */
-export const SW_MSG_RELOAD_FRESH = "RELOAD_FRESH"
+export const SW_MSG_SKIP_WAITING = "SKIP_WAITING"
 
 /** Cache name used by the SW to stash share-target POST data (files + text) for the app to read. */
 export const SHARE_TARGET_CACHE = "share-target"

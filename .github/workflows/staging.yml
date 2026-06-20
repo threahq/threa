@@ -37,11 +37,31 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Restore retained frontend assets
+        uses: actions/cache/restore@v4
+        continue-on-error: true
+        with:
+          path: apps/frontend/.retained-assets
+          key: frontend-retained-assets-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          restore-keys: |
+            frontend-retained-assets-pr-${{ github.event.pull_request.number }}-
+
       - name: Build frontend
         run: bun run --cwd apps/frontend build
 
+      - name: Fold retained assets into dist
+        run: bun apps/frontend/scripts/retain-assets.ts
+
+      - name: Save retained frontend assets
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: apps/frontend/.retained-assets
+          key: frontend-retained-assets-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+
       - name: Deploy frontend to CF Pages
-        run: bunx wrangler pages deploy apps/frontend/dist --project-name threa-staging --branch pr-${{ github.event.pull_request.number }}
+        working-directory: apps/frontend
+        run: bunx wrangler pages deploy dist --project-name threa-staging --branch pr-${{ github.event.pull_request.number }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

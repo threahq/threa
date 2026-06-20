@@ -113,10 +113,8 @@ export default defineConfig({
         // falls through to the network when nothing is precached.
         globPatterns: isE2ETest ? [] : ["**/*.{js,css,html,ico,png,svg}"],
         // recover.html is the nuclear-option SW-unregister page (public/recover.html).
-        // Precaching it would defeat its purpose — and with CF Pages Pretty URLs, the
-        // /recover ↔ /recover.html rewrite loop in _redirects causes the SW install
-        // fetch to fail with ERR_TOO_MANY_REDIRECTS, which strands the SW in
-        // "installing" forever and breaks navigator.serviceWorker.ready (and push).
+        // It must stay network-served even when the app shell is broken; precaching
+        // it would route recovery through the SW it is trying to unregister.
         globIgnores: ["**/recover.html"],
       },
       devOptions: {

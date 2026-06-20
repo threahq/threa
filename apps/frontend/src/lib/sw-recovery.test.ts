@@ -125,6 +125,31 @@ describe("runSwRecovery", () => {
     expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload" })
   })
 
+  it("clears CacheStorage before refetching a poisoned chunk", async () => {
+    const calls: string[] = []
+    vi.stubGlobal("caches", {
+      keys: vi.fn(async () => {
+        calls.push("keys")
+        return ["workbox-precache-v2"]
+      }),
+      delete: vi.fn(async () => {
+        calls.push("delete")
+        return true
+      }),
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls.push("fetch")
+        return new Response("")
+      })
+    )
+
+    await runSwRecovery({ force: true, bustUrls: ["https://app.threa.io/assets/workspace-layout-D6MDsthX.js"] })
+
+    expect(calls.slice(0, 3)).toEqual(["keys", "delete", "fetch"])
+  })
+
   it("reloads even if the cache-busting refetch rejects", async () => {
     vi.stubGlobal(
       "fetch",

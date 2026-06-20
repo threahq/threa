@@ -3,75 +3,94 @@ import { toast } from "sonner"
 import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
 import { getNotifiedVersion, setNotifiedVersion } from "@/lib/app-update-version"
-import { SW_MSG_RELOAD_FRESH } from "@/lib/sw-messages"
+import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
 
 const POLL_INTERVAL = 300_000 // 5 minutes
 const TOAST_ID = "app-update"
 const IS_DEV = import.meta.env.DEV
 
-/**
- * Cap how long the Reload action waits for the SW to acknowledge the
- * network-fresh request before reloading anyway. The ack is near-instant; this
- * only guards against a wedged SW so Reload can never hang.
- */
-export const RELOAD_FRESH_ACK_TIMEOUT_MS = 1500
+export const WAITING_WORKER_TIMEOUT_MS = 1500
+export const RELOAD_FALLBACK_TIMEOUT_MS = 3000
 
-/**
- * Tell the browser to check for a new service worker. The SW's install handler
- * calls skipWaiting() unconditionally, so it activates immediately — no need
- * to post a message or check registration.waiting.
- */
 async function triggerSwUpdate(): Promise<void> {
   const registration = await navigator.serviceWorker?.getRegistration()
   if (!registration) return
   await registration.update()
 }
 
-/**
- * Ask the controlling SW to serve the next navigation from the network, then
- * resolve once it acks (or the timeout elapses). The ack guarantees the SW has
- * set its one-shot flag before we trigger the navigation, so the reload that
- * follows is the one served fresh.
- */
-function requestFreshNav(controller: ServiceWorker): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const channel = new MessageChannel()
-    const timer = setTimeout(resolve, RELOAD_FRESH_ACK_TIMEOUT_MS)
-    channel.port1.onmessage = () => {
+function waitForInstallingWorker(
+  registration: ServiceWorkerRegistration,
+  timeoutMs: number
+): Promise<ServiceWorker | null> {
+  const worker = registration.installing
+  if (!worker) return Promise.resolve(null)
+  if (worker.state === "installed" || worker.state === "activated")
+    return Promise.resolve(registration.waiting ?? worker)
+  if (worker.state === "redundant") return Promise.resolve(null)
+
+  return new Promise((resolve) => {
+    const finish = (value: ServiceWorker | null) => {
       clearTimeout(timer)
-      resolve()
+      worker.removeEventListener("statechange", onStateChange)
+      resolve(value)
     }
-    try {
-      controller.postMessage({ type: SW_MSG_RELOAD_FRESH }, [channel.port2])
-    } catch {
-      clearTimeout(timer)
-      resolve()
+    const onStateChange = () => {
+      if (worker.state === "installed" || worker.state === "activated") finish(registration.waiting ?? worker)
+      if (worker.state === "redundant") finish(null)
     }
+    const timer = setTimeout(() => finish(registration.waiting), timeoutMs)
+    worker.addEventListener("statechange", onStateChange)
   })
+}
+
+async function findWaitingWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorker | null> {
+  if (registration.waiting) return registration.waiting
+
+  const alreadyInstalling = await waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
+  if (registration.waiting || alreadyInstalling) return registration.waiting ?? alreadyInstalling
+
+  try {
+    await registration.update()
+  } catch {
+    return null
+  }
+  if (registration.waiting) return registration.waiting
+  return waitForInstallingWorker(registration, WAITING_WORKER_TIMEOUT_MS)
 }
 
 /**
  * Reload onto the new build.
  *
- * The SW serves navigations cache-first from the build-atomic precache, so a
- * plain reload returns whatever build the *currently controlling* SW precached
- * — and right after a deploy that is still the old build, so the version toast
- * just reappears. Waiting for the new SW to install and claim before reloading
- * is racy (a slow/throttled install reloads onto the old shell anyway), so
- * instead we ask the controlling SW to serve this one navigation from the
- * network. The reload then fetches the freshly-deployed index.html (and its new
- * hashed assets) directly, landing on the new build in one click regardless of
- * SW-update timing. The new SW installs in the background as usual.
- *
- * No controller (first load before the SW claims) means the navigation already
- * hits the network, so a plain reload is correct.
+ * New service workers install but stay parked in `waiting`, so an open tab keeps
+ * the worker and precache that match its running bundle. On the user's click we
+ * activate the parked worker, reload on `controllerchange`, and fall back to a
+ * plain reload if the worker never claims.
  */
 export async function reloadForUpdate(): Promise<void> {
-  const controller = navigator.serviceWorker?.controller
-  if (controller) {
-    await requestFreshNav(controller)
+  const registration = await navigator.serviceWorker?.getRegistration()
+  if (!registration) {
+    window.location.reload()
+    return
   }
-  window.location.reload()
+
+  const waiting = await findWaitingWorker(registration)
+  if (!waiting) {
+    window.location.reload()
+    return
+  }
+
+  let reloaded = false
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null
+  const reloadOnce = (): void => {
+    if (reloaded) return
+    reloaded = true
+    if (fallbackTimer) clearTimeout(fallbackTimer)
+    window.location.reload()
+  }
+
+  navigator.serviceWorker.addEventListener("controllerchange", reloadOnce, { once: true })
+  fallbackTimer = setTimeout(reloadOnce, RELOAD_FALLBACK_TIMEOUT_MS)
+  waiting.postMessage({ type: SW_MSG_SKIP_WAITING })
 }
 
 /**
