@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { cn } from "@/lib/utils"
 
 interface SearchableSelectProps<T> {
@@ -63,7 +63,7 @@ export function SearchableSelect<T>({
   prefixContent,
   "data-testid": testId,
 }: SearchableSelectProps<T>) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
 
@@ -129,8 +129,8 @@ export function SearchableSelect<T>({
     </>
   )
 
-  if (isMobile) {
-    // Drawer (vaul) on mobile. The drawer itself is content-driven (no fixed
+  if (isTouch) {
+    // Drawer (vaul) on touch devices. The drawer itself is content-driven (no fixed
     // height) so a 4-row list gives a 4-row drawer instead of an empty 85dvh
     // sheet. The CommandList caps at 70dvh, which lets the keyboard shrink
     // available space without pushing rows off-screen — vaul is configured

@@ -21,7 +21,7 @@ import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
 import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
 import { useSettings, useSidebar } from "@/contexts"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { getAdminPortalUrl } from "@/lib/admin-url"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -214,7 +214,7 @@ export function SidebarFooter({
   const { openSettings } = useSettings()
   const { logout } = useAuth()
   const { collapseOnMobile } = useSidebar()
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
@@ -446,10 +446,10 @@ export function SidebarFooter({
 
   if (!currentUser) return null
 
-  if (isMobile) {
+  if (isTouch) {
     return (
       <div className="flex flex-col gap-1.5">
-        <SidebarCreateButton actions={createActions} isMobile />
+        <SidebarCreateButton actions={createActions} isTouch />
         <SidebarFooterTrigger
           avatarSrc={avatarSrc}
           currentUser={currentUser}
@@ -480,7 +480,7 @@ export function SidebarFooter({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <SidebarCreateButton actions={createActions} isMobile={false} />
+      <SidebarCreateButton actions={createActions} isTouch={false} />
       <SidebarActionMenu
         actions={menuActions}
         ariaLabel="Account menu"
@@ -530,13 +530,13 @@ const CREATE_BUTTON_CLASS = cn(
 /**
  * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
  * every stream flavor (scratchpad variants + channel). Uses a bottom drawer on
- * mobile and a dropdown on desktop, mirroring the account menu beneath it.
+ * touch devices and a dropdown for mouse input, mirroring the account menu beneath it.
  * Top-level per INV-18.
  */
-function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem[]; isMobile: boolean }) {
+function SidebarCreateButton({ actions, isTouch }: { actions: SidebarActionItem[]; isTouch: boolean }) {
   const [open, setOpen] = useState(false)
 
-  if (isMobile) {
+  if (isTouch) {
     return (
       <>
         <Button

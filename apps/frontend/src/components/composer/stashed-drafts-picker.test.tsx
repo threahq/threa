@@ -3,10 +3,10 @@ import { render, screen, fireEvent, createEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
-let isMobileMockValue = false
+let isTouchMockValue = false
 
 function makeDraft(id: string, text: string): CachedDraft {
   return {
@@ -39,12 +39,12 @@ function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[
 describe("StashedDraftsPicker", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    isMobileMockValue = false
-    vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
+    isTouchMockValue = false
+    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouchMockValue)
   })
 
-  it("keeps the editor focused when pressing popover buttons on mobile", async () => {
-    isMobileMockValue = true
+  it("keeps the editor focused when pressing popover buttons on touch", async () => {
+    isTouchMockValue = true
     renderPicker()
 
     await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
@@ -57,8 +57,8 @@ describe("StashedDraftsPicker", () => {
     expect(mousedown.defaultPrevented).toBe(true)
   })
 
-  it("does not suppress focus on desktop where Radix manages it", async () => {
-    isMobileMockValue = false
+  it("does not suppress focus on fine-pointer devices where Radix manages it", async () => {
+    isTouchMockValue = false
     renderPicker()
 
     await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
@@ -71,7 +71,7 @@ describe("StashedDraftsPicker", () => {
   })
 
   it("still fires button actions on click despite the mousedown guard", async () => {
-    isMobileMockValue = true
+    isTouchMockValue = true
     const onStashCurrent = vi.fn()
     const onRestore = vi.fn()
     renderPicker({ onStashCurrent, onRestore })

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFutureTime, formatSendCountdown } from "@/lib/dates"
 import { useScheduledList, useCancelScheduled, useSendScheduledNow } from "@/hooks"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useLongPress } from "@/hooks/use-long-press"
 import { usePreferencesOptional } from "@/contexts"
 import { REMINDER_PRESETS, computeRemindAt, type ReminderPreset } from "@/lib/reminder-presets"
@@ -86,7 +86,7 @@ export function ScheduledMessagesPicker({
   const { items } = useScheduledList(workspaceId, "pending", streamId)
   const cancelMutation = useCancelScheduled(workspaceId)
   const sendNowMutation = useSendScheduledNow(workspaceId)
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   // Browser-local timezone is the default everywhere in the UI — native
   // pickers operate in device-local, so we keep the custom-time path on
   // device-local to avoid silent drift. The user's saved profile timezone
@@ -211,7 +211,7 @@ export function ScheduledMessagesPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
+        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isTouch)}>
           {mode === "list" ? (
             <ListMode
               workspaceId={workspaceId}
@@ -575,14 +575,14 @@ interface ScheduledRowProps {
 /**
  * Row inside the composer popover. Mirrors the `/scheduled` list-row:
  *   - Body click opens the edit dialog.
- *   - Desktop hover reveals the Send-now / Edit / Cancel triplet via the
+ *   - Fine-pointer hover reveals the Send-now / Edit / Cancel triplet via the
  *     shared `ScheduledActions` cluster.
- *   - Mobile uses long-press → bottom-sheet drawer (no tiny tap targets).
+ *   - Touch uses long-press → bottom-sheet drawer (no tiny tap targets).
  */
 function ScheduledRow({ scheduled, now, timezone, onEdit, onSendNow, onCancel, onRequestActions }: ScheduledRowProps) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const longPress = useLongPress({
-    enabled: isMobile,
+    enabled: isTouch,
     onLongPress: () => onRequestActions(scheduled),
   })
 
@@ -618,7 +618,7 @@ function ScheduledRow({ scheduled, now, timezone, onEdit, onSendNow, onCancel, o
             {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
           </p>
         </button>
-        {!isMobile && (
+        {!isTouch && (
           <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <ScheduledActions
               scheduled={scheduled}

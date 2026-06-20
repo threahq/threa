@@ -132,12 +132,12 @@ export function ScratchpadItem({
         }
       : null
 
-  const { drawerOpen, setDrawerOpen, handleClick, isMobile, longPress } = useSidebarItemDrawer({
+  const { drawerOpen, setDrawerOpen, handleClick, isTouch, longPress } = useSidebarItemDrawer({
     canOpenDrawer: actions.length > 0,
     collapseOnMobile,
   })
 
-  const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
+  const showHoverPreview = compact && showPreviewOnHover && !isTouch && !!preview?.content
 
   // E2E and companion-on are mutually exclusive (INV-E1 forces companion off
   // server-side for encrypted streams), so a single decoration slot is enough
@@ -151,21 +151,21 @@ export function ScratchpadItem({
 
   return (
     <>
-      <SidebarActionContextMenu actions={actions} disabled={isMobile} focusRef={itemRef}>
+      <SidebarActionContextMenu actions={actions} disabled={isTouch} focusRef={itemRef}>
         <div className="group relative">
           <Link
             ref={itemRef}
             to={`/w/${workspaceId}/s/${streamWithPreview.id}`}
             onClick={handleClick}
-            onTouchStart={isMobile ? longPress.handlers.onTouchStart : undefined}
-            onTouchEnd={isMobile ? longPress.handlers.onTouchEnd : undefined}
-            onTouchMove={isMobile ? longPress.handlers.onTouchMove : undefined}
-            onContextMenu={isMobile ? longPress.handlers.onContextMenu : undefined}
+            onTouchStart={isTouch ? longPress.handlers.onTouchStart : undefined}
+            onTouchEnd={isTouch ? longPress.handlers.onTouchEnd : undefined}
+            onTouchMove={isTouch ? longPress.handlers.onTouchMove : undefined}
+            onContextMenu={isTouch ? longPress.handlers.onContextMenu : undefined}
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
               isActive ? "bg-primary/10" : "hover:bg-muted/50",
               hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
-              isMobile && actions.length > 0 && "select-none",
+              isTouch && actions.length > 0 && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
@@ -204,7 +204,7 @@ export function ScratchpadItem({
                   toEmoji={toEmoji}
                   compact={compact}
                   showPreviewOnHover={showPreviewOnHover}
-                  isMobile={isMobile}
+                  isTouch={isTouch}
                   e2eEnabled={streamWithPreview.e2eEnabled}
                 />
               </div>
@@ -231,7 +231,7 @@ export function ScratchpadItem({
           onOpenChange={setSectionPickerOpen}
         />
       )}
-      {isMobile && actions.length > 0 && (
+      {isTouch && actions.length > 0 && (
         <SidebarActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}

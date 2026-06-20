@@ -23,6 +23,7 @@ import {
 import { TopbarLoadingIndicator } from "@/components/layout/topbar-loading-indicator"
 import { downloadImage, copyImage } from "@/lib/image-utils"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks"
 import { cn } from "@/lib/utils"
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
@@ -318,7 +319,11 @@ function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
 
 export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId, onItemChange }: MediaGalleryProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex)
+  // Width drives control visibility and layout/insets; input capability drives
+  // the gesture model (swipe carousel vs. arrow/hover). An iPad is wide+touch;
+  // a narrow desktop window is small+mouse — they must diverge.
   const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [panelOpen, setPanelOpen] = useState(true)
   const [showArrows, setShowArrows] = useState(false)
   // Source vs. rendered toggle for markdown/html slides. Persists across
@@ -464,10 +469,10 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // ref above doesn't re-fire) and when the width changes (rotation). Reads
   // currentIndexRef so an in-progress swipe animation isn't interrupted.
   useLayoutEffect(() => {
-    if (!isMobile || containerWidth === 0 || !stripRef.current) return
+    if (!isTouch || containerWidth === 0 || !stripRef.current) return
     stripRef.current.style.transition = "none"
     stripRef.current.style.transform = `translateX(${-currentIndexRef.current * containerWidth}px)`
-  }, [isOpen, isMobile, containerWidth])
+  }, [isOpen, isTouch, containerWidth])
 
   const current = items[currentIndex] ?? null
   const hasPrev = currentIndex > 0
@@ -481,9 +486,9 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       // the outgoing slide's hook will also reset when enabled flips to false, but
       // calling here lets the zoom-out animate in sync with the strip slide.
       zoomableRef.current?.reset()
-      // On mobile, animate the strip directly before updating state so the
+      // On touch, animate the strip directly before updating state so the
       // user sees a smooth slide rather than a hard cut.
-      if (isMobile && stripRef.current && containerWidth > 0) {
+      if (isTouch && stripRef.current && containerWidth > 0) {
         stripRef.current.style.transition = "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)"
         stripRef.current.style.transform = `translateX(${-index * containerWidth}px)`
       }
@@ -491,7 +496,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       const next = items[index]
       if (next) onItemChange?.(next.attachmentId)
     },
-    [items, onItemChange, isMobile, containerWidth]
+    [items, onItemChange, isTouch, containerWidth]
   )
 
   const goPrev = useCallback(() => goTo(currentIndex - 1), [goTo, currentIndex])
@@ -741,11 +746,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     [currentIndex, hasNext, hasPrev, items, onItemChange, onClose]
   )
 
-  // Mobile: tap left/right zones to navigate (suppressed after a committed swipe
+  // Touch: tap left/right zones to navigate (suppressed after a committed swipe
   // and disabled while zoomed so taps inside a zoomed image don't navigate away).
   const handleMobileTap = useCallback(
     (e: React.MouseEvent) => {
-      if (!isMobile || !isMultiple) return
+      if (!isTouch || !isMultiple) return
       if (isZoomedRef.current) return
       // Tap-to-navigate inside the text panel would hijack link clicks, text
       // selection, and code-block interactions. Taps in the surrounding margin
@@ -762,7 +767,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
       if (zone < 0.3 && hasPrev) goPrev()
       else if (zone > 0.7 && hasNext) goNext()
     },
-    [isMobile, isMultiple, hasPrev, hasNext, goPrev, goNext]
+    [isTouch, isMultiple, hasPrev, hasNext, goPrev, goNext]
   )
 
   const handleZoomIn = useCallback(() => zoomableRef.current?.zoomIn(), [])
@@ -881,7 +886,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
           </DialogDescription>
 
           <div className="relative flex h-full overflow-hidden">
-            {isMobile ? (
+            {isTouch ? (
               // dismissWrapperRef handles the vertical "drag down to close" gesture.
               // containerRef clips the strip; stripRef holds all slides side-by-side
               // and moves as one unit so the entering image slides in simultaneously

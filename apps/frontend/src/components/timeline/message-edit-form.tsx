@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useMessageService } from "@/contexts"
 import { messageKeys } from "@/api/messages"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
@@ -44,7 +44,7 @@ export function MessageEditForm({
 }: MessageEditFormProps) {
   const queryClient = useQueryClient()
   const messageService = useMessageService()
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
   const [contentJson, setContentJson] = useState<JSONContent>(initialContentJson ?? EMPTY_DOC)
@@ -62,7 +62,7 @@ export function MessageEditForm({
   const instructionsId = useId()
 
   useEffect(() => {
-    if (isMobile) return // vaul handles Escape via onOpenChange
+    if (isTouch) return // vaul handles Escape via onOpenChange
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault()
@@ -71,7 +71,7 @@ export function MessageEditForm({
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isMobile, onCancel])
+  }, [isTouch, onCancel])
 
   const setRichEditorHandle = useCallback((handle: RichEditorHandle | null) => {
     richEditorRef.current = handle
@@ -141,7 +141,7 @@ export function MessageEditForm({
   const isEmpty = useMemo(() => !serializeToMarkdown(contentJson).trim(), [contentJson])
 
   const screenReaderInstructions = useMemo(() => {
-    if (isMobile) {
+    if (isTouch) {
       return isEmpty
         ? `Press ${MOD_KEY_NAME}+Enter to delete. Tab and Shift+Tab indent content. Press Escape to leave the editor.`
         : `Press ${MOD_KEY_NAME}+Enter to save. Tab and Shift+Tab indent content. Press Escape to leave the editor.`
@@ -150,13 +150,13 @@ export function MessageEditForm({
     return isEmpty
       ? "Press Enter to delete. Tab and Shift+Tab indent content. Press Escape to cancel editing."
       : "Press Enter to save. Tab and Shift+Tab indent content. Press Escape to cancel editing."
-  }, [isMobile, isEmpty])
+  }, [isTouch, isEmpty])
 
   const focusMobileActionBar = useCallback(() => {
     mobileActionBarRef.current?.focus()
   }, [])
 
-  if (isMobile) {
+  if (isTouch) {
     const trailingContent = (
       <>
         <Button

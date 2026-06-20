@@ -7,12 +7,12 @@ import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confi
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
-/** Keystroke hint for the "Save current" action. Rendered only on non-mobile (no hardware keyboard). */
+/** Keystroke hint for the "Save current" action. Rendered only for fine pointers (no hardware keyboard on touch). */
 const MOD_SYMBOL = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "⌘" : "Ctrl+"
 
 interface StashedDraftsPickerProps {
@@ -75,7 +75,7 @@ export function StashedDraftsPicker({
   const [open, setOpen] = useState(false)
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
   const { setTriggerRef, anchor } = useComposerAnchor(open)
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const count = drafts.length
   const now = useMemo(() => new Date(), [open])
 
@@ -149,7 +149,7 @@ export function StashedDraftsPicker({
           </TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isMobile)}>
+        <PopoverContent align="end" side="top" sideOffset={8} className="w-80 p-0" {...keepEditorFocusProps(isTouch)}>
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
             <p className="text-sm font-medium">
               Drafts
@@ -165,13 +165,13 @@ export function StashedDraftsPicker({
             >
               <FilePlus className="h-3.5 w-3.5" />
               <span>Save current</span>
-              {!isMobile && <span className="text-muted-foreground ml-1">{MOD_SYMBOL}S</span>}
+              {!isTouch && <span className="text-muted-foreground ml-1">{MOD_SYMBOL}S</span>}
             </Button>
           </div>
 
           {drafts.length === 0 ? (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-              {isMobile ? (
+              {isTouch ? (
                 <>No saved drafts yet. Tap "Save current" to stash what you're typing and start fresh.</>
               ) : (
                 <>

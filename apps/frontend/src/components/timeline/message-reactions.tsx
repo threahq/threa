@@ -1,7 +1,7 @@
 import { forwardRef, useMemo, useCallback } from "react"
 import { SmilePlus, X } from "lucide-react"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
@@ -19,7 +19,7 @@ interface MessageReactionsProps {
 
 export function MessageReactions({ reactions, workspaceId, messageId, currentUserId }: MessageReactionsProps) {
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const { toggleReaction, toggleByEmoji } = useMessageReactions(workspaceId, messageId)
 
   const sortedReactions = useMemo(() => {
@@ -59,7 +59,7 @@ export function MessageReactions({ reactions, workspaceId, messageId, currentUse
             emoji={toEmoji(shortcode) ?? shortcode}
             userIds={userIds}
             currentUserId={currentUserId}
-            isMobile={isMobile}
+            isTouch={isTouch}
             onToggle={() => handleToggleReaction(shortcode)}
           />
         </ReactionPillDetails>
@@ -99,13 +99,13 @@ interface ReactionPillProps {
   emoji: string
   userIds: string[]
   currentUserId: string | null
-  isMobile: boolean
+  isTouch: boolean
   onToggle: () => void
 }
 
 // Forwards ref and spreads extra props so Radix HoverCardTrigger `asChild` can inject handlers.
 const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.ButtonHTMLAttributes<HTMLButtonElement>>(
-  ({ emoji, userIds, currentUserId, isMobile, onToggle, ...rest }, ref) => {
+  ({ emoji, userIds, currentUserId, isTouch, onToggle, ...rest }, ref) => {
     const hasReacted = currentUserId ? userIds.includes(currentUserId) : false
 
     return (
@@ -121,12 +121,12 @@ const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.But
         onClick={onToggle}
         {...rest}
       >
-        {/* Emoji — on desktop, fades to X icon on hover when user has reacted */}
+        {/* Emoji — with a fine pointer, fades to X icon on hover when user has reacted */}
         <span className="relative text-sm leading-none w-4 h-4 flex items-center justify-center">
-          <span className={cn("transition-opacity", hasReacted && !isMobile && "group-hover/pill:opacity-0")}>
+          <span className={cn("transition-opacity", hasReacted && !isTouch && "group-hover/pill:opacity-0")}>
             {emoji}
           </span>
-          {hasReacted && !isMobile && (
+          {hasReacted && !isTouch && (
             <X className="absolute inset-0 h-4 w-4 opacity-0 group-hover/pill:opacity-100 transition-opacity text-primary/70" />
           )}
         </span>

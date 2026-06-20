@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { cn } from "@/lib/utils"
 import {
   DESKTOP_GRID_COLUMNS,
@@ -542,14 +542,16 @@ export function ReactionEmojiPicker({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const { emojis, emojiWeights } = useWorkspaceEmoji(workspaceId)
-  const isNarrow = useIsMobile()
-  const isTouchDevice = typeof window !== "undefined" && "ontouchstart" in window
-  const useDrawer = isNarrow || isTouchDevice
+  // The input pointer drives the surface: a narrow desktop window gets the
+  // popover, an iPad gets the drawer. Grid geometry follows the surface (not raw
+  // viewport width) so the drawer always renders finger-sized rows and the
+  // popover always renders the dense desktop grid.
+  const useDrawer = useCoarsePointer()
 
   const handleSelect = useCallback(
     (item: EmojiEntry) => {
       onSelect(item.emoji)
-      // On mobile, keep open when toggling off an active reaction
+      // In the drawer (touch), keep it open when toggling off an active reaction
       if (useDrawer && activeShortcodes.has(item.shortcode)) {
         return
       }

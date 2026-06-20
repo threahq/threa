@@ -9,14 +9,14 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { SidebarFooter } from "./sidebar-footer"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as drawerModule from "@/components/ui/drawer"
 
 const logout = vi.fn()
 const openSettings = vi.fn()
 const collapseOnMobile = vi.fn()
-const isMobile = { value: true }
+const isTouch = { value: true }
 
 function renderWithRouter(ui: React.ReactElement, queryClient?: QueryClient) {
   const client = queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -33,7 +33,7 @@ describe("SidebarFooter", () => {
     logout.mockReset()
     openSettings.mockReset()
     collapseOnMobile.mockReset()
-    isMobile.value = true
+    isTouch.value = true
 
     vi.spyOn(authModule, "useAuth").mockReturnValue({
       logout,
@@ -48,7 +48,7 @@ describe("SidebarFooter", () => {
       setMenuOpen: vi.fn(),
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
-    vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobile.value)
+    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouch.value)
 
     // The footer mounts useStatusAutoExpiry and useNotificationPauseAutoExpiry,
     // which resolve their mutations through the services context the unit
@@ -238,7 +238,7 @@ describe("SidebarFooter", () => {
   })
 
   it("opens the desktop dropdown from the account row trigger", async () => {
-    isMobile.value = false
+    isTouch.value = false
     const user = userEvent.setup()
 
     renderWithRouter(

@@ -5,13 +5,13 @@ import { DEFAULT_WORK_SCHEDULE } from "@threa/types"
 import { spyOnExport } from "@/test/spy"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ScheduledMessagesPicker } from "./scheduled-messages-picker"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as hooks from "@/hooks"
 import * as workScheduleModule from "@/hooks/use-work-schedule"
 import * as contexts from "@/contexts"
 import * as editDialogModule from "@/components/scheduled/scheduled-edit-dialog"
 
-let isMobileMockValue = true
+let isTouchMockValue = true
 
 function renderPicker() {
   return render(
@@ -24,8 +24,8 @@ function renderPicker() {
 describe("ScheduledMessagesPicker", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    isMobileMockValue = true
-    vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
+    isTouchMockValue = true
+    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouchMockValue)
     spyOnExport(hooks, "useScheduledList").mockReturnValue((() => ({ items: [] })) as never)
     spyOnExport(hooks, "useCancelScheduled").mockReturnValue((() => ({ mutate: vi.fn() })) as never)
     spyOnExport(hooks, "useSendScheduledNow").mockReturnValue((() => ({ mutate: vi.fn() })) as never)
@@ -35,7 +35,7 @@ describe("ScheduledMessagesPicker", () => {
     spyOnExport(editDialogModule, "ScheduledEditDialog").mockReturnValue((() => null) as never)
   })
 
-  it("lets the date/time inputs take focus while guarding the action buttons (mobile)", async () => {
+  it("lets the date/time inputs take focus while guarding the action buttons (touch)", async () => {
     renderPicker()
 
     await userEvent.click(screen.getByRole("button", { name: /scheduled/i }))
@@ -57,8 +57,8 @@ describe("ScheduledMessagesPicker", () => {
     expect(btnMousedown.defaultPrevented).toBe(true)
   })
 
-  it("does not guard focus on desktop", async () => {
-    isMobileMockValue = false
+  it("does not guard focus on fine-pointer devices", async () => {
+    isTouchMockValue = false
     renderPicker()
 
     await userEvent.click(screen.getByRole("button", { name: /scheduled/i }))

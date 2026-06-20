@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type MouseEvent } from "react"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useLongPress } from "@/hooks/use-long-press"
 
 interface UseSidebarItemDrawerOptions {
@@ -8,7 +8,7 @@ interface UseSidebarItemDrawerOptions {
 }
 
 export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile }: UseSidebarItemDrawerOptions) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const preventNavigationUntilRef = useRef(0)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -20,7 +20,7 @@ export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile }: UseSid
 
   const longPress = useLongPress({
     onLongPress: openDrawer,
-    enabled: isMobile && canOpenDrawer,
+    enabled: isTouch && canOpenDrawer,
   })
 
   const handleClick = useCallback(
@@ -39,7 +39,7 @@ export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile }: UseSid
     drawerOpen,
     setDrawerOpen,
     handleClick,
-    isMobile,
+    isTouch,
     longPress,
   }
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import * as hooksModule from "@/hooks"
-import * as mobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as reactionPickerModule from "./reaction-emoji-picker"
 import * as allReactionsPopoverModule from "./all-reactions-popover"
@@ -20,7 +20,7 @@ beforeEach(() => {
     toggleByEmoji: mockToggleByEmoji,
   } as unknown as ReturnType<typeof hooksModule.useMessageReactions>)
   vi.spyOn(hooksModule, "stripColons").mockImplementation((s: string) => s.replace(/:/g, ""))
-  vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(false)
+  vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(false)
   vi.spyOn(workspaceEmojiModule, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: (s: string) => s,
   } as ReturnType<typeof workspaceEmojiModule.useWorkspaceEmoji>)

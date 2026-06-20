@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom"
 import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView } from "@threa/types"
 import { SavedItem } from "./saved-item"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as contextsModule from "@/contexts"
 
 const WORKSPACE_ID = "ws_1"
@@ -68,7 +68,7 @@ function mount(saved: SavedMessageView) {
 }
 
 beforeEach(() => {
-  vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+  vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(false)
   // RelativeTime (rendered in the row footer) reads the timezone/locale from
   // the preferences context.
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({

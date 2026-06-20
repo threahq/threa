@@ -133,7 +133,7 @@ interface StreamItemPreviewProps {
   toEmoji?: (shortcode: string) => string | null
   compact: boolean
   showPreviewOnHover: boolean
-  isMobile: boolean
+  isTouch: boolean
   /**
    * E2E streams: sidebar previews are public surfaces, so we never decrypt
    * here. Phase 3.5 keeps ciphertext at rest and routes decryption through
@@ -149,12 +149,12 @@ export function StreamItemPreview({
   toEmoji,
   compact,
   showPreviewOnHover,
-  isMobile,
+  isTouch,
   e2eEnabled,
 }: StreamItemPreviewProps) {
   if (!preview?.content) return null
 
-  const hoverPreview = compact && showPreviewOnHover && !isMobile
+  const hoverPreview = compact && showPreviewOnHover && !isTouch
 
   return (
     <div
@@ -315,12 +315,12 @@ export function StreamItem({
 
   const hasPreviewOnlyDrawer = stream.type === StreamTypes.DM && drawerPreview !== null
   const canOpenDrawer = actions.length > 0 || hasPreviewOnlyDrawer
-  const { drawerOpen, setDrawerOpen, handleClick, isMobile, longPress } = useSidebarItemDrawer({
+  const { drawerOpen, setDrawerOpen, handleClick, isTouch, longPress } = useSidebarItemDrawer({
     canOpenDrawer,
     collapseOnMobile,
   })
 
-  const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
+  const showHoverPreview = compact && showPreviewOnHover && !isTouch && !!preview?.content
 
   if (stream.type === StreamTypes.SCRATCHPAD) {
     return (
@@ -340,21 +340,21 @@ export function StreamItem({
 
   return (
     <>
-      <SidebarActionContextMenu actions={actions} disabled={isMobile} focusRef={itemRef}>
+      <SidebarActionContextMenu actions={actions} disabled={isTouch} focusRef={itemRef}>
         <div className="group relative">
           <Link
             ref={itemRef}
             to={`/w/${workspaceId}/s/${stream.id}`}
             onClick={handleClick}
-            onTouchStart={isMobile ? longPress.handlers.onTouchStart : undefined}
-            onTouchEnd={isMobile ? longPress.handlers.onTouchEnd : undefined}
-            onTouchMove={isMobile ? longPress.handlers.onTouchMove : undefined}
-            onContextMenu={isMobile ? longPress.handlers.onContextMenu : undefined}
+            onTouchStart={isTouch ? longPress.handlers.onTouchStart : undefined}
+            onTouchEnd={isTouch ? longPress.handlers.onTouchEnd : undefined}
+            onTouchMove={isTouch ? longPress.handlers.onTouchMove : undefined}
+            onContextMenu={isTouch ? longPress.handlers.onContextMenu : undefined}
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
               isActive ? "bg-primary/10" : "hover:bg-muted/50",
               hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
-              isMobile && canOpenDrawer && "select-none",
+              isTouch && canOpenDrawer && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
@@ -403,7 +403,7 @@ export function StreamItem({
                   toEmoji={toEmoji}
                   compact={compact}
                   showPreviewOnHover={showPreviewOnHover}
-                  isMobile={isMobile}
+                  isTouch={isTouch}
                   e2eEnabled={stream.e2eEnabled}
                 />
               </div>
@@ -425,7 +425,7 @@ export function StreamItem({
       {sectionPickerOpen && (
         <SectionPicker workspaceId={workspaceId} streamId={stream.id} open onOpenChange={setSectionPickerOpen} />
       )}
-      {isMobile && canOpenDrawer && (
+      {isTouch && canOpenDrawer && (
         <SidebarActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}

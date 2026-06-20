@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatSendCountdown } from "@/lib/dates"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useLongPress } from "@/hooks/use-long-press"
 import { RelativeTime } from "@/components/relative-time"
 import { ScheduledActionDrawer } from "./scheduled-action-drawer"
@@ -23,8 +23,8 @@ interface ScheduledItemProps {
 /**
  * List row for the /scheduled page. Mirrors the SavedItem 3-line layout —
  * stream chip header, message preview, time-until footer — and the
- * hover-reveal action cluster on desktop. On mobile we replace the tiny
- * action icons with a long-press → bottom-sheet drawer (the convention used
+ * hover-reveal action cluster on fine-pointer devices. On touch we replace the
+ * tiny action icons with a long-press → bottom-sheet drawer (the convention used
  * by the timeline's MessageActionDrawer): tap navigates / opens edit, hold
  * to reveal Send-now / Edit / Cancel.
  *
@@ -32,7 +32,7 @@ interface ScheduledItemProps {
  * failed rows route the body click into the edit dialog (via onEdit).
  */
 export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSendNow }: ScheduledItemProps) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   // Always render in the device's local timezone — using a stored
   // `preferences.timezone` would silently disagree with native pickers
   // (which always operate in device-local), so a row scheduled at 07:46
@@ -72,9 +72,9 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
   const pendingLabel = isPending ? labelOrSoon : null
 
   const [drawerOpen, setDrawerOpen] = useState(false)
-  // Long-press only on mobile, only for actionable rows. Sent/cancelled rows
+  // Long-press only on touch, only for actionable rows. Sent/cancelled rows
   // have no actions so we don't trap their tap on a deferred timer.
-  const longPressEnabled = isMobile && (isPending || isFailed)
+  const longPressEnabled = isTouch && (isPending || isFailed)
   const longPress = useLongPress({
     enabled: longPressEnabled,
     onLongPress: () => setDrawerOpen(true),
@@ -151,11 +151,11 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
           </button>
         )}
 
-        {/* Desktop hover-reveal actions. Hidden on mobile — long-press handles
-            the drawer, no tiny tap targets. The wrapper owns the
+        {/* Fine-pointer hover-reveal actions. Hidden on touch — long-press
+            handles the drawer, no tiny tap targets. The wrapper owns the
             opacity/hover/popover-open visibility rules; ScheduledActions
             renders only the icon buttons. */}
-        {!isMobile && (
+        {!isTouch && (
           <div
             className={cn(
               "flex shrink-0 items-center gap-1 opacity-0 transition-opacity",
@@ -177,7 +177,7 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
         )}
       </div>
 
-      {isMobile && (
+      {isTouch && (
         <ScheduledActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}

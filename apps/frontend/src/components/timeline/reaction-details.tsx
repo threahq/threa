@@ -3,7 +3,7 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { useActors, actorTypeFromId } from "@/hooks"
 import { useLongPress } from "@/hooks/use-long-press"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
 
@@ -123,20 +123,20 @@ interface ReactionPillDetailsProps {
 
 /**
  * Wraps a reaction pill and reveals who reacted:
- * - Desktop: hover opens a HoverCard popover (~350ms delay).
- * - Mobile: long-press opens a bottom Drawer; tap still toggles the reaction.
+ * - Fine pointer: hover opens a HoverCard popover (~350ms delay).
+ * - Touch: long-press opens a bottom Drawer; tap still toggles the reaction.
  *
  * The wrapped child keeps its native click handling in both modes.
  */
 export function ReactionPillDetails({ emoji, reactions, workspaceId, children }: ReactionPillDetailsProps) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const { handlers } = useLongPress({
-    enabled: isMobile,
+    enabled: isTouch,
     onLongPress: () => setDrawerOpen(true),
   })
 
-  if (!isMobile) {
+  if (!isTouch) {
     return (
       <HoverCard openDelay={350} closeDelay={120}>
         <HoverCardTrigger asChild>{children}</HoverCardTrigger>
