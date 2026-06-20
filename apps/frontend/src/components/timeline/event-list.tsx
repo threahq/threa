@@ -662,11 +662,12 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
   return (
     <>
       {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
-      {/* The first-unread row gets extra top padding so the absolutely-positioned
-          divider has room to breathe above the message instead of crowding it.
-          Only wrap when the divider shows so every other row keeps its spacing
-          and DOM shape. */}
-      {showUnreadDivider ? <div className="pt-3">{rowContent}</div> : rowContent}
+      {/* The first-unread row reserves `pt-6` (24px) of top padding so the
+          absolutely-positioned divider, centered at 12px (`top-3`), gets equal
+          12px breathing room above and below the line — `pt-3` left the line
+          flush against the message top. Only wrap when the divider shows so
+          every other row keeps its spacing and DOM shape. */}
+      {showUnreadDivider ? <div className="pt-6">{rowContent}</div> : rowContent}
     </>
   )
 }
