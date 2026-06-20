@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from "react"
 import type { StreamEvent } from "@threa/types"
 import { useScrollToElement } from "./use-scroll-to-element"
 
@@ -36,13 +36,68 @@ interface UseUnreadDividerResult {
   firstUnreadEventId: string | undefined
   /** The event ID where the divider should be shown, or undefined if hidden */
   dividerEventId: string | undefined
-  /** Whether the divider has settled to its muted (gray) resting state */
-  isDimmed: boolean
   /**
    * Dismiss the latched divider for the rest of this reading session (Escape
    * "escapes the unread block"). Stays dismissed until the stream changes.
    */
   dismiss: () => void
+}
+
+/**
+ * Drive the unread divider's red → muted-gray "freshness" fade. The stream opens
+ * at the live bottom, so the divider usually starts off-screen; the timer must
+ * wait until the row has actually entered the viewport, or it would settle to
+ * gray before the viewer ever scrolls up to see it. Returns `isDimmed`.
+ */
+export function useDividerDim(
+  scrollContainerRef: RefObject<HTMLElement | null>,
+  dividerEventId: string | undefined,
+  streamId: string
+): boolean {
+  const [isDimmed, setIsDimmed] = useState(false)
+  const [seen, setSeen] = useState(false)
+
+  // Reset when the stream or the latched divider changes.
+  useEffect(() => {
+    setSeen(false)
+    setIsDimmed(false)
+  }, [streamId, dividerEventId])
+
+  // Latch `seen` the first time the divider row intersects the viewport. Once
+  // seen, the effect re-runs and detaches (early return) — it's a one-shot.
+  useEffect(() => {
+    if (!dividerEventId || seen) return
+    const el = scrollContainerRef.current
+    let raf = 0
+    const check = () => {
+      raf = 0
+      const scroller = scrollContainerRef.current
+      if (!scroller) return
+      const row = scroller.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(dividerEventId)}"]`)
+      if (!row) return
+      const sr = scroller.getBoundingClientRect()
+      const rr = row.getBoundingClientRect()
+      if (rr.top < sr.bottom && rr.bottom > sr.top) setSeen(true)
+    }
+    const schedule = () => {
+      if (!raf) raf = requestAnimationFrame(check)
+    }
+    schedule()
+    el?.addEventListener("scroll", schedule, { passive: true })
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      el?.removeEventListener("scroll", schedule)
+    }
+  }, [dividerEventId, streamId, seen, scrollContainerRef])
+
+  // Start the red → gray countdown only once the divider has been seen.
+  useEffect(() => {
+    if (!dividerEventId || !seen) return
+    const dimTimer = setTimeout(() => setIsDimmed(true), 3000)
+    return () => clearTimeout(dimTimer)
+  }, [dividerEventId, seen])
+
+  return isDimmed
 }
 
 /**
@@ -109,17 +164,6 @@ export function useUnreadDivider({
   const dismiss = useCallback(() => setDismissedStreamId(streamId), [streamId])
   const displayedUnreadId = dismissedStreamId === streamId ? undefined : latchRef.current.eventId
 
-  // Hold the divider red on (re)latch, then settle it to gray after a few
-  // seconds. Keyed on the latched id so an auto-mark-as-read that clears the
-  // live unread mid-countdown can't cancel the timer and strand it on red.
-  const [isDimmed, setIsDimmed] = useState(false)
-  useEffect(() => {
-    setIsDimmed(false)
-    if (!displayedUnreadId) return
-    const dimTimer = setTimeout(() => setIsDimmed(true), 3000)
-    return () => clearTimeout(dimTimer)
-  }, [displayedUnreadId])
-
   // Latch deep-link mode per stream. The `?m=` param is auto-cleared from the
   // URL ~3s after a deep-link lands, flipping highlightMessageId to null.
   // Without this latch the scroll-to-first-unread gate below would re-arm at
@@ -144,7 +188,6 @@ export function useUnreadDivider({
   return {
     firstUnreadEventId,
     dividerEventId: displayedUnreadId,
-    isDimmed,
     dismiss,
   }
 }

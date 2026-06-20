@@ -49,45 +49,31 @@ describe("useUnreadDivider", () => {
     expect(result.current.dividerEventId).toBeUndefined()
   })
 
-  it("keeps the divider in place after the stream becomes read, then dims it", async () => {
-    vi.useFakeTimers()
-    try {
-      const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
+  it("keeps the divider in place after the stream becomes read", () => {
+    const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
 
-      const { result, rerender } = renderHook(
-        ({ lastReadEventId }: { lastReadEventId: string | null | undefined }) =>
-          useUnreadDivider({
-            events,
-            lastReadEventId,
-            currentUserId: "me",
-            streamId: "stream_1",
-            readStateResolved: true,
-          }),
-        {
-          initialProps: { lastReadEventId: null as string | null | undefined },
-        }
-      )
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }: { lastReadEventId: string | null | undefined }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+        }),
+      {
+        initialProps: { lastReadEventId: null as string | null | undefined },
+      }
+    )
 
-      rerender({ lastReadEventId: null })
-      expect(result.current.dividerEventId).toBe("event_1")
-      expect(result.current.isDimmed).toBe(false)
+    rerender({ lastReadEventId: null })
+    expect(result.current.dividerEventId).toBe("event_1")
 
-      // Auto-mark-as-read clears the live unread, but the divider stays latched
-      // at its position for the rest of the reading session.
-      rerender({ lastReadEventId: "event_2" })
-      expect(result.current.firstUnreadEventId).toBeUndefined()
-      expect(result.current.dividerEventId).toBe("event_1")
-      expect(result.current.isDimmed).toBe(false)
-
-      // After the dim delay it settles to gray but remains present.
-      act(() => {
-        vi.advanceTimersByTime(3000)
-      })
-      expect(result.current.dividerEventId).toBe("event_1")
-      expect(result.current.isDimmed).toBe(true)
-    } finally {
-      vi.useRealTimers()
-    }
+    // Auto-mark-as-read clears the live unread, but the divider stays latched
+    // at its position for the rest of the reading session.
+    rerender({ lastReadEventId: "event_2" })
+    expect(result.current.firstUnreadEventId).toBeUndefined()
+    expect(result.current.dividerEventId).toBe("event_1")
   })
 
   it("re-latches at the new stream's first unread when switching streams", () => {
@@ -158,7 +144,6 @@ describe("useUnreadDivider", () => {
       lastReadEventId: "event_9",
     })
     expect(result.current.dividerEventId).toBeUndefined()
-    expect(result.current.isDimmed).toBe(false)
   })
 
   it("latches off scroll-to-first-unread once a stream is deep-linked, even after the ?m= param clears", () => {

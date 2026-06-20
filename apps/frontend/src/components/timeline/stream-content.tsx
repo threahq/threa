@@ -15,6 +15,7 @@ import {
   useLastSeenEvent,
   useUnreadCounts,
   useUnreadDivider,
+  useDividerDim,
   useIsMobile,
   useNewMessageIndicator,
   useAgentActivity,
@@ -1508,11 +1509,7 @@ export function StreamContent({
   // Unread divider state — a bookmark line at the first unread message. The
   // stream opens at the bottom (no auto-scroll to unread); the viewer reaches
   // the divider via the "N new" jump button or by scrolling up.
-  const {
-    dividerEventId,
-    isDimmed: isDividerDimmed,
-    dismiss: dismissUnreadDivider,
-  } = useUnreadDivider({
+  const { dividerEventId, dismiss: dismissUnreadDivider } = useUnreadDivider({
     events: displayEvents,
     lastReadEventId,
     currentUserId: currentWorkspaceUserId ?? undefined,
@@ -1529,6 +1526,10 @@ export function StreamContent({
     // stale null while the authoritative membership value is still loading.
     readStateResolved: lastReadEventId !== undefined,
   })
+
+  // The divider's red → gray fade waits until the row is actually on screen —
+  // it usually starts off-screen above (the stream opens at the bottom).
+  const isDividerDimmed = useDividerDim(scrollContainerRef, dividerEventId, streamId)
 
   // Read the last loaded event from a ref so the Escape listener below doesn't
   // re-attach on every live message (the events array is a fresh reference each
@@ -1899,8 +1900,12 @@ export function StreamContent({
               Jumps up to the "New" divider so the viewer can read from there. */}
             {unreadAboveViewport && unreadCount > 0 && !batchMode && (
               <div
+                // Sits below the floating date pill (top-2, ~z-20) so the two
+                // top-center affordances stack instead of overlapping. When
+                // search is open the date pill is hidden but the search bar
+                // takes the top, so drop a little further.
                 className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
-                style={{ top: isSearchOpen ? "3.5rem" : "0.5rem" }}
+                style={{ top: isSearchOpen ? "3.5rem" : "2.75rem" }}
               >
                 <Button
                   variant="secondary"
