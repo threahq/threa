@@ -33,12 +33,12 @@ function createPool() {
 }
 
 function createHandlers(overrides: Partial<PublicApiDeps> = {}) {
-  const { pool } = createPool()
+  const { pool, client } = createPool()
   const deps: PublicApiDeps = {
     eventService: {} as PublicApiDeps["eventService"],
     streamService: {
-      createScratchpad: mock(() => Promise.resolve({ id: "stream_1" })),
-      addBotToStream: mock(() => Promise.resolve()),
+      createScratchpadInTransaction: mock(() => Promise.resolve({ id: "stream_1" })),
+      addBotToStreamOn: mock(() => Promise.resolve()),
     } as unknown as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
@@ -58,13 +58,13 @@ function createHandlers(overrides: Partial<PublicApiDeps> = {}) {
     } as unknown as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
     labelAssignmentService: {
-      assignByName: mock(() => Promise.resolve({})),
+      assignByNameInTransaction: mock(() => Promise.resolve({})),
     } as unknown as PublicApiDeps["labelAssignmentService"],
     pool,
     io: {} as PublicApiDeps["io"],
     ...overrides,
   }
-  return { handlers: createPublicApiHandlers(deps), deps }
+  return { handlers: createPublicApiHandlers(deps), deps, client }
 }
 
 function botRequest(body: unknown): Request {
@@ -82,9 +82,9 @@ describe("bot runtime session labels", () => {
 
   it("assigns an optional label by name for the personal bot owner", async () => {
     spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
-    const assignByName = mock(() => Promise.resolve({}))
+    const assignByNameInTransaction = mock(() => Promise.resolve({}))
     const { handlers, deps } = createHandlers({
-      labelAssignmentService: { assignByName } as unknown as PublicApiDeps["labelAssignmentService"],
+      labelAssignmentService: { assignByNameInTransaction } as unknown as PublicApiDeps["labelAssignmentService"],
     })
     const cap = createResponse()
 
@@ -99,10 +99,12 @@ describe("bot runtime session labels", () => {
       cap.res
     )
 
-    expect(deps.streamService.createScratchpad).toHaveBeenCalledWith(
+    expect(deps.streamService.createScratchpadInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({ createdBy: "usr_owner" })
     )
-    expect(assignByName).toHaveBeenCalledWith(
+    expect(assignByNameInTransaction).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         actor: { type: LabelActorTypes.USER, id: "usr_owner" },
         name: "Pi remote",
@@ -118,5 +120,30 @@ describe("bot runtime session labels", () => {
         runtimeSessionId: "sess_1",
       },
     })
+  })
+
+  it("rejects the session creation when label assignment fails", async () => {
+    spyOn(BotRepository, "findById").mockResolvedValue(personalBot("usr_owner"))
+    const assignByNameInTransaction = mock(() => Promise.reject(new Error("boom")))
+    const { handlers, deps, client } = createHandlers({
+      labelAssignmentService: { assignByNameInTransaction } as unknown as PublicApiDeps["labelAssignmentService"],
+    })
+    const cap = createResponse()
+
+    await expect(
+      handlers.createBotRuntimeSession(
+        botRequest({
+          runtimeKind: "pi-local",
+          instanceId: "inst_1",
+          runtimeSessionId: "sess_1",
+          displayName: "Pi remote - threa",
+          labelName: "Pi remote",
+        }),
+        cap.res
+      )
+    ).rejects.toThrow("boom")
+
+    expect(deps.botRuntimeService.createOrLinkPiRemoteSessionInTransaction).not.toHaveBeenCalled()
+    expect(client.query).toHaveBeenCalledWith("ROLLBACK")
   })
 })

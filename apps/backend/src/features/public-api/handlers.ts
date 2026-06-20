@@ -1100,42 +1100,35 @@ export function createPublicApiHandlers({
         })
       }
 
-      const stream = await streamService.createScratchpad({
-        workspaceId: req.workspaceId!,
-        displayName: data.displayName,
-        // Coding-agent build sessions (pi-local / claude-code-channel) default
-        // to memory off — their turns are implementation churn, not durable
-        // knowledge, so GAM extraction there is noise. Callers can opt in with
-        // `memoryMode: "auto"`.
-        memoryMode: data.memoryMode ?? MemoryModes.OFF,
-        createdBy: bot.ownerUserId,
-      })
-      await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
+      const { link, stream } = await withTransaction(pool, async (client) => {
+        const stream = await streamService.createScratchpadInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          displayName: data.displayName,
+          // Coding-agent build sessions (pi-local / claude-code-channel) default
+          // to memory off — their turns are implementation churn, not durable
+          // knowledge, so GAM extraction there is noise. Callers can opt in with
+          // `memoryMode: "auto"`.
+          memoryMode: data.memoryMode ?? MemoryModes.OFF,
+          createdBy: bot.ownerUserId,
+        })
+        await streamService.addBotToStreamOn(client, stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
 
-      if (data.labelName) {
-        try {
-          await labelAssignmentService.assignByName({
+        if (data.labelName) {
+          await labelAssignmentService.assignByNameInTransaction(client, {
             workspaceId: req.workspaceId!,
             actor: { type: LabelActorTypes.USER, id: bot.ownerUserId },
             name: data.labelName,
             resourceType: LabelableResourceTypes.STREAM,
             resourceId: stream.id,
           })
-        } catch (err) {
-          logger.warn(
-            { err, workspaceId: req.workspaceId!, streamId: stream.id, labelName: data.labelName },
-            "Failed to assign optional runtime session label"
-          )
         }
-      }
 
-      const link = await withTransaction(pool, async (client) => {
         await botRuntimeService.repairBotTraitsInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: bot.id,
           traits: requiredRuntimeTraits,
         })
-        return botRuntimeService.createOrLinkPiRemoteSessionInTransaction(client, {
+        const link = await botRuntimeService.createOrLinkPiRemoteSessionInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: bot.id,
           runtimeKind: data.runtimeKind,
@@ -1146,6 +1139,7 @@ export function createPublicApiHandlers({
           linkedBy: bot.ownerUserId,
           metadata: { displayName: data.displayName, localCwd: data.localCwd ?? null },
         })
+        return { link, stream }
       })
 
       res.json({

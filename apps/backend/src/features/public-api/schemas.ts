@@ -149,7 +149,7 @@ export const createRuntimeSessionSchema = z.object({
   // 'auto' to opt the session's scratchpad into GAM memory extraction.
   memoryMode: z.enum(MEMORY_MODES).optional(),
   // Optional owner-scoped label name to assign to the created scratchpad stream.
-  labelName: z.string().trim().min(1).max(100).optional(),
+  labelName: z.string().trim().min(1).max(100).regex(/\S/).optional(),
 })
 
 export const renameRuntimeSessionSchema = z.object({
