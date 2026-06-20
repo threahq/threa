@@ -11,6 +11,8 @@ export interface ThreaChannelConfig {
   apiKey: string
   /** Scratchpad display name: the configured prefix (default "Claude Code") with the project directory appended. */
   displayName: string
+  /** Sent as `labelName` on session create; the backend applies it only to a newly created scratchpad. Unset = no label. */
+  defaultLabel?: string
   /** `^[A-Za-z0-9_-]+$`, ≤64 — must satisfy the `/bot` hello schema. */
   instanceId: string
   runtimeSessionId: string
@@ -51,6 +53,7 @@ export interface RawConfig {
   workspaceId?: unknown
   apiKey?: unknown
   displayName?: unknown
+  defaultLabel?: unknown
   permissionRelay?: unknown
   pollMs?: unknown
   replyTimeoutMs?: unknown
@@ -110,6 +113,7 @@ export function loadConfig(input: LoadConfigInput): LoadConfigResult {
   }
 
   const displayName = defaultDisplayName(cwd, str(env.THREA_DISPLAY_NAME) ?? str(file.displayName))
+  const defaultLabel = str(env.THREA_DEFAULT_LABEL) ?? str(file.defaultLabel)
   const seed = `${hostname}:${cwd}`
   const instanceId = sanitizeId(str(env.THREA_INSTANCE_ID) ?? str(file.instanceId) ?? deriveStableId("cc", seed)).slice(
     0,
@@ -129,6 +133,7 @@ export function loadConfig(input: LoadConfigInput): LoadConfigResult {
       workspaceId: workspaceId!,
       apiKey: apiKey!,
       displayName,
+      defaultLabel,
       instanceId,
       runtimeSessionId,
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),

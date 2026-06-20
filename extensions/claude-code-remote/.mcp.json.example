@@ -2,11 +2,7 @@
   "mcpServers": {
     "threa": {
       "command": "bun",
-      "args": ["/ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts"],
-      "env": {
-        "THREA_WORKSPACE_ID": "ws_replace_me",
-        "THREA_API_KEY": "threa_bk_replace_me"
-      }
+      "args": ["/ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts"]
     }
   }
 }
