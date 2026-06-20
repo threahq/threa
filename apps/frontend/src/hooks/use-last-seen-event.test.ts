@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest"
-import { pickVisibleRange, advanceFrontier, type VisibleRow } from "./use-last-seen-event"
+import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { renderHook, act } from "@testing-library/react"
+import type { StreamEvent } from "@threa/types"
+import { pickVisibleRange, advanceFrontier, useLastSeenEvent, type VisibleRow } from "./use-last-seen-event"
 
 // Viewport spans y=0..100. Rows are in chronological (DOM) order.
 const VIEWPORT_TOP = 0
@@ -94,5 +96,104 @@ describe("advanceFrontier", () => {
 
   it("treats an exactly-contiguous top (frontier + 1) as no gap", () => {
     expect(advanceFrontier(9, 10, 14)).toBe(14)
+  })
+})
+
+describe("useLastSeenEvent re-scan on content resize", () => {
+  // The container viewport spans y=0..100; rows carry mutable rects so a test
+  // can "grow" the content (an embed loading) between scans.
+  let roCallbacks: ResizeObserverCallback[]
+  const saved: Record<string, unknown> = {}
+
+  beforeEach(() => {
+    roCallbacks = []
+    const g = globalThis as Record<string, unknown>
+    saved.raf = g.requestAnimationFrame
+    saved.caf = g.cancelAnimationFrame
+    saved.ro = g.ResizeObserver
+    // Run rAF synchronously so a scheduled scan resolves within the act() block.
+    // Return 0 (not a truthy id): the hook assigns the return value to its `raf`
+    // guard *after* the callback runs here, so a truthy id would wedge the guard
+    // and swallow the next schedule().
+    g.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      cb(0)
+      return 0
+    }
+    g.cancelAnimationFrame = () => {}
+    // jsdom has no ResizeObserver; capture the callback so the test can fire it.
+    g.ResizeObserver = class {
+      constructor(cb: ResizeObserverCallback) {
+        roCallbacks.push(cb)
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  })
+
+  afterEach(() => {
+    const g = globalThis as Record<string, unknown>
+    g.requestAnimationFrame = saved.raf
+    g.cancelAnimationFrame = saved.caf
+    g.ResizeObserver = saved.ro
+  })
+
+  function rect(top: number, bottom: number): DOMRect {
+    return {
+      top,
+      bottom,
+      left: 0,
+      right: 0,
+      width: 0,
+      height: bottom - top,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect
+  }
+
+  function fireResize() {
+    act(() => {
+      for (const cb of roCallbacks) cb([], {} as ResizeObserver)
+    })
+  }
+
+  it("advances the frontier to the trailing row when an embed resizes it into view without a scroll", () => {
+    // A short stream that fits the viewport fires no scroll event. The last row
+    // starts below the fold (its embed hasn't loaded), so the first scan can't
+    // reach it; a ResizeObserver-driven re-scan must mark it once it lands.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: -50, bottom: -10 }, // scrolled above the viewport (already read)
+      e1: { top: 10, bottom: 60 }, // visible
+      e2: { top: 130, bottom: 180 }, // below the fold — not yet seen
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [{ id: "e0" }, { id: "e1" }, { id: "e2" }] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result } = renderHook(() =>
+      useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId: "e0", enabled: true })
+    )
+
+    // First scan: e2 is below the fold, so the frontier stops at e1.
+    expect(result.current.lastSeenEventId).toBe("e1")
+    expect(result.current.atLastRow).toBe(false)
+
+    // The embed loads and the trailing row resizes into the viewport.
+    positions.e2 = { top: 65, bottom: 95 }
+    fireResize()
+
+    // The re-scan reaches the last row — the message that was stuck unread.
+    expect(result.current.lastSeenEventId).toBe("e2")
+    expect(result.current.atLastRow).toBe(true)
   })
 })
