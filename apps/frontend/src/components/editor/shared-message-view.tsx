@@ -2,7 +2,7 @@ import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { X, Share2 } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
 import type { SharedMessageAttrs } from "./shared-message-extension"
@@ -23,11 +23,11 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
   const attrs = node.attrs as SharedMessageAttrs
   const { workspaceId: _workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource(attrs.messageId, attrs.streamId)
-  // Touch devices have no hover state, so the desktop hover-reveal pattern
-  // would leave the remove control invisible AND untappable. Always show on
-  // mobile, and on desktop expose it via hover OR keyboard focus so tab
-  // users can reach it too.
-  const isMobile = useIsMobile()
+  // Touch devices have no hover state, so the hover-reveal pattern would leave
+  // the remove control invisible AND untappable. Always show on touch, and for
+  // mouse input expose it via hover OR keyboard focus so tab users can reach it
+  // too.
+  const isTouch = useCoarsePointer()
 
   return (
     <NodeViewWrapper
@@ -50,7 +50,7 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
           // hit-zone meets WCAG 2.1 AA on touch.
           "shrink-0 rounded-sm p-1 text-muted-foreground transition-opacity hover:text-foreground",
           "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40",
-          isMobile ? "opacity-100" : "opacity-0 group-hover/shared-message:opacity-100"
+          isTouch ? "opacity-100" : "opacity-0 group-hover/shared-message:opacity-100"
         )}
         aria-label="Remove shared message"
       >

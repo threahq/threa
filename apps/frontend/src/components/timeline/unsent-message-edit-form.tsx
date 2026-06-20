@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { usePendingMessages } from "@/contexts"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
@@ -31,7 +31,7 @@ export function UnsentMessageEditForm({
   authorName,
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
 
@@ -54,7 +54,7 @@ export function UnsentMessageEditForm({
   }, [messageId, cancelEditing, onDone])
 
   useEffect(() => {
-    if (isMobile) return
+    if (isTouch) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault()
@@ -63,7 +63,7 @@ export function UnsentMessageEditForm({
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isMobile, handleCancel])
+  }, [isTouch, handleCancel])
 
   const setRichEditorHandle = useCallback((handle: RichEditorHandle | null) => {
     richEditorRef.current = handle
@@ -124,17 +124,17 @@ export function UnsentMessageEditForm({
   }, [])
 
   const screenReaderInstructions = useMemo(() => {
-    if (isMobile) {
+    if (isTouch) {
       return `Press ${MOD_KEY_NAME}+Enter to save. Tab and Shift+Tab indent content. Press Escape to leave the editor.`
     }
     return "Press Enter to save. Tab and Shift+Tab indent content. Press Escape to cancel editing."
-  }, [isMobile])
+  }, [isTouch])
 
   const focusMobileActionBar = useCallback(() => {
     mobileActionBarRef.current?.focus()
   }, [])
 
-  if (isMobile) {
+  if (isTouch) {
     const trailingContent = (
       <>
         <Button

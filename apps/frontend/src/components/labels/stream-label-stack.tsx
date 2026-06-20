@@ -2,7 +2,7 @@ import { Link } from "react-router-dom"
 import { LabelableResourceTypes } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { useResourceLabelAssignments } from "@/hooks"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { LabelChip, LabelGlyph } from "./label-chip"
@@ -19,8 +19,8 @@ interface StreamLabelStackProps {
 /**
  * Display-only stack of the labels on a stream, for the stream top bar. Shows up
  * to {@link VISIBLE_CAP} overlapping glyphs + a `+N` overflow count; the full set
- * fans out as tinted name-pills on desktop hover (an overlay — no layout shift,
- * INV-21) or in a bottom drawer on mobile tap. Editing lives in `LabelPicker`.
+ * fans out as tinted name-pills on fine-pointer hover (an overlay — no layout
+ * shift, INV-21) or in a bottom drawer on touch tap. Editing lives in `LabelPicker`.
  *
  * Reads the shared assignment pool (public labels on the stream + the viewer's
  * private ones), already deduped + active-only, and stays live via the
@@ -28,7 +28,7 @@ interface StreamLabelStackProps {
  */
 export function StreamLabelStack({ workspaceId, streamId, className }: StreamLabelStackProps) {
   const { labels } = useResourceLabelAssignments(workspaceId, LabelableResourceTypes.STREAM, streamId)
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
 
   if (labels.length === 0) return null
 
@@ -74,7 +74,7 @@ export function StreamLabelStack({ workspaceId, streamId, className }: StreamLab
     </div>
   )
 
-  if (isMobile) {
+  if (isTouch) {
     return (
       <Drawer>
         <DrawerTrigger asChild>{trigger}</DrawerTrigger>

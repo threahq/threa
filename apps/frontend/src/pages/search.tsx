@@ -12,7 +12,7 @@ import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
 import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 
 /**
  * Full-page message search — the mobile-native search surface (mirrors the
@@ -24,7 +24,9 @@ export function SearchPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const { activeResultId, setActiveResultId } = useSearchPanel()
-  const isMobile = useIsMobile()
+  // Suppress autofocus on touch so a virtual keyboard doesn't spring up on
+  // open; a narrow desktop (fine pointer) still autofocuses the search input.
+  const isTouch = useCoarsePointer()
 
   // Local state for typing; URL is written behind a debounce for bookmarkability.
   const [localQuery, setLocalQuery] = useState(() => searchParams.get("q") ?? "")
@@ -88,7 +90,7 @@ export function SearchPage() {
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
                 editorClassName="h-auto min-h-8 py-1.5"
-                autoFocus={!isMobile}
+                autoFocus={!isTouch}
               />
             </div>
           </div>

@@ -6,6 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { cn } from "@/lib/utils"
 import {
   DESKTOP_GRID_COLUMNS,
@@ -542,9 +543,11 @@ export function ReactionEmojiPicker({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const { emojis, emojiWeights } = useWorkspaceEmoji(workspaceId)
+  // Width drives grid geometry (column count, emoji size, container height); the
+  // input pointer drives the surface choice (a narrow desktop window gets the
+  // popover, an iPad gets the drawer).
   const isNarrow = useIsMobile()
-  const isTouchDevice = typeof window !== "undefined" && "ontouchstart" in window
-  const useDrawer = isNarrow || isTouchDevice
+  const useDrawer = useCoarsePointer()
 
   const handleSelect = useCallback(
     (item: EmojiEntry) => {
@@ -605,7 +608,7 @@ export function ReactionEmojiPicker({
       onClose={handleClose}
       searchInputRef={searchInputRef}
       open={open}
-      isMobile={useDrawer}
+      isMobile={isNarrow}
     />
   )
 

@@ -37,6 +37,7 @@ import { Quote, MessageSquareReply, Check } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useLongPress } from "@/hooks/use-long-press"
 import { AttachmentList } from "./attachment-list"
 import { E2eAttachmentList } from "./e2e-attachment-list"
@@ -874,17 +875,18 @@ function SentMessageEvent({
   // lands in IDB (live socket apply or bootstrap).
   const movedTombstoneEvent = useMovedTombstone(payload.movedFrom?.moveTombstoneId)
 
-  // Mobile: long-press opens action drawer instead of dropdown
   const isMobile = useIsMobile()
+  // Touch: long-press opens action drawer instead of dropdown
+  const isTouch = useCoarsePointer()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
   const longPress = useLongPress({
     onLongPress: openDrawer,
-    enabled: isMobile && !isEditing && !batch?.enabled,
+    enabled: isTouch && !isEditing && !batch?.enabled,
     deferToNativeLinks: true,
   })
 
-  // Mobile: swipe left to quote reply
+  // Touch: swipe left to quote reply
   const handleSwipeQuote = useCallback(() => {
     const snippet = payload.contentMarkdown.trim()
     if (!snippet) return
@@ -899,7 +901,7 @@ function SentMessageEvent({
   }, [quoteReplyCtx, payload.messageId, payload.contentMarkdown, streamId, actorName, event.actorId, event.actorType])
   const swipe = useSwipeAction({
     onSwipe: handleSwipeQuote,
-    enabled: isMobile && !isEditing && !!quoteReplyCtx && !batch?.enabled,
+    enabled: isTouch && !isEditing && !!quoteReplyCtx && !batch?.enabled,
   })
 
   const startEditing = useCallback(() => {
@@ -907,14 +909,14 @@ function SentMessageEvent({
   }, [])
 
   // Restore focus to the zone's editor after exiting inline edit mode.
-  // On mobile the body-level inline-edit presence attribute hides the stream
+  // On touch the body-level inline-edit presence attribute hides the stream
   // composer, so there is no extra flag to reset here.
   const stopEditing = useCallback(() => {
     const zone = containerRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
     setIsEditing(false)
-    if (isMobile) return
+    if (isTouch) return
     requestAnimationFrame(() => focusVisibleZoneEditor(zone))
-  }, [isMobile])
+  }, [isTouch])
 
   // Register this message's edit handler with the context so the composer's ArrowUp trigger
   // can imperatively open edit mode and scroll into view. Unregistered on unmount.
@@ -1197,7 +1199,7 @@ function SentMessageEvent({
   // mode doesn't change row height. They're rendered as `pointer-events-none`
   // (handled below) so the row's batch-toggle click handler still wins.
   let footerContent: ReactNode
-  if (isEditing && !isMobile) {
+  if (isEditing && !isTouch) {
     footerContent = undefined
   } else {
     footerContent = (
@@ -1242,7 +1244,7 @@ function SentMessageEvent({
             <SavedIndicator saved={savedForMessage ?? null} />
           </>
         }
-        isEditing={isEditing && !isMobile}
+        isEditing={isEditing && !isTouch}
         isGroupContinuation={groupContinuation}
         hoverActions={
           batch?.enabled ? undefined : (
@@ -1304,13 +1306,13 @@ function SentMessageEvent({
         deferSecondaryHydration={deferSecondaryHydration}
         containerClassName={cn(
           "scroll-mt-12",
-          isMobile && !isEditing && "select-none",
+          isTouch && !isEditing && "select-none",
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
-        swipeOffset={isMobile ? swipe.offset : undefined}
-        swipeLocked={isMobile ? swipe.isLocked : undefined}
+        swipeOffset={isTouch ? swipe.offset : undefined}
+        swipeLocked={isTouch ? swipe.isLocked : undefined}
         touchHandlers={
-          isMobile && !batch?.enabled
+          isTouch && !batch?.enabled
             ? {
                 onTouchStart: (e: React.TouchEvent) => {
                   longPress.handlers.onTouchStart(e)
@@ -1334,8 +1336,8 @@ function SentMessageEvent({
         }
         batch={batch}
       >
-        {/* Desktop: inline edit replaces message content. Mobile: drawer handles editing. */}
-        {isEditing && !isMobile ? (
+        {/* Fine pointer: inline edit replaces message content. Touch: drawer handles editing. */}
+        {isEditing && !isTouch ? (
           <MessageEditForm
             messageId={payload.messageId}
             workspaceId={workspaceId}
@@ -1350,8 +1352,8 @@ function SentMessageEvent({
           />
         ) : undefined}
       </MessageLayout>
-      {/* Mobile: edit in a bottom-sheet drawer (avoids scroll/keyboard issues) */}
-      {isEditing && isMobile && (
+      {/* Touch: edit in a bottom-sheet drawer (avoids scroll/keyboard issues) */}
+      {isEditing && isTouch && (
         <MessageEditForm
           messageId={payload.messageId}
           workspaceId={workspaceId}
@@ -1410,7 +1412,7 @@ function SentMessageEvent({
           workspaceId={workspaceId}
         />
       )}
-      {isMobile && (
+      {isTouch && (
         <MessageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -1462,10 +1464,10 @@ function PendingMessageEvent({
 }: MessageEventInnerProps) {
   const { markEditing, deleteMessage } = usePendingMessages()
   const isOnline = useIsOnline()
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPress = useLongPress({ onLongPress: openDrawer, enabled: isMobile, deferToNativeLinks: true })
+  const longPress = useLongPress({ onLongPress: openDrawer, enabled: isTouch, deferToNativeLinks: true })
 
   const [slowEnough, setSlowEnough] = useState(
     () => Date.now() - new Date(event.createdAt).getTime() >= SLOW_SEND_THRESHOLD_MS
@@ -1496,10 +1498,10 @@ function PendingMessageEvent({
         isGroupContinuation={groupContinuation}
         containerClassName={cn(
           showPendingState && "opacity-60",
-          isMobile && "select-none",
+          isTouch && "select-none",
           longPress.isPressed && "opacity-40 transition-opacity duration-100"
         )}
-        touchHandlers={isMobile ? longPress.handlers : undefined}
+        touchHandlers={isTouch ? longPress.handlers : undefined}
         statusIndicator={
           showPendingState ? (
             <span className="text-xs text-muted-foreground opacity-0 animate-fade-in-delayed">
@@ -1531,7 +1533,7 @@ function PendingMessageEvent({
         }
         footer={null}
       />
-      {isMobile && (
+      {isTouch && (
         <UnsentMessageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -1555,10 +1557,10 @@ function FailedMessageEvent({
   isFirstMessage,
 }: MessageEventInnerProps) {
   const { retryMessage, markEditing, deleteMessage } = usePendingMessages()
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPress = useLongPress({ onLongPress: openDrawer, enabled: isMobile, deferToNativeLinks: true })
+  const longPress = useLongPress({ onLongPress: openDrawer, enabled: isTouch, deferToNativeLinks: true })
 
   return (
     <>
@@ -1572,10 +1574,10 @@ function FailedMessageEvent({
         deferSecondaryHydration={deferSecondaryHydration}
         containerClassName={cn(
           "border-l-2 border-destructive pl-2",
-          isMobile && "select-none",
+          isTouch && "select-none",
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
-        touchHandlers={isMobile ? longPress.handlers : undefined}
+        touchHandlers={isTouch ? longPress.handlers : undefined}
         statusIndicator={<span className="text-xs text-destructive">Failed to send</span>}
         actions={
           <div className="flex gap-1 mt-1 hidden sm:flex">
@@ -1597,7 +1599,7 @@ function FailedMessageEvent({
         }
         footer={null}
       />
-      {isMobile && (
+      {isTouch && (
         <UnsentMessageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -1621,14 +1623,14 @@ function EditingMessageEvent({
   deferSecondaryHydration,
   isFirstMessage,
 }: MessageEventInnerProps) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const containerRef = useRef<HTMLDivElement>(null)
 
   const stopEditing = useCallback(() => {
     const zone = containerRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
-    if (isMobile) return
+    if (isTouch) return
     requestAnimationFrame(() => focusVisibleZoneEditor(zone))
-  }, [isMobile])
+  }, [isTouch])
 
   return (
     <>
@@ -1640,11 +1642,11 @@ function EditingMessageEvent({
         actorName={actorName}
         isFirstMessage={isFirstMessage}
         deferSecondaryHydration={deferSecondaryHydration}
-        isEditing={!isMobile}
+        isEditing={!isTouch}
         containerRef={containerRef}
         statusIndicator={<span className="text-xs text-muted-foreground">Editing unsent message</span>}
       >
-        {!isMobile ? (
+        {!isTouch ? (
           <UnsentMessageEditForm
             messageId={event.id}
             streamId={streamId}
@@ -1653,7 +1655,7 @@ function EditingMessageEvent({
           />
         ) : undefined}
       </MessageLayout>
-      {isMobile && (
+      {isTouch && (
         <UnsentMessageEditForm
           messageId={event.id}
           streamId={streamId}

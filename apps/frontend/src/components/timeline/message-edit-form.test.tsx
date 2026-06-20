@@ -4,7 +4,7 @@ import { render, screen, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import * as mobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as drawerModule from "@/components/ui/drawer"
 import * as editorModule from "@/components/editor"
 import * as prosemirrorModule from "@threa/prosemirror"
@@ -12,13 +12,13 @@ import * as contextsModule from "@/contexts"
 import { MessageEditForm } from "./message-edit-form"
 import type { JSONContent } from "@threa/types"
 
-let isMobileMockValue = false
+let isTouchMockValue = false
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  isMobileMockValue = false
+  isTouchMockValue = false
 
-  vi.spyOn(mobileModule, "useIsMobile").mockImplementation(() => isMobileMockValue)
+  vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouchMockValue)
 
   spyOnExport(drawerModule, "Drawer").mockReturnValue((({ children }: { children: React.ReactNode }) => (
     <div data-testid="drawer-root">{children}</div>
@@ -141,7 +141,7 @@ describe("MessageEditForm", () => {
   })
 
   it("should expose the mobile editor with instructions", () => {
-    isMobileMockValue = true
+    isTouchMockValue = true
     renderForm({ authorName: "Alice" })
 
     const editor = screen.getByRole("textbox", { name: "Edit message" })

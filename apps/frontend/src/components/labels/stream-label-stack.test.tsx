@@ -6,7 +6,7 @@ import { LabelableResourceTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as drawerModule from "@/components/ui/drawer"
 import { StreamLabelStack } from "./stream-label-stack"
 import type { CachedLabel, CachedLabelAssignment } from "@/hooks"
@@ -69,7 +69,7 @@ function mount() {
 describe("StreamLabelStack", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(false)
     vi.spyOn(authModule, "useAuth").mockReturnValue({
       user: { id: "workos_me" },
     } as unknown as ReturnType<typeof authModule.useAuth>)
@@ -100,8 +100,8 @@ describe("StreamLabelStack", () => {
     expect(trigger).not.toHaveTextContent("+")
   })
 
-  it("renders every label as a name-pill in the mobile fan-out", () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+  it("renders every label as a name-pill in the touch fan-out", () => {
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
     // Passthrough the vaul Drawer primitives — jsdom can't drive vaul's
     // open animation, so render the content inline to assert the revealed set.
     const Passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
@@ -120,7 +120,7 @@ describe("StreamLabelStack", () => {
   })
 
   it("links each fanned-out chip to the label's landing page", () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
     const Passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
     spyOnExport(drawerModule, "Drawer").mockReturnValue(Passthrough as never)
     spyOnExport(drawerModule, "DrawerTrigger").mockReturnValue(Passthrough as never)

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { VOICE_TRANSCRIPTION_MODELS, type JSONContent, type VoicePolishLevel } from "@threa/types"
 
 const VOICE_POLISH_LEVEL_DESCRIPTIONS: ReadonlyArray<{
@@ -49,7 +49,7 @@ function parsePrompt(markdown: string): JSONContent {
 
 export function AISettings() {
   const { preferences, updatePreference, isLoading } = usePreferences()
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const editorRef = useRef<RichEditorHandle>(null)
   const savedPrompt = preferences?.scratchpadCustomPrompt ?? ""
   const normalizedSavedPrompt = savedPrompt.trim()
@@ -126,7 +126,7 @@ export function AISettings() {
               placeholder="Tell Ariadne how to think and help in your scratchpads..."
               messageSendMode="cmdEnter"
               staticToolbarOpen={formatOpen}
-              disableSelectionToolbar={isMobile}
+              disableSelectionToolbar={isTouch}
               ariaLabel="Scratchpad custom prompt editor"
               className="min-h-0 [&_.tiptap]:min-h-[180px] [&_.tiptap]:max-h-[320px]"
               enableMentions={false}

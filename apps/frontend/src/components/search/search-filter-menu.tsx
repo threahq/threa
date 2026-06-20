@@ -16,7 +16,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { filterUsersOnly, useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
@@ -69,12 +69,12 @@ interface SearchFilterMenuProps {
  * query string via `addFilterToQuery`, so the query stays the single source
  * of truth and the result renders as a normal removable chip.
  *
- * Popover on desktop, bottom drawer on mobile (same split as
- * `SearchableSelect`) — typing filter syntax on a phone keyboard is exactly
+ * Popover for fine pointers, bottom drawer on touch (same split as
+ * `SearchableSelect`) — typing filter syntax on a touch keyboard is exactly
  * the flow this menu replaces.
  */
 export function SearchFilterMenu({ workspaceId, query, onQueryChange, className }: SearchFilterMenuProps) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<FilterKind | null>(null)
 
@@ -133,7 +133,7 @@ export function SearchFilterMenu({ workspaceId, query, onQueryChange, className 
     </Button>
   )
 
-  if (isMobile) {
+  if (isTouch) {
     return (
       <Drawer open={open} onOpenChange={setOpen}>
         <DrawerTrigger asChild>{trigger}</DrawerTrigger>

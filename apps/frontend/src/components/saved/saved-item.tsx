@@ -12,7 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { RelativeTime } from "@/components/relative-time"
 import { ReminderPopoverContent } from "@/components/timeline/reminder-popover-content"
 import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
@@ -125,14 +125,14 @@ interface SavedRowActionsProps {
 }
 
 /**
- * Actions are always visible on mobile (no hover affordance) and hover-reveal
- * on desktop. Reminder changes are routed through the shared
+ * Actions are always visible on touch (no hover affordance) and hover-reveal
+ * on fine-pointer devices. Reminder changes are routed through the shared
  * `ReminderPopoverContent` so behaviour matches the message-level bookmark
  * button.
  */
 function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore, onDelete }: SavedRowActionsProps) {
   const status = saved.status as SavedStatus
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
 
@@ -148,10 +148,10 @@ function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore,
       )}
     >
       {status === "saved" &&
-        // Mobile gets the same bottom-sheet picker as the message-level "Set
-        // reminder" flow; desktop keeps the hover/click popover. Either way
+        // Touch gets the same bottom-sheet picker as the message-level "Set
+        // reminder" flow; fine-pointer keeps the hover/click popover. Either way
         // the underlying mutation hooks and presets are shared.
-        (isMobile ? (
+        (isTouch ? (
           <>
             <Button
               size="icon"

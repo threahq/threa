@@ -7,7 +7,7 @@ import { StreamItem } from "./stream-item"
 import type { StreamItemData } from "./types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
-import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
@@ -17,8 +17,8 @@ const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
 const setMenuOpen = vi.fn()
 
-const mobileState = {
-  isMobileValue: true,
+const touchState = {
+  isTouchValue: true,
 }
 
 function renderWithRouter(ui: React.ReactElement) {
@@ -62,7 +62,7 @@ describe("StreamItem", () => {
     collapseOnMobile.mockReset()
     openStreamSettings.mockReset()
     setMenuOpen.mockReset()
-    mobileState.isMobileValue = true
+    touchState.isTouchValue = true
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
@@ -78,7 +78,7 @@ describe("StreamItem", () => {
       getActorAvatar: () => null,
     } as unknown as ReturnType<typeof hooksModule.useActors>)
 
-    vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => mobileState.isMobileValue)
+    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => touchState.isTouchValue)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
       date,
@@ -256,7 +256,7 @@ describe("StreamItem", () => {
   })
 
   it("renders a desktop context-menu trigger for DMs", () => {
-    mobileState.isMobileValue = false
+    touchState.isTouchValue = false
 
     const stream = createStream({
       id: "stream_dm_1",

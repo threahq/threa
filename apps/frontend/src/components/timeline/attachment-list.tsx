@@ -10,7 +10,7 @@ import { downloadImage, copyImage, triggerDownload } from "@/lib/image-utils"
 import { formatFileSize } from "@/lib/file-size"
 import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useLongPress } from "@/hooks/use-long-press"
 import {
   isHtmlAttachment,
@@ -179,7 +179,7 @@ function ImageAttachment({
   const [imgDecoded, setImgDecoded] = useState(false)
   const [error, setError] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
 
   const box = inlineImageBox(attachment.width, attachment.height)
 
@@ -193,7 +193,7 @@ function ImageAttachment({
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
   const longPressRaw = useLongPress({
     onLongPress: openDrawer,
-    enabled: isMobile && !!thumbnailUrl,
+    enabled: isTouch && !!thumbnailUrl,
   })
 
   // Wrap touch handlers to stop propagation — prevents the message-level
@@ -238,7 +238,7 @@ function ImageAttachment({
         onClick={handleClick}
         onKeyDown={handleKeyDown}
         data-highlighted={isHighlighted || undefined}
-        {...(isMobile ? longPress.handlers : {})}
+        {...(isTouch ? longPress.handlers : {})}
         style={{ width: box.width, height: box.height }}
         className={cn(
           "group/image relative overflow-hidden rounded-lg border bg-muted/30 transition-all cursor-pointer",
@@ -270,7 +270,7 @@ function ImageAttachment({
           />
         )}
       </div>
-      {isMobile && thumbnailUrl && (
+      {isTouch && thumbnailUrl && (
         <ImageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}

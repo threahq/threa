@@ -107,7 +107,7 @@ describe("ScratchpadItem", () => {
           drawerOpen: false,
           setDrawerOpen: vi.fn(),
           handleClick: () => collapseOnMobile(),
-          isMobile: false,
+          isTouch: false,
           longPress: {
             handlers: {
               onTouchStart: undefined,

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { Quote } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useQuoteReply } from "./quote-reply-context"
 
 interface SelectionInfo {
@@ -48,10 +48,10 @@ interface TextSelectionQuoteProps {
 
 /**
  * Shows a floating "Quote" button when the user selects text within a message.
- * Desktop only — mobile uses select-none on messages.
+ * Fine pointer only — touch devices use select-none on messages.
  */
 export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
-  const isMobile = useIsMobile()
+  const isTouch = useCoarsePointer()
   const quoteReplyCtx = useQuoteReply()
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
 
@@ -100,11 +100,11 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
   }, [streamId])
 
   useEffect(() => {
-    if (isMobile) return
+    if (isTouch) return
 
     document.addEventListener("selectionchange", handleSelectionChange)
     return () => document.removeEventListener("selectionchange", handleSelectionChange)
-  }, [isMobile, handleSelectionChange])
+  }, [isTouch, handleSelectionChange])
 
   const handleQuote = useCallback(() => {
     if (!selection || !quoteReplyCtx) return
@@ -120,7 +120,7 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
     setSelection(null)
   }, [selection, quoteReplyCtx])
 
-  if (isMobile || !selection || !quoteReplyCtx) return null
+  if (isTouch || !selection || !quoteReplyCtx) return null
 
   return createPortal(
     <div

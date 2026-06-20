@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback } from "react"
 import { RefreshCw } from "lucide-react"
 import { useSidebar, useCoordinatedLoading, type UrgencyBlock } from "@/contexts"
-import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh } from "@/hooks"
+import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useCoarsePointer } from "@/hooks"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { TopbarLoadingIndicator } from "./topbar-loading-indicator"
 import { ConnectionStatus } from "./connection-status"
@@ -122,6 +122,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     setWidth,
   } = useSidebar()
   const { showLoadingIndicator } = useCoordinatedLoading()
+  const isTouch = useCoarsePointer()
 
   const { handleResizeStart } = useResizeDrag({
     width,
@@ -151,7 +152,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     refreshing,
     mode: pullMode,
   } = usePullToRefresh({
-    enabled: isMobile && !isKeyboardOpen,
+    enabled: isTouch && !isKeyboardOpen,
     onRefresh: handleSoftRefresh,
   })
 
@@ -181,18 +182,18 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     onClose: collapse,
   })
 
-  // Disabled on mobile — touch devices don't hover.
+  // Disabled on touch — touch devices don't hover.
   const handleMouseEnter = useCallback(() => {
-    if (!isMobile) {
+    if (!isTouch) {
       setHovering(true)
     }
-  }, [setHovering, isMobile])
+  }, [setHovering, isTouch])
 
   const handleMouseLeave = useCallback(() => {
-    if (!isMobile) {
+    if (!isTouch) {
       setHovering(false)
     }
-  }, [setHovering, isMobile])
+  }, [setHovering, isTouch])
 
   const handleBackdropClick = useCallback(() => {
     collapse()
