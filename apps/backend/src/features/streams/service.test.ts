@@ -1307,6 +1307,19 @@ describe("StreamService.markUnread", () => {
     expect(mockMemberUpdate).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
+
+  test("does not emit when the membership update returns null (non-member)", async () => {
+    mockFindByMessageId.mockResolvedValue({ id: "evt_5", sequence: 50n } as never)
+    mockFindPreviousMessageEvent.mockResolvedValue({ id: "evt_4", sequence: 40n } as never)
+    mockCountMessagesThrough.mockResolvedValue(4)
+    mockMemberUpdate.mockResolvedValue(null)
+
+    const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
+
+    expect(result).toBeNull()
+    expect(mockMemberUpdate).toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
 })
 
 describe("StreamService.markAllAsRead", () => {

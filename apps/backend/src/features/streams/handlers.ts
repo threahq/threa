@@ -826,7 +826,7 @@ export function createStreamHandlers({
 
       const membership = await streamService.markUnread(workspaceId, streamId, userId, data.messageId)
       if (!membership) {
-        return res.status(404).json({ error: "Message not found in this stream, or not a member" })
+        throw new HttpError("Message not found in this stream", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
 
       res.json({ membership })

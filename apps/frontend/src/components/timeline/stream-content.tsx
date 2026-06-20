@@ -1548,6 +1548,8 @@ export function StreamContent({
     dismissUnreadDivider()
     scrollToBottom({ force: true })
   }, [streamId, dismissUnreadDivider, scrollToBottom])
+  const escapeUnreadRef = useRef(escapeUnread)
+  escapeUnreadRef.current = escapeUnread
 
   // Desktop Slack-style Esc-marks-channel-read. Scoped to when the divider is
   // actually shown so it never swallows Escape elsewhere; the composer/editor
@@ -1583,13 +1585,15 @@ export function StreamContent({
   }, [isMobile, isDraft, dividerEventId, isSearchOpen, escapeUnread])
 
   // The touchable ✕ counterpart to the Escape shortcut (divider + jump bar).
-  // Works on every device, so it's not gated on `!isMobile`.
+  // Works on every device, so it's not gated on `!isMobile`. Ref-read like the
+  // two listeners below so it attaches once per stream (no re-subscribe gap when
+  // escapeUnread's identity churns).
   useEffect(() => {
     return addEscapeUnreadListener((detail) => {
       if (detail.streamId !== streamId) return
-      escapeUnread()
+      escapeUnreadRef.current()
     })
-  }, [streamId, escapeUnread])
+  }, [streamId])
 
   // Manual "Mark read up to here" from a message action. The pointer is partial
   // unless the chosen row is the last loaded one — marking up to a mid-window

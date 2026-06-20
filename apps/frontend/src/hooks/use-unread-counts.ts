@@ -156,6 +156,13 @@ export function useUnreadCounts(workspaceId: string) {
             workspaceId,
             _cachedAt: now,
           })
+        } else {
+          await db.streamMemberships.put({
+            ...membership,
+            id: membershipId,
+            workspaceId,
+            _cachedAt: now,
+          })
         }
       })
     },
