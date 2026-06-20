@@ -176,6 +176,7 @@ describe("sidebar-actions", () => {
 
       renderWithRouter(
         <SidebarActionDrawer
+          streamName="General"
           title="Actions for General"
           description="Choose an action for this stream."
           open={true}
@@ -190,7 +191,6 @@ describe("sidebar-actions", () => {
             },
           ]}
           preview={{
-            streamName: "General",
             authorName: "Ariadne",
             content: "Latest update from the stream",
             createdAt: "2026-03-03T10:00:00Z",
@@ -198,6 +198,7 @@ describe("sidebar-actions", () => {
         />
       )
 
+      expect(screen.getByText("General")).toBeInTheDocument()
       expect(screen.getByText("Ariadne")).toBeInTheDocument()
       expect(screen.getByText("Latest update from the stream")).toBeInTheDocument()
 
@@ -228,10 +229,10 @@ describe("sidebar-actions", () => {
           open={false}
           onOpenChange={vi.fn()}
           actions={[]}
+          streamName="Taylor"
           title="Actions for Taylor"
           description="Choose an action for this stream."
           preview={{
-            streamName: "Taylor",
             content: "No messages yet",
           }}
         />

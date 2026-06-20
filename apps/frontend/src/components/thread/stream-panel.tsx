@@ -531,7 +531,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                 description="Choose an action for this stream."
                 header={
                   <div className="px-4 pt-2 pb-3">
-                    <p className="truncate text-base font-semibold text-foreground">
+                    <p className="break-words text-base font-semibold text-foreground">
                       {decryptedPanelName ?? streamLabel(stream)}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
