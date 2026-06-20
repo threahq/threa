@@ -623,7 +623,7 @@ export function StreamPage() {
                   description="Choose an action for this stream."
                   header={
                     <div className="px-4 pt-2 pb-3">
-                      <p className="truncate text-base font-semibold text-foreground">{streamName}</p>
+                      <p className="break-words text-base font-semibold text-foreground">{streamName}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {stream ? getStreamTypeLabel(stream.type) : "Stream"} actions
                       </p>

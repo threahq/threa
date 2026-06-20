@@ -125,7 +125,6 @@ export function ScratchpadItem({
   const drawerPreview: SidebarActionPreview | null =
     preview && preview.content
       ? {
-          streamName: isDraft ? `${name} (draft)` : name,
           authorName: getActorName(preview.authorId, preview.authorType),
           content: truncateContent(preview.content, 140, toEmoji),
           createdAt: preview.createdAt,
@@ -236,6 +235,7 @@ export function ScratchpadItem({
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           actions={actions}
+          streamName={isDraft ? `${name} (draft)` : name}
           title={`Actions for ${name}`}
           description="Choose an action for this stream."
           preview={drawerPreview}
