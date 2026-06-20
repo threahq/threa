@@ -15,6 +15,7 @@ import {
   Share2,
   CornerDownRight,
   Layers,
+  CheckCheck,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -122,6 +123,12 @@ export interface MessageActionContext {
    * this is the touch path to the desktop hover swatch on the row's rail.
    */
   onReassignConversation?: () => void
+  /**
+   * Advance the stream's read pointer to this message. Lets the user mark
+   * read up to a chosen row where scroll-driven marking is fiddly (notably
+   * mobile). The row only signals intent; the stream decides partial-vs-full.
+   */
+  onMarkReadUpToHere?: () => void
 }
 
 /** A top-level action in the message context menu. */
@@ -356,6 +363,14 @@ export const messageActions: MessageAction[] = [
     icon: CornerDownRight,
     when: (ctx) => !!ctx.onShowMoveDetails,
     action: (ctx) => ctx.onShowMoveDetails?.(),
+  },
+  {
+    id: "mark-read-up-to-here",
+    label: "Mark read up to here",
+    icon: CheckCheck,
+    separatorBefore: true,
+    when: (ctx) => !!ctx.onMarkReadUpToHere,
+    action: (ctx) => ctx.onMarkReadUpToHere?.(),
   },
   {
     id: "copy-as-markdown",

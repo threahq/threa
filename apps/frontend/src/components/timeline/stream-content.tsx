@@ -90,6 +90,7 @@ import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { localStartOfDayMs } from "@/lib/dates"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
+import { addMarkReadUpToHereListener } from "@/lib/mark-read-events"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -1529,6 +1530,12 @@ export function StreamContent({
   const lastLoadedEventIdRef = useRef<string | undefined>(undefined)
   lastLoadedEventIdRef.current = events.length > 0 ? events[events.length - 1].id : undefined
 
+  // `markAsRead` is a fresh callback each render (its mutation dep churns), so
+  // read it from a ref to keep the document listener below attached once per
+  // stream rather than re-subscribing on every live message.
+  const markAsReadRef = useRef(markAsRead)
+  markAsReadRef.current = markAsRead
+
   // Escape "escapes the unread block" (desktop, Slack's Esc-marks-channel-read):
   // mark the stream fully read, dismiss the persistent unread divider, and
   // resume tailing the live bottom. Scoped to when the divider is actually shown
@@ -1566,6 +1573,19 @@ export function StreamContent({
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [isMobile, isDraft, dividerEventId, isSearchOpen, markAsRead, streamId, dismissUnreadDivider, scrollToBottom])
+
+  // Manual "Mark read up to here" from a message action. The pointer is partial
+  // unless the chosen row is the last loaded one — marking up to a mid-window
+  // event must not optimistically zero the badge (the count resolves to the
+  // true remainder on the `stream:read` round-trip; see markAsRead partial).
+  useEffect(() => {
+    return addMarkReadUpToHereListener((detail) => {
+      if (detail.streamId !== streamId) return
+      markAsReadRef.current(streamId, detail.eventId, {
+        partial: detail.eventId !== lastLoadedEventIdRef.current,
+      })
+    })
+  }, [streamId])
 
   const queryClient = useQueryClient()
   const isPublicChannel = stream?.type === StreamTypes.CHANNEL && stream?.visibility === Visibilities.PUBLIC

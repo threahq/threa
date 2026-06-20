@@ -363,6 +363,35 @@ describe("share action (modal)", () => {
   })
 })
 
+describe("mark-read-up-to-here action", () => {
+  it("is hidden when onMarkReadUpToHere is not supplied", () => {
+    const actions = getVisibleActions(createContext())
+    expect(actions.find((a) => a.id === "mark-read-up-to-here")).toBeUndefined()
+  })
+
+  it("is visible when onMarkReadUpToHere is supplied", () => {
+    const actions = getVisibleActions(createContext({ onMarkReadUpToHere: () => {} }))
+    expect(actions.find((a) => a.id === "mark-read-up-to-here")).toBeDefined()
+  })
+
+  it("invokes the onMarkReadUpToHere callback when run", () => {
+    const onMarkReadUpToHere = vi.fn()
+    const ctx = createContext({ onMarkReadUpToHere })
+    const action = getVisibleActions(ctx).find((a) => a.id === "mark-read-up-to-here")!
+    action.action!(ctx)
+    expect(onMarkReadUpToHere).toHaveBeenCalledOnce()
+  })
+
+  it("renders as its own row above the copy group (not part of it)", () => {
+    const ctx = createContext({ onMarkReadUpToHere: () => {} })
+    const items = groupVisibleActions(getVisibleActions(ctx))
+    const markReadRow = items.find((i) => i.kind === "single" && i.action.id === "mark-read-up-to-here")
+    expect(markReadRow).toBeDefined()
+    const copyGroup = items.find((i) => i.kind === "group" && i.members[0]?.id === "copy-as-markdown")
+    expect(copyGroup).toBeDefined()
+  })
+})
+
 describe("groupVisibleActions", () => {
   it("returns single items for ungrouped actions and groups same-id ones", () => {
     const ctx = createContext()
