@@ -72,7 +72,7 @@ export function BotChannelsSection({ workspaceId, botId, isArchived }: BotChanne
       {grantedStreams.length > 0 && (
         <div className="rounded-md border divide-y">
           {grantedStreams.map((grant) => (
-            <div key={grant.streamId} className="flex items-center justify-between px-3 py-2 group">
+            <div key={grant.streamId} className="flex items-center justify-between px-3 py-2 group reveal-host">
               <div className="flex items-center gap-2 min-w-0">
                 <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                 <span className="text-sm truncate">{grant.slug ?? grant.displayName ?? grant.streamId}</span>
@@ -81,7 +81,7 @@ export function BotChannelsSection({ workspaceId, botId, isArchived }: BotChanne
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0"
+                  className="reveal-actions h-6 w-6 shrink-0"
                   onClick={() => revokeStreamMutation.mutate(grant.streamId)}
                   disabled={revokeStreamMutation.isPending}
                 >

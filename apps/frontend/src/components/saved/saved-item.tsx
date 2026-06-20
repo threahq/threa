@@ -12,7 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { RelativeTime } from "@/components/relative-time"
 import { ReminderPopoverContent } from "@/components/timeline/reminder-popover-content"
 import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
@@ -89,7 +89,7 @@ export function SavedItem({ saved, workspaceId, onMarkDone, onArchive, onRestore
   return (
     <div
       className={cn(
-        "group flex items-start gap-3 px-4 py-3 hover:bg-muted/40 border-b border-border/50",
+        "group reveal-host flex items-start gap-3 px-4 py-3 hover:bg-muted/40 border-b border-border/50",
         isUnavailable && "opacity-75"
       )}
     >
@@ -132,21 +132,12 @@ interface SavedRowActionsProps {
  */
 function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore, onDelete }: SavedRowActionsProps) {
   const status = saved.status as SavedStatus
-  const isTouch = useCoarsePointer()
+  const isTouch = useInputMode() === "touch"
   const [sheetOpen, setSheetOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
 
   return (
-    <div
-      className={cn(
-        // Mobile: always visible. Desktop: hover-reveal. `has-[[data-state=open]]` keeps
-        // the bar visible while the reminder popover is open so it doesn't disappear
-        // out from under the user's pointer.
-        "flex items-center gap-1 shrink-0",
-        "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 sm:transition-opacity",
-        "has-[[data-state=open]]:opacity-100"
-      )}
-    >
+    <div className={cn("flex items-center gap-1 shrink-0", "reveal-actions")}>
       {status === "saved" &&
         // Touch gets the same bottom-sheet picker as the message-level "Set
         // reminder" flow; fine-pointer keeps the hover/click popover. Either way

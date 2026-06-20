@@ -135,12 +135,12 @@ export function LinkPreviewCard({
         target="_blank"
         rel="noopener noreferrer"
         className={cn(
-          "group/preview relative block overflow-hidden rounded-lg border bg-muted/30 transition-all max-w-xs",
+          "group/preview reveal-host relative block overflow-hidden rounded-lg border bg-muted/30 transition-all max-w-xs",
           "hover:border-primary hover:shadow-sm",
           isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
         )}
       >
-        <div className="absolute top-1.5 right-1.5 z-10 flex gap-1 opacity-0 group-hover/preview:opacity-100 transition-opacity">
+        <div className="reveal-actions absolute top-1.5 right-1.5 z-10 flex gap-1">
           {onDismiss && (
             <Button
               variant="secondary"
@@ -184,7 +184,7 @@ export function LinkPreviewCard({
     <div
       data-native-context="true"
       className={cn(
-        "group/preview relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
+        "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
         "hover:border-primary/50 hover:shadow-sm",
         isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
       )}
@@ -212,7 +212,7 @@ export function LinkPreviewCard({
         )}
         <span className="text-xs text-muted-foreground truncate">{headerLabel}</span>
         <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
-        <div className="flex gap-1 opacity-0 group-hover/preview:opacity-100 transition-opacity">
+        <div className="reveal-actions flex gap-1">
           {onDismiss && (
             <Button
               variant="ghost"

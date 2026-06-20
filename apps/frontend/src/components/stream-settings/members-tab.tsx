@@ -321,7 +321,10 @@ export function StreamBotsSection({
       {botsWithAccess.length > 0 && (
         <div className="space-y-1">
           {botsWithAccess.map((bot) => (
-            <div key={bot.id} className="flex items-center justify-between rounded-md border px-3 py-2 group">
+            <div
+              key={bot.id}
+              className="flex items-center justify-between rounded-md border px-3 py-2 group reveal-host"
+            >
               <div className="flex items-center gap-2.5 min-w-0">
                 <ActorAvatar actorId={bot.id} actorType="bot" workspaceId={workspaceId} size="sm" alt={bot.name} />
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -333,7 +336,7 @@ export function StreamBotsSection({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0"
+                  className="reveal-actions h-6 w-6 shrink-0"
                   onClick={() => revokeMutation.mutate(bot.id)}
                   disabled={revokeMutation.isPending}
                 >

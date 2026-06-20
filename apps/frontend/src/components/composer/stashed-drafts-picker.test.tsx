@@ -3,7 +3,7 @@ import { render, screen, fireEvent, createEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { StashedDraftsPicker } from "./stashed-drafts-picker"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import type { CachedDraft, DraftPreview } from "@/hooks"
 
 let isTouchMockValue = false
@@ -40,7 +40,7 @@ describe("StashedDraftsPicker", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     isTouchMockValue = false
-    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouchMockValue)
+    vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouchMockValue ? "touch" : "mouse"))
   })
 
   it("keeps the editor focused when pressing popover buttons on touch", async () => {

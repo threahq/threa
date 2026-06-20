@@ -9,7 +9,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { SidebarFooter } from "./sidebar-footer"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as drawerModule from "@/components/ui/drawer"
 
@@ -48,7 +48,7 @@ describe("SidebarFooter", () => {
       setMenuOpen: vi.fn(),
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
-    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouch.value)
+    vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouch.value ? "touch" : "mouse"))
 
     // The footer mounts useStatusAutoExpiry and useNotificationPauseAutoExpiry,
     // which resolve their mutations through the services context the unit

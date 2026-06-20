@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatSendCountdown } from "@/lib/dates"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { RelativeTime } from "@/components/relative-time"
 import { ScheduledActionDrawer } from "./scheduled-action-drawer"
@@ -22,17 +22,17 @@ interface ScheduledItemProps {
 
 /**
  * List row for the /scheduled page. Mirrors the SavedItem 3-line layout —
- * stream chip header, message preview, time-until footer — and the
- * hover-reveal action cluster on fine-pointer devices. On touch we replace the
- * tiny action icons with a long-press → bottom-sheet drawer (the convention used
- * by the timeline's MessageActionDrawer): tap navigates / opens edit, hold
- * to reveal Send-now / Edit / Cancel.
+ * stream chip header, message preview, time-until footer — and the action
+ * cluster (Send-now / Edit / Cancel): hover/focus-reveal for a mouse, persistent
+ * for a finger so the icons stay reachable. Touch additionally gets a long-press
+ * → bottom-sheet drawer (the convention used by the timeline's
+ * MessageActionDrawer): tap navigates / opens edit, hold for the same actions.
  *
  * Sent rows behave as links to the live message in its stream; pending and
  * failed rows route the body click into the edit dialog (via onEdit).
  */
 export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSendNow }: ScheduledItemProps) {
-  const isTouch = useCoarsePointer()
+  const touchCapable = useTouchCapable()
   // Always render in the device's local timezone — using a stored
   // `preferences.timezone` would silently disagree with native pickers
   // (which always operate in device-local), so a row scheduled at 07:46
@@ -72,9 +72,10 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
   const pendingLabel = isPending ? labelOrSoon : null
 
   const [drawerOpen, setDrawerOpen] = useState(false)
-  // Long-press only on touch, only for actionable rows. Sent/cancelled rows
-  // have no actions so we don't trap their tap on a deferred timer.
-  const longPressEnabled = isTouch && (isPending || isFailed)
+  // Long-press is an additive touch gesture (a mouse never fires it), only for
+  // actionable rows. Sent/cancelled rows have no actions so we don't trap their
+  // tap on a deferred timer.
+  const longPressEnabled = touchCapable && (isPending || isFailed)
   const longPress = useLongPress({
     enabled: longPressEnabled,
     onLongPress: () => setDrawerOpen(true),
@@ -127,7 +128,7 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
     <>
       <div
         className={cn(
-          "group flex items-start gap-3 border-b border-border/50 px-4 py-3 hover:bg-muted/40",
+          "group reveal-host flex items-start gap-3 border-b border-border/50 px-4 py-3 hover:bg-muted/40",
           isFailed && "border-l-4 border-l-destructive",
           longPress.isPressed && "bg-muted/40"
         )}
@@ -151,33 +152,21 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
           </button>
         )}
 
-        {/* Fine-pointer hover-reveal actions. Hidden on touch — long-press
-            handles the drawer, no tiny tap targets. The wrapper owns the
-            opacity/hover/popover-open visibility rules; ScheduledActions
-            renders only the icon buttons. */}
-        {!isTouch && (
-          <div
-            className={cn(
-              "flex shrink-0 items-center gap-1 opacity-0 transition-opacity",
-              "group-hover:opacity-100 focus-within:opacity-100",
-              // Keep the cluster visible while any popover hosted by an action
-              // is open (matches SavedItem); without this, the trigger would
-              // disappear under the user's pointer the moment the popover mounts.
-              "has-[[data-state=open]]:opacity-100"
-            )}
-          >
-            <ScheduledActions
-              scheduled={scheduled}
-              variant="hover-cluster"
-              onEdit={onEdit}
-              onCancel={onCancel}
-              onSendNow={onSendNow}
-            />
-          </div>
-        )}
+        {/* Persistent on touch (send-now/cancel stay reachable by finger),
+            hover/focus-reveal for a mouse. ScheduledActions renders only the
+            icon buttons; reveal-actions owns the visibility. */}
+        <div className="flex shrink-0 items-center gap-1 reveal-actions">
+          <ScheduledActions
+            scheduled={scheduled}
+            variant="hover-cluster"
+            onEdit={onEdit}
+            onCancel={onCancel}
+            onSendNow={onSendNow}
+          />
+        </div>
       </div>
 
-      {isTouch && (
+      {touchCapable && (
         <ScheduledActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}

@@ -6,7 +6,7 @@ import { LabelableResourceTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import * as drawerModule from "@/components/ui/drawer"
 import { StreamLabelStack } from "./stream-label-stack"
 import type { CachedLabel, CachedLabelAssignment } from "@/hooks"
@@ -69,7 +69,7 @@ function mount() {
 describe("StreamLabelStack", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(false)
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
     vi.spyOn(authModule, "useAuth").mockReturnValue({
       user: { id: "workos_me" },
     } as unknown as ReturnType<typeof authModule.useAuth>)
@@ -101,7 +101,7 @@ describe("StreamLabelStack", () => {
   })
 
   it("renders every label as a name-pill in the touch fan-out", () => {
-    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
     // Passthrough the vaul Drawer primitives — jsdom can't drive vaul's
     // open animation, so render the content inline to assert the revealed set.
     const Passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
@@ -120,7 +120,7 @@ describe("StreamLabelStack", () => {
   })
 
   it("links each fanned-out chip to the label's landing page", () => {
-    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
     const Passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
     spyOnExport(drawerModule, "Drawer").mockReturnValue(Passthrough as never)
     spyOnExport(drawerModule, "DrawerTrigger").mockReturnValue(Passthrough as never)

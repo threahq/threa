@@ -214,7 +214,7 @@ export function ConversationOverlayRow({
 
   return (
     <div className={cn("transition-opacity duration-200", isDimmed && "opacity-40 saturate-50")}>
-      <div data-testid="conversation-overlay-row" className="group/convrow relative" ref={registerRow}>
+      <div data-testid="conversation-overlay-row" className="group/convrow reveal-host relative" ref={registerRow}>
         {/* Row context lets the message action menu/drawer (deep inside
             children) surface the "Move to conversation…" correction — the
             touch path to what the desktop hover swatch below does. */}
@@ -263,10 +263,8 @@ export function ConversationOverlayRow({
               aria-label="Correct conversation for this message"
               title="Correct conversation"
               className={cn(
-                "absolute left-1 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full",
+                "reveal-actions absolute left-1 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full",
                 "border border-border/60 bg-popover shadow-sm sm:flex",
-                "opacity-0 transition-opacity focus-visible:opacity-100 group-hover/convrow:opacity-100",
-                "data-[state=open]:opacity-100",
                 isPending && "opacity-100"
               )}
             >

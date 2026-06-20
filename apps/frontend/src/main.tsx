@@ -7,6 +7,9 @@ import { setNotificationIntent } from "./lib/notification-intent"
 import { hydrateCollapseCache } from "./lib/markdown/collapse-cache"
 import { applyPersistedComposerHeight } from "./lib/composer-height-storage"
 import { installCrashRecovery } from "./lib/crash-recovery"
+// Side-effect import: attaches the live pointer listener and sets <html data-input>
+// before first paint so the CSS reveal model (.reveal-*) is correct from the start.
+import "./hooks/use-input-mode"
 import "./index.css"
 
 // Catch uncaught errors that wedge the app after the PWA returns from the

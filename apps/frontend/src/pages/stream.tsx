@@ -480,7 +480,7 @@ export function StreamPage() {
       <StreamTitlePreview name={streamName}>
         <div
           className={cn(
-            "group inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 transition-colors min-w-0",
+            "group reveal-host inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 transition-colors min-w-0",
             canRenameScratchpad
               ? "cursor-pointer hover:bg-accent/50 hover:outline hover:outline-1 hover:outline-border"
               : "cursor-default"
@@ -495,9 +495,7 @@ export function StreamPage() {
               {isDraft && <span className="ml-2 text-xs font-normal text-muted-foreground">(draft)</span>}
             </h1>
           )}
-          {canRenameScratchpad && (
-            <Pencil className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-          )}
+          {canRenameScratchpad && <Pencil className="reveal-actions h-3.5 w-3.5 shrink-0" />}
         </div>
       </StreamTitlePreview>
     )

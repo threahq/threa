@@ -7,7 +7,8 @@ import { StreamItem } from "./stream-item"
 import type { StreamItemData } from "./types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
@@ -78,7 +79,11 @@ describe("StreamItem", () => {
       getActorAvatar: () => null,
     } as unknown as ReturnType<typeof hooksModule.useActors>)
 
-    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => touchState.isTouchValue)
+    // Active-input presentation (context-menu suppression, select-none) keys off
+    // useInputMode; the long-press gesture keys off useTouchCapable. Drive both
+    // from the same fixture flag so a touch fixture gets both behaviors.
+    vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (touchState.isTouchValue ? "touch" : "mouse"))
+    vi.spyOn(touchCapableModule, "useTouchCapable").mockImplementation(() => touchState.isTouchValue)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
       date,

@@ -4,6 +4,53 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  /*
+   * Action-affordance reveal model — see hooks/use-input-mode.tsx.
+   * Keyed on `<html data-input>` (the input the user is actively using), NOT on
+   * `@media (hover)`. A mouse on a touchscreen laptop is reported as `hover:none`
+   * by the browser, so the old `group-hover` reveal (which Tailwind wraps in
+   * `@media (hover: hover)`) never fired for it — actions became unreachable.
+   * Here a mouse always gets a hover/focus reveal; a finger gets the affordance
+   * persistently (.reveal-actions) or reaches actions via long-press
+   * (.reveal-actions-hover-only stays hidden for touch).
+   *
+   * Apply `.reveal-host` to the hoverable container (the row) and one of the
+   * reveal classes to the affordance cluster inside it.
+   */
+  .reveal-actions {
+    opacity: 1;
+  }
+  .reveal-actions-hover-only {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  html[data-input="mouse"] .reveal-actions,
+  html[data-input="mouse"] .reveal-actions-hover-only {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+  }
+  html[data-input="mouse"] .reveal-host:hover .reveal-actions,
+  html[data-input="mouse"] .reveal-host:hover .reveal-actions-hover-only,
+  html[data-input="mouse"] .reveal-actions:focus-within,
+  html[data-input="mouse"] .reveal-actions-hover-only:focus-within,
+  html[data-input="mouse"] .reveal-actions:has([data-state="open"]),
+  html[data-input="mouse"] .reveal-actions-hover-only:has([data-state="open"]) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Keyboard focus / open menu reveals even for touch and before JS sets the
+     attribute, so the affordance is never trapped. */
+  .reveal-actions-hover-only:focus-within,
+  .reveal-actions-hover-only:has([data-state="open"]) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 /*
  * Threa - Golden Thread Theme
  *

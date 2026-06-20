@@ -16,7 +16,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { filterUsersOnly, useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
@@ -69,12 +69,12 @@ interface SearchFilterMenuProps {
  * query string via `addFilterToQuery`, so the query stays the single source
  * of truth and the result renders as a normal removable chip.
  *
- * Popover for fine pointers, bottom drawer on touch (same split as
+ * Popover for mouse input, bottom drawer when a finger is active (same split as
  * `SearchableSelect`) — typing filter syntax on a touch keyboard is exactly
- * the flow this menu replaces.
+ * the flow this menu replaces. A mouse on a touchscreen laptop gets the popover.
  */
 export function SearchFilterMenu({ workspaceId, query, onQueryChange, className }: SearchFilterMenuProps) {
-  const isTouch = useCoarsePointer()
+  const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<FilterKind | null>(null)
 

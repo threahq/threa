@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 
 interface SearchableSelectProps<T> {
@@ -63,7 +63,9 @@ export function SearchableSelect<T>({
   prefixContent,
   "data-testid": testId,
 }: SearchableSelectProps<T>) {
-  const isTouch = useCoarsePointer()
+  // Drawer-vs-popover presentation keys off the active input mode, so a mouse on
+  // a touchscreen laptop gets the popover and only a finger gets the drawer.
+  const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
 

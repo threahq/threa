@@ -11,7 +11,7 @@ import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import {
   useUpdateScheduled,
   useLockScheduledForEdit,
@@ -51,9 +51,10 @@ interface ScheduledEditDialogProps {
  */
 export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: ScheduledEditDialogProps) {
   const isMobile = useIsMobile()
-  // Selection toolbar is a hover/fine-pointer popover, so it keys off input
-  // capability (a touch iPad suppresses it) rather than viewport width.
-  const isTouch = useCoarsePointer()
+  // Selection toolbar is a hover/mouse affordance, so it keys off the active
+  // input mode (a finger suppresses it) rather than viewport width — a mouse on
+  // a touchscreen laptop still gets it.
+  const disableSelectionToolbar = useInputMode() === "touch"
   const updateMutation = useUpdateScheduled(workspaceId)
   const lockMutation = useLockScheduledForEdit(workspaceId)
   const releaseLockMutation = useReleaseScheduledEditLock(workspaceId)
@@ -269,7 +270,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       messageSendMode="cmdEnter"
       disabled={isSaving}
       autoFocus
-      disableSelectionToolbar={isTouch}
+      disableSelectionToolbar={disableSelectionToolbar}
       blurOnEscape
       scopeId={scheduled?.id}
       memoAnchorStreamId={scheduled?.streamId}

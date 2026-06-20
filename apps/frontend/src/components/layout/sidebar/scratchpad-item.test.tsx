@@ -6,6 +6,7 @@ import { ScratchpadItem } from "./scratchpad-item"
 import type { StreamItemData } from "./types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
 import * as urgencyTrackingModule from "./use-urgency-tracking"
 import * as itemDrawerModule from "./use-sidebar-item-drawer"
@@ -101,13 +102,15 @@ describe("ScratchpadItem", () => {
 
     vi.spyOn(urgencyTrackingModule, "useUrgencyTracking").mockImplementation(() => undefined)
 
+    vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")
+
     vi.spyOn(itemDrawerModule, "useSidebarItemDrawer").mockImplementation(
       ({ collapseOnMobile }: { collapseOnMobile: () => void }) =>
         ({
           drawerOpen: false,
           setDrawerOpen: vi.fn(),
           handleClick: () => collapseOnMobile(),
-          isTouch: false,
+          touchCapable: false,
           longPress: {
             handlers: {
               onTouchStart: undefined,

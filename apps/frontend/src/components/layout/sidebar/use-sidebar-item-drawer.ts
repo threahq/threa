@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type MouseEvent } from "react"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 
 interface UseSidebarItemDrawerOptions {
@@ -8,7 +8,9 @@ interface UseSidebarItemDrawerOptions {
 }
 
 export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile }: UseSidebarItemDrawerOptions) {
-  const isTouch = useCoarsePointer()
+  // Long-press is an additive touch gesture, so it's enabled whenever a finger
+  // could be used (capability) — a mouse never fires it.
+  const touchCapable = useTouchCapable()
   const preventNavigationUntilRef = useRef(0)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -20,7 +22,7 @@ export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile }: UseSid
 
   const longPress = useLongPress({
     onLongPress: openDrawer,
-    enabled: isTouch && canOpenDrawer,
+    enabled: touchCapable && canOpenDrawer,
   })
 
   const handleClick = useCallback(
@@ -39,7 +41,7 @@ export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile }: UseSid
     drawerOpen,
     setDrawerOpen,
     handleClick,
-    isTouch,
+    touchCapable,
     longPress,
   }
 }

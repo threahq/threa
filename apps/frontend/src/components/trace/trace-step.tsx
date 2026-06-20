@@ -540,7 +540,7 @@ function renderStepContent(
     case "message_sent": {
       const messagePreview = content.length > 100 ? content.slice(0, 100) + "..." : content
       return (
-        <div className="group">
+        <div className="group reveal-host">
           <span className="text-muted-foreground">Sent message: </span>
           <span className="inline">
             "<MarkdownContent content={messagePreview} className="inline text-sm" />"
@@ -548,7 +548,7 @@ function renderStepContent(
           {messageLink && (
             <Link
               to={messageLink}
-              className="inline-flex items-center gap-1 ml-2 text-xs text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+              className="reveal-actions inline-flex items-center gap-1 ml-2 text-xs text-muted-foreground hover:text-primary"
             >
               View message
               <ExternalLink className="w-3 h-3" />
@@ -561,7 +561,7 @@ function renderStepContent(
     case "message_edited": {
       const messagePreview = content.length > 100 ? content.slice(0, 100) + "..." : content
       return (
-        <div className="group">
+        <div className="group reveal-host">
           <span className="text-muted-foreground">Updated previous message: </span>
           <span className="inline">
             "<MarkdownContent content={messagePreview} className="inline text-sm" />"
@@ -569,7 +569,7 @@ function renderStepContent(
           {messageLink && (
             <Link
               to={messageLink}
-              className="inline-flex items-center gap-1 ml-2 text-xs text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+              className="reveal-actions inline-flex items-center gap-1 ml-2 text-xs text-muted-foreground hover:text-primary"
             >
               View message
               <ExternalLink className="w-3 h-3" />

@@ -6,6 +6,7 @@ import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -131,12 +132,15 @@ export function ScratchpadItem({
         }
       : null
 
-  const { drawerOpen, setDrawerOpen, handleClick, isTouch, longPress } = useSidebarItemDrawer({
+  const { drawerOpen, setDrawerOpen, handleClick, touchCapable, longPress } = useSidebarItemDrawer({
     canOpenDrawer: actions.length > 0,
     collapseOnMobile,
   })
+  // Presentation (select-none, right-click suppression, hover preview) follows
+  // the active input; the long-press gesture follows touch capability above.
+  const isTouchInput = useInputMode() === "touch"
 
-  const showHoverPreview = compact && showPreviewOnHover && !isTouch && !!preview?.content
+  const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
 
   // E2E and companion-on are mutually exclusive (INV-E1 forces companion off
   // server-side for encrypted streams), so a single decoration slot is enough
@@ -150,21 +154,21 @@ export function ScratchpadItem({
 
   return (
     <>
-      <SidebarActionContextMenu actions={actions} disabled={isTouch} focusRef={itemRef}>
-        <div className="group relative">
+      <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
+        <div className="group reveal-host relative">
           <Link
             ref={itemRef}
             to={`/w/${workspaceId}/s/${streamWithPreview.id}`}
             onClick={handleClick}
-            onTouchStart={isTouch ? longPress.handlers.onTouchStart : undefined}
-            onTouchEnd={isTouch ? longPress.handlers.onTouchEnd : undefined}
-            onTouchMove={isTouch ? longPress.handlers.onTouchMove : undefined}
-            onContextMenu={isTouch ? longPress.handlers.onContextMenu : undefined}
+            onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
+            onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
+            onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
+            onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
             className={cn(
               "flex items-stretch rounded-lg text-sm transition-colors",
               isActive ? "bg-primary/10" : "hover:bg-muted/50",
               hasUnread && !isActive && "bg-primary/5 hover:bg-primary/10",
-              isTouch && actions.length > 0 && "select-none",
+              isTouchInput && actions.length > 0 && "select-none",
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
@@ -203,7 +207,7 @@ export function ScratchpadItem({
                   toEmoji={toEmoji}
                   compact={compact}
                   showPreviewOnHover={showPreviewOnHover}
-                  isTouch={isTouch}
+                  isTouch={isTouchInput}
                   e2eEnabled={streamWithPreview.e2eEnabled}
                 />
               </div>
@@ -230,7 +234,7 @@ export function ScratchpadItem({
           onOpenChange={setSectionPickerOpen}
         />
       )}
-      {isTouch && actions.length > 0 && (
+      {touchCapable && actions.length > 0 && (
         <SidebarActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
