@@ -1968,7 +1968,7 @@ export function StreamContent({
                 <div
                   // Sits clearly below the floating date pill (top-2, ~30px tall)
                   // so the top-center affordances never overlap.
-                  className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1"
+                  className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
                   style={{ top: "3.5rem" }}
                 >
                   <Button
@@ -1985,11 +1985,11 @@ export function StreamContent({
                   <Button
                     variant="secondary"
                     size="icon"
-                    className="pointer-events-auto h-8 w-8 shadow-lg"
+                    className="pointer-events-auto h-9 w-9 shadow-lg"
                     onClick={escapeUnread}
                     aria-label="Mark all read"
                   >
-                    <X className="h-3.5 w-3.5" />
+                    <X className="h-4 w-4" />
                   </Button>
                 </div>
               )}
