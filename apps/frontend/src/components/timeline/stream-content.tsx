@@ -90,7 +90,7 @@ import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { localStartOfDayMs } from "@/lib/dates"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
-import { addMarkReadUpToHereListener, addEscapeUnreadListener } from "@/lib/mark-read-events"
+import { addMarkReadUpToHereListener, addEscapeUnreadListener, addMarkUnreadListener } from "@/lib/mark-read-events"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -1493,7 +1493,7 @@ export function StreamContent({
   useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
 
   const isMobile = useIsMobile()
-  const { markAsRead, getUnreadCount } = useUnreadCounts(workspaceId)
+  const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)
   const unreadCount = getUnreadCount(streamId)
 
   // Track live-arriving messages from other users for brief "new" indicator.
@@ -1535,6 +1535,8 @@ export function StreamContent({
   // stream rather than re-subscribing on every live message.
   const markAsReadRef = useRef(markAsRead)
   markAsReadRef.current = markAsRead
+  const markUnreadRef = useRef(markUnread)
+  markUnreadRef.current = markUnread
 
   // "Escape the unread block": mark the stream fully read, dismiss the
   // persistent unread divider, and resume tailing the live bottom. Shared by
@@ -1599,6 +1601,16 @@ export function StreamContent({
       markAsReadRef.current(streamId, detail.eventId, {
         partial: detail.eventId !== lastLoadedEventIdRef.current,
       })
+    })
+  }, [streamId])
+
+  // Manual "Mark as unread" — move the read pointer back so the chosen message
+  // and everything after it are unread. The count rises on the stream:read_set
+  // round-trip (markUnread reseeds only the pointer optimistically).
+  useEffect(() => {
+    return addMarkUnreadListener((detail) => {
+      if (detail.streamId !== streamId) return
+      markUnreadRef.current(streamId, detail.messageId)
     })
   }, [streamId])
 

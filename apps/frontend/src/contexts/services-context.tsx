@@ -43,6 +43,7 @@ export interface StreamService {
   getEventsAround: typeof streamsApi.getEventsAround
   getEventsAroundDate: typeof streamsApi.getEventsAroundDate
   markAsRead: typeof streamsApi.markAsRead
+  markUnread: typeof streamsApi.markUnread
   checkSlugAvailable: typeof streamsApi.checkSlugAvailable
   setNotificationLevel: typeof streamsApi.setNotificationLevel
   addMember: typeof streamsApi.addMember

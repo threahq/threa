@@ -16,6 +16,7 @@ import {
   CornerDownRight,
   Layers,
   CheckCheck,
+  CircleDot,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -129,6 +130,11 @@ export interface MessageActionContext {
    * mobile). The row only signals intent; the stream decides partial-vs-full.
    */
   onMarkReadUpToHere?: () => void
+  /**
+   * Move the read pointer back so this message and everything after it are
+   * unread (Slack's "mark as unread").
+   */
+  onMarkUnread?: () => void
 }
 
 /** A top-level action in the message context menu. */
@@ -371,6 +377,13 @@ export const messageActions: MessageAction[] = [
     separatorBefore: true,
     when: (ctx) => !!ctx.onMarkReadUpToHere,
     action: (ctx) => ctx.onMarkReadUpToHere?.(),
+  },
+  {
+    id: "mark-unread",
+    label: "Mark as unread",
+    icon: CircleDot,
+    when: (ctx) => !!ctx.onMarkUnread,
+    action: (ctx) => ctx.onMarkUnread?.(),
   },
   {
     id: "copy-as-markdown",

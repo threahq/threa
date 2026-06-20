@@ -108,6 +108,27 @@ export function applyStreamReadOrdinal(
   }
 }
 
+/**
+ * Apply a `stream:read_set` absolute read position. Unlike
+ * `applyStreamReadOrdinal`, the read position is SET, not max-merged: an
+ * explicit "mark as unread" moves the pointer BACKWARD, so unread must be
+ * allowed to rise. The latest ordinal is still a monotonic stream fact and
+ * max-merges. Mention/activity counts are left untouched — restoring those
+ * badges for the re-unread range is a deliberate follow-up.
+ */
+export function applyStreamReadSet(
+  state: UnreadCounterState,
+  streamId: string,
+  lastReadOrdinal: number
+): UnreadCounterState {
+  const latest = Math.max(state.latestOrdinals?.[streamId] ?? 0, lastReadOrdinal)
+  return {
+    ...state,
+    latestOrdinals: { ...state.latestOrdinals, [streamId]: latest },
+    unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, latest - lastReadOrdinal) },
+  }
+}
+
 /** Apply a `stream:read_all` reads array — per-stream `applyStreamReadOrdinal`. */
 export function applyStreamsReadAllOrdinals(
   state: UnreadCounterState,

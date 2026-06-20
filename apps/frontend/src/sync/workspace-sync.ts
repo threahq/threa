@@ -53,6 +53,7 @@ import {
   applyActivityCounts,
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
+  applyStreamReadSet,
   applyStreamsReadAllOrdinals,
 } from "./unread-counters"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
@@ -126,6 +127,19 @@ interface StreamsReadAllPayload {
   streamIds: string[]
   /** Absolute read position per updated stream. */
   reads: Array<{ streamId: string; lastReadOrdinal: number }>
+}
+
+// Read-pointer SET from an explicit "mark as unread". Unlike stream:read, the
+// ordinal is applied as a plain set (not max-merged) so the pointer can move
+// backward and unread can rise. lastReadEventId is null when the pointer lands
+// before the first message.
+interface StreamReadSetPayload {
+  workspaceId: string
+  authorId: string
+  streamId: string
+  lastReadEventId: string | null
+  lastReadSequence?: string
+  lastReadOrdinal: number
 }
 
 // Author-scoped: the user's own mute/notify choice for one stream, mirrored to
@@ -864,6 +878,55 @@ export function registerWorkspaceSocketHandlers(
     navigator.serviceWorker?.controller?.postMessage({
       type: SW_MSG_CLEAR_NOTIFICATIONS,
       streamId: payload.streamId,
+    })
+  }
+
+  // Handle a read-pointer SET ("mark as unread") — from this or another session
+  // of the same user. Mirrors the pointer backward and SETs the unread count;
+  // never dismisses notifications (this re-unreads, it doesn't clear).
+  const handleStreamReadSet = (payload: StreamReadSetPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+      if (!old) return old
+      return {
+        ...old,
+        streamMemberships: old.streamMemberships.map((membership) =>
+          membership.streamId === payload.streamId
+            ? { ...membership, lastReadEventId: payload.lastReadEventId }
+            : membership
+        ),
+      }
+    })
+
+    commitCounter((state) => applyStreamReadSet(state, payload.streamId, payload.lastReadOrdinal))
+
+    queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
+      streamKeys.bootstrap(workspaceId, payload.streamId),
+      (old) => {
+        if (!old?.membership) return old
+        return {
+          ...old,
+          membership: { ...old.membership, lastReadEventId: payload.lastReadEventId },
+        }
+      }
+    )
+
+    db.transaction("rw", [db.streams, db.streamMemberships], async () => {
+      const now = Date.now()
+      await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
+
+      const membershipId = `${workspaceId}:${payload.streamId}`
+      const membership = await db.streamMemberships.get(membershipId)
+      if (membership) {
+        await db.streamMemberships.put({
+          ...membership,
+          lastReadEventId: payload.lastReadEventId,
+          id: membershipId,
+          workspaceId,
+          _cachedAt: now,
+        })
+      }
     })
   }
 
@@ -1620,6 +1683,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("workspace_user:removed", handleWorkspaceUserRemoved)
   socket.on("workspace_user:updated", handleWorkspaceUserUpdated)
   socket.on("stream:read", handleStreamRead)
+  socket.on("stream:read_set", handleStreamReadSet)
   socket.on("stream:read_all", handleStreamReadAll)
   socket.on("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
   socket.on("stream:activity", handleStreamActivity)
@@ -1668,6 +1732,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("workspace_user:removed", handleWorkspaceUserRemoved)
     socket.off("workspace_user:updated", handleWorkspaceUserUpdated)
     socket.off("stream:read", handleStreamRead)
+    socket.off("stream:read_set", handleStreamReadSet)
     socket.off("stream:read_all", handleStreamReadAll)
     socket.off("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
     socket.off("stream:activity", handleStreamActivity)

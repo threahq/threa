@@ -75,7 +75,7 @@ import { ShareMessageModal } from "@/components/share/share-message-modal"
 import { useIsOnline } from "@/components/layout/connection-status"
 import type { BatchTimelineState } from "./event-list"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
-import { dispatchMarkReadUpToHere } from "@/lib/mark-read-events"
+import { dispatchMarkReadUpToHere, dispatchMarkUnread } from "@/lib/mark-read-events"
 import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlayRow } from "./conversation-overlay/row-context"
 
@@ -1155,6 +1155,7 @@ function SentMessageEvent({
       onShowMoveDetails: movedTombstoneEvent ? () => setTimeout(() => setMoveDetailsOpen(true), 0) : undefined,
       onReassignConversation: conversationOverlayRow && !batch?.enabled ? handleRequestConversationPicker : undefined,
       onMarkReadUpToHere: () => dispatchMarkReadUpToHere(streamId, event.id),
+      onMarkUnread: () => dispatchMarkUnread(streamId, payload.messageId),
     }),
     [
       payload.contentMarkdown,

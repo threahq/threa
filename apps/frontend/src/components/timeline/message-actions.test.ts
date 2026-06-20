@@ -392,6 +392,32 @@ describe("mark-read-up-to-here action", () => {
   })
 })
 
+describe("mark-unread action", () => {
+  it("is hidden when onMarkUnread is not supplied", () => {
+    const actions = getVisibleActions(createContext())
+    expect(actions.find((a) => a.id === "mark-unread")).toBeUndefined()
+  })
+
+  it("is visible when onMarkUnread is supplied", () => {
+    const actions = getVisibleActions(createContext({ onMarkUnread: () => {} }))
+    expect(actions.find((a) => a.id === "mark-unread")).toBeDefined()
+  })
+
+  it("invokes the onMarkUnread callback when run", () => {
+    const onMarkUnread = vi.fn()
+    const ctx = createContext({ onMarkUnread })
+    const action = getVisibleActions(ctx).find((a) => a.id === "mark-unread")!
+    action.action!(ctx)
+    expect(onMarkUnread).toHaveBeenCalledOnce()
+  })
+
+  it("sits directly after 'Mark read up to here' when both are present", () => {
+    const ctx = createContext({ onMarkReadUpToHere: () => {}, onMarkUnread: () => {} })
+    const ids = getVisibleActions(ctx).map((a) => a.id)
+    expect(ids.indexOf("mark-unread")).toBe(ids.indexOf("mark-read-up-to-here") + 1)
+  })
+})
+
 describe("groupVisibleActions", () => {
   it("returns single items for ungrouped actions and groups same-id ones", () => {
     const ctx = createContext()
