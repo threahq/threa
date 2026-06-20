@@ -124,6 +124,17 @@ export function useLastSeenEvent({
   const readIndexRef = useRef(readIndex)
   readIndexRef.current = readIndex
 
+  // The read pointer's sequence: -1 for "nothing read" (null pointer), null when
+  // the pointer sits outside the loaded window. A backward move is judged against
+  // the pointer's OWN past sequence (see below), so it is sequence- not index-based.
+  const readSeq = useMemo<bigint | null>(() => {
+    if (lastReadEventId == null) return -1n
+    const ev = readIndex >= 0 ? events[readIndex] : undefined
+    return ev ? BigInt(ev.sequence) : null
+  }, [lastReadEventId, readIndex, events])
+  const readSeqRef = useRef(readSeq)
+  readSeqRef.current = readSeq
+
   // The read frontier: the bottom of the contiguous run read so far. Seeded from
   // the read pointer and advanced only while the viewport stays contiguous with
   // it. An external read (another device) bumps it forward via readIndexRef.
@@ -133,11 +144,13 @@ export function useLastSeenEvent({
   // device) the frontier is pulled back with it and pinned: the just-unread row
   // is usually still on screen, so without the pin advanceFrontier would re-read
   // it on the very next scan and auto-mark would undo the unread. The next real
-  // user scroll lifts the pin and resumes normal advancement. The move is keyed
-  // on the pointer id changing (not the index) so it also fires when the pointer
-  // clears to null — marking the first/only message unread, where the index is
-  // -1 and an index-only check would miss it.
+  // user scroll lifts the pin and resumes normal advancement. A retreat is judged
+  // by comparing the pointer to its OWN previous sequence (prevReadSeqRef), NEVER
+  // to the frontier: while reading, the frontier leads the lagging pointer, so a
+  // forward catch-up below the frontier must not be mistaken for a retreat (that
+  // bug froze auto-read after a mark-unread).
   const pinnedRef = useRef(false)
+  const prevReadSeqRef = useRef(readSeq)
   const prevLastReadIdRef = useRef(lastReadEventId)
   const prevStreamIdRef = useRef(streamId)
 
@@ -195,6 +208,7 @@ export function useLastSeenEvent({
   // pointer, never inheriting the previous stream's position.
   useEffect(() => {
     frontierRef.current = readIndexRef.current
+    prevReadSeqRef.current = readSeqRef.current
     pinnedRef.current = false
     setLastSeenEventId(undefined)
     setAtLastRow(false)
@@ -254,13 +268,15 @@ export function useLastSeenEvent({
     const streamChanged = prevStreamIdRef.current !== streamId
     prevStreamIdRef.current = streamId
     if (!streamChanged && lastReadEventId !== prevLastReadIdRef.current) {
-      if (readIndex < frontierRef.current) {
+      // Retreat = the pointer's sequence dropped below where it just was (mark-as-
+      // unread). Forward moves and external reads are left to recompute's forward
+      // bump; only a genuine backward move pins.
+      if (readSeqRef.current != null && prevReadSeqRef.current != null && readSeqRef.current < prevReadSeqRef.current) {
         frontierRef.current = readIndex
         pinnedRef.current = true
-      } else if (readIndex > frontierRef.current) {
-        frontierRef.current = readIndex
       }
     }
+    if (readSeqRef.current != null) prevReadSeqRef.current = readSeqRef.current
     prevLastReadIdRef.current = lastReadEventId
     const raf = requestAnimationFrame(recompute)
     return () => cancelAnimationFrame(raf)
