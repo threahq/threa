@@ -1,16 +1,5 @@
 {
   "version": 1,
-  "include": [
-    "/login",
-    "/login/",
-    "/workspaces",
-    "/workspaces/",
-    "/add-account",
-    "/add-account/",
-    "/share",
-    "/share/",
-    "/join/*",
-    "/w/*"
-  ],
-  "exclude": []
+  "include": ["/*"],
+  "exclude": ["/assets/*"]
 }
