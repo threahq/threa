@@ -2,13 +2,14 @@ import { useRef, useSyncExternalStore } from "react"
 
 /**
  * A coarse, app-global "a multi-event apply is in progress" signal. While it is
- * open, the shared IndexedDB store hooks (sidebar streams, unread badges, stream
- * memberships, labels, drafts, …) HOLD their last value instead of re-rendering
- * for every individual write, then re-read once when it closes — so applying N
- * events (a sync catch-up replay) paints the FINAL state in one settle instead
- * of trickling N times. Without it, replay drives the live socket handlers per
- * entry and each write fires its table's `useLiveQuery`, so a backlog of streams
- * archived / drafts upserted / members added visibly slots in one at a time.
+ * open, the shared IndexedDB store hooks (sidebar streams, unread/activity
+ * badges, stream memberships, labels, dmPeers, drafts, …) HOLD their last value
+ * instead of re-rendering for every individual write, then re-read once when it
+ * closes — so applying N events (a sync catch-up replay) paints the FINAL state
+ * in one settle instead of trickling N times. Without it, replay drives the live
+ * socket handlers per entry and each write fires its table's `useLiveQuery`, so a
+ * backlog of streams archived / drafts upserted / members added visibly slots in
+ * one at a time.
  *
  * It is purely a render-layer coalescer: IndexedDB stays the source of truth and
  * the hooks re-read fresh on close, so the worst case for any bug here is a
@@ -20,7 +21,6 @@ import { useRef, useSyncExternalStore } from "react"
  * force-closes a stuck window so a missed `end` can never strand the UI frozen.
  */
 let depth = 0
-let version = 0
 let watchdog: ReturnType<typeof setTimeout> | null = null
 const listeners = new Set<() => void>()
 
@@ -29,8 +29,11 @@ const listeners = new Set<() => void>()
 // self-heals quickly rather than stranding the UI frozen.
 const APPLY_WINDOW_WATCHDOG_MS = 5_000
 
-function notify(): void {
-  version += 1
+// Notify only on the closed↔open transitions that matter to readers (depth
+// 0↔1), never on a nested bump (1↔2): `useApplyWindowOpen` snapshots the boolean,
+// so a nested change wouldn't re-render anyway, and direct subscribers want the
+// transition, not every refcount tick.
+function notifyTransition(): void {
   for (const listener of listeners) listener()
 }
 
@@ -38,17 +41,19 @@ export function beginApplyWindow(): void {
   depth += 1
   if (watchdog) clearTimeout(watchdog)
   watchdog = setTimeout(forceCloseApplyWindow, APPLY_WINDOW_WATCHDOG_MS)
-  notify()
+  if (depth === 1) notifyTransition()
 }
 
 export function endApplyWindow(): void {
   if (depth === 0) return
   depth -= 1
-  if (depth === 0 && watchdog) {
-    clearTimeout(watchdog)
-    watchdog = null
+  if (depth === 0) {
+    if (watchdog) {
+      clearTimeout(watchdog)
+      watchdog = null
+    }
+    notifyTransition()
   }
-  notify()
 }
 
 function forceCloseApplyWindow(): void {
@@ -56,15 +61,11 @@ function forceCloseApplyWindow(): void {
   console.warn("Apply window watchdog fired; force-closing", { depth })
   depth = 0
   watchdog = null
-  notify()
+  notifyTransition()
 }
 
 export function isApplyWindowOpen(): boolean {
   return depth > 0
-}
-
-function getApplyWindowVersion(): number {
-  return version
 }
 
 export function subscribeApplyWindow(listener: () => void): () => void {
@@ -74,10 +75,13 @@ export function subscribeApplyWindow(listener: () => void): () => void {
   }
 }
 
-/** Re-renders the caller whenever the apply window opens or closes. */
+/**
+ * Re-renders the caller on every closed↔open transition. The snapshot IS the
+ * open boolean (not a version counter), so React tracks the value it returns —
+ * no concurrent-mode tearing, and a nested refcount bump doesn't re-render.
+ */
 export function useApplyWindowOpen(): boolean {
-  useSyncExternalStore(subscribeApplyWindow, getApplyWindowVersion, getApplyWindowVersion)
-  return isApplyWindowOpen()
+  return useSyncExternalStore(subscribeApplyWindow, isApplyWindowOpen, isApplyWindowOpen)
 }
 
 /**
@@ -99,10 +103,11 @@ export function useBatchedValue<T>(value: T): T {
 
 /** Test/teardown escape hatch: reset to the closed, depth-0 state. */
 export function resetApplyWindow(): void {
+  const wasOpen = depth > 0
   depth = 0
   if (watchdog) {
     clearTimeout(watchdog)
     watchdog = null
   }
-  notify()
+  if (wasOpen) notifyTransition()
 }

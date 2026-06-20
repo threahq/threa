@@ -1278,7 +1278,9 @@ export class SyncEngine {
         // Committed to replaying this page (not collapsing): hold the reactive
         // read layer steady for the whole replay so every batched store hook
         // re-reads once on close instead of once per entry. Idempotent — opened
-        // on the first applied page and kept open across subsequent pages.
+        // on the first applied page and kept open across subsequent pages. MUST
+        // stay below the collapse/empty returns above: opening on a collapsed or
+        // empty page would freeze the UI and then settle mid-bootstrap.
         if (!applyWindowOpen) {
           beginApplyWindow()
           applyWindowOpen = true
