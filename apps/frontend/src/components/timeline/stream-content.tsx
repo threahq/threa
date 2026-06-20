@@ -90,7 +90,7 @@ import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { localStartOfDayMs } from "@/lib/dates"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
-import { addMarkReadUpToHereListener } from "@/lib/mark-read-events"
+import { addMarkReadUpToHereListener, addEscapeUnreadListener } from "@/lib/mark-read-events"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -1536,11 +1536,20 @@ export function StreamContent({
   const markAsReadRef = useRef(markAsRead)
   markAsReadRef.current = markAsRead
 
-  // Escape "escapes the unread block" (desktop, Slack's Esc-marks-channel-read):
-  // mark the stream fully read, dismiss the persistent unread divider, and
-  // resume tailing the live bottom. Scoped to when the divider is actually shown
-  // so it never swallows Escape elsewhere; the composer/editor keep their own
-  // Escape via the isInput guard, and search owns Escape while open.
+  // "Escape the unread block": mark the stream fully read, dismiss the
+  // persistent unread divider, and resume tailing the live bottom. Shared by
+  // the desktop Escape shortcut and the touchable ✕ on the divider / jump bar
+  // (the ✕ is the only path on mobile, where the keyboard shortcut is absent).
+  const escapeUnread = useCallback(() => {
+    const lastLoadedEventId = lastLoadedEventIdRef.current
+    if (lastLoadedEventId) markAsReadRef.current(streamId, lastLoadedEventId)
+    dismissUnreadDivider()
+    scrollToBottom({ force: true })
+  }, [streamId, dismissUnreadDivider, scrollToBottom])
+
+  // Desktop Slack-style Esc-marks-channel-read. Scoped to when the divider is
+  // actually shown so it never swallows Escape elsewhere; the composer/editor
+  // keep their own Escape via the isInput guard, and search owns Escape while open.
   useEffect(() => {
     if (isMobile || isDraft || !dividerEventId || isSearchOpen) return
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1565,14 +1574,20 @@ export function StreamContent({
           (wrapper) => wrapper.querySelector('[role="tooltip"]') == null
         )
       if (overlayOwnsEscape) return
-      const lastLoadedEventId = lastLoadedEventIdRef.current
-      if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
-      dismissUnreadDivider()
-      scrollToBottom({ force: true })
+      escapeUnread()
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isMobile, isDraft, dividerEventId, isSearchOpen, markAsRead, streamId, dismissUnreadDivider, scrollToBottom])
+  }, [isMobile, isDraft, dividerEventId, isSearchOpen, escapeUnread])
+
+  // The touchable ✕ counterpart to the Escape shortcut (divider + jump bar).
+  // Works on every device, so it's not gated on `!isMobile`.
+  useEffect(() => {
+    return addEscapeUnreadListener((detail) => {
+      if (detail.streamId !== streamId) return
+      escapeUnread()
+    })
+  }, [streamId, escapeUnread])
 
   // Manual "Mark read up to here" from a message action. The pointer is partial
   // unless the chosen row is the last loaded one — marking up to a mid-window
@@ -1917,7 +1932,7 @@ export function StreamContent({
               <div
                 // Sits clearly below the floating date pill (top-2, ~30px tall)
                 // so the top-center affordances never overlap.
-                className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
+                className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1"
                 style={{ top: "3.5rem" }}
               >
                 <Button
@@ -1928,6 +1943,17 @@ export function StreamContent({
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
                   {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+                </Button>
+                {/* Dismiss without scrolling up: mark all loaded read and tail
+                  the live bottom — the touchable equivalent of Escape. */}
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="pointer-events-auto h-8 w-8 shadow-lg"
+                  onClick={escapeUnread}
+                  aria-label="Mark all read"
+                >
+                  <X className="h-3.5 w-3.5" />
                 </Button>
               </div>
             )}

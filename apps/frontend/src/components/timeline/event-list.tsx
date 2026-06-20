@@ -661,7 +661,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
 
   return (
     <>
-      {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
+      {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} streamId={ctx.streamId} />}
       {/* The first-unread row reserves `pt-6` (24px) of top padding so the
           absolutely-positioned divider, centered at 12px (`top-3`), gets equal
           12px breathing room above and below the line — `pt-3` left the line

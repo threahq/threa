@@ -29,3 +29,30 @@ export function addMarkReadUpToHereListener(listener: (detail: MarkReadUpToHereD
   document.addEventListener(MARK_READ_UP_TO_HERE_EVENT, handleEvent)
   return () => document.removeEventListener(MARK_READ_UP_TO_HERE_EVENT, handleEvent)
 }
+
+const ESCAPE_UNREAD_EVENT = "threa:escape-unread"
+
+interface EscapeUnreadDetail {
+  streamId: string
+}
+
+/**
+ * Touch-friendly equivalent of the desktop Escape shortcut: mark every loaded
+ * message read, dismiss the unread divider, and resume tailing the live bottom.
+ * Dispatched from the unread divider / jump-bar ✕; the owning stream's
+ * `stream-content` listens and runs the shared escape behavior. A DOM event
+ * (not prop threading) keeps the divider — rendered deep inside the virtualized
+ * list — from having to carry a callback through the whole render context.
+ */
+export function dispatchEscapeUnread(streamId: string): void {
+  document.dispatchEvent(new CustomEvent<EscapeUnreadDetail>(ESCAPE_UNREAD_EVENT, { detail: { streamId } }))
+}
+
+export function addEscapeUnreadListener(listener: (detail: EscapeUnreadDetail) => void): () => void {
+  const handleEvent = (event: Event) => {
+    listener((event as CustomEvent<EscapeUnreadDetail>).detail)
+  }
+
+  document.addEventListener(ESCAPE_UNREAD_EVENT, handleEvent)
+  return () => document.removeEventListener(ESCAPE_UNREAD_EVENT, handleEvent)
+}

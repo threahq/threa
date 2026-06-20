@@ -1,9 +1,18 @@
+import { X } from "lucide-react"
+import { dispatchEscapeUnread } from "@/lib/mark-read-events"
+
 interface UnreadDividerProps {
   /** Once dimmed the line settles from red to muted gray but stays in place. */
   isDimmed?: boolean
+  /**
+   * Owning stream. Present, the line shows a ✕ that marks everything loaded
+   * read and tails the live bottom — the touch-reachable counterpart to the
+   * desktop Escape shortcut (the only path on mobile).
+   */
+  streamId?: string
 }
 
-export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
+export function UnreadDivider({ isDimmed, streamId }: UnreadDividerProps) {
   return (
     <div
       // The line sits in the gap *above* the first-unread item, centered in the
@@ -22,6 +31,18 @@ export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
       <div className="flex-1 border-t border-current" />
       <span className="text-xs font-medium bg-background px-2">New</span>
       <div className="flex-1 border-t border-current" />
+      {streamId && (
+        <button
+          type="button"
+          onClick={() => dispatchEscapeUnread(streamId)}
+          // pointer-events-auto: the line itself is inert so it never eats
+          // clicks on the message below; only this control is interactive.
+          className="pointer-events-auto shrink-0 rounded-full bg-background p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-label="Mark all read"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   )
 }
