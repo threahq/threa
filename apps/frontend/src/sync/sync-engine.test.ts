@@ -1056,6 +1056,46 @@ describe("SyncEngine sync cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("seeds the cursor from the bootstrap's sync head on first connect so a stale cursor does not double-bootstrap", async () => {
+    // Cold boot of a returning user: a stale cursor survives in IDB from a prior
+    // session. Without the head seed, catch-up would read from "10", see the
+    // whole gap to head, and collapse into a SECOND full bootstrap on top of the
+    // connect one. The connect bootstrap carries the head it was read against, so
+    // the cursor jumps there and catch-up finds nothing.
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi.fn(async (_workspaceId: string, params: { after: string; limit: number }) => {
+      // From the seeded head there is no gap; from the stale cursor the server
+      // would report the span as unhealable (below the retained floor), which is
+      // exactly what the old path turned into a second bootstrap.
+      if (BigInt(params.after) >= 5000n) return emptyPage("5000")
+      return { entries: [], head: "5000", requiresBootstrap: true } satisfies SyncCatchUpResponse
+    })
+    const deps = makeActiveDeps(catchUp)
+    deps.workspaceService.bootstrap = vi.fn(async () => ({ ...makeWorkspaceBootstrap(), syncHead: "5000" }))
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    // Catch-up runs from the seeded head, not the stale cursor.
+    await vi.waitFor(() =>
+      expect(catchUp).toHaveBeenCalledWith(
+        "ws_1",
+        { after: "5000", limit: expect.any(Number) },
+        expect.any(AbortSignal)
+      )
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp).not.toHaveBeenCalledWith(
+      "ws_1",
+      { after: "10", limit: expect.any(Number) },
+      expect.any(AbortSignal)
+    )
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    expect(engine.getSyncCursor()).toBe("5000")
+    engine.destroy()
+  })
+
   it("buffers live events while catch-up runs and splices those above the catch-up position afterwards", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
