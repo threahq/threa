@@ -16,9 +16,11 @@ import {
   executeDraftResolve,
   executeDraftUpsert,
   hasPendingDraftUpsert,
+  reconcileStagedDrafts,
   syncDraftResolution,
   type DraftsServiceLike,
 } from "./draft-sync"
+import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 
 const workspaceId = "ws_1"
 const userId = "user_1"
@@ -67,6 +69,7 @@ function localDraft(overrides: Partial<CachedDraft> = {}): CachedDraft {
 beforeEach(async () => {
   resetDraftStoreCache()
   resetDraftResolutionGuard()
+  localStorage.clear()
   await db.drafts.clear()
   await db.composerLoaded.clear()
   await db.pendingOperations.clear()
@@ -761,5 +764,113 @@ describe("deleteDraftById — the single user-initiated delete path", () => {
     await deleteDraftById(workspaceId, "draft_missing")
 
     expect(await db.pendingOperations.where("type").equals("delete_draft").toArray()).toHaveLength(0)
+  })
+})
+
+describe("reconcileStagedDrafts", () => {
+  const loadedScope = "stream:stream_recover"
+
+  async function setLoaded(row: CachedDraft) {
+    await db.drafts.put(row)
+    await db.composerLoaded.put({ scope: row.scope, workspaceId, draftId: row.id })
+  }
+
+  it("recovers an un-flushed tail (staged differs from the loaded IDB draft)", async () => {
+    await setLoaded(
+      localDraft({
+        id: "draft_recover1",
+        scope: loadedScope,
+        contentJson: makeDoc("hello"),
+        baseVersion: 4,
+        attachments: [{ id: "att_1", filename: "f.txt", mimeType: "text/plain", sizeBytes: 1 }],
+      })
+    )
+    stageDraftContent(workspaceId, loadedScope, makeDoc("hello world"))
+
+    await reconcileStagedDrafts(workspaceId)
+
+    const recovered = await db.drafts.get("draft_recover1")
+    expect(recovered?.contentJson).toEqual(makeDoc("hello world"))
+    // Sync bookkeeping + attachments survive a body-only recovery.
+    expect(recovered?.baseVersion).toBe(4)
+    expect(recovered?.attachments).toHaveLength(1)
+    // Mirrored to the backend so cross-device drift splits on bootstrap.
+    expect(await hasPendingDraftUpsert("draft_recover1")).toBe(true)
+    // Buffer consumed.
+    expect(readStagedDraft(workspaceId, loadedScope)).toBeNull()
+  })
+
+  it("drops a staged entry already captured by the last flush (no redundant push)", async () => {
+    await setLoaded(
+      localDraft({ id: "draft_recover2", scope: loadedScope, contentJson: makeDoc("same"), baseVersion: 2 })
+    )
+    stageDraftContent(workspaceId, loadedScope, makeDoc("same"))
+
+    await reconcileStagedDrafts(workspaceId)
+
+    expect(await hasPendingDraftUpsert("draft_recover2")).toBe(false)
+    expect(readStagedDraft(workspaceId, loadedScope)).toBeNull()
+  })
+
+  it("creates a draft + loaded pointer when the scope has none", async () => {
+    stageDraftContent(workspaceId, loadedScope, makeDoc("brand new"))
+
+    await reconcileStagedDrafts(workspaceId)
+
+    const pointer = await db.composerLoaded.get(loadedScope)
+    expect(pointer?.draftId).toBeTruthy()
+    const created = pointer?.draftId ? await db.drafts.get(pointer.draftId) : undefined
+    expect(created?.contentJson).toEqual(makeDoc("brand new"))
+    expect(created?.baseVersion).toBeUndefined()
+    expect(await hasPendingDraftUpsert(pointer!.draftId!)).toBe(true)
+  })
+
+  it("never applies plaintext over a sealed (E2E) loaded draft (E2EE-4)", async () => {
+    await setLoaded(
+      localDraft({
+        id: "draft_sealed",
+        scope: loadedScope,
+        contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+        ciphertext: "sealed-bytes",
+        envelope: { v: 1 },
+        e2eVersion: 1,
+        baseVersion: 1,
+      })
+    )
+    stageDraftContent(workspaceId, loadedScope, makeDoc("plaintext leak"))
+
+    await reconcileStagedDrafts(workspaceId)
+
+    const row = await db.drafts.get("draft_sealed")
+    expect(row?.ciphertext).toBe("sealed-bytes")
+    expect(row?.contentJson).toEqual({ type: "doc", content: [{ type: "paragraph" }] })
+    expect(await hasPendingDraftUpsert("draft_sealed")).toBe(false)
+    // Stale/foreign buffer is still cleared.
+    expect(readStagedDraft(workspaceId, loadedScope)).toBeNull()
+  })
+
+  it("keeps the staged buffer when the recovery write fails (no loss, retried next load)", async () => {
+    stageDraftContent(workspaceId, loadedScope, makeDoc("unflushed tail"))
+    const putSpy = vi.spyOn(db.drafts, "put").mockRejectedValueOnce(new Error("idb boom"))
+
+    await reconcileStagedDrafts(workspaceId)
+
+    // The buffer is the only copy of the tail — it must survive a transient write
+    // failure so the next load can retry, rather than being cleared away.
+    expect(readStagedDraft(workspaceId, loadedScope)?.contentJson).toEqual(makeDoc("unflushed tail"))
+    putSpy.mockRestore()
+  })
+
+  it("clears a staged entry whose content is empty without creating a draft", async () => {
+    // Write an empty-content buffer directly (the public stage helper refuses to).
+    localStorage.setItem(
+      `threa:draft-stage:${workspaceId}:${loadedScope}`,
+      JSON.stringify({ contentJson: { type: "doc", content: [{ type: "paragraph" }] }, clientUpdatedAt: Date.now() })
+    )
+
+    await reconcileStagedDrafts(workspaceId)
+
+    expect(await db.composerLoaded.get(loadedScope)).toBeUndefined()
+    expect(readStagedDraft(workspaceId, loadedScope)).toBeNull()
   })
 })
