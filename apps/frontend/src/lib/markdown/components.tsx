@@ -372,10 +372,12 @@ export const markdownComponents: Components = {
     return null
   },
 
-  // Tables - use Shadcn UI Table
+  // Tables - use Shadcn UI Table. Let content set the width so long paths,
+  // URLs, and paragraphs flow naturally and the wrapper scrolls horizontally
+  // on narrow viewports instead of crushing cells into tight wrapping.
   table: ({ children }) => (
     <div className="my-2 overflow-x-auto">
-      <Table>{children}</Table>
+      <Table className="w-auto table-auto">{children}</Table>
     </div>
   ),
   thead: ({ children }) => <TableHeader>{children}</TableHeader>,
