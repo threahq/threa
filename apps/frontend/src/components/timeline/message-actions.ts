@@ -372,7 +372,7 @@ export const messageActions: MessageAction[] = [
   },
   {
     id: "mark-read-up-to-here",
-    label: "Mark read up to here",
+    label: "Mark as read",
     icon: CheckCheck,
     separatorBefore: true,
     when: (ctx) => !!ctx.onMarkReadUpToHere,
@@ -382,6 +382,7 @@ export const messageActions: MessageAction[] = [
     id: "mark-unread",
     label: "Mark as unread",
     icon: CircleDot,
+    separatorBefore: true,
     when: (ctx) => !!ctx.onMarkUnread,
     action: (ctx) => ctx.onMarkUnread?.(),
   },

@@ -133,10 +133,13 @@ export function useLastSeenEvent({
   // device) the frontier is pulled back with it and pinned: the just-unread row
   // is usually still on screen, so without the pin advanceFrontier would re-read
   // it on the very next scan and auto-mark would undo the unread. The next real
-  // user scroll lifts the pin and resumes normal advancement. prevReadIndexRef
-  // tracks the prior pointer index so a decrease can be detected.
+  // user scroll lifts the pin and resumes normal advancement. The move is keyed
+  // on the pointer id changing (not the index) so it also fires when the pointer
+  // clears to null — marking the first/only message unread, where the index is
+  // -1 and an index-only check would miss it.
   const pinnedRef = useRef(false)
-  const prevReadIndexRef = useRef(readIndex)
+  const prevLastReadIdRef = useRef(lastReadEventId)
+  const prevStreamIdRef = useRef(streamId)
 
   const recompute = useCallback(() => {
     const el = scrollContainerRef.current
@@ -192,7 +195,6 @@ export function useLastSeenEvent({
   // pointer, never inheriting the previous stream's position.
   useEffect(() => {
     frontierRef.current = readIndexRef.current
-    prevReadIndexRef.current = readIndexRef.current
     pinnedRef.current = false
     setLastSeenEventId(undefined)
     setAtLastRow(false)
@@ -243,16 +245,26 @@ export function useLastSeenEvent({
   // us (external read), so the frontier and the affordance stay current.
   useEffect(() => {
     if (!enabled) return
-    // A backward move of the read pointer to a known row (mark-as-unread, here or
-    // echoed from another device) pulls the frontier back with it and pins it.
-    if (readIndex >= 0 && readIndex < prevReadIndexRef.current) {
-      frontierRef.current = readIndex
-      pinnedRef.current = true
+    // Detect a genuine pointer move (the id changed), not a windowing artifact
+    // where the same read event scrolls out of the loaded window. On a backward
+    // move (readIndex now before the frontier — including -1 when the pointer
+    // cleared to null) pull the frontier back and pin it; on a forward move (an
+    // external read on another device) bump it forward. Skip on stream switch:
+    // the reset effect already reseeds the frontier from the new stream.
+    const streamChanged = prevStreamIdRef.current !== streamId
+    prevStreamIdRef.current = streamId
+    if (!streamChanged && lastReadEventId !== prevLastReadIdRef.current) {
+      if (readIndex < frontierRef.current) {
+        frontierRef.current = readIndex
+        pinnedRef.current = true
+      } else if (readIndex > frontierRef.current) {
+        frontierRef.current = readIndex
+      }
     }
-    prevReadIndexRef.current = readIndex
+    prevLastReadIdRef.current = lastReadEventId
     const raf = requestAnimationFrame(recompute)
     return () => cancelAnimationFrame(raf)
-  }, [enabled, events.length, readIndex, recompute])
+  }, [enabled, events.length, streamId, lastReadEventId, readIndex, recompute])
 
   return { lastSeenEventId, atLastRow, unreadAboveViewport }
 }

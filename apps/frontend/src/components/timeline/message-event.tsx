@@ -856,8 +856,8 @@ function SentMessageEvent({
   const parentStream = useStreamFromStore(currentStream?.parentStreamId ?? undefined)
   const rootStream = useStreamFromStore(currentStream?.rootStreamId ?? undefined)
   // Gate the read-state actions by where this row sits relative to the read
-  // pointer: "Mark read up to here" only on unread rows, "Mark as unread" only
-  // on read rows. Ungated (no resolved frontier) shows both.
+  // pointer: "Mark as read" only on unread rows, "Mark as unread" only on read
+  // rows. Ungated (no resolved frontier) shows both.
   const rowRead = rowReadState(event.sequence, useReadFrontier())
   // For one-level threads, parent === root, so we only show the root entry to
   // avoid two identical menu items. For nested threads (parent is itself a

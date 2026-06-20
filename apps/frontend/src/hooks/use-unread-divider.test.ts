@@ -76,6 +76,63 @@ describe("useUnreadDivider", () => {
     expect(result.current.dividerEventId).toBe("event_1")
   })
 
+  it("moves the divider up when an earlier message is marked unread", () => {
+    const events = [
+      makeMessageEvent("event_1", "other"),
+      makeMessageEvent("event_2", "other"),
+      makeMessageEvent("event_3", "other"),
+      makeMessageEvent("event_4", "other"),
+    ]
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }: { lastReadEventId: string | null }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+        }),
+      { initialProps: { lastReadEventId: "event_3" as string | null } }
+    )
+
+    // Read through event_3 → divider latched at event_4.
+    expect(result.current.dividerEventId).toBe("event_4")
+
+    // Mark event_2 unread → the read pointer moves back to event_1, so the first
+    // unread is now event_2. The divider must follow it UP, not stay at event_4.
+    rerender({ lastReadEventId: "event_1" })
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
+  it("re-shows a dismissed divider when a later mark-unread moves it to an earlier row", () => {
+    const events = [
+      makeMessageEvent("event_1", "other"),
+      makeMessageEvent("event_2", "other"),
+      makeMessageEvent("event_3", "other"),
+      makeMessageEvent("event_4", "other"),
+    ]
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }: { lastReadEventId: string | null }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+        }),
+      { initialProps: { lastReadEventId: "event_3" as string | null } }
+    )
+
+    expect(result.current.dividerEventId).toBe("event_4")
+    act(() => result.current.dismiss())
+    expect(result.current.dividerEventId).toBeUndefined()
+
+    // Marking an earlier message unread re-positions the divider, so the prior
+    // dismissal (keyed to event_4) no longer applies.
+    rerender({ lastReadEventId: "event_1" })
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
   it("re-latches at the new stream's first unread when switching streams", () => {
     // streamId and events (hence firstUnreadEventId) change in the same commit,
     // with no intervening undefined — the render-phase latch must re-fire here.

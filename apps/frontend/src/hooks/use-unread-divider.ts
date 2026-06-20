@@ -153,16 +153,28 @@ export function useUnreadDivider({
   if (latchRef.current.streamId !== streamId) {
     latchRef.current = { streamId, eventId: undefined }
   }
-  if (!latchRef.current.eventId && firstUnreadEventId) {
-    latchRef.current.eventId = firstUnreadEventId
+  if (firstUnreadEventId && latchRef.current.eventId !== firstUnreadEventId) {
+    // Capture the first unread, then hold it for the session — auto-mark-as-read
+    // advancing the live unread forward does NOT move it. The one exception is a
+    // BACKWARD move (mark-as-unread re-surfaced messages above the divider): the
+    // first unread is now earlier, so the divider must follow it up.
+    const latchedIdx = latchRef.current.eventId ? events.findIndex((e) => e.id === latchRef.current.eventId) : -1
+    const firstIdx = events.findIndex((e) => e.id === firstUnreadEventId)
+    if (!latchRef.current.eventId || (firstIdx >= 0 && (latchedIdx < 0 || firstIdx < latchedIdx))) {
+      latchRef.current.eventId = firstUnreadEventId
+    }
   }
 
-  // Explicit dismissal (Escape). A latched divider has no clear-on-read, so a
-  // separate flag overrides it; reset on stream change so re-entering a stream
-  // with unread shows the divider again.
-  const [dismissedStreamId, setDismissedStreamId] = useState<string | undefined>(undefined)
-  const dismiss = useCallback(() => setDismissedStreamId(streamId), [streamId])
-  const displayedUnreadId = dismissedStreamId === streamId ? undefined : latchRef.current.eventId
+  // Explicit dismissal (Escape / ✕). A latched divider has no clear-on-read, so a
+  // separate flag overrides it. Keyed to the dismissed position (not just the
+  // stream) so a later mark-as-unread that moves the divider to an EARLIER row
+  // re-shows it. Reset on stream change so re-entering a stream with unread shows
+  // the divider again.
+  const [dismissed, setDismissed] = useState<{ streamId: string; eventId: string | undefined } | undefined>(undefined)
+  const dismiss = useCallback(() => setDismissed({ streamId, eventId: latchRef.current.eventId }), [streamId])
+  const latched = latchRef.current.eventId
+  const isDismissed = dismissed?.streamId === streamId && dismissed?.eventId === latched
+  const displayedUnreadId = isDismissed ? undefined : latched
 
   // Latch deep-link mode per stream. The `?m=` param is auto-cleared from the
   // URL ~3s after a deep-link lands, flipping highlightMessageId to null.

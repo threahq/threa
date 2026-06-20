@@ -246,4 +246,47 @@ describe("useLastSeenEvent re-scan on content resize", () => {
     expect(result.current.lastSeenEventId).toBe("e3")
     expect(result.current.atLastRow).toBe(true)
   })
+
+  it("pins when the read pointer clears to null (marking the only message unread)", () => {
+    // A single-message stream that's been read. Marking it unread sets the
+    // pointer to null (no previous message) — readIndex becomes -1. The frontier
+    // must still pull back and pin so the visible row isn't instantly re-read.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: 10, bottom: 60 },
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    const row = document.createElement("div")
+    row.setAttribute("data-event-id", "e0")
+    row.getBoundingClientRect = () => rect(positions.e0.top, positions.e0.bottom)
+    container.appendChild(row)
+
+    const events = [{ id: "e0" }] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId, enabled: true }),
+      { initialProps: { lastReadEventId: "e0" as string | null } }
+    )
+
+    // Read: pointer at the only message, nothing to emit.
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.atLastRow).toBe(true)
+
+    // Mark it unread → pointer clears to null.
+    act(() => rerender({ lastReadEventId: null }))
+
+    // Pinned: e0 must NOT be emitted as seen even though it's on screen.
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.atLastRow).toBe(false)
+
+    // A user scroll resumes normal advancement.
+    act(() => {
+      container.dispatchEvent(new Event("scroll"))
+    })
+    expect(result.current.lastSeenEventId).toBe("e0")
+    expect(result.current.atLastRow).toBe(true)
+  })
 })

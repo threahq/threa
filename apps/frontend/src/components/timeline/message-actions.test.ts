@@ -411,7 +411,7 @@ describe("mark-unread action", () => {
     expect(onMarkUnread).toHaveBeenCalledOnce()
   })
 
-  it("sits directly after 'Mark read up to here' when both are present", () => {
+  it("sits directly after 'Mark as read' when both are present", () => {
     const ctx = createContext({ onMarkReadUpToHere: () => {}, onMarkUnread: () => {} })
     const ids = getVisibleActions(ctx).map((a) => a.id)
     expect(ids.indexOf("mark-unread")).toBe(ids.indexOf("mark-read-up-to-here") + 1)

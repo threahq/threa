@@ -1592,7 +1592,7 @@ export function StreamContent({
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [isMobile, isDraft, dividerEventId, isSearchOpen, escapeUnread])
 
-  // Manual "Mark read up to here" from a message action. The pointer is partial
+  // Manual "Mark as read" from a message action. The pointer is partial
   // unless the chosen row is the last loaded one — marking up to a mid-window
   // event must not optimistically zero the badge (the count resolves to the
   // true remainder on the `stream:read` round-trip; see markAsRead partial).

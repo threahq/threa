@@ -4,7 +4,7 @@ import { createContext, useContext } from "react"
  * The read pointer's per-stream `sequence` (bigint-as-string), or `null` when
  * the read state isn't resolved or the pointer sits outside the loaded window.
  * Provided by `stream-content`; message rows read it to gate their read-state
- * actions ("Mark read up to here" on unread rows, "Mark as unread" on read
+ * actions ("Mark as read" on unread rows, "Mark as unread" on read
  * rows). `null` means "don't gate" — both actions stay visible — so a surface
  * with no provider (e.g. a context with no resolved read state) is unchanged.
  */
