@@ -1485,8 +1485,12 @@ export function StreamContent({
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
     // Observe the virtualized content box so a settle/embed resize re-scans even
-    // when the stream is too short to scroll. The plain path's content lives in
-    // the scroller itself, so the hook's container fallback covers it.
+    // when the stream is too short to scroll. The plain (thread) path has no
+    // separate content box; the hook then observes the scroller itself, which
+    // catches viewport/keyboard resizes but NOT inner embed growth (a fixed-
+    // height overflow container's own box doesn't change as content grows) — a
+    // short thread ending in a late-loading card staying unread is a known
+    // follow-up, not covered here.
     contentRef: useVirtualized ? virtualContentRef : undefined,
     events: displayEvents,
     streamId,
