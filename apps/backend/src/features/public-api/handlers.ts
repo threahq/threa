@@ -43,7 +43,6 @@ import {
   AttachmentSafetyStatuses,
   AuthorTypes,
   LabelActorTypes,
-  LabelableResourceTypes,
   type Label,
   type LabelActor,
   type LabelAssignment,
@@ -1100,46 +1099,18 @@ export function createPublicApiHandlers({
         })
       }
 
-      const { link, stream } = await withTransaction(pool, async (client) => {
-        const stream = await streamService.createScratchpadInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          displayName: data.displayName,
-          // Coding-agent build sessions (pi-local / claude-code-channel) default
-          // to memory off — their turns are implementation churn, not durable
-          // knowledge, so GAM extraction there is noise. Callers can opt in with
-          // `memoryMode: "auto"`.
-          memoryMode: data.memoryMode ?? MemoryModes.OFF,
-          createdBy: bot.ownerUserId,
-        })
-        await streamService.addBotToStreamOn(client, stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
-
-        if (data.labelName) {
-          await labelAssignmentService.assignByNameInTransaction(client, {
-            workspaceId: req.workspaceId!,
-            actor: { type: LabelActorTypes.USER, id: bot.ownerUserId },
-            name: data.labelName,
-            resourceType: LabelableResourceTypes.STREAM,
-            resourceId: stream.id,
-          })
-        }
-
-        await botRuntimeService.repairBotTraitsInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          botId: bot.id,
-          traits: requiredRuntimeTraits,
-        })
-        const link = await botRuntimeService.createOrLinkPiRemoteSessionInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          botId: bot.id,
-          runtimeKind: data.runtimeKind,
-          instanceId: data.instanceId,
-          runtimeSessionId: data.runtimeSessionId,
-          rootStreamId: stream.id,
-          activeStreamId: stream.id,
-          linkedBy: bot.ownerUserId,
-          metadata: { displayName: data.displayName, localCwd: data.localCwd ?? null },
-        })
-        return { link, stream }
+      const { link, stream } = await botRuntimeService.createLinkedScratchpadSession({
+        workspaceId: req.workspaceId!,
+        botId: bot.id,
+        ownerUserId: bot.ownerUserId,
+        runtimeKind: data.runtimeKind,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
+        displayName: data.displayName,
+        localCwd: data.localCwd,
+        memoryMode: data.memoryMode,
+        labelName: data.labelName,
+        traits: requiredRuntimeTraits,
       })
 
       res.json({
