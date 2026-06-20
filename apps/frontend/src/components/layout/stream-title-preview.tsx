@@ -36,6 +36,16 @@ interface UseStreamTitlePreviewResult {
   overlay: ReactNode
 }
 
+// The grown label, measured at press time: the label's own left edge plus the
+// enclosing title bar's vertical extent and right edge, so the name fills the
+// bar and covers the controls to its right rather than floating as a card.
+interface PreviewBox {
+  left: number
+  top: number
+  height: number
+  right: number
+}
+
 /**
  * Touch-only press-and-hold preview of a truncated label. Returns props to
  * spread onto the truncated element and an overlay that grows the full name in
@@ -46,7 +56,7 @@ interface UseStreamTitlePreviewResult {
  */
 export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult {
   const isTouch = useCoarsePointer()
-  const [rect, setRect] = useState<DOMRect | null>(null)
+  const [box, setBox] = useState<PreviewBox | null>(null)
   const anchorRef = useRef<HTMLElement | null>(null)
   const setAnchor = useCallback<React.RefCallback<HTMLElement>>((node) => {
     anchorRef.current = node
@@ -59,14 +69,25 @@ export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult
   const longPress = useLongPress({
     onLongPress: () => {
       firedRef.current = true
-      if (anchorRef.current) setRect(anchorRef.current.getBoundingClientRect())
+      const el = anchorRef.current
+      if (!el) return
+      const label = el.getBoundingClientRect()
+      // Both title bars (stream header, side-panel header) are <header>; grow to
+      // fill it. Fall back to the label's own box when there's no bar ancestor.
+      const bar = el.closest("header")?.getBoundingClientRect()
+      setBox({
+        left: label.left,
+        top: bar?.top ?? label.top,
+        height: bar?.height ?? label.height,
+        right: bar?.right ?? window.innerWidth,
+      })
     },
     enabled: isTouch,
   })
 
   if (!isTouch) return { anchorProps: null, overlay: null }
 
-  const close = () => setRect(null)
+  const close = () => setBox(null)
   const anchorProps: PreviewAnchorProps = {
     ref: setAnchor,
     onTouchStart: (e) => {
@@ -92,18 +113,25 @@ export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult
     },
   }
 
+  const left = box ? box.left - PAD_PX : 0
   const overlay =
-    rect &&
+    box &&
     createPortal(
       <div
-        // pointer-events-none: the finger is still down on the label; the
-        // overlay must never intercept the ongoing touch / its release.
-        className="pointer-events-none fixed z-50 flex items-center rounded-md border bg-popover px-3 text-popover-foreground shadow-md origin-left animate-in fade-in-0 zoom-in-95 duration-150"
+        // Styled as the bar itself (opaque bg, no card chrome) so it reads as
+        // the title eating the bar and hiding the controls underneath, not a
+        // floating popover. pointer-events-none: the finger is still down on
+        // the label; the overlay must never intercept the touch / its release.
+        className="pointer-events-none fixed z-50 flex items-center bg-background px-3 text-foreground origin-left animate-in fade-in-0 zoom-in-95 duration-150"
         style={{
-          left: rect.left - PAD_PX,
-          top: rect.top,
-          minHeight: rect.height,
-          maxWidth: `calc(100vw - ${Math.max(rect.left - PAD_PX, 0)}px - 0.5rem)`,
+          left,
+          top: box.top,
+          minHeight: box.height,
+          // Cover at least to the bar's right edge (hiding the controls), but
+          // grow wider when the name needs it; wrap only past the viewport.
+          minWidth: Math.max(box.right - left, 0),
+          width: "max-content",
+          maxWidth: `calc(100vw - ${Math.max(left, 0)}px - 0.5rem)`,
         }}
       >
         <span className="break-words text-base font-semibold">{name}</span>
