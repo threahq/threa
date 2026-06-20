@@ -1530,9 +1530,20 @@ export function StreamContent({
     readStateResolved: lastReadEventId !== undefined,
   })
 
+  // Once the read pointer reaches or passes the latched divider (the viewer read
+  // through it, or hit "Mark as read"), it's no longer fresh — dim it at once
+  // rather than waiting the seen → 3s countdown.
+  const dividerReadPast = useMemo(() => {
+    if (!dividerEventId || lastReadEventId == null) return false
+    const divider = events.find((e) => e.id === dividerEventId)
+    const pointer = events.find((e) => e.id === lastReadEventId)
+    if (!divider || !pointer) return false
+    return BigInt(pointer.sequence) >= BigInt(divider.sequence)
+  }, [events, dividerEventId, lastReadEventId])
+
   // The divider's red → gray fade waits until the row is actually on screen —
   // it usually starts off-screen above (the stream opens at the bottom).
-  const isDividerDimmed = useDividerDim(scrollContainerRef, dividerEventId, streamId)
+  const isDividerDimmed = useDividerDim(scrollContainerRef, dividerEventId, streamId, dividerReadPast)
 
   // Read the last loaded event from a ref so the Escape listener below doesn't
   // re-attach on every live message (the events array is a fresh reference each

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
-import { useUnreadDivider } from "./use-unread-divider"
+import { useUnreadDivider, useDividerDim } from "./use-unread-divider"
 import * as useScrollToElementModule from "./use-scroll-to-element"
 
 beforeEach(() => {
@@ -262,5 +262,24 @@ describe("useUnreadDivider", () => {
     )
 
     expect(enabledCalls[enabledCalls.length - 1]).toBe(true)
+  })
+})
+
+describe("useDividerDim", () => {
+  it("dims immediately once the read pointer passes the divider, without waiting the timer", () => {
+    const container = document.createElement("div")
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ readPast }: { readPast: boolean }) => useDividerDim(scrollContainerRef, "event_1", "stream_1", readPast),
+      { initialProps: { readPast: false } }
+    )
+
+    // Fresh divider, not yet read past, not yet seen → still red.
+    expect(result.current).toBe(false)
+
+    // "Mark as read" advances the pointer past the divider → grey at once.
+    rerender({ readPast: true })
+    expect(result.current).toBe(true)
   })
 })

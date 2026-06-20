@@ -47,12 +47,15 @@ interface UseUnreadDividerResult {
  * Drive the unread divider's red → muted-gray "freshness" fade. The stream opens
  * at the live bottom, so the divider usually starts off-screen; the timer must
  * wait until the row has actually entered the viewport, or it would settle to
- * gray before the viewer ever scrolls up to see it. Returns `isDimmed`.
+ * gray before the viewer ever scrolls up to see it. `readPast` short-circuits the
+ * wait: once the read pointer reaches or passes the divider (the viewer read it,
+ * or marked it read), it is no longer fresh, so dim immediately. Returns `isDimmed`.
  */
 export function useDividerDim(
   scrollContainerRef: RefObject<HTMLElement | null>,
   dividerEventId: string | undefined,
-  streamId: string
+  streamId: string,
+  readPast = false
 ): boolean {
   const [isDimmed, setIsDimmed] = useState(false)
   const [seen, setSeen] = useState(false)
@@ -62,6 +65,12 @@ export function useDividerDim(
     setSeen(false)
     setIsDimmed(false)
   }, [streamId, dividerEventId])
+
+  // Reading past the divider (explicit "Mark as read" or scrolling through it)
+  // dims it at once, ahead of the seen → 3s countdown.
+  useEffect(() => {
+    if (dividerEventId && readPast) setIsDimmed(true)
+  }, [dividerEventId, readPast])
 
   // Latch `seen` the first time the divider row intersects the viewport. Once
   // seen, the effect re-runs and detaches (early return) — it's a one-shot.
