@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from "react"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 
 /**
@@ -63,7 +64,11 @@ interface SidebarContextValue {
   sectionStates: Record<string, CollapseState>
   /** Read a section's state, falling back to the provided default (default: "open"). */
   getSectionState: (section: string, defaultState?: CollapseState) => CollapseState
-  /** Whether viewport is mobile-sized */
+  /**
+   * Whether the sidebar uses its overlay treatment: a narrow viewport OR a
+   * touch device (so an iPad in landscape — wide but finger-driven — still gets
+   * the swipeable overlay sidebar, not the pinned desktop layout).
+   */
   isMobile: boolean
   /** Whether sidebar is currently being hovered (for hover margin behavior) */
   isHovering: boolean
@@ -202,8 +207,13 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   const [persistedState, setPersistedState] = useState<SidebarPersistedState>(() => getStoredState(storageKey))
 
-  // Runtime state (preview is transient, not persisted)
-  const isMobile = useIsMobile()
+  // Runtime state (preview is transient, not persisted).
+  // Overlay sidebar treatment applies to narrow viewports AND touch devices, so
+  // a tablet in landscape (wide but finger-driven) keeps the swipeable overlay
+  // sidebar instead of falling into the pinned desktop layout with no swipe.
+  const isNarrowViewport = useIsMobile()
+  const isTouchDevice = useTouchCapable()
+  const isMobile = isNarrowViewport || isTouchDevice
   const [state, setState] = useState<SidebarState>(() =>
     isMobile || persistedState.openState === "collapsed" ? "collapsed" : "pinned"
   )

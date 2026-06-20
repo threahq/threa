@@ -87,11 +87,7 @@ export function SectionHeader({
         e.stopPropagation()
         if (!hasMenu) onAdd?.()
       }}
-      // Mobile is the implicit base case (no opacity rule → always visible);
-      // desktop hides until the section is hovered. Inverting the cascade
-      // this way avoids the previous `opacity-0 max-sm:opacity-100` ordering
-      // which left mobile users without a "+" on collapsed sections.
-      className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded sm:opacity-0 sm:group-hover/section:opacity-100 hover:bg-muted transition-all"
+      className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
       title={addTooltip}
       aria-label={addTooltip}
     >
@@ -136,10 +132,7 @@ export function SectionHeader({
         <Link
           to={titleHref}
           onClick={onTitleNavigate}
-          // Mirrors the "+" button's reveal: hover-only on desktop, always shown
-          // on mobile (no hover). The wrapper above stops propagation, so opening
-          // the label never also toggles the section.
-          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded sm:opacity-0 sm:group-hover/section:opacity-100 hover:bg-muted transition-all"
+          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
           title={label ? `Open ${label}` : "Open"}
           aria-label={label ? `Open ${label}` : "Open"}
         >
@@ -187,7 +180,7 @@ export function SectionHeader({
           }
         }}
         className={cn(
-          "group/section w-full flex items-center justify-between rounded-md cursor-pointer select-none [-webkit-touch-callout:none]",
+          "group/section reveal-host w-full flex items-center justify-between rounded-md cursor-pointer select-none [-webkit-touch-callout:none]",
           paddingClass,
           "hover:bg-muted/50 transition-colors"
         )}
@@ -201,7 +194,7 @@ export function SectionHeader({
   return (
     <div
       className={cn(
-        "group/section flex items-center justify-between select-none [-webkit-touch-callout:none]",
+        "group/section reveal-host flex items-center justify-between select-none [-webkit-touch-callout:none]",
         paddingClass
       )}
     >

@@ -21,7 +21,7 @@ export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
     <NodeViewWrapper
       className={cn(
         "my-1 flex items-start gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm select-none",
-        "group/quote-reply",
+        "group/quote-reply reveal-host",
         selected && "ring-2 ring-primary/30"
       )}
       data-type="quote-reply"
@@ -43,7 +43,7 @@ export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
       <button
         type="button"
         onClick={deleteNode}
-        className="shrink-0 rounded-sm p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/quote-reply:opacity-100"
+        className="shrink-0 rounded-sm p-0.5 text-muted-foreground reveal-actions hover:text-foreground"
         aria-label="Remove quote"
       >
         <X className="h-3.5 w-3.5" />
