@@ -3,6 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSavedService } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
+import { useBatchedValue } from "@/stores/apply-window"
 import { db, type CachedSavedMessage } from "@/db"
 import type {
   SavedMessageView,
@@ -264,5 +265,7 @@ export function useLiveSavedCount(workspaceId: string): number {
       .between([workspaceId, "saved", 1], [workspaceId, "saved", Infinity], true, true)
       .count()
   }, [workspaceId])
-  return count ?? 0
+  // Hold steady during a catch-up replay so the badge settles once with the rest
+  // of the sidebar instead of ticking per replayed reminder (apply-window gate).
+  return useBatchedValue(count ?? 0)
 }
