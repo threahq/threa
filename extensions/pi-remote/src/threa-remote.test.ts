@@ -787,3 +787,104 @@ describe("defaultDisplayNameFor", () => {
     expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "  Work Pi  ")).toBe("Work Pi - threa")
   })
 })
+
+describe("buildPersistedConfig", () => {
+  test("preserves hand-edited top-level fields from on-disk config not present in memory", () => {
+    const result = __testing.buildPersistedConfig(
+      {
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        linkedSessions: { session_a: { linkId: "a", rootStreamId: "s1", activeStreamId: "s1", runtimeSessionId: "rs1", streamUrlPath: "/s1" } },
+      } as never,
+      {
+        defaultLabel: "coding",
+        pollMs: 5000,
+      } as never
+    )
+    // In-memory required fields present
+    expect(result.baseUrl).toBe("https://app.threa.io")
+    expect(result.workspaceId).toBe("ws_123")
+    // Hand-edited fields from on-disk absent from the in-memory config survive
+    expect(result.defaultLabel).toBe("coding")
+    expect(result.pollMs).toBe(5000)
+    // linkedSessions from in-memory still present
+    expect(result.linkedSessions).toMatchObject({ session_a: { linkId: "a" } })
+  })
+
+  test("in-memory defined fields override on-disk values", () => {
+    const result = __testing.buildPersistedConfig(
+      {
+        baseUrl: "https://staging.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+      } as never,
+      {
+        baseUrl: "https://app.threa.io",
+      } as never
+    )
+    expect(result.baseUrl).toBe("https://staging.threa.io")
+  })
+
+  test("merges linkedSessions from both sides, in-memory keys win", () => {
+    const result = __testing.buildPersistedConfig(
+      {
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        linkedSessions: {
+          session_b: { linkId: "b", rootStreamId: "s1", activeStreamId: "s1", runtimeSessionId: "rs2", streamUrlPath: "/s1" },
+        },
+      } as never,
+      {
+        linkedSessions: {
+          session_a: { linkId: "a", rootStreamId: "s1", activeStreamId: "s1", runtimeSessionId: "rs1", streamUrlPath: "/s1" },
+        },
+      } as never
+    )
+    expect(result.linkedSessions).toMatchObject({
+      session_a: { linkId: "a" },
+      session_b: { linkId: "b" },
+    })
+  })
+
+  test("removes migrated global enabled flag from output", () => {
+    const result = __testing.buildPersistedConfig(
+      {
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        enabled: true,
+      } as never,
+      { enabled: true } as never
+    )
+    expect(result.enabled).toBeUndefined()
+  })
+
+  test("migrates global streamCursors from either side", () => {
+    const result = __testing.buildPersistedConfig(
+      {
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+        streamCursors: { stream_b: "50" },
+      } as never,
+      {
+        streamCursors: { stream_a: "42" },
+      } as never
+    )
+    expect(result.streamCursors).toMatchObject({ stream_a: "42", stream_b: "50" })
+  })
+
+  test("skips writing streamCursors when neither side has cursors", () => {
+    const result = __testing.buildPersistedConfig(
+      {
+        baseUrl: "https://app.threa.io",
+        workspaceId: "ws_123",
+        apiKey: "threa_bk_test",
+      } as never,
+      {} as never
+    )
+    expect(result.streamCursors).toBeUndefined()
+  })
+})

@@ -316,43 +316,44 @@ function acquireConfigLockSync(): (() => void) | undefined {
   return undefined
 }
 
-function saveConfig(): void {
-  if (!config) return
-  const persisted: Config = { ...config }
-  // Keep a copy because `persisted.streamCursors` is removed from the
-  // canonical write shape before the legacy cursor merge below.
-  const inMemoryStreamCursors = persisted.streamCursors
+function buildPersistedConfig(
+  inMemory: Config,
+  onDisk: Partial<Config> | undefined
+): Record<string, unknown> {
+  // Start from on-disk fields so hand-edited / unknown top-level keys the
+  // runtime doesn't manage survive the write. Overlay every field the runtime
+  // has in-memory but skip undefined optionals so a hand-edited defaultLabel
+  // on disk isn't erased by the runtime's unset optional.
+  const persisted: Record<string, unknown> = { ...(onDisk ?? {}) }
+  const inMemoryStreamCursors = inMemory.streamCursors
+  for (const [key, value] of Object.entries(inMemory)) {
+    if (value !== undefined) persisted[key] = value
+  }
+  // enabled is migrated to per-session link state; strip the global flag.
+  // streamCursors is merged below and written only when either side is non-empty.
   delete persisted.enabled
   delete persisted.streamCursors
+  // Merge linkedSessions so concurrent Pi instances (each owning a distinct key,
+  // keyed by runtimeSessionId) don't clobber each other's links (INV-20).
+  if (onDisk?.linkedSessions && inMemory.linkedSessions) {
+    persisted.linkedSessions = { ...onDisk.linkedSessions, ...inMemory.linkedSessions }
+  }
+  // Legacy global cursors: merge either side. Migrated into per-link
+  // streamCursors by migrateSessionState; this branch only matters for
+  // upgraded installs that still carry the global map on disk.
+  if (onDisk?.streamCursors || inMemoryStreamCursors) {
+    persisted.streamCursors = { ...(onDisk?.streamCursors ?? {}), ...(inMemoryStreamCursors ?? {}) }
+  }
+  return persisted
+}
+
+function saveConfig(): void {
+  if (!config) return
   mkdirSync(dirname(CONFIG_PATH), { recursive: true })
-  // Hold the cross-process lock across the entire read-merge-write so a
-  // concurrent Pi instance can't read a pre-merge snapshot and then overwrite
-  // this instance's just-merged `linkedSessions`/`streamCursors` (INV-20).
-  // If the lock can't be acquired, skip — never write unlocked (INV-20).
   const release = acquireConfigLockSync()
   if (!release) return
   try {
-    // Merge with whatever is on disk so concurrent Pi instances (each owning a
-    // distinct `linkedSessions` key, keyed by runtimeSessionId) don't clobber
-    // each other's links. Without this, a read-modify-write from instance A
-    // overwrites instance B's `linkedSessions` entry because A only has its own
-    // link in memory. This instance's own keys win over stale on-disk copies.
-    // Non-mergeable fields (baseUrl/workspaceId/apiKey/...) keep the in-memory
-    // (just-edited) value.
-    const onDisk = readStoredConfig()
-    if (onDisk?.linkedSessions && persisted.linkedSessions) {
-      const merged = { ...onDisk.linkedSessions, ...persisted.linkedSessions }
-      persisted.linkedSessions = merged
-    }
-    // Legacy global cursors: merge either side. They've been migrated into
-    // per-link `streamCursors` by `migrateSessionState`, so this branch only
-    // matters for upgraded installs that still carry the global map on disk.
-    if (onDisk?.streamCursors || inMemoryStreamCursors) {
-      const mergedCursors = { ...(onDisk?.streamCursors ?? {}), ...(inMemoryStreamCursors ?? {}) }
-      persisted.streamCursors = mergedCursors
-    }
-    // Atomic write via temp + rename so a crash or a concurrent reader never
-    // sees a half-written file.
+    const persisted = buildPersistedConfig(config, readStoredConfig())
     const tmp = `${CONFIG_PATH}.${process.pid}.tmp`
     writeFileSync(tmp, `${JSON.stringify(persisted, null, 2)}\n`)
     renameSync(tmp, CONFIG_PATH)
@@ -2561,6 +2562,7 @@ export const __testing = {
   formatToolCallTrace,
   formatToolResultTrace,
   buildClaimInvocationPayload,
+  buildPersistedConfig,
   buildRuntimeCapabilities,
   getRuntimeCommand,
   parseSessionControlCommand,
