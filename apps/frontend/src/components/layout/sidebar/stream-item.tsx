@@ -133,7 +133,7 @@ interface StreamItemPreviewProps {
   toEmoji?: (shortcode: string) => string | null
   compact: boolean
   showPreviewOnHover: boolean
-  isMobile: boolean
+  isTouch: boolean
   /**
    * E2E streams: sidebar previews are public surfaces, so we never decrypt
    * here. Phase 3.5 keeps ciphertext at rest and routes decryption through
@@ -149,12 +149,12 @@ export function StreamItemPreview({
   toEmoji,
   compact,
   showPreviewOnHover,
-  isMobile,
+  isTouch,
   e2eEnabled,
 }: StreamItemPreviewProps) {
   if (!preview?.content) return null
 
-  const hoverPreview = compact && showPreviewOnHover && !isMobile
+  const hoverPreview = compact && showPreviewOnHover && !isTouch
 
   return (
     <div
@@ -403,7 +403,7 @@ export function StreamItem({
                   toEmoji={toEmoji}
                   compact={compact}
                   showPreviewOnHover={showPreviewOnHover}
-                  isMobile={isTouch}
+                  isTouch={isTouch}
                   e2eEnabled={stream.e2eEnabled}
                 />
               </div>

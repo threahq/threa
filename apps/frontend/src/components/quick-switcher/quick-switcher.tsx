@@ -598,9 +598,10 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
             />
           )}
 
-          {/* Keyboard hints footer — hidden on touch (no physical keyboard) */}
+          {/* Keyboard hints footer — needs a physical keyboard (not touch) and
+              room to lay out without overflowing (hidden below the sm breakpoint). */}
           {!inputRequest && !isTouch && (
-            <div className="flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
+            <div className="hidden sm:flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
               <div className="flex gap-4">
                 <span>
                   <kbd className="kbd-hint">↑↓</kbd> Navigate

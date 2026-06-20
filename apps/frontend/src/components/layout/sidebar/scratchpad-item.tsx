@@ -204,7 +204,7 @@ export function ScratchpadItem({
                   toEmoji={toEmoji}
                   compact={compact}
                   showPreviewOnHover={showPreviewOnHover}
-                  isMobile={isTouch}
+                  isTouch={isTouch}
                   e2eEnabled={streamWithPreview.e2eEnabled}
                 />
               </div>
