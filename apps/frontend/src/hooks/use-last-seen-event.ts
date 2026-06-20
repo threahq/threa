@@ -1,0 +1,208 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { StreamEvent } from "@threa/types"
+
+export interface VisibleRow {
+  id: string
+  top: number
+  bottom: number
+}
+
+export interface VisibleRange {
+  /** First row (chronological DOM order) intersecting the viewport. */
+  topId: string
+  /** Last row intersecting the viewport. */
+  bottomId: string
+}
+
+/**
+ * The contiguous run of rows intersecting the viewport — first and last. A row
+ * counts as visible when any part of it is between the viewport top and bottom;
+ * a row taller than the viewport still counts (the viewer has reached it).
+ */
+export function pickVisibleRange(rows: VisibleRow[], viewportTop: number, viewportBottom: number): VisibleRange | null {
+  let topId: string | null = null
+  let bottomId: string | null = null
+  for (const row of rows) {
+    if (row.top < viewportBottom && row.bottom > viewportTop) {
+      if (topId === null) topId = row.id
+      bottomId = row.id
+    }
+  }
+  return topId !== null && bottomId !== null ? { topId, bottomId } : null
+}
+
+/**
+ * Advance the read frontier through a contiguous run only. The frontier moves to
+ * the bottom of the viewport when the viewport's top is at or above the first
+ * unread row (`frontier + 1`) — i.e. there is no gap of unseen rows between the
+ * read frontier and what's on screen. Landing at the live bottom leaves such a
+ * gap, so the frontier (and the read pointer) stays put; flinging past a block
+ * of rows without them entering the viewport likewise stops the advance.
+ */
+export function advanceFrontier(frontier: number, topIdx: number, botIdx: number): number {
+  if (topIdx <= frontier + 1 && botIdx > frontier) return botIdx
+  return frontier
+}
+
+interface UseLastSeenEventOptions {
+  /** The owned scroll container (virtualized timeline or plain thread scroller). */
+  scrollContainerRef: React.RefObject<HTMLElement | null>
+  /** The loaded event window, used to map a visible row back to its position. */
+  events: StreamEvent[]
+  streamId: string
+  /**
+   * The viewer's persisted read pointer (the last event they've read up to), or
+   * `null`/`undefined` when nothing is read / still hydrating. Seeds the read
+   * frontier so marking resumes from where the viewer left off.
+   */
+  lastReadEventId: string | null | undefined
+  /** Off while loading/jumping/draft — no scroller to read, nothing to track. */
+  enabled: boolean
+}
+
+interface UseLastSeenEventResult {
+  /**
+   * The event to mark read up to: the bottom of the contiguous run the viewer
+   * has scrolled through starting from their read pointer. `undefined` until the
+   * frontier advances past the pointer. Read state never jumps a gap — landing
+   * at the live bottom does NOT mark the unread above it read; the viewer must
+   * scroll down through it (or press Escape) for the pointer to advance.
+   */
+  lastSeenEventId: string | undefined
+  /** Whether the read frontier has reached the last rendered row (a full read). */
+  atLastRow: boolean
+  /**
+   * Whether unread sits above the current viewport — i.e. the first unread row
+   * is scrolled off the top. Drives the "N new ↑" jump affordance.
+   */
+  unreadAboveViewport: boolean
+}
+
+/**
+ * Track how far the viewer has actually read, advancing the read pointer only
+ * through a CONTIGUOUS run from where they left off (Slack-style). Opening a
+ * stream lands at the live bottom; the unread above stays unread until the
+ * viewer scrolls up to the first unread and reads down through it — the pointer
+ * cannot skip a gap of messages the viewer never had on screen.
+ */
+export function useLastSeenEvent({
+  scrollContainerRef,
+  events,
+  streamId,
+  lastReadEventId,
+  enabled,
+}: UseLastSeenEventOptions): UseLastSeenEventResult {
+  const [lastSeenEventId, setLastSeenEventId] = useState<string | undefined>(undefined)
+  const [atLastRow, setAtLastRow] = useState(false)
+  const [unreadAboveViewport, setUnreadAboveViewport] = useState(false)
+
+  const indexById = useMemo(() => {
+    const m = new Map<string, number>()
+    for (let i = 0; i < events.length; i++) m.set(events[i].id, i)
+    return m
+  }, [events])
+  // Refs keep the scroll-listener closure stable across data ticks — re-attaching
+  // it on every new message would drop scroll events mid-gesture.
+  const indexByIdRef = useRef(indexById)
+  indexByIdRef.current = indexById
+  const eventsRef = useRef(events)
+  eventsRef.current = events
+
+  // The viewer's read pointer as an index into the loaded window. A read event
+  // older than the window (or unknown) is -1: everything loaded is unread.
+  const readIndex = lastReadEventId != null ? (indexById.get(lastReadEventId) ?? -1) : -1
+  const readIndexRef = useRef(readIndex)
+  readIndexRef.current = readIndex
+
+  // The read frontier: the bottom of the contiguous run read so far. Seeded from
+  // the read pointer and advanced only while the viewport stays contiguous with
+  // it. An external read (another device) bumps it forward via readIndexRef.
+  const frontierRef = useRef(readIndex)
+
+  const recompute = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const containerRect = el.getBoundingClientRect()
+    // The floating composer overlaps the scroller's bottom; a row hidden behind
+    // it has not been seen, so exclude that band from the viewport.
+    const composerH = Number.parseFloat(getComputedStyle(el).getPropertyValue("--composer-height")) || 0
+    const viewportTop = containerRect.top
+    const viewportBottom = containerRect.bottom - composerH
+
+    const rowEls = el.querySelectorAll<HTMLElement>("[data-event-id]")
+    if (rowEls.length === 0) return
+    const rows: VisibleRow[] = []
+    for (let i = 0; i < rowEls.length; i++) {
+      const id = rowEls[i].dataset.eventId
+      if (!id) continue
+      const r = rowEls[i].getBoundingClientRect()
+      rows.push({ id, top: r.top, bottom: r.bottom })
+    }
+
+    const range = pickVisibleRange(rows, viewportTop, viewportBottom)
+    if (!range) return
+    const map = indexByIdRef.current
+    const topIdx = map.get(range.topId)
+    const botIdx = map.get(range.bottomId)
+    if (topIdx === undefined || botIdx === undefined) return
+    const lastRenderedIdx = map.get(rows[rows.length - 1].id) ?? botIdx
+
+    // External reads can only move the frontier forward.
+    if (readIndexRef.current > frontierRef.current) frontierRef.current = readIndexRef.current
+
+    frontierRef.current = advanceFrontier(frontierRef.current, topIdx, botIdx)
+
+    const frontier = frontierRef.current
+    setAtLastRow(frontier >= lastRenderedIdx)
+    // Unread sits above the viewport when the first unread row (frontier + 1)
+    // exists in the window and is scrolled off the top.
+    setUnreadAboveViewport(frontier + 1 <= lastRenderedIdx && frontier + 1 < topIdx)
+    // Only emit a mark target once the frontier has moved PAST the read pointer —
+    // marking up to where they already are is a wasted no-op round-trip.
+    if (frontier > readIndexRef.current && frontier >= 0) {
+      const id = eventsRef.current[frontier]?.id
+      if (id) setLastSeenEventId((prev) => (prev === id ? prev : id))
+    }
+  }, [scrollContainerRef])
+
+  // Reset on stream switch — the new stream's frontier seeds from its own read
+  // pointer, never inheriting the previous stream's position.
+  useEffect(() => {
+    frontierRef.current = readIndexRef.current
+    setLastSeenEventId(undefined)
+    setAtLastRow(false)
+    setUnreadAboveViewport(false)
+  }, [streamId])
+
+  // Attach the scroll listener and seed an initial scan. The initial scan covers
+  // a window that fits the viewport with no scroll (no scroll event would fire).
+  // `enabled` flips true exactly when the scroller is mounted, so the ref is live.
+  useEffect(() => {
+    if (!enabled) return
+    const el = scrollContainerRef.current
+    let raf = 0
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        recompute()
+      })
+    }
+    schedule()
+    el?.addEventListener("scroll", schedule, { passive: true })
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      el?.removeEventListener("scroll", schedule)
+    }
+  }, [enabled, streamId, recompute, scrollContainerRef])
+
+  // Re-scan when the window grows (live append) or the read pointer moves under
+  // us (external read), so the frontier and the affordance stay current.
+  useEffect(() => {
+    if (!enabled) return
+    const raf = requestAnimationFrame(recompute)
+    return () => cancelAnimationFrame(raf)
+  }, [enabled, events.length, readIndex, recompute])
+
+  return { lastSeenEventId, atLastRow, unreadAboveViewport }
+}

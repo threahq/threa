@@ -5,6 +5,7 @@ import {
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
+  findEventItemIndex,
   getTimelineItemKey,
   groupTimelineItems,
   injectGapItems,
@@ -395,6 +396,34 @@ describe("findMessageItemIndex", () => {
       eventItem("evt_2", "msg_real"),
     ]
     expect(findMessageItemIndex(items, "msg_real")).toBe(1)
+  })
+})
+
+describe("findEventItemIndex", () => {
+  function eventItem(id: string): TimelineItem {
+    return { type: "event", event: createEvent({ id, sequence: id, eventType: "message_created", payload: {} }) }
+  }
+
+  it("returns the index of the item carrying the event id (the unread-divider anchor)", () => {
+    const items: TimelineItem[] = [eventItem("evt_1"), eventItem("evt_2"), eventItem("evt_3")]
+    expect(findEventItemIndex(items, "evt_2")).toBe(1)
+  })
+
+  it("matches a group on its first event, like the divider does", () => {
+    const items: TimelineItem[] = [
+      eventItem("evt_1"),
+      {
+        type: "session_group",
+        sessionId: "sess_1",
+        sessionVersion: 1,
+        events: [createEvent({ id: "evt_2", sequence: "2", eventType: "message_created", payload: {} })],
+      },
+    ]
+    expect(findEventItemIndex(items, "evt_2")).toBe(1)
+  })
+
+  it("returns -1 when the event is not in the window so the cold-load scroll falls back to the bottom", () => {
+    expect(findEventItemIndex([eventItem("evt_1")], "evt_gone")).toBe(-1)
   })
 })
 

@@ -7,10 +7,11 @@ export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
   return (
     <div
       // The line sits in the gap *above* the first-unread item, centered in the
-      // extra `pt-3` that row gets while the divider shows (see TimelineItemContent).
-      // `top-3` + `-translate-y-1/2` lands the line's center ~12px below the row
-      // top, leaving even breathing room above (to the previous row) and below
-      // (the message's own `pt-3`) so it doesn't crowd either.
+      // extra `pt-6` (24px) that row gets while the divider shows (see
+      // TimelineItemContent). `top-3` + `-translate-y-1/2` lands the line's
+      // center 12px below the row top — exactly half the reserved padding — so
+      // the breathing room above (to the previous row) and below (to the
+      // message) is symmetric.
       //
       // Color, not opacity: the line keeps reserving its row as it settles, so
       // nothing shifts when it dims (INV-21).

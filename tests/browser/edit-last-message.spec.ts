@@ -156,10 +156,16 @@ test.describe("Edit last message (ArrowUp)", () => {
     const lastFillerEl = userA.page.getByRole("main").locator(".message-item").getByText(`${fillerText} #20`).first()
     await expect(lastFillerEl).toBeVisible({ timeout: 15000 })
 
-    // After bootstrap + initial auto-scroll, the latest message should be in viewport
-    // and User A's first message should be scrolled off-screen
+    // Cold load opens at the live bottom (the tail), so with the 20 fillers after
+    // it User A's first message is already off-screen above. Re-assert that via a
+    // scroll-to-tail — the precondition for the ArrowUp scroll-into-view below —
+    // and retry the scroll-then-check so a settle still converging its final
+    // scroll position can't leave a single scroll undone.
     const firstMessageEl = userA.page.getByRole("main").locator(".message-item").getByText(firstMessage).first()
-    await expect(firstMessageEl).not.toBeInViewport({ timeout: 5000 })
+    await expect(async () => {
+      await lastFillerEl.scrollIntoViewIfNeeded()
+      await expect(firstMessageEl).not.toBeInViewport()
+    }).toPass({ timeout: 10000 })
 
     // Press ArrowUp in the empty composer: the inline edit form opens AND the
     // off-screen target scrolls into view. Both are re-issued under load — the

@@ -286,6 +286,19 @@ export function findMessageItemIndex(items: TimelineItem[], messageId: string): 
   )
 }
 
+/**
+ * Index of the timeline item carrying `eventId` (the row, command group, or
+ * session group whose first event matches). Mirrors `isFirstUnread` so the
+ * scroll target resolves to the same item that renders the unread divider.
+ */
+export function findEventItemIndex(items: TimelineItem[], eventId: string): number {
+  return items.findIndex((item) => {
+    if (item.type === "event") return item.event.id === eventId
+    if (item.type === "command_group" || item.type === "session_group") return item.events[0]?.id === eventId
+    return false
+  })
+}
+
 /** Returns a stable key string for a timeline item */
 export function getTimelineItemKey(item: TimelineItem): string {
   switch (item.type) {
@@ -649,11 +662,12 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
   return (
     <>
       {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
-      {/* The first-unread row gets extra top padding so the absolutely-positioned
-          divider has room to breathe above the message instead of crowding it.
-          Only wrap when the divider shows so every other row keeps its spacing
-          and DOM shape. */}
-      {showUnreadDivider ? <div className="pt-3">{rowContent}</div> : rowContent}
+      {/* The first-unread row reserves `pt-6` (24px) of top padding so the
+          absolutely-positioned divider, centered at 12px (`top-3`), gets equal
+          12px breathing room above and below the line — `pt-3` left the line
+          flush against the message top. Only wrap when the divider shows so
+          every other row keeps its spacing and DOM shape. */}
+      {showUnreadDivider ? <div className="pt-6">{rowContent}</div> : rowContent}
     </>
   )
 }

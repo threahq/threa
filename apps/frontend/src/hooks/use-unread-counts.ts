@@ -28,21 +28,34 @@ export function useUnreadCounts(workspaceId: string) {
   )
 
   const markAsReadMutation = useMutation({
-    mutationFn: ({ streamId, lastEventId }: { streamId: string; lastEventId: string }) =>
+    mutationFn: ({ streamId, lastEventId }: { streamId: string; lastEventId: string; partial?: boolean }) =>
       streamService.markAsRead(workspaceId, streamId, lastEventId),
-    onSuccess: async (membership, { streamId, lastEventId }) => {
+    onSuccess: async (membership, { streamId, lastEventId, partial }) => {
       const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       const hadActivity = (current?.activityCounts[streamId] ?? 0) > 0
 
+      // A partial read advances the read pointer to a mid-window event with
+      // unread still below it. Zeroing the counters optimistically would be
+      // wrong AND sticky: the ordinal read position MAX-merges (see
+      // `applyStreamReadOrdinal`), so once forced to "read = latest" the
+      // server's `stream:read` for the mid event can never restore the
+      // remaining count. So for a partial read only the read POINTER moves
+      // optimistically; the badge resolves to the true remainder on the
+      // `stream:read` round-trip.
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const clearedActivity = old.activityCounts[streamId] ?? 0
+        const counters = partial
+          ? {}
+          : {
+              unreadCounts: { ...old.unreadCounts, [streamId]: 0 },
+              mentionCounts: { ...old.mentionCounts, [streamId]: 0 },
+              activityCounts: { ...old.activityCounts, [streamId]: 0 },
+              unreadActivityCount: Math.max(0, (old.unreadActivityCount ?? 0) - clearedActivity),
+            }
         return {
           ...old,
-          unreadCounts: { ...old.unreadCounts, [streamId]: 0 },
-          mentionCounts: { ...old.mentionCounts, [streamId]: 0 },
-          activityCounts: { ...old.activityCounts, [streamId]: 0 },
-          unreadActivityCount: Math.max(0, (old.unreadActivityCount ?? 0) - clearedActivity),
+          ...counters,
           streamMemberships: old.streamMemberships.map((existingMembership) =>
             existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
           ),
@@ -62,7 +75,7 @@ export function useUnreadCounts(workspaceId: string) {
       await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships], async () => {
         const now = Date.now()
         const state = await db.unreadState.get(workspaceId)
-        if (state) {
+        if (state && !partial) {
           const clearedActivity = state.activityCounts[streamId] ?? 0
           await db.unreadState.put({
             ...state,
@@ -148,8 +161,8 @@ export function useUnreadCounts(workspaceId: string) {
   })
 
   const markAsRead = useCallback(
-    (streamId: string, lastEventId: string) => {
-      markAsReadMutation.mutate({ streamId, lastEventId })
+    (streamId: string, lastEventId: string, opts?: { partial?: boolean }) => {
+      markAsReadMutation.mutate({ streamId, lastEventId, partial: opts?.partial })
     },
     [markAsReadMutation]
   )

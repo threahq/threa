@@ -192,5 +192,52 @@ describe("useUnreadCounts", () => {
     expect(bootstrap?.streamMemberships.find((membership) => membership.streamId === "stream_1")?.lastReadEventId).toBe(
       "event_new"
     )
+    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+  })
+
+  it("advances the read pointer but keeps the unread badge on a partial read", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_mid",
+      lastReadAt: new Date().toISOString(),
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    act(() => {
+      result.current.markAsRead("stream_1", "event_mid", { partial: true })
+    })
+
+    await waitFor(() => {
+      const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(
+        bootstrap?.streamMemberships.find((membership) => membership.streamId === "stream_1")?.lastReadEventId
+      ).toBe("event_mid")
+    })
+
+    // Pointer advanced, but the badge is untouched — the server `stream:read`
+    // round-trip owns the true remaining count (no sticky optimistic zero).
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(2)
+    expect(await db.unreadState.get("ws_1")).toMatchObject({ unreadCounts: { stream_1: 2 } })
   })
 })

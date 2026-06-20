@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
-import { MessageSquare, ArrowDown, X, Move, Loader2, Check } from "lucide-react"
+import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -12,7 +12,11 @@ import {
   useStreamBootstrap,
   useWorkspaceUserId,
   useAutoMarkAsRead,
+  useLastSeenEvent,
+  useUnreadCounts,
   useUnreadDivider,
+  useDividerDim,
+  useIsMobile,
   useNewMessageIndicator,
   useAgentActivity,
   useAbortResearch,
@@ -61,6 +65,7 @@ import {
   itemDayStartMs,
   findFirstMessageId,
   findMessageItemIndex,
+  findEventItemIndex,
   getTimelineItemKey,
   filterVisibleItems,
   OLDER_SKELETON_ITEMS,
@@ -1471,25 +1476,40 @@ export function StreamContent({
     clearSearch()
   }, [streamId, exitJumpMode, clearSearch])
 
-  // Auto-mark stream as read when viewing
-  const lastEventId = events.length > 0 ? events[events.length - 1].id : undefined
-  useAutoMarkAsRead(workspaceId, streamId, lastEventId, { enabled: !isDraft && !isLoading && !isJumpMode })
+  // Auto-mark stream as read when viewing. The stream opens at the live bottom;
+  // read state advances only through the contiguous run the viewer scrolls
+  // through from where they left off (see useLastSeenEvent), so the unread above
+  // the fold stays unread until they go up to it (or press Escape). A not-at-tail
+  // mark is partial — the badge keeps the remaining unread (markAsRead partial).
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
+  const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
+    scrollContainerRef,
+    events: displayEvents,
+    streamId,
+    lastReadEventId,
+    enabled: autoMarkEnabled,
+  })
+  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
+
+  const isMobile = useIsMobile()
+  const { markAsRead, getUnreadCount } = useUnreadCounts(workspaceId)
+  const unreadCount = getUnreadCount(streamId)
 
   // Track live-arriving messages from other users for brief "new" indicator.
   const newMessageIds = useNewMessageIndicator(events, currentWorkspaceUserId ?? undefined, streamId, lastReadEventId)
 
-  // Unread divider state management (also handles scroll-to-first-unread).
-  // Pass `displayEvents` so the divider's first-unread search skips events we
-  // hide from this stream's render (e.g. thread membership rows) — otherwise
-  // the divider can target an event id that never matches a rendered row and
-  // silently fails to show.
-  const { dividerEventId, isDimmed: isDividerDimmed } = useUnreadDivider({
+  // Unread divider state — a bookmark line at the first unread message. The
+  // stream opens at the bottom (no auto-scroll to unread); the viewer reaches
+  // the divider via the "N new" jump button or by scrolling up.
+  const { dividerEventId, dismiss: dismissUnreadDivider } = useUnreadDivider({
     events: displayEvents,
     lastReadEventId,
     currentUserId: currentWorkspaceUserId ?? undefined,
     streamId,
     isLoading,
     highlightMessageId,
+    // Never auto-scroll to the unread line — opening lands at the live bottom.
+    scrollToUnread: false,
     // `lastReadEventId` is `string | null` once resolved; it is only `undefined`
     // while the read sources (stream row / membership) are still hydrating. Gate
     // on that so a not-yet-known read position can't be read as "all unread" and
@@ -1498,6 +1518,54 @@ export function StreamContent({
     // stale null while the authoritative membership value is still loading.
     readStateResolved: lastReadEventId !== undefined,
   })
+
+  // The divider's red → gray fade waits until the row is actually on screen —
+  // it usually starts off-screen above (the stream opens at the bottom).
+  const isDividerDimmed = useDividerDim(scrollContainerRef, dividerEventId, streamId)
+
+  // Read the last loaded event from a ref so the Escape listener below doesn't
+  // re-attach on every live message (the events array is a fresh reference each
+  // append).
+  const lastLoadedEventIdRef = useRef<string | undefined>(undefined)
+  lastLoadedEventIdRef.current = events.length > 0 ? events[events.length - 1].id : undefined
+
+  // Escape "escapes the unread block" (desktop, Slack's Esc-marks-channel-read):
+  // mark the stream fully read, dismiss the persistent unread divider, and
+  // resume tailing the live bottom. Scoped to when the divider is actually shown
+  // so it never swallows Escape elsewhere; the composer/editor keep their own
+  // Escape via the isInput guard, and search owns Escape while open.
+  useEffect(() => {
+    if (isMobile || isDraft || !dividerEventId || isSearchOpen) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      const target = event.target as HTMLElement | null
+      const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
+      if (isInput) return
+      // An open Radix overlay that owns Escape (move dialog, dropdown, the
+      // reaction popover) listens in the capture phase and does not stop
+      // propagation, so without this our bubble-phase handler would ALSO mark
+      // the stream read and jump to the tail on the same keypress. Dialogs and
+      // menus match by role; other popovers match the popper wrapper (only in
+      // the DOM while open — no forceMount). Hover-only tooltips render in a
+      // popper wrapper too but never own Escape, so a tooltip showing on a
+      // hovered message must not block the shortcut — skip wrappers whose
+      // content is a tooltip.
+      const overlayOwnsEscape =
+        document.querySelector(
+          '[role="dialog"][data-state="open"],[role="alertdialog"][data-state="open"],[role="menu"][data-state="open"]'
+        ) != null ||
+        Array.from(document.querySelectorAll("[data-radix-popper-content-wrapper]")).some(
+          (wrapper) => wrapper.querySelector('[role="tooltip"]') == null
+        )
+      if (overlayOwnsEscape) return
+      const lastLoadedEventId = lastLoadedEventIdRef.current
+      if (lastLoadedEventId) markAsRead(streamId, lastLoadedEventId)
+      dismissUnreadDivider()
+      scrollToBottom({ force: true })
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [isMobile, isDraft, dividerEventId, isSearchOpen, markAsRead, streamId, dismissUnreadDivider, scrollToBottom])
 
   const queryClient = useQueryClient()
   const isPublicChannel = stream?.type === StreamTypes.CHANNEL && stream?.visibility === Visibilities.PUBLIC
@@ -1542,6 +1610,28 @@ export function StreamContent({
       scrollToBottom({ force: true })
     }
   }, [isJumpMode, exitJumpMode, resetShiftBaseline, scrollToBottom])
+
+  // Jump up to the first unread (the "New" divider) and stop following the tail
+  // so a live message doesn't yank the reader back down. Lands the divider near
+  // the top with a little context above so the run reads from the top.
+  const scrollToFirstUnread = useCallback(() => {
+    if (!dividerEventId) return
+    disableAutoScroll()
+    if (useVirtualized) {
+      const idx = findEventItemIndex(visibleItems, dividerEventId)
+      if (idx < 0) return
+      try {
+        listRef.current?.scrollToIndex(idx, { align: "start", offset: -56 })
+      } catch {
+        // A not-yet-measured virtua list can throw; the row is already rendered
+        // by the time this button is clickable, so this is best-effort.
+      }
+    } else {
+      scrollContainerRef.current
+        ?.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(dividerEventId)}"]`)
+        ?.scrollIntoView({ block: "start" })
+    }
+  }, [dividerEventId, useVirtualized, visibleItems, listRef, disableAutoScroll, scrollContainerRef])
 
   const editLastMessageCtxWithScroll = useMemo(
     () => ({ ...editLastMessageCtx, scrollToMessage }),
@@ -1795,6 +1885,29 @@ export function StreamContent({
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                   Jump to latest
+                </Button>
+              </div>
+            )}
+            {/* "N new messages" jump — shown when unread sits above the viewport.
+              Jumps up to the "New" divider so the viewer can read from there.
+              Hidden while search is open: jumping the timeline would yank it out
+              from under the active search-result navigation, and the Escape
+              mark-read shortcut is gated on `!isSearchOpen` too. */}
+            {unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen && (
+              <div
+                // Sits clearly below the floating date pill (top-2, ~30px tall)
+                // so the top-center affordances never overlap.
+                className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
+                style={{ top: "3.5rem" }}
+              >
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="pointer-events-auto shadow-lg gap-1.5"
+                  onClick={scrollToFirstUnread}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                  {unreadCount} new message{unreadCount === 1 ? "" : "s"}
                 </Button>
               </div>
             )}
