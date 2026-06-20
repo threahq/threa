@@ -45,7 +45,9 @@ const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
 const ACTIVE_SCRATCHPAD_CAPABILITY = "active-scratchpad"
-const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload", "shell"] as const
+const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop"] as const
+type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
+const STEER_DRAIN_LIMIT = 10
 const SHELL_TIMEOUT_MS = 60_000
 // 32K chars per stream — large enough for typical output, small enough to avoid
 // dumping a CI log into the scratchpad if a curious user pipes `find /` in.
@@ -1973,6 +1975,50 @@ async function runShellCommand(invocation: ClaimedInvocation, args: string, ctx:
   await completeInvocationWithMarkdown(invocation, formatShellResult(command, result), ctx)
 }
 
+async function runSteerCommand(
+  pi: ExtensionAPI,
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext
+): Promise<void> {
+  const steerText = args.trim()
+  if (!steerText) {
+    if (pending) {
+      await recordTraceStep("steer", "Steer requested; checking for pending Threa messages.", "Steering…")
+    }
+    await completeInvocationNoResponse(invocation)
+    return
+  }
+
+  const steeredInvocation = { ...invocation, promptMarkdown: steerText }
+  const { prompt, cursor, context } = await buildInvocationPrompt(steeredInvocation, ctx)
+  const shouldSteer = pending !== undefined || !ctx.isIdle()
+  if (!pending) {
+    beginPendingInvocation(invocation, cursor)
+    pendingInvocationPrompt = prompt
+    await recordTraceStep("context_received", formatInvocationTrace(steeredInvocation, context), "Loaded context…")
+  } else {
+    steeredInvocations.push({ invocation, cursor })
+    await recordTraceStep("steer", formatInvocationTrace(steeredInvocation, context), "Steering…")
+  }
+  setRemoteStatus(ctx, `Threa remote: running ${pending?.id ?? invocation.id}`)
+  pi.sendUserMessage(prompt, shouldSteer ? { deliverAs: "steer" } : undefined)
+}
+
+async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
+  const hadPendingRemoteInvocation = pending !== undefined
+  const wasBusy = !ctx.isIdle()
+  if (wasBusy) ctx.abort()
+  if (hadPendingRemoteInvocation) {
+    await completePending(NO_RESPONSE_MARKER, ctx)
+  }
+  await completeInvocationWithMarkdown(
+    invocation,
+    wasBusy || hadPendingRemoteInvocation ? "Stopped the current Pi turn." : "No Pi turn is running.",
+    ctx
+  )
+}
+
 async function runSkillCommand(
   pi: ExtensionAPI,
   invocation: ClaimedInvocation,
@@ -2040,6 +2086,12 @@ async function handleSessionControlInvocation(
         return
       case "shell":
         await runShellCommand(invocation, command.args, ctx)
+        return
+      case "steer":
+        await runSteerCommand(pi, invocation, command.args, ctx)
+        return
+      case "stop":
+        await runStopCommand(invocation, ctx)
         return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
@@ -2113,16 +2165,22 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
     return true
   }
 
-  const steer = pending !== undefined || !ctx.isIdle()
-  if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…", ctx)
+  for (let claimedCount = 0; claimedCount < STEER_DRAIN_LIMIT; claimedCount++) {
+    const steer = pending !== undefined || !ctx.isIdle()
+    if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…", ctx)
 
-  const invocation = await claimNextInvocation(ctx)
-  if (!invocation) return true
-  if (isSessionControlInvocation(invocation)) {
-    await handleSessionControlInvocation(pi, ctx, invocation)
-    return true
+    const invocation = await claimNextInvocation(ctx)
+    if (!invocation) return true
+    if (isSessionControlInvocation(invocation)) {
+      const command = resolveSessionControlCommand(invocation)
+      await handleSessionControlInvocation(pi, ctx, invocation)
+      if (command?.name === "stop") return true
+    } else {
+      await injectInvocation(pi, ctx, invocation, steer)
+    }
+    if (!steer) return true
+    if (!pending && ctx.isIdle()) return true
   }
-  await injectInvocation(pi, ctx, invocation, steer)
   return true
 }
 

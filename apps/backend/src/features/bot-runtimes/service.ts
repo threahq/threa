@@ -393,7 +393,10 @@ export class BotRuntimeService {
         supportsActiveScratchpad: true,
         supportsPersistentSessions: true,
         ...(params.runtimeKind === "pi-local"
-          ? { supportsSessionControlCommands: true, sessionControlCommands: ["compact", "model", "thinking", "skill"] }
+          ? {
+              supportsSessionControlCommands: true,
+              sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop"],
+            }
           : {}),
       },
       // Session-link writes don't carry the runtime's BIK; keep the key the

@@ -21,6 +21,28 @@ interface Dependencies {
   botRuntimeService: BotRuntimeService
 }
 
+function resolveRuntimeInvocationRouting(commandName: string): {
+  trigger: (typeof BotInvocationTriggers)[keyof typeof BotInvocationTriggers]
+  requiredCapability: (typeof BotInvocationCapabilities)[keyof typeof BotInvocationCapabilities]
+} {
+  if (commandName === "steer") {
+    return {
+      trigger: BotInvocationTriggers.SESSION_CONTROL,
+      requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
+    }
+  }
+  if (commandName === "stop") {
+    return {
+      trigger: BotInvocationTriggers.SESSION_CONTROL,
+      requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
+    }
+  }
+  return {
+    trigger: BotInvocationTriggers.SESSION_CONTROL,
+    requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
+  }
+}
+
 export function createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService }: Dependencies) {
   return {
     /**
@@ -115,6 +137,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           name: parsed.name,
           args: parsed.args,
         })
+        const routing = resolveRuntimeInvocationRouting(parsed.name)
         await botRuntimeService.createInvocationInTransaction(client, {
           workspaceId,
           rootStreamId: resolved.runtime.rootStreamId,
@@ -122,8 +145,8 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           sourceMessageId: cmdId,
           responseStreamId: resolved.runtime.responseStreamId,
           actorId: resolved.runtime.botId,
-          trigger: BotInvocationTriggers.SESSION_CONTROL,
-          requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
+          trigger: routing.trigger,
+          requiredCapability: routing.requiredCapability,
           promptMarkdown: `/${parsed.name}${parsed.args ? ` ${parsed.args}` : ""}`,
           authorUserId: userId,
           targetInstanceId: resolved.runtime.targetInstanceId,
