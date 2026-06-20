@@ -372,6 +372,11 @@ export async function restoreStashedDraftToComposer(
   scope: string,
   draftId: string
 ): Promise<void> {
+  // Drop the staging buffer: it holds the keystrokes for the draft being swapped
+  // OUT (already flushed to its own row by the caller), so leaving it would let a
+  // reload before the next keystroke recover that stale body over the draft we
+  // just restored — corrupting it. The restored draft re-stages on its first edit.
+  clearStagedDraft(workspaceId, scope)
   await db.composerLoaded.put({ scope, workspaceId, draftId })
   setComposerLoadedInCache(workspaceId, scope, draftId)
 }
@@ -540,9 +545,12 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
       // can't lose it (the debounce only reaches IDB after DEBOUNCE_MS). Plaintext
       // only: an E2E draft must never write its body to disk unsealed (E2EE-4), and
       // there is no synchronous seal — its reload-loss window stays open by design.
-      // The gate is read live (the timer-fire seal uses the same ref) so a value
-      // typed while plaintext is never staged after the stream became encrypted.
-      if (!e2eGateRef.current.enabled) stageDraftContent(workspaceId, draftKey, contentJson)
+      // Gate on the render value `e2eEnabled`, not `e2eGateRef` (which trails a
+      // prop change by one effect): this runs synchronously at keystroke time, and
+      // the callback re-binds when `e2eEnabled` flips, so a stream that just became
+      // encrypted never stages a plaintext keystroke. (The seal at timer-fire still
+      // reads the ref, the right source for that deferred point.)
+      if (!e2eEnabled) stageDraftContent(workspaceId, draftKey, contentJson)
       // `saveDraft` reads the live E2E gate when the timer fires, so a value typed
       // while the stream was plaintext is sealed (or dropped) — never written as
       // plaintext — if the stream became encrypted in the meantime (E2EE-4).
@@ -551,7 +559,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         void saveDraft(contentJson)
       }, DEBOUNCE_MS)
     },
-    [saveDraft, workspaceId, draftKey]
+    [saveDraft, workspaceId, draftKey, e2eEnabled]
   )
 
   /**

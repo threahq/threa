@@ -7,6 +7,7 @@ import {
   resolveLoadedDraft,
   clearLoadedDraft,
   stashLoadedDraft,
+  restoreStashedDraftToComposer,
 } from "./use-draft-message"
 import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
@@ -928,6 +929,25 @@ describe("draft staging (synchronous reload safety)", () => {
 
     await stashLoadedDraft(workspaceId, draftKey)
 
+    expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
+  })
+
+  it("clears the staging buffer on stash-restore so a reload can't overwrite the restored draft", async () => {
+    // Loaded draft A (with staged keystrokes) plus a separate stash entry B.
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("draft A"), attachments: [] })
+    await db.drafts.put({
+      id: "draft_B",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("draft B"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    stageDraftContent(workspaceId, draftKey, makeDoc("draft A edited"))
+
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_B")
+
+    // The swapped-out draft's buffer is gone, so reconcile can't apply it over B.
     expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
   })
 })

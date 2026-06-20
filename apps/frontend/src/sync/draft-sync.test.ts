@@ -849,6 +849,18 @@ describe("reconcileStagedDrafts", () => {
     expect(readStagedDraft(workspaceId, loadedScope)).toBeNull()
   })
 
+  it("keeps the staged buffer when the recovery write fails (no loss, retried next load)", async () => {
+    stageDraftContent(workspaceId, loadedScope, makeDoc("unflushed tail"))
+    const putSpy = vi.spyOn(db.drafts, "put").mockRejectedValueOnce(new Error("idb boom"))
+
+    await reconcileStagedDrafts(workspaceId)
+
+    // The buffer is the only copy of the tail — it must survive a transient write
+    // failure so the next load can retry, rather than being cleared away.
+    expect(readStagedDraft(workspaceId, loadedScope)?.contentJson).toEqual(makeDoc("unflushed tail"))
+    putSpy.mockRestore()
+  })
+
   it("clears a staged entry whose content is empty without creating a draft", async () => {
     // Write an empty-content buffer directly (the public stage helper refuses to).
     localStorage.setItem(

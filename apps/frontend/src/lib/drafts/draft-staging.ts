@@ -35,13 +35,14 @@ import { isEmptyContent } from "@/lib/prosemirror-utils"
 const PREFIX = "threa:draft-stage:"
 
 /**
- * Skip staging a serialized payload larger than this. A pathological paste (a
- * whole document into the composer) would make the synchronous per-keystroke
- * write janky and could exhaust the localStorage quota; the debounced IDB write
- * still persists it, so the only cost of skipping is the reload-loss window for
- * that one outsized draft.
+ * Skip staging a serialized payload longer than this (measured in `string.length`,
+ * i.e. UTF-16 code units — localStorage stores UTF-16, so the on-disk cost is
+ * roughly twice this in bytes, ~512KB). A pathological paste (a whole document
+ * into the composer) would make the synchronous per-keystroke write janky and eat
+ * into the localStorage quota; the debounced IDB write still persists it, so the
+ * only cost of skipping is the reload-loss window for that one outsized draft.
  */
-const MAX_STAGED_BYTES = 256 * 1024
+const MAX_STAGED_CHARS = 256 * 1024
 
 export interface StagedDraft {
   scope: string
@@ -78,7 +79,7 @@ export function stageDraftContent(workspaceId: string, scope: string, contentJso
       return
     }
     const raw = JSON.stringify({ contentJson, clientUpdatedAt: Date.now() })
-    if (raw.length > MAX_STAGED_BYTES) {
+    if (raw.length > MAX_STAGED_CHARS) {
       // Too large to stage cheaply — drop any prior buffer and let the debounce
       // carry it to IDB. Leaving a stale smaller entry would recover the wrong body.
       localStorage.removeItem(keyFor(workspaceId, scope))
@@ -125,11 +126,17 @@ export function listStagedDrafts(workspaceId: string): StagedDraft[] {
   const prefix = workspacePrefix(workspaceId)
   const out: StagedDraft[] = []
   try {
+    // Snapshot the keys before reading. `localStorage.length`/`key(i)` index a
+    // LIVE store, so another tab writing/removing a key mid-iteration would shift
+    // indices and silently skip an entry; collect first, then read each (a
+    // since-deleted key reads back null and is skipped).
+    const keys: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i)
-      if (!key || !key.startsWith(prefix)) continue
-      const scope = key.slice(prefix.length)
-      const entry = readStagedDraft(workspaceId, scope)
+      if (key && key.startsWith(prefix)) keys.push(key)
+    }
+    for (const key of keys) {
+      const entry = readStagedDraft(workspaceId, key.slice(prefix.length))
       if (entry) out.push(entry)
     }
   } catch {

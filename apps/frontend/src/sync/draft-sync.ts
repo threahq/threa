@@ -608,12 +608,16 @@ export async function reconcileStagedDrafts(workspaceId: string): Promise<void> 
     try {
       await applyStagedDraft(workspaceId, entry)
     } catch (err) {
+      // Keep the buffer on failure (a transient IDB error) — it is the only copy
+      // of an un-flushed tail, so dropping it here would be the very loss this
+      // recovery exists to prevent. The next load retries.
       console.error("Failed to recover staged draft", err)
-    } finally {
-      // The buffer has served its purpose for this load whether or not it
-      // applied; clear it so it can't accumulate or re-recover stale content.
-      clearStagedDraft(workspaceId, entry.scope)
+      continue
     }
+    // Cleared only after the write succeeded — including the no-op paths
+    // (already-durable, sealed-scope, empty) which return normally — so the
+    // buffer can't accumulate or re-recover content already in IDB.
+    clearStagedDraft(workspaceId, entry.scope)
   }
 }
 
@@ -634,6 +638,10 @@ async function applyStagedDraft(workspaceId: string, entry: StagedDraft): Promis
   // split for this id instead of accepting a newer server row over the tail we
   // are about to recover (the same "unpushed edits win, server arbitrates" rule
   // `applyDraftUpserted` follows). Mirrors the draft to the backend either way.
+  // The two writes aren't atomic, but a crash in between is harmless: an op with
+  // no row no-ops at drain (`executeDraftUpsert` returns on a missing row), and
+  // the staging buffer — cleared only after this whole apply succeeds — still
+  // holds the content, so the next load recovers it.
   await enqueueDraftUpsert(workspaceId, id)
   // Preserve the loaded draft's sync bookkeeping + sidecars (baseVersion,
   // attachments, contextRefs) so recovering a typed tail can't wipe them; only
