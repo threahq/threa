@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { describe, expect, it, vi } from "vitest"
 import { onRequest, shouldServeSpaForStaticMiss } from "../functions/[[path]].js"
 
@@ -10,6 +11,10 @@ function requestFor(pathname: string, init?: RequestInit): Request {
 
 function response(body: string, status = 200): Response {
   return new Response(body, { status })
+}
+
+function routesConfig(): { exclude: string[] } {
+  return JSON.parse(readFileSync(new URL("../public/_routes.json", import.meta.url), "utf8")) as { exclude: string[] }
 }
 
 describe("SPA fallback function", () => {
@@ -80,5 +85,9 @@ describe("SPA fallback function", () => {
 
     expect(await result.text()).toBe("next")
     expect(next).toHaveBeenCalledOnce()
+  })
+
+  it("keeps API requests outside Pages Functions at the routing layer", () => {
+    expect(routesConfig().exclude).toEqual(expect.arrayContaining(["/api", "/api/*"]))
   })
 })
