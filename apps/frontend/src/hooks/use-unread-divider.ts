@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from "react"
+import { useState, useRef, useMemo, useCallback } from "react"
 import type { StreamEvent } from "@threa/types"
 import { useScrollToElement } from "./use-scroll-to-element"
 
@@ -44,69 +44,21 @@ interface UseUnreadDividerResult {
 }
 
 /**
- * Drive the unread divider's red → muted-gray "freshness" fade. The stream opens
- * at the live bottom, so the divider usually starts off-screen; the timer must
- * wait until the row has actually entered the viewport, or it would settle to
- * gray before the viewer ever scrolls up to see it. `readPast` short-circuits the
- * wait: once the read pointer reaches or passes the divider (the viewer read it,
- * or marked it read), it is no longer fresh, so dim immediately. Returns `isDimmed`.
+ * Whether the latched unread divider has been read past: true once the read
+ * pointer reaches or passes its position (the viewer read through it, or marked
+ * it read). The divider renders red while this is false (unread still sits at or
+ * after the line) and muted-gray once true — a pure read-state signal, no timer.
  */
-export function useDividerDim(
-  scrollContainerRef: RefObject<HTMLElement | null>,
+export function isDividerReadPast(
+  events: StreamEvent[],
   dividerEventId: string | undefined,
-  streamId: string,
-  readPast = false
+  lastReadEventId: string | null | undefined
 ): boolean {
-  const [isDimmed, setIsDimmed] = useState(false)
-  const [seen, setSeen] = useState(false)
-
-  // Reset when the stream or the latched divider changes.
-  useEffect(() => {
-    setSeen(false)
-    setIsDimmed(false)
-  }, [streamId, dividerEventId])
-
-  // Reading past the divider (explicit "Mark as read" or scrolling through it)
-  // dims it at once, ahead of the seen → 3s countdown.
-  useEffect(() => {
-    if (dividerEventId && readPast) setIsDimmed(true)
-  }, [dividerEventId, readPast])
-
-  // Latch `seen` the first time the divider row intersects the viewport. Once
-  // seen, the effect re-runs and detaches (early return) — it's a one-shot.
-  useEffect(() => {
-    if (!dividerEventId || seen) return
-    const el = scrollContainerRef.current
-    let raf = 0
-    const check = () => {
-      raf = 0
-      const scroller = scrollContainerRef.current
-      if (!scroller) return
-      const row = scroller.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(dividerEventId)}"]`)
-      if (!row) return
-      const sr = scroller.getBoundingClientRect()
-      const rr = row.getBoundingClientRect()
-      if (rr.top < sr.bottom && rr.bottom > sr.top) setSeen(true)
-    }
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(check)
-    }
-    schedule()
-    el?.addEventListener("scroll", schedule, { passive: true })
-    return () => {
-      if (raf) cancelAnimationFrame(raf)
-      el?.removeEventListener("scroll", schedule)
-    }
-  }, [dividerEventId, streamId, seen, scrollContainerRef])
-
-  // Start the red → gray countdown only once the divider has been seen.
-  useEffect(() => {
-    if (!dividerEventId || !seen) return
-    const dimTimer = setTimeout(() => setIsDimmed(true), 3000)
-    return () => clearTimeout(dimTimer)
-  }, [dividerEventId, seen])
-
-  return isDimmed
+  if (!dividerEventId || lastReadEventId == null) return false
+  const divider = events.find((e) => e.id === dividerEventId)
+  const pointer = events.find((e) => e.id === lastReadEventId)
+  if (!divider || !pointer) return false
+  return BigInt(pointer.sequence) >= BigInt(divider.sequence)
 }
 
 /**

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
-import { useUnreadDivider, useDividerDim } from "./use-unread-divider"
+import { useUnreadDivider, isDividerReadPast } from "./use-unread-divider"
 import * as useScrollToElementModule from "./use-scroll-to-element"
 
 beforeEach(() => {
@@ -265,21 +265,26 @@ describe("useUnreadDivider", () => {
   })
 })
 
-describe("useDividerDim", () => {
-  it("dims immediately once the read pointer passes the divider, without waiting the timer", () => {
-    const container = document.createElement("div")
-    const scrollContainerRef = { current: container }
+describe("isDividerReadPast", () => {
+  // Sequences are numeric bigint strings (compared via BigInt), unlike the id.
+  const events = [
+    { id: "event_1", sequence: "1" },
+    { id: "event_2", sequence: "2" },
+    { id: "event_3", sequence: "3" },
+  ] as unknown as Parameters<typeof isDividerReadPast>[0]
 
-    const { result, rerender } = renderHook(
-      ({ readPast }: { readPast: boolean }) => useDividerDim(scrollContainerRef, "event_1", "stream_1", readPast),
-      { initialProps: { readPast: false } }
-    )
+  it("is red (not read past) while the read pointer sits before the divider", () => {
+    // Divider at event_2, pointer at event_1 (unread still at/after the line).
+    expect(isDividerReadPast(events, "event_2", "event_1")).toBe(false)
+  })
 
-    // Fresh divider, not yet read past, not yet seen → still red.
-    expect(result.current).toBe(false)
+  it("is grey (read past) once the pointer reaches or passes the divider", () => {
+    expect(isDividerReadPast(events, "event_2", "event_2")).toBe(true)
+    expect(isDividerReadPast(events, "event_2", "event_3")).toBe(true)
+  })
 
-    // "Mark as read" advances the pointer past the divider → grey at once.
-    rerender({ readPast: true })
-    expect(result.current).toBe(true)
+  it("is red when nothing is read yet (null pointer) or the divider is hidden", () => {
+    expect(isDividerReadPast(events, "event_2", null)).toBe(false)
+    expect(isDividerReadPast(events, undefined, "event_3")).toBe(false)
   })
 })
