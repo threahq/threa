@@ -3519,7 +3519,7 @@
         "operationId": "listLabels",
         "summary": "List labels",
         "tags": ["Labels"],
-        "description": "The label catalog visible to this key: all public labels plus the key actor's own private labels, their memberships, and assignments on reachable resources.",
+        "description": "The key actor's labels (every label is private to its owner) and their resource assignments.",
         "security": [{ "apiKey": ["labels:read"] }],
         "parameters": [
           {
@@ -3549,7 +3549,6 @@
                             "properties": {
                               "id": { "type": "string" },
                               "workspaceId": { "type": "string" },
-                              "visibility": { "type": "string", "enum": ["public", "private"] },
                               "creatorActorType": { "type": "string", "enum": ["user", "bot"] },
                               "creatorActorId": { "type": "string" },
                               "name": { "type": "string" },
@@ -3566,7 +3565,6 @@
                             "required": [
                               "id",
                               "workspaceId",
-                              "visibility",
                               "creatorActorType",
                               "creatorActorId",
                               "name",
@@ -3578,21 +3576,6 @@
                               "updatedAt",
                               "archivedAt"
                             ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "memberships": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "labelId": { "type": "string" },
-                              "actorType": { "type": "string", "enum": ["user", "bot"] },
-                              "actorId": { "type": "string" },
-                              "workspaceId": { "type": "string" },
-                              "joinedAt": { "type": "string", "format": "date-time" }
-                            },
-                            "required": ["labelId", "actorType", "actorId", "workspaceId", "joinedAt"],
                             "additionalProperties": false
                           }
                         },
@@ -3622,7 +3605,7 @@
                           }
                         }
                       },
-                      "required": ["labels", "memberships", "assignments"],
+                      "required": ["labels", "assignments"],
                       "additionalProperties": false
                     }
                   },
@@ -3659,9 +3642,9 @@
       },
       "post": {
         "operationId": "createLabel",
-        "summary": "Create a label",
+        "summary": "Create or update a label by name",
         "tags": ["Labels"],
-        "description": "Create a label owned by the key actor (a user or a bot).",
+        "description": "Find-or-create a label owned by the key actor (a user or a bot), keyed by its name. Posting an existing name returns that label and applies any appearance fields supplied — labels are identified by their text, so this is idempotent.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
           {
@@ -3681,12 +3664,11 @@
                 "type": "object",
                 "properties": {
                   "name": { "type": "string", "minLength": 1, "maxLength": 100 },
-                  "visibility": { "type": "string", "enum": ["public", "private"] },
                   "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
                   "emoji": { "anyOf": [{ "type": "string", "maxLength": 32 }, { "type": "null" }] },
                   "description": { "anyOf": [{ "type": "string", "maxLength": 500 }, { "type": "null" }] }
                 },
-                "required": ["name", "visibility", "color"],
+                "required": ["name"],
                 "additionalProperties": false
               }
             }
@@ -3706,7 +3688,6 @@
                       "properties": {
                         "id": { "type": "string" },
                         "workspaceId": { "type": "string" },
-                        "visibility": { "type": "string", "enum": ["public", "private"] },
                         "creatorActorType": { "type": "string", "enum": ["user", "bot"] },
                         "creatorActorId": { "type": "string" },
                         "name": { "type": "string" },
@@ -3721,7 +3702,6 @@
                       "required": [
                         "id",
                         "workspaceId",
-                        "visibility",
                         "creatorActorType",
                         "creatorActorId",
                         "name",
@@ -3765,6 +3745,208 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/labels/assignments": {
+      "post": {
+        "operationId": "assignLabel",
+        "summary": "Apply a label to a resource by name",
+        "tags": ["Labels"],
+        "description": "Attach a label to a resource the key actor can reach, identifying the label by its text: the label is found-or-created for the actor, then assigned. `resourceType` is the polymorphic target (`stream` today) so the same endpoint labels any future resource without a wire change.",
+        "security": [{ "apiKey": ["labels:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+                  "emoji": { "anyOf": [{ "type": "string", "maxLength": 32 }, { "type": "null" }] },
+                  "description": { "anyOf": [{ "type": "string", "maxLength": 500 }, { "type": "null" }] },
+                  "resourceType": { "type": "string", "enum": ["stream"] },
+                  "resourceId": { "type": "string", "minLength": 1, "maxLength": 64 }
+                },
+                "required": ["name", "resourceType", "resourceId"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "object",
+                          "properties": {
+                            "id": { "type": "string" },
+                            "workspaceId": { "type": "string" },
+                            "creatorActorType": { "type": "string", "enum": ["user", "bot"] },
+                            "creatorActorId": { "type": "string" },
+                            "name": { "type": "string" },
+                            "slug": { "type": "string" },
+                            "color": { "type": "string" },
+                            "emoji": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "description": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "createdAt": { "type": "string", "format": "date-time" },
+                            "updatedAt": { "type": "string", "format": "date-time" },
+                            "archivedAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+                          },
+                          "required": [
+                            "id",
+                            "workspaceId",
+                            "creatorActorType",
+                            "creatorActorId",
+                            "name",
+                            "slug",
+                            "color",
+                            "emoji",
+                            "description",
+                            "createdAt",
+                            "updatedAt",
+                            "archivedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "assignment": {
+                          "type": "object",
+                          "properties": {
+                            "labelId": { "type": "string" },
+                            "resourceType": { "type": "string", "enum": ["stream"] },
+                            "resourceId": { "type": "string" },
+                            "actorType": { "type": "string", "enum": ["user", "bot"] },
+                            "actorId": { "type": "string" },
+                            "workspaceId": { "type": "string" },
+                            "assignedAt": { "type": "string", "format": "date-time" }
+                          },
+                          "required": [
+                            "labelId",
+                            "resourceType",
+                            "resourceId",
+                            "actorType",
+                            "actorId",
+                            "workspaceId",
+                            "assignedAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["label", "assignment"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      },
+      "delete": {
+        "operationId": "unassignLabel",
+        "summary": "Remove a label from a resource by name",
+        "tags": ["Labels"],
+        "description": "Remove the key actor's assignment of a label (identified by its text) from a resource.",
+        "security": [{ "apiKey": ["labels:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 100 }
+          },
+          {
+            "name": "resourceType",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["stream"] }
+          },
+          {
+            "name": "resourceId",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+          }
+        ],
+        "responses": {
+          "204": { "description": "No content" },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
         }
       }
     },
@@ -3823,7 +4005,6 @@
                       "properties": {
                         "id": { "type": "string" },
                         "workspaceId": { "type": "string" },
-                        "visibility": { "type": "string", "enum": ["public", "private"] },
                         "creatorActorType": { "type": "string", "enum": ["user", "bot"] },
                         "creatorActorId": { "type": "string" },
                         "name": { "type": "string" },
@@ -3838,7 +4019,6 @@
                       "required": [
                         "id",
                         "workspaceId",
-                        "visibility",
                         "creatorActorType",
                         "creatorActorId",
                         "name",
@@ -3889,7 +4069,7 @@
         "operationId": "deleteLabel",
         "summary": "Delete a label",
         "tags": ["Labels"],
-        "description": "Archive a label the key actor created and remove its memberships and assignments.",
+        "description": "Archive a label the key actor created and remove its assignments.",
         "security": [{ "apiKey": ["labels:write"] }],
         "parameters": [
           {
@@ -3905,401 +4085,6 @@
             "required": true,
             "schema": { "type": "string" },
             "description": "Label ID (prefixed ULID)"
-          }
-        ],
-        "responses": {
-          "204": { "description": "No content" },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "error": { "type": "string" },
-                    "details": {
-                      "type": "object",
-                      "propertyNames": { "type": "string" },
-                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
-                    }
-                  },
-                  "required": ["error"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspaceId}/labels/{labelId}/join": {
-      "post": {
-        "operationId": "joinLabel",
-        "summary": "Join a public label",
-        "tags": ["Labels"],
-        "security": [{ "apiKey": ["labels:write"] }],
-        "parameters": [
-          {
-            "name": "workspaceId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Workspace ID (prefixed ULID)"
-          },
-          {
-            "name": "labelId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Label ID (prefixed ULID)"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "labelId": { "type": "string" },
-                        "actorType": { "type": "string", "enum": ["user", "bot"] },
-                        "actorId": { "type": "string" },
-                        "workspaceId": { "type": "string" },
-                        "joinedAt": { "type": "string", "format": "date-time" }
-                      },
-                      "required": ["labelId", "actorType", "actorId", "workspaceId", "joinedAt"],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": ["data"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "error": { "type": "string" },
-                    "details": {
-                      "type": "object",
-                      "propertyNames": { "type": "string" },
-                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
-                    }
-                  },
-                  "required": ["error"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspaceId}/labels/{labelId}/leave": {
-      "post": {
-        "operationId": "leaveLabel",
-        "summary": "Leave a label",
-        "tags": ["Labels"],
-        "description": "Drop the key actor's membership. The last member leaving archives the label.",
-        "security": [{ "apiKey": ["labels:write"] }],
-        "parameters": [
-          {
-            "name": "workspaceId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Workspace ID (prefixed ULID)"
-          },
-          {
-            "name": "labelId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Label ID (prefixed ULID)"
-          }
-        ],
-        "responses": {
-          "204": { "description": "No content" },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "error": { "type": "string" },
-                    "details": {
-                      "type": "object",
-                      "propertyNames": { "type": "string" },
-                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
-                    }
-                  },
-                  "required": ["error"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspaceId}/labels/{labelId}/promote": {
-      "post": {
-        "operationId": "promoteLabel",
-        "summary": "Promote a private label to public",
-        "tags": ["Labels"],
-        "security": [{ "apiKey": ["labels:write"] }],
-        "parameters": [
-          {
-            "name": "workspaceId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Workspace ID (prefixed ULID)"
-          },
-          {
-            "name": "labelId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Label ID (prefixed ULID)"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "id": { "type": "string" },
-                        "workspaceId": { "type": "string" },
-                        "visibility": { "type": "string", "enum": ["public", "private"] },
-                        "creatorActorType": { "type": "string", "enum": ["user", "bot"] },
-                        "creatorActorId": { "type": "string" },
-                        "name": { "type": "string" },
-                        "slug": { "type": "string" },
-                        "color": { "type": "string" },
-                        "emoji": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
-                        "description": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
-                        "createdAt": { "type": "string", "format": "date-time" },
-                        "updatedAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
-                      },
-                      "required": [
-                        "id",
-                        "workspaceId",
-                        "visibility",
-                        "creatorActorType",
-                        "creatorActorId",
-                        "name",
-                        "slug",
-                        "color",
-                        "emoji",
-                        "description",
-                        "createdAt",
-                        "updatedAt",
-                        "archivedAt"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": ["data"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "error": { "type": "string" },
-                    "details": {
-                      "type": "object",
-                      "propertyNames": { "type": "string" },
-                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
-                    }
-                  },
-                  "required": ["error"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspaceId}/labels/{labelId}/assignments": {
-      "post": {
-        "operationId": "assignLabel",
-        "summary": "Apply a label to a resource",
-        "tags": ["Labels"],
-        "description": "Attach a label to a resource the key actor can reach. `resourceType` is the polymorphic target (`stream` today) so the same endpoint labels any future resource without a wire change.",
-        "security": [{ "apiKey": ["labels:write"] }],
-        "parameters": [
-          {
-            "name": "workspaceId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Workspace ID (prefixed ULID)"
-          },
-          {
-            "name": "labelId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Label ID (prefixed ULID)"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "type": "object",
-                "properties": {
-                  "resourceType": { "type": "string", "enum": ["stream"] },
-                  "resourceId": { "type": "string", "minLength": 1, "maxLength": 64 }
-                },
-                "required": ["resourceType", "resourceId"],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "labelId": { "type": "string" },
-                        "resourceType": { "type": "string", "enum": ["stream"] },
-                        "resourceId": { "type": "string" },
-                        "actorType": { "type": "string", "enum": ["user", "bot"] },
-                        "actorId": { "type": "string" },
-                        "workspaceId": { "type": "string" },
-                        "assignedAt": { "type": "string", "format": "date-time" }
-                      },
-                      "required": [
-                        "labelId",
-                        "resourceType",
-                        "resourceId",
-                        "actorType",
-                        "actorId",
-                        "workspaceId",
-                        "assignedAt"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": ["data"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "error": { "type": "string" },
-                    "details": {
-                      "type": "object",
-                      "propertyNames": { "type": "string" },
-                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
-                    }
-                  },
-                  "required": ["error"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or inaccessible resource" },
-          "404": { "description": "Resource not found" }
-        }
-      },
-      "delete": {
-        "operationId": "unassignLabel",
-        "summary": "Remove a label from a resource",
-        "tags": ["Labels"],
-        "description": "Remove the key actor's own assignment of a label from a resource.",
-        "security": [{ "apiKey": ["labels:write"] }],
-        "parameters": [
-          {
-            "name": "workspaceId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Workspace ID (prefixed ULID)"
-          },
-          {
-            "name": "labelId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Label ID (prefixed ULID)"
-          },
-          {
-            "name": "resourceType",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string", "enum": ["stream"] }
-          },
-          {
-            "name": "resourceId",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string", "minLength": 1, "maxLength": 64 }
           }
         ],
         "responses": {

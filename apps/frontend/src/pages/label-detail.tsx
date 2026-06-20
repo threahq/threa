@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, ChevronRight, Globe, Lock, Pencil, Tag } from "lucide-react"
-import { Visibilities } from "@threa/types"
+import { ArrowLeft, ChevronRight, Pencil, Tag } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -161,7 +160,6 @@ function LabelHero({
   canEdit: boolean
   onEdit: () => void
 }) {
-  const isPublic = label.visibility === Visibilities.PUBLIC
   return (
     <div
       className="relative overflow-hidden rounded-xl border p-5 sm:p-6"
@@ -180,11 +178,6 @@ function LabelHero({
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-semibold leading-tight">{label.name}</h2>
           <div className="mt-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span className="inline-flex items-center gap-1">
-              {isPublic ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              {isPublic ? "Public" : "Private"}
-            </span>
-            <span aria-hidden>·</span>
             <span>{streamCountLabel(streamCount)}</span>
           </div>
           {label.description && (

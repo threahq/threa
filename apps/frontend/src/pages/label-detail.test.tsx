@@ -2,7 +2,6 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import { render, screen, userEvent } from "@/test"
-import { Visibilities } from "@threa/types"
 import { LabelDetailPage } from "./label-detail"
 import { ServicesProvider, SidebarProvider, type LabelService } from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -17,7 +16,6 @@ function label(overrides: Partial<CachedLabel> = {}): CachedLabel {
   return {
     id: LABEL_ID,
     workspaceId: WS,
-    visibility: Visibilities.PRIVATE,
     creatorUserId: "user_me",
     name: "Reading list",
     slug: "reading-list",

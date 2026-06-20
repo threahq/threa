@@ -207,9 +207,6 @@ export {
   useCreateLabel,
   useUpdateLabel,
   useDeleteLabel,
-  useJoinLabel,
-  useLeaveLabel,
-  usePromoteLabel,
   useResourceLabelAssignments,
   useLabelStreams,
   selectLabelStreams,
@@ -220,6 +217,5 @@ export {
   type ResourceLabelState,
   type AssignLabelInput,
   type CachedLabel,
-  type CachedLabelMembership,
   type CachedLabelAssignment,
 } from "./use-labels"

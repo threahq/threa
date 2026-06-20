@@ -137,7 +137,6 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
     unreadActivityCount: 0,
     mutedStreamIds: [],
     labels: [],
-    labelMemberships: [],
     labelAssignments: [],
     viewerPermissions: [],
     sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
@@ -1685,7 +1684,6 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
       db.streamMemberships.clear(),
       db.unreadState.clear(),
       db.labels.clear(),
-      db.labelMemberships.clear(),
       db.labelAssignments.clear(),
       db.events.clear(),
     ])

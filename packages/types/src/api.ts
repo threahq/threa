@@ -29,7 +29,6 @@ import type {
   StreamEvent,
   StreamMember,
   Label,
-  LabelMember,
   LabelAssignment,
   Workspace,
   User,
@@ -1271,19 +1270,8 @@ export interface WorkspaceBootstrap {
   userPreferences: UserPreferences
   /** Viewer's persisted sidebar layout for this workspace (defaults to the Smart preset). */
   sidebarConfig: SidebarConfig
-  /**
-   * Labels visible to the viewer: all of the viewer's own private labels +
-   * every public label in the workspace (joined or not — the Discover tab
-   * needs un-joined public labels too).
-   */
+  /** The viewer's own labels (every label is private to its creator). */
   labels: Label[]
-  /**
-   * Viewer's `label_members` rows. Every label the viewer created or joined —
-   * public or private — has a membership row (the creator is auto-joined at
-   * create time), so "joined" is one uniform check. `Label.creatorUserId` is
-   * retained for edit/archive/promote permissions.
-   */
-  labelMemberships: LabelMember[]
   /**
    * Viewer's label→resource assignments across the workspace (all resource
    * types). Viewer-scoped: only the assignments this user created. Resolve
@@ -1985,14 +1973,12 @@ export interface EnclaveRewrapNeededPayload {
 }
 
 /**
- * Wire body for `POST /labels`. Slug is server-derived from `name` (validated
- * for uniqueness via partial unique indexes scoped to visibility); `color` is
- * required so frontend doesn't have to invent defaults for new public labels
- * other workspace users will see.
+ * Wire body for `POST /labels`. Slug is server-derived from `name` (unique per
+ * owner); `color` is required so the frontend picks an explicit swatch rather
+ * than inventing a default.
  */
 export interface CreateLabelInput {
   name: string
-  visibility: Visibility
   color: string
   emoji?: string | null
   description?: string | null
@@ -2007,64 +1993,41 @@ export interface UpdateLabelInput {
 }
 
 /**
- * Wire payload for `label:created` / `label:updated`. Visibility tells the
- * dispatcher how to scope routing (private → creator only, public → workspace).
+ * Wire payload for `label:created` / `label:updated`. Labels are owner-scoped,
+ * so `targetUserId` is the owning actor and the event is delivered to that
+ * actor only.
  */
 export interface LabelUpsertedPayload {
   workspaceId: string
-  /** Set when private — the creator who should receive this event. */
-  targetUserId: string | null
+  targetUserId: string
   label: Label
 }
 
-/** Wire payload for `label:deleted` (soft-archive). */
+/** Wire payload for `label:deleted` (soft-archive). Delivered to the owner. */
 export interface LabelDeletedPayload {
   workspaceId: string
-  targetUserId: string | null
-  labelId: string
-}
-
-/**
- * Wire payload for `label:member_joined`. Delivered to the affected member only
- * (`targetUserId`), matching the viewer-scoped memberships shipped in bootstrap.
- */
-export interface LabelMemberJoinedPayload {
-  workspaceId: string
-  targetUserId: string
-  member: LabelMember
-}
-
-/**
- * Wire payload for `label:member_left`. The membership row is gone, so only the
- * identity is carried. Delivered to the affected member only (`targetUserId`).
- */
-export interface LabelMemberLeftPayload {
-  workspaceId: string
   targetUserId: string
   labelId: string
-  userId: string
 }
 
 /**
- * Wire payload for `label:assigned` (a label applied to a resource). Routing
- * follows the label's visibility: a private label is viewer-scoped, so
- * `targetUserId` is the assigning user; a public label is a shared pool, so
- * `targetUserId` is null and the event fans out to the resource's access scope.
+ * Wire payload for `label:assigned` (a label applied to a resource).
+ * Owner-scoped: `targetUserId` is the actor who applied it, the only one who
+ * sees the assignment.
  */
 export interface LabelAssignedPayload {
   workspaceId: string
-  targetUserId: string | null
+  targetUserId: string
   assignment: LabelAssignment
 }
 
 /**
  * Wire payload for `label:unassigned`. The row is gone, so only identity is
- * carried. Routing follows the label's visibility (private → the `userId` whose
- * row was removed; public → null, fanned out to the resource's access scope).
+ * carried. Delivered to the actor whose row was removed (`targetUserId`).
  */
 export interface LabelUnassignedPayload {
   workspaceId: string
-  targetUserId: string | null
+  targetUserId: string
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string

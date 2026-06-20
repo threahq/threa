@@ -69,10 +69,11 @@ parallel is the only cheap way to catch it.
 There is no single subsystem for this; it is a constraint every repository write honors.
 Representative, verified call sites, one per technique:
 
-- **Idempotent upsert.** `LabelMemberRepository.join`
-  (`apps/backend/src/features/labels/repository.ts:251`) does
-  `ON CONFLICT (label_id, user_id) DO UPDATE`, keeping the original `joined_at` so a
-  repeat join does not churn the timestamp. Inviting an E2E actor uses
+- **Idempotent upsert.** `LabelAssignmentRepository.assign`
+  (`apps/backend/src/features/labels/repository.ts`) does
+  `ON CONFLICT (workspace_id, resource_type, resource_id, label_id, user_id) DO UPDATE`,
+  keeping the original `assigned_at` so re-applying a label does not churn the timestamp.
+  Inviting an E2E actor uses
   `ON CONFLICT ... DO NOTHING` so a repeat invite is a no-op
   (`apps/backend/src/features/e2e-streams/actor-repository.ts`).
 - **Atomic counter (the cleanest example).** Stream event sequence allocation upserts a

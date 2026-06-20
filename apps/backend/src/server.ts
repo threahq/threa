@@ -539,7 +539,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Constructed after botChannelService: applying a label to a stream reuses the
   // actor's own access model, so the assignment service resolves bot reachability
   // through channel grants (users resolve through stream membership).
-  const labelAssignmentService = new LabelAssignmentService({ pool, botChannelService })
+  const labelAssignmentService = new LabelAssignmentService({ pool, labelService, botChannelService })
 
   // User-scoped API keys are managed by Threa, not WorkOS.
   const userApiKeyService = new UserApiKeyServiceImpl(pool)

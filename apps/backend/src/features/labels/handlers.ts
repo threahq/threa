@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { VISIBILITY_OPTIONS, LABELABLE_RESOURCE_TYPES, LabelActorTypes } from "@threa/types"
+import { LABELABLE_RESOURCE_TYPES, LabelActorTypes } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import type { LabelService } from "./service"
 import type { LabelAssignmentService } from "./assignment-service"
@@ -14,7 +14,6 @@ const assignmentSchema = z.object({
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
-  visibility: z.enum(VISIBILITY_OPTIONS),
   color: z.string().regex(COLOR_PATTERN, "color must be a #RRGGBB hex string"),
   emoji: z.string().max(32).nullable().optional(),
   description: z.string().max(500).nullable().optional(),
@@ -42,12 +41,11 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
     async list(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      const [labels, memberships, assignments] = await Promise.all([
-        labelService.listVisibleTo(workspaceId, userId),
-        labelService.listMembershipsForUser(workspaceId, userId),
+      const [labels, assignments] = await Promise.all([
+        labelService.listForActor(workspaceId, userId),
         labelAssignmentService.listForViewer(workspaceId, { type: LabelActorTypes.USER, id: userId }),
       ])
-      res.json({ labels, memberships, assignments })
+      res.json({ labels, assignments })
     },
 
     async create(req: Request, res: Response) {
@@ -63,7 +61,6 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
         workspaceId,
         actor: { type: LabelActorTypes.USER, id: userId },
         name: parsed.data.name,
-        visibility: parsed.data.visibility,
         color: parsed.data.color,
         emoji: parsed.data.emoji ?? null,
         description: parsed.data.description ?? null,
@@ -99,38 +96,6 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const labelId = req.params.labelId!
       await labelService.archive({ workspaceId, actor: { type: LabelActorTypes.USER, id: userId }, labelId })
       res.json({ ok: true })
-    },
-
-    async join(req: Request, res: Response) {
-      const userId = req.user!.id
-      const workspaceId = req.workspaceId!
-      const labelId = req.params.labelId!
-      const member = await labelService.join({
-        workspaceId,
-        actor: { type: LabelActorTypes.USER, id: userId },
-        labelId,
-      })
-      res.status(201).json({ member })
-    },
-
-    async leave(req: Request, res: Response) {
-      const userId = req.user!.id
-      const workspaceId = req.workspaceId!
-      const labelId = req.params.labelId!
-      await labelService.leave({ workspaceId, actor: { type: LabelActorTypes.USER, id: userId }, labelId })
-      res.json({ ok: true })
-    },
-
-    async promote(req: Request, res: Response) {
-      const userId = req.user!.id
-      const workspaceId = req.workspaceId!
-      const labelId = req.params.labelId!
-      const label = await labelService.promote({
-        workspaceId,
-        actor: { type: LabelActorTypes.USER, id: userId },
-        labelId,
-      })
-      res.json({ label })
     },
 
     async assign(req: Request, res: Response) {

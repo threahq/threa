@@ -45,12 +45,12 @@ function NoLabelsYet({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * One catalog row. A checked box means *I* applied this label; unchecking it
- * removes my attribution from the shared pool. The checkbox is the control and
- * the adjacent label (linked by `htmlFor`) extends the hit area across the
- * whole row, so the same markup feels right with a mouse or a thumb. While a
- * slow toggle is in flight a spinner takes the checkbox's slot (same 16px box,
- * no layout shift) so the row reads as working rather than dead.
+ * One catalog row. A checked box means this label is applied to the resource;
+ * unchecking it removes the assignment. The checkbox is the control and the
+ * adjacent label (linked by `htmlFor`) extends the hit area across the whole
+ * row, so the same markup feels right with a mouse or a thumb. While a slow
+ * toggle is in flight a spinner takes the checkbox's slot (same 16px box, no
+ * layout shift) so the row reads as working rather than dead.
  */
 function LabelRow({
   label,
@@ -105,13 +105,11 @@ function LabelRow({
 
 /**
  * Apply or remove labels on a single resource. A checkbox list: ticking a row
- * applies the label, unticking it removes the viewer's attribution — toggling
- * adds or removes *my* row in the shared pool, never anyone else's. The list
- * stays open so several labels can be set in one pass. Renders as a centered
- * dialog on desktop and a bottom drawer on mobile (ResponsiveDialog); the rows
- * are identical on both. The catalog is the viewer's usable labels
- * (`useLabelsView().myLabels`) and the checked state reflects the viewer's own
- * attribution (`myLabelIds`).
+ * applies the label, unticking it removes the assignment. The list stays open so
+ * several labels can be set in one pass. Renders as a centered dialog on desktop
+ * and a bottom drawer on mobile (ResponsiveDialog); the rows are identical on
+ * both. The catalog is the viewer's labels (`useLabelsView().myLabels`) and the
+ * checked state reflects which are applied to this resource (`myLabelIds`).
  */
 export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpenChange }: LabelPickerProps) {
   const isOnline = useIsOnline()

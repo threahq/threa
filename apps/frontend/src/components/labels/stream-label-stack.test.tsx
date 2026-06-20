@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { LabelableResourceTypes, Visibilities } from "@threa/types"
+import { LabelableResourceTypes } from "@threa/types"
 import { spyOnExport } from "@/test"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -19,7 +19,6 @@ function label(id: string): CachedLabel {
   return {
     id,
     workspaceId: WORKSPACE_ID,
-    visibility: Visibilities.PUBLIC,
     creatorUserId: "user_me",
     name: id,
     slug: id,

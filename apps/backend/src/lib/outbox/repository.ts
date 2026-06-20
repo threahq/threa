@@ -14,7 +14,6 @@ import type {
   Bot as WireBot,
   BotInvocationCapability,
   Label,
-  LabelMember,
   LabelAssignment,
   LabelableResourceType,
   SavedMessageView,
@@ -97,8 +96,6 @@ export type OutboxEventType =
   | "label:created"
   | "label:updated"
   | "label:deleted"
-  | "label:member_joined"
-  | "label:member_left"
   | "label:assigned"
   | "label:unassigned"
   | "enclave:rewrap_needed"
@@ -681,47 +678,28 @@ export interface BotResyncOutboxPayload extends WorkspaceScopedPayload {
   reason: string
 }
 
-// Label event payloads.
-// `targetUserId` is non-null for private-label events (delivered to creator
-// only) and null for public-label events (workspace-wide). The broadcast
-// handler routes on this discriminator.
+// Label event payloads. Labels are owner-scoped, so `targetUserId` is always the
+// owning actor and the broadcast handler delivers to that actor's user room only.
 export interface LabelUpsertedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string | null
+  targetUserId: string
   label: Label
 }
 
 export interface LabelDeletedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string | null
-  labelId: string
-}
-
-// Membership events are delivered to the affected member only (`targetUserId`),
-// mirroring the viewer-scoped membership data shipped in bootstrap/list. `joined`
-// carries the full row; `left` carries only identity since the row is gone.
-export interface LabelMemberJoinedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string
-  member: LabelMember
-}
-
-export interface LabelMemberLeftOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   labelId: string
-  userId: string
 }
 
-// Assignment routing mirrors the label's visibility (like the upsert events
-// above): `targetUserId` is the creator for a private-label row (delivered to
-// their user room only) and null for a public-label row, which fans out to the
-// resource's access scope — the stream room — so the shared pool reaches every
-// member who can see the resource. `assigned` carries the full row; `unassigned`
-// carries only the key since the row is gone.
+// Assignment events are owner-scoped like the label itself: `targetUserId` is
+// the actor who applied/removed the row, the only one who sees it. `assigned`
+// carries the full row; `unassigned` carries only the key since the row is gone.
 export interface LabelAssignedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string | null
+  targetUserId: string
   assignment: LabelAssignment
 }
 
 export interface LabelUnassignedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string | null
+  targetUserId: string
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string
@@ -823,8 +801,6 @@ export interface OutboxEventPayloadMap {
   "label:created": LabelUpsertedOutboxPayload
   "label:updated": LabelUpsertedOutboxPayload
   "label:deleted": LabelDeletedOutboxPayload
-  "label:member_joined": LabelMemberJoinedOutboxPayload
-  "label:member_left": LabelMemberLeftOutboxPayload
   "label:assigned": LabelAssignedOutboxPayload
   "label:unassigned": LabelUnassignedOutboxPayload
   "enclave:rewrap_needed": EnclaveRewrapNeededOutboxPayload

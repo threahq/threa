@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { LabelActorTypes, Visibilities, type Label } from "@threa/types"
+import { LabelActorTypes, type Label } from "@threa/types"
 import { LabelService } from "./service"
-import { LabelRepository, LabelMemberRepository, LabelAssignmentRepository } from "./repository"
+import { LabelRepository, LabelAssignmentRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
 
@@ -16,7 +16,6 @@ function fakeLabel(overrides: Partial<Label> = {}): Label {
   return {
     id: LABEL_ID,
     workspaceId: WORKSPACE_ID,
-    visibility: Visibilities.PUBLIC,
     creatorActorType: LabelActorTypes.USER,
     creatorUserId: USER_ID,
     name: "Priority",
@@ -39,17 +38,21 @@ function setupService() {
 describe("LabelService.archive", () => {
   afterEach(() => mock.restore())
 
-  it("deletes assignments alongside memberships so no resource keeps a chip for a dead label", async () => {
+  it("deletes assignments and emits label:deleted to the owner", async () => {
     const service = setupService()
     spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
     spyOn(LabelRepository, "archive").mockResolvedValue(true)
-    spyOn(LabelMemberRepository, "deleteAllForLabel").mockResolvedValue(undefined)
     const assignmentCleanup = spyOn(LabelAssignmentRepository, "deleteAllForLabel").mockResolvedValue(undefined)
-    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     await service.archive({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
 
     expect(assignmentCleanup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:deleted",
+      expect.objectContaining({ labelId: LABEL_ID, targetUserId: USER_ID })
+    )
   })
 
   it("does not touch assignments when the archive is a no-op (already archived)", async () => {
@@ -63,98 +66,84 @@ describe("LabelService.archive", () => {
 
     expect(assignmentCleanup).not.toHaveBeenCalled()
   })
+
+  it("rejects archiving someone else's label", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel({ creatorUserId: "usr_other" }))
+    const archive = spyOn(LabelRepository, "archive").mockResolvedValue(true)
+
+    await expect(service.archive({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })).rejects.toThrow()
+    expect(archive).not.toHaveBeenCalled()
+  })
 })
 
 describe("LabelService.create", () => {
   afterEach(() => mock.restore())
 
-  it("auto-joins the creator and emits member_joined even for a private label", async () => {
+  it("inserts the label and emits label:created to the owner only", async () => {
     const service = setupService()
-    spyOn(LabelRepository, "privateSlugExists").mockResolvedValue(false)
-    spyOn(LabelRepository, "insert").mockResolvedValue(fakeLabel({ visibility: Visibilities.PRIVATE }))
-    const join = spyOn(LabelMemberRepository, "join").mockResolvedValue({
-      labelId: LABEL_ID,
-      actorType: LabelActorTypes.USER,
-      userId: USER_ID,
-      workspaceId: WORKSPACE_ID,
-      joinedAt: NOW,
-    })
+    spyOn(LabelRepository, "slugExists").mockResolvedValue(false)
+    spyOn(LabelRepository, "insert").mockResolvedValue(fakeLabel())
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     await service.create({
       workspaceId: WORKSPACE_ID,
       actor: USER_ACTOR,
-      name: "Secret",
-      visibility: Visibilities.PRIVATE,
+      name: "Priority",
       color: "#ff0000",
       emoji: null,
       description: null,
     })
 
-    expect(join).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ userId: USER_ID, workspaceId: WORKSPACE_ID })
-    )
     expect(outbox).toHaveBeenCalledWith(
       expect.anything(),
-      "label:member_joined",
-      expect.objectContaining({ targetUserId: USER_ID })
+      "label:created",
+      expect.objectContaining({ targetUserId: USER_ID, label: expect.objectContaining({ id: LABEL_ID }) })
     )
   })
 })
 
-describe("LabelService.leave", () => {
+describe("LabelService.upsertByName", () => {
   afterEach(() => mock.restore())
 
-  it("archives the label and clears its assignments when the last member leaves", async () => {
+  it("emits label:created when a new label is born", async () => {
     const service = setupService()
-    spyOn(LabelRepository, "findByIdForUpdate").mockResolvedValue(fakeLabel())
-    spyOn(LabelMemberRepository, "leave").mockResolvedValue(true)
-    spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(0)
-    const archive = spyOn(LabelRepository, "archive").mockResolvedValue(true)
-    spyOn(LabelMemberRepository, "deleteAllForLabel").mockResolvedValue(undefined)
-    const assignmentCleanup = spyOn(LabelAssignmentRepository, "deleteAllForLabel").mockResolvedValue(undefined)
+    spyOn(LabelRepository, "upsertByName").mockResolvedValue({ label: fakeLabel(), inserted: true })
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.leave({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
+    await service.upsertByName({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, name: "Priority" })
 
-    expect(archive).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
-    expect(assignmentCleanup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
     expect(outbox).toHaveBeenCalledWith(
       expect.anything(),
-      "label:deleted",
-      expect.objectContaining({ labelId: LABEL_ID })
+      "label:created",
+      expect.objectContaining({ targetUserId: USER_ID })
     )
   })
 
-  it("emits member_left and keeps the label when other members remain", async () => {
+  it("emits label:updated when an existing label is matched", async () => {
     const service = setupService()
-    spyOn(LabelRepository, "findByIdForUpdate").mockResolvedValue(fakeLabel())
-    spyOn(LabelMemberRepository, "leave").mockResolvedValue(true)
-    spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(2)
-    const archive = spyOn(LabelRepository, "archive").mockResolvedValue(true)
+    spyOn(LabelRepository, "upsertByName").mockResolvedValue({ label: fakeLabel(), inserted: false })
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.leave({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
+    await service.upsertByName({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, name: "Priority" })
 
-    expect(archive).not.toHaveBeenCalled()
     expect(outbox).toHaveBeenCalledWith(
       expect.anything(),
-      "label:member_left",
-      expect.objectContaining({ labelId: LABEL_ID, userId: USER_ID, targetUserId: USER_ID })
+      "label:updated",
+      expect.objectContaining({ targetUserId: USER_ID })
     )
   })
 
-  it("is a no-op when the caller was not a member (no count, no events)", async () => {
+  it("only overwrites appearance fields the caller provided", async () => {
     const service = setupService()
-    spyOn(LabelRepository, "findByIdForUpdate").mockResolvedValue(fakeLabel())
-    spyOn(LabelMemberRepository, "leave").mockResolvedValue(false)
-    const count = spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(0)
-    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const upsert = spyOn(LabelRepository, "upsertByName").mockResolvedValue({ label: fakeLabel(), inserted: false })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.leave({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, labelId: LABEL_ID })
+    await service.upsertByName({ workspaceId: WORKSPACE_ID, actor: USER_ACTOR, name: "Priority", color: "#00ff00" })
 
-    expect(count).not.toHaveBeenCalled()
-    expect(outbox).not.toHaveBeenCalled()
+    expect(upsert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ overwriteColor: true, overwriteEmoji: false, overwriteDescription: false })
+    )
   })
 })

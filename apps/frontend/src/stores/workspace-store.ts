@@ -15,7 +15,6 @@ import {
   type CachedPersona,
   type CachedBot,
   type CachedLabel,
-  type CachedLabelMembership,
   type CachedLabelAssignment,
   type CachedUnreadState,
   type CachedUserPreferences,
@@ -46,7 +45,6 @@ const cache = {
   personas: new Map<string, CachedPersona[]>(),
   bots: new Map<string, CachedBot[]>(),
   labels: new Map<string, CachedLabel[]>(),
-  labelMemberships: new Map<string, CachedLabelMembership[]>(),
   labelAssignments: new Map<string, CachedLabelAssignment[]>(),
   unreadState: new Map<string, CachedUnreadState>(),
   userPreferences: new Map<string, CachedUserPreferences>(),
@@ -121,7 +119,6 @@ export function resetWorkspaceStoreCache(): void {
   cache.personas.clear()
   cache.bots.clear()
   cache.labels.clear()
-  cache.labelMemberships.clear()
   cache.labelAssignments.clear()
   cache.unreadState.clear()
   cache.userPreferences.clear()
@@ -155,7 +152,6 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     personas,
     bots,
     labels,
-    labelMemberships,
     labelAssignments,
     unreadState,
     prefs,
@@ -170,7 +166,6 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     db.personas.where("workspaceId").equals(workspaceId).toArray(),
     db.bots.where("workspaceId").equals(workspaceId).toArray(),
     db.labels.where("workspaceId").equals(workspaceId).toArray(),
-    db.labelMemberships.where("workspaceId").equals(workspaceId).toArray(),
     db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
     db.unreadState.get(workspaceId),
     db.userPreferences.get(workspaceId),
@@ -193,7 +188,6 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     personas,
     bots,
     labels,
-    labelMemberships,
     labelAssignments,
     unreadState,
     userPreferences: prefs,
@@ -219,7 +213,6 @@ export function seedWorkspaceCache(
     personas: CachedPersona[]
     bots: CachedBot[]
     labels?: CachedLabel[]
-    labelMemberships?: CachedLabelMembership[]
     labelAssignments?: CachedLabelAssignment[]
     unreadState?: CachedUnreadState
     userPreferences?: CachedUserPreferences
@@ -237,7 +230,6 @@ export function seedWorkspaceCache(
   cache.personas.set(workspaceId, data.personas)
   cache.bots.set(workspaceId, data.bots)
   if (data.labels) cache.labels.set(workspaceId, data.labels)
-  if (data.labelMemberships) cache.labelMemberships.set(workspaceId, data.labelMemberships)
   if (data.labelAssignments) cache.labelAssignments.set(workspaceId, data.labelAssignments)
   if (data.unreadState) cache.unreadState.set(workspaceId, data.unreadState)
   if (data.userPreferences) cache.userPreferences.set(workspaceId, data.userPreferences)
@@ -384,16 +376,6 @@ export function useWorkspaceLabels(workspaceId: string | undefined): CachedLabel
   const cached = workspaceId ? (cache.labels.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
     () => (workspaceId ? db.labels.where("workspaceId").equals(workspaceId).toArray() : []),
-    [workspaceId],
-    cached
-  )
-}
-
-export function useWorkspaceLabelMemberships(workspaceId: string | undefined): CachedLabelMembership[] {
-  useWorkspaceCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.labelMemberships.get(workspaceId) ?? []) : []
-  return useArrayStoreHook(
-    () => (workspaceId ? db.labelMemberships.where("workspaceId").equals(workspaceId).toArray() : []),
     [workspaceId],
     cached
   )

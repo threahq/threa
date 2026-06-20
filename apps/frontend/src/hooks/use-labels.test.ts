@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
-import { LabelableResourceTypes, type Label, type LabelAssignment, type LabelMember } from "@threa/types"
+import { LabelableResourceTypes, type Label, type LabelAssignment } from "@threa/types"
 import { db } from "@/db"
 import * as contextsModule from "@/contexts"
 import { labelKeys, reconcileLabels, selectLabelStreams, useLabelsSync, type CachedLabelAssignment } from "./use-labels"
@@ -14,7 +14,6 @@ function makeLabel(overrides: Partial<Label> & { id: string }): Label {
   const now = new Date().toISOString()
   return {
     workspaceId: WORKSPACE_ID,
-    visibility: "private",
     creatorActorType: "user",
     creatorUserId: "user_me",
     name: "Sample",
@@ -25,15 +24,6 @@ function makeLabel(overrides: Partial<Label> & { id: string }): Label {
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
-    ...overrides,
-  }
-}
-
-function makeMember(overrides: Partial<LabelMember> & { labelId: string; userId: string }): LabelMember {
-  return {
-    workspaceId: WORKSPACE_ID,
-    actorType: "user",
-    joinedAt: new Date().toISOString(),
     ...overrides,
   }
 }
@@ -54,24 +44,18 @@ function makeAssignment(
 describe("reconcileLabels", () => {
   beforeEach(async () => {
     await db.labels.clear()
-    await db.labelMemberships.clear()
     await db.labelAssignments.clear()
   })
 
-  it("inserts labels and memberships from the server response", async () => {
+  it("inserts labels from the server response", async () => {
     await reconcileLabels(
       WORKSPACE_ID,
       [makeLabel({ id: "lbl_1", name: "First" }), makeLabel({ id: "lbl_2", name: "Second" })],
-      [makeMember({ labelId: "lbl_1", userId: "user_other" })],
       []
     )
 
     const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).toArray()
-    const memberships = await db.labelMemberships.where("workspaceId").equals(WORKSPACE_ID).toArray()
-
     expect(labels.map((l) => l.id).sort()).toEqual(["lbl_1", "lbl_2"])
-    expect(memberships).toHaveLength(1)
-    expect(memberships[0].id).toBe(`${WORKSPACE_ID}:lbl_1:user_other`)
   })
 
   it("deletes cached labels missing from the server response", async () => {
@@ -80,32 +64,23 @@ describe("reconcileLabels", () => {
       _cachedAt: Date.now() - 60_000,
     })
 
-    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_kept", name: "Kept" })], [], [])
+    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_kept", name: "Kept" })], [])
 
     const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).toArray()
     expect(labels.map((l) => l.id)).toEqual(["lbl_kept"])
   })
 
-  it("cascades membership deletion when a label is pruned", async () => {
-    await db.labels.put({
-      ...makeLabel({ id: "lbl_stale" }),
-      _cachedAt: Date.now() - 60_000,
-    })
-    await db.labelMemberships.put({
-      id: `${WORKSPACE_ID}:lbl_stale:user_other`,
-      workspaceId: WORKSPACE_ID,
-      labelId: "lbl_stale",
-      userId: "user_other",
-      joinedAt: new Date().toISOString(),
-      _cachedAt: Date.now() - 60_000,
-    })
+  it("preserves a row written after the fetch started (socket race)", async () => {
+    const fetchStartedAt = Date.now()
+    // A `label:*` socket handler wrote this row while the HTTP snapshot was in
+    // flight, so the snapshot can't know about it — its _cachedAt is newer than
+    // the fetch start and it must survive the prune.
+    await db.labels.put({ ...makeLabel({ id: "lbl_socket", name: "Socket" }), _cachedAt: fetchStartedAt + 5_000 })
 
-    await reconcileLabels(WORKSPACE_ID, [], [], [])
+    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_snapshot" })], [], fetchStartedAt)
 
-    const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).count()
-    const memberships = await db.labelMemberships.where("workspaceId").equals(WORKSPACE_ID).count()
-    expect(labels).toBe(0)
-    expect(memberships).toBe(0)
+    const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).toArray()
+    expect(labels.map((l) => l.id).sort()).toEqual(["lbl_snapshot", "lbl_socket"])
   })
 
   it("only touches the targeted workspace", async () => {
@@ -116,7 +91,7 @@ describe("reconcileLabels", () => {
       _cachedAt: Date.now(),
     })
 
-    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_local" })], [], [])
+    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_local" })], [])
 
     const other = await db.labels.where("workspaceId").equals("ws_other").toArray()
     expect(other.map((l) => l.id)).toEqual(["lbl_other_ws"])
@@ -138,7 +113,6 @@ describe("reconcileLabels", () => {
     await reconcileLabels(
       WORKSPACE_ID,
       [makeLabel({ id: "lbl_1" })],
-      [],
       [makeAssignment({ labelId: "lbl_1", resourceId: "strm_live" })]
     )
 
@@ -247,12 +221,12 @@ describe("selectLabelStreams", () => {
 
 describe("useLabelsSync refetchOnReconnect", () => {
   let listFn: ReturnType<typeof vi.fn>
-  const response = { labels: [], memberships: [], assignments: [] }
+  const response = { labels: [], assignments: [] }
 
   beforeEach(async () => {
     vi.restoreAllMocks()
     onlineManager.setOnline(true)
-    await Promise.all([db.labels.clear(), db.labelMemberships.clear(), db.labelAssignments.clear()])
+    await Promise.all([db.labels.clear(), db.labelAssignments.clear()])
     listFn = vi.fn().mockResolvedValue(response)
     vi.spyOn(contextsModule, "useLabelService").mockReturnValue({
       list: listFn,

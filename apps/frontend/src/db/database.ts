@@ -624,18 +624,13 @@ export interface CachedE2eKey {
 }
 
 /**
- * Cached label row. Mirrors `Label` on the wire — both private (creator-only)
- * and public (workspace-visible, opt-in via join) labels live in the same store
- * for offline-first reads via `useLiveQuery`. The viewer sees:
- *   • all public labels in the workspace (joined or not)
- *   • their own private labels
- * Filter by `visibility` + `creatorUserId` in queries; the discovery tab uses
- * `[workspaceId+visibility]`.
+ * Cached label row. Mirrors `Label` on the wire. Every label is private to its
+ * creating actor, so the store only ever holds the viewer's own labels. Bucket
+ * by `creatorUserId` in queries.
  */
 export interface CachedLabel {
   id: string
   workspaceId: string
-  visibility: "public" | "private"
   /**
    * Whether `creatorUserId` is a user or a bot (bots can own labels via the
    * public API). Optional so rows cached before this field existed still read;
@@ -656,31 +651,12 @@ export interface CachedLabel {
 }
 
 /**
- * Per-user membership in a public label. Private-label creators are NOT
- * tracked here — they always see their own labels via `creatorUserId` on
- * `CachedLabel`. Composite key `${workspaceId}:${labelId}:${userId}` so a
- * label can have many members.
- */
-export interface CachedLabelMembership {
-  /** Composite key: `${workspaceId}:${labelId}:${userId}` */
-  id: string
-  workspaceId: string
-  labelId: string
-  /** Whether `userId` is a user or a bot. Optional for back-compat; absent ⇒ `"user"`. */
-  actorType?: "user" | "bot"
-  userId: string
-  joinedAt: string
-  _cachedAt: number
-}
-
-/**
  * A label applied to a resource. Generic over `resourceType` (a stream today;
  * messages/users/attachments later) — the assignment store never special-cases
- * the resource. Viewer-scoped: only the current user's assignments are cached,
- * mirroring private-label visibility. `[workspaceId+resourceType+resourceId]`
- * answers "which labels are on this resource"; `[workspaceId+labelId]` answers
- * "which resources carry this label". Composite key
- * `${workspaceId}:${resourceType}:${resourceId}:${labelId}:${userId}`.
+ * the resource. Owner-scoped: only the current actor's assignments are cached.
+ * `[workspaceId+resourceType+resourceId]` answers "which labels are on this
+ * resource"; `[workspaceId+labelId]` answers "which resources carry this
+ * label". Composite key `${workspaceId}:${resourceType}:${resourceId}:${labelId}:${userId}`.
  */
 export interface CachedLabelAssignment {
   id: string
@@ -811,7 +787,6 @@ export class ThreaDatabase extends Dexie {
   scheduledMessages!: EntityTable<CachedScheduledMessage, "id">
   e2eKeys!: EntityTable<CachedE2eKey, "id">
   labels!: EntityTable<CachedLabel, "id">
-  labelMemberships!: EntityTable<CachedLabelMembership, "id">
   labelAssignments!: EntityTable<CachedLabelAssignment, "id">
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
   sidebarConfigs!: EntityTable<CachedSidebarConfig, "id">
@@ -1184,6 +1159,19 @@ export class ThreaDatabase extends Dexie {
         if (loadedRows.length > 0) await tx.table("composerLoaded").bulkPut(loadedRows)
       })
 
+    // v35: Labels are private-only now. Drop the `labelMemberships` store (it
+    // only modeled the public "join" concept) and re-index `labels` without the
+    // removed `visibility` column. Clearing `labels` is safe — the bootstrap
+    // refills it from the server on next load.
+    this.version(35)
+      .stores({
+        labels: "id, workspaceId, creatorUserId, _cachedAt",
+        labelMemberships: null,
+      })
+      .upgrade((tx) => {
+        return tx.table("labels").clear()
+      })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1249,7 +1237,6 @@ export async function clearAllCachedData(): Promise<void> {
       // them so the next account starts without inherited key material.
       db.e2eKeys.clear(),
       db.labels.clear(),
-      db.labelMemberships.clear(),
       db.labelAssignments.clear(),
       db.sidebarConfigs.clear(),
       // The persisted device key seals this identity's private key for

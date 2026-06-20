@@ -345,14 +345,11 @@ export interface BotRuntimeManifest {
 }
 
 /**
- * User-defined organizational label. Private labels (`visibility: "private"`)
- * are only visible to the creator. Public labels (`visibility: "public"`) are
- * discoverable workspace-wide; workspace users join via `LabelMember` rows to
- * subscribe (in the future: to receive auto-applied resource assignments).
- *
- * Slugs collide on `(workspaceId, slug)` for public and on
- * `(workspaceId, creatorUserId, slug)` for private (DB enforces via partial
- * unique indexes, ignoring archived rows).
+ * User-defined organizational label. Every label is private — owned by and
+ * visible to its creating actor only. The label's text is its external
+ * identity: slugs are unique per owner on `(workspaceId, creatorUserId, slug)`
+ * (DB enforces via a partial unique index, ignoring archived rows), so a name
+ * resolves to exactly one of an actor's labels.
  *
  * `creatorActorType` + `creatorUserId` identify the creator. For a user-created
  * label `creatorActorType` is `"user"` and `creatorUserId` is a UserId; for a
@@ -363,7 +360,6 @@ export interface BotRuntimeManifest {
 export interface Label {
   id: string
   workspaceId: string
-  visibility: Visibility
   creatorActorType: LabelActorType
   creatorUserId: string
   name: string
@@ -373,29 +369,16 @@ export interface Label {
   description: string | null
   createdAt: string
   updatedAt: string
-  /** When non-null, the label is soft-archived and excluded from list/discover. */
+  /** When non-null, the label is soft-archived and excluded from the list. */
   archivedAt: string | null
-}
-
-/**
- * Per-user membership in a public label. Private-label creators are not
- * tracked here — they always see their own labels via `creatorUserId`.
- */
-export interface LabelMember {
-  labelId: string
-  /** Discriminator for `userId`: `"user"` (a UserId) or `"bot"` (a bot id). */
-  actorType: LabelActorType
-  userId: string
-  workspaceId: string
-  joinedAt: string
 }
 
 /**
  * A label applied to a resource (a stream today; messages/users/attachments
  * later — `resourceType` is the polymorphic discriminator). Viewer-scoped:
- * `userId` is the person who applied it, and assignments are private to that
- * user, mirroring private-label visibility. Resolve `labelId` against the
- * workspace's labels to render; an assignment whose label is gone is ignored.
+ * `userId` is the actor who applied it, and assignments are private to that
+ * actor, like the label itself. Resolve `labelId` against the actor's labels to
+ * render; an assignment whose label is gone is ignored.
  */
 export interface LabelAssignment {
   labelId: string
@@ -409,9 +392,9 @@ export interface LabelAssignment {
 }
 
 /**
- * The actor that creates, joins, or applies a label — a workspace user or a bot
- * (the latter only reachable through the public API). `id` is a UserId when
- * `type` is `"user"` and a bot id when `"bot"`.
+ * The actor that creates or applies a label — a workspace user or a bot (the
+ * latter only reachable through the public API). `id` is a UserId when `type`
+ * is `"user"` and a bot id when `"bot"`.
  */
 export interface LabelActor {
   type: LabelActorType
