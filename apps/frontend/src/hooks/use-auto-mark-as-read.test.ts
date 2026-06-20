@@ -195,4 +195,27 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_123", "event_123", { partial: false })
     expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })
+
+  it("clears the dedup on stream switch so the next stream's first mark always fires", () => {
+    // The consumer isn't keyed by streamId, so the hook persists across switches.
+    // The dedup refs must reset per stream — otherwise a prior stream's marked
+    // event/partial-ness could suppress the next stream's first mark.
+    const { rerender } = renderHook(({ streamId }) => useAutoMarkAsRead("ws_123", streamId, "event_shared"), {
+      initialProps: { streamId: "stream_a" },
+    })
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_a", "event_shared", { partial: false })
+
+    // Switch streams; the (artificially) same event id must still re-fire because
+    // the dedup was cleared on the streamId change.
+    rerender({ streamId: "stream_b" })
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+    expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_b", "event_shared", { partial: false })
+    expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
+  })
 })

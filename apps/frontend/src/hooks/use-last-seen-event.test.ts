@@ -347,4 +347,50 @@ describe("useLastSeenEvent re-scan on content resize", () => {
     expect(result.current.atLastRow).toBe(true)
     expect(result.current.lastSeenEventId).toBe("e4")
   })
+
+  it("rolls lastSeenEventId back to undefined when the read pointer retreats (mark-as-unread)", () => {
+    // The core auto-mark bug: lastSeenEventId used to be a forward-only latch, so
+    // after a backward pointer move it stayed at the old high value and auto-mark
+    // re-fired it, undoing the mark-as-unread. It must roll back to undefined when
+    // the pointer is pulled to/below the frontier.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: 5, bottom: 23 },
+      e1: { top: 23, bottom: 41 },
+      e2: { top: 41, bottom: 59 },
+      e3: { top: 59, bottom: 77 },
+      e4: { top: 77, bottom: 95 },
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [
+      { id: "e0", sequence: "0" },
+      { id: "e1", sequence: "1" },
+      { id: "e2", sequence: "2" },
+      { id: "e3", sequence: "3" },
+      { id: "e4", sequence: "4" },
+    ] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId, enabled: true }),
+      { initialProps: { lastReadEventId: "e2" as string | null } }
+    )
+
+    // Frontier runs ahead of the pointer (e2) to the last visible row.
+    expect(result.current.lastSeenEventId).toBe("e4")
+
+    // Mark-as-unread retreats the pointer to e0. lastSeenEventId must NOT stay at
+    // "e4" (which auto-mark would re-fire) — it rolls back to undefined.
+    act(() => rerender({ lastReadEventId: "e0" }))
+    expect(result.current.lastSeenEventId).toBeUndefined()
+  })
 })

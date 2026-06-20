@@ -196,11 +196,17 @@ export function useLastSeenEvent({
     // Unread sits above the viewport when the first unread row (frontier + 1)
     // exists in the window and is scrolled off the top.
     setUnreadAboveViewport(frontier + 1 <= lastRenderedIdx && frontier + 1 < topIdx)
-    // Only emit a mark target once the frontier has moved PAST the read pointer —
-    // marking up to where they already are is a wasted no-op round-trip.
+    // `lastSeenEventId` is derived, not a forward-only latch: it names the
+    // frontier's row only while the frontier sits PAST the read pointer. Once the
+    // pointer catches up to (or passes) the frontier — the round-trip landed, or a
+    // backward move (mark-as-unread) pulled the frontier back to the pointer —
+    // nothing is seen-but-unmarked ahead, so clear it. Without this roll-back the
+    // stale higher value would let auto-mark re-fire and undo the mark-as-unread.
     if (frontier > readIndexRef.current && frontier >= 0) {
       const id = eventsRef.current[frontier]?.id
       if (id) setLastSeenEventId((prev) => (prev === id ? prev : id))
+    } else {
+      setLastSeenEventId((prev) => (prev === undefined ? prev : undefined))
     }
   }, [scrollContainerRef])
 
