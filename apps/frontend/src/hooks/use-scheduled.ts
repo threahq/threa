@@ -6,6 +6,7 @@ import { useScheduledService } from "@/contexts"
 import { useSyncEngine, useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
+import { useBatchedValue } from "@/stores/apply-window"
 import { db, type CachedScheduledMessage } from "@/db"
 import { enqueueOperation } from "@/sync/operation-queue"
 import type {
@@ -257,7 +258,9 @@ export function useLiveScheduledCount(workspaceId: string): number {
       .between([workspaceId, "pending", -Infinity], [workspaceId, "pending", Infinity], true, true)
       .count()
   }, [workspaceId])
-  return count ?? 0
+  // Hold steady during a catch-up replay so the badge settles once with the rest
+  // of the sidebar instead of ticking per replayed schedule (apply-window gate).
+  return useBatchedValue(count ?? 0)
 }
 
 /**

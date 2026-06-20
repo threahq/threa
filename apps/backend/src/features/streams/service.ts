@@ -406,75 +406,72 @@ export class StreamService {
   }
 
   async createScratchpad(params: CreateScratchpadParams): Promise<Stream> {
-    return withTransaction(this.pool, async (client) => {
-      const id = streamId()
+    return withTransaction(this.pool, (client) => this.createScratchpadInTransaction(client, params))
+  }
 
-      const stream = await StreamRepository.insert(client, {
-        id,
-        workspaceId: params.workspaceId,
-        type: StreamTypes.SCRATCHPAD,
-        displayName: params.displayName,
-        description: params.description,
-        visibility: Visibilities.PRIVATE,
-        companionMode: params.companionMode ?? CompanionModes.OFF,
-        companionPersonaId: params.companionPersonaId,
-        memoryMode: params.memoryMode,
-        createdBy: params.createdBy,
-      })
+  async createScratchpadInTransaction(db: Querier, params: CreateScratchpadParams): Promise<Stream> {
+    const id = streamId()
 
-      await StreamMemberRepository.insert(client, id, params.createdBy)
+    const stream = await StreamRepository.insert(db, {
+      id,
+      workspaceId: params.workspaceId,
+      type: StreamTypes.SCRATCHPAD,
+      displayName: params.displayName,
+      description: params.description,
+      visibility: Visibilities.PRIVATE,
+      companionMode: params.companionMode ?? CompanionModes.OFF,
+      companionPersonaId: params.companionPersonaId,
+      memoryMode: params.memoryMode,
+      createdBy: params.createdBy,
+    })
 
-      // Attach optional context bag in the same transaction as the stream +
-      // outbox event so the pre-compute handler (which fires on stream:created)
-      // always sees a fully-wired bag by the time it processes the event. INV-7.
-      if (params.contextBag) {
-        await ContextBagRepository.insert(client, {
-          workspaceId: params.workspaceId,
-          streamId: stream.id,
-          intent: params.contextBag.intent,
-          refs: params.contextBag.refs,
-          createdBy: params.createdBy,
-        })
-      }
+    await StreamMemberRepository.insert(db, id, params.createdBy)
 
-      // INV-E1: the E2E flag must be visible the instant the stream is, or
-      // a plaintext writer could squeeze a message in between the stream
-      // insert and the flag insert. Same transaction guarantees there is no
-      // such window. We annotate the returned stream so the create handler
-      // can hand the encryption metadata back to the client without a
-      // second round-trip.
-      if (params.e2e) {
-        await E2eStreamsRepository.markStreamE2e(client, {
-          streamId: stream.id,
-          workspaceId: params.workspaceId,
-          ownerUserId: params.createdBy,
-          ownerUserKeyId: params.e2e.ownerKeyId,
-        })
-        stream.e2eEnabled = true
-        stream.e2eOwnerKeyId = params.e2e.ownerKeyId
-        stream.e2eActors = []
-      }
-
-      // Persist an at-creation tool policy in the same transaction, so the
-      // very first turn already respects it. `undefined` = unrestricted (no
-      // row); a policy (incl. `[]`) is written via the shared upsert.
-      if (params.allowedToolCategories !== undefined) {
-        await StreamPoliciesRepository.setToolPolicy(
-          client,
-          params.workspaceId,
-          stream.id,
-          params.allowedToolCategories
-        )
-      }
-
-      await OutboxRepository.insert(client, "stream:created", {
+    // Attach optional context bag in the same transaction as the stream +
+    // outbox event so the pre-compute handler (which fires on stream:created)
+    // always sees a fully-wired bag by the time it processes the event. INV-7.
+    if (params.contextBag) {
+      await ContextBagRepository.insert(db, {
         workspaceId: params.workspaceId,
         streamId: stream.id,
-        stream,
+        intent: params.contextBag.intent,
+        refs: params.contextBag.refs,
+        createdBy: params.createdBy,
       })
+    }
 
-      return stream
+    // INV-E1: the E2E flag must be visible the instant the stream is, or
+    // a plaintext writer could squeeze a message in between the stream
+    // insert and the flag insert. Same transaction guarantees there is no
+    // such window. We annotate the returned stream so the create handler
+    // can hand the encryption metadata back to the client without a
+    // second round-trip.
+    if (params.e2e) {
+      await E2eStreamsRepository.markStreamE2e(db, {
+        streamId: stream.id,
+        workspaceId: params.workspaceId,
+        ownerUserId: params.createdBy,
+        ownerUserKeyId: params.e2e.ownerKeyId,
+      })
+      stream.e2eEnabled = true
+      stream.e2eOwnerKeyId = params.e2e.ownerKeyId
+      stream.e2eActors = []
+    }
+
+    // Persist an at-creation tool policy in the same transaction, so the
+    // very first turn already respects it. `undefined` = unrestricted (no
+    // row); a policy (incl. `[]`) is written via the shared upsert.
+    if (params.allowedToolCategories !== undefined) {
+      await StreamPoliciesRepository.setToolPolicy(db, params.workspaceId, stream.id, params.allowedToolCategories)
+    }
+
+    await OutboxRepository.insert(db, "stream:created", {
+      workspaceId: params.workspaceId,
+      streamId: stream.id,
+      stream,
     })
+
+    return stream
   }
 
   async createChannel(params: CreateChannelParams): Promise<Stream> {

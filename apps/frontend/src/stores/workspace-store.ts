@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
+import { useBatchedValue } from "./apply-window"
 import {
   applyDecryptedNameOverlay,
   getStreamNameCacheVersion,
@@ -273,7 +274,7 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
 
 function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
   const live = useLiveQuery(queryFn, deps)
-  return live ?? cached
+  return useBatchedValue(live ?? cached)
 }
 
 function useSingletonStoreHook<T>(
@@ -282,8 +283,8 @@ function useSingletonStoreHook<T>(
   cached: T | undefined
 ): T | undefined {
   const live = useLiveQuery(queryFn, deps, cached)
-  if (live === undefined && cached !== undefined) return cached
-  return live
+  const resolved = live === undefined && cached !== undefined ? cached : live
+  return useBatchedValue(resolved)
 }
 
 export function useWorkspaceFromStore(workspaceId: string | undefined): CachedWorkspace | undefined {

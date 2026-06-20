@@ -356,7 +356,8 @@ describe("Pi remote trace safety", () => {
         "workspaceId": " ws_123 ",
         "apiKey": " threa_bk_test ",
         "pollMs": 1500,
-        "defaultDisplayName": " Local Pi "
+        "defaultDisplayName": " Local Pi ",
+        "defaultLabel": " Pi remote "
       }`)
     ).toEqual({
       baseUrl: "https://app.threa.io/",
@@ -364,6 +365,7 @@ describe("Pi remote trace safety", () => {
       apiKey: "threa_bk_test",
       pollMs: 1500,
       defaultDisplayName: "Local Pi",
+      defaultLabel: "Pi remote",
     })
   })
 

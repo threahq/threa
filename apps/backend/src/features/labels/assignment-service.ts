@@ -97,19 +97,24 @@ export class LabelAssignmentService {
    * commit together. Returns the resolved label alongside the assignment.
    */
   async assignByName(params: AssignLabelByNameParams): Promise<{ label: Label; assignment: LabelAssignment }> {
-    return withTransaction(this.pool, async (client) => {
-      await this.assertResourceAccess(client, params.actor, params.workspaceId, params.resourceType, params.resourceId)
+    return withTransaction(this.pool, (client) => this.assignByNameInTransaction(client, params))
+  }
 
-      const { label } = await this.labelService.upsertByNameWithin(client, params)
-      const assignment = await this.assignWithin(client, label, {
-        workspaceId: params.workspaceId,
-        actor: params.actor,
-        labelId: label.id,
-        resourceType: params.resourceType,
-        resourceId: params.resourceId,
-      })
-      return { label, assignment }
+  async assignByNameInTransaction(
+    client: PoolClient,
+    params: AssignLabelByNameParams
+  ): Promise<{ label: Label; assignment: LabelAssignment }> {
+    await this.assertResourceAccess(client, params.actor, params.workspaceId, params.resourceType, params.resourceId)
+
+    const { label } = await this.labelService.upsertByNameWithin(client, params)
+    const assignment = await this.assignWithin(client, label, {
+      workspaceId: params.workspaceId,
+      actor: params.actor,
+      labelId: label.id,
+      resourceType: params.resourceType,
+      resourceId: params.resourceId,
     })
+    return { label, assignment }
   }
 
   private async assignWithin(client: PoolClient, label: Label, params: AssignLabelParams): Promise<LabelAssignment> {

@@ -23,9 +23,13 @@ import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { CatchUpBatch } from "./catch-up-batch"
+import { beginApplyWindow, endApplyWindow } from "@/stores/apply-window"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import { savedKeys } from "@/hooks/use-saved"
+import { scheduledKeys } from "@/hooks/use-scheduled"
+import { activityKeys } from "@/hooks/use-activity"
 import type { WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
@@ -78,6 +82,24 @@ interface SyncEngineDeps {
 /** Safety valve for catch-up paging (20 pages × 500 entries). */
 const MAX_CATCHUP_PAGES = 20
 const CATCHUP_PAGE_LIMIT = 500
+
+/**
+ * Above this many missed entries on the first catch-up page, heal the whole
+ * workspace with one atomic snapshot instead of replaying the gap entry by
+ * entry. Replay drives the live handlers per entry — each missed stream, draft,
+ * membership and read advances its own cache + IDB write and re-renders the
+ * sidebar/badges alone — so a long offline window (a laptop asleep for days)
+ * visibly trickles streams in, archives them, flips unread counts and flies
+ * drafts in and out one at a time over many seconds. The forced full bootstrap
+ * applies the entire workspace in a single settle (one IDB transaction + one
+ * `setQueryData`), so a large gap lands at its final state at once.
+ *
+ * Tuned to separate a brief blip (a handful of entries — cheap to replay, no
+ * extra full-snapshot fetch) from a real catch-up. A page at or below
+ * `CATCHUP_PAGE_LIMIT` keeps the existing per-entry replay (with counters and
+ * previews still coalesced by the catch-up batch).
+ */
+export const CATCHUP_COLLAPSE_THRESHOLD = 200
 
 /**
  * How long a heartbeat-detected lag must persist before it triggers catch-up.
@@ -1097,6 +1119,24 @@ export class SyncEngine {
   }
 
   /**
+   * Refresh the surfaces a full-bootstrap collapse does NOT re-derive on its
+   * own. Saved and scheduled lists aren't carried by the workspace bootstrap and
+   * gate off `refetchOnReconnect` in sync mode (use-saved / use-scheduled), so
+   * they are healed only by catch-up replaying their sync-log entries; the
+   * activity feed list is likewise handler-invalidated, not bootstrapped. When a
+   * large gap (or the below-floor case) collapses to a bootstrap, replay is
+   * skipped — without this an already-open Saved / Scheduled / Activity view
+   * would sit stale until it remounts. Invalidation is a no-op for unmounted
+   * queries (they refetch on next mount) and refetches the open ones.
+   */
+  private invalidateReplayHealedQueries(): void {
+    const { queryClient } = this.deps
+    queryClient.invalidateQueries({ queryKey: savedKeys.all })
+    queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
+    queryClient.invalidateQueries({ queryKey: activityKeys.all })
+  }
+
+  /**
    * Active catch-up: applies log entries through the SAME registered handlers
    * live socket events use (the protocol guarantees `entry.payload` is the
    * exact payload the socket emits — see the sync service doc), in syncId
@@ -1124,6 +1164,14 @@ export class SyncEngine {
     // means no position is known and the splice applies everything buffered
     // — live behavior.
     let appliedThrough: bigint | null = null
+
+    // Opened the first time this run applies replayed entries (see
+    // beginApplyWindow): holds the reactive read layer steady so the sidebar,
+    // badges, memberships and drafts paint the replay's FINAL state once when it
+    // closes instead of trickling per entry. Not opened for an empty page or a
+    // collapse-to-bootstrap (the snapshot already lands atomically). Closed in
+    // the finally, so a throw or early return can never strand it open.
+    let applyWindowOpen = false
 
     // Counter and preview updates replayed below fold into this batch (via the
     // handlers' getCatchUpBatch) instead of writing per-entry, so the
@@ -1185,8 +1233,12 @@ export class SyncEngine {
           // forceFull: the cursor is below the retained floor, so catch-up has
           // no entries to replay — only the full workspace snapshot is
           // authoritative for everything <= head. The slim reconnect path
-          // (per-stream deltas only) would leave the rest stale.
-          void this.runBootstrap(true, { forceFull: true })
+          // (per-stream deltas only) would leave the rest stale. Await it so the
+          // snapshot lands BEFORE the finally's gate.resume splices buffered live
+          // events (syncId > head) on top — a fire-and-forget bootstrap could
+          // finish after the splice and overwrite (regress) events above head.
+          this.invalidateReplayHealedQueries()
+          await this.runBootstrap(true, { forceFull: true })
           return
         }
         if (response.entries.length === 0) {
@@ -1198,6 +1250,46 @@ export class SyncEngine {
           // drain (truncation by MAX_CATCHUP_PAGES is healed the same way).
           this.noteSeenHead(response.head)
           break
+        }
+
+        // A large gap heals faster and without the trickle by collapsing to one
+        // atomic snapshot rather than replaying every missed entry through the
+        // live handlers (see CATCHUP_COLLAPSE_THRESHOLD). Only the FIRST page
+        // decides (pages === 0) — once entries have been applied, finish the
+        // replay rather than re-fetch and re-apply. The mechanics mirror the
+        // below-floor branch exactly: jump the cursor to head (the snapshot owns
+        // everything <= head), record the head as seen, bound the resume splice
+        // at head, and force a full bootstrap. Read-before-stamp holds — head was
+        // read before the bootstrap fires, so the snapshot is a lower bound and
+        // the splice drops only buffered events the snapshot already covers. The
+        // bootstrap is awaited so its snapshot lands BEFORE the finally's
+        // gate.resume splices the buffered events on top — fire-and-forget would
+        // let the snapshot finish after the splice and regress events above head.
+        if (pages === 0 && response.entries.length >= CATCHUP_COLLAPSE_THRESHOLD) {
+          console.info("Sync catch-up gap large; collapsing to a full bootstrap", {
+            workspaceId: this.workspaceId,
+            trigger,
+            cursorBefore,
+            head: response.head,
+            firstPageEntries: response.entries.length,
+          })
+          cursorStore.advance(response.head)
+          this.noteSeenHead(response.head)
+          appliedThrough = BigInt(response.head)
+          this.invalidateReplayHealedQueries()
+          await this.runBootstrap(true, { forceFull: true })
+          return
+        }
+
+        // Committed to replaying this page (not collapsing): hold the reactive
+        // read layer steady for the whole replay so every batched store hook
+        // re-reads once on close instead of once per entry. Idempotent — opened
+        // on the first applied page and kept open across subsequent pages. MUST
+        // stay below the collapse/empty returns above: opening on a collapsed or
+        // empty page would freeze the UI and then settle mid-bootstrap.
+        if (!applyWindowOpen) {
+          beginApplyWindow()
+          applyWindowOpen = true
         }
 
         pages += 1
@@ -1267,6 +1359,12 @@ export class SyncEngine {
         const through = appliedThrough
         await gate.resume((_eventType, syncId) => through === null || syncId > through)
       }
+
+      // Release the held read layer last — after the batch flush AND the resume
+      // splice have written — so the one re-read every batched hook does on close
+      // reflects the replay's final state plus the spliced live events together.
+      // Unconditional (even on destroy/throw) so the window never strands open.
+      if (applyWindowOpen) endApplyWindow()
     }
   }
 

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedDraft, type ComposerLoaded, type DraftScratchpad } from "@/db"
+import { useBatchedValue } from "./apply-window"
 
 const cache = {
   scratchpads: new Map<string, DraftScratchpad[]>(),
@@ -56,8 +57,8 @@ function useDraftCacheSignal(workspaceId: string | undefined): number {
 
 function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
   const live = useLiveQuery(queryFn, deps, cached) ?? []
-  if (live.length === 0 && cached.length > 0) return cached
-  return live
+  const resolved = live.length === 0 && cached.length > 0 ? cached : live
+  return useBatchedValue(resolved)
 }
 
 export function hasSeededDraftCache(workspaceId: string): boolean {

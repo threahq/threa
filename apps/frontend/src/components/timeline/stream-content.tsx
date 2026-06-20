@@ -1027,6 +1027,9 @@ export function StreamContent({
 
   // Unified API regardless of scroll mode
   const scrollContainerRef = useVirtualized ? virtuosoScrollerRef : plainScrollRef
+  // Content box for the plain (thread) scroller — its height tracks scrollHeight,
+  // so observing it (not the fixed h-full scroller) catches embed/image growth.
+  const plainContentRef = useRef<HTMLDivElement>(null)
   const isScrolledFarFromBottom = useVirtualized ? virtualIsScrolledFar : plainIsScrolledFar
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
@@ -1486,6 +1489,12 @@ export function StreamContent({
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
+    // Observe the scrolling content box (its height tracks scrollHeight) so a
+    // settle / embed / image resize re-scans even when the stream is too short
+    // to scroll. Both paths pass one — the virtualized list's inner content div
+    // and the plain (thread) scroller's content wrapper. Observing the scroller
+    // itself wouldn't catch it: a fixed h-full box doesn't change as content grows.
+    contentRef: useVirtualized ? virtualContentRef : plainContentRef,
     events: displayEvents,
     streamId,
     lastReadEventId,
@@ -1755,8 +1764,11 @@ export function StreamContent({
   const readFrontierSequence = useMemo<string | null>(() => {
     if (lastReadEventId === undefined) return null
     if (lastReadEventId === null) return "0"
-    return displayEvents.find((event) => event.id === lastReadEventId)?.sequence ?? null
-  }, [displayEvents, lastReadEventId])
+    // Resolve against the unfiltered events so a pointer on a row that's
+    // filtered out of the display still yields its sequence (else the gate
+    // would wrongly fall back to ungated).
+    return events.find((event) => event.id === lastReadEventId)?.sequence ?? null
+  }, [events, lastReadEventId])
 
   return (
     <ReadFrontierContext.Provider value={readFrontierSequence}>
@@ -1888,38 +1900,40 @@ export function StreamContent({
                     onScroll={plainHandleScroll}
                     {...batchPointerHandlers}
                   >
-                    {isThread && parentMessage && parentStreamId && (
-                      <ThreadParentMessage
-                        event={parentMessage}
+                    <div ref={plainContentRef}>
+                      {isThread && parentMessage && parentStreamId && (
+                        <ThreadParentMessage
+                          event={parentMessage}
+                          workspaceId={workspaceId}
+                          streamId={parentStreamId}
+                          replyCount={displayEvents.length}
+                        />
+                      )}
+                      {isFetchingOlder && (
+                        <div className="flex justify-center py-2">
+                          <p className="text-sm text-muted-foreground">Loading older messages...</p>
+                        </div>
+                      )}
+                      <EventList
+                        timelineItems={timelineItems}
+                        isLoading={isLoading}
                         workspaceId={workspaceId}
-                        streamId={parentStreamId}
-                        replyCount={displayEvents.length}
+                        streamId={streamId}
+                        highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
+                        firstUnreadEventId={dividerEventId}
+                        isDividerDimmed={isDividerDimmed}
+                        agentActivity={agentActivity}
+                        hideSessionCards={isChannel}
+                        newMessageIds={newMessageIds}
+                        batch={batchState}
+                        conversationOverlay={activeConversationOverlay}
                       />
-                    )}
-                    {isFetchingOlder && (
-                      <div className="flex justify-center py-2">
-                        <p className="text-sm text-muted-foreground">Loading older messages...</p>
-                      </div>
-                    )}
-                    <EventList
-                      timelineItems={timelineItems}
-                      isLoading={isLoading}
-                      workspaceId={workspaceId}
-                      streamId={streamId}
-                      highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
-                      firstUnreadEventId={dividerEventId}
-                      isDividerDimmed={isDividerDimmed}
-                      agentActivity={agentActivity}
-                      hideSessionCards={isChannel}
-                      newMessageIds={newMessageIds}
-                      batch={batchState}
-                      conversationOverlay={activeConversationOverlay}
-                    />
-                    {isFetchingNewer && (
-                      <div className="flex justify-center py-2">
-                        <p className="text-sm text-muted-foreground">Loading newer messages...</p>
-                      </div>
-                    )}
+                      {isFetchingNewer && (
+                        <div className="flex justify-center py-2">
+                          <p className="text-sm text-muted-foreground">Loading newer messages...</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

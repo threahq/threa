@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
+import { LabelActorTypes, LabelableResourceTypes, MemoryModes, type MemoryMode } from "@threa/types"
 import type {
   BotInvocationCapability,
   BotInvocationTrigger,
@@ -24,9 +25,13 @@ import {
   type BotRuntimeSessionLink,
   type StreamActiveActor,
 } from "./repository"
+import type { LabelAssignmentService } from "../labels"
+import type { Stream, StreamService } from "../streams"
 
 interface BotRuntimeServiceDeps {
   pool: Pool
+  streamService?: Pick<StreamService, "createScratchpadInTransaction" | "addBotToStreamOn">
+  labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
 }
 
 function serializeBotForOutbox(bot: Bot) {
@@ -49,9 +54,13 @@ function serializeBotForOutbox(bot: Bot) {
 
 export class BotRuntimeService {
   private readonly pool: Pool
+  private readonly streamService?: Pick<StreamService, "createScratchpadInTransaction" | "addBotToStreamOn">
+  private readonly labelAssignmentService?: Pick<LabelAssignmentService, "assignByNameInTransaction">
 
   constructor(deps: BotRuntimeServiceDeps) {
     this.pool = deps.pool
+    this.streamService = deps.streamService
+    this.labelAssignmentService = deps.labelAssignmentService
   }
 
   async findLatestPresence(params: { workspaceId: string; botId: string }): Promise<BotRuntimeInstance | null> {
@@ -232,6 +241,63 @@ export class BotRuntimeService {
     metadata?: Record<string, unknown>
   }): Promise<BotRuntimeSessionLink> {
     return withTransaction(this.pool, (client) => this.createOrLinkPiRemoteSessionInTransaction(client, params))
+  }
+
+  async createLinkedScratchpadSession(params: {
+    workspaceId: string
+    botId: string
+    ownerUserId: string
+    runtimeKind: BotRuntimeKind
+    instanceId: string
+    runtimeSessionId: string
+    displayName: string
+    localCwd?: string
+    memoryMode?: MemoryMode
+    labelName?: string
+    traits: readonly BotTrait[]
+  }): Promise<{ link: BotRuntimeSessionLink; stream: Stream }> {
+    const { streamService, labelAssignmentService } = this
+    if (!streamService || !labelAssignmentService) {
+      throw new Error("BotRuntimeService missing scratchpad session dependencies")
+    }
+
+    return withTransaction(this.pool, async (client) => {
+      const stream = await streamService.createScratchpadInTransaction(client, {
+        workspaceId: params.workspaceId,
+        displayName: params.displayName,
+        memoryMode: params.memoryMode ?? MemoryModes.OFF,
+        createdBy: params.ownerUserId,
+      })
+      await streamService.addBotToStreamOn(client, stream.id, params.botId, params.workspaceId, params.ownerUserId)
+
+      if (params.labelName) {
+        await labelAssignmentService.assignByNameInTransaction(client, {
+          workspaceId: params.workspaceId,
+          actor: { type: LabelActorTypes.USER, id: params.ownerUserId },
+          name: params.labelName,
+          resourceType: LabelableResourceTypes.STREAM,
+          resourceId: stream.id,
+        })
+      }
+
+      await this.repairBotTraitsInTransaction(client, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        traits: params.traits,
+      })
+      const link = await this.createOrLinkPiRemoteSessionInTransaction(client, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeKind: params.runtimeKind,
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId,
+        rootStreamId: stream.id,
+        activeStreamId: stream.id,
+        linkedBy: params.ownerUserId,
+        metadata: { displayName: params.displayName, localCwd: params.localCwd ?? null },
+      })
+      return { link, stream }
+    })
   }
 
   async createOrLinkPiRemoteSessionInTransaction(

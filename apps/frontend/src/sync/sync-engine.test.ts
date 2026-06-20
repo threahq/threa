@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import type { Socket } from "socket.io-client"
 import { QueryClient } from "@tanstack/react-query"
-import { SyncEngine, isSyncEngineCurrent } from "./sync-engine"
+import { SyncEngine, isSyncEngineCurrent, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
+import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
 import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -889,6 +890,7 @@ describe("SyncEngine.backfillStreamGap", () => {
 describe("SyncEngine sync cursor (active mode)", () => {
   beforeEach(async () => {
     resetRevealGate()
+    resetApplyWindow()
     await Promise.all([
       db.workspaces.clear(),
       db.syncCursors.clear(),
@@ -897,6 +899,13 @@ describe("SyncEngine sync cursor (active mode)", () => {
       db.streams.clear(),
     ])
   })
+
+  /** Record every open/close transition of the global apply window. */
+  function trackApplyWindow(): { transitions: boolean[]; stop: () => void } {
+    const transitions: boolean[] = []
+    const stop = subscribeApplyWindow(() => transitions.push(isApplyWindowOpen()))
+    return { transitions, stop }
+  }
 
   function makeActiveDeps(catchUp: ReturnType<typeof vi.fn>) {
     return {
@@ -983,6 +992,67 @@ describe("SyncEngine sync cursor (active mode)", () => {
     // connect one (so nothing from the pruned span is silently skipped).
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("500"))
     await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
+    engine.destroy()
+  })
+
+  it("collapses a large catch-up gap into one full bootstrap instead of replaying entry by entry", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // A reconnect after a long offline window: the first page comes back at the
+    // collapse threshold, so the engine heals the whole workspace with one
+    // atomic snapshot (cursor jumps to head, a fresh bootstrap fires) rather than
+    // dispatching every missed entry through the live handlers and trickling the
+    // sidebar/badges in one by one.
+    const bigPage = Array.from({ length: CATCHUP_COLLAPSE_THRESHOLD }, (_, i) =>
+      userAddedEntry(String(11 + i), `user_${i}`)
+    )
+    const catchUp = vi.fn().mockResolvedValue({ entries: bigPage, head: "5000" })
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    const applyWindow = trackApplyWindow()
+    const invalidateSpy = vi.spyOn(deps.queryClient, "invalidateQueries")
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("5000"))
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
+    // The big page's entries were NOT replayed one by one — collapsing skips the
+    // per-entry handler dispatch entirely, so no handler IDB write landed.
+    expect(await db.workspaceUsers.get("user_0")).toBeUndefined()
+    // Skipping replay means the replay-healed lists (saved/scheduled/activity,
+    // which the bootstrap doesn't re-derive) must be invalidated so an open view
+    // refetches instead of sitting stale.
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["saved"] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["scheduled"] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["activity"] })
+    // Collapsing re-derives via the (already atomic) bootstrap, so it never opens
+    // a replay apply-window.
+    applyWindow.stop()
+    expect(applyWindow.transitions).toEqual([])
+    expect(isApplyWindowOpen()).toBe(false)
+    engine.destroy()
+  })
+
+  it("replays a small catch-up gap through the live handlers without collapsing", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // A handful of missed entries stays on the per-entry replay path — cheap, and
+    // it avoids an extra full-snapshot fetch. The bootstrap is only the connect
+    // one (no collapse fallback), and the entries' handler writes land.
+    const smallPage = Array.from({ length: 3 }, (_, i) => userAddedEntry(String(11 + i), `small_user_${i}`))
+    const catchUp = vi.fn().mockResolvedValueOnce({ entries: smallPage, head: "13" }).mockResolvedValue(emptyPage("13"))
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+    const applyWindow = trackApplyWindow()
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("small_user_2")).toBeDefined())
+    expect(engine.getSyncCursor()).toBe("13")
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    // Replaying opens the apply-window once and closes it once, so the batched
+    // store hooks settle the three streams in a single re-read rather than three.
+    applyWindow.stop()
+    expect(applyWindow.transitions).toEqual([true, false])
+    expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
   })
 
