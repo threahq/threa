@@ -55,7 +55,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
-import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
+import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
@@ -477,40 +477,48 @@ export function StreamPage() {
     headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} />
   } else if (isScratchpad) {
     headerTitle = (
-      <div
-        className={cn(
-          "group inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 transition-colors min-w-0",
-          canRenameScratchpad
-            ? "cursor-pointer hover:bg-accent/50 hover:outline hover:outline-1 hover:outline-border"
-            : "cursor-default"
-        )}
-        onClick={canRenameScratchpad ? handleStartRename : undefined}
-      >
-        {nameDecrypting && !pendingName ? (
-          <Skeleton className="h-5 w-40" />
-        ) : (
-          <h1 className="font-semibold truncate">
-            {streamName}
-            {isDraft && <span className="ml-2 text-xs font-normal text-muted-foreground">(draft)</span>}
-          </h1>
-        )}
-        {canRenameScratchpad && (
-          <Pencil className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-        )}
-      </div>
+      <StreamTitlePreview name={streamName}>
+        <div
+          className={cn(
+            "group inline-flex items-center gap-1 rounded-md px-2 py-1 -ml-2 transition-colors min-w-0",
+            canRenameScratchpad
+              ? "cursor-pointer hover:bg-accent/50 hover:outline hover:outline-1 hover:outline-border"
+              : "cursor-default"
+          )}
+          onClick={canRenameScratchpad ? handleStartRename : undefined}
+        >
+          {nameDecrypting && !pendingName ? (
+            <Skeleton className="h-5 w-40" />
+          ) : (
+            <h1 className="font-semibold truncate">
+              {streamName}
+              {isDraft && <span className="ml-2 text-xs font-normal text-muted-foreground">(draft)</span>}
+            </h1>
+          )}
+          {canRenameScratchpad && (
+            <Pencil className="h-3.5 w-3.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+          )}
+        </div>
+      </StreamTitlePreview>
     )
   } else if (isDm && dmPeerUserId) {
     headerTitle = (
-      <button
-        type="button"
-        onClick={() => openUserProfile(dmPeerUserId)}
-        className="font-semibold truncate hover:underline text-left"
-      >
-        {streamName}
-      </button>
+      <StreamTitlePreview name={streamName}>
+        <button
+          type="button"
+          onClick={() => openUserProfile(dmPeerUserId)}
+          className="font-semibold truncate hover:underline text-left"
+        >
+          {streamName}
+        </button>
+      </StreamTitlePreview>
     )
   } else {
-    headerTitle = <h1 className="font-semibold truncate">{streamName}</h1>
+    headerTitle = (
+      <StreamTitlePreview name={streamName}>
+        <h1 className="font-semibold truncate">{streamName}</h1>
+      </StreamTitlePreview>
+    )
   }
 
   const mainStreamContent = (
