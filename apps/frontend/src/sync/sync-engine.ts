@@ -1119,24 +1119,6 @@ export class SyncEngine {
   }
 
   /**
-   * Active catch-up: applies log entries through the SAME registered handlers
-   * live socket events use (the protocol guarantees `entry.payload` is the
-   * exact payload the socket emits — see the sync service doc), in syncId
-   * order, awaiting each entry so applies cannot interleave. Duplicates are
-   * by design (sweep + dispatcher can both emit; snapshot/log overlap is the
-   * safe side of read-before-stamp) and are absorbed by the handlers'
-   * idempotency — including the unread counter family, whose absolute
-   * payloads max-merge/LWW-set (phase 2c).
-   *
-   * While catch-up pages, the gate buffers live syncId-bearing events; the
-   * finally-splice applies buffered events above the catch-up position and
-   * reopens live flow. A buffered ABSOLUTE counter event at or below the
-   * position must NOT re-apply: its log copy already applied, and activity
-   * counts are LWW — re-applying it after a newer log entry would regress
-   * them. The cursor advances only past entries that were handed to handlers,
-   * never by jumping to head.
-   */
-  /**
    * Refresh the surfaces a full-bootstrap collapse does NOT re-derive on its
    * own. Saved and scheduled lists aren't carried by the workspace bootstrap and
    * gate off `refetchOnReconnect` in sync mode (use-saved / use-scheduled), so
@@ -1154,6 +1136,24 @@ export class SyncEngine {
     queryClient.invalidateQueries({ queryKey: activityKeys.all })
   }
 
+  /**
+   * Active catch-up: applies log entries through the SAME registered handlers
+   * live socket events use (the protocol guarantees `entry.payload` is the
+   * exact payload the socket emits — see the sync service doc), in syncId
+   * order, awaiting each entry so applies cannot interleave. Duplicates are
+   * by design (sweep + dispatcher can both emit; snapshot/log overlap is the
+   * safe side of read-before-stamp) and are absorbed by the handlers'
+   * idempotency — including the unread counter family, whose absolute
+   * payloads max-merge/LWW-set (phase 2c).
+   *
+   * While catch-up pages, the gate buffers live syncId-bearing events; the
+   * finally-splice applies buffered events above the catch-up position and
+   * reopens live flow. A buffered ABSOLUTE counter event at or below the
+   * position must NOT re-apply: its log copy already applied, and activity
+   * counts are LWW — re-applying it after a newer log entry would regress
+   * them. The cursor advances only past entries that were handed to handlers,
+   * never by jumping to head.
+   */
   private async performActiveCatchUp(trigger: string, signal: AbortSignal, cycle: number): Promise<void> {
     const syncService = this.deps.syncService!
     const gate = this.eventGate!
