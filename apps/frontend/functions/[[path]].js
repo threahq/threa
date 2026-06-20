@@ -2,7 +2,7 @@ const FILE_EXTENSION_RE = /\/[^/]+\.[^/]+$/
 
 function isHtmlNavigation(request) {
   const accept = request.headers.get("accept") ?? ""
-  return accept.includes("text/html")
+  return accept.toLowerCase().includes("text/html")
 }
 
 function isExtensionlessPath(pathname) {
