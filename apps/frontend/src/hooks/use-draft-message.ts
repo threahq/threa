@@ -11,6 +11,7 @@ import {
   useDraftsFromStore,
 } from "@/stores/draft-store"
 import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
+import { clearStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, markDraftResolved, recordScopeResolved } from "@/sync/draft-resolution-guard"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
@@ -246,6 +247,9 @@ async function removeLoadedDraftLocally(
  * drift doesn't matter.
  */
 export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+  // Drop the staging buffer first (synchronous) so a racing flush or a reload
+  // can't recover the discarded content back into the composer.
+  clearStagedDraft(workspaceId, scope)
   const { loadedId, baseVersion } = await removeLoadedDraftLocally(workspaceId, scope)
   // Sync side-effect after the local state is fully cleared.
   if (loadedId) await syncDraftRemoval(workspaceId, loadedId, baseVersion)
@@ -258,6 +262,10 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
  * entry instead of being collaterally deleted (plan §resolve-on-send).
  */
 export async function resolveLoadedDraft(workspaceId: string, scope: string): Promise<void> {
+  // Drop the staging buffer first (synchronous) so the just-sent content can't be
+  // recovered by a reload, nor re-staged by a debounced flush racing the teardown
+  // — the same resurrection class the resolution guard below closes.
+  clearStagedDraft(workspaceId, scope)
   // Bump the scope's resolve sequence BEFORE the async teardown so a debounced
   // save already in flight can't re-create the draft once the pointer is cleared
   // (see the guard in `upsertLoadedDraft`). Ordering matters: this synchronous
@@ -281,6 +289,7 @@ export async function resolveLoadedDraft(workspaceId: string, scope: string): Pr
  * promotion / discard flows to clear a scope entirely.
  */
 export async function purgeScopeDrafts(workspaceId: string, scope: string): Promise<void> {
+  clearStagedDraft(workspaceId, scope)
   // Read + delete the rows AND clear the loaded pointer atomically: `baseVersion`
   // reflects any server confirmation that landed before the delete (ghost-draft
   // race), and clearing the pointer inside the txn prevents an inbound echo from
@@ -306,6 +315,10 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
  * cleared only when it referenced a purged plaintext row.
  */
 export async function purgePlaintextScopeDrafts(workspaceId: string, scope: string): Promise<void> {
+  // E2EE-4 defense in depth: an encrypted scope must never have a plaintext
+  // staging buffer. The write path already gates staging on encryption, so this
+  // only ever clears a stray entry written before the stream was known to be E2E.
+  clearStagedDraft(workspaceId, scope)
   let clearedPointer = false
   const removed = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
     const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
@@ -337,6 +350,10 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
 export async function stashLoadedDraft(workspaceId: string, scope: string): Promise<string | null> {
   const draftId = (await db.composerLoaded.get(scope))?.draftId ?? null
   if (!draftId) return null
+  // The caller flushed the live editor into the row before stashing, so the
+  // staged buffer is now redundant; drop it so a reload doesn't recover the
+  // stashed body back into the (now draft-less) composer as a new loaded draft.
+  clearStagedDraft(workspaceId, scope)
   await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
   return draftId
@@ -519,6 +536,13 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
       }
+      // Synchronously stage the keystroke so a reload before the debounce fires
+      // can't lose it (the debounce only reaches IDB after DEBOUNCE_MS). Plaintext
+      // only: an E2E draft must never write its body to disk unsealed (E2EE-4), and
+      // there is no synchronous seal — its reload-loss window stays open by design.
+      // The gate is read live (the timer-fire seal uses the same ref) so a value
+      // typed while plaintext is never staged after the stream became encrypted.
+      if (!e2eGateRef.current.enabled) stageDraftContent(workspaceId, draftKey, contentJson)
       // `saveDraft` reads the live E2E gate when the timer fires, so a value typed
       // while the stream was plaintext is sealed (or dropped) — never written as
       // plaintext — if the stream became encrypted in the meantime (E2EE-4).
@@ -527,7 +551,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
         void saveDraft(contentJson)
       }, DEBOUNCE_MS)
     },
-    [saveDraft]
+    [saveDraft, workspaceId, draftKey]
   )
 
   /**

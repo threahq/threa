@@ -17,6 +17,7 @@ import {
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
 import { hasSeededDraftCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
+import { reconcileStagedDrafts } from "@/sync/draft-sync"
 import { useSyncSnapshot, useSyncStatus } from "@/sync/sync-status"
 import { debugBootstrap, isBootstrapDebugEnabled } from "@/lib/bootstrap-debug"
 import {
@@ -141,9 +142,20 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
 
   useEffect(() => {
     let cancelled = false
-    seedDraftCacheFromIdb(workspaceId).then(() => {
+    // Recover any synchronously-staged composer content into IDB BEFORE seeding
+    // the draft cache, so a draft typed-then-reloaded (before its debounce
+    // reached IDB) is already present when the composer first reads. A failed
+    // recovery must never block the app — seed regardless.
+    const run = async () => {
+      try {
+        await reconcileStagedDrafts(workspaceId)
+      } catch (err) {
+        console.error("Failed to recover staged drafts", err)
+      }
+      await seedDraftCacheFromIdb(workspaceId)
       if (!cancelled) setPrimedDraftWorkspaceId(workspaceId)
-    })
+    }
+    void run()
     return () => {
       cancelled = true
     }
