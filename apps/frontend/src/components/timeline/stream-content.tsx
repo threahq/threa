@@ -1484,6 +1484,10 @@ export function StreamContent({
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
+    // Observe the virtualized content box so a settle/embed resize re-scans even
+    // when the stream is too short to scroll. The plain path's content lives in
+    // the scroller itself, so the hook's container fallback covers it.
+    contentRef: useVirtualized ? virtualContentRef : undefined,
     events: displayEvents,
     streamId,
     lastReadEventId,

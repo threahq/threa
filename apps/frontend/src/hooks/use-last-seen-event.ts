@@ -47,6 +47,15 @@ export function advanceFrontier(frontier: number, topIdx: number, botIdx: number
 interface UseLastSeenEventOptions {
   /** The owned scroll container (virtualized timeline or plain thread scroller). */
   scrollContainerRef: React.RefObject<HTMLElement | null>
+  /**
+   * The scrolling content box inside the container (its height = scrollHeight).
+   * Observed for size changes so the scan re-runs when rows grow after the last
+   * scroll — the open-at-bottom settle finishing, or async embeds (link/GitHub
+   * cards, images) loading. Without it a short stream that fits the viewport,
+   * and so fires no scroll event, would never re-scan and the trailing rows
+   * would stay unread. Falls back to the container when omitted.
+   */
+  contentRef?: React.RefObject<HTMLElement | null>
   /** The loaded event window, used to map a visible row back to its position. */
   events: StreamEvent[]
   streamId: string
@@ -87,6 +96,7 @@ interface UseLastSeenEventResult {
  */
 export function useLastSeenEvent({
   scrollContainerRef,
+  contentRef,
   events,
   streamId,
   lastReadEventId,
@@ -190,11 +200,23 @@ export function useLastSeenEvent({
     }
     schedule()
     el?.addEventListener("scroll", schedule, { passive: true })
+    // Re-scan when the rendered geometry changes without a scroll: the
+    // open-at-bottom settle finishing, or async embeds (link/GitHub cards,
+    // images) loading and resizing the trailing rows. On a short stream that
+    // can't scroll this is the ONLY thing that brings the last rows into the
+    // seen frontier — otherwise they stay unread with no gesture to fix it.
+    const content = contentRef?.current ?? null
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null
+    if (ro) {
+      if (el) ro.observe(el)
+      if (content && content !== el) ro.observe(content)
+    }
     return () => {
       if (raf) cancelAnimationFrame(raf)
       el?.removeEventListener("scroll", schedule)
+      ro?.disconnect()
     }
-  }, [enabled, streamId, recompute, scrollContainerRef])
+  }, [enabled, streamId, recompute, scrollContainerRef, contentRef])
 
   // Re-scan when the window grows (live append) or the read pointer moves under
   // us (external read), so the frontier and the affordance stay current.
