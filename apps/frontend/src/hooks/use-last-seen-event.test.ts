@@ -196,4 +196,54 @@ describe("useLastSeenEvent re-scan on content resize", () => {
     expect(result.current.lastSeenEventId).toBe("e2")
     expect(result.current.atLastRow).toBe(true)
   })
+
+  it("does not re-read a still-visible row when the read pointer moves backward (mark-as-unread), until a scroll", () => {
+    // A short, fully-read stream: every row is on screen and the pointer is at
+    // the tail (e3). Marking e2 unread moves the pointer back to e1 while e2 is
+    // still visible — the frontier must NOT auto-advance back to the tail (which
+    // would let auto-mark immediately re-read it). A real scroll resumes it.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: 5, bottom: 30 },
+      e1: { top: 30, bottom: 55 },
+      e2: { top: 55, bottom: 80 },
+      e3: { top: 80, bottom: 98 },
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [{ id: "e0" }, { id: "e1" }, { id: "e2" }, { id: "e3" }] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId, enabled: true }),
+      { initialProps: { lastReadEventId: "e3" as string | null } }
+    )
+
+    // Fully read: pointer at the tail, nothing to emit.
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.atLastRow).toBe(true)
+
+    // Mark e2 unread → the pointer lands on e1.
+    act(() => rerender({ lastReadEventId: "e1" }))
+
+    // The frontier is pinned at e1; e3 must NOT be emitted as seen even though it
+    // is still on screen, so auto-mark won't undo the unread.
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.atLastRow).toBe(false)
+
+    // A genuine user scroll lifts the pin and normal advancement resumes.
+    act(() => {
+      container.dispatchEvent(new Event("scroll"))
+    })
+    expect(result.current.lastSeenEventId).toBe("e3")
+    expect(result.current.atLastRow).toBe(true)
+  })
 })
