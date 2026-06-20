@@ -96,6 +96,25 @@ describe("loadConfig", () => {
     }
   })
 
+  test("resolves defaultLabel from env (winning over file) and is undefined when unset", () => {
+    const unset = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } })
+    if ("config" in unset) expect(unset.config.defaultLabel).toBeUndefined()
+
+    const fromFile = loadConfig({
+      ...base,
+      env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" },
+      file: { defaultLabel: "coding" },
+    })
+    if ("config" in fromFile) expect(fromFile.config.defaultLabel).toBe("coding")
+
+    const envWins = loadConfig({
+      ...base,
+      env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_DEFAULT_LABEL: " review " },
+      file: { defaultLabel: "coding" },
+    })
+    if ("config" in envWins) expect(envWins.config.defaultLabel).toBe("review")
+  })
+
   test("parses permissionRelay off and clamps pollMs", () => {
     const result = loadConfig({
       ...base,

@@ -41,7 +41,7 @@ bun install
 
 ### 3. Configure credentials
 
-Either set environment variables, or write `~/.claude/threa-channel/config.json`. Environment variables win over the file.
+Put the bot key **outside the repo**. Write `~/.claude/threa-channel/config.json` (recommended — it lives in your home dir, so no `git add` can ever reach it), or set environment variables. Environment variables win over the file. Never paste the key into a tracked `.mcp.json` (see the warning in step 4).
 
 ```bash
 export THREA_WORKSPACE_ID=ws_...
@@ -49,6 +49,7 @@ export THREA_API_KEY=threa_bk_...
 # optional
 export THREA_BASE_URL=https://app.threa.io        # default
 export THREA_DISPLAY_NAME="Claude Code"           # prefix; the project dir is appended
+export THREA_DEFAULT_LABEL="coding"                # label applied to scratchpads this channel creates
 export THREA_PERMISSION_RELAY=1                    # 1 (default) to relay approvals, 0 to disable
 ```
 
@@ -60,13 +61,24 @@ export THREA_PERMISSION_RELAY=1                    # 1 (default) to relay approv
   "workspaceId": "ws_...",
   "apiKey": "threa_bk_...",
   "displayName": "Claude Code",
+  "defaultLabel": "coding",
   "permissionRelay": true
 }
 ```
 
 ### 4. Register the channel with Claude Code
 
-Add the server to your MCP config. Use `.mcp.json.example` as a template. For a project, drop it in `.mcp.json`; for all projects, add the block to `~/.claude.json`. User-level config needs the **absolute** path to `src/index.ts`. You can put the credentials in the `env` block instead of the shell.
+Register the server at **local** scope so it stays private to your machine and never touches a tracked file:
+
+```bash
+claude mcp add threa --scope local -- bun /ABSOLUTE/PATH/TO/threa/extensions/claude-code-remote/src/index.ts
+```
+
+This writes to `~/.claude.json` under the current project, not to `.mcp.json`. Credentials come from step 3 (the home-dir config file or your shell), so no `env` block is needed. The path to `src/index.ts` must be **absolute**.
+
+> ⚠️ **Do not put your bot key in the Threa repo's `.mcp.json`.** That file is committed and open source — a key pasted there leaks on push. `.mcp.json.example` is intentionally secret-free for this reason. If you'd rather hand-edit a config file than run `claude mcp add`, use the **user-level** `~/.claude.json` (untracked) and not the repo's `.mcp.json`.
+
+If you do want the server defined in a checked-in `.mcp.json` (e.g. to share its existence with a team), keep secrets out of it with environment-variable expansion — `"env": { "THREA_API_KEY": "${THREA_API_KEY}" }` — and provide the value from your shell. Claude Code expands `${VAR}` / `${VAR:-default}` in `.mcp.json` at load time.
 
 ### 5. Launch Claude Code with the channel
 
@@ -115,17 +127,18 @@ The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve agains
 
 ## Configuration reference
 
-| Env var                    | Config key         | Default                | Meaning                                         |
-| -------------------------- | ------------------ | ---------------------- | ----------------------------------------------- |
-| `THREA_BASE_URL`           | `baseUrl`          | `https://app.threa.io` | Threa app origin                                |
-| `THREA_WORKSPACE_ID`       | `workspaceId`      | (required)             | `ws_…`                                          |
-| `THREA_API_KEY`            | `apiKey`           | (required)             | `threa_bk_…` bot key                            |
-| `THREA_DISPLAY_NAME`       | `displayName`      | `Claude Code`          | Scratchpad name prefix; project dir appended    |
-| `THREA_PERMISSION_RELAY`   | `permissionRelay`  | `true`                 | Relay tool-approval prompts into the scratchpad |
-| `THREA_POLL_MS`            | `pollMs`           | `3000`                 | Backstop claim poll (the socket pushes faster)  |
-| `THREA_REPLY_TIMEOUT_MS`   | `replyTimeoutMs`   | `1800000`              | Close an unanswered request after this many ms  |
-| `THREA_INSTANCE_ID`        | `instanceId`       | derived                | Override the per-directory instance id          |
-| `THREA_RUNTIME_SESSION_ID` | `runtimeSessionId` | derived                | Override the per-directory session id           |
+| Env var                    | Config key         | Default                | Meaning                                                                                 |
+| -------------------------- | ------------------ | ---------------------- | --------------------------------------------------------------------------------------- |
+| `THREA_BASE_URL`           | `baseUrl`          | `https://app.threa.io` | Threa app origin                                                                        |
+| `THREA_WORKSPACE_ID`       | `workspaceId`      | (required)             | `ws_…`                                                                                  |
+| `THREA_API_KEY`            | `apiKey`           | (required)             | `threa_bk_…` bot key                                                                    |
+| `THREA_DISPLAY_NAME`       | `displayName`      | `Claude Code`          | Scratchpad name prefix; project dir appended                                            |
+| `THREA_DEFAULT_LABEL`      | `defaultLabel`     | (none)                 | Label applied to scratchpads this channel creates (only on first creation, not re-link) |
+| `THREA_PERMISSION_RELAY`   | `permissionRelay`  | `true`                 | Relay tool-approval prompts into the scratchpad                                         |
+| `THREA_POLL_MS`            | `pollMs`           | `3000`                 | Backstop claim poll (the socket pushes faster)                                          |
+| `THREA_REPLY_TIMEOUT_MS`   | `replyTimeoutMs`   | `1800000`              | Close an unanswered request after this many ms                                          |
+| `THREA_INSTANCE_ID`        | `instanceId`       | derived                | Override the per-directory instance id                                                  |
+| `THREA_RUNTIME_SESSION_ID` | `runtimeSessionId` | derived                | Override the per-directory session id                                                   |
 
 By default the instance and session ids are derived from your hostname and the working directory, so re-launching Claude Code in the same project reuses the same scratchpad.
 
