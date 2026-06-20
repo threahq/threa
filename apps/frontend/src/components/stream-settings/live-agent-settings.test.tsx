@@ -8,7 +8,10 @@ import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import { streamKeys } from "@/hooks"
 import * as streamsHooks from "@/hooks/use-streams"
 import * as workspacesHooks from "@/hooks/use-workspaces"
+import * as workspaceStore from "@/stores/workspace-store"
 import { LiveAgentSettings } from "./live-agent-settings"
+
+type WorkspaceBot = ReturnType<typeof workspaceStore.useWorkspaceBots>[number]
 
 const companionMutate = vi.fn(async () => {})
 const toolMutate = vi.fn(async () => {})
@@ -27,6 +30,7 @@ beforeEach(() => {
   vi.spyOn(workspacesHooks, "useCurrentWorkspaceUser").mockReturnValue({
     id: "user_owner",
   } as unknown as ReturnType<typeof workspacesHooks.useCurrentWorkspaceUser>)
+  vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue([])
 })
 
 function seedAndRender(opts: {
@@ -34,12 +38,20 @@ function seedAndRender(opts: {
   allowed?: ToolPrivacyPolicy
   configured?: ToolPrivacyCategory[]
   e2e?: boolean
+  botMemberIds?: string[]
+  botRuntimePresence?: Record<string, { status: string } | null>
+  bots?: WorkspaceBot[]
 }) {
+  if (opts.bots) {
+    vi.spyOn(workspaceStore, "useWorkspaceBots").mockReturnValue(opts.bots)
+  }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_sp"), {
     stream: { createdBy: opts.createdBy ?? "user_owner" },
     allowedToolCategories: opts.allowed ?? null,
     configuredToolCategories: opts.configured,
+    botMemberIds: opts.botMemberIds,
+    botRuntimePresence: opts.botRuntimePresence,
   })
   function Wrapper({ children }: { children: ReactNode }) {
     return createElement(QueryClientProvider, { client: queryClient }, createElement(TooltipProvider, null, children))
@@ -72,5 +84,34 @@ describe("LiveAgentSettings", () => {
 
     expect(screen.queryByRole("switch", { name: /restrict tool access/i })).not.toBeInTheDocument()
     expect(screen.getByRole("radio", { name: /companion/i })).toBeInTheDocument()
+  })
+
+  it("surfaces an attached, connected external agent above the mode radios", () => {
+    seedAndRender({
+      botMemberIds: ["bot_pi"],
+      botRuntimePresence: { bot_pi: { status: "available" } },
+      bots: [{ id: "bot_pi", name: "Pi Remote" } as WorkspaceBot],
+    })
+
+    expect(screen.getByText("Pi Remote")).toBeInTheDocument()
+    expect(screen.getByText(/connected/i)).toBeInTheDocument()
+    expect(screen.getByText(/reads and replies/i)).toBeInTheDocument()
+  })
+
+  it("shows an attached external agent as not connected when its runtime is offline", () => {
+    seedAndRender({
+      botMemberIds: ["bot_pi"],
+      botRuntimePresence: { bot_pi: { status: "offline" } },
+      bots: [{ id: "bot_pi", name: "Pi Remote" } as WorkspaceBot],
+    })
+
+    expect(screen.getByText("Pi Remote")).toBeInTheDocument()
+    expect(screen.getByText(/not connected/i)).toBeInTheDocument()
+  })
+
+  it("shows no external-agent indicator when none is attached", () => {
+    seedAndRender({})
+
+    expect(screen.queryByText(/external agent/i)).not.toBeInTheDocument()
   })
 })

@@ -3,7 +3,9 @@ import { Moon, Sparkles } from "lucide-react"
 import { CompanionModes, type CompanionMode, type ToolPrivacyCategory, type ToolPrivacyPolicy } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { Label } from "@/components/ui/label"
+import type { ActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { ToolPolicyControl } from "./tool-policy-picker"
+import { ExternalAgentIndicator } from "./external-agent-indicator"
 
 export interface AgentToolPolicyBinding {
   value: ToolPrivacyPolicy
@@ -20,6 +22,8 @@ interface AgentSettingsPanelProps {
   companionBusy?: boolean
   /** Tool-access section; omit to hide it (e.g. the viewer isn't the owner). */
   toolPolicy?: AgentToolPolicyBinding
+  /** External agent attached to the scratchpad, surfaced above the mode radios. */
+  externalAgent?: ActiveBotPresence | null
 }
 
 /**
@@ -33,9 +37,12 @@ export function AgentSettingsPanel({
   onCompanionModeChange,
   companionBusy,
   toolPolicy,
+  externalAgent,
 }: AgentSettingsPanelProps) {
   return (
     <div className="space-y-4">
+      {externalAgent && <ExternalAgentIndicator agent={externalAgent} />}
+
       <div className="space-y-2">
         <Label className="text-sm font-medium">Companion mode</Label>
         <div role="radiogroup" aria-label="Companion mode" className="grid grid-cols-2 gap-2">
