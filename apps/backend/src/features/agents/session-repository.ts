@@ -612,8 +612,21 @@ export const AgentSessionRepository = {
       lastSeenSequence: bigint
       responseMessageId?: string | null
       sentMessageIds?: string[]
+      /**
+       * Also complete a FAILED session, not just a RUNNING one. A bot
+       * invocation whose claim is still valid can only have reached FAILED via
+       * orphan-session-cleanup's stale-heartbeat scan — a genuine `/fail` flips
+       * the claim, which blocks completion upstream. When such a turn finishes
+       * successfully its trace must end COMPLETED, not stay stuck red, so the
+       * completion recovers that orphan false-positive. The status-guarded
+       * UPDATE keeps this race-safe against a concurrent cleanup (INV-20).
+       */
+      recoverFromFailed?: boolean
     }
   ): Promise<AgentSession | null> {
+    const allowedStatuses = params.recoverFromFailed
+      ? [SessionStatuses.RUNNING, SessionStatuses.FAILED]
+      : [SessionStatuses.RUNNING]
     const result = await db.query<SessionRow>(
       sql`
         UPDATE agent_sessions
@@ -623,9 +636,10 @@ export const AgentSessionRepository = {
           response_message_id = ${params.responseMessageId ?? null},
           sent_message_ids = ${params.sentMessageIds ?? null},
           current_step_type = NULL,
+          error = NULL,
           completed_at = NOW()
         WHERE id = ${id}
-          AND status = ${SessionStatuses.RUNNING}
+          AND status = ANY(${allowedStatuses})
         RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
       `
     )
