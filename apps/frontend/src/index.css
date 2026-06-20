@@ -18,32 +18,39 @@
    * Apply `.reveal-host` to the hoverable container (the row) and one of the
    * reveal classes to the affordance cluster inside it.
    */
+  /*
+   * Row action clusters: OPACITY-ONLY reveal — they stay clickable even while
+   * faded (matching the `opacity-0 group-hover:opacity-100` pattern they
+   * replace), so a click-without-hover (incl. Playwright) is never trapped.
+   * Persistent for touch; hover/focus reveal for mouse.
+   */
   .reveal-actions {
     opacity: 1;
   }
+  html[data-input="mouse"] .reveal-actions {
+    opacity: 0;
+    transition: opacity 150ms ease;
+  }
+  html[data-input="mouse"] .reveal-host:hover .reveal-actions,
+  html[data-input="mouse"] .reveal-actions:focus-within,
+  html[data-input="mouse"] .reveal-actions:has([data-state="open"]) {
+    opacity: 1;
+  }
+
+  /*
+   * Floating overlays (e.g. the message hover toolbar): also gate
+   * pointer-events so the hidden overlay never blocks the content beneath it.
+   * Hidden for touch (long-press reaches these); revealed on hover for mouse
+   * and on focus/open for everyone.
+   */
   .reveal-actions-hover-only {
     opacity: 0;
     pointer-events: none;
   }
-
-  html[data-input="mouse"] .reveal-actions,
   html[data-input="mouse"] .reveal-actions-hover-only {
-    opacity: 0;
-    pointer-events: none;
     transition: opacity 150ms ease;
   }
-  html[data-input="mouse"] .reveal-host:hover .reveal-actions,
   html[data-input="mouse"] .reveal-host:hover .reveal-actions-hover-only,
-  html[data-input="mouse"] .reveal-actions:focus-within,
-  html[data-input="mouse"] .reveal-actions-hover-only:focus-within,
-  html[data-input="mouse"] .reveal-actions:has([data-state="open"]),
-  html[data-input="mouse"] .reveal-actions-hover-only:has([data-state="open"]) {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  /* Keyboard focus / open menu reveals even for touch and before JS sets the
-     attribute, so the affordance is never trapped. */
   .reveal-actions-hover-only:focus-within,
   .reveal-actions-hover-only:has([data-state="open"]) {
     opacity: 1;
