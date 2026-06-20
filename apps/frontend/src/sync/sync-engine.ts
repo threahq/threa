@@ -1233,9 +1233,12 @@ export class SyncEngine {
           // forceFull: the cursor is below the retained floor, so catch-up has
           // no entries to replay — only the full workspace snapshot is
           // authoritative for everything <= head. The slim reconnect path
-          // (per-stream deltas only) would leave the rest stale.
+          // (per-stream deltas only) would leave the rest stale. Await it so the
+          // snapshot lands BEFORE the finally's gate.resume splices buffered live
+          // events (syncId > head) on top — a fire-and-forget bootstrap could
+          // finish after the splice and overwrite (regress) events above head.
           this.invalidateReplayHealedQueries()
-          void this.runBootstrap(true, { forceFull: true })
+          await this.runBootstrap(true, { forceFull: true })
           return
         }
         if (response.entries.length === 0) {
@@ -1258,7 +1261,10 @@ export class SyncEngine {
         // everything <= head), record the head as seen, bound the resume splice
         // at head, and force a full bootstrap. Read-before-stamp holds — head was
         // read before the bootstrap fires, so the snapshot is a lower bound and
-        // the splice drops only buffered events the snapshot already covers.
+        // the splice drops only buffered events the snapshot already covers. The
+        // bootstrap is awaited so its snapshot lands BEFORE the finally's
+        // gate.resume splices the buffered events on top — fire-and-forget would
+        // let the snapshot finish after the splice and regress events above head.
         if (pages === 0 && response.entries.length >= CATCHUP_COLLAPSE_THRESHOLD) {
           console.info("Sync catch-up gap large; collapsing to a full bootstrap", {
             workspaceId: this.workspaceId,
@@ -1271,7 +1277,7 @@ export class SyncEngine {
           this.noteSeenHead(response.head)
           appliedThrough = BigInt(response.head)
           this.invalidateReplayHealedQueries()
-          void this.runBootstrap(true, { forceFull: true })
+          await this.runBootstrap(true, { forceFull: true })
           return
         }
 
