@@ -1741,51 +1741,86 @@ export async function applyWorkspaceBootstrap(
   // snapshot, so the in-memory cache doesn't briefly regress to the old preset.
   let effectiveSidebarConfig = bootstrap.sidebarConfig
 
-  await Promise.all([
-    db.workspaces.put({ ...bootstrap.workspace, _cachedAt: now }),
-    db.workspaceUsers.bulkPut(bootstrap.users.map((u) => ({ ...u, _cachedAt: now }))),
-    db.streams.bulkPut(
-      bootstrap.streams.map((s) => {
-        const membership = membershipByStream.get(s.id)
-        const existing = existingByStreamId.get(s.id)
-        return {
-          ...s,
-          notificationLevel: membership?.notificationLevel,
-          lastReadEventId: membership?.lastReadEventId,
-          // Preserve fields workspace-bootstrap doesn't carry but stream-
-          // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
-          contextBag: existing?.contextBag,
+  // One transaction over every table so they commit together and each table's
+  // `useLiveQuery` fires once — one settle, not a per-table trickle. Parallel
+  // independent writes (the previous shape) commit a micro-transaction each, so
+  // the sidebar / badges / memberships re-render table-by-table; that is visible
+  // on a reconnect-collapse that lands here with no apply window held (and on a
+  // cold first connect). Mirrors applyReconnectBootstrapBatch. The conditional
+  // unread/prefs/sidebar writes are inlined (read→check→write stays atomic,
+  // INV-20) rather than nested transactions.
+  await db.transaction(
+    "rw",
+    [
+      db.workspaces,
+      db.workspaceUsers,
+      db.streams,
+      db.streamMemberships,
+      db.dmPeers,
+      db.personas,
+      db.bots,
+      db.labels,
+      db.labelAssignments,
+      db.unreadState,
+      db.userPreferences,
+      db.sidebarConfigs,
+      db.workspaceMetadata,
+    ],
+    async () => {
+      await Promise.all([
+        db.workspaces.put({ ...bootstrap.workspace, _cachedAt: now }),
+        db.workspaceUsers.bulkPut(bootstrap.users.map((u) => ({ ...u, _cachedAt: now }))),
+        db.streams.bulkPut(
+          bootstrap.streams.map((s) => {
+            const membership = membershipByStream.get(s.id)
+            const existing = existingByStreamId.get(s.id)
+            return {
+              ...s,
+              notificationLevel: membership?.notificationLevel,
+              lastReadEventId: membership?.lastReadEventId,
+              // Preserve fields workspace-bootstrap doesn't carry but stream-
+              // bootstrap does (bag mirroring lives in `applyStreamBootstrap`).
+              contextBag: existing?.contextBag,
+              _cachedAt: now,
+            }
+          })
+        ),
+        db.streamMemberships.bulkPut(
+          bootstrap.streamMemberships.map((sm) => ({
+            ...sm,
+            id: `${workspaceId}:${sm.streamId}`,
+            workspaceId,
+            _cachedAt: now,
+          }))
+        ),
+        db.dmPeers.bulkPut(
+          bootstrap.dmPeers.map((dp) => ({
+            ...dp,
+            id: `${workspaceId}:${dp.streamId}`,
+            workspaceId,
+            _cachedAt: now,
+          }))
+        ),
+        db.personas.bulkPut(bootstrap.personas.map((p) => ({ ...p, workspaceId: workspaceId, _cachedAt: now }))),
+        db.bots.bulkPut(bootstrap.bots.map((b) => ({ ...b, workspaceId: workspaceId, _cachedAt: now }))),
+        db.labels.bulkPut(bootstrap.labels.map((l) => ({ ...l, _cachedAt: now }))),
+        db.labelAssignments.bulkPut(bootstrap.labelAssignments.map(assignmentToCached)),
+        db.workspaceMetadata.put({
+          id: workspaceId,
+          workspaceId,
+          emojis: bootstrap.emojis,
+          emojiWeights: bootstrap.emojiWeights,
+          commands: bootstrap.commands,
+          configuredToolCategories: bootstrap.configuredToolCategories,
           _cachedAt: now,
-        }
-      })
-    ),
-    db.streamMemberships.bulkPut(
-      bootstrap.streamMemberships.map((sm) => ({
-        ...sm,
-        id: `${workspaceId}:${sm.streamId}`,
-        workspaceId,
-        _cachedAt: now,
-      }))
-    ),
-    db.dmPeers.bulkPut(
-      bootstrap.dmPeers.map((dp) => ({
-        ...dp,
-        id: `${workspaceId}:${dp.streamId}`,
-        workspaceId,
-        _cachedAt: now,
-      }))
-    ),
-    db.personas.bulkPut(bootstrap.personas.map((p) => ({ ...p, workspaceId: workspaceId, _cachedAt: now }))),
-    db.bots.bulkPut(bootstrap.bots.map((b) => ({ ...b, workspaceId: workspaceId, _cachedAt: now }))),
-    db.labels.bulkPut(bootstrap.labels.map((l) => ({ ...l, _cachedAt: now }))),
-    db.labelAssignments.bulkPut(bootstrap.labelAssignments.map(assignmentToCached)),
-    // Only write unreadState if no concurrent socket handler has updated it
-    // since the fetch started. Socket handlers (stream:activity, activity:created)
-    // may have incremented counts during the fetch window.
-    // Wrapped in a transaction so the read→check→write is atomic (INV-20).
-    db.transaction("rw", [db.unreadState], async () => {
-      const existing = await db.unreadState.get(workspaceId)
-      if (!existing || !fetchStartedAt || existing._cachedAt < fetchStartedAt) {
+        }),
+      ])
+
+      // Only write unreadState if no concurrent socket handler updated it since
+      // the fetch started — stream:activity / activity:created may have bumped
+      // counts during the fetch window (INV-20).
+      const existingUnread = await db.unreadState.get(workspaceId)
+      if (!existingUnread || !fetchStartedAt || existingUnread._cachedAt < fetchStartedAt) {
         await db.unreadState.put({
           id: workspaceId,
           workspaceId,
@@ -1798,10 +1833,9 @@ export async function applyWorkspaceBootstrap(
           _cachedAt: now,
         })
       }
-    }),
-    db.transaction("rw", [db.userPreferences], async () => {
-      const existing = await db.userPreferences.get(workspaceId)
-      if (!existing || !fetchStartedAt || existing._cachedAt < fetchStartedAt) {
+
+      const existingPrefs = await db.userPreferences.get(workspaceId)
+      if (!existingPrefs || !fetchStartedAt || existingPrefs._cachedAt < fetchStartedAt) {
         await db.userPreferences.put({
           ...bootstrap.userPreferences,
           id: workspaceId,
@@ -1809,10 +1843,9 @@ export async function applyWorkspaceBootstrap(
           _cachedAt: now,
         })
       }
-    }),
-    db.transaction("rw", [db.sidebarConfigs], async () => {
-      const existing = await db.sidebarConfigs.get(workspaceId)
-      if (!existing || !fetchStartedAt || existing._cachedAt < fetchStartedAt) {
+
+      const existingSidebar = await db.sidebarConfigs.get(workspaceId)
+      if (!existingSidebar || !fetchStartedAt || existingSidebar._cachedAt < fetchStartedAt) {
         await db.sidebarConfigs.put({
           id: workspaceId,
           workspaceId,
@@ -1820,19 +1853,10 @@ export async function applyWorkspaceBootstrap(
           _cachedAt: now,
         })
       } else {
-        effectiveSidebarConfig = existing.config
+        effectiveSidebarConfig = existingSidebar.config
       }
-    }),
-    db.workspaceMetadata.put({
-      id: workspaceId,
-      workspaceId,
-      emojis: bootstrap.emojis,
-      emojiWeights: bootstrap.emojiWeights,
-      commands: bootstrap.commands,
-      configuredToolCategories: bootstrap.configuredToolCategories,
-      _cachedAt: now,
-    }),
-  ])
+    }
+  )
 
   // Clean up stale entities: anything in IDB for this workspace that
   // wasn't in the bootstrap AND was written before this bootstrap.

@@ -19,6 +19,13 @@ import { useRef, useSyncExternalStore } from "react"
  *
  * Refcounted (begin/end nest) so overlapping windows are safe; a watchdog
  * force-closes a stuck window so a missed `end` can never strand the UI frozen.
+ *
+ * Global (not workspace-keyed) on purpose: `workspace-layout` mounts exactly one
+ * `SyncEngine` at a time (it recreates the engine on workspace change and the
+ * account scope remounts on account switch), so there is only ever one catch-up
+ * coordinating this gate. If concurrent per-workspace engines are ever
+ * introduced, key this by `workspaceId` the way `reveal-gate` does, or one
+ * workspace's replay would freeze another's reads.
  */
 let depth = 0
 let watchdog: ReturnType<typeof setTimeout> | null = null
@@ -39,9 +46,14 @@ function notifyTransition(): void {
 
 export function beginApplyWindow(): void {
   depth += 1
-  if (watchdog) clearTimeout(watchdog)
-  watchdog = setTimeout(forceCloseApplyWindow, APPLY_WINDOW_WATCHDOG_MS)
-  if (depth === 1) notifyTransition()
+  // Arm the watchdog once, on the open transition — not on nested begins, so a
+  // (mis)nested caller can't keep pushing the deadline out and stranding the UI
+  // frozen. The bound is "≤5s from first open", which any real replay clears.
+  if (depth === 1) {
+    if (watchdog) clearTimeout(watchdog)
+    watchdog = setTimeout(forceCloseApplyWindow, APPLY_WINDOW_WATCHDOG_MS)
+    notifyTransition()
+  }
 }
 
 export function endApplyWindow(): void {
