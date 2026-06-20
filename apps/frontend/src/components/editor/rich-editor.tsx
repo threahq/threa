@@ -5,6 +5,7 @@ import type { ResolvedPos } from "@tiptap/pm/model"
 import type { PluginKey } from "@tiptap/pm/state"
 import { useParams } from "react-router-dom"
 import { createEditorExtensions } from "./editor-extensions"
+import { applyExternalEditorContent } from "./apply-external-content"
 import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { EditorToolbar } from "./editor-toolbar"
@@ -221,6 +222,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
+  // Retry trigger + bounded counter for the external-value sync below. If
+  // applying restored content throws, we re-run the sync on the next frame so
+  // the body still lands rather than leaving the composer blank over a draft
+  // that the restore already checked out of the stash (the "dead until refresh"
+  // draft-restore failure).
+  const [externalSyncNonce, setExternalSyncNonce] = useState(0)
+  const externalSyncFailuresRef = useRef(0)
   const [isFocused, setIsFocused] = useState(false)
   const [hasSelection, setHasSelection] = useState(false)
   const [isInTable, setIsInTable] = useState(false)
@@ -754,18 +762,26 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
     const currentJson = JSON.stringify(editor.getJSON())
     const newJson = JSON.stringify(editableValue)
-    if (newJson !== currentJson) {
-      const hadFocus = editor.isFocused
-      isInternalUpdate.current = true
-      editor.commands.setContent(editableValue)
-      isInternalUpdate.current = false
-      // Mobile browsers can drop focus when contenteditable content is replaced.
-      // Restore it to keep the virtual keyboard open.
-      if (hadFocus && !editor.isFocused) {
-        editor.commands.focus()
-      }
+    if (newJson === currentJson) {
+      externalSyncFailuresRef.current = 0
+      return
     }
-  }, [editableValue, editor])
+
+    if (applyExternalEditorContent(editor, editableValue, isInternalUpdate)) {
+      externalSyncFailuresRef.current = 0
+      return
+    }
+
+    // The source content is correct (it reached us as `value`); the editor just
+    // failed to take it. Re-run next frame so the restored body still lands
+    // instead of leaving a blank composer over a now-checked-out draft. Bounded
+    // so a genuinely unparseable doc can't spin.
+    if (externalSyncFailuresRef.current < 3) {
+      externalSyncFailuresRef.current += 1
+      const raf = requestAnimationFrame(() => setExternalSyncNonce((n) => n + 1))
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [editableValue, editor, externalSyncNonce])
 
   // Re-parse content when mentionables load or currentUser becomes known (for correct mention type colors)
   useEffect(() => {
@@ -799,15 +815,24 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       const markdown = serializeToMarkdown(editor.getJSON())
       if (markdown) {
         isInternalUpdate.current = true
-        editor.commands.setContent(
-          parseMarkdown(
-            markdown,
-            enableMentions ? getMentionType : undefined,
-            enableEmoji ? toEmoji : undefined,
-            markdownParseOptions
+        try {
+          editor.commands.setContent(
+            parseMarkdown(
+              markdown,
+              enableMentions ? getMentionType : undefined,
+              enableEmoji ? toEmoji : undefined,
+              markdownParseOptions
+            )
           )
-        )
-        isInternalUpdate.current = false
+        } catch (err) {
+          // Same guard as the external-value sync: a throw must not strand the
+          // flag true, or every later onUpdate is swallowed and the composer
+          // goes dead. The reparse is cosmetic, so dropping it leaves the
+          // already-displayed content intact.
+          console.error("Editor failed to reparse content for mention types", err)
+        } finally {
+          isInternalUpdate.current = false
+        }
       }
     }
   }, [
