@@ -12,9 +12,13 @@ import { upsertLoadedDraft, stashLoadedDraft } from "./use-draft-message"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
 
-// Real data layer (fake-indexeddb), real composer + stash hooks. The only seams
-// are the viewer id + E2E session, defaulted to "no viewer / locked" so the
-// plaintext path runs without an AuthProvider — exactly as use-draft-message.test.ts.
+// Hook-level test (renderHook), like its siblings use-draft-message.test.ts and
+// use-draft-composer.test.ts: it pins the no-limbo DATA invariant of restore
+// against the real data layer (fake-indexeddb). It deliberately does not mount a
+// component — RichEditor is mocked suite-wide, so a mounted flow wouldn't exercise
+// the real editor sync anyway; that hop is unit-tested in apply-external-content.test.ts.
+// The only seams are the viewer id + E2E session, defaulted to "no viewer / locked"
+// so the plaintext path runs without an AuthProvider.
 const LOCKED_SESSION = {
   status: "locked",
   keyId: null,
@@ -96,19 +100,19 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
    * separate loaded ambient draft — the exact shape of the reported bug (a stash
    * pile where the user restores the long, attachment-carrying entry).
    */
-  async function seedStashAndAmbient(): Promise<{ bigId: string }> {
+  async function seedStashAndAmbient(): Promise<{ bigId: string; ambientId: string }> {
     const big = await upsertLoadedDraft(workspaceId, draftKey, {
       contentJson: BIG_BODY,
       attachments: [BIG_ATTACHMENT],
     })
     await stashLoadedDraft(workspaceId, draftKey) // detach -> big becomes a stash entry
-    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: AMBIENT_BODY, attachments: [] })
+    const ambient = await upsertLoadedDraft(workspaceId, draftKey, { contentJson: AMBIENT_BODY, attachments: [] })
     await seedDraftCacheFromIdb(workspaceId)
-    return { bigId: big.id }
+    return { bigId: big.id, ambientId: ambient.id }
   }
 
   it("restores the big draft's body into the composer AND keeps the row recoverable", async () => {
-    const { bigId } = await seedStashAndAmbient()
+    const { bigId, ambientId } = await seedStashAndAmbient()
 
     const { result } = renderHook(() => useRestoreHarness(), { wrapper })
 
@@ -127,6 +131,6 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     expect(await db.drafts.get(bigId)).toBeDefined()
     expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId)
     // 4) The previously-loaded ambient draft is preserved as a stash sibling (swap, not clobber).
-    await waitFor(() => expect(result.current.stash.drafts.some((d) => d.contentJson)).toBe(true))
+    await waitFor(() => expect(result.current.stash.drafts.some((d) => d.id === ambientId)).toBe(true))
   })
 })
