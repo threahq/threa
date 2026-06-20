@@ -1900,12 +1900,11 @@ export function StreamContent({
               Jumps up to the "New" divider so the viewer can read from there. */}
             {unreadAboveViewport && unreadCount > 0 && !batchMode && (
               <div
-                // Sits below the floating date pill (top-2, ~z-20) so the two
-                // top-center affordances stack instead of overlapping. When
-                // search is open the date pill is hidden but the search bar
-                // takes the top, so drop a little further.
+                // Sits clearly below the floating date pill (top-2, ~30px tall)
+                // and the search bar (when open) so the top-center affordances
+                // never overlap.
                 className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
-                style={{ top: isSearchOpen ? "3.5rem" : "2.75rem" }}
+                style={{ top: "3.5rem" }}
               >
                 <Button
                   variant="secondary"
