@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
+import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import {
   CompanionModes,
   type CompanionMode,
@@ -11,6 +12,7 @@ import {
   type ToolPrivacyPolicy,
 } from "@threa/types"
 import { ToolPolicyPicker } from "./tool-policy-picker"
+import { ExternalAgentIndicator } from "./external-agent-indicator"
 
 interface CompanionTabProps {
   workspaceId: string
@@ -31,6 +33,7 @@ export function CompanionTab({
   canManageToolPolicy,
 }: CompanionTabProps) {
   const { mutateAsync: updateCompanionMode, isPending } = useUpdateCompanionMode(workspaceId, stream.id)
+  const externalAgent = useActiveBotPresence(workspaceId, stream.id)
 
   // On encrypted scratchpads Ariadne runs in the enclave (never the plaintext
   // companion path), so the toggle is a real control here too: Companion =
@@ -50,6 +53,8 @@ export function CompanionTab({
 
   return (
     <div className="space-y-6 p-1">
+      {externalAgent && <ExternalAgentIndicator agent={externalAgent} />}
+
       <div className="space-y-3">
         <div className="space-y-1">
           <Label className="text-sm font-medium">Companion mode</Label>

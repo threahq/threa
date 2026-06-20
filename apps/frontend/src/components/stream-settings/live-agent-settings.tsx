@@ -4,6 +4,7 @@ import type { CompanionMode, StreamBootstrap, ToolPrivacyPolicy } from "@threa/t
 import { streamKeys } from "@/hooks"
 import { useUpdateCompanionMode, useUpdateToolPolicy } from "@/hooks/use-streams"
 import { useCurrentWorkspaceUser } from "@/hooks/use-workspaces"
+import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import { AgentSettingsPanel } from "./agent-settings-panel"
 
 interface LiveAgentSettingsProps {
@@ -25,6 +26,7 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
   const { mutateAsync: updateCompanionMode, isPending: companionBusy } = useUpdateCompanionMode(workspaceId, streamId)
   const { mutateAsync: updateToolPolicy, isPending: toolBusy } = useUpdateToolPolicy(workspaceId, streamId)
   const currentUser = useCurrentWorkspaceUser(workspaceId)
+  const externalAgent = useActiveBotPresence(workspaceId, streamId)
 
   // Cache-only observer: re-renders when a mutation patches the bootstrap.
   const { data: bootstrap } = useQuery({
@@ -58,6 +60,7 @@ export function LiveAgentSettings({ workspaceId, streamId, companionMode, e2e }:
       companionMode={companionMode}
       onCompanionModeChange={handleCompanion}
       companionBusy={companionBusy}
+      externalAgent={externalAgent}
       toolPolicy={
         isOwner
           ? {
