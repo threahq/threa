@@ -66,7 +66,7 @@ async function createLinkedPi(client: TestClient, workspaceId: string, suffix: s
       supportsActiveScratchpad: true,
       supportsPersistentSessions: true,
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "steer", "stop"],
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
     },
   })
@@ -136,7 +136,7 @@ function sendHello(
           supportsActiveScratchpad: true,
           supportsPersistentSessions: true,
           supportsSessionControlCommands: true,
-          sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+          sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "steer", "stop"],
           thinkingLevels: ["off", "minimal", "low", "medium", "high"],
         },
         ...(params.sinceCursor ? { sinceCursor: params.sinceCursor } : {}),

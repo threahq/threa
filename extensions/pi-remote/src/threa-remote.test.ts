@@ -96,7 +96,7 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop"],
     })
   })
 
@@ -122,6 +122,11 @@ describe("Pi remote trace safety", () => {
     })
     expect(__testing.parseSessionControlCommand("  /thinking high  ")).toEqual({ name: "thinking", args: "high" })
     expect(__testing.parseSessionControlCommand("/shell echo hello")).toEqual({ name: "shell", args: "echo hello" })
+    expect(__testing.parseSessionControlCommand("/steer check the failing test first")).toEqual({
+      name: "steer",
+      args: "check the failing test first",
+    })
+    expect(__testing.parseSessionControlCommand("/stop")).toEqual({ name: "stop", args: "" })
   })
 
   test("rejects prompts that do not look like session-control commands", () => {

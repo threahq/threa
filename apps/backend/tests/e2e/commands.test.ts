@@ -189,7 +189,7 @@ async function createLinkedPiSession(
       supportsActiveScratchpad: true,
       supportsPersistentSessions: true,
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "steer", "stop"],
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
       modelSuggestions: [
         { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -225,6 +225,8 @@ describe("Stream-scoped Pi session-control commands", () => {
     expect(linkedNames).toContain("thinking")
     expect(linkedNames).toContain("skill")
     expect(linkedNames).toContain("reload")
+    expect(linkedNames).toContain("steer")
+    expect(linkedNames).toContain("stop")
 
     // /thinking suggestions reflect the runtime's advertised levels, not a backend-hardcoded list.
     const thinkingCommand = linkedCommands.find((c) => c.name === "thinking")
