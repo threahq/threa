@@ -1,0 +1,16 @@
+{
+  "name": "@threa/agent-daemon",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "threa-agentd": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
