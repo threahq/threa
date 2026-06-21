@@ -1,0 +1,168 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+---
+
+<DocsLayout
+  title="Markdown · Threa Developers"
+  description="The message content format: standard markdown plus the custom link schemes that carry mentions, channels, files, emoji, and memory cards through the wire losslessly."
+  current="markdown"
+  sections={[
+    { id: "the-content-field", label: "The content field" },
+    { id: "formatting", label: "Standard markdown" },
+    { id: "mentions", label: "Mentions and channels" },
+    { id: "attachments", label: "Attachments" },
+    { id: "emoji", label: "Emoji" },
+    { id: "schemes", label: "Link scheme reference" },
+    { id: "structure", label: "Why the schemes exist" },
+  ]}
+>
+  <p class="eyebrow">Markdown</p>
+  <h1>The message content <span class="accent">format</span>.</h1>
+  <p class="lead">
+    Message bodies are markdown. On top of standard formatting, a few custom
+    link schemes carry what plain markdown has no syntax for: a mention's
+    identity, a file, a channel. They survive a round trip unchanged.
+  </p>
+
+  <h2 id="the-content-field">The content field</h2>
+  <p>
+    You send a message body in the <code>content</code> field as a markdown
+    string. The API parses it, resolves any references, and stores a structured
+    document. Reads return the canonical markdown in <code>contentMarkdown</code>.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="send a message"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "content": "Deploy is green. Thanks @pierre. Details in #releases." }'`}
+  />
+  <p>
+    What you write and what you read back are not always byte-identical. You can
+    write a mention as a bare <code>@pierre</code>; the API resolves it and stores
+    the actor it points at, so the read-back form is the resolved
+    <code>[@pierre](user:usr_…)</code>. The text a person sees is the same either
+    way.
+  </p>
+
+  <h2 id="formatting">Standard markdown</h2>
+  <p>
+    Common GitHub-flavored markdown renders as you'd expect. Supported:
+  </p>
+  <table class="docs-table">
+    <thead><tr><th>Element</th><th>Syntax</th></tr></thead>
+    <tbody>
+      <tr><td>Bold, italic, strikethrough</td><td><code>**bold**</code>, <code>*italic*</code>, <code>~~struck~~</code></td></tr>
+      <tr><td>Inline code, code blocks</td><td><code>`code`</code>, triple-backtick fences with a language</td></tr>
+      <tr><td>Headings</td><td><code># H1</code> through <code>###### H6</code></td></tr>
+      <tr><td>Lists, task lists</td><td><code>- item</code>, <code>1. item</code>, <code>- [ ] todo</code></td></tr>
+      <tr><td>Tables</td><td>GFM pipe tables</td></tr>
+      <tr><td>Blockquotes, rules</td><td><code>&gt; quote</code>, <code>---</code></td></tr>
+      <tr><td>Links</td><td><code>[text](https://…)</code></td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>Reserved schemes</strong>
+    A link whose target starts with one of the schemes below (for example
+    <code>user:</code> or <code>attachment:</code>) is a typed reference, not a
+    plain link; Threa renders it as a chip or card. Use <code>https://</code>,
+    <code>mailto:</code>, or a relative path for ordinary links.
+  </div>
+
+  <h2 id="mentions">Mentions and channels</h2>
+  <p>
+    Write a mention as a bare <code>@slug</code> and a channel as
+    <code>#slug</code>. The API resolves each one against the workspace and
+    stores a reference to the actor or stream, not the slug. Slugs can change;
+    the stored reference doesn't.
+  </p>
+  <CodeBlock
+    lang="text"
+    label="you write"
+    code={`Ping @pierre and @ariadne about #releases.`}
+  />
+  <CodeBlock
+    lang="text"
+    label="you read back"
+    code={`Ping [@pierre](user:usr_8x2…) and [@ariadne](persona:persona_a1…) about [#releases](channel:stream_4f…).`}
+  />
+  <p>
+    The label inside the brackets is a display name; the link target is the
+    stable id. An actor is a workspace member (<code>user:</code>), an agent like
+    Ariadne (<code>persona:</code>), or a bot (<code>bot:</code>).
+    <code>@here</code> and <code>@channel</code> are broadcasts and resolve to
+    <code>broadcast:here</code> / <code>broadcast:channel</code>.
+  </p>
+  <p>
+    If you already know the id, you can write the resolved form directly; it
+    round-trips unchanged. A bare slug that resolves to nothing is left as typed.
+  </p>
+
+  <h2 id="attachments">Attachments</h2>
+  <p>
+    Upload a file first, then reference the returned id in a message. The scheme
+    is <code>attachment:&lt;id&gt;</code>; the link label is the filename shown in
+    the message.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="upload, then attach"
+    code={`# 1. upload, returns { "id": "att_…" }
+curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/attachments \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -F file=@./report.pdf
+
+# 2. reference that id in a message
+curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "content": "Q3 numbers: [report.pdf](attachment:att_…)" }'`}
+  />
+
+  <h2 id="emoji">Emoji</h2>
+  <p>
+    Write emoji as <code>:shortcode:</code> (for example <code>:tada:</code>).
+    Known shortcodes resolve to the character; an unknown one stays as text. Raw
+    unicode emoji you paste in are folded to their shortcode on the way in, so
+    the stored form is consistent.
+  </p>
+
+  <h2 id="schemes">Link scheme reference</h2>
+  <p>
+    Every typed reference rides on standard <code>[label](scheme:payload)</code>
+    link syntax, so a client that doesn't understand a scheme still shows the
+    label as readable text. The ones you'll write are the first group; the rest
+    you'll mostly encounter on reads.
+  </p>
+  <table class="docs-table">
+    <thead><tr><th>Scheme</th><th>Reference</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><code>user:</code></td><td>workspace member mention</td><td><code>[@pierre](user:usr_…)</code></td></tr>
+      <tr><td><code>persona:</code></td><td>agent mention (e.g. Ariadne)</td><td><code>[@ariadne](persona:persona_…)</code></td></tr>
+      <tr><td><code>bot:</code></td><td>bot mention</td><td><code>[@deploybot](bot:bot_…)</code></td></tr>
+      <tr><td><code>broadcast:</code></td><td><code>@here</code> / <code>@channel</code></td><td><code>[@here](broadcast:here)</code></td></tr>
+      <tr><td><code>channel:</code></td><td>channel link</td><td><code>[#releases](channel:stream_…)</code></td></tr>
+      <tr><td><code>attachment:</code></td><td>uploaded file</td><td><code>[report.pdf](attachment:att_…)</code></td></tr>
+      <tr><td><code>memo:</code></td><td>memory card</td><td><code>[Auth rewrite](memo:memo_…)</code></td></tr>
+      <tr><td><code>quote:</code></td><td>quoted reply (read)</td><td><code>[Alice](quote:stream_…/msg_…)</code></td></tr>
+      <tr><td><code>shared-message:</code></td><td>cross-stream share (read)</td><td><code>[Alice](shared-message:stream_…/msg_…)</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="structure">Why the schemes exist</h2>
+  <p>
+    Threa stores each message as a structured document, not as a string. The
+    markdown you send and read is a projection of that document. Plain markdown
+    has no way to say "this is a mention of member <code>usr_8x2</code>," only
+    "this is the text <code>@pierre</code>." The schemes carry the missing piece:
+    a markdown link with a stable id, so the projection round-trips through the
+    structured form without losing what a reference points at.
+  </p>
+  <p>
+    For an integration: send plain, readable markdown, and read the resolved form
+    back. If you only need the text, strip the link syntax to its label; a
+    mention reduces to <code>@pierre</code>, a file to its filename.
+  </p>
+</DocsLayout>
