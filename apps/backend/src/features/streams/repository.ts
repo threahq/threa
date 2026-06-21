@@ -8,6 +8,7 @@ import type {
   MemoryMode,
   ThreadSummary,
   E2eActor,
+  ThreaDocument,
 } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
@@ -20,6 +21,7 @@ interface StreamRow {
   display_name: string | null
   slug: string | null
   description: string | null
+  description_json: ThreaDocument | null
   visibility: string
   parent_stream_id: string | null
   parent_message_id: string | null
@@ -96,6 +98,7 @@ export interface Stream {
   displayName: string | null
   slug: string | null
   description: string | null
+  descriptionJson: ThreaDocument | null
   visibility: Visibility
   parentStreamId: string | null
   parentMessageId: string | null
@@ -137,7 +140,8 @@ export interface InsertStreamParams {
   type: StreamType
   displayName?: string
   slug?: string
-  description?: string
+  description?: string | null
+  descriptionJson?: ThreaDocument | null
   visibility?: Visibility
   parentStreamId?: string
   parentMessageId?: string
@@ -154,7 +158,8 @@ export interface UpdateStreamParams {
   // the authoritative name lives in `e2e_streams.name_ciphertext`.
   displayName?: string | null
   slug?: string
-  description?: string
+  description?: string | null
+  descriptionJson?: ThreaDocument | null
   visibility?: Visibility
   companionMode?: CompanionMode
   companionPersonaId?: string | null
@@ -190,6 +195,7 @@ function mapRowToStream(row: StreamRow): Stream {
     displayName: row.display_name,
     slug: row.slug,
     description: row.description,
+    descriptionJson: row.description_json,
     visibility: row.visibility as Visibility,
     parentStreamId: row.parent_stream_id,
     parentMessageId: row.parent_message_id,
@@ -243,7 +249,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 }
 
 const SELECT_FIELDS = `
-  id, workspace_id, type, display_name, slug, description, visibility,
+  id, workspace_id, type, display_name, slug, description, description_json, visibility,
   parent_stream_id, parent_message_id, root_stream_id,
   companion_mode, companion_persona_id, memory_mode,
   created_by, created_at, updated_at, archived_at, display_name_generated_at
@@ -253,7 +259,7 @@ const SELECT_FIELDS = `
 // plaintext rows visible (the `e2e_owner_user_key_id` projection is just
 // NULL for them) so callers don't have to branch on stream type.
 const SELECT_FIELDS_WITH_E2E = `
-  s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.visibility,
+  s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.description_json, s.visibility,
   s.parent_stream_id, s.parent_message_id, s.root_stream_id,
   s.companion_mode, s.companion_persona_id, s.memory_mode,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
@@ -622,7 +628,7 @@ export const StreamRepository = {
   async insert(db: Querier, params: InsertStreamParams): Promise<Stream> {
     const result = await db.query<StreamRow>(sql`
       INSERT INTO streams (
-        id, workspace_id, type, display_name, slug, description, visibility,
+        id, workspace_id, type, display_name, slug, description, description_json, visibility,
         parent_stream_id, parent_message_id, root_stream_id,
         companion_mode, companion_persona_id, memory_mode, uniqueness_key, created_by
       ) VALUES (
@@ -632,6 +638,7 @@ export const StreamRepository = {
         ${params.displayName ?? null},
         ${params.slug ?? null},
         ${params.description ?? null},
+        ${params.descriptionJson ? JSON.stringify(params.descriptionJson) : null},
         ${params.visibility ?? "private"},
         ${params.parentStreamId ?? null},
         ${params.parentMessageId ?? null},
@@ -757,6 +764,10 @@ export const StreamRepository = {
     if (params.description !== undefined) {
       sets.push(`description = $${paramIndex++}`)
       values.push(params.description)
+    }
+    if (params.descriptionJson !== undefined) {
+      sets.push(`description_json = $${paramIndex++}`)
+      values.push(params.descriptionJson === null ? null : JSON.stringify(params.descriptionJson))
     }
     if (params.visibility !== undefined) {
       sets.push(`visibility = $${paramIndex++}`)

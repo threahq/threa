@@ -47,6 +47,9 @@ interface CreateStreamInputBase {
   type: StreamType
   displayName?: string
   slug?: string
+  /** Rich-text description (ProseMirror); backend derives the markdown projection. */
+  descriptionJson?: JSONContent
+  /** Markdown description (external/wire); backend parses it to `descriptionJson`. */
   description?: string
   visibility?: Visibility
   companionMode?: CompanionMode
@@ -84,6 +87,16 @@ export type CreateStreamInput =
 export interface UpdateStreamInput {
   displayName?: string
   slug?: string
+  /**
+   * Rich-text description as a ProseMirror document (canonical, INV-58). Internal
+   * clients send this; the backend derives the markdown projection. An empty doc
+   * clears the description. Prefer this over `description` from app code.
+   */
+  descriptionJson?: JSONContent
+  /**
+   * Markdown description. The external/public-API wire format — the backend
+   * parses it to `descriptionJson`. Internal clients should send `descriptionJson`.
+   */
   description?: string
   visibility?: Visibility
   companionMode?: CompanionMode

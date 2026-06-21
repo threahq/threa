@@ -11,6 +11,13 @@ export const StreamTypes = {
 
 export const DM_PARTICIPANT_COUNT = 2
 
+/**
+ * Upper bound on the markdown projection of a stream description. Generous enough
+ * for a rich multi-paragraph note (descriptions collapse in the UI past a few
+ * lines) while still bounding the markdown that feeds search + the public-API wire.
+ */
+export const STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH = 10_000
+
 export const VISIBILITY_OPTIONS = ["public", "private"] as const
 export type Visibility = (typeof VISIBILITY_OPTIONS)[number]
 

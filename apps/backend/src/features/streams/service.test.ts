@@ -1445,3 +1445,53 @@ describe("StreamService.updateStream sealed-name handling", () => {
     expect(mockUpdateSealedName).not.toHaveBeenCalled()
   })
 })
+
+describe("StreamService.updateStream description", () => {
+  let service: StreamService
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockFindById.mockReset()
+    mockUpdate.mockReset()
+    mockInsertOutbox.mockReset()
+  })
+
+  test("persists the canonical descriptionJson plus its derived markdown and emits stream:updated", async () => {
+    const stream = { id: "stream_1", workspaceId: "ws_1" } as never
+    mockUpdate.mockResolvedValue(stream)
+    mockFindById.mockResolvedValue(stream)
+
+    await service.updateStream("stream_1", {
+      descriptionJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "About this channel" }] }],
+      },
+    })
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      {},
+      "stream_1",
+      expect.objectContaining({
+        description: "About this channel",
+        descriptionJson: expect.objectContaining({ type: "doc" }),
+      })
+    )
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:updated",
+      expect.objectContaining({ streamId: "stream_1" })
+    )
+  })
+
+  test("leaves the description columns untouched when neither field is supplied", async () => {
+    const stream = { id: "stream_1", workspaceId: "ws_1" } as never
+    mockUpdate.mockResolvedValue(stream)
+    mockFindById.mockResolvedValue(stream)
+
+    await service.updateStream("stream_1", { displayName: "Renamed" })
+
+    const params = mockUpdate.mock.calls[0]![2] as Record<string, unknown>
+    expect(params).not.toHaveProperty("description")
+    expect(params).not.toHaveProperty("descriptionJson")
+  })
+})
