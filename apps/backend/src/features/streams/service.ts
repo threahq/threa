@@ -434,14 +434,14 @@ export class StreamService {
   async createScratchpadInTransaction(db: Querier, params: CreateScratchpadParams): Promise<Stream> {
     const id = streamId()
 
-    const description = normalizeStreamDescription({ description: params.description })
+    const normalizedDescription = normalizeStreamDescription({ description: params.description })
     const stream = await StreamRepository.insert(db, {
       id,
       workspaceId: params.workspaceId,
       type: StreamTypes.SCRATCHPAD,
       displayName: params.displayName,
-      description: description?.description ?? undefined,
-      descriptionJson: description?.descriptionJson ?? undefined,
+      description: normalizedDescription?.description ?? undefined,
+      descriptionJson: normalizedDescription?.descriptionJson ?? undefined,
       visibility: Visibilities.PRIVATE,
       companionMode: params.companionMode ?? CompanionModes.OFF,
       companionPersonaId: params.companionPersonaId,
@@ -507,14 +507,14 @@ export class StreamService {
         throw new DuplicateSlugError(params.slug)
       }
 
-      const description = normalizeStreamDescription({ description: params.description })
+      const normalizedDescription = normalizeStreamDescription({ description: params.description })
       const stream = await StreamRepository.insert(client, {
         id,
         workspaceId: params.workspaceId,
         type: StreamTypes.CHANNEL,
         slug: params.slug,
-        description: description?.description ?? undefined,
-        descriptionJson: description?.descriptionJson ?? undefined,
+        description: normalizedDescription?.description ?? undefined,
+        descriptionJson: normalizedDescription?.descriptionJson ?? undefined,
         visibility: params.visibility ?? Visibilities.PUBLIC,
         createdBy: params.createdBy,
       })
