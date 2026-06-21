@@ -82,12 +82,15 @@ describe("sealed turn path", () => {
     const { promptMarkdown, sealing } = await __testing.openSealedTurnContext(sealed, identity, STREAM_ID)
 
     expect(promptMarkdown).toBe("What is 2 + 2?")
+    expect(sealing).toMatchObject({
+      streamId: STREAM_ID,
+      replyKeyGeneration: KEY_GEN,
+      replySenderId: BOT_SENDER_ID,
+      callbackToken: "cbtok_session_1",
+    })
+    // contextText is a substring check (it embeds decrypted history), not equality.
     expect(sealing.contextText).toContain("Some earlier context")
     expect(sealing.contextText).toContain("Recent Threa stream context")
-    expect(sealing.streamId).toBe(STREAM_ID)
-    expect(sealing.replyKeyGeneration).toBe(KEY_GEN)
-    expect(sealing.replySenderId).toBe(BOT_SENDER_ID)
-    expect(sealing.callbackToken).toBe("cbtok_session_1")
   })
 
   test("fails loudly when no wrap covers the prompt's key generation", async () => {
@@ -122,9 +125,8 @@ describe("sealed turn path", () => {
     const step = await __testing.sealStepWith(sealing, "reasoning", "Considering the question")
     expect(step).not.toBeNull()
     expect(step!.stepId).toMatch(/^step_/)
-    expect(step!.stepType).toBe("reasoning")
     const expectedAad = buildMessageAad({ streamId: STREAM_ID, messageId: step!.stepId, senderId: BOT_SENDER_ID })
-    expect(step!.envelope.aad).toBe(bytesToBase64(expectedAad))
+    expect(step).toMatchObject({ stepType: "reasoning", envelope: { aad: bytesToBase64(expectedAad) } })
     const opened = await openMessageAsString({
       key: sealing.replySsk,
       envelope: step!.envelope,
