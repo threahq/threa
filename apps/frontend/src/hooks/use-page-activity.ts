@@ -6,23 +6,6 @@ export interface PageActivityState {
   isActive: boolean
 }
 
-// Window focus only tells you which of several overlapping windows the user is
-// working in — a desktop concern. On a touch device `document.hasFocus()` is an
-// unreliable proxy for "the user is looking at this": mobile browsers and
-// installed PWAs routinely report no focus while the page is the foreground, and
-// the `focus` event frequently never fires when a PWA resumes from the
-// background. So gate "active" on focus only when the primary pointer is fine
-// (mouse/trackpad); on a coarse pointer (touch), a visible page is active.
-function isCoarsePointer(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia("(pointer: coarse)").matches
-    : false
-}
-
-function deriveIsActive(isVisible: boolean, isFocused: boolean): boolean {
-  return isVisible && (isFocused || isCoarsePointer())
-}
-
 export function getPageActivityState(): PageActivityState {
   if (typeof document === "undefined") {
     return {
@@ -38,7 +21,7 @@ export function getPageActivityState(): PageActivityState {
   return {
     isVisible,
     isFocused,
-    isActive: deriveIsActive(isVisible, isFocused),
+    isActive: isVisible && isFocused,
   }
 }
 
@@ -67,5 +50,5 @@ export function usePageActivity(): PageActivityState {
     }
   }, [])
 
-  return { isVisible, isFocused, isActive: deriveIsActive(isVisible, isFocused) }
+  return { isVisible, isFocused, isActive: isVisible && isFocused }
 }
