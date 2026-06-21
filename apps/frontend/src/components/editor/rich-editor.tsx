@@ -16,7 +16,10 @@ import {
   useCommandSuggestion,
   useEmojiSuggestion,
   useMemoSuggestion,
+  useCommandArgPicker,
+  findPickableArg,
 } from "./triggers"
+import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
 import { MentionPluginKey } from "./triggers/mention-extension"
 import { CommandPluginKey } from "./triggers/command-extension"
@@ -284,6 +287,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     setSnippetDraft({ text: "", filename: defaultSnippetFilename(snippetCountRef.current) })
   }, [])
 
+  // Stable bridge to the command-argument picker: held in a ref because the
+  // picker (which owns `openArgPicker`) is set up after the editor exists,
+  // while the command suggestion that fires it is wired up here.
+  const onCommandPickedRef = useRef<(item: CommandItem) => void>(() => {})
+  const notifyCommandPicked = useCallback((item: CommandItem) => onCommandPickedRef.current(item), [])
+
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
   // Filtered for autocomplete dropdown only
@@ -295,6 +304,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     includeSnippet: snippetEnabled,
     onOpenGiphy: () => setGiphyOpen(true),
     onOpenSnippet: openSnippetEditor,
+    onCommandPicked: notifyCommandPicked,
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 
@@ -365,6 +375,17 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   // Ref to access editor instance from callbacks defined before useEditor returns
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
+
+  // Argument option picker (e.g. `/model` → choose a model). Opens after a
+  // command with advertised `args[].suggestions` is inserted; its keys are
+  // routed through editorProps.handleKeyDown below so it preempts send/blur.
+  const { openArgPicker, renderArgPicker, handleArgPickerKeyDown } = useCommandArgPicker(editorRef)
+  const argPickerKeyDownRef = useRef(handleArgPickerKeyDown)
+  argPickerKeyDownRef.current = handleArgPickerKeyDown
+  onCommandPickedRef.current = (item: CommandItem) => {
+    const arg = findPickableArg(item)
+    if (arg) openArgPicker(arg)
+  }
 
   // Track mentionables state to detect when data loads or currentUser becomes known
   const lastParsedState = useRef({ count: mentionables.length, hasCurrentUser: false })
@@ -682,6 +703,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       },
       handleKeyDown: (_view, event) => {
         const currentEditor = editorRef.current
+
+        // The command-argument picker preempts send / edit-last / blur while
+        // open — same role TipTap's suggestion plugin plays for the @/slash
+        // popups, but routed here since editorProps runs before the keymaps.
+        if (argPickerKeyDownRef.current(event)) {
+          return true
+        }
 
         if (event.key === "Escape" && blurOnEscape) {
           if (currentEditor && isSuggestionActive(currentEditor)) {
@@ -1090,6 +1118,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       {enableMentions ? renderMentionList() : null}
       {enableChannels ? renderChannelList() : null}
       {enableCommands ? renderCommandList() : null}
+      {enableCommands ? renderArgPicker() : null}
       {enableEmoji ? renderEmojiGrid() : null}
       {enableMemoEmbed ? renderMemoList() : null}
       {giphyEnabled && workspaceId ? (
