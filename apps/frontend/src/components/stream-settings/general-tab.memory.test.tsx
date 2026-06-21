@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as e2eSession from "@/stores/e2e-session-store"
+import * as descriptionSectionModule from "./description-section"
 import { StreamTypes, Visibilities, MemoryModes, type Stream } from "@threa/types"
 import { GeneralTab } from "./general-tab"
 
@@ -47,6 +48,11 @@ function renderTab(stream: Stream, update: ReturnType<typeof vi.fn>) {
 
 describe("GeneralTab automatic-memory toggle", () => {
   beforeEach(() => {
+    // The description section mounts the full rich-text editor (auth + workspace
+    // context); stub it so these memory-toggle tests stay focused and provider-light.
+    vi.spyOn(descriptionSectionModule, "DescriptionSection").mockImplementation(() => (
+      <div data-testid="description-section" />
+    ))
     // The display-name section reads the e2e session + workspace user id even
     // on a plaintext scratchpad; pin them so the tab mounts without a live
     // store (mirrors general-tab.rename.test.tsx).
