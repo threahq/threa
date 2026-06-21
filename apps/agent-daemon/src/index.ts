@@ -388,6 +388,7 @@ function attachAgent(ref: string): void {
   const select = Bun.spawnSync(["tmux", "select-window", "-t", target], { stdout: "pipe", stderr: "pipe" })
   if (select.exitCode !== 0) die(select.stderr.toString().trim() || `tmux select-window failed for ${target}`)
   const attach = Bun.spawnSync(["tmux", "attach-session", "-t", agent.tmuxSession], {
+    stdin: "inherit",
     stdout: "inherit",
     stderr: "pipe",
   })
