@@ -5,14 +5,19 @@ export type MentionType = "user" | "persona" | "bot" | "broadcast" | "me"
 
 interface MentionContextValue {
   getMentionType: (slug: string) => MentionType
-  onMentionClick?: (slug: string, type: MentionType) => void
+  /**
+   * `id` is the resolved actor id from a pointer-link mention (INV-64) — when
+   * present, navigate by it directly rather than re-resolving the slug (slugs
+   * are mutable). The bare-slug render path omits it.
+   */
+  onMentionClick?: (slug: string, type: MentionType, id?: string) => void
 }
 
 const MentionContext = createContext<MentionContextValue | null>(null)
 
 interface MentionProviderProps {
   mentionables: Mentionable[]
-  onMentionClick?: (slug: string, type: MentionType) => void
+  onMentionClick?: (slug: string, type: MentionType, id?: string) => void
   children: ReactNode
 }
 
@@ -46,7 +51,7 @@ export function useMentionType(): (slug: string) => MentionType {
   return context.getMentionType
 }
 
-export function useMentionClick(): ((slug: string, type: MentionType) => void) | undefined {
+export function useMentionClick(): ((slug: string, type: MentionType, id?: string) => void) | undefined {
   const context = useContext(MentionContext)
   return context?.onMentionClick
 }

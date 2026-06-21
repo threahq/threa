@@ -1,7 +1,13 @@
 import type { Components } from "react-markdown"
 import { Children, isValidElement, type ReactNode, type MouseEvent } from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { parseGiphyHref, parseMemoHref, parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
+import {
+  parseGiphyHref,
+  parseMemoHref,
+  parseMentionPointerHref,
+  parseQuoteHref,
+  parseSharedMessageHref,
+} from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { classifyDraftLink } from "@/lib/in-app-links"
@@ -10,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
-import { ProcessedChildren } from "./mention-renderer"
+import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { useLinkPreviewContext } from "./link-preview-context"
 import { QuoteReplyBlock } from "./quote-reply-block"
@@ -144,6 +150,18 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
         {label}
       </a>
     )
+  }
+
+  // `user:`/`persona:`/`bot:`/`broadcast:`/`channel:` pointer — render the inline
+  // mention/channel chip (INV-64). The id rides on the href; the slug is the link
+  // text. Rendered directly (not via ProcessedChildren) so the label isn't
+  // re-scanned as a bare `@slug`.
+  const mentionPointer = href ? parseMentionPointerHref(href) : null
+  if (mentionPointer) {
+    const label = extractTextFromChildren(children)
+    const sigil = mentionPointer.kind === "channel" ? "#" : "@"
+    const slug = label.startsWith(sigil) ? label.slice(sigil.length) : label
+    return <PointerMentionChip pointer={mentionPointer} slug={slug} />
   }
 
   if (href?.startsWith("attachment:")) {
