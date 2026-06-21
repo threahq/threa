@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -7,6 +7,7 @@ import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as e2eSession from "@/stores/e2e-session-store"
 import * as streamKeyCache from "@/lib/crypto/stream-key-cache"
 import * as messageEnvelope from "@/lib/crypto/message-envelope"
+import * as descriptionSectionModule from "./description-section"
 import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@/lib/crypto/stream-name-cache"
 import { StreamTypes, Visibilities, type Stream } from "@threa/types"
 import { GeneralTab } from "./general-tab"
@@ -71,6 +72,14 @@ function renderTab(stream: Stream, update: ReturnType<typeof vi.fn>) {
     </QueryClientProvider>
   )
 }
+
+beforeEach(() => {
+  // The description section mounts the full rich-text editor (auth + workspace
+  // context); stub it so these rename tests stay focused and provider-light.
+  vi.spyOn(descriptionSectionModule, "DescriptionSection").mockImplementation(() => (
+    <div data-testid="description-section" />
+  ))
+})
 
 afterEach(() => {
   clearStreamNameCache()

@@ -2,7 +2,6 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { VisibilityPicker } from "@/components/ui/visibility-picker"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -18,6 +17,7 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { ChannelSlugInput } from "./channel-slug-input"
+import { DescriptionSection } from "./description-section"
 import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -109,7 +109,7 @@ export function GeneralTab({
     sections.push(<ThreadDisplayNameSection key="name" displayName={stream.displayName ?? "Thread"} />)
   }
 
-  if (isChannel || isDm) {
+  if (isChannel || isScratchpad || isDm) {
     sections.push(<DescriptionSection key="description" workspaceId={workspaceId} stream={stream} />)
   }
 
@@ -395,43 +395,6 @@ function ThreadDisplayNameSection({ displayName }: { displayName: string }) {
     <div className="space-y-3">
       <Label className="text-sm font-medium">Display name</Label>
       <Input value={displayName} disabled readOnly className="bg-muted/50" />
-    </div>
-  )
-}
-
-function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
-  const [description, setDescription] = useState(stream.description ?? "")
-  const updateMutation = useUpdateStream(workspaceId, stream.id)
-  const hasChanged = description !== (stream.description ?? "")
-
-  const handleSave = () => {
-    if (!hasChanged) return
-    updateMutation.mutate(
-      { description },
-      {
-        onError: () => toast.error("Failed to update description"),
-      }
-    )
-  }
-
-  return (
-    <div className="space-y-3">
-      <Label className="text-sm font-medium">Description</Label>
-      <Textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder={stream.type === StreamTypes.CHANNEL ? "What is this channel about?" : "Add a description…"}
-        maxLength={500}
-        rows={3}
-      />
-      <div className="flex items-center justify-between">
-        {hasChanged && (
-          <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
-            {updateMutation.isPending ? "Saving..." : "Save"}
-          </Button>
-        )}
-        <span className="text-xs text-muted-foreground ml-auto">{description.length}/500</span>
-      </div>
     </div>
   )
 }
