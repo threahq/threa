@@ -118,6 +118,28 @@ describe("useAutoMarkAsRead", () => {
     expect(mockPostMessage).not.toHaveBeenCalled()
   })
 
+  it("marks read on a touch device that is visible but reports no focus", () => {
+    // Mobile browsers / installed PWAs routinely report `document.hasFocus()` ===
+    // false while the page is the foreground the user is looking at (and the
+    // resume `focus` event often never fires). On a coarse-pointer device,
+    // visible must be enough — otherwise auto-mark wedges off and a stream the
+    // user is clearly reading stays unread (a persisted mark-unread divider
+    // stuck red across a cold app resume).
+    hasFocus = false
+    const matchMediaSpy = vi
+      .spyOn(window, "matchMedia")
+      .mockImplementation((query: string) => ({ matches: query.includes("coarse"), media: query }) as MediaQueryList)
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123"))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: false })
+    matchMediaSpy.mockRestore()
+  })
+
   it("waits until the tab is visible and focused again before sending the read event", () => {
     renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123"))
 
