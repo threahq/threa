@@ -47,6 +47,8 @@ import {
   type E2eActorRewrapInput,
   type ToolPrivacyPolicy,
   type JSONContent,
+  type AuthorType,
+  type DescriptionSetEventPayload,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -819,6 +821,14 @@ export class StreamService {
       description?: string
       /** Rich-text description (ProseMirror), canonical internal input. */
       descriptionJson?: JSONContent
+      /**
+       * Who is changing the description. When set and the description actually
+       * changes, a `description_set` timeline event is appended in the same
+       * transaction (mirrors member_added). Omit for description-less updates or
+       * callers that shouldn't produce a timeline row.
+       */
+      actorId?: string
+      actorType?: AuthorType
       visibility?: Visibility
       memoryMode?: MemoryMode
       /**
@@ -832,13 +842,16 @@ export class StreamService {
       sealedName?: { ciphertext: string; envelope: unknown } | null
     }
   ): Promise<Stream | null> {
-    const { sealedName, description, descriptionJson, ...rest } = data
+    const { sealedName, description, descriptionJson, actorId, actorType, ...rest } = data
     const streamData: UpdateStreamParams = { ...rest }
     const normalizedDescription = normalizeStreamDescription({ description, descriptionJson })
     if (normalizedDescription) {
       streamData.description = normalizedDescription.description
       streamData.descriptionJson = normalizedDescription.descriptionJson
     }
+    // Append a timeline row only when an actor deliberately changes the
+    // description — not for renames/archives that ride the same method.
+    const wantsDescriptionEvent = normalizedDescription !== undefined && actorId != null
     if (sealedName) {
       // Setting a sealed name is a sealed-only E2E rename: the authoritative name
       // lives in the ciphertext, so scrub the plaintext `display_name` to null —
@@ -859,6 +872,13 @@ export class StreamService {
     }
     try {
       return await withTransaction(this.pool, async (client) => {
+        // Snapshot the pre-update markdown so we only emit when it really changes
+        // (a no-op re-save shouldn't spam the timeline).
+        let previousDescription: string | null = null
+        if (wantsDescriptionEvent) {
+          previousDescription = (await StreamRepository.findById(client, streamId))?.description ?? null
+        }
+
         if (streamData.slug) {
           const current = await StreamRepository.findById(client, streamId)
           if (current && streamData.slug !== current.slug) {
@@ -906,6 +926,25 @@ export class StreamService {
           streamId: result.id,
           stream: result,
         })
+
+        // Timeline row for the description change (INV-61 broadcast event):
+        // "X set/cleared the description". Carries the markdown snapshot so the
+        // row renders the body without a fetch, like message_created.
+        if (wantsDescriptionEvent && result.description !== previousDescription) {
+          const event = await StreamEventRepository.insert(client, {
+            id: eventId(),
+            streamId: result.id,
+            eventType: "description_set",
+            payload: { descriptionMarkdown: result.description } satisfies DescriptionSetEventPayload,
+            actorId,
+            actorType: actorType ?? "user",
+          })
+          await OutboxRepository.insert(client, "stream:description_set", {
+            workspaceId: result.workspaceId,
+            streamId: result.id,
+            event,
+          })
+        }
         return result
       })
     } catch (error) {
