@@ -31,7 +31,9 @@ export function UnsentMessageEditForm({
   authorName,
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
-  const isTouch = useInputMode() === "touch"
+  // Latch the surface at mount: input mode is live, so reading it directly would
+  // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
+  const [isTouch] = useState(useInputMode() === "touch")
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
 

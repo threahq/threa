@@ -342,20 +342,22 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   }, [items.length, mode])
 
   useEffect(() => {
-    if (open) {
-      const prefix = initialMode ? MODE_PREFIXES[initialMode] : ""
-      setQuery(prefix)
-      setSelectedIndex(0)
-      setFocusedTabIndex(null)
-      // Skip auto-focus only when a finger is active — opening the virtual
-      // keyboard shifts the layout.
-      if (!isTouchInput) {
-        requestAnimationFrame(() => {
-          richInputRef.current?.focus()
-        })
-      }
-    }
-  }, [open, initialMode, isTouchInput])
+    if (!open) return
+    const prefix = initialMode ? MODE_PREFIXES[initialMode] : ""
+    setQuery(prefix)
+    setSelectedIndex(0)
+    setFocusedTabIndex(null)
+  }, [open, initialMode])
+
+  useEffect(() => {
+    // Auto-focus on open for mouse; skip on touch so the virtual keyboard
+    // doesn't shift the layout. Kept separate from the init effect so an
+    // input-mode flip while the palette is open can't reset query/selection.
+    if (!open || isTouchInput) return
+    requestAnimationFrame(() => {
+      richInputRef.current?.focus()
+    })
+  }, [open, isTouchInput])
 
   useEffect(() => {
     if (!open) {

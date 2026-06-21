@@ -197,10 +197,10 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   }, [setHovering, inputMode])
 
   const handleMouseLeave = useCallback(() => {
-    if (inputMode !== "touch") {
-      setHovering(false)
-    }
-  }, [setHovering, inputMode])
+    // Always clear on leave — gating this on input mode would strand a stale
+    // hover state after a mouse→touch switch.
+    setHovering(false)
+  }, [setHovering])
 
   const handleBackdropClick = useCallback(() => {
     collapse()

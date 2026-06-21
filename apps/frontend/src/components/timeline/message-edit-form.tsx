@@ -44,7 +44,9 @@ export function MessageEditForm({
 }: MessageEditFormProps) {
   const queryClient = useQueryClient()
   const messageService = useMessageService()
-  const isTouch = useInputMode() === "touch"
+  // Latch the surface at mount: input mode is live, so reading it directly would
+  // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
+  const [isTouch] = useState(useInputMode() === "touch")
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
   const [contentJson, setContentJson] = useState<JSONContent>(initialContentJson ?? EMPTY_DOC)

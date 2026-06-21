@@ -28,8 +28,10 @@ describe("useTouchCapable", () => {
     expect(result.current).toBe(true)
   })
 
-  it("falls back to maxTouchPoints when the media query is unsupported", async () => {
-    stub(false, 5)
+  it("falls back to maxTouchPoints when matchMedia is unavailable", async () => {
+    // No matchMedia at all → the hook's mql is null; only maxTouchPoints answers.
+    vi.stubGlobal("matchMedia", undefined)
+    Object.defineProperty(navigator, "maxTouchPoints", { value: 5, configurable: true })
     const { useTouchCapable } = await import("./use-touch-capable")
     const { result } = renderHook(() => useTouchCapable())
     expect(result.current).toBe(true)
