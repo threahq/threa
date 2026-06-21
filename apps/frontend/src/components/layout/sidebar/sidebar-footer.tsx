@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutRef } from "react"
+import { forwardRef, useCallback, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react"
 import {
   ArrowLeftRight,
   Bell,
@@ -221,6 +221,15 @@ export function SidebarFooter({
   const [menuOpen, setMenuOpen] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
   const [pauseOpen, setPauseOpen] = useState(false)
+  // The drawer (touch) and dropdown (mouse) are mutually exclusive surfaces;
+  // when the active input flips, close any open one so a stale open-state can't
+  // reopen the wrong surface in the other mode.
+  useEffect(() => {
+    setDrawerOpen(false)
+    setMenuOpen(false)
+    setStatusOpen(false)
+    setPauseOpen(false)
+  }, [isTouch])
   const queryClient = useQueryClient()
   const resumeNotifications = useResumeNotifications(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)

@@ -100,7 +100,12 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
   }, [streamId])
 
   useEffect(() => {
-    if (inputMode !== "mouse") return
+    // Clear any stale selection when leaving mouse input, so switching back to a
+    // mouse doesn't re-show the quote affordance from a selection that's gone.
+    if (inputMode !== "mouse") {
+      setSelection(null)
+      return
+    }
 
     document.addEventListener("selectionchange", handleSelectionChange)
     return () => document.removeEventListener("selectionchange", handleSelectionChange)

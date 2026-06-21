@@ -880,6 +880,10 @@ function SentMessageEvent({
   // Inline-vs-drawer edit and post-edit focus follow the input in active use.
   const isTouchInput = useInputMode() === "touch"
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // Latch the edit surface (inline vs drawer) at edit start: input mode is live,
+  // so reading it during an edit would unmount/remount the form and drop unsaved
+  // text if the user switched input mid-edit.
+  const [editingSurfaceTouch, setEditingSurfaceTouch] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
   const longPress = useLongPress({
     onLongPress: openDrawer,
@@ -906,18 +910,21 @@ function SentMessageEvent({
   })
 
   const startEditing = useCallback(() => {
+    setEditingSurfaceTouch(isTouchInput)
     setIsEditing(true)
-  }, [])
+  }, [isTouchInput])
 
   // Restore focus to the zone's editor after exiting inline edit mode.
   // On touch the body-level inline-edit presence attribute hides the stream
   // composer, so there is no extra flag to reset here.
   const stopEditing = useCallback(() => {
     const zone = containerRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
+    const wasTouchSurface = editingSurfaceTouch
     setIsEditing(false)
-    if (isTouchInput) return
+    setEditingSurfaceTouch(false)
+    if (wasTouchSurface) return
     requestAnimationFrame(() => focusVisibleZoneEditor(zone))
-  }, [isTouchInput])
+  }, [editingSurfaceTouch])
 
   // Register this message's edit handler with the context so the composer's ArrowUp trigger
   // can imperatively open edit mode and scroll into view. Unregistered on unmount.
@@ -1200,7 +1207,7 @@ function SentMessageEvent({
   // mode doesn't change row height. They're rendered as `pointer-events-none`
   // (handled below) so the row's batch-toggle click handler still wins.
   let footerContent: ReactNode
-  if (isEditing && !isTouchInput) {
+  if (isEditing && !editingSurfaceTouch) {
     footerContent = undefined
   } else {
     footerContent = (
@@ -1245,7 +1252,7 @@ function SentMessageEvent({
             <SavedIndicator saved={savedForMessage ?? null} />
           </>
         }
-        isEditing={isEditing && !isTouchInput}
+        isEditing={isEditing && !editingSurfaceTouch}
         isGroupContinuation={groupContinuation}
         hoverActions={
           batch?.enabled ? undefined : (
@@ -1338,7 +1345,7 @@ function SentMessageEvent({
         batch={batch}
       >
         {/* Fine pointer: inline edit replaces message content. Touch: drawer handles editing. */}
-        {isEditing && !isTouchInput ? (
+        {isEditing && !editingSurfaceTouch ? (
           <MessageEditForm
             messageId={payload.messageId}
             workspaceId={workspaceId}
@@ -1354,7 +1361,7 @@ function SentMessageEvent({
         ) : undefined}
       </MessageLayout>
       {/* Touch: edit in a bottom-sheet drawer (avoids scroll/keyboard issues) */}
-      {isEditing && isTouchInput && (
+      {isEditing && editingSurfaceTouch && (
         <MessageEditForm
           messageId={payload.messageId}
           workspaceId={workspaceId}
@@ -1627,13 +1634,16 @@ function EditingMessageEvent({
   isFirstMessage,
 }: MessageEventInnerProps) {
   const isTouchInput = useInputMode() === "touch"
+  // Latch the surface at mount: this row is already in edit mode, so a live
+  // input switch must not swap inline<->drawer and drop the in-progress edit.
+  const [editingSurfaceTouch] = useState(isTouchInput)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const stopEditing = useCallback(() => {
     const zone = containerRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
-    if (isTouchInput) return
+    if (editingSurfaceTouch) return
     requestAnimationFrame(() => focusVisibleZoneEditor(zone))
-  }, [isTouchInput])
+  }, [editingSurfaceTouch])
 
   return (
     <>
@@ -1645,11 +1655,11 @@ function EditingMessageEvent({
         actorName={actorName}
         isFirstMessage={isFirstMessage}
         deferSecondaryHydration={deferSecondaryHydration}
-        isEditing={!isTouchInput}
+        isEditing={!editingSurfaceTouch}
         containerRef={containerRef}
         statusIndicator={<span className="text-xs text-muted-foreground">Editing unsent message</span>}
       >
-        {!isTouchInput ? (
+        {!editingSurfaceTouch ? (
           <UnsentMessageEditForm
             messageId={event.id}
             streamId={streamId}
@@ -1658,7 +1668,7 @@ function EditingMessageEvent({
           />
         ) : undefined}
       </MessageLayout>
-      {isTouchInput && (
+      {editingSurfaceTouch && (
         <UnsentMessageEditForm
           messageId={event.id}
           streamId={streamId}
