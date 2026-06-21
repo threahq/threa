@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
+  applyStreamReadSet,
   applyStreamsReadAllOrdinals,
   applyActivityCounts,
   type UnreadCounterState,
@@ -141,6 +142,41 @@ describe("applyStreamReadOrdinal", () => {
     expect(state.mentionCounts.s1).toBe(0)
     expect(state.activityCounts.s1).toBe(1)
     expect(state.unreadActivityCount).toBe(1)
+  })
+})
+
+describe("applyStreamReadSet", () => {
+  const seeded = makeState({
+    unreadCounts: { s1: 0 },
+    mentionCounts: { s1: 0 },
+    activityCounts: { s1: 0, s2: 1 },
+    unreadActivityCount: 1,
+    latestOrdinals: { s1: 8 },
+  })
+
+  it("moves the pointer BACKWARD and raises unread (the mark-unread case)", () => {
+    // Fully read (0 unread of 8); mark unread from ordinal 6 → pointer to 5,
+    // so messages 6,7,8 are unread.
+    const next = applyStreamReadSet(seeded, "s1", 5)
+    expect(next.unreadCounts.s1).toBe(3)
+  })
+
+  it("does NOT max-merge — a lower ordinal wins over the prior read", () => {
+    const read = applyStreamReadOrdinal(seeded, "s1", 8)
+    const unread = applyStreamReadSet(read, "s1", 4)
+    expect(unread.unreadCounts.s1).toBe(4)
+  })
+
+  it("leaves mention/activity counts untouched (restoration is a follow-up)", () => {
+    const next = applyStreamReadSet(seeded, "s1", 2)
+    expect(next.mentionCounts.s1).toBe(seeded.mentionCounts.s1)
+    expect(next.activityCounts.s1).toBe(seeded.activityCounts.s1)
+    expect(next.unreadActivityCount).toBe(seeded.unreadActivityCount)
+  })
+
+  it("clamps unread at zero when the pointer is at or past latest", () => {
+    const next = applyStreamReadSet(seeded, "s1", 8)
+    expect(next.unreadCounts.s1).toBe(0)
   })
 })
 

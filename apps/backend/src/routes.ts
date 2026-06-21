@@ -436,6 +436,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-generations", ...authed, stream.rollE2eKey)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/read", ...authed, stream.markAsRead)
+  app.post("/api/workspaces/:workspaceId/streams/:streamId/unread", ...authed, stream.markUnread)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/archive", ...authed, stream.archive)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/unarchive", ...authed, stream.unarchive)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/members", ...authed, stream.addMember)

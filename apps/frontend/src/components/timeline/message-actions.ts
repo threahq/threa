@@ -15,6 +15,8 @@ import {
   Share2,
   CornerDownRight,
   Layers,
+  CheckCheck,
+  CircleDot,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -122,6 +124,17 @@ export interface MessageActionContext {
    * this is the touch path to the desktop hover swatch on the row's rail.
    */
   onReassignConversation?: () => void
+  /**
+   * Advance the stream's read pointer to this message. Lets the user mark
+   * read up to a chosen row where scroll-driven marking is fiddly (notably
+   * mobile). The row only signals intent; the stream decides partial-vs-full.
+   */
+  onMarkReadUpToHere?: () => void
+  /**
+   * Move the read pointer back so this message and everything after it are
+   * unread (Slack's "mark as unread").
+   */
+  onMarkUnread?: () => void
 }
 
 /** A top-level action in the message context menu. */
@@ -356,6 +369,22 @@ export const messageActions: MessageAction[] = [
     icon: CornerDownRight,
     when: (ctx) => !!ctx.onShowMoveDetails,
     action: (ctx) => ctx.onShowMoveDetails?.(),
+  },
+  {
+    id: "mark-read-up-to-here",
+    label: "Mark as read",
+    icon: CheckCheck,
+    separatorBefore: true,
+    when: (ctx) => !!ctx.onMarkReadUpToHere,
+    action: (ctx) => ctx.onMarkReadUpToHere?.(),
+  },
+  {
+    id: "mark-unread",
+    label: "Mark as unread",
+    icon: CircleDot,
+    separatorBefore: true,
+    when: (ctx) => !!ctx.onMarkUnread,
+    action: (ctx) => ctx.onMarkUnread?.(),
   },
   {
     id: "copy-as-markdown",

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
-import { useUnreadDivider } from "./use-unread-divider"
+import { useUnreadDivider, isDividerReadPast } from "./use-unread-divider"
 import * as useScrollToElementModule from "./use-scroll-to-element"
 
 beforeEach(() => {
@@ -74,6 +74,63 @@ describe("useUnreadDivider", () => {
     rerender({ lastReadEventId: "event_2" })
     expect(result.current.firstUnreadEventId).toBeUndefined()
     expect(result.current.dividerEventId).toBe("event_1")
+  })
+
+  it("moves the divider up when an earlier message is marked unread", () => {
+    const events = [
+      makeMessageEvent("event_1", "other"),
+      makeMessageEvent("event_2", "other"),
+      makeMessageEvent("event_3", "other"),
+      makeMessageEvent("event_4", "other"),
+    ]
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }: { lastReadEventId: string | null }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+        }),
+      { initialProps: { lastReadEventId: "event_3" as string | null } }
+    )
+
+    // Read through event_3 → divider latched at event_4.
+    expect(result.current.dividerEventId).toBe("event_4")
+
+    // Mark event_2 unread → the read pointer moves back to event_1, so the first
+    // unread is now event_2. The divider must follow it UP, not stay at event_4.
+    rerender({ lastReadEventId: "event_1" })
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
+  it("re-shows a dismissed divider when a later mark-unread moves it to an earlier row", () => {
+    const events = [
+      makeMessageEvent("event_1", "other"),
+      makeMessageEvent("event_2", "other"),
+      makeMessageEvent("event_3", "other"),
+      makeMessageEvent("event_4", "other"),
+    ]
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }: { lastReadEventId: string | null }) =>
+        useUnreadDivider({
+          events,
+          lastReadEventId,
+          currentUserId: "me",
+          streamId: "stream_1",
+          readStateResolved: true,
+        }),
+      { initialProps: { lastReadEventId: "event_3" as string | null } }
+    )
+
+    expect(result.current.dividerEventId).toBe("event_4")
+    act(() => result.current.dismiss())
+    expect(result.current.dividerEventId).toBeUndefined()
+
+    // Marking an earlier message unread re-positions the divider, so the prior
+    // dismissal (keyed to event_4) no longer applies.
+    rerender({ lastReadEventId: "event_1" })
+    expect(result.current.dividerEventId).toBe("event_2")
   })
 
   it("re-latches at the new stream's first unread when switching streams", () => {
@@ -205,5 +262,29 @@ describe("useUnreadDivider", () => {
     )
 
     expect(enabledCalls[enabledCalls.length - 1]).toBe(true)
+  })
+})
+
+describe("isDividerReadPast", () => {
+  // Sequences are numeric bigint strings (compared via BigInt), unlike the id.
+  const events = [
+    { id: "event_1", sequence: "1" },
+    { id: "event_2", sequence: "2" },
+    { id: "event_3", sequence: "3" },
+  ] as unknown as Parameters<typeof isDividerReadPast>[0]
+
+  it("is red (not read past) while the read pointer sits before the divider", () => {
+    // Divider at event_2, pointer at event_1 (unread still at/after the line).
+    expect(isDividerReadPast(events, "event_2", "event_1")).toBe(false)
+  })
+
+  it("is grey (read past) once the pointer reaches or passes the divider", () => {
+    expect(isDividerReadPast(events, "event_2", "event_2")).toBe(true)
+    expect(isDividerReadPast(events, "event_2", "event_3")).toBe(true)
+  })
+
+  it("is red when nothing is read yet (null pointer) or the divider is hidden", () => {
+    expect(isDividerReadPast(events, "event_2", null)).toBe(false)
+    expect(isDividerReadPast(events, undefined, "event_3")).toBe(false)
   })
 })

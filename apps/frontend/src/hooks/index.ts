@@ -109,7 +109,7 @@ export { useAutoMarkAsRead } from "./use-auto-mark-as-read"
 
 export { useLastSeenEvent } from "./use-last-seen-event"
 
-export { useUnreadDivider, useDividerDim } from "./use-unread-divider"
+export { useUnreadDivider, isDividerReadPast } from "./use-unread-divider"
 
 export { useNewMessageIndicator } from "./use-new-message-indicator"
 

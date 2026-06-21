@@ -182,6 +182,10 @@ const markAsReadSchema = z.object({
   lastEventId: z.string(),
 })
 
+const markUnreadSchema = z.object({
+  messageId: z.string(),
+})
+
 const checkSlugAvailableSchema = z.object({
   slug: z.string().min(1, "slug query parameter is required"),
   exclude: z.string().optional(),
@@ -807,6 +811,23 @@ export function createStreamHandlers({
       }
 
       await activityService?.markStreamActivityAsRead(userId, streamId)
+
+      res.json({ membership })
+    },
+
+    async markUnread(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+
+      const data = validateRequest(markUnreadSchema, req.body)
+
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+
+      const membership = await streamService.markUnread(workspaceId, streamId, userId, data.messageId)
+      if (!membership) {
+        throw new HttpError("Message not found in this stream", { status: 404, code: "MESSAGE_NOT_FOUND" })
+      }
 
       res.json({ membership })
     },

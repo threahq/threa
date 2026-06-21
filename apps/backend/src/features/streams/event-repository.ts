@@ -383,6 +383,26 @@ export const StreamEventRepository = {
     return result.rows[0] ? mapRowToEvent(result.rows[0]) : null
   },
 
+  /**
+   * The message_created event immediately before `sequence` in viewer order.
+   * Used as the read pointer for "mark unread" — set the membership here so the
+   * message at `sequence` and everything after it count as unread. Returns null
+   * when `sequence` is the stream's first message (nothing precedes it, so the
+   * pointer becomes "nothing read").
+   */
+  async findPreviousMessageEvent(db: Querier, streamId: string, sequence: bigint): Promise<StreamEvent | null> {
+    const result = await db.query<StreamEventRow>(sql`
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
+      FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type = 'message_created'
+        AND sequence < ${sequence.toString()}
+      ORDER BY sequence DESC
+      LIMIT 1
+    `)
+    return result.rows[0] ? mapRowToEvent(result.rows[0]) : null
+  },
+
   async findMessageCreatedByMessageIdsForUpdate(
     db: Querier,
     streamId: string,

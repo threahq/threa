@@ -75,6 +75,8 @@ import { ShareMessageModal } from "@/components/share/share-message-modal"
 import { useIsOnline } from "@/components/layout/connection-status"
 import type { BatchTimelineState } from "./event-list"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
+import { dispatchMarkReadUpToHere, dispatchMarkUnread } from "@/lib/mark-read-events"
+import { useReadFrontier, rowReadState } from "./read-frontier-context"
 import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlayRow } from "./conversation-overlay/row-context"
 
@@ -853,6 +855,10 @@ function SentMessageEvent({
   const currentStream = useStreamFromStore(streamId)
   const parentStream = useStreamFromStore(currentStream?.parentStreamId ?? undefined)
   const rootStream = useStreamFromStore(currentStream?.rootStreamId ?? undefined)
+  // Gate the read-state actions by where this row sits relative to the read
+  // pointer: "Mark as read" only on unread rows, "Mark as unread" only on read
+  // rows. Ungated (no resolved frontier) shows both.
+  const rowRead = rowReadState(event.sequence, useReadFrontier())
   // For one-level threads, parent === root, so we only show the root entry to
   // avoid two identical menu items. For nested threads (parent is itself a
   // thread), we show both: root for the most useful target (the channel/dm/
@@ -1153,6 +1159,8 @@ function SentMessageEvent({
       // flight.
       onShowMoveDetails: movedTombstoneEvent ? () => setTimeout(() => setMoveDetailsOpen(true), 0) : undefined,
       onReassignConversation: conversationOverlayRow && !batch?.enabled ? handleRequestConversationPicker : undefined,
+      onMarkReadUpToHere: rowRead !== "read" ? () => dispatchMarkReadUpToHere(streamId, event.id) : undefined,
+      onMarkUnread: rowRead !== "unread" ? () => dispatchMarkUnread(streamId, payload.messageId) : undefined,
     }),
     [
       payload.contentMarkdown,
@@ -1161,8 +1169,10 @@ function SentMessageEvent({
       payload.editedAt,
       payload.reactions,
       e2eEnabled,
+      event.id,
       event.actorType,
       event.actorId,
+      rowRead,
       panelId,
       threadId,
       isThreadParentProp,

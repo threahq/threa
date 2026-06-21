@@ -115,6 +115,59 @@ export function useUnreadCounts(workspaceId: string) {
     },
   })
 
+  // Mark a message (and everything after it) unread. Only the read POINTER
+  // moves optimistically — the membership reseed makes the unread divider
+  // appear at once; the unread COUNT rises on the `stream:read_set` round-trip
+  // (applyStreamReadSet SETs it, which is allowed to move backward). Mirrors the
+  // partial markAsRead path, which likewise defers the count to the round-trip.
+  const markUnreadMutation = useMutation({
+    mutationFn: ({ streamId, messageId }: { streamId: string; messageId: string }) =>
+      streamService.markUnread(workspaceId, streamId, messageId),
+    onSuccess: async (membership, { streamId }) => {
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          streamMemberships: old.streamMemberships.map((existingMembership) =>
+            existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
+          ),
+        }
+      })
+
+      queryClient.setQueryData(
+        streamKeys.bootstrap(workspaceId, streamId),
+        (old: import("@threa/types").StreamBootstrap | undefined) => {
+          if (!old) return old
+          return { ...old, membership: { ...old.membership, lastReadEventId: membership.lastReadEventId } }
+        }
+      )
+
+      await db.transaction("rw", [db.streams, db.streamMemberships], async () => {
+        const now = Date.now()
+        await db.streams.update(streamId, { lastReadEventId: membership.lastReadEventId, _cachedAt: now })
+
+        const membershipId = `${workspaceId}:${streamId}`
+        const existingMembership = await db.streamMemberships.get(membershipId)
+        if (existingMembership) {
+          await db.streamMemberships.put({
+            ...existingMembership,
+            ...membership,
+            id: membershipId,
+            workspaceId,
+            _cachedAt: now,
+          })
+        } else {
+          await db.streamMemberships.put({
+            ...membership,
+            id: membershipId,
+            workspaceId,
+            _cachedAt: now,
+          })
+        }
+      })
+    },
+  })
+
   const markAllAsReadMutation = useMutation({
     mutationFn: () => workspaceService.markAllAsRead(workspaceId),
     onSuccess: (updatedStreamIds) => {
@@ -171,11 +224,19 @@ export function useUnreadCounts(workspaceId: string) {
     markAllAsReadMutation.mutate()
   }, [markAllAsReadMutation])
 
+  const markUnread = useCallback(
+    (streamId: string, messageId: string) => {
+      markUnreadMutation.mutate({ streamId, messageId })
+    },
+    [markUnreadMutation]
+  )
+
   return {
     unreadCounts,
     getUnreadCount,
     getTotalUnreadCount,
     markAsRead,
+    markUnread,
     markAllAsRead,
     isMarkingAsRead: markAsReadMutation.isPending,
     isMarkingAllAsRead: markAllAsReadMutation.isPending,

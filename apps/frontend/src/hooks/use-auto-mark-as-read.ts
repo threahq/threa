@@ -54,6 +54,15 @@ export function useAutoMarkAsRead(
   lastEventIdRef.current = lastEventId
   partialRef.current = partial
 
+  // The consumer (StreamContent) is not keyed by streamId, so this hook persists
+  // across stream switches. Clear the dedup refs per stream — otherwise a prior
+  // stream's marked event/partial-ness could suppress the first auto-mark in the
+  // next stream.
+  useEffect(() => {
+    lastMarkedRef.current = null
+    lastMarkedPartialRef.current = null
+  }, [streamId])
+
   useEffect(() => {
     if (!enabled || !lastEventId || !isActive) return
 

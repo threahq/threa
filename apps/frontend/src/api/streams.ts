@@ -201,4 +201,12 @@ export const streamsApi = {
     )
     return res.membership
   },
+
+  async markUnread(workspaceId: string, streamId: string, messageId: string): Promise<StreamMember> {
+    const res = await api.post<{ membership: StreamMember }>(
+      `/api/workspaces/${workspaceId}/streams/${streamId}/unread`,
+      { messageId }
+    )
+    return res.membership
+  },
 }

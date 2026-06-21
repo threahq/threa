@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from "react"
+import { useState, useRef, useMemo, useCallback } from "react"
 import type { StreamEvent } from "@threa/types"
 import { useScrollToElement } from "./use-scroll-to-element"
 
@@ -44,60 +44,21 @@ interface UseUnreadDividerResult {
 }
 
 /**
- * Drive the unread divider's red → muted-gray "freshness" fade. The stream opens
- * at the live bottom, so the divider usually starts off-screen; the timer must
- * wait until the row has actually entered the viewport, or it would settle to
- * gray before the viewer ever scrolls up to see it. Returns `isDimmed`.
+ * Whether the latched unread divider has been read past: true once the read
+ * pointer reaches or passes its position (the viewer read through it, or marked
+ * it read). The divider renders red while this is false (unread still sits at or
+ * after the line) and muted-gray once true — a pure read-state signal, no timer.
  */
-export function useDividerDim(
-  scrollContainerRef: RefObject<HTMLElement | null>,
+export function isDividerReadPast(
+  events: StreamEvent[],
   dividerEventId: string | undefined,
-  streamId: string
+  lastReadEventId: string | null | undefined
 ): boolean {
-  const [isDimmed, setIsDimmed] = useState(false)
-  const [seen, setSeen] = useState(false)
-
-  // Reset when the stream or the latched divider changes.
-  useEffect(() => {
-    setSeen(false)
-    setIsDimmed(false)
-  }, [streamId, dividerEventId])
-
-  // Latch `seen` the first time the divider row intersects the viewport. Once
-  // seen, the effect re-runs and detaches (early return) — it's a one-shot.
-  useEffect(() => {
-    if (!dividerEventId || seen) return
-    const el = scrollContainerRef.current
-    let raf = 0
-    const check = () => {
-      raf = 0
-      const scroller = scrollContainerRef.current
-      if (!scroller) return
-      const row = scroller.querySelector<HTMLElement>(`[data-event-id="${CSS.escape(dividerEventId)}"]`)
-      if (!row) return
-      const sr = scroller.getBoundingClientRect()
-      const rr = row.getBoundingClientRect()
-      if (rr.top < sr.bottom && rr.bottom > sr.top) setSeen(true)
-    }
-    const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(check)
-    }
-    schedule()
-    el?.addEventListener("scroll", schedule, { passive: true })
-    return () => {
-      if (raf) cancelAnimationFrame(raf)
-      el?.removeEventListener("scroll", schedule)
-    }
-  }, [dividerEventId, streamId, seen, scrollContainerRef])
-
-  // Start the red → gray countdown only once the divider has been seen.
-  useEffect(() => {
-    if (!dividerEventId || !seen) return
-    const dimTimer = setTimeout(() => setIsDimmed(true), 3000)
-    return () => clearTimeout(dimTimer)
-  }, [dividerEventId, seen])
-
-  return isDimmed
+  if (!dividerEventId || lastReadEventId == null) return false
+  const divider = events.find((e) => e.id === dividerEventId)
+  const pointer = events.find((e) => e.id === lastReadEventId)
+  if (!divider || !pointer) return false
+  return BigInt(pointer.sequence) >= BigInt(divider.sequence)
 }
 
 /**
@@ -153,16 +114,28 @@ export function useUnreadDivider({
   if (latchRef.current.streamId !== streamId) {
     latchRef.current = { streamId, eventId: undefined }
   }
-  if (!latchRef.current.eventId && firstUnreadEventId) {
-    latchRef.current.eventId = firstUnreadEventId
+  if (firstUnreadEventId && latchRef.current.eventId !== firstUnreadEventId) {
+    // Capture the first unread, then hold it for the session — auto-mark-as-read
+    // advancing the live unread forward does NOT move it. The one exception is a
+    // BACKWARD move (mark-as-unread re-surfaced messages above the divider): the
+    // first unread is now earlier, so the divider must follow it up.
+    const latchedIdx = latchRef.current.eventId ? events.findIndex((e) => e.id === latchRef.current.eventId) : -1
+    const firstIdx = events.findIndex((e) => e.id === firstUnreadEventId)
+    if (!latchRef.current.eventId || (firstIdx >= 0 && (latchedIdx < 0 || firstIdx < latchedIdx))) {
+      latchRef.current.eventId = firstUnreadEventId
+    }
   }
 
-  // Explicit dismissal (Escape). A latched divider has no clear-on-read, so a
-  // separate flag overrides it; reset on stream change so re-entering a stream
-  // with unread shows the divider again.
-  const [dismissedStreamId, setDismissedStreamId] = useState<string | undefined>(undefined)
-  const dismiss = useCallback(() => setDismissedStreamId(streamId), [streamId])
-  const displayedUnreadId = dismissedStreamId === streamId ? undefined : latchRef.current.eventId
+  // Explicit dismissal (Escape / ✕). A latched divider has no clear-on-read, so a
+  // separate flag overrides it. Keyed to the dismissed position (not just the
+  // stream) so a later mark-as-unread that moves the divider to an EARLIER row
+  // re-shows it. Reset on stream change so re-entering a stream with unread shows
+  // the divider again.
+  const [dismissed, setDismissed] = useState<{ streamId: string; eventId: string | undefined } | undefined>(undefined)
+  const dismiss = useCallback(() => setDismissed({ streamId, eventId: latchRef.current.eventId }), [streamId])
+  const latched = latchRef.current.eventId
+  const isDismissed = dismissed?.streamId === streamId && dismissed?.eventId === latched
+  const displayedUnreadId = isDismissed ? undefined : latched
 
   // Latch deep-link mode per stream. The `?m=` param is auto-cleared from the
   // URL ~3s after a deep-link lands, flipping highlightMessageId to null.

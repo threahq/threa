@@ -1245,6 +1245,83 @@ describe("StreamService.markAsRead", () => {
   })
 })
 
+describe("StreamService.markUnread", () => {
+  let service: StreamService
+  const mockMemberUpdate = spyOn(StreamMemberRepository, "update")
+  const mockFindByMessageId = spyOn(StreamEventRepository, "findByMessageId")
+  const mockFindPreviousMessageEvent = spyOn(StreamEventRepository, "findPreviousMessageEvent")
+  const mockCountMessagesThrough = spyOn(StreamEventRepository, "countMessagesThrough")
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockMemberUpdate.mockReset()
+    mockFindByMessageId.mockReset()
+    mockFindPreviousMessageEvent.mockReset()
+    mockCountMessagesThrough.mockReset()
+    mockInsertOutbox.mockReset()
+    mockInsertOutbox.mockResolvedValue({} as never)
+  })
+
+  test("points the read pointer at the message before the target and emits stream:read_set", async () => {
+    mockFindByMessageId.mockResolvedValue({ id: "evt_5", sequence: 50n } as never)
+    mockFindPreviousMessageEvent.mockResolvedValue({ id: "evt_4", sequence: 40n } as never)
+    mockCountMessagesThrough.mockResolvedValue(4)
+    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+
+    await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
+
+    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: "evt_4" })
+    expect(mockCountMessagesThrough).toHaveBeenCalledWith({}, "stream_1", 40n)
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_4",
+      lastReadSequence: "40",
+      lastReadOrdinal: 4,
+    })
+  })
+
+  test("clears the read pointer when the target is the first message", async () => {
+    mockFindByMessageId.mockResolvedValue({ id: "evt_1", sequence: 10n } as never)
+    mockFindPreviousMessageEvent.mockResolvedValue(null)
+    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+
+    await service.markUnread("ws_1", "stream_1", "usr_1", "msg_1")
+
+    expect(mockMemberUpdate).toHaveBeenCalledWith({}, "stream_1", "usr_1", { lastReadEventId: null })
+    expect(mockCountMessagesThrough).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:read_set",
+      expect.objectContaining({ lastReadEventId: null, lastReadSequence: "0", lastReadOrdinal: 0 })
+    )
+  })
+
+  test("returns null and emits nothing when the message is not in the stream", async () => {
+    mockFindByMessageId.mockResolvedValue(null)
+
+    const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_gone")
+
+    expect(result).toBeNull()
+    expect(mockMemberUpdate).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+
+  test("does not emit when the membership update returns null (non-member)", async () => {
+    mockFindByMessageId.mockResolvedValue({ id: "evt_5", sequence: 50n } as never)
+    mockFindPreviousMessageEvent.mockResolvedValue({ id: "evt_4", sequence: 40n } as never)
+    mockCountMessagesThrough.mockResolvedValue(4)
+    mockMemberUpdate.mockResolvedValue(null)
+
+    const result = await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
+
+    expect(result).toBeNull()
+    expect(mockMemberUpdate).toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+})
+
 describe("StreamService.markAllAsRead", () => {
   let service: StreamService
   const mockMemberList = spyOn(StreamMemberRepository, "list")

@@ -124,10 +124,35 @@ export function useLastSeenEvent({
   const readIndexRef = useRef(readIndex)
   readIndexRef.current = readIndex
 
+  // The read pointer's sequence: -1 for "nothing read" (null pointer), null when
+  // the pointer sits outside the loaded window. A backward move is judged against
+  // the pointer's OWN past sequence (see below), so it is sequence- not index-based.
+  const readSeq = useMemo<bigint | null>(() => {
+    if (lastReadEventId == null) return -1n
+    const ev = readIndex >= 0 ? events[readIndex] : undefined
+    return ev ? BigInt(ev.sequence) : null
+  }, [lastReadEventId, readIndex, events])
+  const readSeqRef = useRef(readSeq)
+  readSeqRef.current = readSeq
+
   // The read frontier: the bottom of the contiguous run read so far. Seeded from
   // the read pointer and advanced only while the viewport stays contiguous with
   // it. An external read (another device) bumps it forward via readIndexRef.
   const frontierRef = useRef(readIndex)
+
+  // When the read pointer moves BACKWARD (mark-as-unread, here or on another
+  // device) the frontier is pulled back with it and pinned: the just-unread row
+  // is usually still on screen, so without the pin advanceFrontier would re-read
+  // it on the very next scan and auto-mark would undo the unread. The next real
+  // user scroll lifts the pin and resumes normal advancement. A retreat is judged
+  // by comparing the pointer to its OWN previous sequence (prevReadSeqRef), NEVER
+  // to the frontier: while reading, the frontier leads the lagging pointer, so a
+  // forward catch-up below the frontier must not be mistaken for a retreat (that
+  // bug froze auto-read after a mark-unread).
+  const pinnedRef = useRef(false)
+  const prevReadSeqRef = useRef(readSeq)
+  const prevLastReadIdRef = useRef(lastReadEventId)
+  const prevStreamIdRef = useRef(streamId)
 
   const recompute = useCallback(() => {
     const el = scrollContainerRef.current
@@ -157,21 +182,36 @@ export function useLastSeenEvent({
     if (topIdx === undefined || botIdx === undefined) return
     const lastRenderedIdx = map.get(rows[rows.length - 1].id) ?? botIdx
 
-    // External reads can only move the frontier forward.
-    if (readIndexRef.current > frontierRef.current) frontierRef.current = readIndexRef.current
-
-    frontierRef.current = advanceFrontier(frontierRef.current, topIdx, botIdx)
+    // While pinned (the pointer was just moved back by mark-as-unread and the
+    // now-unread row is still on screen) hold the frontier so advanceFrontier
+    // doesn't immediately re-read it; a user scroll lifts the pin.
+    if (!pinnedRef.current) {
+      // External reads can only move the frontier forward.
+      if (readIndexRef.current > frontierRef.current) frontierRef.current = readIndexRef.current
+      frontierRef.current = advanceFrontier(frontierRef.current, topIdx, botIdx)
+    }
 
     const frontier = frontierRef.current
     setAtLastRow(frontier >= lastRenderedIdx)
     // Unread sits above the viewport when the first unread row (frontier + 1)
     // exists in the window and is scrolled off the top.
     setUnreadAboveViewport(frontier + 1 <= lastRenderedIdx && frontier + 1 < topIdx)
-    // Only emit a mark target once the frontier has moved PAST the read pointer —
-    // marking up to where they already are is a wasted no-op round-trip.
-    if (frontier > readIndexRef.current && frontier >= 0) {
+    // `lastSeenEventId` is derived, not a forward-only latch: it names the
+    // frontier's row only while the frontier sits PAST the read pointer. Once the
+    // pointer catches up to (or passes) the frontier — the round-trip landed, or a
+    // backward move (mark-as-unread) pulled the frontier back to the pointer —
+    // nothing is seen-but-unmarked ahead, so clear it. Without this roll-back the
+    // stale higher value would let auto-mark re-fire and undo the mark-as-unread.
+    // `readSeq == null` means the pointer is set but sits OUTSIDE the loaded
+    // window (e.g. mark-as-unread on the oldest loaded row moves it below the
+    // window) — read progress is then unknowable, so emit nothing rather than
+    // re-marking up to the stale frontier.
+    const pointerResolved = readSeqRef.current != null
+    if (pointerResolved && frontier > readIndexRef.current && frontier >= 0) {
       const id = eventsRef.current[frontier]?.id
       if (id) setLastSeenEventId((prev) => (prev === id ? prev : id))
+    } else {
+      setLastSeenEventId((prev) => (prev === undefined ? prev : undefined))
     }
   }, [scrollContainerRef])
 
@@ -179,6 +219,8 @@ export function useLastSeenEvent({
   // pointer, never inheriting the previous stream's position.
   useEffect(() => {
     frontierRef.current = readIndexRef.current
+    prevReadSeqRef.current = readSeqRef.current
+    pinnedRef.current = false
     setLastSeenEventId(undefined)
     setAtLastRow(false)
     setUnreadAboveViewport(false)
@@ -198,8 +240,14 @@ export function useLastSeenEvent({
         recompute()
       })
     }
+    // A real user scroll is the gesture that resumes normal advancement after a
+    // mark-as-unread pin; resize/initial re-scans must NOT lift it.
+    const onScroll = () => {
+      pinnedRef.current = false
+      schedule()
+    }
     schedule()
-    el?.addEventListener("scroll", schedule, { passive: true })
+    el?.addEventListener("scroll", onScroll, { passive: true })
     // Re-scan when the rendered geometry changes without a scroll: the
     // open-at-bottom settle finishing, or async embeds (link/GitHub cards,
     // images) loading and resizing the trailing rows. On a short stream that
@@ -213,7 +261,7 @@ export function useLastSeenEvent({
     }
     return () => {
       if (raf) cancelAnimationFrame(raf)
-      el?.removeEventListener("scroll", schedule)
+      el?.removeEventListener("scroll", onScroll)
       ro?.disconnect()
     }
   }, [enabled, streamId, recompute, scrollContainerRef, contentRef])
@@ -222,9 +270,28 @@ export function useLastSeenEvent({
   // us (external read), so the frontier and the affordance stay current.
   useEffect(() => {
     if (!enabled) return
+    // Detect a genuine pointer move (the id changed), not a windowing artifact
+    // where the same read event scrolls out of the loaded window. On a backward
+    // move (readIndex now before the frontier — including -1 when the pointer
+    // cleared to null) pull the frontier back and pin it; on a forward move (an
+    // external read on another device) bump it forward. Skip on stream switch:
+    // the reset effect already reseeds the frontier from the new stream.
+    const streamChanged = prevStreamIdRef.current !== streamId
+    prevStreamIdRef.current = streamId
+    if (!streamChanged && lastReadEventId !== prevLastReadIdRef.current) {
+      // Retreat = the pointer's sequence dropped below where it just was (mark-as-
+      // unread). Forward moves and external reads are left to recompute's forward
+      // bump; only a genuine backward move pins.
+      if (readSeqRef.current != null && prevReadSeqRef.current != null && readSeqRef.current < prevReadSeqRef.current) {
+        frontierRef.current = readIndex
+        pinnedRef.current = true
+      }
+    }
+    if (readSeqRef.current != null) prevReadSeqRef.current = readSeqRef.current
+    prevLastReadIdRef.current = lastReadEventId
     const raf = requestAnimationFrame(recompute)
     return () => cancelAnimationFrame(raf)
-  }, [enabled, events.length, readIndex, recompute])
+  }, [enabled, events.length, streamId, lastReadEventId, readIndex, recompute])
 
   return { lastSeenEventId, atLastRow, unreadAboveViewport }
 }

@@ -22,7 +22,7 @@ export interface StreamMember {
 
 export interface UpdateStreamMemberParams {
   notificationLevel?: NotificationLevel | null
-  lastReadEventId?: string
+  lastReadEventId?: string | null
 }
 
 function mapRowToMember(row: StreamMemberRow): StreamMember {
