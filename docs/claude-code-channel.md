@@ -76,15 +76,20 @@ A claim holds a lease (`claimTtlSeconds`, max 300) that expires if not renewed, 
 
 The channel handles one turn at a time. A message you send while Claude is still working waits in Threa until the current turn completes, then gets claimed and pushed. The one exception is a permission verdict (below), which is pulled through immediately so a blocked turn can continue.
 
-## Outbound: the reply tool completes the invocation
+## Outbound: send for progress, reply to finish
 
-The channel exposes one tool, `reply(invocation_id, text)`. Claude is told (via the server's `instructions`, which land in its system prompt) to call it exactly once per `<channel>` event. When Claude calls it:
+The channel exposes two output tools, and Claude is told (via the server's `instructions`, which land in its system prompt) how they differ:
 
-1. The channel looks up the in-flight invocation by `invocation_id`.
-2. It calls `POST /bot-invocations/:id/complete` with `finalMessageMarkdown: text`. That posts the reply into the scratchpad and closes the invocation.
-3. It clears the in-flight entry, and when nothing is in flight, flips presence back to `available`.
+- **`send(invocation_id, text)`** posts a progress or intermediate message and leaves the request open. Claude can call it any number of times during a turn. It posts via `POST /streams/:id/messages` (the same path the permission relay uses) — the invocation stays in flight, so presence stays `busy`.
+- **`reply(invocation_id, text)`** posts the final message and closes the request. Claude calls it once, last. It calls `POST /bot-invocations/:id/complete` with `finalMessageMarkdown: text`, which posts the reply into the scratchpad and closes the invocation; the channel then clears the in-flight entry and, when nothing is in flight, flips presence back to `available`.
 
-The `reply` tool is the only path back to Threa, which is why the instructions insist on it. As a safety net, an in-flight invocation that is never answered is force-closed after `replyTimeoutMs` (default 30 minutes) with a short notice, so a session can't get wedged in `busy` forever.
+Splitting the two means a long turn isn't silent until a single terminal reply — it can stream updates as it works and finish with a summary. This is the only path back to Threa, which is why the instructions insist on ending with `reply`.
+
+### The idle-timeout safety net
+
+A turn that goes silent without a `reply` would otherwise wedge the session in `busy` forever (the next message can't be claimed while one is in flight). So an in-flight invocation is force-closed after `idleTimeoutMs` (default 60 minutes, `THREA_IDLE_TIMEOUT_MS`) of **inactivity**. It's an _idle_ timer, not an absolute one: every `send` and every tool-approval prompt resets it, so an actively-working turn is never reaped — only one that has genuinely gone quiet. If the reaped turn had already `send`-ed something, it closes silently (`noResponse`); otherwise it posts a short "ended without a reply" notice.
+
+The one case the heartbeat can't cover is a single long-running tool call (a 40-minute test run): Claude is blocked awaiting the tool and can't `send` in the middle of it. The idle window must therefore exceed the longest single operation — raise `THREA_IDLE_TIMEOUT_MS` if a turn does heavy uninterrupted work. (This replaced an earlier fixed 30-minute reply timeout that force-closed long turns at exactly 30 minutes regardless of whether they were still working.)
 
 ## Attachments
 
@@ -117,7 +122,7 @@ The local terminal dialog stays open the whole time, so whichever answer arrives
 | ----------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------- |
 | Where it runs                             | Inside Pi, via Pi's extension API                         | A subprocess Claude Code spawns over stdio                           |
 | How it gets a prompt                      | Claims invocation, injects via `pi.sendUserMessage`       | Claims invocation, pushes a `notifications/claude/channel` event     |
-| How it returns a reply                    | Hooks Pi's `agent_end`, posts the captured assistant text | Claude calls the `reply` tool, which completes the invocation        |
+| How it returns a reply                    | Hooks Pi's `agent_end`, posts the captured assistant text | Claude calls `send` for progress and `reply` to finish the turn      |
 | Trace detail                              | Rich per-tool steps (it hooks Pi's tool events)           | One "working" step (a channel can't see Claude's tool calls)         |
 | Session control (`/compact`, `/model`, …) | Yes                                                       | No (a channel can't drive Claude's session)                          |
 | Permission prompts                        | N/A (Pi runs the model in-process)                        | Relayed into the scratchpad as messages                              |

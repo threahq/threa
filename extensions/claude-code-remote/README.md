@@ -136,7 +136,7 @@ The channel uploads the file (one per `THREA_ATTACH:` line; paths resolve agains
 | `THREA_DEFAULT_LABEL`      | `defaultLabel`     | (none)                 | Label applied to scratchpads this channel creates (only on first creation, not re-link) |
 | `THREA_PERMISSION_RELAY`   | `permissionRelay`  | `true`                 | Relay tool-approval prompts into the scratchpad                                         |
 | `THREA_POLL_MS`            | `pollMs`           | `3000`                 | Backstop claim poll (the socket pushes faster)                                          |
-| `THREA_REPLY_TIMEOUT_MS`   | `replyTimeoutMs`   | `1800000`              | Close an unanswered request after this many ms                                          |
+| `THREA_IDLE_TIMEOUT_MS`    | `idleTimeoutMs`    | `3600000`              | Force-close a turn after this much inactivity (each `send` / approval resets it)        |
 | `THREA_INSTANCE_ID`        | `instanceId`       | derived                | Override the per-directory instance id                                                  |
 | `THREA_RUNTIME_SESSION_ID` | `runtimeSessionId` | derived                | Override the per-directory session id                                                   |
 
@@ -149,10 +149,16 @@ bun test
 bun run typecheck
 ```
 
+## Sending multiple messages per turn
+
+Claude has two output tools. `send` posts a progress or intermediate message into the scratchpad and leaves the request open — call it as often as you like during a long task. `reply` posts the final message and closes the request; call it once, last. So a long turn can stream updates as it works and finish with a summary, instead of going silent until a single terminal reply.
+
+Each `send` (and each tool-approval prompt) also counts as a sign of life that resets the idle timeout, so an actively-working turn is never force-closed.
+
 ## Limitations
 
-- A channel only sees the inbound message and the reply, not Claude's individual tool calls, so the Threa trace card shows a single "working" step rather than the per-tool trace a Pi session produces.
-- Claude must call the `reply` tool to close a request. If a turn ends without a reply, the request is force-closed after `replyTimeoutMs` with a short notice.
+- A channel only sees the inbound message and Claude's `send`/`reply` calls, not its individual tool calls, so the Threa trace card shows a single "working" step rather than the per-tool trace a Pi session produces.
+- Claude can't `send` a heartbeat while blocked on a single long tool call (e.g. a 40-minute test run). The idle timeout must exceed your longest single operation — raise `THREA_IDLE_TIMEOUT_MS` if needed. A turn that goes idle without a `reply` is force-closed (silently if it already `send`-ed something, otherwise with a short "ended without a reply" notice).
 - One turn at a time: a message sent while Claude is still working is handled after the current reply (a permission verdict is the exception and goes through immediately).
 
 ## Roadmap (parity with `pi-remote`)
