@@ -56,6 +56,7 @@ import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview } from "@/components/layout"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
@@ -171,6 +172,11 @@ export function StreamPage() {
 
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
+  // Touch-only: the title bar is chrome (title, type/archived pills, label
+  // stack), so a finger-hold should reveal/act, never text-select it — but a
+  // mouse may still select to copy the name, and the rename input must stay
+  // selectable while editing.
+  const isTouchInput = useInputMode() === "touch"
   // The just-submitted name, held while the rename is in flight so the header
   // shows it continuously instead of dipping to the persisted name during the
   // network round-trip. Cleared once the write lands (the decrypt cache is seeded
@@ -522,7 +528,7 @@ export function StreamPage() {
   const mainStreamContent = (
     <div className="flex h-full flex-col">
       <header className="relative flex h-12 items-center justify-between border-b px-4">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className={cn("flex items-center gap-2 flex-1 min-w-0", isTouchInput && !isEditing && "select-none")}>
           <SidebarToggle location="page" />
           {headerTitle}
           {companionModeIndicator}
