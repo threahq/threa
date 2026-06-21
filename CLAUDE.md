@@ -21,6 +21,8 @@ Default implementation mode for routine tasks: **minimal patch**. Do not refacto
 
 ## Working Style
 
+Be extremely concise, sacrifice grammar for sake of concision.
+
 Read this before asking the user anything.
 
 **Search before you ask.** If a question has a factual answer in the repo ("is there a sync path from control-plane to backend?", "which model does persona X use?", "how does auth flow through the workspace-router?"), it is your job to find it. Use Grep, Glob, and the Agent tool. Start from `docs/system-overview.md`, `docs/architecture.md`, `docs/core-concepts.md`, then `apps/*/src/` and the relevant feature folder under `apps/backend/src/features/`. Escalate to the user only when (a) the search genuinely came back empty, (b) the decision is a preference the code cannot reveal, or (c) the action is destructive or irreversible.
