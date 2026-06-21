@@ -726,6 +726,13 @@
   border-radius: 0.375rem;
 }
 
+/* The continuation gutter must reserve the same width as the compact avatar so
+   grouped follow-up messages align under the head's content instead of 8px to
+   its right. Width only — the spacer keeps its h-5 hover-timestamp box. */
+[data-message-display="compact"] .message-avatar-spacer {
+  width: 1.5rem;
+}
+
 [data-message-display="compact"] .message-content {
   gap: 0.5rem;
 }
