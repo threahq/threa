@@ -99,7 +99,7 @@ describe("advanceFrontier", () => {
   })
 })
 
-describe("useLastSeenEvent re-scan on content resize", () => {
+describe("useLastSeenEvent re-scan triggers", () => {
   // The container viewport spans y=0..100; rows carry mutable rects so a test
   // can "grow" the content (an embed loading) between scans.
   let roCallbacks: ResizeObserverCallback[]
@@ -197,6 +197,66 @@ describe("useLastSeenEvent re-scan on content resize", () => {
     fireResize()
 
     // The re-scan reaches the last row — the message that was stuck unread.
+    expect(result.current.lastSeenEventId).toBe("e2")
+    expect(result.current.atLastRow).toBe(true)
+  })
+
+  it("re-arms the scan when the virtualized scroller late-mounts after enabled (scrollContainerEl)", () => {
+    // The bug behind the stuck-unread divider: the virtualized timeline flips
+    // `enabled` true BEFORE virtua mounts its scroller (a ref callback). The
+    // attach effect must re-run when the element finally mounts — a ref change
+    // alone never re-runs an effect, so a viewport-fitting stream (no scroll to
+    // re-trigger a scan) would leave its frontier stuck and the divider red.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: -50, bottom: -10 }, // already read, scrolled above
+      e1: { top: 10, bottom: 55 }, // visible
+      e2: { top: 60, bottom: 95 }, // visible (short stream fits the viewport)
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [
+      { id: "e0", sequence: "0" },
+      { id: "e1", sequence: "1" },
+      { id: "e2", sequence: "2" },
+    ] as unknown as StreamEvent[]
+    // The ref starts null (scroller not mounted) and is populated by virtua's ref
+    // callback when it mounts — mirrored here by mutating `.current`.
+    const scrollContainerRef: { current: HTMLElement | null } = { current: null }
+
+    const { result, rerender } = renderHook(
+      ({ el }) =>
+        useLastSeenEvent({
+          scrollContainerRef,
+          scrollContainerEl: el,
+          events,
+          streamId: "stream_1",
+          lastReadEventId: "e0",
+          enabled: true,
+        }),
+      { initialProps: { el: null as HTMLElement | null } }
+    )
+
+    // Scroller not mounted yet → nothing to scan, frontier can't advance.
+    expect(result.current.lastSeenEventId).toBeUndefined()
+
+    // Virtua mounts the scroller: the ref goes live AND the element surfaces as
+    // reactive state. The element dep is what re-runs the attach effect; mutating
+    // the ref alone (no element change) would not, which is the original bug.
+    act(() => {
+      scrollContainerRef.current = container
+      rerender({ el: container })
+    })
+
+    // Re-armed: the frontier advances to the trailing visible row, so auto-read
+    // can fire and the divider clears.
     expect(result.current.lastSeenEventId).toBe("e2")
     expect(result.current.atLastRow).toBe(true)
   })

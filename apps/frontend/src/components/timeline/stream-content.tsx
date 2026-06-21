@@ -981,6 +981,7 @@ export function StreamContent({
     listRef,
     scrollerRef: virtualScrollerRef,
     registerScroller: registerVirtualScroller,
+    scrollerEl: virtualScrollerEl,
     contentRef: virtualContentRef,
     shift,
     isScrolledFarFromBottom: virtualIsScrolledFar,
@@ -1489,6 +1490,12 @@ export function StreamContent({
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
+    // The virtualized scroller late-mounts via a ref callback, AFTER
+    // `autoMarkEnabled` flips true — pass the mounted element so the read-frontier
+    // scan re-arms its observers once the scroller exists. The plain thread
+    // scroller mounts synchronously with the content, so it has no element to
+    // track (the ref is already live when enabled flips).
+    scrollContainerEl: useVirtualized ? virtualScrollerEl : null,
     // Observe the scrolling content box (its height tracks scrollHeight) so a
     // settle / embed / image resize re-scans even when the stream is too short
     // to scroll. Both paths pass one — the virtualized list's inner content div
