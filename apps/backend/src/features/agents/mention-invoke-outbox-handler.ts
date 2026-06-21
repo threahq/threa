@@ -3,7 +3,7 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
 import { parseMessagePayload } from "../../lib/outbox"
 import { AgentTriggers, AuthorTypes } from "@threa/types"
-import { collectMentionSlugs } from "@threa/prosemirror"
+import { collectMentionActorRefs } from "@threa/prosemirror"
 import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
@@ -61,22 +61,26 @@ export class MentionInvokeHandler extends DebouncedOutboxHandler {
 
     const triggeredBy = messageEvent.actorId
 
-    // Mentions come from the canonical contentJson mention nodes (INV-58) —
-    // produced by the editor's mention picker and by parseMarkdown on the
-    // API path — not from a pattern over serialized markdown, so non-Latin
-    // slugs invoke the same as ASCII ones (INV-54). Null contentJson (events
-    // predating it) means "no structural mentions". Deduped: one job per
+    // Mention nodes carry a resolved actor id as the authoritative reference
+    // (INV-64) — the ingestion resolver has already rewritten markdown-path
+    // slugs to ids, so we select by id and never by slug (INV-54: id-based
+    // dispatch is language-agnostic). Null contentJson (events predating it)
+    // means "no structural mentions". Deduped by actorId upstream: one job per
     // persona no matter how many times it's mentioned in the message.
     const contentJson = messageEvent.payload.contentJson
-    const mentionSlugs = contentJson ? Array.from(new Set(collectMentionSlugs(contentJson))) : []
-    if (mentionSlugs.length === 0) {
+    const personaIds = contentJson
+      ? collectMentionActorRefs(contentJson)
+          .filter((ref) => ref.actorType === "persona")
+          .map((ref) => ref.actorId)
+      : []
+    if (personaIds.length === 0) {
       return
     }
 
-    for (const slug of mentionSlugs) {
-      const persona = await PersonaRepository.findBySlug(this.db, slug, workspaceId)
+    const personas = await PersonaRepository.findByIds(this.db, personaIds, workspaceId)
 
-      if (!persona || persona.status !== "active") {
+    for (const persona of personas) {
+      if (persona.status !== "active") {
         continue
       }
 

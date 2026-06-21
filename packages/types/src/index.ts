@@ -620,6 +620,16 @@ export {
   tryValidateContent,
 } from "./prosemirror"
 
+// Authoritative actor/stream references for mentions/channel links (INV-64)
+export {
+  MENTION_BROADCAST_HERE,
+  MENTION_BROADCAST_CHANNEL,
+  isResolvedMentionId,
+  isResolvedChannelLinkId,
+  actorTypeFromMentionId,
+} from "./actor-ref"
+export type { MentionActorType, MentionActorRef } from "./actor-ref"
+
 // User Preferences
 export {
   // Theme

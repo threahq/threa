@@ -23,6 +23,7 @@ import { serializeBigInt } from "@threa/backend-common"
 import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
 import { OperationLeaseRepository } from "../../lib/operation-leases"
+import { resolveMentionContent } from "../mentions"
 import {
   AuthorTypes,
   CompanionModes,
@@ -465,6 +466,12 @@ export class EventService {
       e2eVersion: params.e2eVersion,
     })
 
+    // Rewrite slug-only mention/channel ids to authoritative actor/stream ids
+    // (INV-64) before the body feeds projections, mention extraction, and the
+    // outbox payload. No-op when ids are already resolved (rich-client writes);
+    // markdown is untouched because slugs are unchanged.
+    params.contentJson = (await resolveMentionContent(client, params.workspaceId, params.contentJson)).contentJson
+
     // Validate attachments before creating the event. Two flavors:
     // - "new" (`messageId === null`): fresh upload, ownership anchored to this
     //   message via `attachToMessage` below.
@@ -725,6 +732,11 @@ export class EventService {
       if (params.contentMarkdown.trim() === existing.contentMarkdown.trim()) return existing
 
       const actorType = await this.resolveActorType(client, params.streamId, params.actorId, params.actorType, existing)
+
+      // Resolve slug-only mention/channel ids before the edited body feeds the
+      // event payload, projection, and outbox (INV-64). No-op when already
+      // resolved; markdown is unchanged (slugs are stable).
+      params.contentJson = (await resolveMentionContent(client, params.workspaceId, params.contentJson)).contentJson
 
       await MessageVersionRepository.insert(client, {
         id: messageVersionId(),

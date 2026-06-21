@@ -9,7 +9,6 @@ import {
 } from "./repository"
 import { StreamRepository } from "../streams"
 import { BotRepository } from "../public-api/bot-repository"
-import { PersonaRepository } from "../agents"
 import { EventService } from "../messaging"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import * as e2eStreams from "../e2e-streams"
@@ -45,13 +44,15 @@ const docWithText = (text: string) => ({
   content: [{ type: "paragraph", content: [{ type: "text", text }] }],
 })
 
-const docWithMention = (slug: string) => ({
+// The ingestion resolver has already rewritten `attrs.id` to a prefixed actor
+// id by the time this handler runs (INV-64); the slug is a display label only.
+const docWithMention = (params: { id: string; slug: string; mentionType: string }) => ({
   type: "doc",
   content: [
     {
       type: "paragraph",
       content: [
-        { type: "mention", attrs: { id: slug, slug, mentionType: "bot" } },
+        { type: "mention", attrs: { id: params.id, slug: params.slug, mentionType: params.mentionType } },
         { type: "text", text: " hi" },
       ],
     },
@@ -117,23 +118,25 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
     e2eEnabled: false,
   }
 
-  it("dispatches a mention invocation from a contentJson mention node with a non-ASCII slug", async () => {
+  it("selects a mentioned bot by its resolved id and still carries the slug on the protocol field", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    const findVisibleBySlugs = spyOn(BotRepository, "findVisibleBySlugs").mockResolvedValue([
+    const findVisibleByIds = spyOn(BotRepository, "findVisibleByIds").mockResolvedValue([
       { id: "bot_1", slug: "аріадна", name: "Аріадна", archivedAt: null, traits: ["mentionable"] },
     ] as never)
-    spyOn(PersonaRepository, "findBySlug").mockResolvedValue(null as never)
     const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
       invocation: { id: "inv_1" },
       wasNewlyInserted: true,
     } as never)
 
     await runProcessMessageCreated(
-      userMessagePayload({ contentMarkdown: "@аріадна hi", contentJson: docWithMention("аріадна") })
+      userMessagePayload({
+        contentMarkdown: "@аріадна hi",
+        contentJson: docWithMention({ id: "bot_1", slug: "аріадна", mentionType: "bot" }),
+      })
     )
 
-    expect(findVisibleBySlugs).toHaveBeenCalledWith({} as Pool, "ws_1", "usr_1", ["аріадна"])
+    expect(findVisibleByIds).toHaveBeenCalledWith({} as Pool, "ws_1", "usr_1", ["bot_1"])
     expect(createInvocation).toHaveBeenCalledWith(
       expect.objectContaining({
         actorId: "bot_1",
@@ -143,9 +146,28 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
     )
   })
 
+  it("ignores an unresolved (bare-slug) mention node — selection never runs", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
+    const findVisibleByIds = spyOn(BotRepository, "findVisibleByIds").mockResolvedValue([] as never)
+    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
+      invocation: { id: "inv_1" },
+      wasNewlyInserted: true,
+    } as never)
+
+    await runProcessMessageCreated(
+      userMessagePayload({
+        contentMarkdown: "@scout hi",
+        contentJson: docWithMention({ id: "scout", slug: "scout", mentionType: "bot" }),
+      })
+    )
+
+    expect(findVisibleByIds).not.toHaveBeenCalled()
+    expect(createInvocation).not.toHaveBeenCalled()
+  })
+
   it("ignores @-shaped plain text that has no mention node", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
-    const findVisibleBySlugs = spyOn(BotRepository, "findVisibleBySlugs").mockResolvedValue([] as never)
+    const findVisibleByIds = spyOn(BotRepository, "findVisibleByIds").mockResolvedValue([] as never)
     const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
       invocation: { id: "inv_1" },
       wasNewlyInserted: true,
@@ -155,7 +177,7 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
       userMessagePayload({ contentMarkdown: "ping @scout", contentJson: docWithText("ping @scout") })
     )
 
-    expect(findVisibleBySlugs).not.toHaveBeenCalled()
+    expect(findVisibleByIds).not.toHaveBeenCalled()
     expect(createInvocation).not.toHaveBeenCalled()
   })
 })
@@ -276,6 +298,41 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
       expect.objectContaining({
         contentMarkdown: expect.stringContaining("Claude Code with the Threa channel"),
         metadata: { "bot_runtime.notice": "missing_session_link" },
+      })
+    )
+  })
+
+  // The active bot carries only `active-scratchpad` (not `mentionable`), so it is
+  // never picked up by the mentionable-bot loop. Alongside a mentioned persona it
+  // would normally be filtered out — it dispatches only because the gate matches
+  // the active bot's resolved id against the mentioned ids (INV-64), not its slug.
+  it("dispatches the active bot when it is explicitly mentioned by its resolved id", async () => {
+    const { createInvocation } = setupActiveScratchpad({ instance: { runtimeKind: "openclaw" } })
+    spyOn(BotRepository, "findVisibleByIds").mockResolvedValue([activeBot] as never)
+
+    const mentionDoc = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "mention", attrs: { id: "bot_1", slug: "scout", mentionType: "bot" } },
+            { type: "mention", attrs: { id: "persona_helper", slug: "helper", mentionType: "persona" } },
+            { type: "text", text: " hi" },
+          ],
+        },
+      ],
+    }
+
+    await runProcessMessageCreated(
+      userMessagePayload({ contentMarkdown: "@scout @helper hi", contentJson: mentionDoc })
+    )
+
+    expect(createInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: "bot_1",
+        trigger: "active-scratchpad",
+        mentionedActorSlugs: ["scout", "helper"],
       })
     )
   })

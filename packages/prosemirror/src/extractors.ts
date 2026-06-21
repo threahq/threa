@@ -4,21 +4,31 @@
  * checks and projection writes.
  */
 
-import type { JSONContent } from "@threa/types"
+import { type JSONContent, actorTypeFromMentionId, isResolvedChannelLinkId, isResolvedMentionId } from "@threa/types"
 
 /**
- * Slugs come from the node attrs, so this works for any script the slug is
- * written in — no ASCII pattern matching over serialized markdown (INV-54).
- * Lowercased to match how mention targets are stored and looked up.
+ * Resolved actor references for CONSUMERS (notifications, agent/bot dispatch).
+ * `actorType` is derived from the id prefix, which is authoritative (INV-64) —
+ * the node's `mentionType`/`slug` are display labels and never drive a decision.
+ * Broadcast sentinels map to `{ actorType: "broadcast", actorId: sentinel }`.
+ * Mention nodes whose id is still a bare slug (unresolved) are skipped — they
+ * only appear before the ingestion resolver runs. Deduped by `actorId`.
  */
-export function collectMentionSlugs(content: JSONContent): string[] {
-  const slugs: string[] = []
+export function collectMentionActorRefs(
+  content: JSONContent
+): Array<{ actorType: "user" | "persona" | "bot" | "broadcast"; actorId: string }> {
+  const seen = new Set<string>()
+  const refs: Array<{ actorType: "user" | "persona" | "bot" | "broadcast"; actorId: string }> = []
 
   const walk = (node: JSONContent): void => {
     if (node.type === "mention") {
-      const slug = node.attrs?.slug
-      if (typeof slug === "string" && slug.length > 0) {
-        slugs.push(slug.toLowerCase())
+      const id = node.attrs?.id
+      if (typeof id === "string" && id.length > 0) {
+        const actorType = actorTypeFromMentionId(id)
+        if (actorType !== null && !seen.has(id)) {
+          seen.add(id)
+          refs.push({ actorType, actorId: id })
+        }
       }
     }
     if (node.content) {
@@ -29,7 +39,125 @@ export function collectMentionSlugs(content: JSONContent): string[] {
   }
 
   walk(content)
-  return slugs
+  return refs
+}
+
+/**
+ * Resolved stream ids from `channelLink` nodes (id has the `stream_` prefix).
+ * Unresolved (bare-slug) channel links are skipped. Deduped, first-seen order.
+ */
+export function collectChannelStreamIds(content: JSONContent): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "channelLink") {
+      const id = node.attrs?.id
+      if (typeof id === "string" && id.length > 0 && isResolvedChannelLinkId(id) && !seen.has(id)) {
+        seen.add(id)
+        ordered.push(id)
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ordered
+}
+
+/**
+ * Slugs of mention nodes whose id is unresolved (a bare slug, no prefix) — the
+ * input the ingestion resolver needs to look up. Excludes broadcast slugs
+ * (`here`/`channel`), which resolve to a sentinel without a DB lookup.
+ * Lowercased (slug lookups are case-insensitive) and deduped.
+ */
+export function collectUnresolvedMentionSlugs(content: JSONContent): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "mention") {
+      const id = node.attrs?.id
+      const slug = node.attrs?.slug
+      if (typeof id === "string" && typeof slug === "string" && slug.length > 0 && !isResolvedMentionId(id)) {
+        const lower = slug.toLowerCase()
+        if (lower !== "here" && lower !== "channel" && !seen.has(lower)) {
+          seen.add(lower)
+          ordered.push(lower)
+        }
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ordered
+}
+
+/**
+ * Slugs of `channelLink` nodes whose id is unresolved — the resolver input for
+ * channels. Lowercased and deduped.
+ */
+export function collectUnresolvedChannelLinkSlugs(content: JSONContent): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "channelLink") {
+      const id = node.attrs?.id
+      const slug = node.attrs?.slug
+      if (typeof id === "string" && typeof slug === "string" && slug.length > 0 && !isResolvedChannelLinkId(id)) {
+        const lower = slug.toLowerCase()
+        if (!seen.has(lower)) {
+          seen.add(lower)
+          ordered.push(lower)
+        }
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return ordered
+}
+
+/**
+ * Pure transformer: returns a NEW tree with `mention`/`channelLink` attrs
+ * rewritten by `fn`. `fn` receives the node and returns replacement attrs, or
+ * `undefined` to leave the node unchanged. Non-target nodes are copied
+ * structurally (only `content` is recursed); all other fields are preserved.
+ */
+export function mapMentionAndChannelNodes(
+  content: JSONContent,
+  fn: (node: JSONContent) => Record<string, unknown> | undefined
+): JSONContent {
+  const map = (node: JSONContent): JSONContent => {
+    let next = node
+    if (node.type === "mention" || node.type === "channelLink") {
+      const newAttrs = fn(node)
+      if (newAttrs !== undefined) {
+        next = { ...node, attrs: newAttrs }
+      }
+    }
+    if (next.content) {
+      next = { ...next, content: next.content.map(map) }
+    }
+    return next
+  }
+
+  return map(content)
 }
 
 /**

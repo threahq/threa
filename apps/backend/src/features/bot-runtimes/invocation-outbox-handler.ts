@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import { AuthorTypes, StreamTypes, botHasCapability } from "@threa/types"
 import { resolveDeliveryVerdict, TrustTiers, TurnDeliveries } from "@threa/agent-runtime"
-import { collectMentionSlugs, parseMarkdown } from "@threa/prosemirror"
+import { collectMentionActorRefs, parseMarkdown, type JSONContent } from "@threa/prosemirror"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
@@ -17,7 +17,6 @@ import {
 } from "./repository"
 import { resolveRuntimeKindConfig } from "./runtime-kind-config"
 import { EventService } from "../messaging"
-import { PersonaRepository } from "../agents"
 
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -27,6 +26,24 @@ const DEFAULT_CONFIG = {
   refreshIntervalMs: 5_000,
   maxRetries: 5,
   baseBackoffMs: 1_000,
+}
+
+/**
+ * Raw mention-node slugs in document order. PROTOCOL-ONLY display data for the
+ * external turn (`mentionedActorSlugs`) — it never drives selection or
+ * notification (those read resolved ids via collectMentionActorRefs, INV-64).
+ */
+function collectMentionSlugsForProtocol(content: JSONContent): string[] {
+  const slugs: string[] = []
+  const walk = (node: JSONContent): void => {
+    if (node.type === "mention") {
+      const slug = node.attrs?.slug
+      if (typeof slug === "string" && slug.length > 0) slugs.push(slug)
+    }
+    if (node.content) for (const child of node.content) walk(child)
+  }
+  walk(content)
+  return slugs
 }
 
 export class BotInvocationOutboxHandler implements OutboxHandler {
@@ -97,29 +114,24 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(this.pool, rootStreamId)
     const invocationRootStreamId = rootStream?.id ?? stream.id
     const isUserAuthored = message.event.actorType === AuthorTypes.USER
-    // Mentions come from the canonical contentJson mention nodes (INV-58) —
-    // produced by the editor's mention picker and by parseMarkdown on the API
-    // path — not from a pattern over serialized markdown, so non-Latin slugs
-    // dispatch the same as ASCII ones (INV-54).
+    // Selection reads the RESOLVED actor ids on the canonical contentJson mention
+    // nodes (INV-64) — the ingestion resolver rewrote each node's `attrs.id` to a
+    // prefixed actor id, so `actorType` comes from that prefix and never from the
+    // slug. Bare-slug (unresolved) nodes are skipped by collectMentionActorRefs.
     const contentJson = message.event.payload.contentJson
-    const mentionedSlugs = isUserAuthored && contentJson ? collectMentionSlugs(contentJson) : []
-    const uniqueMentionedSlugs = Array.from(new Set(mentionedSlugs))
-    const [mentionedBots, mentionedPersonas] =
-      uniqueMentionedSlugs.length > 0
-        ? await Promise.all([
-            BotRepository.findVisibleBySlugs(
-              this.pool,
-              message.workspaceId,
-              message.event.actorId,
-              uniqueMentionedSlugs
-            ),
-            Promise.all(
-              uniqueMentionedSlugs.map((slug) => PersonaRepository.findBySlug(this.pool, slug, message.workspaceId))
-            ),
-          ])
-        : [[], []]
+    const mentionRefs = isUserAuthored && contentJson ? collectMentionActorRefs(contentJson) : []
+    const mentionedBotIds = mentionRefs.filter((ref) => ref.actorType === "bot").map((ref) => ref.actorId)
+    const hasMentionedPersona = mentionRefs.some((ref) => ref.actorType === "persona")
+    const mentionedBots =
+      mentionedBotIds.length > 0
+        ? await BotRepository.findVisibleByIds(this.pool, message.workspaceId, message.event.actorId, mentionedBotIds)
+        : []
     const mentionableBots = mentionedBots.filter((mentionedBot) => botHasCapability(mentionedBot, "mentionable"))
-    const hasMentionedPersona = mentionedPersonas.some(Boolean)
+
+    // Protocol-only display data for external bots: the raw mention slugs as
+    // authored. Carried verbatim on the turn protocol (`mentionedActorSlugs`);
+    // it drives NO selection or notification decision (those read ids above).
+    const mentionedSlugs = isUserAuthored && contentJson ? collectMentionSlugsForProtocol(contentJson) : []
 
     for (const mentionedBot of mentionableBots) {
       if (!(await this.verdictAllowsExternalDispatch(message.workspaceId, stream.id, mentionedBot.id))) continue
@@ -153,7 +165,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return
     if (message.event.actorType === AuthorTypes.BOT && message.event.actorId === bot.id) return
     if (mentionableBots.some((mentionedBot) => mentionedBot.id === bot.id)) return
-    const activeExplicitlyMentioned = bot.slug != null && mentionedSlugs.includes(bot.slug)
+    const activeExplicitlyMentioned = mentionedBotIds.includes(bot.id)
     if ((mentionableBots.length > 0 || hasMentionedPersona) && !activeExplicitlyMentioned) return
 
     // Before any side effect: the missing-link notice below writes a plaintext

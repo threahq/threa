@@ -419,6 +419,20 @@ export const StreamRepository = {
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
+  /**
+   * Batched slug lookup (INV-56) for the mention/channel resolver. Slugs are
+   * matched case-insensitively, mirroring `findBySlug`.
+   */
+  async findBySlugs(db: Querier, workspaceId: string, slugs: string[]): Promise<Stream[]> {
+    if (slugs.length === 0) return []
+    const lowered = slugs.map((slug) => slug.toLowerCase())
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
+          WHERE workspace_id = ${workspaceId} AND LOWER(slug) = ANY(${lowered})`
+    )
+    return result.rows.map(mapRowToStream)
+  },
+
   async findByUniquenessKey(db: Querier, workspaceId: string, uniquenessKey: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
