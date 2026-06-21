@@ -26,6 +26,8 @@ import {
   E2E_ACTOR_KINDS,
   E2E_KEY_WRAP_RECIPIENT_KINDS,
   TOOL_PRIVACY_CATEGORIES,
+  threaDocumentSchema,
+  STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threa/types"
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
@@ -138,7 +140,8 @@ const updateStreamSchema = z
         message: "Slug must start with a letter and contain only lowercase letters, numbers, hyphens, or underscores",
       })
       .optional(),
-    description: z.string().max(500).optional(),
+    description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH).optional(),
+    descriptionJson: threaDocumentSchema.optional(),
     visibility: visibilitySchema.optional(),
     memoryMode: memoryModeSchema.optional(),
     // Optional encrypted name. Strict base64 so a malformed ciphertext can't be
@@ -640,7 +643,16 @@ export function createStreamHandlers({
 
       const data = validateRequest(schema, req.body)
 
-      const { displayName, slug, description, visibility, memoryMode, sealedNameCiphertext, sealedNameEnvelope } = data
+      const {
+        displayName,
+        slug,
+        description,
+        descriptionJson,
+        visibility,
+        memoryMode,
+        sealedNameCiphertext,
+        sealedNameEnvelope,
+      } = data
 
       // Schema guarantees one of: both set, both null (clear), or both omitted.
       let sealedName: { ciphertext: string; envelope: unknown } | null | undefined
@@ -654,6 +666,7 @@ export function createStreamHandlers({
         displayName,
         slug,
         description,
+        descriptionJson,
         visibility,
         memoryMode,
         sealedName,

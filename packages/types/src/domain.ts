@@ -174,7 +174,15 @@ export interface Stream {
   type: StreamType
   displayName: string | null
   slug: string | null
+  /** Markdown projection of the description (derived from `descriptionJson`). */
   description: string | null
+  /**
+   * Canonical rich-text description (ProseMirror), mirroring `Message.contentJson`.
+   * `null` when the stream has no rich description; absent on cached rows synced
+   * before rich descriptions shipped — render those from `description` markdown.
+   * The backend always sends it (possibly `null`) on a freshly-fetched stream.
+   */
+  descriptionJson?: ThreaDocument | null
   visibility: Visibility
   parentStreamId: string | null
   parentMessageId: string | null

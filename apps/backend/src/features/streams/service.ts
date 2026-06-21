@@ -1,7 +1,14 @@
 import { z } from "zod"
 import { Pool } from "pg"
 import { withClient, withTransaction, type Querier } from "../../db"
-import { StreamRepository, Stream, StreamWithPreview, LastMessagePreview, type DmPeer } from "./repository"
+import {
+  StreamRepository,
+  Stream,
+  StreamWithPreview,
+  LastMessagePreview,
+  type DmPeer,
+  type UpdateStreamParams,
+} from "./repository"
 import { StreamMemberRepository, StreamMember } from "./member-repository"
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
 import { MessageRepository } from "../messaging"
@@ -39,6 +46,7 @@ import {
   type E2eKeyRollInput,
   type E2eActorRewrapInput,
   type ToolPrivacyPolicy,
+  type JSONContent,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -53,6 +61,7 @@ import { BotRepository } from "../public-api/bot-repository"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, memoryModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 import { StreamPoliciesRepository } from "./policy-repository"
+import { normalizeStreamDescription } from "./description"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
@@ -425,12 +434,14 @@ export class StreamService {
   async createScratchpadInTransaction(db: Querier, params: CreateScratchpadParams): Promise<Stream> {
     const id = streamId()
 
+    const description = normalizeStreamDescription({ description: params.description })
     const stream = await StreamRepository.insert(db, {
       id,
       workspaceId: params.workspaceId,
       type: StreamTypes.SCRATCHPAD,
       displayName: params.displayName,
-      description: params.description,
+      description: description?.description ?? undefined,
+      descriptionJson: description?.descriptionJson ?? undefined,
       visibility: Visibilities.PRIVATE,
       companionMode: params.companionMode ?? CompanionModes.OFF,
       companionPersonaId: params.companionPersonaId,
@@ -496,12 +507,14 @@ export class StreamService {
         throw new DuplicateSlugError(params.slug)
       }
 
+      const description = normalizeStreamDescription({ description: params.description })
       const stream = await StreamRepository.insert(client, {
         id,
         workspaceId: params.workspaceId,
         type: StreamTypes.CHANNEL,
         slug: params.slug,
-        description: params.description,
+        description: description?.description ?? undefined,
+        descriptionJson: description?.descriptionJson ?? undefined,
         visibility: params.visibility ?? Visibilities.PUBLIC,
         createdBy: params.createdBy,
       })
@@ -802,7 +815,10 @@ export class StreamService {
     data: {
       displayName?: string | null
       slug?: string
+      /** Markdown description (external/wire). Derived to `descriptionJson`. */
       description?: string
+      /** Rich-text description (ProseMirror), canonical internal input. */
+      descriptionJson?: JSONContent
       visibility?: Visibility
       memoryMode?: MemoryMode
       /**
@@ -816,7 +832,13 @@ export class StreamService {
       sealedName?: { ciphertext: string; envelope: unknown } | null
     }
   ): Promise<Stream | null> {
-    const { sealedName, ...streamData } = data
+    const { sealedName, description, descriptionJson, ...rest } = data
+    const streamData: UpdateStreamParams = { ...rest }
+    const normalizedDescription = normalizeStreamDescription({ description, descriptionJson })
+    if (normalizedDescription) {
+      streamData.description = normalizedDescription.description
+      streamData.descriptionJson = normalizedDescription.descriptionJson
+    }
     if (sealedName) {
       // Setting a sealed name is a sealed-only E2E rename: the authoritative name
       // lives in the ciphertext, so scrub the plaintext `display_name` to null —

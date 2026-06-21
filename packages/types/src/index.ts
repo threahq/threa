@@ -8,6 +8,7 @@ export {
   type StreamType,
   StreamTypes,
   DM_PARTICIPANT_COUNT,
+  STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
   // Visibility
   VISIBILITY_OPTIONS,
   type Visibility,
