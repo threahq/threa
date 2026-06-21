@@ -24,6 +24,7 @@ import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
 import { OperationLeaseRepository } from "../../lib/operation-leases"
 import { resolveMentionContent } from "../mentions"
+import { deriveContentMarkdown } from "./content"
 import {
   AuthorTypes,
   CompanionModes,
@@ -468,9 +469,14 @@ export class EventService {
 
     // Rewrite slug-only mention/channel ids to authoritative actor/stream ids
     // (INV-64) before the body feeds projections, mention extraction, and the
-    // outbox payload. No-op when ids are already resolved (rich-client writes);
-    // markdown is untouched because slugs are unchanged.
-    params.contentJson = (await resolveMentionContent(client, params.workspaceId, params.contentJson)).contentJson
+    // outbox payload. No-op when ids are already resolved (rich-client writes).
+    // When resolution changes an id, re-derive the markdown so the wire form
+    // (`[@slug](user:usr_x)`) stays consistent with the JSON.
+    const resolvedCreate = await resolveMentionContent(client, params.workspaceId, params.contentJson)
+    if (resolvedCreate.changed) {
+      params.contentJson = resolvedCreate.contentJson
+      params.contentMarkdown = deriveContentMarkdown(resolvedCreate.contentJson)
+    }
 
     // Validate attachments before creating the event. Two flavors:
     // - "new" (`messageId === null`): fresh upload, ownership anchored to this
@@ -734,9 +740,13 @@ export class EventService {
       const actorType = await this.resolveActorType(client, params.streamId, params.actorId, params.actorType, existing)
 
       // Resolve slug-only mention/channel ids before the edited body feeds the
-      // event payload, projection, and outbox (INV-64). No-op when already
-      // resolved; markdown is unchanged (slugs are stable).
-      params.contentJson = (await resolveMentionContent(client, params.workspaceId, params.contentJson)).contentJson
+      // event payload, projection, and outbox (INV-64). When resolution changes
+      // an id, re-derive the markdown so the stored wire form matches the JSON.
+      const resolvedEdit = await resolveMentionContent(client, params.workspaceId, params.contentJson)
+      if (resolvedEdit.changed) {
+        params.contentJson = resolvedEdit.contentJson
+        params.contentMarkdown = deriveContentMarkdown(resolvedEdit.contentJson)
+      }
 
       await MessageVersionRepository.insert(client, {
         id: messageVersionId(),

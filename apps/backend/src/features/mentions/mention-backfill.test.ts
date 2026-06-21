@@ -52,6 +52,7 @@ describe("resolveContentRows", () => {
           type: "mention",
           attrs: { id: "persona_system_ariadne", slug: "ariadne", mentionType: "persona" },
         }),
+        contentMarkdown: "[@ariadne](persona:persona_system_ariadne)",
       },
     ])
   })
@@ -68,6 +69,7 @@ describe("resolveContentRows", () => {
           type: "mention",
           attrs: { id: "broadcast:here", slug: "here", mentionType: "broadcast" },
         }),
+        contentMarkdown: "[@here](broadcast:here)",
       },
     ])
   })

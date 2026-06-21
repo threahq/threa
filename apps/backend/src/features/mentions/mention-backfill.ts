@@ -2,6 +2,11 @@ import type { JSONContent } from "@threa/types"
 import { collectUnresolvedChannelLinkSlugs, collectUnresolvedMentionSlugs } from "@threa/prosemirror"
 import { sql } from "../../db"
 import { registerBackfill, type BackfillContext } from "../../lib/backfill"
+// Barrel import (INV-52). The messaging barrel exports `deriveContentMarkdown`
+// before `EventService`, so this resolves cleanly despite the messaging↔mentions
+// cycle (event-service imports this feature's resolver) — the binding is only
+// used at runtime inside `processChunk`, never at module init.
+import { deriveContentMarkdown } from "../messaging"
 import { applyMentionResolution, buildMentionResolutionMaps, type MentionResolutionMaps } from "./resolution"
 
 export const MENTION_BACKFILL_NAME = "mention-actor-refs"
@@ -83,11 +88,13 @@ function selectRowsQuery(table: BackfillTable, workspaceId: string, ids: string[
 export function resolveContentRows(
   rows: ContentRow[],
   maps: MentionResolutionMaps
-): Array<{ id: string; contentJson: JSONContent }> {
-  const updates: Array<{ id: string; contentJson: JSONContent }> = []
+): Array<{ id: string; contentJson: JSONContent; contentMarkdown: string }> {
+  const updates: Array<{ id: string; contentJson: JSONContent; contentMarkdown: string }> = []
   for (const row of rows) {
     const { contentJson, changed } = applyMentionResolution(row.content_json, maps)
-    if (changed) updates.push({ id: row.id, contentJson })
+    // Re-derive markdown so the stored wire form (`[@slug](user:usr_x)`) stays
+    // consistent with the rewritten JSON — the id now rides on the markdown too.
+    if (changed) updates.push({ id: row.id, contentJson, contentMarkdown: deriveContentMarkdown(contentJson) })
   }
   return updates
 }
@@ -140,7 +147,9 @@ async function processChunk(
   const updates = resolveContentRows(rows, maps)
   for (const update of updates) {
     await ctx.pool.query(
-      sql`UPDATE ${sql.raw(table)} SET content_json = ${JSON.stringify(update.contentJson)} WHERE id = ${update.id}`
+      sql`UPDATE ${sql.raw(table)}
+          SET content_json = ${JSON.stringify(update.contentJson)}, content_markdown = ${update.contentMarkdown}
+          WHERE id = ${update.id}`
     )
   }
 
