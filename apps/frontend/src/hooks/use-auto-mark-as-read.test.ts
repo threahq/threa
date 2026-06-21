@@ -4,6 +4,7 @@ import { useAutoMarkAsRead } from "./use-auto-mark-as-read"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "../lib/sw-messages"
 import * as useUnreadCountsModule from "./use-unread-counts"
 import * as useActivityCountsModule from "./use-activity-counts"
+import * as useMobileModule from "./use-mobile"
 
 const mockMarkAsRead = vi.fn()
 const mockGetUnreadCount = vi.fn()
@@ -14,6 +15,10 @@ let unreadCount = 1
 let activityCount = 0
 let hasFocus = true
 let visibilityState: DocumentVisibilityState = "visible"
+// Device shape — drives the phone-like focus relaxation. Defaults are a desktop
+// (fine pointer, wide viewport): focus is required. Touch/tablet tests flip these.
+let isMobileViewport = false
+let isCoarsePointer = false
 
 const originalVisibilityState = Object.getOwnPropertyDescriptor(document, "visibilityState")
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
@@ -39,9 +44,14 @@ describe("useAutoMarkAsRead", () => {
     activityCount = 0
     hasFocus = true
     visibilityState = "visible"
+    isMobileViewport = false
+    isCoarsePointer = false
 
     mockGetUnreadCount.mockImplementation(() => unreadCount)
     mockGetActivityCount.mockImplementation(() => activityCount)
+
+    vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileViewport)
+    vi.spyOn(useMobileModule, "useIsCoarsePointer").mockImplementation(() => isCoarsePointer)
 
     vi.spyOn(useUnreadCountsModule, "useUnreadCounts").mockReturnValue({
       markAsRead: mockMarkAsRead,
@@ -116,6 +126,62 @@ describe("useAutoMarkAsRead", () => {
 
     expect(mockMarkAsRead).not.toHaveBeenCalled()
     expect(mockPostMessage).not.toHaveBeenCalled()
+  })
+
+  it("marks read on a phone-like device (coarse + narrow) that is visible but reports no focus", () => {
+    // Mobile browsers / installed PWAs routinely report `document.hasFocus()` ===
+    // false while the page is the foreground the user is looking at (and the
+    // resume `focus` event often never fires). On a phone-like device, visible
+    // must be enough — otherwise auto-mark wedges off and a stream the user is
+    // clearly reading stays unread (a persisted mark-unread divider stuck red
+    // across a cold app resume).
+    hasFocus = false
+    isMobileViewport = true
+    isCoarsePointer = true
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123"))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: false })
+  })
+
+  it("does NOT mark read on a coarse-but-wide device (tablet / iPad split view) while unfocused", () => {
+    // A coarse pointer alone is not "phone-like": an iPad in Split View / Stage
+    // Manager is coarse but wide, and an unfocused pane there means the user is
+    // working in the OTHER app — exactly the false-positive the focus gate
+    // exists to prevent. The relaxation requires BOTH coarse and a phone-width
+    // viewport, so a wide coarse device stays focus-gated.
+    hasFocus = false
+    isCoarsePointer = true
+    isMobileViewport = false
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123"))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
+  it("does NOT mark read on a phone-like device while the tab is hidden", () => {
+    // The phone relaxation drops only the FOCUS requirement, never visibility —
+    // a backgrounded PWA the user has switched away from must not auto-read.
+    hasFocus = false
+    visibilityState = "hidden"
+    isMobileViewport = true
+    isCoarsePointer = true
+
+    renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123"))
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
   })
 
   it("waits until the tab is visible and focused again before sending the read event", () => {

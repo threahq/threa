@@ -48,6 +48,16 @@ interface UseLastSeenEventOptions {
   /** The owned scroll container (virtualized timeline or plain thread scroller). */
   scrollContainerRef: React.RefObject<HTMLElement | null>
   /**
+   * The mounted scroller element as reactive state, when the owner tracks it
+   * (the virtualized timeline late-mounts its scroller via a ref callback). The
+   * attach effect depends on it so the scroll listener + ResizeObserver are
+   * armed once the element actually exists — a ref alone never re-runs the
+   * effect, so a window that fits the viewport (no scroll to re-trigger a scan)
+   * would otherwise never advance the frontier. `null` for owners whose scroller
+   * mounts synchronously with `enabled` (the plain thread scroller).
+   */
+  scrollContainerEl?: HTMLElement | null
+  /**
    * The scrolling content box inside the container (its height = scrollHeight).
    * Observed for size changes so the scan re-runs when rows grow after the last
    * scroll — the open-at-bottom settle finishing, or async embeds (link/GitHub
@@ -96,6 +106,7 @@ interface UseLastSeenEventResult {
  */
 export function useLastSeenEvent({
   scrollContainerRef,
+  scrollContainerEl,
   contentRef,
   events,
   streamId,
@@ -228,10 +239,14 @@ export function useLastSeenEvent({
 
   // Attach the scroll listener and seed an initial scan. The initial scan covers
   // a window that fits the viewport with no scroll (no scroll event would fire).
-  // `enabled` flips true exactly when the scroller is mounted, so the ref is live.
+  // The virtualized timeline late-mounts its scroller AFTER `enabled` flips, so
+  // this effect depends on the mounted element (`scrollContainerEl`), not just
+  // `enabled`: a ref change never re-runs an effect, so without the element dep
+  // the ResizeObserver would arm against a null scroller and a viewport-fitting
+  // window (no scroll to re-trigger a scan) would never advance the frontier.
   useEffect(() => {
     if (!enabled) return
-    const el = scrollContainerRef.current
+    const el = scrollContainerEl ?? scrollContainerRef.current
     let raf = 0
     const schedule = () => {
       if (raf) return
@@ -264,7 +279,7 @@ export function useLastSeenEvent({
       el?.removeEventListener("scroll", onScroll)
       ro?.disconnect()
     }
-  }, [enabled, streamId, recompute, scrollContainerRef, contentRef])
+  }, [enabled, streamId, recompute, scrollContainerRef, scrollContainerEl, contentRef])
 
   // Re-scan when the window grows (live append) or the read pointer moves under
   // us (external read), so the frontier and the affordance stay current.

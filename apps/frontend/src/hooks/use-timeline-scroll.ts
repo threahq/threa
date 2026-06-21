@@ -65,6 +65,11 @@ interface UseTimelineScrollReturn {
   /** Ref callback for the scrollable `<div>` — use as its `ref`. Keeps
    *  `scrollerRef` current and re-arms the ResizeObserver once it mounts. */
   registerScroller: (node: HTMLDivElement | null) => void
+  /** The mounted scroller element as reactive state (null until virtua mounts
+   *  it). Consumers whose effects must re-run when the scroller late-mounts
+   *  (e.g. the read-frontier scan in `useLastSeenEvent`) depend on this, not the
+   *  ref — a ref change does not re-run an effect. */
+  scrollerEl: HTMLDivElement | null
   /** Ref for the inner content wrapper (sized to the full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
   /**
@@ -546,6 +551,7 @@ export function useTimelineScroll({
     listRef,
     scrollerRef,
     registerScroller,
+    scrollerEl,
     contentRef,
     shift,
     isScrolledFarFromBottom,
