@@ -85,8 +85,9 @@ export function buildInstructions(permissionRelay: boolean): string {
     "",
     "For each such event:",
     "- Do the work it asks for in this session, against the real files.",
-    "- Then call the `reply` tool exactly once, passing the `invocation_id` from that event's tag and your answer as `text`. The reply tool is the ONLY way your answer reaches the user, and it closes the request on Threa — so always reply, even with a short acknowledgement.",
-    "- One reply per invocation_id. If several events arrive together, reply to each by its own id.",
+    "- While you work, call the `send` tool to post progress or intermediate messages back to the scratchpad (passing the same `invocation_id`). It does NOT close the request, so you can call it as many times as you like — use it for partial answers, status on a long task, or anything worth surfacing before you're done. On a long task, send something periodically: it keeps the user informed and keeps the request from being closed for inactivity.",
+    "- When you are finished, call the `reply` tool exactly once with the `invocation_id` and your final answer. `reply` posts the message AND closes the request on Threa, so call it last. If you have nothing to add after your `send` messages, still call `reply` (a short 'Done.' is fine) to close cleanly.",
+    "- One `reply` per invocation_id. If several events arrive together, answer each by its own id.",
     "",
     "Attachments. If a message has attachments, the channel downloads them into the working directory and lists each local path under the event — read them from those paths. To send a local file back, add a line `THREA_ATTACH: path/to/file` to your reply text (one per file; paths resolve against the working directory); the channel uploads it and replaces the line with an attachment link.",
   ]
@@ -101,7 +102,13 @@ export function buildInstructions(permissionRelay: boolean): string {
 
 interface Inflight {
   invocation: ClaimedInvocation
+  // Idle-timeout timer; reset on every sign of life (a `send`, a permission
+  // request) so an actively-working turn is never reaped, only a silent one.
   deadline: ReturnType<typeof setTimeout>
+  // Count of interim `send` messages posted during this turn. When the idle
+  // timeout fires after at least one send, the turn closes silently instead of
+  // posting the "ended without a reply" notice — the user already heard from it.
+  sentCount: number
   // The reply after THREA_ATTACH uploads, cached when a complete() fails so the
   // retry reuses the same uploads instead of orphaning a fresh copy each time.
   prepared?: { markdown: string; attachmentIds: string[] }
@@ -158,9 +165,25 @@ export class ChannelServer {
     this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
+          name: "send",
+          description:
+            "Post a progress or intermediate message to the Threa scratchpad WITHOUT closing the request. Call as many times as you like during a turn; finish with `reply`.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              invocation_id: {
+                type: "string",
+                description: "The invocation_id from the <channel> event you are working on.",
+              },
+              text: { type: "string", description: "The message to post, as markdown." },
+            },
+            required: ["invocation_id", "text"],
+          },
+        },
+        {
           name: "reply",
           description:
-            "Send your answer back to the Threa scratchpad and close the request. Call once per invocation_id.",
+            "Post your final answer to the Threa scratchpad and close the request. Call once per invocation_id, last.",
           inputSchema: {
             type: "object",
             properties: {
@@ -177,7 +200,7 @@ export class ChannelServer {
     }))
 
     this.mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-      if (req.params.name !== "reply") {
+      if (req.params.name !== "reply" && req.params.name !== "send") {
         return { isError: true, content: [{ type: "text", text: `Unknown tool: ${req.params.name}` }] }
       }
       const args = (req.params.arguments ?? {}) as { invocation_id?: unknown; text?: unknown }
@@ -186,10 +209,10 @@ export class ChannelServer {
       if (!invocationId || !text.trim()) {
         return {
           isError: true,
-          content: [{ type: "text", text: "reply requires a non-empty invocation_id and text." }],
+          content: [{ type: "text", text: `${req.params.name} requires a non-empty invocation_id and text.` }],
         }
       }
-      return this.handleReply(invocationId, text)
+      return req.params.name === "send" ? this.handleSend(invocationId, text) : this.handleReply(invocationId, text)
     })
 
     if (this.config.permissionRelay) {
@@ -328,8 +351,11 @@ export class ChannelServer {
       }
     }
 
-    const deadline = setTimeout(() => void this.onReplyTimeout(invocation.id), this.config.replyTimeoutMs)
-    this.inflight.set(invocation.id, { invocation, deadline })
+    this.inflight.set(invocation.id, {
+      invocation,
+      deadline: this.scheduleIdleTimeout(invocation.id),
+      sentCount: 0,
+    })
     // This is the turn Claude is now executing; a permission prompt it triggers
     // belongs in this invocation's stream (see handlePermissionRequest).
     this.activeTurnStreamId = invocation.responseStreamId
@@ -377,6 +403,66 @@ export class ChannelServer {
     }
   }
 
+  // --- Send (interim) -------------------------------------------------------
+
+  /** Post a progress message into the turn's stream without closing the request. */
+  private async handleSend(
+    invocationId: string,
+    text: string
+  ): Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }> {
+    const entry = this.inflight.get(invocationId)
+    if (!entry) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `No open request with invocation_id ${invocationId} — interim messages need an open request (it may have been answered or closed).`,
+          },
+        ],
+      }
+    }
+    // Stable per-send client id so a retry after a network failure dedupes
+    // instead of double-posting; commit the counter only once the post lands.
+    const seq = entry.sentCount + 1
+    try {
+      const { markdown } = await uploadReplyAttachments(this.client, text, process.cwd())
+      await this.client.sendMessage(entry.invocation.responseStreamId, {
+        content: markdown,
+        clientMessageId: `ccsend-${invocationId}-${seq}`,
+        metadata: { "cc.channel.invocationId": invocationId, "cc.channel.interim": "true" },
+      })
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `Failed to post message to Threa: ${this.summarize(error)}` }],
+      }
+    }
+    // The idle timer can fire during the awaits above — unlike handleReply, which
+    // clears its deadline up front, this path must keep the turn open and can't.
+    // If it fired, onReplyTimeout already removed this entry and completed the
+    // turn, so the message we just posted landed on a closed turn. Report that
+    // instead of a clean "sent" (and don't touch the dead entry), so Claude
+    // doesn't then try to reply to a request that's gone.
+    const live = this.inflight.get(invocationId)
+    if (!live) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Message posted, but request ${invocationId} had already closed for inactivity — it is complete; do not reply to it.`,
+          },
+        ],
+      }
+    }
+    live.sentCount = seq
+    // A send is a sign of life: push the idle timeout out so a turn that keeps
+    // posting progress is never force-closed.
+    this.touchIdleTimeout(invocationId)
+    return { content: [{ type: "text", text: "sent" }] }
+  }
+
   // --- Reply ----------------------------------------------------------------
 
   private async handleReply(
@@ -421,8 +507,12 @@ export class ChannelServer {
     } catch (error) {
       // Re-arm (with a fresh deadline) so Claude can retry the reply. Safe from
       // double-complete because the original deadline was already cleared.
-      const deadline = setTimeout(() => void this.onReplyTimeout(invocationId), this.config.replyTimeoutMs)
-      this.inflight.set(invocationId, { invocation: entry.invocation, deadline, prepared })
+      this.inflight.set(invocationId, {
+        invocation: entry.invocation,
+        deadline: this.scheduleIdleTimeout(invocationId),
+        sentCount: entry.sentCount,
+        prepared,
+      })
       await this.syncPresence()
       return {
         isError: true,
@@ -436,15 +526,22 @@ export class ChannelServer {
     return { content: [{ type: "text", text: "sent" }] }
   }
 
+  /** Fired when a turn goes idle (no `reply`/`send`/permission activity) for the whole idle window. */
   private async onReplyTimeout(invocationId: string): Promise<void> {
     const entry = this.inflight.get(invocationId)
     if (!entry) return
     this.clearInflight(invocationId)
+    // If the turn already posted interim messages, the user has heard from it —
+    // close silently rather than posting a misleading "no reply" notice.
+    const closeBody =
+      entry.sentCount > 0
+        ? { noResponse: true }
+        : { finalMessageMarkdown: "_Claude Code ended the turn without sending a reply._" }
     await this.client
       .complete(invocationId, {
         instanceId: this.config.instanceId,
         claimToken: entry.invocation.claimToken,
-        finalMessageMarkdown: "_Claude Code ended the turn without sending a reply._",
+        ...closeBody,
         metadata: { "cc.channel.invocationId": invocationId, "cc.channel.timedOut": "true" },
       })
       .catch((error) => log(`timeout completion failed: ${this.summarize(error)}`))
@@ -459,6 +556,18 @@ export class ChannelServer {
     this.inflight.delete(invocationId)
   }
 
+  private scheduleIdleTimeout(invocationId: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => void this.onReplyTimeout(invocationId), this.config.idleTimeoutMs)
+  }
+
+  /** Reset an in-flight turn's idle timeout after a sign of life (a `send`, a permission prompt). */
+  private touchIdleTimeout(invocationId: string): void {
+    const entry = this.inflight.get(invocationId)
+    if (!entry) return
+    clearTimeout(entry.deadline)
+    entry.deadline = this.scheduleIdleTimeout(invocationId)
+  }
+
   // --- Permission relay -----------------------------------------------------
 
   private async handlePermissionRequest(params: z.infer<typeof PermissionRequestSchema>["params"]): Promise<void> {
@@ -466,11 +575,16 @@ export class ChannelServer {
     // reply), falling back to the scratchpad root.
     const targetStreamId = this.activeTurnStreamId ?? this.link?.rootStreamId
     if (!targetStreamId) return
-    // Drop the open request after the same window we give a reply, so an
+    // A pending tool approval is a sign of life: keep the turn it belongs to from
+    // being reaped for inactivity while it waits on the user's verdict.
+    for (const [id, entry] of this.inflight) {
+      if (entry.invocation.responseStreamId === targetStreamId) this.touchIdleTimeout(id)
+    }
+    // Drop the open request after the same idle window we give a turn, so an
     // abandoned/cancelled prompt the user never answers doesn't leak forever.
     const existing = this.openPermissions.get(params.request_id)
     if (existing) clearTimeout(existing.cleanup)
-    const cleanup = setTimeout(() => this.openPermissions.delete(params.request_id), this.config.replyTimeoutMs)
+    const cleanup = setTimeout(() => this.openPermissions.delete(params.request_id), this.config.idleTimeoutMs)
     this.openPermissions.set(params.request_id, { cleanup })
     const preview = params.input_preview ? `\n\n\`${params.input_preview.slice(0, 200)}\`` : ""
     const content = [

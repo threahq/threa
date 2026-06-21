@@ -20,8 +20,15 @@ export interface ThreaChannelConfig {
   permissionRelay: boolean
   /** Backstop claim-poll cadence; the `/bot` socket pushes work faster than this. */
   pollMs: number
-  /** Safety net: an in-flight invocation with no `reply` is force-closed after this. */
-  replyTimeoutMs: number
+  /**
+   * Safety net for a wedged turn: an in-flight invocation is force-closed after
+   * this much *inactivity*. Every `send` (and tool-approval activity) resets it,
+   * so an actively-working turn never trips it — only one that went silent
+   * without a `reply`. Must exceed the longest single tool call Claude makes
+   * (e.g. a long test run), since Claude can't `send` a heartbeat while blocked
+   * on a tool.
+   */
+  idleTimeoutMs: number
 }
 
 const UNSAFE_ID_CHARS = /[^A-Za-z0-9_-]+/g
@@ -56,7 +63,7 @@ export interface RawConfig {
   defaultLabel?: unknown
   permissionRelay?: unknown
   pollMs?: unknown
-  replyTimeoutMs?: unknown
+  idleTimeoutMs?: unknown
   instanceId?: unknown
   runtimeSessionId?: unknown
 }
@@ -138,7 +145,7 @@ export function loadConfig(input: LoadConfigInput): LoadConfigResult {
       runtimeSessionId,
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),
       pollMs: parseNum(env.THREA_POLL_MS ?? file.pollMs, 3000, 1000),
-      replyTimeoutMs: parseNum(env.THREA_REPLY_TIMEOUT_MS ?? file.replyTimeoutMs, 1_800_000, 60_000),
+      idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
     },
   }
 }
