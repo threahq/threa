@@ -28,6 +28,17 @@ interface PreviewAnchorProps {
   onTouchCancel: () => void
   onContextMenu: (e: React.MouseEvent) => void
   onClickCapture: (e: React.MouseEvent) => void
+  style: React.CSSProperties
+}
+
+// Hold-to-preview must not trip the browser's native text selection / iOS
+// callout on the held label — the gesture is "reveal the name", not "select
+// it". Touch-only (anchorProps is null on fine pointers), so desktop selection
+// is untouched. The tap-to-edit / open / navigate action still fires on release.
+const ANCHOR_STYLE: React.CSSProperties = {
+  WebkitUserSelect: "none",
+  userSelect: "none",
+  WebkitTouchCallout: "none",
 }
 
 interface UseStreamTitlePreviewResult {
@@ -106,6 +117,7 @@ export function useStreamTitlePreview(name: string): UseStreamTitlePreviewResult
   const close = () => setAnchor(null)
   const anchorProps: PreviewAnchorProps = {
     ref: setAnchorEl,
+    style: ANCHOR_STYLE,
     onTouchStart: (e) => {
       firedRef.current = false
       longPress.handlers.onTouchStart(e)

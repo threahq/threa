@@ -109,6 +109,30 @@ describe("StreamTitlePreview", () => {
     expect(screen.getAllByText(LONG_NAME)).toHaveLength(1)
   })
 
+  it("disables text selection on the held title (touch) so a hold previews instead of selecting", () => {
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+    render(
+      <StreamTitlePreview name={LONG_NAME}>
+        <h1 className="truncate">{LONG_NAME}</h1>
+      </StreamTitlePreview>
+    )
+
+    const title = screen.getByRole("heading", { name: LONG_NAME })
+    expect(title.style.userSelect).toBe("none")
+  })
+
+  it("leaves text selectable on a fine pointer (no select suppression)", () => {
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(false)
+    render(
+      <StreamTitlePreview name={LONG_NAME}>
+        <h1 className="truncate">{LONG_NAME}</h1>
+      </StreamTitlePreview>
+    )
+
+    const title = screen.getByRole("heading", { name: LONG_NAME })
+    expect(title.style.userSelect).toBe("")
+  })
+
   it("grows inside the enclosing title bar (<header>), not as a detached overlay", () => {
     vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
     render(
