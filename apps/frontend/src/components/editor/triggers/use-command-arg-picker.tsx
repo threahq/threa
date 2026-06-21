@@ -39,10 +39,17 @@ interface ArgPickerState {
   query: string
 }
 
-function caretClientRect(editor: Editor | null): DOMRect | null {
+/**
+ * Rect of a fixed doc position. The picker anchors to `anchorPos` (the start of
+ * the argument, just after the `/command ` chip) rather than the live caret, so
+ * it stays put as the user types the filter — matching the trigger-anchored
+ * @mention / /command popovers instead of marching right per keystroke (INV-21).
+ * Measured live, so it still follows scroll.
+ */
+function posClientRect(editor: Editor | null, pos: number): DOMRect | null {
   if (!editor || editor.isDestroyed) return null
   try {
-    const coords = editor.view.coordsAtPos(editor.state.selection.from)
+    const coords = editor.view.coordsAtPos(pos)
     return new DOMRect(coords.left, coords.top, 0, coords.bottom - coords.top)
   } catch {
     return null
@@ -167,7 +174,7 @@ export function useCommandArgPicker(editorRef: RefObject<Editor | null>): UseCom
       <CommandArgPicker
         ref={listRef}
         items={items}
-        clientRect={() => caretClientRect(editorRef.current)}
+        clientRect={() => posClientRect(editorRef.current, state.anchorPos)}
         command={(suggestion) => select(suggestion.value)}
       />,
       document.body
