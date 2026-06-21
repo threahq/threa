@@ -47,7 +47,7 @@ import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
-import { calculateUrgency, categorizeStream } from "./utils"
+import { calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./utils"
 import type { StreamItemData } from "./types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
@@ -123,15 +123,19 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
+  // Archiving a stream marks only that row; its thread descendants stay "active"
+  // and would otherwise still surface in the sidebar. A thread inherits its root
+  // via `rootStreamId`, so one lookup hides every nested thread under an archived
+  // root (scratchpad, channel, or any top-level stream).
+  const archivedStreamIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const stream of idbStreams) if (stream.archivedAt) ids.add(stream.id)
+    return ids
+  }, [idbStreams])
 
   const processedStreams = useMemo(() => {
     return idbStreams
-      .filter((stream) => {
-        if (stream.archivedAt) return false
-        // Non-public streams always appear (bootstrap only includes them if user has access)
-        if (stream.visibility !== Visibilities.PUBLIC) return true
-        return memberStreamIds.has(stream.id)
-      })
+      .filter((stream) => isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds))
       .map((stream): StreamItemData => {
         const streamWithPreview = { ...stream, lastMessagePreview: stream.lastMessagePreview ?? null }
         const unreadCount = getUnreadCount(stream.id)
@@ -161,6 +165,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       })
   }, [
     idbStreams,
+    archivedStreamIds,
     memberStreamIds,
     mutedStreamIdSet,
     getUnreadCount,
