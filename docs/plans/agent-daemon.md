@@ -20,14 +20,17 @@ bun apps/agent-daemon/src/index.ts attach <agent-id-or-name>
 bun apps/agent-daemon/src/index.ts stop <agent-id-or-name>
 ```
 
-The CLI delegates to the existing global skill scripts:
+The CLI delegates to the existing global skill scripts. By default it looks under `~/dev/personal/pi-extensions`; override with:
 
-- `/Users/kristofferremback/dev/personal/pi-extensions/skills/spawn-pi-remote-worktree/spawn.sh`
-- `/Users/kristofferremback/dev/personal/pi-extensions/skills/spawn-claude-channel-worktree/spawn.sh`
+- `THREA_AGENTD_PI_EXTENSIONS_DIR`
+- `THREA_AGENTD_PI_SPAWN_SCRIPT`
+- `THREA_AGENTD_CLAUDE_SPAWN_SCRIPT`
 
 ## Inventory
 
 V1 inventory is SQLite at `~/.threa/agentd/inventory.sqlite` unless overridden by `THREA_AGENTD_INVENTORY`.
+
+`attach` switches the current tmux client to the managed agent window when already inside tmux. Outside tmux, it selects the window and attaches to the recorded tmux session.
 
 Tracked fields:
 

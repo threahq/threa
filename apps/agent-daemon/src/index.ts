@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 
 import { Database } from "bun:sqlite"
+import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 
-const PI_SPAWN_SCRIPT = "/Users/kristofferremback/dev/personal/pi-extensions/skills/spawn-pi-remote-worktree/spawn.sh"
-const CLAUDE_SPAWN_SCRIPT =
-  "/Users/kristofferremback/dev/personal/pi-extensions/skills/spawn-claude-channel-worktree/spawn.sh"
+const DEFAULT_PI_EXTENSIONS_DIR = `${homedir()}/dev/personal/pi-extensions`
 const DEFAULT_INVENTORY_PATH = `${homedir()}/.threa/agentd/inventory.sqlite`
 
 type RuntimeKind = "pi" | "claude"
@@ -73,6 +72,20 @@ function now(): string {
 
 function inventoryPath(): string {
   return process.env.THREA_AGENTD_INVENTORY || DEFAULT_INVENTORY_PATH
+}
+
+function piExtensionsDir(): string {
+  return process.env.THREA_AGENTD_PI_EXTENSIONS_DIR || DEFAULT_PI_EXTENSIONS_DIR
+}
+
+function piSpawnScript(): string {
+  return process.env.THREA_AGENTD_PI_SPAWN_SCRIPT || `${piExtensionsDir()}/skills/spawn-pi-remote-worktree/spawn.sh`
+}
+
+function claudeSpawnScript(): string {
+  return (
+    process.env.THREA_AGENTD_CLAUDE_SPAWN_SCRIPT || `${piExtensionsDir()}/skills/spawn-claude-channel-worktree/spawn.sh`
+  )
 }
 
 function openInventory(): Database {
@@ -263,7 +276,7 @@ function parseSpawn(args: string[]): SpawnOptions {
 }
 
 function buildSpawnCommand(options: SpawnOptions): string[] {
-  const script = options.runtime === "pi" ? PI_SPAWN_SCRIPT : CLAUDE_SPAWN_SCRIPT
+  const script = options.runtime === "pi" ? piSpawnScript() : claudeSpawnScript()
   const command = ["bash", script, options.name]
   command.push("--repo", options.repo ?? defaultRepo())
   if (options.branch) command.push("--branch", options.branch)
@@ -292,11 +305,12 @@ function parseSpawnOutput(output: string): Partial<ManagedAgent> {
 }
 
 async function spawnAgent(options: SpawnOptions): Promise<void> {
-  if (!existsSync(options.runtime === "pi" ? PI_SPAWN_SCRIPT : CLAUDE_SPAWN_SCRIPT)) {
-    die(`spawn script missing for ${options.runtime}`)
+  const script = options.runtime === "pi" ? piSpawnScript() : claudeSpawnScript()
+  if (!existsSync(script)) {
+    die(`spawn script missing for ${options.runtime}: ${script}`)
   }
   const command = buildSpawnCommand(options)
-  const id = `${options.runtime}-${Date.now()}`
+  const id = `${options.runtime}-${Date.now()}-${randomUUID().slice(0, 8)}`
   const createdAt = now()
   const agent: ManagedAgent = {
     id,
@@ -324,7 +338,11 @@ async function spawnAgent(options: SpawnOptions): Promise<void> {
   const finalStatus: AgentStatus = exitCode === 0 ? "online" : "error"
   upsertAgent({
     ...agent,
-    ...parsed,
+    worktree: parsed.worktree ?? agent.worktree,
+    branch: parsed.branch ?? agent.branch,
+    tmuxSession: parsed.tmuxSession ?? agent.tmuxSession,
+    tmuxWindow: parsed.tmuxWindow ?? agent.tmuxWindow,
+    scratchpadUrl: parsed.scratchpadUrl ?? agent.scratchpadUrl,
     status: finalStatus,
     updatedAt: now(),
     lastOutput: output.slice(-4000),
@@ -360,8 +378,21 @@ function stopAgent(ref: string): void {
 function attachAgent(ref: string): void {
   const agent = findAgent(ref)
   if (!agent.tmuxSession || !agent.tmuxWindow) die(`${agent.name} has no tmux target recorded`)
-  console.log(`tmux select-window -t '${agent.tmuxSession}:${agent.tmuxWindow}'`)
-  if (agent.scratchpadUrl) console.log(agent.scratchpadUrl)
+  const target = `${agent.tmuxSession}:${agent.tmuxWindow}`
+  if (process.env.TMUX) {
+    const result = Bun.spawnSync(["tmux", "switch-client", "-t", target], { stdout: "inherit", stderr: "pipe" })
+    if (result.exitCode !== 0) die(result.stderr.toString().trim() || `tmux switch-client failed for ${target}`)
+    return
+  }
+
+  const select = Bun.spawnSync(["tmux", "select-window", "-t", target], { stdout: "pipe", stderr: "pipe" })
+  if (select.exitCode !== 0) die(select.stderr.toString().trim() || `tmux select-window failed for ${target}`)
+  const attach = Bun.spawnSync(["tmux", "attach-session", "-t", agent.tmuxSession], {
+    stdout: "inherit",
+    stderr: "pipe",
+  })
+  if (attach.exitCode !== 0)
+    die(attach.stderr.toString().trim() || `tmux attach-session failed for ${agent.tmuxSession}`)
 }
 
 function commandExists(name: string): boolean {
@@ -374,10 +405,10 @@ function doctor(): void {
     ["bun", commandExists("bun"), "required"],
     ["git", commandExists("git"), "required"],
     ["tmux", commandExists("tmux"), "required"],
-    ["pi", existsSync("/Users/kristofferremback/.bun/bin/pi") || commandExists("pi"), "needed for Pi agents"],
+    ["pi", commandExists("pi"), "needed for Pi agents"],
     ["claude", commandExists("claude"), "needed for Claude agents"],
-    ["pi spawn script", existsSync(PI_SPAWN_SCRIPT), PI_SPAWN_SCRIPT],
-    ["claude spawn script", existsSync(CLAUDE_SPAWN_SCRIPT), CLAUDE_SPAWN_SCRIPT],
+    ["pi spawn script", existsSync(piSpawnScript()), piSpawnScript()],
+    ["claude spawn script", existsSync(claudeSpawnScript()), claudeSpawnScript()],
     ["tmux session 0", Bun.spawnSync(["tmux", "has-session", "-t", "0"]).exitCode === 0, "default target"],
   ]
   for (const [name, ok, note] of checks) {
