@@ -126,9 +126,9 @@ describe("useAutoMarkAsRead", () => {
     // user is clearly reading stays unread (a persisted mark-unread divider
     // stuck red across a cold app resume).
     hasFocus = false
-    const matchMediaSpy = vi
-      .spyOn(window, "matchMedia")
-      .mockImplementation((query: string) => ({ matches: query.includes("coarse"), media: query }) as MediaQueryList)
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query: string) => ({ matches: query.includes("coarse"), media: query }) as MediaQueryList
+    )
 
     renderHook(() => useAutoMarkAsRead("ws_123", "stream_123", "event_123"))
 
@@ -137,7 +137,6 @@ describe("useAutoMarkAsRead", () => {
     })
 
     expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_123", { partial: false })
-    matchMediaSpy.mockRestore()
   })
 
   it("waits until the tab is visible and focused again before sending the read event", () => {
