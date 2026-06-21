@@ -96,12 +96,19 @@ export function useCommandSuggestion({
   includeSnippet = false,
   onOpenGiphy,
   onOpenSnippet,
+  onCommandPicked,
 }: {
   includeMemoSearch?: boolean
   includeGiphy?: boolean
   includeSnippet?: boolean
   onOpenGiphy?: () => void
   onOpenSnippet?: () => void
+  /**
+   * Fired after a command is inserted into the composer (post chip insertion).
+   * The host uses it to open the argument option picker for commands that
+   * advertise `args[].suggestions` (e.g. `/model`).
+   */
+  onCommandPicked?: (item: CommandItem) => void
 } = {}) {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   // Held in a ref so the `renderList` callback stays referentially stable (the
@@ -110,6 +117,8 @@ export function useCommandSuggestion({
   onOpenGiphyRef.current = onOpenGiphy
   const onOpenSnippetRef = useRef(onOpenSnippet)
   onOpenSnippetRef.current = onOpenSnippet
+  const onCommandPickedRef = useRef(onCommandPicked)
+  onCommandPickedRef.current = onCommandPicked
   const metadata = useWorkspaceMetadata(workspaceId)
   const queryClient = useQueryClient()
   const streamBootstrapKey = workspaceId && streamId ? streamKeys.bootstrap(workspaceId, streamId) : null
@@ -160,6 +169,7 @@ export function useCommandSuggestion({
         props.command(item)
         if (item.clientActionId === GIPHY_SLASH_ACTION) onOpenGiphyRef.current?.()
         if (item.clientActionId === SNIPPET_SLASH_ACTION) onOpenSnippetRef.current?.()
+        onCommandPickedRef.current?.(item)
       }
       return <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={command} />
     },
