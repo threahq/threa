@@ -219,6 +219,33 @@ describe("ChannelServer.handleSend", () => {
     expect(res.isError).toBe(true)
     expect(calls.sendMessage).toEqual([])
   })
+
+  test("reports a closed turn when the idle timeout fires mid-send", async () => {
+    const { client, calls } = makeFakeClient()
+    const server = new ChannelServer(makeConfig(), client)
+    const invocation = makeInvocation({ id: "binv_race", responseStreamId: "stream_turn" })
+    seedInflight(server, invocation)
+
+    // Simulate onReplyTimeout firing during the post: the entry is removed from
+    // the in-flight map while sendMessage is in flight.
+    ;(client as unknown as { sendMessage: (s: string, b: Record<string, unknown>) => Promise<void> }).sendMessage =
+      async (streamId, body) => {
+        ;(server as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_race")
+        calls.sendMessage.push({ streamId, body })
+      }
+
+    const res = (await (
+      server as unknown as {
+        handleSend: (id: string, text: string) => Promise<{ isError?: boolean; content: { text: string }[] }>
+      }
+    ).handleSend("binv_race", "progress")) as { isError?: boolean; content: { text: string }[] }
+
+    // The message still posted (it can't be un-posted), but the result is not a
+    // clean "sent" — it tells Claude the turn already closed.
+    expect(calls.sendMessage[0]?.streamId).toBe("stream_turn")
+    expect(res.isError).toBe(true)
+    expect(res.content[0]?.text).toContain("already closed")
+  })
 })
 
 describe("ChannelServer.onReplyTimeout", () => {

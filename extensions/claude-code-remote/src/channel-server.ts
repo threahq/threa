@@ -438,7 +438,25 @@ export class ChannelServer {
         content: [{ type: "text", text: `Failed to post message to Threa: ${this.summarize(error)}` }],
       }
     }
-    entry.sentCount = seq
+    // The idle timer can fire during the awaits above — unlike handleReply, which
+    // clears its deadline up front, this path must keep the turn open and can't.
+    // If it fired, onReplyTimeout already removed this entry and completed the
+    // turn, so the message we just posted landed on a closed turn. Report that
+    // instead of a clean "sent" (and don't touch the dead entry), so Claude
+    // doesn't then try to reply to a request that's gone.
+    const live = this.inflight.get(invocationId)
+    if (!live) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Message posted, but request ${invocationId} had already closed for inactivity — it is complete; do not reply to it.`,
+          },
+        ],
+      }
+    }
+    live.sentCount = seq
     // A send is a sign of life: push the idle timeout out so a turn that keeps
     // posting progress is never force-closed.
     this.touchIdleTimeout(invocationId)
