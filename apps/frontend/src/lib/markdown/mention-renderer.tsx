@@ -8,7 +8,7 @@ import { useIsKnownCommand } from "./command-list-context"
 import { MENTION_PATTERN, isValidSlug } from "@threa/types"
 
 // Colors match the design system kitchen sink.
-const triggerStyles = {
+export const triggerStyles = {
   user: "bg-[hsl(200_70%_50%/0.1)] text-[hsl(200_70%_50%)]",
   persona: "bg-primary/10 text-primary",
   bot: "bg-green-500/10 text-green-600 dark:text-green-400",
@@ -23,7 +23,7 @@ interface TriggerChipProps {
   text: string
 }
 
-const chipBase = "inline px-1 py-px rounded font-medium"
+export const chipBase = "inline px-1 py-px rounded font-medium"
 
 /** Channel chips render as links; mentions and commands render as spans. */
 function TriggerChip({ type, text }: TriggerChipProps) {

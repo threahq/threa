@@ -5,6 +5,7 @@ import { MessageEvent } from "./message-event"
 import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
+import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
 
 interface EventItemProps {
@@ -96,6 +97,13 @@ export function EventItem({
       return (
         <div data-event-id={event.id}>
           <MembershipEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
+
+    case "description_set":
+      return (
+        <div data-event-id={event.id}>
+          <DescriptionSetEvent event={event} workspaceId={workspaceId} />
         </div>
       )
 

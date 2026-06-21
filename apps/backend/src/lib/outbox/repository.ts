@@ -69,6 +69,7 @@ export type OutboxEventType =
   | "stream:member_added"
   | "stream:member_removed"
   | "stream:memos_captured"
+  | "stream:description_set"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -116,6 +117,7 @@ export type StreamScopedEventType =
   | "stream:member_added"
   | "stream:member_removed"
   | "stream:memos_captured"
+  | "stream:description_set"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -255,6 +257,15 @@ export interface StreamMemberRemovedOutboxPayload extends StreamScopedPayload {
  * rides along so clients append it without a fetch.
  */
 export interface StreamMemosCapturedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries a `description_set` timeline event to the stream's room. Same envelope
+ * shape as the membership/memos events: the full stream event rides along so
+ * clients append it without a fetch.
+ */
+export interface StreamDescriptionSetOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -765,6 +776,7 @@ export interface OutboxEventPayloadMap {
   "stream:member_added": StreamMemberAddedOutboxPayload
   "stream:member_removed": StreamMemberRemovedOutboxPayload
   "stream:memos_captured": StreamMemosCapturedOutboxPayload
+  "stream:description_set": StreamDescriptionSetOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -868,6 +880,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:member_added",
   "stream:member_removed",
   "stream:memos_captured",
+  "stream:description_set",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

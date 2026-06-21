@@ -1124,6 +1124,19 @@ export interface MemosCapturedEventPayload {
 }
 
 /**
+ * Payload for `description_set` timeline events: appended to a stream when an
+ * actor sets, changes, or clears its description, in the same transaction as the
+ * description write. Carries the markdown snapshot at the time it was set so the
+ * row renders the body with the normal message-markdown pipeline without a fetch
+ * (a point-in-time snapshot, like `message_created` carries the message body).
+ * The acting user is the event's `actorId`/`actorType`. `null` means the
+ * description was cleared ("X cleared the description").
+ */
+export interface DescriptionSetEventPayload {
+  descriptionMarkdown: string | null
+}
+
+/**
  * Provenance stamped onto a relocated `message_created` event payload by
  * the move flow. Surfaces a per-message origin badge in the destination
  * timeline without a join. Re-moves overwrite earlier provenance — we

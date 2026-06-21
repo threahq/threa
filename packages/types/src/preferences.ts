@@ -111,6 +111,12 @@ export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN = 0
 export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX = 500
 export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 
+// Stream-description collapse threshold - rendered line count above which a
+// "set the description" timeline event starts collapsed behind a Show more/less
+// toggle. Same line-count semantics as the code/quote thresholds; not yet a
+// user preference (no slider), so a single default rather than a stored value.
+export const DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD = 8
+
 // Voice polish level: how aggressively the polish model rewrites a finalized
 // dictation transcript. The id flows through the wire format and is mirrored
 // by the backend prompt builder.
