@@ -1747,6 +1747,18 @@ export function StreamContent({
     return () => clearTimeout(timer)
   }, [canStartHighlightClear, setSearchParams])
 
+  // Per-row read-state gating signal: the read pointer's sequence. null while
+  // the read state is unresolved or the pointer is outside the loaded window —
+  // rows then leave both read-state actions visible (see rowReadState).
+  const readFrontierSequence = useMemo<string | null>(() => {
+    if (lastReadEventId === undefined) return null
+    if (lastReadEventId === null) return "0"
+    // Resolve against the unfiltered events so a pointer on a row that's
+    // filtered out of the display still yields its sequence (else the gate
+    // would wrongly fall back to ungated).
+    return events.find((event) => event.id === lastReadEventId)?.sequence ?? null
+  }, [events, lastReadEventId])
+
   // Hard load error with nothing cached to fall back on. Placed after every
   // hook so the hook order stays stable: `error`/`idbStream` can toggle (a
   // failed fetch that later succeeds, or IDB resolving a beat after first
@@ -1761,18 +1773,6 @@ export function StreamContent({
       />
     )
   }
-
-  // Per-row read-state gating signal: the read pointer's sequence. null while
-  // the read state is unresolved or the pointer is outside the loaded window —
-  // rows then leave both read-state actions visible (see rowReadState).
-  const readFrontierSequence = useMemo<string | null>(() => {
-    if (lastReadEventId === undefined) return null
-    if (lastReadEventId === null) return "0"
-    // Resolve against the unfiltered events so a pointer on a row that's
-    // filtered out of the display still yields its sequence (else the gate
-    // would wrongly fall back to ungated).
-    return events.find((event) => event.id === lastReadEventId)?.sequence ?? null
-  }, [events, lastReadEventId])
 
   return (
     <ReadFrontierContext.Provider value={readFrontierSequence}>

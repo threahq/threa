@@ -202,7 +202,12 @@ export function useLastSeenEvent({
     // backward move (mark-as-unread) pulled the frontier back to the pointer —
     // nothing is seen-but-unmarked ahead, so clear it. Without this roll-back the
     // stale higher value would let auto-mark re-fire and undo the mark-as-unread.
-    if (frontier > readIndexRef.current && frontier >= 0) {
+    // `readSeq == null` means the pointer is set but sits OUTSIDE the loaded
+    // window (e.g. mark-as-unread on the oldest loaded row moves it below the
+    // window) — read progress is then unknowable, so emit nothing rather than
+    // re-marking up to the stale frontier.
+    const pointerResolved = readSeqRef.current != null
+    if (pointerResolved && frontier > readIndexRef.current && frontier >= 0) {
       const id = eventsRef.current[frontier]?.id
       if (id) setLastSeenEventId((prev) => (prev === id ? prev : id))
     } else {

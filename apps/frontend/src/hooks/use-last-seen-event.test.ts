@@ -393,4 +393,47 @@ describe("useLastSeenEvent re-scan on content resize", () => {
     act(() => rerender({ lastReadEventId: "e0" }))
     expect(result.current.lastSeenEventId).toBeUndefined()
   })
+
+  it("does not emit a mark target while the read pointer sits outside the loaded window", () => {
+    // Mark-as-unread on the oldest loaded row moves the pointer to a message below
+    // the loaded window, so it is unresolvable in `events`. Emitting the stale
+    // frontier would re-mark it read and undo the unread.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: 5, bottom: 23 },
+      e1: { top: 23, bottom: 41 },
+      e2: { top: 41, bottom: 59 },
+      e3: { top: 59, bottom: 77 },
+      e4: { top: 77, bottom: 95 },
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [
+      { id: "e0", sequence: "0" },
+      { id: "e1", sequence: "1" },
+      { id: "e2", sequence: "2" },
+      { id: "e3", sequence: "3" },
+      { id: "e4", sequence: "4" },
+    ] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ lastReadEventId }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId, enabled: true }),
+      { initialProps: { lastReadEventId: "e0" as string | null } }
+    )
+
+    expect(result.current.lastSeenEventId).toBe("e4")
+
+    // Pointer moves to a message older than the loaded window (id not in events).
+    act(() => rerender({ lastReadEventId: "older_than_window" }))
+    expect(result.current.lastSeenEventId).toBeUndefined()
+  })
 })
