@@ -29,7 +29,8 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <p>
     You send a message body in the <code>content</code> field as a markdown
     string. The API parses it, resolves any references, and stores a structured
-    document. Reads return the canonical markdown in <code>contentMarkdown</code>.
+    document. Reads return the canonical markdown in the same <code>content</code>
+    field.
   </p>
   <CodeBlock
     lang="bash"
@@ -57,7 +58,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
       <tr><td>Bold, italic, strikethrough</td><td><code>**bold**</code>, <code>*italic*</code>, <code>~~struck~~</code></td></tr>
       <tr><td>Inline code, code blocks</td><td><code>`code`</code>, triple-backtick fences with a language</td></tr>
       <tr><td>Headings</td><td><code># H1</code> through <code>###### H6</code></td></tr>
-      <tr><td>Lists, task lists</td><td><code>- item</code>, <code>1. item</code>, <code>- [ ] todo</code></td></tr>
+      <tr><td>Lists</td><td><code>- item</code>, <code>1. item</code></td></tr>
       <tr><td>Tables</td><td>GFM pipe tables</td></tr>
       <tr><td>Blockquotes, rules</td><td><code>&gt; quote</code>, <code>---</code></td></tr>
       <tr><td>Links</td><td><code>[text](https://…)</code></td></tr>
@@ -109,7 +110,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <CodeBlock
     lang="bash"
     label="upload, then attach"
-    code={`# 1. upload, returns { "id": "att_…" }
+    code={`# 1. upload, returns { "id": "attach_…" }
 curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/attachments \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -F file=@./report.pdf
@@ -118,7 +119,7 @@ curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/attachments \\
 curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
-  -d '{ "content": "Q3 numbers: [report.pdf](attachment:att_…)" }'`}
+  -d '{ "content": "Q3 numbers: [report.pdf](attachment:attach_…)" }'`}
   />
 
   <h2 id="emoji">Emoji</h2>
@@ -144,7 +145,7 @@ curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/mes
       <tr><td><code>bot:</code></td><td>bot mention</td><td><code>[@deploybot](bot:bot_…)</code></td></tr>
       <tr><td><code>broadcast:</code></td><td><code>@here</code> / <code>@channel</code></td><td><code>[@here](broadcast:here)</code></td></tr>
       <tr><td><code>channel:</code></td><td>channel link</td><td><code>[#releases](channel:stream_…)</code></td></tr>
-      <tr><td><code>attachment:</code></td><td>uploaded file</td><td><code>[report.pdf](attachment:att_…)</code></td></tr>
+      <tr><td><code>attachment:</code></td><td>uploaded file</td><td><code>[report.pdf](attachment:attach_…)</code></td></tr>
       <tr><td><code>memo:</code></td><td>memory card</td><td><code>[Auth rewrite](memo:memo_…)</code></td></tr>
       <tr><td><code>quote:</code></td><td>quoted reply (read)</td><td><code>[Alice](quote:stream_…/msg_…)</code></td></tr>
       <tr><td><code>shared-message:</code></td><td>cross-stream share (read)</td><td><code>[Alice](shared-message:stream_…/msg_…)</code></td></tr>
