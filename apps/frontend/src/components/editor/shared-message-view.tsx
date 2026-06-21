@@ -2,7 +2,6 @@ import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { X, Share2 } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
 import type { SharedMessageAttrs } from "./shared-message-extension"
@@ -23,17 +22,12 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
   const attrs = node.attrs as SharedMessageAttrs
   const { workspaceId: _workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource(attrs.messageId, attrs.streamId)
-  // Touch devices have no hover state, so the hover-reveal pattern would leave
-  // the remove control invisible AND untappable. Always show on touch, and for
-  // mouse input expose it via hover OR keyboard focus so tab users can reach it
-  // too.
-  const isTouch = useCoarsePointer()
 
   return (
     <NodeViewWrapper
       className={cn(
         "my-1 flex items-start gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm select-none",
-        "group/shared-message",
+        "group/shared-message reveal-host",
         selected && "ring-2 ring-primary/30"
       )}
       data-type="shared-message"
@@ -48,9 +42,8 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
         className={cn(
           // 24x24 minimum tap target (p-1 + h-4 icon = 24px) so the
           // hit-zone meets WCAG 2.1 AA on touch.
-          "shrink-0 rounded-sm p-1 text-muted-foreground transition-opacity hover:text-foreground",
-          "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40",
-          isTouch ? "opacity-100" : "opacity-0 group-hover/shared-message:opacity-100"
+          "reveal-actions shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/40"
         )}
         aria-label="Remove shared message"
       >

@@ -1,33 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook } from "@testing-library/react"
 
-type ChangeHandler = (ev: Pick<MediaQueryListEvent, "matches">) => void
-
-function mockMatchMedia(initialCoarse: boolean) {
-  const handlers = new Set<ChangeHandler>()
-  let matches = initialCoarse
-  const mql = {
-    get matches() {
-      return matches
-    },
-    media: "(pointer: coarse)",
+function stubMatchMedia(coarsePrimary: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("pointer: coarse") ? coarsePrimary : false,
+    media: query,
     onchange: null,
     addListener: () => {},
     removeListener: () => {},
-    addEventListener: (_: string, cb: ChangeHandler) => handlers.add(cb),
-    removeEventListener: (_: string, cb: ChangeHandler) => handlers.delete(cb),
+    addEventListener: () => {},
+    removeEventListener: () => {},
     dispatchEvent: () => false,
-  }
-  vi.stubGlobal("matchMedia", (query: string) => {
-    mql.media = query
-    return mql
-  })
-  return {
-    emit(next: boolean) {
-      matches = next
-      for (const cb of handlers) cb({ matches: next })
-    },
-  }
+  }))
 }
 
 afterEach(() => {
@@ -36,26 +20,17 @@ afterEach(() => {
 })
 
 describe("useCoarsePointer", () => {
-  it("reports the primary pointer as coarse on touch devices", async () => {
-    mockMatchMedia(true)
-    const { useCoarsePointer: fresh } = await import("./use-pointer")
-    const { result } = renderHook(() => fresh())
+  it("is true on a touch-primary device (coarse primary pointer)", async () => {
+    stubMatchMedia(true)
+    const { useCoarsePointer } = await import("./use-pointer")
+    const { result } = renderHook(() => useCoarsePointer())
     expect(result.current).toBe(true)
   })
 
-  it("reports fine on a mouse-driven device regardless of width", async () => {
-    mockMatchMedia(false)
-    const { useCoarsePointer: fresh } = await import("./use-pointer")
-    const { result } = renderHook(() => fresh())
-    expect(result.current).toBe(false)
-  })
-
-  it("reacts when the primary pointer changes (e.g. a mouse is attached)", async () => {
-    const media = mockMatchMedia(true)
-    const { useCoarsePointer: fresh } = await import("./use-pointer")
-    const { result } = renderHook(() => fresh())
-    expect(result.current).toBe(true)
-    act(() => media.emit(false))
+  it("is false on a mouse-primary device — even a touch-capable laptop reports its trackpad", async () => {
+    stubMatchMedia(false)
+    const { useCoarsePointer } = await import("./use-pointer")
+    const { result } = renderHook(() => useCoarsePointer())
     expect(result.current).toBe(false)
   })
 })

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react"
 import { createPortal } from "react-dom"
 import { Quote } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useQuoteReply } from "./quote-reply-context"
 
 interface SelectionInfo {
@@ -48,10 +48,10 @@ interface TextSelectionQuoteProps {
 
 /**
  * Shows a floating "Quote" button when the user selects text within a message.
- * Fine pointer only — touch devices use select-none on messages.
+ * Active mouse only — touch input uses select-none on messages.
  */
 export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
-  const isTouch = useCoarsePointer()
+  const inputMode = useInputMode()
   const quoteReplyCtx = useQuoteReply()
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
 
@@ -100,11 +100,16 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
   }, [streamId])
 
   useEffect(() => {
-    if (isTouch) return
+    // Clear any stale selection when leaving mouse input, so switching back to a
+    // mouse doesn't re-show the quote affordance from a selection that's gone.
+    if (inputMode !== "mouse") {
+      setSelection(null)
+      return
+    }
 
     document.addEventListener("selectionchange", handleSelectionChange)
     return () => document.removeEventListener("selectionchange", handleSelectionChange)
-  }, [isTouch, handleSelectionChange])
+  }, [inputMode, handleSelectionChange])
 
   const handleQuote = useCallback(() => {
     if (!selection || !quoteReplyCtx) return
@@ -120,7 +125,7 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
     setSelection(null)
   }, [selection, quoteReplyCtx])
 
-  if (isTouch || !selection || !quoteReplyCtx) return null
+  if (inputMode !== "mouse" || !selection || !quoteReplyCtx) return null
 
   return createPortal(
     <div

@@ -6,7 +6,8 @@ import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import * as useMobileModule from "@/hooks/use-mobile"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import type { AttachmentSummary } from "@threa/types"
 
 const WIDTH = 400
@@ -20,9 +21,11 @@ beforeEach(() => {
   vi.spyOn(attachmentsApi, "getDownloadUrl").mockImplementation(
     (...args: Parameters<typeof attachmentsApi.getDownloadUrl>) => mockGetDownloadUrl(...args)
   )
-  // The gallery's swipe strip carousel keys off input capability (coarse
-  // pointer), not width; it still needs a real measured width to position.
-  vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+  // The gallery's swipe strip carousel renders for an active touch input and
+  // animates whenever touch is available; it still needs a real measured width
+  // to position.
+  vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("touch")
+  vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
   vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
   offsetWidthSpy = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth")
   Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => WIDTH })

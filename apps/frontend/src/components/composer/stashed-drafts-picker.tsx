@@ -7,7 +7,7 @@ import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confi
 import { draftInlineText, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { useComposerAnchor } from "./use-composer-anchor"
 import type { CachedDraft, DraftPreview } from "@/hooks"
@@ -75,7 +75,9 @@ export function StashedDraftsPicker({
   const [open, setOpen] = useState(false)
   const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
   const { setTriggerRef, anchor } = useComposerAnchor(open)
-  const isTouch = useCoarsePointer()
+  // Active input drives the virtual-keyboard guard and the "Tap"/"Press" +
+  // keyboard-shortcut copy — a hardware keyboard is present only with a mouse.
+  const isTouch = useInputMode() === "touch"
   const count = drafts.length
   const now = useMemo(() => new Date(), [open])
 
@@ -186,7 +188,7 @@ export function StashedDraftsPicker({
                 const preview = rowPreview(draft, previewById)
                 const attachmentCount = draft.attachments?.length ?? 0
                 return (
-                  <li key={draft.id} className="group/row">
+                  <li key={draft.id} className="group/row reveal-host">
                     <div className="flex items-start gap-2 px-3 py-2 hover:bg-muted/60 focus-within:bg-muted/60">
                       <button
                         type="button"
@@ -204,7 +206,7 @@ export function StashedDraftsPicker({
                         variant="ghost"
                         size="icon"
                         aria-label="Delete saved draft"
-                        className="h-7 w-7 shrink-0 opacity-0 group-hover/row:opacity-100 focus:opacity-100 max-sm:opacity-100"
+                        className="h-7 w-7 shrink-0 reveal-actions"
                         onClick={(e) => {
                           e.stopPropagation()
                           requestDelete(draft.id)

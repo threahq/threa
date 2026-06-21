@@ -13,7 +13,7 @@ import {
 import { flushSync } from "react-dom"
 import { ArrowUp, X, Plus, AtSign, Slash, Paperclip } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
@@ -298,9 +298,10 @@ export function MessageComposer({
   // isn't torn down mid-take.
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
-  // Selection toolbar is a hover/fine-pointer popover, so it keys off input
-  // capability (a touch iPad suppresses it) rather than viewport width.
-  const isTouch = useCoarsePointer()
+  // Selection toolbar is a hover/mouse affordance, so it keys off the active
+  // input mode (a finger suppresses it) rather than viewport width — a mouse on
+  // a touchscreen laptop still gets it.
+  const disableSelectionToolbar = useInputMode() === "touch"
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
 
@@ -632,7 +633,7 @@ export function MessageComposer({
       autoFocus={autoFocus}
       scopeId={scopeId}
       staticToolbarOpen={!isMobile && formatOpen}
-      disableSelectionToolbar={isTouch}
+      disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
       ariaLabel="Message input"
       ariaDescribedBy={instructionsId}

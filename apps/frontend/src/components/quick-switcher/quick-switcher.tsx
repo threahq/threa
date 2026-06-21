@@ -22,7 +22,7 @@ import {
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useSettings } from "@/contexts"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
@@ -135,10 +135,11 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   )
 
   const isMobile = useIsMobile()
-  // Width drives the layout (tab position, escape-hint clipping); input
-  // capability drives keyboard concerns (auto-focus vs. a virtual keyboard,
-  // hardware-keyboard hint visibility).
-  const isTouch = useCoarsePointer()
+  // Width drives the layout (tab position, escape-hint clipping); the active
+  // input mode drives keyboard concerns (auto-focus vs. a virtual keyboard,
+  // keyboard-hint visibility) so a mouse on a touchscreen laptop autofocuses
+  // and sees the hints.
+  const isTouchInput = useInputMode() === "touch"
   const inputRef = useRef<HTMLInputElement>(null)
   const richInputRef = useRef<RichInputRef>(null)
 
@@ -341,19 +342,22 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   }, [items.length, mode])
 
   useEffect(() => {
-    if (open) {
-      const prefix = initialMode ? MODE_PREFIXES[initialMode] : ""
-      setQuery(prefix)
-      setSelectedIndex(0)
-      setFocusedTabIndex(null)
-      // Skip auto-focus on touch — opening the virtual keyboard shifts the layout
-      if (!isTouch) {
-        requestAnimationFrame(() => {
-          richInputRef.current?.focus()
-        })
-      }
-    }
-  }, [open, initialMode, isTouch])
+    if (!open) return
+    const prefix = initialMode ? MODE_PREFIXES[initialMode] : ""
+    setQuery(prefix)
+    setSelectedIndex(0)
+    setFocusedTabIndex(null)
+  }, [open, initialMode])
+
+  useEffect(() => {
+    // Auto-focus on open for mouse; skip on touch so the virtual keyboard
+    // doesn't shift the layout. Kept separate from the init effect so an
+    // input-mode flip while the palette is open can't reset query/selection.
+    if (!open || isTouchInput) return
+    requestAnimationFrame(() => {
+      richInputRef.current?.focus()
+    })
+  }, [open, isTouchInput])
 
   useEffect(() => {
     if (!open) {
@@ -386,13 +390,14 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
 
   const focusInput = useCallback(() => {
     setFocusedTabIndex(null)
-    // Skip auto-focus on touch — the virtual keyboard causes jarring layout shifts
-    if (!isTouch) {
+    // Skip auto-focus only when a finger is active — the virtual keyboard causes
+    // jarring layout shifts.
+    if (!isTouchInput) {
       requestAnimationFrame(() => {
         richInputRef.current?.focus()
       })
     }
-  }, [isTouch])
+  }, [isTouchInput])
 
   const handleModeChange = useCallback(
     (newMode: QuickSwitcherMode) => {
@@ -537,7 +542,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
                   onKeyDown={handleInputKeyDown}
                   placeholder={inputRequest.placeholder}
                   className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  autoFocus={!isTouch}
+                  autoFocus={!isTouchInput}
                   aria-label="Command input"
                 />
               ) : (
@@ -564,7 +569,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
                   triggers={triggers}
                   placeholder={MODE_PLACEHOLDERS[mode]}
                   ariaLabel="Quick switcher input"
-                  autoFocus={!isTouch}
+                  autoFocus={!isTouchInput}
                 />
               )}
             </div>
@@ -598,10 +603,10 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
             />
           )}
 
-          {/* Keyboard hints footer — needs a physical keyboard (not touch) and
-              room to lay out without overflowing (hidden below the sm breakpoint). */}
-          {!inputRequest && !isTouch && (
-            <div className="hidden sm:flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
+          {/* Keyboard hints footer — shown whenever the active input is a mouse
+              (not a finger), so a mouse on any width sees the hints. */}
+          {!inputRequest && !isTouchInput && (
+            <div className="flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
               <div className="flex gap-4">
                 <span>
                   <kbd className="kbd-hint">↑↓</kbd> Navigate

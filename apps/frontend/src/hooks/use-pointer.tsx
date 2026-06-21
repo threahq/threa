@@ -1,16 +1,17 @@
 import { useSyncExternalStore } from "react"
 
-// Touch affordances — swipe, long-press, action sheets, larger tap targets —
-// key off input capability, not viewport width. An iPad in landscape is wide
-// but finger-driven; a narrow desktop window is small but mouse-driven. Width
-// (useIsMobile) answers "do I have room?"; this answers "what is the user
-// pointing with?". `(pointer: coarse)` is true when the primary pointer is a
-// finger, so a laptop with a touchscreen still reads as fine (its trackpad is
-// the primary pointer), which is the right default for precise affordances.
+// Whether the PRIMARY pointer is coarse — i.e. this is a touch-primary device
+// (phone / tablet / convertible in tablet mode), NOT a mouse-primary one.
+//
+// This is deliberately distinct from `useTouchCapable` (`any-pointer: coarse`):
+// a touch laptop is touch-CAPABLE but mouse-PRIMARY (its trackpad reports
+// `pointer: fine`), and should keep its mouse-focused layout. Use this for
+// device-class layout/mode decisions (e.g. the overlay-vs-pinned sidebar); use
+// `useTouchCapable` to additively enable touch gestures, and `useInputMode` for
+// affordances that follow whichever input the user is actively driving.
 const coarseQuery = "(pointer: coarse)"
 
-// Shared subscription — one matchMedia listener regardless of how many
-// components call useCoarsePointer (avoids N listeners in long message lists).
+// Shared subscription — one matchMedia listener regardless of how many callers.
 const coarseMql = typeof window !== "undefined" ? window.matchMedia(coarseQuery) : null
 
 function subscribe(onChange: () => void) {
@@ -22,6 +23,10 @@ function getSnapshot() {
   return coarseMql?.matches ?? false
 }
 
+function getServerSnapshot() {
+  return false
+}
+
 export function useCoarsePointer() {
-  return useSyncExternalStore(subscribe, getSnapshot)
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

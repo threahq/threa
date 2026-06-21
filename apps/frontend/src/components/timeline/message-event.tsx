@@ -37,7 +37,8 @@ import { Quote, MessageSquareReply, Check } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { AttachmentList } from "./attachment-list"
 import { E2eAttachmentList } from "./e2e-attachment-list"
@@ -693,7 +694,7 @@ function MessageLayout({
       <div
         className={cn(
           // Opaque background so swipe-to-quote icon shows behind the message
-          "message-item group relative flex gap-3 px-3 sm:px-6 bg-background",
+          "message-item group reveal-host relative flex gap-3 px-3 sm:px-6 bg-background",
           rowVerticalPadding,
           // Per-actor accent (gradient + inset stripe) — see ACTOR_ROW_THEME.
           theme.rowAccent,
@@ -742,17 +743,13 @@ function MessageLayout({
               // the toolbar readable on py-0.5 continuations without pushing past
               // the viewport — on heads (pt-3 pb-0.5) it sits just above the
               // header row.
-              "pointer-events-none absolute right-4 z-10 hidden sm:block",
-              "bottom-[calc(100%-20px)] opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
-              // Keyboard users tabbing through the timeline land on the toolbar
-              // buttons even while it's visually hidden (opacity-0 doesn't
-              // remove descendants from the tab order, and `pointer-events-none`
-              // only affects mouse/touch). Reveal on `focus-within` so the
-              // focused control is visible.
-              "focus-within:pointer-events-auto focus-within:opacity-100",
-              "has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100",
-              "transition-opacity",
-              isEditing && "pointer-events-none opacity-0"
+              //
+              // `reveal-actions-hover-only`: revealed on hover/focus for mouse +
+              // keyboard users (keyed on the live input mode, so a mouse on a
+              // touchscreen laptop reveals it too), and kept hidden for touch —
+              // touch users reach these via the long-press action drawer.
+              "reveal-actions-hover-only absolute right-4 z-10 hidden sm:block bottom-[calc(100%-20px)]",
+              isEditing && "!opacity-0 !pointer-events-none"
             )}
           >
             <div className="flex items-center gap-0.5 rounded-md border border-border/60 bg-popover/95 px-1 py-1 shadow-md backdrop-blur-sm">
@@ -882,13 +879,21 @@ function SentMessageEvent({
   const movedTombstoneEvent = useMovedTombstone(payload.movedFrom?.moveTombstoneId)
 
   const isMobile = useIsMobile()
-  // Touch: long-press opens action drawer instead of dropdown
-  const isTouch = useCoarsePointer()
+  // Gestures (long-press → action drawer, swipe → quote) are enabled whenever
+  // touch is AVAILABLE, not just when it's the primary pointer — a mouse never
+  // fires touch events, so this strands no one and covers hybrid devices.
+  const touchCapable = useTouchCapable()
+  // Inline-vs-drawer edit and post-edit focus follow the input in active use.
+  const isTouchInput = useInputMode() === "touch"
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // Latch the edit surface (inline vs drawer) at edit start: input mode is live,
+  // so reading it during an edit would unmount/remount the form and drop unsaved
+  // text if the user switched input mid-edit.
+  const [editingSurfaceTouch, setEditingSurfaceTouch] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
   const longPress = useLongPress({
     onLongPress: openDrawer,
-    enabled: isTouch && !isEditing && !batch?.enabled,
+    enabled: touchCapable && !isEditing && !batch?.enabled,
     deferToNativeLinks: true,
   })
 
@@ -907,22 +912,25 @@ function SentMessageEvent({
   }, [quoteReplyCtx, payload.messageId, payload.contentMarkdown, streamId, actorName, event.actorId, event.actorType])
   const swipe = useSwipeAction({
     onSwipe: handleSwipeQuote,
-    enabled: isTouch && !isEditing && !!quoteReplyCtx && !batch?.enabled,
+    enabled: touchCapable && !isEditing && !!quoteReplyCtx && !batch?.enabled,
   })
 
   const startEditing = useCallback(() => {
+    setEditingSurfaceTouch(isTouchInput)
     setIsEditing(true)
-  }, [])
+  }, [isTouchInput])
 
   // Restore focus to the zone's editor after exiting inline edit mode.
   // On touch the body-level inline-edit presence attribute hides the stream
   // composer, so there is no extra flag to reset here.
   const stopEditing = useCallback(() => {
     const zone = containerRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
+    const wasTouchSurface = editingSurfaceTouch
     setIsEditing(false)
-    if (isTouch) return
+    setEditingSurfaceTouch(false)
+    if (wasTouchSurface) return
     requestAnimationFrame(() => focusVisibleZoneEditor(zone))
-  }, [isTouch])
+  }, [editingSurfaceTouch])
 
   // Register this message's edit handler with the context so the composer's ArrowUp trigger
   // can imperatively open edit mode and scroll into view. Unregistered on unmount.
@@ -1209,7 +1217,7 @@ function SentMessageEvent({
   // mode doesn't change row height. They're rendered as `pointer-events-none`
   // (handled below) so the row's batch-toggle click handler still wins.
   let footerContent: ReactNode
-  if (isEditing && !isTouch) {
+  if (isEditing && !editingSurfaceTouch) {
     footerContent = undefined
   } else {
     footerContent = (
@@ -1254,7 +1262,7 @@ function SentMessageEvent({
             <SavedIndicator saved={savedForMessage ?? null} />
           </>
         }
-        isEditing={isEditing && !isTouch}
+        isEditing={isEditing && !editingSurfaceTouch}
         isGroupContinuation={groupContinuation}
         hoverActions={
           batch?.enabled ? undefined : (
@@ -1316,13 +1324,13 @@ function SentMessageEvent({
         deferSecondaryHydration={deferSecondaryHydration}
         containerClassName={cn(
           "scroll-mt-12",
-          isTouch && !isEditing && "select-none",
+          isTouchInput && !isEditing && "select-none",
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
-        swipeOffset={isTouch ? swipe.offset : undefined}
-        swipeLocked={isTouch ? swipe.isLocked : undefined}
+        swipeOffset={touchCapable ? swipe.offset : undefined}
+        swipeLocked={touchCapable ? swipe.isLocked : undefined}
         touchHandlers={
-          isTouch && !batch?.enabled
+          touchCapable && !batch?.enabled
             ? {
                 onTouchStart: (e: React.TouchEvent) => {
                   longPress.handlers.onTouchStart(e)
@@ -1347,7 +1355,7 @@ function SentMessageEvent({
         batch={batch}
       >
         {/* Fine pointer: inline edit replaces message content. Touch: drawer handles editing. */}
-        {isEditing && !isTouch ? (
+        {isEditing && !editingSurfaceTouch ? (
           <MessageEditForm
             messageId={payload.messageId}
             workspaceId={workspaceId}
@@ -1363,7 +1371,7 @@ function SentMessageEvent({
         ) : undefined}
       </MessageLayout>
       {/* Touch: edit in a bottom-sheet drawer (avoids scroll/keyboard issues) */}
-      {isEditing && isTouch && (
+      {isEditing && editingSurfaceTouch && (
         <MessageEditForm
           messageId={payload.messageId}
           workspaceId={workspaceId}
@@ -1422,7 +1430,7 @@ function SentMessageEvent({
           workspaceId={workspaceId}
         />
       )}
-      {isTouch && (
+      {touchCapable && (
         <MessageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -1474,10 +1482,11 @@ function PendingMessageEvent({
 }: MessageEventInnerProps) {
   const { markEditing, deleteMessage } = usePendingMessages()
   const isOnline = useIsOnline()
-  const isTouch = useCoarsePointer()
+  const touchCapable = useTouchCapable()
+  const isTouchInput = useInputMode() === "touch"
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPress = useLongPress({ onLongPress: openDrawer, enabled: isTouch, deferToNativeLinks: true })
+  const longPress = useLongPress({ onLongPress: openDrawer, enabled: touchCapable, deferToNativeLinks: true })
 
   const [slowEnough, setSlowEnough] = useState(
     () => Date.now() - new Date(event.createdAt).getTime() >= SLOW_SEND_THRESHOLD_MS
@@ -1508,10 +1517,10 @@ function PendingMessageEvent({
         isGroupContinuation={groupContinuation}
         containerClassName={cn(
           showPendingState && "opacity-60",
-          isTouch && "select-none",
+          isTouchInput && "select-none",
           longPress.isPressed && "opacity-40 transition-opacity duration-100"
         )}
-        touchHandlers={isTouch ? longPress.handlers : undefined}
+        touchHandlers={touchCapable ? longPress.handlers : undefined}
         statusIndicator={
           showPendingState ? (
             <span className="text-xs text-muted-foreground opacity-0 animate-fade-in-delayed">
@@ -1543,7 +1552,7 @@ function PendingMessageEvent({
         }
         footer={null}
       />
-      {isTouch && (
+      {touchCapable && (
         <UnsentMessageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -1567,10 +1576,11 @@ function FailedMessageEvent({
   isFirstMessage,
 }: MessageEventInnerProps) {
   const { retryMessage, markEditing, deleteMessage } = usePendingMessages()
-  const isTouch = useCoarsePointer()
+  const touchCapable = useTouchCapable()
+  const isTouchInput = useInputMode() === "touch"
   const [drawerOpen, setDrawerOpen] = useState(false)
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPress = useLongPress({ onLongPress: openDrawer, enabled: isTouch, deferToNativeLinks: true })
+  const longPress = useLongPress({ onLongPress: openDrawer, enabled: touchCapable, deferToNativeLinks: true })
 
   return (
     <>
@@ -1584,10 +1594,10 @@ function FailedMessageEvent({
         deferSecondaryHydration={deferSecondaryHydration}
         containerClassName={cn(
           "border-l-2 border-destructive pl-2",
-          isTouch && "select-none",
+          isTouchInput && "select-none",
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
-        touchHandlers={isTouch ? longPress.handlers : undefined}
+        touchHandlers={touchCapable ? longPress.handlers : undefined}
         statusIndicator={<span className="text-xs text-destructive">Failed to send</span>}
         actions={
           <div className="flex gap-1 mt-1 hidden sm:flex">
@@ -1609,7 +1619,7 @@ function FailedMessageEvent({
         }
         footer={null}
       />
-      {isTouch && (
+      {touchCapable && (
         <UnsentMessageActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
@@ -1633,14 +1643,17 @@ function EditingMessageEvent({
   deferSecondaryHydration,
   isFirstMessage,
 }: MessageEventInnerProps) {
-  const isTouch = useCoarsePointer()
+  const isTouchInput = useInputMode() === "touch"
+  // Latch the surface at mount: this row is already in edit mode, so a live
+  // input switch must not swap inline<->drawer and drop the in-progress edit.
+  const [editingSurfaceTouch] = useState(isTouchInput)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const stopEditing = useCallback(() => {
     const zone = containerRef.current?.closest<HTMLElement>("[data-editor-zone]") ?? null
-    if (isTouch) return
+    if (editingSurfaceTouch) return
     requestAnimationFrame(() => focusVisibleZoneEditor(zone))
-  }, [isTouch])
+  }, [editingSurfaceTouch])
 
   return (
     <>
@@ -1652,11 +1665,11 @@ function EditingMessageEvent({
         actorName={actorName}
         isFirstMessage={isFirstMessage}
         deferSecondaryHydration={deferSecondaryHydration}
-        isEditing={!isTouch}
+        isEditing={!editingSurfaceTouch}
         containerRef={containerRef}
         statusIndicator={<span className="text-xs text-muted-foreground">Editing unsent message</span>}
       >
-        {!isTouch ? (
+        {!editingSurfaceTouch ? (
           <UnsentMessageEditForm
             messageId={event.id}
             streamId={streamId}
@@ -1665,7 +1678,7 @@ function EditingMessageEvent({
           />
         ) : undefined}
       </MessageLayout>
-      {isTouch && (
+      {editingSurfaceTouch && (
         <UnsentMessageEditForm
           messageId={event.id}
           streamId={streamId}

@@ -261,7 +261,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
       {!isLoading && activeKeys.length > 0 && (
         <div className="rounded-lg border divide-y">
           {activeKeys.map((key: BotApiKey) => (
-            <div key={key.id} className="flex items-center gap-3 px-3 py-3 group">
+            <div key={key.id} className="flex items-center gap-3 px-3 py-3 group reveal-host">
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline gap-2">
                   <span className="text-sm font-medium truncate">{key.name}</span>
@@ -292,7 +292,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="shrink-0 h-8 w-8 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                    className="reveal-actions shrink-0 h-8 w-8"
                     onClick={() => startEditingScopes(key)}
                   >
                     <Key className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
@@ -305,7 +305,7 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="shrink-0 h-8 w-8 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                    className="reveal-actions shrink-0 h-8 w-8"
                     onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                   >
                     <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive transition-colors" />

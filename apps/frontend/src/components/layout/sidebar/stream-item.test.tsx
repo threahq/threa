@@ -7,7 +7,8 @@ import { StreamItem } from "./stream-item"
 import type { StreamItemData } from "./types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
@@ -17,8 +18,12 @@ const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
 const setMenuOpen = vi.fn()
 
+// Active input (useInputMode) and touch capability (useTouchCapable) are
+// independent — a touch-capable laptop is mouse-driven — so drive them from
+// separate fixture fields to cover the mixed-mode case.
 const touchState = {
-  isTouchValue: true,
+  inputMode: "touch" as "mouse" | "touch",
+  touchCapable: true,
 }
 
 function renderWithRouter(ui: React.ReactElement) {
@@ -62,7 +67,8 @@ describe("StreamItem", () => {
     collapseOnMobile.mockReset()
     openStreamSettings.mockReset()
     setMenuOpen.mockReset()
-    touchState.isTouchValue = true
+    touchState.inputMode = "touch"
+    touchState.touchCapable = true
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
@@ -78,7 +84,11 @@ describe("StreamItem", () => {
       getActorAvatar: () => null,
     } as unknown as ReturnType<typeof hooksModule.useActors>)
 
-    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => touchState.isTouchValue)
+    // Active-input presentation (context-menu suppression, select-none) keys off
+    // useInputMode; the long-press gesture keys off useTouchCapable. Drive both
+    // from the same fixture flag so a touch fixture gets both behaviors.
+    vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => touchState.inputMode)
+    vi.spyOn(touchCapableModule, "useTouchCapable").mockImplementation(() => touchState.touchCapable)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
       date,
@@ -256,7 +266,8 @@ describe("StreamItem", () => {
   })
 
   it("renders a desktop context-menu trigger for DMs", () => {
-    touchState.isTouchValue = false
+    touchState.inputMode = "mouse"
+    touchState.touchCapable = false
 
     const stream = createStream({
       id: "stream_dm_1",

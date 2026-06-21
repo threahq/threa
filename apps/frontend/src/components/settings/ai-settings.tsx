@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { VOICE_TRANSCRIPTION_MODELS, type JSONContent, type VoicePolishLevel } from "@threa/types"
 
 const VOICE_POLISH_LEVEL_DESCRIPTIONS: ReadonlyArray<{
@@ -49,7 +49,9 @@ function parsePrompt(markdown: string): JSONContent {
 
 export function AISettings() {
   const { preferences, updatePreference, isLoading } = usePreferences()
-  const isTouch = useCoarsePointer()
+  // Selection toolbar is a hover/mouse affordance — suppress it only when a
+  // finger is the active input, so a mouse on a touchscreen laptop keeps it.
+  const disableSelectionToolbar = useInputMode() === "touch"
   const editorRef = useRef<RichEditorHandle>(null)
   const savedPrompt = preferences?.scratchpadCustomPrompt ?? ""
   const normalizedSavedPrompt = savedPrompt.trim()
@@ -126,7 +128,7 @@ export function AISettings() {
               placeholder="Tell Ariadne how to think and help in your scratchpads..."
               messageSendMode="cmdEnter"
               staticToolbarOpen={formatOpen}
-              disableSelectionToolbar={isTouch}
+              disableSelectionToolbar={disableSelectionToolbar}
               ariaLabel="Scratchpad custom prompt editor"
               className="min-h-0 [&_.tiptap]:min-h-[180px] [&_.tiptap]:max-h-[320px]"
               enableMentions={false}

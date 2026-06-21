@@ -118,7 +118,7 @@ export function ItemList({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 max-sm:opacity-100 transition-opacity"
+                      className="reveal-actions h-7 w-7 shrink-0"
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -134,7 +134,7 @@ export function ItemList({
             )
 
             const className = cn(
-              "group relative flex cursor-default select-none items-stretch rounded-[10px] text-sm outline-none transition-colors",
+              "group reveal-host relative flex cursor-default select-none items-stretch rounded-[10px] text-sm outline-none transition-colors",
               isSelected ? "bg-muted" : "hover:bg-muted"
             )
 

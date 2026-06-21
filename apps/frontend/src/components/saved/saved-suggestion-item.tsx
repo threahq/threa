@@ -2,7 +2,6 @@ import { Link } from "react-router-dom"
 import { Check, Sparkles, X } from "lucide-react"
 import type { SavedSuggestionView } from "@threa/types"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { RelativeTime } from "@/components/relative-time"
 
@@ -33,7 +32,7 @@ export function SavedSuggestionItem({
       : `/w/${workspaceId}/s/${suggestion.streamId}`
 
   return (
-    <div className="group flex items-start gap-3 px-4 py-3 hover:bg-muted/40 border-b border-border/50">
+    <div className="group reveal-host flex items-start gap-3 px-4 py-3 hover:bg-muted/40 border-b border-border/50">
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] bg-amber-500/10 text-amber-500">
         <Sparkles className="h-4 w-4" />
       </div>
@@ -67,12 +66,7 @@ export function SavedSuggestionItem({
         </div>
       </div>
 
-      <div
-        className={cn(
-          "flex items-center gap-1 shrink-0",
-          "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 sm:transition-opacity"
-        )}
-      >
+      <div className="flex items-center gap-1 shrink-0 reveal-actions">
         <Button
           size="sm"
           variant="ghost"

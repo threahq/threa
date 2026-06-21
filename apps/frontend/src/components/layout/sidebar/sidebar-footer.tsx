@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutRef } from "react"
+import { forwardRef, useCallback, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react"
 import {
   ArrowLeftRight,
   Bell,
@@ -21,7 +21,7 @@ import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
 import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
 import { useSettings, useSidebar } from "@/contexts"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { getAdminPortalUrl } from "@/lib/admin-url"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -214,11 +214,22 @@ export function SidebarFooter({
   const { openSettings } = useSettings()
   const { logout } = useAuth()
   const { collapseOnMobile } = useSidebar()
-  const isTouch = useCoarsePointer()
+  // Drawer vs. dropdown is a presentation choice — follow the active input so a
+  // mouse on a touchscreen laptop gets the dropdown, a finger gets the sheet.
+  const isTouch = useInputMode() === "touch"
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
   const [pauseOpen, setPauseOpen] = useState(false)
+  // The drawer (touch) and dropdown (mouse) are mutually exclusive surfaces;
+  // when the active input flips, close any open one so a stale open-state can't
+  // reopen the wrong surface in the other mode.
+  useEffect(() => {
+    setDrawerOpen(false)
+    setMenuOpen(false)
+    setStatusOpen(false)
+    setPauseOpen(false)
+  }, [isTouch])
   const queryClient = useQueryClient()
   const resumeNotifications = useResumeNotifications(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)

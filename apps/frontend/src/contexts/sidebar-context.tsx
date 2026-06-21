@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from "react"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 
 /**
@@ -63,7 +64,12 @@ interface SidebarContextValue {
   sectionStates: Record<string, CollapseState>
   /** Read a section's state, falling back to the provided default (default: "open"). */
   getSectionState: (section: string, defaultState?: CollapseState) => CollapseState
-  /** Whether viewport is mobile-sized */
+  /**
+   * Whether the sidebar uses its overlay treatment: a narrow viewport OR a
+   * touch-primary device (coarse primary pointer) — so an iPad in landscape
+   * (wide but finger-driven) gets the swipeable overlay sidebar, while a
+   * touch-capable but mouse-primary laptop stays on the pinned desktop layout.
+   */
   isMobile: boolean
   /** Whether sidebar is currently being hovered (for hover margin behavior) */
   isHovering: boolean
@@ -202,8 +208,15 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   const [persistedState, setPersistedState] = useState<SidebarPersistedState>(() => getStoredState(storageKey))
 
-  // Runtime state (preview is transient, not persisted)
-  const isMobile = useIsMobile()
+  // Runtime state (preview is transient, not persisted).
+  // Overlay sidebar treatment applies to narrow viewports AND touch-PRIMARY
+  // devices (coarse primary pointer), so a tablet in landscape (wide but
+  // finger-driven) keeps the swipeable overlay sidebar. A touch-CAPABLE laptop
+  // is mouse-primary (its trackpad reports a fine pointer) and stays on the
+  // pinned desktop layout — hence useCoarsePointer, not useTouchCapable.
+  const isNarrowViewport = useIsMobile()
+  const isTouchPrimary = useCoarsePointer()
+  const isMobile = isNarrowViewport || isTouchPrimary
   const [state, setState] = useState<SidebarState>(() =>
     isMobile || persistedState.openState === "collapsed" ? "collapsed" : "pinned"
   )

@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback } from "react"
 import { RefreshCw } from "lucide-react"
 import { useSidebar, useCoordinatedLoading, type UrgencyBlock } from "@/contexts"
-import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useCoarsePointer } from "@/hooks"
+import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { TopbarLoadingIndicator } from "./topbar-loading-indicator"
 import { ConnectionStatus } from "./connection-status"
@@ -122,7 +123,12 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     setWidth,
   } = useSidebar()
   const { showLoadingIndicator } = useCoordinatedLoading()
-  const isTouch = useCoarsePointer()
+  // Pull-to-refresh is a touch gesture — enable it additively wherever a finger
+  // could be used (harmless with a mouse). Hover-preview is a mouse affordance,
+  // so it keys off the active input mode (a finger never triggers it) — a mouse
+  // on a touchscreen laptop still gets the hover preview.
+  const touchCapable = useTouchCapable()
+  const inputMode = useInputMode()
 
   const { handleResizeStart } = useResizeDrag({
     width,
@@ -152,7 +158,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     refreshing,
     mode: pullMode,
   } = usePullToRefresh({
-    enabled: isTouch && !isKeyboardOpen,
+    enabled: touchCapable && !isKeyboardOpen,
     onRefresh: handleSoftRefresh,
   })
 
@@ -182,18 +188,19 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     onClose: collapse,
   })
 
-  // Disabled on touch — touch devices don't hover.
+  // Skipped while a finger is the active input — a mouse (even on a touchscreen
+  // laptop) still drives the hover preview.
   const handleMouseEnter = useCallback(() => {
-    if (!isTouch) {
+    if (inputMode !== "touch") {
       setHovering(true)
     }
-  }, [setHovering, isTouch])
+  }, [setHovering, inputMode])
 
   const handleMouseLeave = useCallback(() => {
-    if (!isTouch) {
-      setHovering(false)
-    }
-  }, [setHovering, isTouch])
+    // Always clear on leave — gating this on input mode would strand a stale
+    // hover state after a mouse→touch switch.
+    setHovering(false)
+  }, [setHovering])
 
   const handleBackdropClick = useCallback(() => {
     collapse()

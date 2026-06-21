@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { usePendingMessages } from "@/contexts"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
@@ -31,7 +31,9 @@ export function UnsentMessageEditForm({
   authorName,
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
-  const isTouch = useCoarsePointer()
+  // Latch the surface at mount: input mode is live, so reading it directly would
+  // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
+  const [isTouch] = useState(useInputMode() === "touch")
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
 

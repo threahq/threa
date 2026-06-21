@@ -12,7 +12,7 @@ import {
 import { useSidebar, type CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection } from "./sections"
@@ -113,11 +113,11 @@ export function SidebarStreamList({
   onStreamMovedFromLabel,
   scrollContainerRef,
 }: SidebarStreamListProps) {
-  // Dragging streams into sections is a fine-pointer interaction; on touch the
-  // same is done through the action drawer's section picker, so we leave touch
-  // gestures (scroll, long-press) untouched by disabling drag entirely.
-  const isTouch = useCoarsePointer()
-  const streamDragEnabled = !isTouch
+  // Drag-to-file is a mouse interaction; a finger does the same through the
+  // action drawer's section picker. Keyed on the active input (not capability)
+  // so a mouse can drag even on a touchscreen device, while a finger can't drag
+  // and keeps scroll/long-press intact.
+  const streamDragEnabled = useInputMode() !== "touch"
   // Opening a label from its section header should close the sidebar on mobile,
   // matching stream rows and quick links (no-op on desktop).
   const { collapseOnMobile } = useSidebar()

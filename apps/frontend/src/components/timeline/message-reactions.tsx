@@ -1,7 +1,6 @@
 import { forwardRef, useMemo, useCallback } from "react"
 import { SmilePlus, X } from "lucide-react"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks"
-import { useCoarsePointer } from "@/hooks/use-pointer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
@@ -19,7 +18,6 @@ interface MessageReactionsProps {
 
 export function MessageReactions({ reactions, workspaceId, messageId, currentUserId }: MessageReactionsProps) {
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
-  const isTouch = useCoarsePointer()
   const { toggleReaction, toggleByEmoji } = useMessageReactions(workspaceId, messageId)
 
   const sortedReactions = useMemo(() => {
@@ -59,7 +57,6 @@ export function MessageReactions({ reactions, workspaceId, messageId, currentUse
             emoji={toEmoji(shortcode) ?? shortcode}
             userIds={userIds}
             currentUserId={currentUserId}
-            isTouch={isTouch}
             onToggle={() => handleToggleReaction(shortcode)}
           />
         </ReactionPillDetails>
@@ -99,13 +96,12 @@ interface ReactionPillProps {
   emoji: string
   userIds: string[]
   currentUserId: string | null
-  isTouch: boolean
   onToggle: () => void
 }
 
 // Forwards ref and spreads extra props so Radix HoverCardTrigger `asChild` can inject handlers.
 const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.ButtonHTMLAttributes<HTMLButtonElement>>(
-  ({ emoji, userIds, currentUserId, isTouch, onToggle, ...rest }, ref) => {
+  ({ emoji, userIds, currentUserId, onToggle, ...rest }, ref) => {
     const hasReacted = currentUserId ? userIds.includes(currentUserId) : false
 
     return (
@@ -113,7 +109,7 @@ const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.But
         ref={ref}
         type="button"
         className={cn(
-          "group/pill relative inline-flex min-h-[26px] items-center gap-1 rounded-full border pl-2 pr-2.5 text-xs transition-colors",
+          "reveal-host relative inline-flex min-h-[26px] items-center gap-1 rounded-full border pl-2 pr-2.5 text-xs transition-colors",
           hasReacted
             ? "border-primary/50 bg-primary/[0.14] text-primary hover:bg-primary/[0.2]"
             : "border-transparent bg-primary/[0.05] text-muted-foreground hover:bg-primary/[0.1] hover:text-foreground"
@@ -121,14 +117,11 @@ const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.But
         onClick={onToggle}
         {...rest}
       >
-        {/* Emoji — with a fine pointer, fades to X icon on hover when user has reacted */}
+        {/* Remove affordance: a mouse hover reveals the X over the emoji; touch
+            taps the pill to toggle, so the X stays hidden there. */}
         <span className="relative text-sm leading-none w-4 h-4 flex items-center justify-center">
-          <span className={cn("transition-opacity", hasReacted && !isTouch && "group-hover/pill:opacity-0")}>
-            {emoji}
-          </span>
-          {hasReacted && !isTouch && (
-            <X className="absolute inset-0 h-4 w-4 opacity-0 group-hover/pill:opacity-100 transition-opacity text-primary/70" />
-          )}
+          <span>{emoji}</span>
+          {hasReacted && <X className="reveal-actions-hover-only absolute inset-0 h-4 w-4 text-primary/70" />}
         </span>
         <span className={cn("tabular-nums", hasReacted && "font-medium")}>{userIds.length}</span>
       </button>

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import {
   DESKTOP_GRID_COLUMNS,
@@ -542,11 +542,12 @@ export function ReactionEmojiPicker({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const { emojis, emojiWeights } = useWorkspaceEmoji(workspaceId)
-  // The input pointer drives the surface: a narrow desktop window gets the
-  // popover, an iPad gets the drawer. Grid geometry follows the surface (not raw
-  // viewport width) so the drawer always renders finger-sized rows and the
-  // popover always renders the dense desktop grid.
-  const useDrawer = useCoarsePointer()
+  // The live input mode drives the surface: an active mouse gets the popover, an
+  // active finger gets the drawer (so a mouse on a touch-capable desktop still
+  // gets the popover). Grid geometry follows the surface (not raw viewport
+  // width) so the drawer always renders finger-sized rows and the popover always
+  // renders the dense desktop grid.
+  const useDrawer = useInputMode() === "touch"
 
   const handleSelect = useCallback(
     (item: EmojiEntry) => {

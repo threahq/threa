@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { useMessageService } from "@/contexts"
 import { messageKeys } from "@/api/messages"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
@@ -44,7 +44,9 @@ export function MessageEditForm({
 }: MessageEditFormProps) {
   const queryClient = useQueryClient()
   const messageService = useMessageService()
-  const isTouch = useCoarsePointer()
+  // Latch the surface at mount: input mode is live, so reading it directly would
+  // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
+  const [isTouch] = useState(useInputMode() === "touch")
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
   const [contentJson, setContentJson] = useState<JSONContent>(initialContentJson ?? EMPTY_DOC)

@@ -77,7 +77,7 @@ export function MessageLinkPreviewCard({
   // Full access tier
   if (data.deleted) {
     return (
-      <div className="group/preview relative overflow-hidden rounded-lg border bg-card max-w-md">
+      <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card max-w-md">
         <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
           <MessageSquare className="h-4 w-4 shrink-0" />
           <span className="text-xs italic">This message was deleted</span>
@@ -103,7 +103,7 @@ export function MessageLinkPreviewCard({
   )
 
   return (
-    <div className="group/preview relative overflow-hidden rounded-lg border bg-card transition-all max-w-md hover:border-primary/50 hover:shadow-sm">
+    <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md hover:border-primary/50 hover:shadow-sm">
       <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/30">
         <MessageSquare className="h-4 w-4 text-primary shrink-0" />
         {data.streamName && <span className="text-xs text-muted-foreground truncate">#{data.streamName}</span>}
@@ -160,7 +160,7 @@ function PrivateMessageCard({
   onDismiss?: (previewId: string) => void
 }) {
   return (
-    <div className="group/preview relative overflow-hidden rounded-lg border bg-card max-w-md">
+    <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card max-w-md">
       <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
         <Lock className="h-4 w-4 shrink-0" />
         <span className="text-xs">Message in a private conversation</span>
@@ -178,7 +178,7 @@ function CrossWorkspaceCard({
   onDismiss?: (previewId: string) => void
 }) {
   return (
-    <div className="group/preview relative overflow-hidden rounded-lg border bg-card max-w-md">
+    <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card max-w-md">
       <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
         <MessageSquare className="h-4 w-4 shrink-0" />
         <span className="text-xs">A message in Threa</span>
@@ -195,7 +195,7 @@ function DismissButton({ previewId, onDismiss }: { previewId: string; onDismiss?
     <Button
       variant="ghost"
       size="icon"
-      className="h-5 w-5 ml-auto opacity-0 group-hover/preview:opacity-100 transition-opacity"
+      className="reveal-actions h-5 w-5 ml-auto"
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()

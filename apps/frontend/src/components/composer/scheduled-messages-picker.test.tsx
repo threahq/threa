@@ -5,7 +5,7 @@ import { DEFAULT_WORK_SCHEDULE } from "@threa/types"
 import { spyOnExport } from "@/test/spy"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ScheduledMessagesPicker } from "./scheduled-messages-picker"
-import * as pointerModule from "@/hooks/use-pointer"
+import * as inputModeModule from "@/hooks/use-input-mode"
 import * as hooks from "@/hooks"
 import * as workScheduleModule from "@/hooks/use-work-schedule"
 import * as contexts from "@/contexts"
@@ -25,7 +25,7 @@ describe("ScheduledMessagesPicker", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     isTouchMockValue = true
-    vi.spyOn(pointerModule, "useCoarsePointer").mockImplementation(() => isTouchMockValue)
+    vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouchMockValue ? "touch" : "mouse"))
     spyOnExport(hooks, "useScheduledList").mockReturnValue((() => ({ items: [] })) as never)
     spyOnExport(hooks, "useCancelScheduled").mockReturnValue((() => ({ mutate: vi.fn() })) as never)
     spyOnExport(hooks, "useSendScheduledNow").mockReturnValue((() => ({ mutate: vi.fn() })) as never)

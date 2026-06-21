@@ -171,7 +171,10 @@ export function SidebarActionMenu({
     <Button
       variant="ghost"
       size="icon"
-      className="absolute right-1 top-1 hidden h-6 w-6 opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 sm:flex"
+      // Hidden on touch (long-press + right-click cover it there); mouse hover/
+      // focus/open reveal via reveal-actions-hover-only. The host is the row's
+      // `group relative` wrapper in stream-item / scratchpad-item.
+      className="reveal-actions-hover-only absolute right-1 top-1 flex h-6 w-6"
       aria-label={ariaLabel}
       onClick={(e: MouseEvent<HTMLButtonElement>) => {
         e.preventDefault()

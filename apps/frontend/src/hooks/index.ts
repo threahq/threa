@@ -153,6 +153,10 @@ export { useVisualViewport } from "./use-visual-viewport"
 
 export { useIsMobile, MOBILE_BREAKPOINT } from "./use-mobile"
 
+export { useInputMode, type InputMode } from "./use-input-mode"
+
+export { useTouchCapable } from "./use-touch-capable"
+
 export { useCoarsePointer } from "./use-pointer"
 
 export { useSidebarSwipe } from "./use-sidebar-swipe"

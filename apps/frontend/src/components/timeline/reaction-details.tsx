@@ -3,7 +3,8 @@ import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/h
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { useActors, actorTypeFromId } from "@/hooks"
 import { useLongPress } from "@/hooks/use-long-press"
-import { useCoarsePointer } from "@/hooks/use-pointer"
+import { useInputMode } from "@/hooks/use-input-mode"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { cn } from "@/lib/utils"
 
@@ -123,16 +124,20 @@ interface ReactionPillDetailsProps {
 
 /**
  * Wraps a reaction pill and reveals who reacted:
- * - Fine pointer: hover opens a HoverCard popover (~350ms delay).
- * - Touch: long-press opens a bottom Drawer; tap still toggles the reaction.
+ * - Active mouse: hover opens a HoverCard popover (~350ms delay).
+ * - Active touch: long-press opens a bottom Drawer; tap still toggles the reaction.
+ *
+ * Surface follows the live input mode (a mouse on a touch-capable desktop gets
+ * the HoverCard), while the long-press handlers stay enabled whenever touch is
+ * available so a finger can still summon the Drawer.
  *
  * The wrapped child keeps its native click handling in both modes.
  */
 export function ReactionPillDetails({ emoji, reactions, workspaceId, children }: ReactionPillDetailsProps) {
-  const isTouch = useCoarsePointer()
+  const isTouch = useInputMode() === "touch"
   const [drawerOpen, setDrawerOpen] = useState(false)
   const { handlers } = useLongPress({
-    enabled: isTouch,
+    enabled: useTouchCapable(),
     onLongPress: () => setDrawerOpen(true),
   })
 
