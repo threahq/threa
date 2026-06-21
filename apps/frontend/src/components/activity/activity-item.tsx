@@ -3,7 +3,6 @@ import { Bell } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
-import { UnreadDot } from "./unread-dot"
 import { ActivityContent } from "./activity-content"
 import type { Activity } from "@threa/types"
 
@@ -60,13 +59,12 @@ export function ActivityItem({
         if (isUnread) onMarkAsRead(activity.id)
       }}
       className={cn(
-        "group flex items-start gap-3 rounded-lg px-4 py-3 transition-colors",
+        "group flex items-start gap-3 rounded-lg px-3 py-2.5 transition-colors sm:px-4 sm:py-3",
         isUnread && "bg-primary/5 hover:bg-primary/10",
         !isUnread && !isSelf && "hover:bg-muted/50",
         isSelf && "opacity-75 hover:bg-muted/40 hover:opacity-100"
       )}
     >
-      <UnreadDot isUnread={isUnread} />
       {renderAvatar({ isReminder, isPersona, isSystem, isBot, actorAvatar, actorName })}
       <ActivityContent
         actorName={actorName}
@@ -96,16 +94,16 @@ function renderAvatar(params: {
   // instead of "T for Threa" so the avatar matches the verb ("Reminder for…").
   if (isReminder) {
     return (
-      <div className="h-7 w-7 shrink-0 rounded-[8px] bg-amber-500/10 text-amber-500 flex items-center justify-center">
+      <div className="h-8 w-8 shrink-0 rounded-[8px] bg-amber-500/10 text-amber-500 flex items-center justify-center">
         <Bell className="h-4 w-4" />
       </div>
     )
   }
   if (isPersona) {
-    return <PersonaAvatar slug={actorAvatar.slug} fallback={actorAvatar.fallback} size="sm" />
+    return <PersonaAvatar slug={actorAvatar.slug} fallback={actorAvatar.fallback} size="md" />
   }
   return (
-    <Avatar className="h-7 w-7 rounded-[8px] shrink-0">
+    <Avatar className="h-8 w-8 rounded-[8px] shrink-0">
       {actorAvatar.avatarUrl && <AvatarImage src={actorAvatar.avatarUrl} alt={actorName} />}
       <AvatarFallback
         className={cn(

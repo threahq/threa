@@ -17,7 +17,8 @@ import type {
   UpsertDraftInput,
   UpsertDraftResponse,
 } from "@threa/types"
-import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
+import { clearStagedDraft, listStagedDrafts, type StagedDraft } from "@/lib/drafts/draft-staging"
 import { isResolvedDraftEcho } from "./draft-resolution-guard"
 
 /**
@@ -577,6 +578,89 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
       pendingUpsertIds.add(local.id)
     }
   }
+}
+
+// ============================================================================
+// Startup recovery — flush the synchronous staging buffer into IDB
+// ============================================================================
+
+/**
+ * Recover any synchronously-staged composer content (`lib/drafts/draft-staging`)
+ * into IDB. Runs once at workspace load, BEFORE the draft cache seeds, so the
+ * recovered body is already in `db.drafts` when the composer first reads — no
+ * flash of an empty editor, no parallel read path in the composer.
+ *
+ * Recovery is content-diff, never a timestamp compare: a staged entry whose body
+ * matches the loaded IDB draft was already flushed (drop it); a body that
+ * differs is an un-flushed tail (type-then-reload) and is written into IDB and
+ * queued for push. Enqueuing the push means a draft that drifted on another
+ * device while this tab was gone resolves through the server's split on the next
+ * bootstrap — local wins, never overwrite, never lose. Comparing this device's
+ * staged clock against a roamed draft's foreign clock would be unsafe, so we
+ * don't.
+ *
+ * Writes go straight to IDB (not the in-memory cache) so they can't flip the
+ * draft cache "ready" with a partial set before `seedDraftCacheFromIdb` runs.
+ */
+export async function reconcileStagedDrafts(workspaceId: string): Promise<void> {
+  const staged = listStagedDrafts(workspaceId)
+  for (const entry of staged) {
+    try {
+      await applyStagedDraft(workspaceId, entry)
+    } catch (err) {
+      // Keep the buffer on failure (a transient IDB error) — it is the only copy
+      // of an un-flushed tail, so dropping it here would be the very loss this
+      // recovery exists to prevent. The next load retries.
+      console.error("Failed to recover staged draft", err)
+      continue
+    }
+    // Cleared only after the write succeeded — including the no-op paths
+    // (already-durable, sealed-scope, empty) which return normally — so the
+    // buffer can't accumulate or re-recover content already in IDB.
+    clearStagedDraft(workspaceId, entry.scope)
+  }
+}
+
+async function applyStagedDraft(workspaceId: string, entry: StagedDraft): Promise<void> {
+  if (isEmptyContent(entry.contentJson)) return
+  const loadedId = (await db.composerLoaded.get(entry.scope))?.draftId ?? null
+  const existing = loadedId ? await db.drafts.get(loadedId) : undefined
+
+  // Never apply plaintext over a sealed row (E2EE-4). Staging is plaintext-only,
+  // so a sealed loaded draft means this entry is stale or foreign — drop it.
+  if (existing?.ciphertext != null) return
+  // Already durable — the last debounced flush captured exactly this body.
+  if (existing && JSON.stringify(existing.contentJson) === JSON.stringify(entry.contentJson)) return
+
+  const id = existing?.id ?? generateLocalDraftId()
+  // Mark the draft dirty BEFORE writing it. A sync bootstrap can run concurrently
+  // at boot; with the pending upsert already in place it defers to the server
+  // split for this id instead of accepting a newer server row over the tail we
+  // are about to recover (the same "unpushed edits win, server arbitrates" rule
+  // `applyDraftUpserted` follows). Mirrors the draft to the backend either way.
+  // The two writes aren't atomic, but a crash in between is harmless: an op with
+  // no row no-ops at drain (`executeDraftUpsert` returns on a missing row), and
+  // the staging buffer — cleared only after this whole apply succeeds — still
+  // holds the content, so the next load recovers it.
+  await enqueueDraftUpsert(workspaceId, id)
+  // Preserve the loaded draft's sync bookkeeping + sidecars (baseVersion,
+  // attachments, contextRefs) so recovering a typed tail can't wipe them; only
+  // the body and its clock advance.
+  const row: CachedDraft = existing
+    ? { ...existing, contentJson: entry.contentJson, clientUpdatedAt: entry.clientUpdatedAt }
+    : {
+        id,
+        workspaceId,
+        scope: entry.scope,
+        contentJson: entry.contentJson,
+        attachments: [],
+        clientUpdatedAt: entry.clientUpdatedAt,
+      }
+
+  await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    await db.drafts.put(row)
+    if (!existing) await db.composerLoaded.put({ scope: entry.scope, workspaceId, draftId: id })
+  })
 }
 
 // ============================================================================

@@ -301,14 +301,12 @@ export function StreamItem({
   let drawerPreview: SidebarActionPreview | null = null
   if (preview?.content) {
     drawerPreview = {
-      streamName: name,
       authorName: getActorName(preview.authorId, preview.authorType),
       content: truncateContent(preview.content, 140, toEmoji),
       createdAt: preview.createdAt,
     }
   } else if (stream.type === StreamTypes.DM) {
     drawerPreview = {
-      streamName: name,
       content: "No messages yet",
     }
   }
@@ -430,6 +428,7 @@ export function StreamItem({
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           actions={actions}
+          streamName={name}
           title={`Actions for ${name}`}
           description="Choose an action for this stream."
           preview={drawerPreview}

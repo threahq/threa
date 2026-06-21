@@ -10,6 +10,7 @@ entry_points:
   - apps/frontend/src/sync/draft-sync.ts
   - apps/frontend/src/hooks/use-draft-message.ts
   - apps/frontend/src/sync/draft-resolution-guard.ts
+  - apps/frontend/src/lib/drafts/draft-staging.ts
 public_site: false
 summary: >
   A draft is a first-class row that mirrors from the device to the backend and
@@ -138,6 +139,47 @@ re-running it on reconnect is always safe.
 That is the core. The rest is reference for when you are working on the edges.
 
 ## Details worth knowing
+
+### The synchronous staging buffer closes the debounce gap
+
+The IndexedDB write is debounced (`DEBOUNCE_MS`, 500ms), which leaves a window the
+composer cannot afford to lose: type, then reload before the debounce fires, and the
+keystrokes — living only in React state and the editor — are gone. Losing user content
+is the one thing this feature exists to prevent, so a third persistence layer sits in
+front of IDB: `apps/frontend/src/lib/drafts/draft-staging.ts`, a synchronous
+`localStorage` buffer keyed `threa:draft-stage:{workspaceId}:{scope}`. The three layers
+each write on their own cadence — **localStorage on every change** (synchronous, so it is
+on disk before the browser can process a subsequent reload task), **IDB on the debounce**
+(unchanged), **server from IDB** through the op queue (unchanged). `saveDraftDebounced`
+stages synchronously before it arms the timer; the timer still does the real IDB write.
+
+Recovery is **content-diff, never a timestamp compare**. On workspace load,
+`reconcileStagedDrafts` (`draft-sync.ts`) runs _before_ the draft cache seeds (so the
+recovered body is in `db.drafts` when the composer first reads — no empty flash, no second
+read path in the composer) and writes straight to IDB (so it can't flip the cache "ready"
+with a partial set). For each staged entry it compares the body against the scope's loaded
+IDB draft: identical means the last flush already captured it (drop the buffer); different
+means an un-flushed tail (write it into the draft, preserving `baseVersion` / attachments /
+context refs, and enqueue a push). Enqueuing the push is what makes cross-device safe — a
+draft that drifted on another device while this tab was gone resolves through the server's
+split on the next bootstrap, so local edits win without overwriting. Comparing this
+device's staged clock against a roamed draft's foreign clock would be unsafe, so the
+buffer's `clientUpdatedAt` is for ordering/debugging only and never gates recovery.
+
+The buffer is cleared synchronously, first thing, on every teardown that ends an edit —
+discard, resolve-on-send, stash, scope purge — so a just-sent draft cannot be recovered or
+re-staged by a racing flush (the same resurrection class the resolution guard below
+closes). An emptied editor clears it too (deletion propagation is the debounce's job, not
+the buffer's), and a payload over 256KB is skipped so a pathological paste can't jank the
+synchronous write or exhaust the quota; the debounce still carries it to IDB. Every
+`localStorage` access is wrapped — a quota error or private-mode block must never interrupt
+typing.
+
+**Plaintext only (E2EE-4).** An encrypted draft is sealed before it touches disk, and
+there is no synchronous seal, so E2E scopes never stage — the write gates on encryption and
+`reconcileStagedDrafts` refuses to apply a staged body over a sealed row. The reload-loss
+window therefore stays open for E2E drafts; that is the deliberate trade (no-plaintext-at-
+rest outranks closing the gap for the minority of encrypted scratchpads).
 
 ### Resolve-on-send is a separate, CAS-guarded path
 
@@ -274,5 +316,8 @@ contiguity / `broadcastSequence` machinery (INV-61) correctly does not apply to 
 - `apps/frontend/src/hooks/use-draft-message.ts`: the composer's write path, including
   the E2E seal-on-save and resolve-vs-discard split.
 - `apps/frontend/src/sync/draft-resolution-guard.ts`: the post-send resurrection guard.
+- `apps/frontend/src/lib/drafts/draft-staging.ts`: the synchronous `localStorage` buffer
+  that survives a reload before the IDB debounce fires; recovered by
+  `reconcileStagedDrafts` (`draft-sync.ts`) at workspace load.
 - `apps/frontend/src/lib/crypto/seal-draft.ts`: seal/open a draft body and attachments
   on the message E2E path.

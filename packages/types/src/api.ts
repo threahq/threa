@@ -1309,6 +1309,17 @@ export interface WorkspaceBootstrap {
    * payloads (absent reads as "all gateable").
    */
   configuredToolCategories?: ToolPrivacyCategory[]
+  /**
+   * Workspace-global sync-log head (`MAX(sync_id)`) read just before this
+   * snapshot was assembled, so the snapshot reflects everything `<= syncHead`
+   * (read-before-stamp). On the first socket connect the client seeds its sync
+   * cursor here: the connect bootstrap is the authority for everything
+   * `<= head`, so catch-up starts at head and never collapses into a second
+   * full bootstrap. Stringified BIGINT, matching `SyncCatchUpResponse.head`.
+   * Optional: payloads cached before this field shipped (and the catch-up-driven
+   * reconnect bootstraps that reuse this shape) omit it.
+   */
+  syncHead?: string
 }
 
 export interface PendingInvitation {

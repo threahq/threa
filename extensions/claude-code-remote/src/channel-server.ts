@@ -272,6 +272,7 @@ export class ChannelServer {
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
       localCwd: process.cwd(),
+      ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
     })
   }
 

@@ -40,7 +40,6 @@ export interface SidebarActionItem {
 }
 
 export interface SidebarActionPreview {
-  streamName: string
   authorName?: string
   content: string
   createdAt?: string
@@ -310,6 +309,8 @@ interface SidebarActionDrawerProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   actions: SidebarActionItem[]
+  /** Full stream name shown as the drawer's visible title — wraps rather than truncating so long names stay readable on the cramped sidebar. */
+  streamName?: string
   title?: string
   description?: string
   header?: ReactNode
@@ -320,12 +321,13 @@ export function SidebarActionDrawer({
   open,
   onOpenChange,
   actions,
+  streamName,
   title = "Sidebar actions",
   description = "Choose an action.",
   header,
   preview,
 }: SidebarActionDrawerProps) {
-  const hasVisibleContent = actions.length > 0 || preview != null || header != null
+  const hasVisibleContent = actions.length > 0 || preview != null || header != null || streamName != null
 
   if (!open && !hasVisibleContent) return null
 
@@ -334,7 +336,6 @@ export function SidebarActionDrawer({
     (preview ? (
       <div className="px-4 pt-1 pb-3">
         <div className="rounded-xl bg-muted/60 px-3.5 py-2.5">
-          <p className="mb-1 text-sm font-medium text-foreground">{preview.streamName}</p>
           {(preview.authorName || preview.createdAt) && (
             <div className="mb-1 flex items-center gap-1.5 text-[13px] text-muted-foreground">
               {preview.authorName && <span className="truncate">{preview.authorName}</span>}
@@ -352,6 +353,12 @@ export function SidebarActionDrawer({
       <DrawerContent className="max-h-[85dvh]">
         <DrawerTitle className="sr-only">{title}</DrawerTitle>
         <DrawerDescription className="sr-only">{description}</DrawerDescription>
+
+        {streamName && (
+          <div className="px-4 pt-2 pb-1">
+            <p className="break-words text-base font-semibold text-foreground">{streamName}</p>
+          </div>
+        )}
 
         {resolvedHeader}
 

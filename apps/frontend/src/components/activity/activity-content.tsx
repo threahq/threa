@@ -27,17 +27,28 @@ const DEFAULT_DISPLAY: ActivityDisplay = ACTIVITY_DISPLAY.message
 interface ActivityPreviewProps {
   contentPreview: string
   toEmoji?: (shortcode: string) => string | null
+  /** Reaction glyph rendered ahead of the text (e.g. 👍). */
+  emoji?: string | null
+  /** Unread rows render the content at full strength; read rows are dimmed. */
+  isUnread?: boolean
 }
 
 /**
- * Single-line preview of the message that triggered the activity.
- * Strips markdown, collapses newlines, optionally resolves emoji shortcodes,
- * and renders nothing when there's no displayable content.
+ * The message that triggered the activity — the actual payload of the
+ * notification, so it carries the visual weight (body size, foreground colour)
+ * while the actor/verb/stream line above it stays a muted caption. Strips
+ * markdown, collapses newlines, optionally resolves emoji shortcodes, and
+ * clamps to two lines.
  */
-export function ActivityPreview({ contentPreview, toEmoji }: ActivityPreviewProps) {
+export function ActivityPreview({ contentPreview, toEmoji, emoji, isUnread }: ActivityPreviewProps) {
   const previewText = stripMarkdownToInline(contentPreview, toEmoji)
-  if (!previewText) return null
-  return <p className="mt-0.5 text-xs text-muted-foreground truncate">{previewText}</p>
+  if (!previewText && !emoji) return null
+  return (
+    <p className={cn("mt-1 text-sm leading-snug line-clamp-2", isUnread ? "text-foreground" : "text-foreground/80")}>
+      {emoji && <span className="mr-1 align-middle">{emoji}</span>}
+      {previewText}
+    </p>
+  )
 }
 
 interface ActivityContentProps {
@@ -71,20 +82,34 @@ export function ActivityContent({
   let verb = display.kind === "actor-prefixed" && isSelf ? display.selfVerb : display.verb
   if (!hasStream && activityType === "saved_reminder") verb = STANDALONE_REMINDER_VERB
   const showActor = display.kind === "actor-prefixed" && !isSelf
-  const showEmoji = activityType === "reaction" && emoji
+  const reactionEmoji = activityType === "reaction" ? emoji : null
 
   return (
-    <div className="flex-1 min-w-0">
-      <div className="flex items-baseline gap-1.5 text-sm">
-        {showActor && <span className={cn("font-medium", isUnread && "font-semibold")}>{actorName}</span>}
-        <span className="text-muted-foreground">{verb}</span>
-        {hasStream && <span className="font-medium truncate">{streamName}</span>}
-        {showEmoji && <span className="shrink-0">{emoji}</span>}
+    <div className="min-w-0 flex-1">
+      {/* Caption line. The whole actor/verb/stream cluster lives in one
+          `truncate` block so it ellipsises as a unit on one line — the actor
+          name can never wrap — and the timestamp stays pinned to the right edge
+          (using the horizontal room that used to sit empty on mobile). */}
+      <div className="flex items-baseline gap-2">
+        <div className="min-w-0 flex-1 truncate text-[13px] leading-tight text-muted-foreground">
+          {showActor && <span className="font-semibold text-foreground">{actorName}</span>}
+          {showActor && " "}
+          {verb}
+          {hasStream && " "}
+          {hasStream && <span className="font-medium text-foreground">{streamName}</span>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <RelativeTime date={createdAt} terse className="text-xs tabular-nums text-muted-foreground/70" />
+          {/* Unread marker, right-aligned with the time. Space is reserved when
+              read (transparent) so toggling read/unread never shifts the row
+              (INV-21). Self rows are always read, so they get no marker. */}
+          {!isSelf && (
+            <span aria-hidden className={cn("h-1.5 w-1.5 rounded-full", isUnread ? "bg-blue-500" : "bg-transparent")} />
+          )}
+        </div>
       </div>
 
-      <ActivityPreview contentPreview={contentPreview} toEmoji={toEmoji} />
-
-      <RelativeTime date={createdAt} className="text-xs text-muted-foreground/60 mt-1 block" />
+      <ActivityPreview contentPreview={contentPreview} toEmoji={toEmoji} emoji={reactionEmoji} isUnread={isUnread} />
     </div>
   )
 }

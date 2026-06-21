@@ -668,6 +668,7 @@ export interface WorkspaceBootstrapData {
   activityCounts: Record<string, number>
   unreadActivityCount: number
   viewerPermissions: WorkspacePermissionSlug[]
+  syncHead?: string
 }
 
 export async function getWorkspaceBootstrap(client: TestClient, workspaceId: string): Promise<WorkspaceBootstrapData> {
@@ -678,6 +679,27 @@ export async function getWorkspaceBootstrap(client: TestClient, workspaceId: str
     throw new Error(`Get workspace bootstrap failed: ${JSON.stringify(data)}`)
   }
   return data.data
+}
+
+export interface SyncCatchUpResult {
+  entries: Array<{ syncId: string; eventType: string; payload: unknown; createdAt: string }>
+  head: string
+  requiresBootstrap?: boolean
+}
+
+export async function getSyncCatchUp(
+  client: TestClient,
+  workspaceId: string,
+  after: string = "0"
+): Promise<SyncCatchUpResult> {
+  // The sync endpoint returns the catch-up body directly (not wrapped in `data`).
+  const { status, data } = await client.get<SyncCatchUpResult>(
+    `/api/workspaces/${workspaceId}/sync?after=${after}&limit=100`
+  )
+  if (status !== 200) {
+    throw new Error(`Sync catch-up failed: ${JSON.stringify(data)}`)
+  }
+  return data
 }
 
 /**

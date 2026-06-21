@@ -47,6 +47,7 @@ import {
   type LabelActor,
   type LabelAssignment,
   BotInvocationCapabilities,
+  BotInvocationTriggers,
   BotRuntimeKinds,
   MemoryModes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
@@ -1213,7 +1214,7 @@ export function createPublicApiHandlers({
         acceptingInvocations: false,
       })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
-      const isSessionControl = invocation.requiredCapability === BotInvocationCapabilities.SESSION_CONTROL
+      const isSessionControl = invocation.trigger === BotInvocationTriggers.SESSION_CONTROL
 
       // One delivery verdict per claim (Phase 2.4) drives both the sealed
       // assignment and the plaintext context so they can't disagree. The sealed

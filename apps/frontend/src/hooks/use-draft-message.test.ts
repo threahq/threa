@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
-import { useDraftMessage, getDraftMessageKey, upsertLoadedDraft, resolveLoadedDraft } from "./use-draft-message"
+import {
+  useDraftMessage,
+  getDraftMessageKey,
+  upsertLoadedDraft,
+  resolveLoadedDraft,
+  clearLoadedDraft,
+  stashLoadedDraft,
+  restoreStashedDraftToComposer,
+} from "./use-draft-message"
+import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { ContextRefKinds, type JSONContent } from "@threa/types"
 import type { DraftContextRef } from "@/lib/context-bag/types"
@@ -822,5 +831,123 @@ describe("useDraftMessage", () => {
         expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0)
       })
     })
+  })
+})
+
+describe("draft staging (synchronous reload safety)", () => {
+  const UNLOCKED_SESSION = {
+    status: "unlocked",
+    keyId: "ek_test",
+    publicKey: null,
+    privateKey: {} as CryptoKey,
+    deviceTrusted: true,
+    error: null,
+  } as ReturnType<typeof e2eSessionStore.useE2eSession>
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    localStorage.clear()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue(null)
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(LOCKED_SESSION)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("stages a plaintext keystroke synchronously, before the debounce reaches IDB", async () => {
+    const { result, unmount } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+
+    act(() => {
+      result.current.saveDraftDebounced(makeDoc("typed fast"))
+    })
+
+    // The synchronous stage has happened even though the 500ms debounce has not —
+    // this is the content a same-tick reload would otherwise lose.
+    expect(readStagedDraft(workspaceId, draftKey)?.contentJson).toEqual(makeDoc("typed fast"))
+    // IDB is still empty until the debounce fires.
+    expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0)
+
+    unmount()
+  })
+
+  it("never stages an E2E keystroke (no plaintext at rest, E2EE-4)", async () => {
+    vi.spyOn(currentUserHook, "useCurrentWorkspaceUserId").mockReturnValue("user_1")
+    vi.spyOn(e2eSessionStore, "useE2eSession").mockReturnValue(UNLOCKED_SESSION)
+
+    const { result, unmount } = renderHook(() => useDraftMessage(workspaceId, draftKey, "stream_e2e_root"))
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+
+    act(() => {
+      result.current.saveDraftDebounced(makeDoc("secret"))
+    })
+
+    expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
+    unmount()
+  })
+
+  it("clears the staging buffer on discard (clearLoadedDraft)", async () => {
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("hello"), attachments: [] })
+    stageDraftContent(workspaceId, draftKey, makeDoc("hello world"))
+
+    await clearLoadedDraft(workspaceId, draftKey)
+
+    expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
+  })
+
+  it("clears the staging buffer on send (resolveLoadedDraft) so sent content can't be recovered", async () => {
+    await db.drafts.put({
+      id: "draft_sent",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("sent message"),
+      attachments: [],
+      baseVersion: 2,
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_sent" })
+    stageDraftContent(workspaceId, draftKey, makeDoc("sent message"))
+
+    await resolveLoadedDraft(workspaceId, draftKey)
+
+    expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
+  })
+
+  it("clears the staging buffer on stash", async () => {
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("to stash"), attachments: [] })
+    stageDraftContent(workspaceId, draftKey, makeDoc("to stash"))
+
+    await stashLoadedDraft(workspaceId, draftKey)
+
+    expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
+  })
+
+  it("clears the staging buffer on stash-restore so a reload can't overwrite the restored draft", async () => {
+    // Loaded draft A (with staged keystrokes) plus a separate stash entry B.
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("draft A"), attachments: [] })
+    await db.drafts.put({
+      id: "draft_B",
+      workspaceId,
+      scope: draftKey,
+      contentJson: makeDoc("draft B"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    })
+    stageDraftContent(workspaceId, draftKey, makeDoc("draft A edited"))
+
+    await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_B")
+
+    // The swapped-out draft's buffer is gone, so reconcile can't apply it over B.
+    expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
   })
 })

@@ -1,7 +1,16 @@
 import { CommandKinds, CommandScopes, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandRegistry } from "./registry"
 
-export const PI_SESSION_CONTROL_COMMAND_NAMES = ["compact", "model", "thinking", "skill", "reload", "shell"] as const
+export const PI_SESSION_CONTROL_COMMAND_NAMES = [
+  "compact",
+  "model",
+  "thinking",
+  "skill",
+  "reload",
+  "shell",
+  "steer",
+  "stop",
+] as const
 export type PiSessionControlCommandName = (typeof PI_SESSION_CONTROL_COMMAND_NAMES)[number]
 
 export function listServerCommandInfos(commandRegistry: CommandRegistry): CommandInfo[] {
@@ -76,6 +85,19 @@ export function listPiSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "command", required: true, description: "Shell command to run (passed to `$SHELL -c`)" }],
+    },
+    {
+      name: "steer",
+      description: "Steer the linked Pi session with an immediate follow-up",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "message", required: false, description: "Optional instruction to inject immediately" }],
+    },
+    {
+      name: "stop",
+      description: "Stop the current linked Pi turn",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
     },
   ]
 }

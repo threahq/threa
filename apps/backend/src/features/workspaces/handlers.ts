@@ -15,6 +15,7 @@ import type { AvatarService } from "./avatar-service"
 import type { LabelService, LabelAssignmentService } from "../labels"
 import { getEmojiList } from "../emoji"
 import { getEffectiveLevel } from "../streams"
+import { SyncLogRepository } from "../sync"
 import { BotRepository, serializeBot } from "../public-api"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
@@ -140,6 +141,14 @@ export function createWorkspaceHandlers({
     async bootstrap(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
+
+      // Read the sync-log head BEFORE the snapshot queries below: every
+      // projection then observes a DB state at or after this read, so the
+      // snapshot reflects everything `<= syncHead` (read-before-stamp). The
+      // client seeds its sync cursor here on first connect, making the connect
+      // bootstrap the single authority for `<= head` — catch-up starts at head
+      // instead of a stale cursor that would collapse into a second bootstrap.
+      const { head: syncHead } = await SyncLogRepository.getHeadAndRetainedFrom(pool, workspaceId)
 
       const [
         workspace,
@@ -269,6 +278,7 @@ export function createWorkspaceHandlers({
           viewerPermissions,
           viewerIsPlatformAdmin,
           configuredToolCategories,
+          syncHead: syncHead.toString(),
         },
       })
     },
