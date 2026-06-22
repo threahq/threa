@@ -296,13 +296,6 @@ interface StreamSectionProps {
   state?: CollapseState
   onToggle?: () => void
   action?: ReactNode
-  /**
-   * Rendered in place of the row list when the section has no items (and isn't
-   * collapsed). Lets a persistent section — e.g. Unread, which stays in the
-   * layout once added — hold its space with an "all caught up" placeholder
-   * instead of collapsing to just a header (which shifts everything below it).
-   */
-  emptyState?: ReactNode
   /** Show compact view (title only, no preview) */
   compact?: boolean
   /** Show preview on hover when compact (only works with compact=true) */
@@ -355,7 +348,6 @@ export function StreamSection({
   streamDragEnabled = false,
   dimReadRows = false,
   homeHintFor,
-  emptyState,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -394,8 +386,6 @@ export function StreamSection({
       />
 
       {!isCollapsed && items.length > 0 && <div className="mt-1 flex flex-col gap-0.5">{items.map(renderRow)}</div>}
-
-      {!isCollapsed && items.length === 0 && emptyState}
 
       {!isCollapsed && action}
     </div>

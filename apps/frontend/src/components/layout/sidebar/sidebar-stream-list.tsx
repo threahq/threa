@@ -1,5 +1,4 @@
 import { Fragment, useState, type ReactNode, type RefObject } from "react"
-import { Check } from "lucide-react"
 import {
   DndContext,
   DragOverlay,
@@ -53,18 +52,6 @@ function UnreadSectionTitle({ label }: { label: string }) {
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
       {label}
     </span>
-  )
-}
-
-/** Placeholder shown when the (persistent) Unread section has nothing in it, so
- *  catching up holds the section's space instead of collapsing it. Roughly one
- *  row tall to match a stream item. Top-level per INV-18. */
-function UnreadEmptyState() {
-  return (
-    <div className="mt-1 flex min-h-[2.75rem] items-center gap-2 px-2 text-sm text-muted-foreground/60">
-      <Check className="h-4 w-4 shrink-0" />
-      All caught up
-    </div>
   )
 }
 
@@ -262,21 +249,28 @@ export function SidebarStreamList({
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
           const add = addWiringFor(section.spec)
-          // The Unread section holds read-but-not-cleared members (sticky); dim those
-          // in place and offer "Clear read" to flush them back to their homes. The
-          // control is always mounted (just disabled when there's nothing to clear)
-          // so toggling it on/off never reflows the section.
-          const clearReadAction = isUnread ? (
-            <button
-              type="button"
-              onClick={onClearReadUnread}
-              disabled={!hasReadResidue}
-              className="mt-0.5 flex w-full items-center justify-center px-3 py-1 text-[11px] uppercase tracking-wide text-muted-foreground/70 transition-colors enabled:hover:text-foreground disabled:opacity-40"
-            >
-              Clear read
-            </button>
-          ) : undefined
-          const emptyState = isUnread ? <UnreadEmptyState /> : undefined
+          // The Unread section keeps a single, same-footprint footer so it never
+          // reflows: an empty tray shows a quiet "All caught up", otherwise the
+          // "Clear read" control (disabled when there's nothing read to flush).
+          // Never both at once.
+          let unreadFooter: ReactNode = undefined
+          if (isUnread) {
+            unreadFooter =
+              items.length === 0 ? (
+                <p className="mt-0.5 px-3 py-1 text-center text-[11px] italic text-muted-foreground/50">
+                  All caught up
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClearReadUnread}
+                  disabled={!hasReadResidue}
+                  className="mt-0.5 flex w-full items-center justify-center px-3 py-1 text-[11px] uppercase tracking-wide text-muted-foreground/70 transition-colors enabled:hover:text-foreground disabled:opacity-40"
+                >
+                  Clear read
+                </button>
+              )
+          }
 
           const sectionEl = presentation.tiered ? (
             <TieredStreamSection
@@ -319,8 +313,7 @@ export function SidebarStreamList({
               getMentionCount={getMentionCount}
               state={state}
               onToggle={onToggle}
-              action={clearReadAction}
-              emptyState={emptyState}
+              action={unreadFooter}
               compact={presentation.compact}
               showPreviewOnHover={presentation.showPreviewOnHover}
               scrollContainerRef={scrollContainerRef}
