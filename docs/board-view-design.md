@@ -169,6 +169,48 @@ Q3, it mostly resolves:
    not just scan. Reuses existing compose + reassign + saved paths.
    (Later/maybe: per-scratchpad topic segmentation so scratchpad boards work.)
 
+## The board as the forcing function for conversation maturity (Kris's reframe)
+
+Kris isn't sure conversations are mature enough yet — and that's exactly the
+point. Today conversations live in an _optional_ overlay
+(`convOverlay`/`convView`), so their quality is never under pressure; nobody is
+forced to confront a bad title or a mis-merge. Make conversations your
+**entrypoint** and their quality suddenly _matters_, every day, to the person
+most able to fix it. The board is the accountability surface that drags the
+primitive to maturity. The order of causation flips: **we don't wait for
+conversations to be good before building the board; the board is how they become
+good.**
+
+The feedback loop is already half-built:
+
+- The overlay already has a per-message **reassign** correction ("this message
+  belongs to…", desktop dropdown + mobile picker) — human-in-the-loop
+  relabeling exists today (`conversation-overlay`).
+- The board adds higher-altitude corrections — **retitle**, **merge**,
+  **split**, **mark resolved** — all already expressible as reassignments +
+  status writes, no new primitive.
+- Every correction is a **labeled example**: the board turns daily use into an
+  eval set for the boundary-extraction and topic-summary prompts (INV-44/45 —
+  evals call production entry points). Like the quiet collector learning from
+  dismissals, conversations improve the more the board is used.
+
+### Sequencing to de-risk (the one caution)
+
+If conversations are currently rough, making them the _default_ entrypoint on
+day one risks a wall of "Untitled" / mis-clustered cards — the product feeling
+broken. So promote in reversible stages:
+
+1. **Secondary surface** — board ships as a nav item you open deliberately, not
+   the landing page. Dogfood it; use the corrections; watch quality climb.
+2. **Quality bar** — define a floor from real data (null-title rate, correction
+   rate, % conversations carrying a memo) before promoting.
+3. **Promote to entrypoint** once the floor is cleared.
+
+Keeps the forcing-function benefit without betting the front door on an immature
+primitive. Worth a zeroth step: **measure the current floor** — sample real
+conversations (read-only) for title quality, null rate, cluster size, and status
+distribution, so "is it mature enough?" gets a number instead of a guess.
+
 ## Open decisions remaining
 
 1. **Null-title fallback** — entrypoint first-line (my lean) vs. hide untitled
