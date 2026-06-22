@@ -49,6 +49,16 @@ export type SidebarSectionSpec =
    */
   | { kind: "custom"; sectionId: string; name: string; streamIds: string[] }
   /**
+   * The Unread section: every stream the viewer has unread (non-muted) messages
+   * in, regardless of the bucket / type / custom section / label it otherwise
+   * sits in. When present it **trumps the smart/type buckets** — an unread stream
+   * is pulled out of them and shown here instead. A stream filed into a custom
+   * section or carrying a pinned label keeps its hard location: it stays in that
+   * home (rendered dimmed) AND surfaces here, so it never looks like it's in two
+   * places at once. Draws no membership of its own; the unread signal is live.
+   */
+  | { kind: "unread" }
+  /**
    * The Quick Links block (Drafts / Saved / Files / …). A position-only marker:
    * the links themselves — their order and per-link visibility — live in
    * {@link SidebarConfig.quickLinks}, independent of this section's placement, so
@@ -181,6 +191,7 @@ function isRenderableSectionSpec(spec: SidebarSectionSpec | undefined | null): s
         typeof spec.name === "string" &&
         spec.name.trim().length > 0
       )
+    case "unread":
     case "quicklinks":
       return true
     default:

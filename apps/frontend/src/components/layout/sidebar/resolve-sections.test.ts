@@ -356,6 +356,138 @@ describe("resolveSections — custom sections", () => {
   })
 })
 
+describe("resolveSections — Unread section", () => {
+  const SECTIONS_VERSION = SIDEBAR_CONFIG_VERSION
+  // Unread at the top, then the two smart buckets it draws from.
+  const unreadFirst = {
+    version: SECTIONS_VERSION,
+    basePreset: "smart" as const,
+    sections: [
+      { id: "unread", spec: { kind: "unread" as const } },
+      { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+      { id: "other", spec: { kind: "smart" as const, bucket: "other" as const } },
+    ],
+    quickLinks: [],
+  }
+
+  it("pulls unread streams out of the smart buckets into Unread", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 }),
+      makeItem({ id: "r1", section: "recent", activity: 5 }),
+    ]
+    const getUnreadCount = unreadFrom(new Set(["u1"]))
+
+    expect(shape({ processedStreams, getUnreadCount }, unreadFirst)).toEqual([
+      { id: "unread", items: ["u1"] },
+      // u1 left Recent for Unread; r1 (read) stays.
+      { id: "recent", items: ["r1"] },
+      { id: "other", items: [] },
+    ])
+  })
+
+  it("takes precedence over a bucket ordered above it", () => {
+    const recentFirst = {
+      version: SECTIONS_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+        { id: "unread", spec: { kind: "unread" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 }),
+      makeItem({ id: "r1", section: "recent", activity: 5 }),
+    ]
+    const getUnreadCount = unreadFrom(new Set(["u1"]))
+
+    expect(shape({ processedStreams, getUnreadCount }, recentFirst)).toEqual([
+      // Recent loses u1 to Unread even though it is ordered above it.
+      { id: "recent", items: ["r1"] },
+      { id: "unread", items: ["u1"] },
+    ])
+  })
+
+  it("excludes muted unread streams (quiet urgency), leaving them in their bucket", () => {
+    const processedStreams = [
+      makeItem({ id: "u_active", section: "recent", urgency: "activity", activity: 9 }),
+      // Muted: unread count > 0 but urgency stays "quiet".
+      makeItem({ id: "u_muted", section: "recent", urgency: "quiet", activity: 5 }),
+    ]
+    const getUnreadCount = unreadFrom(new Set(["u_active", "u_muted"]))
+
+    expect(shape({ processedStreams, getUnreadCount }, unreadFirst)).toEqual([
+      { id: "unread", items: ["u_active"] },
+      // The muted unread stays in Recent rather than resurfacing in Unread.
+      { id: "recent", items: ["u_muted"] },
+      { id: "other", items: [] },
+    ])
+  })
+
+  it("keeps a custom-filed unread stream in its custom home (and duplicates it into Unread)", () => {
+    const config = {
+      version: SECTIONS_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "unread", spec: { kind: "unread" as const } },
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+        {
+          id: customSectionId("sec_1"),
+          spec: { kind: "custom" as const, sectionId: "sec_1", name: "Pinned", streamIds: ["c1"] },
+        },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 }),
+      makeItem({ id: "c1", section: "recent", urgency: "activity", activity: 5 }),
+    ]
+    const getUnreadCount = unreadFrom(new Set(["u1", "c1"]))
+
+    expect(shape({ processedStreams, getUnreadCount }, config)).toEqual([
+      // Both unread streams surface here, by activity.
+      { id: "unread", items: ["u1", "c1"] },
+      // u1 (no home) left Recent; c1 was always in its custom home.
+      { id: "recent", items: [] },
+      // c1 stays in its hard-location home — the home copy the UI renders dimmed.
+      { id: customSectionId("sec_1"), items: ["c1"] },
+    ])
+  })
+
+  it("keeps a labeled unread stream in its label lens (and duplicates it into Unread)", () => {
+    const config = {
+      version: SECTIONS_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "unread", spec: { kind: "unread" as const } },
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+        { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [makeItem({ id: "l1", section: "recent", urgency: "activity", activity: 5 })]
+    const getUnreadCount = unreadFrom(new Set(["l1"]))
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["l1"])]])
+
+    expect(shape({ processedStreams, getUnreadCount, streamIdsByLabel }, config)).toEqual([
+      { id: "unread", items: ["l1"] },
+      { id: "recent", items: [] },
+      // The label lens keeps its unread stream (dimmed in the UI).
+      { id: labelSectionId("lbl_1"), items: ["l1"] },
+    ])
+  })
+
+  it("leaves the buckets untouched when no Unread section is in the layout", () => {
+    const processedStreams = [makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 })]
+    const getUnreadCount = unreadFrom(new Set(["u1"]))
+    // Default Smart preset has no Unread section, so u1 stays in Recent.
+    const recent = resolveSections(SMART_SIDEBAR_CONFIG, makeInput({ processedStreams, getUnreadCount })).find(
+      (r) => r.section.id === "recent"
+    )
+    expect(recent?.items.map((i) => i.id)).toEqual(["u1"])
+  })
+})
+
 describe("findSourceLabelId", () => {
   const config = {
     version: SIDEBAR_CONFIG_VERSION,

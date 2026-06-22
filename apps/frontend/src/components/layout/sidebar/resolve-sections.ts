@@ -2,7 +2,7 @@ import { type StreamType, StreamTypes } from "@threa/types"
 import { ALL_SECTIONS, SMART_SECTIONS } from "./config"
 import type { SidebarConfig, SidebarSection, SidebarSectionSpec } from "./sidebar-config"
 import type { SectionKey, StreamItemData } from "./types"
-import { sortStreams } from "./utils"
+import { isUnreadStream, sortStreams } from "./utils"
 
 type TypeSectionStream = Extract<StreamType, "scratchpad" | "channel" | "dm">
 
@@ -63,6 +63,13 @@ export function findSourceLabelId(streamId: string, resolved: ResolvedSection[])
  * layout order rather than competing for the topmost claim. Custom sections
  * out-rank label sections (a stream filed into a custom section is withheld
  * from the label lens too); among label sections, the topmost one wins.
+ *
+ * The Unread section (when present) trumps the smart/type buckets the same way:
+ * every unread stream is withheld from them and shown in Unread instead,
+ * regardless of layout order. But its precedence stops at the hard locations —
+ * an unread stream filed into a custom section or carrying a pinned label keeps
+ * its home (shown dimmed there) AND is duplicated into Unread, so the Unread
+ * section never claims any stream out of a custom/label home below it.
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
   const claimed = new Set<string>()
@@ -73,6 +80,12 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
   // so the label lens claims them out of the smart/type buckets — a labeled
   // stream lives under its label, not its automatic bucket, regardless of order.
   const labeledClaimed = new Set<string>()
+  // Unread streams, withheld from the smart/type buckets so the Unread section
+  // surfaces them instead — only when that section is actually in the layout.
+  // Hard-location homes (custom/label) keep their unread streams, so this only
+  // gates the automatic buckets, never the homes.
+  const unreadClaimed = new Set<string>()
+  const hasUnreadSection = config.sections.some((section) => section.spec.kind === "unread")
   for (const section of config.sections) {
     if (section.spec.kind === "custom") for (const id of section.spec.streamIds) customClaimed.add(id)
     if (section.spec.kind === "label") {
@@ -80,9 +93,17 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
       if (ids) for (const id of ids) labeledClaimed.add(id)
     }
   }
+  if (hasUnreadSection) {
+    for (const stream of input.processedStreams) {
+      if (isUnreadStream(stream, input.getUnreadCount(stream.id))) unreadClaimed.add(stream.id)
+    }
+  }
   return config.sections.map((section) => {
-    const items = resolveItems(section.spec, input, claimed, customClaimed, labeledClaimed)
-    for (const item of items) claimed.add(item.id)
+    const items = resolveItems(section.spec, input, claimed, customClaimed, labeledClaimed, unreadClaimed)
+    // The Unread section never claims its streams: the smart/type buckets already
+    // exclude them via `unreadClaimed`, and the custom/label homes intentionally
+    // keep (and dim) theirs — claiming would hide a home copy resolving below.
+    if (section.spec.kind !== "unread") for (const item of items) claimed.add(item.id)
     return { section, items }
   })
 }
@@ -92,30 +113,50 @@ function resolveItems(
   input: ResolveSectionsInput,
   claimed: ReadonlySet<string>,
   customClaimed: ReadonlySet<string>,
-  labeledClaimed: ReadonlySet<string>
+  labeledClaimed: ReadonlySet<string>,
+  unreadClaimed: ReadonlySet<string>
 ): StreamItemData[] {
   // A custom section draws only its own membership, minus anything an earlier
-  // custom section already took (single-membership; topmost custom wins).
+  // custom section already took (single-membership; topmost custom wins). It
+  // keeps its unread streams (shown dimmed), so `unreadClaimed` never applies.
   if (spec.kind === "custom") return resolveCustomSection(spec.streamIds, input, claimed)
   // A label lens shows its streams out of the buckets, but a stream filed into a
   // custom section still trumps the label — fold custom membership into the
-  // exclusion. Topmost label wins via the running `claimed` set.
+  // exclusion. Topmost label wins via the running `claimed` set. Like custom
+  // sections it keeps its unread streams (dimmed), so `unreadClaimed` is omitted.
   if (spec.kind === "label") {
     const exclude = customClaimed.size === 0 ? claimed : new Set([...claimed, ...customClaimed])
     return resolveLabelSection(spec.labelId, input, exclude)
   }
-  // Smart/type buckets never show a stream that was filed into a custom section
-  // or that carries a pinned label, so fold both memberships into their
-  // exclusion set on top of the running claims.
+  // Every unread stream, regardless of where it would otherwise sit — including
+  // streams in a custom/label home, which are duplicated here (and dimmed in
+  // their home). Drawn independent of `claimed` so a home resolving above still
+  // surfaces its copy here.
+  if (spec.kind === "unread") return resolveUnreadSection(input)
+  // Smart/type buckets never show a stream that was filed into a custom section,
+  // carries a pinned label, or (when an Unread section exists) is unread, so fold
+  // all three memberships into their exclusion set on top of the running claims.
   const exclude =
-    customClaimed.size === 0 && labeledClaimed.size === 0
+    customClaimed.size === 0 && labeledClaimed.size === 0 && unreadClaimed.size === 0
       ? claimed
-      : new Set([...claimed, ...customClaimed, ...labeledClaimed])
+      : new Set([...claimed, ...customClaimed, ...labeledClaimed, ...unreadClaimed])
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
   // Quick links draw no streams — the block renders its own link list, so the
   // resolved section is a positional placeholder the stream list renders specially.
   return []
+}
+
+/**
+ * Every stream the viewer has unread (non-muted) messages in, by activity. Draws
+ * from real streams only (synthetic DM drafts have nothing unread). Ignores the
+ * running `claimed` set on purpose: a custom/label home resolving above keeps its
+ * copy, and this section surfaces the same stream again so the unread is never
+ * buried behind a collapsed home.
+ */
+function resolveUnreadSection({ processedStreams, getUnreadCount }: ResolveSectionsInput): StreamItemData[] {
+  const items = processedStreams.filter((stream) => isUnreadStream(stream, getUnreadCount(stream.id)))
+  return sortStreams(items, "activity", getUnreadCount)
 }
 
 /**

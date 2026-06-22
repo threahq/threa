@@ -191,6 +191,11 @@ export function SidebarStreamList({
 
   const draggingStream = draggingStreamId ? processedStreams.find((s) => s.id === draggingStreamId) : null
 
+  // When an Unread section is in the layout it surfaces the live copy of every
+  // unread stream; a stream in a hard-location home (custom/label) stays there
+  // too, so dim its home copy rather than read as a second live location.
+  const hasUnreadSection = resolvedSections.some(({ section }) => section.spec.kind === "unread")
+
   return (
     <SidebarLabelsProvider workspaceId={workspaceId}>
       <DndContext
@@ -223,6 +228,7 @@ export function SidebarStreamList({
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
           const add = addWiringFor(section.spec)
+          const dimUnread = hasUnreadSection && (section.spec.kind === "custom" || section.spec.kind === "label")
 
           const sectionEl = presentation.tiered ? (
             <TieredStreamSection
@@ -249,6 +255,7 @@ export function SidebarStreamList({
               addTooltip={add?.addTooltip}
               addMenuActions={add?.addMenuActions}
               streamDragEnabled={streamDragEnabled}
+              dimUnread={dimUnread}
             />
           ) : (
             <StreamSection
@@ -269,6 +276,7 @@ export function SidebarStreamList({
               showPreviewOnHover={presentation.showPreviewOnHover}
               scrollContainerRef={scrollContainerRef}
               streamDragEnabled={streamDragEnabled}
+              dimUnread={dimUnread}
             />
           )
 

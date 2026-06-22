@@ -114,6 +114,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
   const addableSpecs = useMemo<SidebarSectionSpec[]>(() => {
     const specs: SidebarSectionSpec[] = []
     if (!hasSection(config, { kind: "quicklinks" })) specs.push({ kind: "quicklinks" })
+    if (!hasSection(config, { kind: "unread" })) specs.push({ kind: "unread" })
     for (const bucket of SIDEBAR_SECTION_KEYS) {
       const spec: SidebarSectionSpec = { kind: "smart", bucket }
       if (!hasSection(config, spec)) specs.push(spec)
