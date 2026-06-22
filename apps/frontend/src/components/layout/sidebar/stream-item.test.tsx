@@ -265,6 +265,57 @@ describe("StreamItem", () => {
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument()
   })
 
+  it("shows an unsent-draft hint on a stream with a loaded draft", () => {
+    const stream = createStream({ hasLoadedDraft: true })
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    expect(screen.getByRole("img", { name: "Unsent draft" })).toBeInTheDocument()
+  })
+
+  it("hides the unsent-draft hint on the active stream (its composer already shows the draft)", () => {
+    const stream = createStream({ hasLoadedDraft: true })
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    expect(screen.queryByRole("img", { name: "Unsent draft" })).not.toBeInTheDocument()
+  })
+
+  it("shows no unsent-draft hint when the stream has no loaded draft", () => {
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    expect(screen.queryByRole("img", { name: "Unsent draft" })).not.toBeInTheDocument()
+  })
+
   it("renders a desktop context-menu trigger for DMs", () => {
     touchState.inputMode = "mouse"
     touchState.touchCapable = false

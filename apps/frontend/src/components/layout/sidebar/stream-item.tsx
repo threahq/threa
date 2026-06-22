@@ -5,6 +5,7 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
+import { DraftIndicator } from "@/components/draft-indicator"
 import { RelativeTime } from "@/components/relative-time"
 import { getThreadRootContext } from "@/components/thread/breadcrumb-helpers"
 import { isDraftId, useActors } from "@/hooks"
@@ -396,6 +397,8 @@ export function StreamItem({
                   )}
                   <div className="ml-auto flex items-center gap-1.5">
                     <StreamLabelDots streamId={stream.id} />
+                    {/* Suppressed on the active stream — its composer already shows the draft. */}
+                    {stream.hasLoadedDraft && !isActive && <DraftIndicator />}
                     <MentionIndicator count={mentionCount} />
                   </div>
                 </div>

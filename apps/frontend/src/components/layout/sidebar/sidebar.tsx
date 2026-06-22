@@ -10,6 +10,7 @@ import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
 import {
   useActivityCounts,
   useAllDrafts,
+  streamIdsWithLoadedDraft,
   createDmDraftId,
   useDraftScratchpads,
   useLiveSavedCount,
@@ -124,6 +125,19 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
 
+  // Streams the user stepped away from with an unsent (loaded, non-stashed)
+  // draft, surfaced as a per-row hint. The signature string keeps the derived
+  // Set referentially stable across draft edits that don't change membership, so
+  // the heavy `processedStreams` map below doesn't rebuild on every keystroke.
+  const loadedDraftStreamIdSignature = useMemo(
+    () => [...streamIdsWithLoadedDraft(allDrafts)].sort().join(","),
+    [allDrafts]
+  )
+  const streamsWithLoadedDraft = useMemo(
+    () => new Set(loadedDraftStreamIdSignature ? loadedDraftStreamIdSignature.split(",") : []),
+    [loadedDraftStreamIdSignature]
+  )
+
   const processedStreams = useMemo(() => {
     return idbStreams
       .filter((stream) => {
@@ -157,6 +171,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           section,
           dmPeerUserId,
           nameDecrypting: isSealedNamePending(streamWithPreview),
+          hasLoadedDraft: streamsWithLoadedDraft.has(stream.id),
         }
       })
   }, [
@@ -172,6 +187,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     unreadState,
     workspaceId,
     isSealedNamePending,
+    streamsWithLoadedDraft,
   ])
 
   // System streams are auto-created infrastructure — don't count toward "has content"
