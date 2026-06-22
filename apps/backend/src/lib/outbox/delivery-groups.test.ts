@@ -99,3 +99,48 @@ describe("permissionGroupsForRole", () => {
     expect(permissionGroupsForRole("member")).toEqual([])
   })
 })
+
+describe("resolveDeliveryGroups — stream archive lifecycle", () => {
+  it("routes stream:archived to the root room and every descendant thread room", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:archived", {
+        workspaceId: "ws_1",
+        streamId: "stream_root",
+        stream: { id: "stream_root" },
+        threadStreamIds: ["stream_thread_a", "stream_thread_b"],
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_root"), streamGroup("stream_thread_a"), streamGroup("stream_thread_b")])
+  })
+
+  it("routes stream:unarchived to the root room and every descendant thread room", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:unarchived", {
+        workspaceId: "ws_1",
+        streamId: "stream_root",
+        stream: { id: "stream_root" },
+        threadStreamIds: ["stream_thread_a"],
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_root"), streamGroup("stream_thread_a")])
+  })
+
+  it("routes to the root room only when there are no descendant threads", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:archived", { workspaceId: "ws_1", streamId: "stream_root", stream: { id: "stream_root" } })
+    )
+    expect(groups).toEqual([streamGroup("stream_root")])
+  })
+
+  it("does not duplicate the root room when a thread id equals the root id (defensive)", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream:archived", {
+        workspaceId: "ws_1",
+        streamId: "stream_root",
+        stream: { id: "stream_root" },
+        threadStreamIds: ["stream_root"],
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_root")])
+  })
+})

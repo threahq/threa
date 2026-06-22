@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test"
+import { io, type Socket } from "socket.io-client"
 import {
   TestClient,
   loginAs,
@@ -9,10 +10,60 @@ import {
   archiveStream,
   getWorkspaceBootstrap,
   getBootstrap,
+  joinRoom,
 } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
 const testEmail = (name: string) => `${name}-${testRunId}@test.com`
+
+function getBaseUrl(): string {
+  return process.env.TEST_BASE_URL || "http://localhost:3001"
+}
+
+function createSocket(client: TestClient): Socket {
+  const cookies = (client as unknown as { cookies?: Map<string, string> }).cookies
+  return io(getBaseUrl(), {
+    extraHeaders: {
+      Cookie: cookies
+        ? Array.from(cookies.entries())
+            .map(([k, v]) => `${k}=${v}`)
+            .join("; ")
+        : "",
+    },
+    transports: ["websocket"],
+    autoConnect: false,
+  })
+}
+
+async function connectSocket(socket: Socket, timeoutMs = 5000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Socket connection timeout")), timeoutMs)
+    socket.on("connect", () => {
+      clearTimeout(timeout)
+      resolve()
+    })
+    socket.on("connect_error", (err) => {
+      clearTimeout(timeout)
+      reject(err)
+    })
+    socket.connect()
+  })
+}
+
+function waitForEvent<T = unknown>(socket: Socket, eventName: string, timeoutMs = 5000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      socket.off(eventName, handler)
+      reject(new Error(`Timeout waiting for event: ${eventName}`))
+    }, timeoutMs)
+    const handler = (data: T) => {
+      clearTimeout(timeout)
+      socket.off(eventName, handler)
+      resolve(data)
+    }
+    socket.on(eventName, handler)
+  })
+}
 
 /**
  * Archiving a stream marks only that row; its thread descendants stay "active".
@@ -84,5 +135,35 @@ describe("Workspace bootstrap excludes threads rooted in archived streams", () =
     })
     expect(status).toBe(403)
     expect((data as { error?: string }).error).toBe("Cannot send messages to a thread under an archived stream")
+  })
+
+  test("a socket joined only to a thread's room receives the root's stream:archived event", async () => {
+    // A thread viewer only joins the thread's stream room, not the root's.
+    // The root's archive event must be routed to the thread's room too, or
+    // the thread composer stays live until a page refresh (the reported
+    // flakiness). This joins ONLY the thread room and asserts the event
+    // arrives — isolating the thread-room routing from the root-room path.
+    const client = new TestClient()
+    await loginAs(client, testEmail("live-routing"), "Live Routing Test")
+    const workspace = await createWorkspace(client, `Live Routing WS ${testRunId}`)
+
+    const root = await createScratchpad(client, workspace.id, "off")
+    const parentMsg = await sendMessage(client, workspace.id, root.id, "parent")
+    const thread = await createThread(client, workspace.id, root.id, parentMsg.id)
+
+    const socket = createSocket(client)
+    try {
+      await connectSocket(socket)
+      // Join ONLY the thread's room — explicitly not the root's.
+      await joinRoom(socket, `ws:${workspace.id}:stream:${thread.id}`)
+
+      const eventPromise = waitForEvent<{ streamId: string }>(socket, "stream:archived")
+      await archiveStream(client, workspace.id, root.id)
+      const event = await eventPromise
+
+      expect(event.streamId).toBe(root.id)
+    } finally {
+      socket.disconnect()
+    }
   })
 })

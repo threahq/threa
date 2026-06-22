@@ -20,6 +20,8 @@ import {
   type StreamMemberAddedOutboxPayload,
   type ActivityCreatedOutboxPayload,
   type StreamDisplayNameUpdatedPayload,
+  type StreamArchivedOutboxPayload,
+  type StreamUnarchivedOutboxPayload,
   type AttachmentTranscodedOutboxPayload,
   type AttachmentThumbnailedOutboxPayload,
   type MessagesMovedOutboxPayload,
@@ -245,6 +247,22 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   if (isOneOfOutboxEventType(event, ["label:assigned", "label:unassigned"])) {
     const payload = event.payload as LabelAssignedOutboxPayload | LabelUnassignedOutboxPayload
     return [userGroup(payload.targetUserId)]
+  }
+
+  // stream:archived / stream:unarchived — a thread inherits its lifecycle
+  // from its root (INV-62), and a client viewing a thread only joins the
+  // thread's room (not the root's). Route to the root's stream room AND every
+  // descendant thread room (populated in the payload at archive/unarchive
+  // time) so thread viewers learn the root's archived state live and the
+  // composer seals/unseals without a refresh. Thread rooms share the root's
+  // audience (access is inherited), so there is no cross-audience leak.
+  if (isOneOfOutboxEventType(event, ["stream:archived", "stream:unarchived"])) {
+    const payload = event.payload as StreamArchivedOutboxPayload | StreamUnarchivedOutboxPayload
+    const groups = [streamGroup(payload.streamId)]
+    for (const threadId of payload.threadStreamIds ?? []) {
+      if (threadId !== payload.streamId) groups.push(streamGroup(threadId))
+    }
+    return groups
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

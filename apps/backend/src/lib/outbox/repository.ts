@@ -275,11 +275,22 @@ export interface StreamUpdatedOutboxPayload extends WorkspaceScopedPayload {
 export interface StreamArchivedOutboxPayload extends WorkspaceScopedPayload {
   streamId: string
   stream: Stream
+  /**
+   * Active descendant thread ids (any depth) so the event can be routed to
+   * their stream rooms too — a client viewing a thread only joins the
+   * thread's room, not the root's, so without this it would never learn the
+   * root was archived and the composer would stay live until a refresh.
+   * Threads inherit access from the root (INV-62), so routing to their rooms
+   * reaches exactly the same audience as the root room — no leak.
+   */
+  threadStreamIds?: string[]
 }
 
 export interface StreamUnarchivedOutboxPayload extends WorkspaceScopedPayload {
   streamId: string
   stream: Stream
+  /** See {@link StreamArchivedOutboxPayload.threadStreamIds}. */
+  threadStreamIds?: string[]
 }
 
 export interface AttachmentUploadedOutboxPayload extends WorkspaceScopedPayload {

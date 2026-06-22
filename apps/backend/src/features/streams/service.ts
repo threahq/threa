@@ -743,10 +743,21 @@ export class StreamService {
           actorType: "user",
         })
 
+        // Route to the root's room AND its descendant thread rooms: a thread
+        // viewer only joins the thread's room, so without the thread ids in
+        // the payload it would never learn the root was archived and the
+        // composer would stay live until a refresh. Threads inherit access
+        // from the root (INV-62), so their rooms reach the same audience.
+        const threadStreamIds =
+          stream.type === StreamTypes.THREAD
+            ? []
+            : await StreamRepository.listThreadIdsByRoot(client, stream.workspaceId, stream.id)
+
         await OutboxRepository.insert(client, "stream:archived", {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
           stream,
+          threadStreamIds,
         })
       }
       return stream
@@ -771,6 +782,10 @@ export class StreamService {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
           stream,
+          threadStreamIds:
+            stream.type === StreamTypes.THREAD
+              ? []
+              : await StreamRepository.listThreadIdsByRoot(client, stream.workspaceId, stream.id),
         })
       }
       return stream

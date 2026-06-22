@@ -380,19 +380,31 @@ export function StreamContent({
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
   const isSystem = stream?.type === StreamTypes.SYSTEM
-  // Archiving marks only the root row, so a thread under an archived
-  // scratchpad/channel stays "active" on its own row. Resolve the root's
-  // archived state from two sources: the cached workspace streams (covers the
-  // live-archive case — `handleStreamArchived` keeps the root in IDB with
-  // `archivedAt` set) and the per-stream bootstrap's `rootArchivedAt` (covers
-  // a deep link to a thread whose archived root was never loaded into the
-  // client cache, since the workspace bootstrap excludes archived roots).
+  // A thread inherits its lifecycle from its root (INV-62): archiving marks
+  // only the root row, so the thread's own `archivedAt` can't tell the client
+  // it is sealed. The root's archived state is resolved from two sources,
+  // chosen by whether the root is resident in the workspace stream cache:
+  //
+  //   - root in `idbStreams` → use its `archivedAt` directly. This is live:
+  //     `stream:archived`/`stream:unarchived` are routed to the thread's room
+  //     too, so `handleStreamArchived`/`handleStreamUnarchived` update the
+  //     root's IDB row and this value re-renders without a refresh. Covers
+  //     live archive/unarchive and rapid toggling.
+  //   - root not in `idbStreams` → the cold-load deep-link case (the workspace
+  //     bootstrap excludes archived roots, so a thread under an already-
+  //     archived root has no root row to read). Fall back to the per-stream
+  //     bootstrap's `rootArchivedAt`, which the backend populates for threads.
+  //
+  // The two null meanings ("root active" vs "root unknown") must NOT be
+  // merged with `??` — that collapses them and lets a stale bootstrap value
+  // win after unarchive, which was the flicker/rapid-toggle bug.
   const rootStreamId = isThread ? (stream?.rootStreamId ?? null) : null
-  const rootArchivedFromCache = useMemo(
-    () => (rootStreamId ? (idbStreams.find((candidate) => candidate.id === rootStreamId)?.archivedAt ?? null) : null),
+  const rootFromCache = useMemo(
+    () => (rootStreamId ? (idbStreams.find((candidate) => candidate.id === rootStreamId) ?? null) : null),
     [idbStreams, rootStreamId]
   )
-  const rootArchivedAt = rootArchivedFromCache ?? bootstrap?.rootArchivedAt ?? null
+  const rootArchivedAt =
+    rootFromCache !== null ? (rootFromCache.archivedAt ?? null) : (bootstrap?.rootArchivedAt ?? null)
   const isArchived = stream?.archivedAt != null || rootArchivedAt != null
 
   // Conversation overlay (channels/DMs): URL-derived so a refresh or shared

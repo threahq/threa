@@ -333,6 +333,24 @@ export const StreamRepository = {
   },
 
   /**
+   * Active thread ids whose top-level root is `rootStreamId` (any nesting
+   * depth — `root_stream_id` points at the non-thread ancestor, INV-62).
+   * Used to route root lifecycle events (`stream:archived` / `stream:unarchived`)
+   * to descendant thread rooms so clients viewing a thread receive them and
+   * resolve the inherited archived state live, without a refresh.
+   */
+  async listThreadIdsByRoot(db: Querier, workspaceId: string, rootStreamId: string): Promise<string[]> {
+    const result = await db.query<{ id: string }>(
+      sql`SELECT id FROM streams
+          WHERE workspace_id = ${workspaceId}
+            AND root_stream_id = ${rootStreamId}
+            AND type = ${StreamTypes.THREAD}
+            AND archived_at IS NULL`
+    )
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
    * List streams by a known set of IDs with optional filtering.
    * Used by the public API to fetch accessible stream details.
    */
