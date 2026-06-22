@@ -818,6 +818,8 @@ describe("ActivityService mention extraction", () => {
     // Public stream → filterByAccess passes all candidates without a member lookup.
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
     const findBySlugs = spyOn(UserRepository, "findBySlugs").mockResolvedValue([] as any)
+    // The mention id is validated against the workspace before it can notify (INV-8).
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: TARGET_USER_ID }] as any)
     spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
     const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
       fakeActivity(params.context)
@@ -844,9 +846,32 @@ describe("ActivityService mention extraction", () => {
     })
   })
 
+  it("drops a mention id that is not a workspace user, even on a public stream (INV-8)", async () => {
+    const service = setupService()
+    // Public stream → filterByAccess would pass any id; the workspace-existence
+    // check is what stops a stale/forged `usr_…` from minting an activity row.
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
+    spyOn(UserRepository, "findByIds").mockResolvedValue([] as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockResolvedValue([])
+
+    const activities = await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hey @ghost",
+      contentJson: mentionDoc("usr_ghost"),
+    })
+
+    expect(activities).toHaveLength(0)
+    expect(insertBatch).not.toHaveBeenCalled()
+  })
+
   it("notifies only user mention nodes, ignoring persona and bot mentions", async () => {
     const service = setupService()
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: TARGET_USER_ID }] as any)
     spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
     const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
       fakeActivity(params.context)

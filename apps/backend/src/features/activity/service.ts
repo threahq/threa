@@ -74,9 +74,19 @@ export class ActivityService {
       const userIds = new Set<string>()
       const candidateIds = mentionedUserIds.filter((id) => id !== actorId)
       if (candidateIds.length > 0) {
-        const eligible = await this.filterByAccess(client, stream, rootStream, candidateIds)
-        for (const id of candidateIds) {
-          if (eligible.has(id)) userIds.add(id)
+        // The mention id rides in from contentJson, so confirm it's a real
+        // workspace user (INV-8) before it can mint an activity row. A public
+        // stream's filterByAccess grants read to everyone, so without this a
+        // stale or forged `usr_…` id would notify a non-workspace user.
+        const workspaceUserIds = new Set(
+          (await UserRepository.findByIds(client, workspaceId, candidateIds)).map((user) => user.id)
+        )
+        const validCandidateIds = candidateIds.filter((id) => workspaceUserIds.has(id))
+        if (validCandidateIds.length > 0) {
+          const eligible = await this.filterByAccess(client, stream, rootStream, validCandidateIds)
+          for (const id of validCandidateIds) {
+            if (eligible.has(id)) userIds.add(id)
+          }
         }
       }
 

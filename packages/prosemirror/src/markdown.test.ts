@@ -787,6 +787,18 @@ describe("@threa/prosemirror mention/channel pointer round-trip (INV-64)", () =>
     }
     expect(serializeToMarkdown(doc)).toBe("@pierre")
   })
+
+  it("does not materialize a channel pointer whose id lacks the stream_ prefix", () => {
+    const parsed = parseMarkdown("[#x](channel:not_stream)")
+    const nodes = parsed.content?.[0]?.content ?? []
+    expect(nodes.some((node) => node.type === "channelLink" && node.attrs?.id === "not_stream")).toBe(false)
+  })
+
+  it("does not materialize a mention pointer whose id prefix mismatches the scheme", () => {
+    const parsed = parseMarkdown("[@x](user:persona_1)")
+    const nodes = parsed.content?.[0]?.content ?? []
+    expect(nodes.some((node) => node.type === "mention" && node.attrs?.id === "persona_1")).toBe(false)
+  })
 })
 
 describe("mention/channel whitespace boundary", () => {

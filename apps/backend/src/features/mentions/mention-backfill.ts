@@ -145,12 +145,19 @@ async function processChunk(
   })
 
   const updates = resolveContentRows(rows, maps)
-  for (const update of updates) {
-    await ctx.pool.query(
-      sql`UPDATE ${sql.raw(table)}
-          SET content_json = ${JSON.stringify(update.contentJson)}, content_markdown = ${update.contentMarkdown}
-          WHERE id = ${update.id}`
-    )
+  if (updates.length > 0) {
+    // One set-based UPDATE per chunk (INV-56) instead of a round-trip per row:
+    // unnest the parallel id / content arrays and join them back onto the table.
+    const updateIds = updates.map((u) => u.id)
+    const updateJson = updates.map((u) => JSON.stringify(u.contentJson))
+    const updateMarkdown = updates.map((u) => u.contentMarkdown)
+    await ctx.pool.query(sql`
+      UPDATE ${sql.raw(table)} AS t
+      SET content_json = data.content_json::jsonb, content_markdown = data.content_markdown
+      FROM unnest(${updateIds}::text[], ${updateJson}::text[], ${updateMarkdown}::text[])
+        AS data(id, content_json, content_markdown)
+      WHERE t.id = data.id
+    `)
   }
 
   return { processed: updates.length }

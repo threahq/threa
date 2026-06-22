@@ -906,21 +906,29 @@ function parseActorPointer(
   allowMentions: boolean,
   allowChannels: boolean
 ): JSONContent | null {
+  // Reject malformed reserved pointers (an id whose prefix doesn't match the
+  // scheme, or an empty slug) so a hand-written `channel:not_stream` or
+  // `user:persona_x` never persists an inconsistent node (INV-64, INV-2).
   if (url.startsWith("channel:")) {
     if (!allowChannels) return null
     const id = url.slice("channel:".length)
-    return id ? { type: "channelLink", attrs: { id, slug: stripMentionSigil(label, "#") } } : null
+    const slug = stripMentionSigil(label, "#")
+    return slug && isResolvedChannelLinkId(id) ? { type: "channelLink", attrs: { id, slug } } : null
   }
   if (url === MENTION_BROADCAST_HERE || url === MENTION_BROADCAST_CHANNEL) {
     if (!allowMentions) return null
-    return { type: "mention", attrs: { id: url, slug: stripMentionSigil(label, "@"), mentionType: "broadcast" } }
+    const slug = stripMentionSigil(label, "@")
+    return slug ? { type: "mention", attrs: { id: url, slug, mentionType: "broadcast" } } : null
   }
   for (const scheme of MENTION_POINTER_SCHEMES) {
     const prefix = `${scheme}:`
     if (url.startsWith(prefix)) {
       if (!allowMentions) return null
       const id = url.slice(prefix.length)
-      return id ? { type: "mention", attrs: { id, slug: stripMentionSigil(label, "@"), mentionType: scheme } } : null
+      const slug = stripMentionSigil(label, "@")
+      return slug && actorTypeFromMentionId(id) === scheme
+        ? { type: "mention", attrs: { id, slug, mentionType: scheme } }
+        : null
     }
   }
   return null
