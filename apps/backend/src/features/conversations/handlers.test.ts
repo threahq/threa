@@ -36,6 +36,7 @@ describe("Conversation Handlers", () => {
   )
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
+  const mockGetFlag = mock(() => Promise.resolve("on" as string))
 
   const handlers = createConversationHandlers({
     conversationService: {
@@ -47,6 +48,9 @@ describe("Conversation Handlers", () => {
     streamService: {
       validateStreamAccess: mockValidateStreamAccess,
     } as never,
+    featureFlagService: {
+      getFlag: mockGetFlag,
+    } as never,
   })
 
   beforeEach(() => {
@@ -55,10 +59,12 @@ describe("Conversation Handlers", () => {
     mockListByWorkspace.mockReset()
     mockGetById.mockReset()
     mockGetMessages.mockReset()
+    mockGetFlag.mockReset()
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
     mockListByWorkspace.mockResolvedValue({ conversations: [], nextCursor: null })
+    mockGetFlag.mockResolvedValue("on")
     mockGetById.mockResolvedValue({
       id: "conv_1",
       streamId: "stream_1",
@@ -93,6 +99,17 @@ describe("Conversation Handlers", () => {
   })
 
   describe("listByWorkspace", () => {
+    test("404s when the board-view feature flag is not 'on'", async () => {
+      mockGetFlag.mockResolvedValue("off")
+      await expect(handlers.listByWorkspace(mockReq({ query: {} }), mockRes())).rejects.toMatchObject({ status: 404 })
+      expect(mockListByWorkspace).not.toHaveBeenCalled()
+    })
+
+    test("checks the board-view flag for the viewer", async () => {
+      await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
+      expect(mockGetFlag).toHaveBeenCalledWith("ws_1", "usr_1", "board-view")
+    })
+
     test("passes workspaceId, userId and validated query (incl. decoded cursor) to the service", async () => {
       const res = mockRes()
       await handlers.listByWorkspace(

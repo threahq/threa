@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
+import type { FeatureFlagService } from "../feature-flags"
 import { CONVERSATION_STATUSES } from "@threa/types"
 import { validateRequest } from "../../lib/validation"
 import { HttpError } from "../../lib/errors"
@@ -38,17 +39,25 @@ const reassignMessageParamsSchema = z.object({
 interface Dependencies {
   conversationService: ConversationService
   streamService: StreamService
+  featureFlagService: FeatureFlagService
 }
 
-export function createConversationHandlers({ conversationService, streamService }: Dependencies) {
+export function createConversationHandlers({ conversationService, streamService, featureFlagService }: Dependencies) {
   return {
     /**
      * Cross-stream board feed. Access is enforced inside the query (INV-62), so
      * there's no single stream to validate here — unlike {@link listByStream}.
+     * Gated behind the `board-view` feature flag: a viewer without it gets a 404,
+     * so the board isn't reachable even by hitting the endpoint directly.
      */
     async listByWorkspace(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
+
+      const boardFlag = await featureFlagService.getFlag(workspaceId, userId, "board-view")
+      if (boardFlag !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
 
       const query = validateRequest(listWorkspaceConversationsSchema, req.query)
 

@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import { isDraftId } from "@/hooks"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { rankMatches } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
@@ -25,6 +26,9 @@ export function rankCommands(candidates: Command[], query: string): Command[] {
 }
 
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
+  // The "View Board" command is gated behind the board-view flag, matching the
+  // route + sidebar gates.
+  const boardEnabled = useFeatureFlag(commandContext.workspaceId, "board-view") === "on"
   const items = useMemo(() => {
     const { currentStreamId, currentStreamName } = commandContext
 
@@ -51,10 +55,11 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // cross-group ordering is the section order, not match quality.
     const contextualItems = rankCommands(contextualCommands, query).map((c) => toItem(c, contextualGroup))
 
-    const globalItems = rankCommands(commands, query).map((c) => toItem(c, "Commands"))
+    const globalCommands = boardEnabled ? commands : commands.filter((c) => c.id !== "view-board")
+    const globalItems = rankCommands(globalCommands, query).map((c) => toItem(c, "Commands"))
 
     return [...contextualItems, ...globalItems]
-  }, [query, commandContext])
+  }, [query, commandContext, boardEnabled])
 
   return {
     items,

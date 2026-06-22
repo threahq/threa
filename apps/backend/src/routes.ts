@@ -266,7 +266,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const search = createSearchHandlers({ pool, searchService })
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
-  const conversation = createConversationHandlers({ conversationService, streamService })
+  const conversation = createConversationHandlers({ conversationService, streamService, featureFlagService })
   const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })

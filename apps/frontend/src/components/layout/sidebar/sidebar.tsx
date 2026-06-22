@@ -32,6 +32,7 @@ import {
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -112,6 +113,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isScheduledPage = splat === "scheduled" || window.location.pathname.includes("/scheduled")
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
   const isBoardPage = splat === "board" || window.location.pathname.endsWith("/board")
+  // The Board is gated behind the board-view flag — hide its quick link (and its
+  // editor row) for users without it, matching the route + endpoint gates.
+  const boardEnabled = useFeatureFlag(workspaceId, "board-view") === "on"
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
@@ -528,7 +532,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
               hasQuickLinksSection ? (
                 <SidebarQuickLinks
                   workspaceId={workspaceId}
-                  quickLinks={sidebarConfig.quickLinks}
+                  quickLinks={
+                    boardEnabled
+                      ? sidebarConfig.quickLinks
+                      : sidebarConfig.quickLinks.filter((link) => link.key !== "board")
+                  }
                   isDraftsPage={isDraftsPage}
                   draftCount={draftCount}
                   isSavedPage={isSavedPage}
@@ -561,7 +569,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           </>
         }
       />
-      <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
+      <SidebarEditorDialog
+        workspaceId={workspaceId}
+        open={isEditorOpen}
+        onOpenChange={setIsEditorOpen}
+        hiddenQuickLinkKeys={boardEnabled ? undefined : ["board"]}
+      />
       {labelRemovePrompt && (
         <RemoveLabelDialog
           open

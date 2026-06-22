@@ -6,6 +6,7 @@ import type { ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
 import { ServicesProvider, SidebarProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
 
@@ -36,14 +37,16 @@ function makeConversation(overrides: Partial<ConversationWithStaleness> = {}): C
 
 function mountBoard(
   conversations: ConversationWithStaleness[],
-  opts: { nextCursor?: string | null; fail?: boolean } = {}
+  opts: { nextCursor?: string | null; fail?: boolean; boardFlag?: "on" | "off" } = {}
 ) {
-  const { nextCursor = null, fail = false } = opts
+  const { nextCursor = null, fail = false, boardFlag = "on" } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
     return { conversations, nextCursor }
   })
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  // The board is gated behind the board-view flag, read from the bootstrap cache.
+  queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), { featureFlags: { "board-view": boardFlag } })
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -104,6 +107,15 @@ describe("BoardPage", () => {
     mountBoard([makeConversation()], { nextCursor: "2026-06-22T12:00:00.000Z|conv_1" })
     expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy()
+  })
+
+  it("does not render the board when the board-view flag is off", async () => {
+    const { listByWorkspace } = mountBoard([makeConversation()], { boardFlag: "off" })
+    // Gate redirects away — board content never appears and the feed isn't fetched.
+    await Promise.resolve()
+    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+    expect(screen.queryByText("Board")).toBeNull()
+    expect(listByWorkspace).not.toHaveBeenCalled()
   })
 
   it("links each card to its conversation opened in its stream", async () => {

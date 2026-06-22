@@ -1,11 +1,12 @@
 import { useMemo } from "react"
 import { AlertCircle, LayoutGrid } from "lucide-react"
-import { useParams } from "react-router-dom"
+import { Navigate, useParams } from "react-router-dom"
 import { StreamTypes } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeaderTabs } from "@/components/layout"
+import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
@@ -21,6 +22,20 @@ import type { ConversationWithStaleness } from "@threa/types"
 export function BoardPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   if (!workspaceId) return null
+  return <BoardPageGate workspaceId={workspaceId} />
+}
+
+/**
+ * The board is gated behind the `board-view` feature flag. While the bootstrap
+ * (and thus the flag) is still unknown, render nothing rather than redirect —
+ * redirecting on the default would bounce a flagged user who deep-links or
+ * refreshes on /board before the bootstrap cache is populated. The backend
+ * endpoint 404s without the flag too, so this is the UX half of the gate.
+ */
+function BoardPageGate({ workspaceId }: { workspaceId: string }) {
+  const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
+  if (boardFlag === null) return null
+  if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
   return <BoardPageInner workspaceId={workspaceId} />
 }
 

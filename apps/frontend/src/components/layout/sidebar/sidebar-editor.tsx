@@ -76,6 +76,9 @@ interface SidebarEditorDialogProps {
   workspaceId: string
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Quick-link keys to hide from the reorder list (e.g. a flag-gated link the
+   * viewer doesn't have). Display-only — the stored config is left untouched. */
+  hiddenQuickLinkKeys?: readonly string[]
 }
 
 /**
@@ -88,8 +91,18 @@ interface SidebarEditorDialogProps {
  * cross-device sync) — there is no save step, so the live sidebar reflects each
  * change as it's made.
  */
-export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: SidebarEditorDialogProps) {
+export function SidebarEditorDialog({
+  workspaceId,
+  open,
+  onOpenChange,
+  hiddenQuickLinkKeys,
+}: SidebarEditorDialogProps) {
   const { config, setConfig, setBasePreset } = useSidebarConfig(workspaceId)
+  // Display-only filter: hide flag-gated links the viewer can't use, without
+  // mutating the stored config (so it returns intact if the flag flips on).
+  const visibleQuickLinks = hiddenQuickLinkKeys?.length
+    ? config.quickLinks.filter((link) => !hiddenQuickLinkKeys.includes(link.key))
+    : config.quickLinks
   const { preferences } = usePreferences()
   // dnd-kit applies its reorder transition via an inline style, which the global
   // `.reduced-motion` stylesheet rule can't reach — so gate it here.
@@ -207,7 +220,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
                 sections={config.sections}
                 sectionIds={sectionIds}
                 labelsById={labelsById}
-                quickLinks={config.quickLinks}
+                quickLinks={visibleQuickLinks}
                 reduceMotion={reduceMotion}
                 onRemoveSection={(id) => setConfig(removeSection(config, id))}
                 onRenameCustomSection={(sectionId, name) => setConfig(renameCustomSection(config, sectionId, name))}
