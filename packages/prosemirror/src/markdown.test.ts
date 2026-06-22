@@ -650,6 +650,38 @@ describe("mention/channel whitespace boundary", () => {
   })
 })
 
+describe("slash command boundary", () => {
+  it("does not claim a leading filepath as a slash command (paste regression)", () => {
+    const result = parseMarkdown("/User/kristofferremback/dev/personal")
+    const content = result.content?.[0]?.content
+
+    expect(content).toEqual([{ type: "text", text: "/User/kristofferremback/dev/personal" }])
+  })
+
+  it("does not claim a two-segment path like /foo/bar", () => {
+    const result = parseMarkdown("/foo/bar")
+    const content = result.content?.[0]?.content
+
+    expect(content?.[0]?.type).not.toBe("slashCommand")
+    expect(content?.[0]).toEqual({ type: "text", text: "/foo/bar" })
+  })
+
+  it("still parses a bare /command at end of line", () => {
+    const result = parseMarkdown("/help")
+    const content = result.content?.[0]?.content
+
+    expect(content?.[0]).toEqual({ type: "slashCommand", attrs: { name: "help" } })
+  })
+
+  it("still parses /command followed by args", () => {
+    const result = parseMarkdown("/model gpt-4")
+    const content = result.content?.[0]?.content
+
+    expect(content?.[0]).toEqual({ type: "slashCommand", attrs: { name: "model" } })
+    expect(content?.[1]).toEqual({ type: "text", text: " gpt-4" })
+  })
+})
+
 describe("@threa/prosemirror table round-trip", () => {
   function cell(type: "tableHeader" | "tableCell", text: string): JSONContent {
     return {

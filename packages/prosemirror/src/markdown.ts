@@ -855,7 +855,11 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       return "user"
     })
 
-  const commandMatch = allowSlashCommands ? text.match(/^(\s*)(\/)([\w-]+)/) : null
+  // The command name must be a whole token: the `(?=\s|$)` boundary stops a
+  // leading filepath like `/User/kristofferremback/dev` (pasted markdown) from
+  // being claimed as a `/User` slash command — only `/cmd`, `/cmd args`, or
+  // `/cmd` at end-of-line match.
+  const commandMatch = allowSlashCommands ? text.match(/^(\s*)(\/)([\w-]+)(?=\s|$)/) : null
   let processText = text
   if (commandMatch) {
     if (commandMatch[1]) {
