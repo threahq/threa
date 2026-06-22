@@ -373,13 +373,14 @@ function customSectionPresentation(name: string): SectionPresentation {
 
 /**
  * Presentation for the Unread section. A priority surface like Important — a
- * plain binary collapse (no tiered "N more" tail, since every row here is an
- * unread the viewer wants to see) — and hidden entirely when nothing is unread,
- * so it never leaves an empty header behind once the viewer catches up.
+ * plain binary collapse (no tiered "N more" tail, since every row here is one the
+ * viewer is working through) — and hidden entirely when the tray is empty, so it
+ * never leaves an empty header behind once the viewer has caught up. The header's
+ * gold-dot title is supplied as `titleContent` by the stream list (a colored
+ * emoji would break the gold-on-paper palette); no icon string here.
  */
 const UNREAD_PRESENTATION: SectionPresentation = {
   label: "Unread",
-  icon: "🔵",
   tiered: false,
   compact: true,
   showPreviewOnHover: true,

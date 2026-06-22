@@ -51,7 +51,13 @@ function makeItem(overrides: ItemOverrides): StreamItemData {
 function makeInput(
   over: Partial<ResolveSectionsInput> & Pick<ResolveSectionsInput, "processedStreams">
 ): ResolveSectionsInput {
-  return { virtualDmStreams: [], getUnreadCount: () => 0, streamIdsByLabel: new Map(), ...over }
+  return {
+    virtualDmStreams: [],
+    getUnreadCount: () => 0,
+    streamIdsByLabel: new Map(),
+    unreadStreamIds: new Set(),
+    ...over,
+  }
 }
 
 /**
@@ -358,7 +364,9 @@ describe("resolveSections — custom sections", () => {
 
 describe("resolveSections — Unread section", () => {
   const SECTIONS_VERSION = SIDEBAR_CONFIG_VERSION
-  // Unread at the top, then the two smart buckets it draws from.
+  // Unread at the top, then the two smart buckets it draws from. Membership is
+  // the sticky tray (`unreadStreamIds`), supplied by the caller — the resolver no
+  // longer derives it from live counts (muting etc. is decided upstream).
   const unreadFirst = {
     version: SECTIONS_VERSION,
     basePreset: "smart" as const,
@@ -370,16 +378,15 @@ describe("resolveSections — Unread section", () => {
     quickLinks: [],
   }
 
-  it("pulls unread streams out of the smart buckets into Unread", () => {
+  it("pulls tray members out of the smart buckets into Unread", () => {
     const processedStreams = [
       makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 }),
       makeItem({ id: "r1", section: "recent", activity: 5 }),
     ]
-    const getUnreadCount = unreadFrom(new Set(["u1"]))
 
-    expect(shape({ processedStreams, getUnreadCount }, unreadFirst)).toEqual([
+    expect(shape({ processedStreams, unreadStreamIds: new Set(["u1"]) }, unreadFirst)).toEqual([
       { id: "unread", items: ["u1"] },
-      // u1 left Recent for Unread; r1 (read) stays.
+      // u1 moved to Unread; r1 (not in the tray) stays in Recent.
       { id: "recent", items: ["r1"] },
       { id: "other", items: [] },
     ])
@@ -399,32 +406,15 @@ describe("resolveSections — Unread section", () => {
       makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 }),
       makeItem({ id: "r1", section: "recent", activity: 5 }),
     ]
-    const getUnreadCount = unreadFrom(new Set(["u1"]))
 
-    expect(shape({ processedStreams, getUnreadCount }, recentFirst)).toEqual([
+    expect(shape({ processedStreams, unreadStreamIds: new Set(["u1"]) }, recentFirst)).toEqual([
       // Recent loses u1 to Unread even though it is ordered above it.
       { id: "recent", items: ["r1"] },
       { id: "unread", items: ["u1"] },
     ])
   })
 
-  it("excludes muted unread streams (quiet urgency), leaving them in their bucket", () => {
-    const processedStreams = [
-      makeItem({ id: "u_active", section: "recent", urgency: "activity", activity: 9 }),
-      // Muted: unread count > 0 but urgency stays "quiet".
-      makeItem({ id: "u_muted", section: "recent", urgency: "quiet", activity: 5 }),
-    ]
-    const getUnreadCount = unreadFrom(new Set(["u_active", "u_muted"]))
-
-    expect(shape({ processedStreams, getUnreadCount }, unreadFirst)).toEqual([
-      { id: "unread", items: ["u_active"] },
-      // The muted unread stays in Recent rather than resurfacing in Unread.
-      { id: "recent", items: ["u_muted"] },
-      { id: "other", items: [] },
-    ])
-  })
-
-  it("keeps a custom-filed unread stream in its custom home (and duplicates it into Unread)", () => {
+  it("drops the ghost: a custom-filed tray member shows only in Unread, not its custom home", () => {
     const config = {
       version: SECTIONS_VERSION,
       basePreset: "smart" as const,
@@ -442,19 +432,17 @@ describe("resolveSections — Unread section", () => {
       makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 }),
       makeItem({ id: "c1", section: "recent", urgency: "activity", activity: 5 }),
     ]
-    const getUnreadCount = unreadFrom(new Set(["u1", "c1"]))
 
-    expect(shape({ processedStreams, getUnreadCount }, config)).toEqual([
-      // Both unread streams surface here, by activity.
+    expect(shape({ processedStreams, unreadStreamIds: new Set(["u1", "c1"]) }, config)).toEqual([
+      // Both tray members surface here, by activity — one copy each, no ghost.
       { id: "unread", items: ["u1", "c1"] },
-      // u1 (no home) left Recent; c1 was always in its custom home.
       { id: "recent", items: [] },
-      // c1 stays in its hard-location home — the home copy the UI renders dimmed.
-      { id: customSectionId("sec_1"), items: ["c1"] },
+      // c1's custom home is empty while it's in the tray (it returns when cleared).
+      { id: customSectionId("sec_1"), items: [] },
     ])
   })
 
-  it("keeps a labeled unread stream in its label lens (and duplicates it into Unread)", () => {
+  it("drops the ghost: a labeled tray member shows only in Unread, not its label lens", () => {
     const config = {
       version: SECTIONS_VERSION,
       basePreset: "smart" as const,
@@ -466,28 +454,49 @@ describe("resolveSections — Unread section", () => {
       quickLinks: [],
     }
     const processedStreams = [makeItem({ id: "l1", section: "recent", urgency: "activity", activity: 5 })]
-    const getUnreadCount = unreadFrom(new Set(["l1"]))
     const streamIdsByLabel = new Map([["lbl_1", new Set(["l1"])]])
 
-    expect(shape({ processedStreams, getUnreadCount, streamIdsByLabel }, config)).toEqual([
+    expect(shape({ processedStreams, streamIdsByLabel, unreadStreamIds: new Set(["l1"]) }, config)).toEqual([
       { id: "unread", items: ["l1"] },
       { id: "recent", items: [] },
-      // The label lens keeps its unread stream (dimmed in the UI).
-      { id: labelSectionId("lbl_1"), items: ["l1"] },
+      // The label lens is empty while l1 is in the tray — no dimmed duplicate.
+      { id: labelSectionId("lbl_1"), items: [] },
     ])
   })
 
-  it("leaves the buckets untouched when no Unread section is in the layout", () => {
+  it("keeps a read-but-not-cleared member in Unread and out of its home (sticky)", () => {
+    const config = {
+      version: SECTIONS_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "unread", spec: { kind: "unread" as const } },
+        {
+          id: customSectionId("sec_1"),
+          spec: { kind: "custom" as const, sectionId: "sec_1", name: "Pinned", streamIds: ["c1"] },
+        },
+      ],
+      quickLinks: [],
+    }
+    // c1 is read now (getUnreadCount default 0) but still in the tray.
+    const processedStreams = [makeItem({ id: "c1", section: "recent", urgency: "quiet", activity: 5 })]
+
+    expect(shape({ processedStreams, unreadStreamIds: new Set(["c1"]) }, config)).toEqual([
+      // It lingers in Unread (de-emphasized in the UI), not bouncing back home on read.
+      { id: "unread", items: ["c1"] },
+      { id: customSectionId("sec_1"), items: [] },
+    ])
+  })
+
+  it("leaves the buckets untouched when the tray is empty", () => {
     const processedStreams = [makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 9 })]
-    const getUnreadCount = unreadFrom(new Set(["u1"]))
-    // Default Smart preset has no Unread section, so u1 stays in Recent.
-    const recent = resolveSections(SMART_SIDEBAR_CONFIG, makeInput({ processedStreams, getUnreadCount })).find(
+    // No Unread section / empty tray, so u1 stays in Recent.
+    const recent = resolveSections(SMART_SIDEBAR_CONFIG, makeInput({ processedStreams })).find(
       (r) => r.section.id === "recent"
     )
     expect(recent?.items.map((i) => i.id)).toEqual(["u1"])
   })
 
-  it("pulls unread streams out of type sections into Unread (All preset path)", () => {
+  it("pulls tray members out of type sections into Unread (All preset path)", () => {
     const config = {
       version: SECTIONS_VERSION,
       basePreset: "all" as const,
@@ -501,11 +510,10 @@ describe("resolveSections — Unread section", () => {
       makeItem({ id: "dm_unread", type: StreamTypes.DM, urgency: "activity", activity: 9 }),
       makeItem({ id: "dm_read", type: StreamTypes.DM, urgency: "quiet", activity: 5 }),
     ]
-    const getUnreadCount = unreadFrom(new Set(["dm_unread"]))
 
-    expect(shape({ processedStreams, getUnreadCount }, config)).toEqual([
+    expect(shape({ processedStreams, unreadStreamIds: new Set(["dm_unread"]) }, config)).toEqual([
       { id: "unread", items: ["dm_unread"] },
-      // The unread DM leaves its type section for Unread; the read DM stays.
+      // The tray member leaves its type section for Unread; the other DM stays.
       { id: "dms", items: ["dm_read"] },
     ])
   })

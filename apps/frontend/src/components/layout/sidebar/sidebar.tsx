@@ -44,6 +44,7 @@ import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
+import { useStickyUnread } from "./use-sticky-unread"
 import { setStreamCustomSection } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
@@ -242,9 +243,44 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [labelAssignments])
 
+  const hasUnreadSection = useMemo(
+    () => sidebarConfig.sections.some((s) => s.spec.kind === "unread"),
+    [sidebarConfig.sections]
+  )
+
+  // The Unread tray's membership: sticky for the session so working through it
+  // doesn't reflow the sidebar on every read. Only accumulates when the layout
+  // actually has an Unread section.
+  const stickyUnread = useStickyUnread(workspaceId, processedStreams, getUnreadCount, hasUnreadSection)
+
+  // For Unread rows (drawn out of their home), a "· home" hint naming the custom
+  // section or pinned label the stream lives in. Custom filing trumps a label,
+  // matching the resolver's precedence.
+  const homeHintById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const s of sidebarConfig.sections) {
+      if (s.spec.kind === "custom") for (const id of s.spec.streamIds) map.set(id, s.spec.name)
+    }
+    for (const s of sidebarConfig.sections) {
+      if (s.spec.kind !== "label") continue
+      const label = labelsById.get(s.spec.labelId)
+      const ids = streamIdsByLabel.get(s.spec.labelId)
+      if (!label || !ids) continue
+      for (const id of ids) if (!map.has(id)) map.set(id, label.name)
+    }
+    return map
+  }, [sidebarConfig.sections, labelsById, streamIdsByLabel])
+
   const resolvedSections = useMemo(
-    () => resolveSections(sidebarConfig, { processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel }),
-    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel]
+    () =>
+      resolveSections(sidebarConfig, {
+        processedStreams,
+        virtualDmStreams,
+        getUnreadCount,
+        streamIdsByLabel,
+        unreadStreamIds: stickyUnread.streamIds,
+      }),
+    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel, stickyUnread.streamIds]
   )
 
   // The Quick Links block renders only when the user keeps it in their layout —
@@ -523,6 +559,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onFileStreamToSection={handleFileStreamToSection}
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
+            homeHintFor={(id) => homeHintById.get(id) ?? null}
+            hasReadResidue={stickyUnread.hasReadResidue}
+            onClearReadUnread={stickyUnread.clearRead}
             quickLinksSlot={
               hasQuickLinksSection ? (
                 <SidebarQuickLinks

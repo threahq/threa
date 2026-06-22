@@ -9,7 +9,7 @@ import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
 import type { StreamItemData } from "./types"
-import { getActivityTime, isUnreadStream } from "./utils"
+import { getActivityTime } from "./utils"
 
 interface SectionHeaderProps {
   label: string
@@ -214,7 +214,8 @@ interface RenderRowOptions {
   showPreviewOnHover: boolean
   scrollContainerRef?: RefObject<HTMLDivElement | null>
   streamDragEnabled: boolean
-  dimUnread: boolean
+  dimReadRows: boolean
+  homeHintFor?: (streamId: string) => string | null
 }
 
 /**
@@ -222,8 +223,8 @@ interface RenderRowOptions {
  * source only when dragging is on (desktop) and the row is a persisted stream —
  * drafts (incl. virtual DMs) carry transient ids that must never be filed into
  * config, and wrapping a disabled row would register a dead draggable for
- * nothing. A dimmed (unread-in-its-hard-location-home) row gets an opacity
- * wrapper — opacity only, so nothing shifts (INV-21).
+ * nothing. In the Unread section an already-read (sticky) row gets an opacity
+ * wrapper so it reads as handled — opacity only, so nothing shifts (INV-21).
  */
 function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): ReactNode {
   const item = (
@@ -237,11 +238,12 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       compact={opts.compact}
       showPreviewOnHover={opts.showPreviewOnHover}
       scrollContainerRef={opts.scrollContainerRef}
+      homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
     />
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
   const row = dragEnabled ? <DraggableStreamRow streamId={stream.id}>{item}</DraggableStreamRow> : item
-  const dimmed = opts.dimUnread && isUnreadStream(stream, opts.getUnreadCount(stream.id))
+  const dimmed = opts.dimReadRows && opts.getUnreadCount(stream.id) === 0
   return dimmed ? (
     <div key={stream.id} className="opacity-50 transition-opacity">
       {row}
@@ -309,12 +311,16 @@ interface StreamSectionProps {
   /** When true, each stream row is a drag source for filing into a custom section (desktop). */
   streamDragEnabled?: boolean
   /**
-   * Dim unread rows in this section. Set for custom/label homes when the layout
-   * has an Unread section: the unread stream's active copy lives up in Unread, so
-   * its hard-location home shows a dimmed ghost rather than reading as a second
-   * live location. Un-dims the moment the stream is read (it leaves Unread too).
+   * Dim already-read rows. Set on the Unread section: a member that's been read
+   * lingers (sticky) but de-emphasizes in place, so the row reads as "handled"
+   * without leaving its slot. Un-dims nothing else — other sections never set it.
    */
-  dimUnread?: boolean
+  dimReadRows?: boolean
+  /**
+   * Resolve a row's trailing "· home" hint (its custom section / pinned label).
+   * Set only on the Unread section, where rows are drawn out of their home.
+   */
+  homeHintFor?: (streamId: string) => string | null
 }
 
 /** Simple binary collapsible section used for Important / Recent. */
@@ -340,7 +346,8 @@ export function StreamSection({
   addTooltip,
   addMenuActions,
   streamDragEnabled = false,
-  dimUnread = false,
+  dimReadRows = false,
+  homeHintFor,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -357,7 +364,8 @@ export function StreamSection({
       showPreviewOnHover,
       scrollContainerRef,
       streamDragEnabled,
-      dimUnread,
+      dimReadRows,
+      homeHintFor,
     })
 
   return (
@@ -439,7 +447,8 @@ export function TieredStreamSection({
   addTooltip,
   addMenuActions,
   streamDragEnabled = false,
-  dimUnread = false,
+  dimReadRows = false,
+  homeHintFor,
 }: TieredStreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -469,7 +478,8 @@ export function TieredStreamSection({
       showPreviewOnHover,
       scrollContainerRef,
       streamDragEnabled,
-      dimUnread,
+      dimReadRows,
+      homeHintFor,
     })
 
   return (
