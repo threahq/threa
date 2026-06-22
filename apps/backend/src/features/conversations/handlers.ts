@@ -4,11 +4,31 @@ import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
 import { CONVERSATION_STATUSES } from "@threa/types"
 import { validateRequest } from "../../lib/validation"
+import { HttpError } from "../../lib/errors"
 
 const listConversationsSchema = z.object({
   status: z.enum(CONVERSATION_STATUSES).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
 })
+
+// The board feed adds keyset pagination: `cursor` is an opaque `"<iso>|<id>"`
+// minted by a prior page's `nextCursor`.
+const listWorkspaceConversationsSchema = listConversationsSchema.extend({
+  cursor: z.string().min(1).optional(),
+})
+
+// Parse the opaque cursor, failing loudly (INV-11/32) on a malformed value
+// rather than silently restarting at page 1.
+function decodeBoardCursor(cursor: string | undefined): { lastActivityAt: string; id: string } | undefined {
+  if (!cursor) return undefined
+  const sep = cursor.indexOf("|")
+  const lastActivityAt = sep === -1 ? "" : cursor.slice(0, sep)
+  const id = sep === -1 ? "" : cursor.slice(sep + 1)
+  if (!lastActivityAt || !id || Number.isNaN(Date.parse(lastActivityAt))) {
+    throw new HttpError("Invalid board cursor", { status: 400, code: "INVALID_CURSOR" })
+  }
+  return { lastActivityAt, id }
+}
 
 const reassignMessageParamsSchema = z.object({
   conversationId: z.string().min(1),
@@ -30,10 +50,14 @@ export function createConversationHandlers({ conversationService, streamService 
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const query = validateRequest(listConversationsSchema, req.query)
+      const query = validateRequest(listWorkspaceConversationsSchema, req.query)
 
-      const conversations = await conversationService.listByWorkspace(workspaceId, userId, query)
-      res.json({ conversations })
+      const result = await conversationService.listByWorkspace(workspaceId, userId, {
+        status: query.status,
+        limit: query.limit,
+        cursor: decodeBoardCursor(query.cursor),
+      })
+      res.json(result)
     },
 
     async listByStream(req: Request, res: Response) {

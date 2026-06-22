@@ -31,7 +31,9 @@ function mockRes() {
 describe("Conversation Handlers", () => {
   const mockValidateStreamAccess = mock(() => Promise.resolve({ id: "stream_1", workspaceId: "ws_1" }))
   const mockListByStream = mock(() => Promise.resolve([] as Record<string, unknown>[]))
-  const mockListByWorkspace = mock(() => Promise.resolve([] as Record<string, unknown>[]))
+  const mockListByWorkspace = mock(() =>
+    Promise.resolve({ conversations: [] as Record<string, unknown>[], nextCursor: null as string | null })
+  )
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
 
@@ -56,7 +58,7 @@ describe("Conversation Handlers", () => {
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
-    mockListByWorkspace.mockResolvedValue([])
+    mockListByWorkspace.mockResolvedValue({ conversations: [], nextCursor: null })
     mockGetById.mockResolvedValue({
       id: "conv_1",
       streamId: "stream_1",
@@ -91,21 +93,46 @@ describe("Conversation Handlers", () => {
   })
 
   describe("listByWorkspace", () => {
-    test("passes workspaceId, userId and validated query to the service", async () => {
+    test("passes workspaceId, userId and validated query (incl. decoded cursor) to the service", async () => {
       const res = mockRes()
-      await handlers.listByWorkspace(mockReq({ query: { status: "active", limit: "25" } }), res)
+      await handlers.listByWorkspace(
+        mockReq({ query: { status: "active", limit: "25", cursor: "2026-06-22T12:00:00.000Z|conv_9" } }),
+        res
+      )
 
-      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", { status: "active", limit: 25 })
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {
+        status: "active",
+        limit: 25,
+        cursor: { lastActivityAt: "2026-06-22T12:00:00.000Z", id: "conv_9" },
+      })
     })
 
-    test("returns the conversations the service resolves", async () => {
+    test("passes cursor: undefined when none is supplied", async () => {
+      await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {
+        status: undefined,
+        limit: undefined,
+        cursor: undefined,
+      })
+    })
+
+    test("rejects a malformed cursor with a 400", async () => {
+      await expect(handlers.listByWorkspace(mockReq({ query: { cursor: "not-a-cursor" } }), mockRes())).rejects.toThrow(
+        "Invalid board cursor"
+      )
+    })
+
+    test("returns the paged result the service resolves", async () => {
       const conversations = [{ id: "conv_1" }, { id: "conv_2" }]
-      mockListByWorkspace.mockResolvedValue(conversations)
+      mockListByWorkspace.mockResolvedValue({ conversations, nextCursor: "2026-06-22T12:00:00.000Z|conv_2" })
       const res = mockRes()
 
       await handlers.listByWorkspace(mockReq({ query: {} }), res)
 
-      expect((res as unknown as { body: unknown }).body).toEqual({ conversations })
+      expect((res as unknown as { body: unknown }).body).toEqual({
+        conversations,
+        nextCursor: "2026-06-22T12:00:00.000Z|conv_2",
+      })
     })
 
     test("does not gate on a single stream's access (filtering is in-query)", async () => {

@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
@@ -59,11 +59,13 @@ interface UseConversationsOptions {
 }
 
 /**
- * Cross-stream conversation feed for the workspace board. Read-only bootstrap
- * (the activity-feed pattern): `staleTime: Infinity` + `refetchOnMount` so the
- * list is fresh each time the board is opened. Live per-event updates across
- * streams aren't wired yet — conversation events are delivered only to per-stream
- * rooms today (see board-view design doc), so that's a follow-up, not a gap here.
+ * Cross-stream conversation feed for the workspace board, keyset-paginated.
+ * Read-only bootstrap (the activity-feed pattern): `staleTime: Infinity` +
+ * `refetchOnMount` so the list is fresh on open. Unlike the activity feed (which
+ * gets live updates via workspace-room socket handlers) the board has no socket
+ * subscription yet — conversation events are delivered only to per-stream rooms
+ * today (see board-view design doc) — so `refetchOnReconnect` is left ON: a
+ * reconnect is the board's only refresh path until cross-stream events land.
  */
 export function useWorkspaceConversations(
   workspaceId: string,
@@ -72,13 +74,15 @@ export function useWorkspaceConversations(
   const conversationService = useConversationService()
   const { status, limit } = options ?? {}
 
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: conversationKeys.workspaceList(workspaceId, { status, limit }),
-    queryFn: () => conversationService.listByWorkspace(workspaceId, { status, limit }),
+    queryFn: ({ pageParam }) => conversationService.listByWorkspace(workspaceId, { status, limit, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
+    refetchOnReconnect: true,
     enabled: !!workspaceId,
   })
 }

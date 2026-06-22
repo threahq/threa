@@ -296,46 +296,48 @@ export const ConversationRepository = {
 
   /**
    * Cross-stream conversation feed for the workspace board. Differs from
-   * {@link findByWorkspace} in two board-critical ways:
+   * {@link findByWorkspace} in three board-critical ways:
    *  - access-filtered in SQL via the canonical thread→root predicate (INV-62),
-   *    so the LIMIT counts only conversations the viewer can actually read; and
+   *    so the LIMIT counts only conversations the viewer can actually read;
    *  - empty resolved shells (`cardinality(message_ids) = 0`, left behind when a
    *    conversation's last message is reassigned away) are excluded so the board
-   *    shows real topics, not tombstones.
+   *    shows real topics, not tombstones; and
+   *  - keyset-paginated on the total order `(last_activity_at, id) DESC` so the
+   *    full board is reachable a page at a time instead of silently truncating
+   *    at the first page. `id` is the tiebreaker that makes the order total (and
+   *    the cursor unambiguous) when timestamps collide.
    *
-   * `composeSql` (not `sql`) because the access predicate is a nested fragment;
-   * `SELECT_FIELDS` is pre-resolved through `sql` so its raw text inlines rather
-   * than being parametrized.
+   * `composeSql` (not `sql`) because the access predicate and the optional
+   * status/cursor conditions are nested fragments; `SELECT_FIELDS` is pre-resolved
+   * through `sql` so its raw text inlines rather than being parametrized. An
+   * absent optional condition splices in as an empty fragment.
    */
   async findByWorkspaceForViewer(
     db: Querier,
     workspaceId: string,
     userId: string,
-    options?: { status?: ConversationStatus; limit?: number }
+    options?: {
+      status?: ConversationStatus
+      limit?: number
+      cursor?: { lastActivityAt: string; id: string }
+    }
   ): Promise<Conversation[]> {
     const limit = options?.limit ?? 50
     const fields = sql`${sql.raw(SELECT_FIELDS)}`
     const access = streamAccessPredicateSql(workspaceId, userId, "conversations.stream_id")
-
-    if (options?.status) {
-      const result = await db.query<ConversationRow>(composeSql`
-        SELECT ${fields} FROM conversations
-        WHERE workspace_id = ${workspaceId}
-          AND status = ${options.status}
-          AND cardinality(message_ids) > 0
-          AND ${access}
-        ORDER BY last_activity_at DESC
-        LIMIT ${limit}
-      `)
-      return result.rows.map(mapRowToConversation)
-    }
+    const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
+    const cursorCond = options?.cursor
+      ? composeSql`AND (last_activity_at, id) < (${options.cursor.lastActivityAt}::timestamptz, ${options.cursor.id})`
+      : sql``
 
     const result = await db.query<ConversationRow>(composeSql`
       SELECT ${fields} FROM conversations
       WHERE workspace_id = ${workspaceId}
         AND cardinality(message_ids) > 0
+        ${statusCond}
+        ${cursorCond}
         AND ${access}
-      ORDER BY last_activity_at DESC
+      ORDER BY last_activity_at DESC, id DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)

@@ -37,7 +37,9 @@ export function BoardCard({ workspaceId, conversation, title, contextLabel }: Bo
           <p className="truncate text-xs text-muted-foreground">{contextLabel}</p>
           <p className="mt-0.5 truncate text-sm font-medium">{title}</p>
           <div className="mt-1 flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{messageIds.length} messages</span>
+            <span className="text-xs text-muted-foreground">
+              {messageIds.length} {messageIds.length === 1 ? "message" : "messages"}
+            </span>
             <StatusBadge status={status} />
           </div>
         </div>

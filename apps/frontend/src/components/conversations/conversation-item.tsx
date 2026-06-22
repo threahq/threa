@@ -48,7 +48,9 @@ export function ConversationItem({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{topicSummary || "Untitled conversation"}</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-muted-foreground">{messageIds.length} messages</span>
+                    <span className="text-xs text-muted-foreground">
+                      {messageIds.length} {messageIds.length === 1 ? "message" : "messages"}
+                    </span>
                     <StatusBadge status={status} />
                   </div>
                 </div>

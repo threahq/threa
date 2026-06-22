@@ -34,8 +34,15 @@ function makeConversation(overrides: Partial<ConversationWithStaleness> = {}): C
   }
 }
 
-function mountBoard(conversations: ConversationWithStaleness[]) {
-  const listByWorkspace = vi.fn(async () => conversations)
+function mountBoard(
+  conversations: ConversationWithStaleness[],
+  opts: { nextCursor?: string | null; fail?: boolean } = {}
+) {
+  const { nextCursor = null, fail = false } = opts
+  const listByWorkspace = vi.fn(async () => {
+    if (fail) throw new Error("boom")
+    return { conversations, nextCursor }
+  })
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
@@ -78,6 +85,25 @@ describe("BoardPage", () => {
     mountBoard([makeConversation()])
     expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
     expect(screen.getByText("3 messages")).toBeTruthy()
+  })
+
+  it("pluralizes a single message as '1 message'", async () => {
+    mountBoard([makeConversation({ messageIds: ["msg_only"] })])
+    expect(await screen.findByText("1 message")).toBeTruthy()
+    expect(screen.queryByText("1 messages")).toBeNull()
+  })
+
+  it("shows an error state with a retry, not the empty state, when the fetch fails", async () => {
+    mountBoard([], { fail: true })
+    expect(await screen.findByText("Couldn't load the board")).toBeTruthy()
+    expect(screen.getByText("Try again")).toBeTruthy()
+    expect(screen.queryByText("Nothing on the board yet")).toBeNull()
+  })
+
+  it("offers Load more when there is another page", async () => {
+    mountBoard([makeConversation()], { nextCursor: "2026-06-22T12:00:00.000Z|conv_1" })
+    expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy()
   })
 
   it("links each card to its conversation opened in its stream", async () => {
