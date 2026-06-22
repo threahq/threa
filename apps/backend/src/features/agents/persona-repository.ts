@@ -242,6 +242,7 @@ export const PersonaRepository = {
     const lowered = slugs.map((slug) => slug.toLowerCase())
     const want = new Set(lowered)
     const bySlug = new Map<string, Persona>()
+    const resolvedPrecedence = new Map<string, number>()
 
     const consider = (persona: Persona, precedence: number): void => {
       const key = persona.slug.toLowerCase()
@@ -252,7 +253,6 @@ export const PersonaRepository = {
         resolvedPrecedence.set(key, precedence)
       }
     }
-    const resolvedPrecedence = new Map<string, number>()
 
     if (workspaceId === null || workspaceId === undefined) {
       const builtIns = listVisibleBuiltInAgentConfigs().map(mapBuiltInToPersona)

@@ -161,6 +161,7 @@ export const QueueRepository = {
         id, queue_name, workspace_id, payload,
         process_after, inserted_at
       ) VALUES ${placeholders.join(", ")}
+      ON CONFLICT (id) DO NOTHING
       RETURNING
         id, queue_name, workspace_id, payload,
         process_after, inserted_at,

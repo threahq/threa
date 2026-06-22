@@ -48,7 +48,7 @@ function listIdsQuery(table: BackfillTable, workspaceId: string) {
       return sql`
         SELECT v.id FROM message_versions v
         JOIN messages m ON m.id = v.message_id
-        WHERE m.workspace_id = ${workspaceId} AND m.e2e_version IS NULL
+        WHERE m.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
         ORDER BY v.id
       `
     case "scheduled_messages":
