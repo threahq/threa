@@ -113,7 +113,7 @@ export function MarkdownWithMentions({ content, className, mentionables }: Markd
 export interface MentionableMarkdownWrapperProps {
   children: ReactNode
   mentionables: Mentionable[]
-  onMentionClick?: (slug: string, type: MentionType) => void
+  onMentionClick?: (slug: string, type: MentionType, id?: string) => void
 }
 
 /**

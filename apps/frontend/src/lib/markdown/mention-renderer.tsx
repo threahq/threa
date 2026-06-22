@@ -77,7 +77,7 @@ function TriggerChip({ type, text }: TriggerChipProps) {
   }
 
   return (
-    <span className={cn(chipBase, "cursor-pointer", style)}>
+    <span className={cn(chipBase, style)}>
       {prefix}
       {text}
     </span>
@@ -130,7 +130,7 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
     )
   }
 
-  return <span className={cn(chipBase, "cursor-pointer", style)}>@{slug}</span>
+  return <span className={cn(chipBase, style)}>@{slug}</span>
 }
 
 // `(?=\s|$)` keeps the command name a whole token, so a path segment like the
