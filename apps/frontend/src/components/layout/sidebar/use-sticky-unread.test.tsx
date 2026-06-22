@@ -68,6 +68,24 @@ describe("useStickyUnread", () => {
     expect([...result.current.streamIds]).toEqual([])
   })
 
+  it("clears the tray the moment it's disabled, and repopulates when re-enabled", () => {
+    const streams = [item("a", "activity")]
+    const { result, rerender } = renderHook(
+      ({ on }: { on: boolean }) => useStickyUnread("ws_1", streams, counts(new Set(["a"])), on),
+      { initialProps: { on: true } }
+    )
+    expect([...result.current.streamIds]).toEqual(["a"])
+
+    // Removing the Unread section empties the tray with no stale frame.
+    rerender({ on: false })
+    expect([...result.current.streamIds]).toEqual([])
+    expect(result.current.hasReadResidue).toBe(false)
+
+    // Re-adding it starts fresh and re-collects the currently-unread streams.
+    rerender({ on: true })
+    expect([...result.current.streamIds]).toEqual(["a"])
+  })
+
   it("prunes a held stream once it no longer exists (archived/left)", () => {
     let streams = [item("a", "activity"), item("b", "activity")]
     const unread = new Set(["a", "b"])

@@ -69,13 +69,21 @@ export function useStickyUnread(
     })
   }, [streams, getUnreadCount])
 
+  // Disabling takes effect in the same render rather than waiting for the effect
+  // above to clear `held` — so removing the Unread section can't withhold its
+  // former members from their home sections for a frame. (The effect still
+  // empties `held` so re-enabling starts from a clean tray.)
+  const streamIds = enabled ? held : EMPTY
+
   let hasReadResidue = false
-  for (const s of streams) {
-    if (held.has(s.id) && !isUnreadStream(s, getUnreadCount(s.id))) {
-      hasReadResidue = true
-      break
+  if (enabled) {
+    for (const s of streams) {
+      if (held.has(s.id) && !isUnreadStream(s, getUnreadCount(s.id))) {
+        hasReadResidue = true
+        break
+      }
     }
   }
 
-  return { streamIds: held, hasReadResidue, clearRead }
+  return { streamIds, hasReadResidue, clearRead }
 }
