@@ -1,6 +1,6 @@
 # Exploration: The Board — a second way to interact with a stream
 
-Status: exploration / design, v2. Sibling to
+Status: exploration / design, v3. Sibling to
 [`nonlinear-stream-views-exploration.md`](./nonlinear-stream-views-exploration.md),
 which argues a stream is a container and the timeline is one projection. This
 doc designs the **board** as a co-equal interaction mode and as the home for
@@ -62,14 +62,14 @@ which is the whole "automatic organization that surfaces what matters" ethos
    changed its name. Fine for a living "what matters" wall; worth a light "this
    updates itself" mental model, not a fixed-artifact one.
 2. **Null titles.** `topicSummary` can be null → "Untitled conversation". A wall
-   of "Untitled" is bad. Mitigation: fall back to the entrypoint message's
-   stripped first line (INV-60) when title is null.
-3. **Scratchpads degenerate to one post.** The scratchpad path skips AI
-   segmentation and keeps a single conversation per scratchpad
-   (`boundary-extraction-service.ts:218-233`). So a scratchpad board = one card,
-   not a topic board. For a solo-first product this is the biggest gap — either
-   scope the board to channels/DMs first, or later enable topic segmentation for
-   scratchpads (a backend change).
+   of "Untitled" is bad. **Decided:** fall back to a stripped **excerpt of the
+   first message** (INV-60) when the title is null.
+3. **Scratchpads = one conversation.** The scratchpad path skips AI segmentation
+   and keeps a single conversation per scratchpad
+   (`boundary-extraction-service.ts:218-233`). **Decided:** accept it — a
+   scratchpad shows as one board card; we do _not_ build per-scratchpad topic
+   segmentation. (Want several scratchpad cards? Author them — each authored post
+   seeds its own conversation.)
 4. **Extraction latency.** A brand-new message becomes a conversation card
    asynchronously (outbox → worker → LLM). A just-posted topic appears after a
    short delay, not instantly.
@@ -172,6 +172,7 @@ Curation, then, is mostly _picking the lens_ — plus explicit save/pin for the
 manual override. And like the quiet collector learns from dismissals, the
 personal lens can get smarter over time (later). The structural lenses are free
 today; personal lenses need a per-viewer join (mentions/saved/participation).
+**Decided:** of the personal lenses, **Mine** ships first; Saved comes later.
 
 ## Default posture per stream type — the Q4 you asked me to explain
 
@@ -184,8 +185,9 @@ Q3, it mostly resolves:
   channel/DM you usually want the live conversation; the board is there when you
   want to triage. Revisit per-type later (a high-traffic channel or a
   knowledge-base stream might prefer board-default).
-- **Scratchpads → timeline only for now** (the one-conversation limitation
-  above) until per-scratchpad topic segmentation exists.
+- **Scratchpads → timeline default; one card on the board** (one conversation
+  per scratchpad, by decision). Author extra posts to a scratchpad for more
+  cards; no AI segmentation planned.
 
 ## Architecture sketch (reuse-first)
 
@@ -229,12 +231,13 @@ alongside as enrichment. Then:
 
 2. **Lenses + scope.** Structural lenses first (Active / Needs-resolution /
    Decisions — all from existing signals), then scope filter (per channel / DMs
-   / label), then personal lenses (Mine / Saved — need per-viewer joins).
+   / label), then the **Mine** personal lens (Saved later — needs a per-viewer
+   join).
 3. **Full act-from-the-board + corrections.** Reply in place, mark resolved,
    save/pin, plus the maturity corrections (retitle / merge / split) that feed
-   the eval loop. Reuses existing compose + reassign + saved paths. Per-scratchpad
-   topic segmentation for the _derived_ path becomes optional, since authored
-   posts already make scratchpad boards work.
+   the eval loop. Reuses existing compose + reassign + saved paths.
+   Per-scratchpad topic segmentation is **not planned** (scratchpad = one
+   conversation, by decision).
 
 ## The board as the forcing function for conversation maturity (Kris's reframe)
 
@@ -279,16 +282,20 @@ primitive. Worth a zeroth step: **measure the current floor** — sample real
 conversations (read-only) for title quality, null rate, cluster size, and status
 distribution, so "is it mature enough?" gets a number instead of a guess.
 
-## Open decisions remaining
+## Decisions (resolved 2026-06-22)
 
-1. **Null-title fallback** — entrypoint first-line (my lean) vs. hide untitled
-   vs. force a title-generation pass?
-2. **Scratchpad gap** — ship board for channels/DMs first and treat scratchpad
-   segmentation as later work, or invest in segmentation up front (it's the
-   solo-first surface)?
-3. **Lens priority** — confirm the structural set (Active / Needs-resolution /
-   Decisions) for phase 2; which personal lens matters most (Mine vs. Saved)?
-4. **Mutability UX** — how loud should "this card merged/retitled" be, if at all?
+1. **Null-title fallback** → a stripped **excerpt of the first message** (not
+   "Untitled"; no hiding, no extra generation pass).
+2. **Scratchpad gap** → **accept one conversation per scratchpad**; no
+   segmentation work. Multiple scratchpad cards come from authored posts.
+3. **First personal lens** → **Mine** (Saved later). Structural set confirmed:
+   Active / Needs-resolution / Decisions.
+4. **Mutability UX** → **skip** surfacing "merged/retitled" notices for now
+   (such notes get ignored anyway).
+
+With these, the design is settled. What remains is execution: **(0)** measure
+the derived-conversation floor (read-only), then **(1b)** build the authored
+board.
 
 ---
 
