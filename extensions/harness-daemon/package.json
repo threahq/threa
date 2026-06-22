@@ -1,9 +1,9 @@
 {
-  "name": "@threa/agent-daemon",
+  "name": "@threa/harness-daemon",
   "private": true,
   "type": "module",
   "bin": {
-    "threa-agentd": "src/index.ts"
+    "threa-harnessd": "src/index.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",

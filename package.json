@@ -29,7 +29,7 @@
     "setup:worktree": "bun scripts/setup-worktree.ts",
     "codex:setup": "bash scripts/codex-cloud-setup.sh",
     "codex:doctor": "bash scripts/codex-cloud-doctor.sh",
-    "agentd": "bun extensions/agent-daemon/src/index.ts",
+    "harnessd": "bun extensions/harness-daemon/src/index.ts",
     "lint": "bun run --cwd apps/backend lint && bun run --cwd apps/control-plane lint && bun run --cwd apps/frontend lint && bun run --cwd apps/backoffice lint && bun run --cwd apps/db-read-proxy lint && bun run --cwd apps/enclave lint && bun run --cwd apps/public-site lint && bun run check:dockerfiles && bun run check:migrations",
     "check:dockerfiles": "bun scripts/check-dockerfile-workspaces.ts",
     "check:migrations": "bun scripts/check-migrations.ts",

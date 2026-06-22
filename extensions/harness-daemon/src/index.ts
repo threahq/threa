@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import { homedir, hostname } from "node:os"
 
-const DEFAULT_INVENTORY_PATH = `${homedir()}/.threa/agentd/inventory.sqlite`
+const DEFAULT_INVENTORY_PATH = `${homedir()}/.threa/harnessd/inventory.sqlite`
 
 type RuntimeKind = "pi" | "claude"
 type AgentStatus = "starting" | "online" | "offline" | "stopped" | "error"
@@ -67,26 +67,26 @@ interface ThreaChannelConfig {
 }
 
 function usage(): never {
-  console.log(`threa-agentd
+  console.log(`threa-harnessd
 
 Usage:
-  threa-agentd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
-  threa-agentd do <natural language command>
-  threa-agentd list
-  threa-agentd stop <agent-id-or-name>
-  threa-agentd attach <agent-id-or-name>
-  threa-agentd doctor
+  threa-harnessd spawn <pi|claude> --name <name> [--branch <ref>] [--repo <path>] [--tmux <session>] [--skip-setup]
+  threa-harnessd do <natural language command>
+  threa-harnessd list
+  threa-harnessd stop <agent-id-or-name>
+  threa-harnessd attach <agent-id-or-name>
+  threa-harnessd doctor
 
 Examples:
-  threa-agentd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
-  threa-agentd spawn claude --name fix-sidebar --branch fix/sidebar
-  threa-agentd do spawn a pi agent for long chat performance
+  threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
+  threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
+  threa-harnessd do spawn a pi agent for long chat performance
 `)
   process.exit(0)
 }
 
 function die(message: string): never {
-  console.error(`agentd: ${message}`)
+  console.error(`harnessd: ${message}`)
   process.exit(1)
 }
 
@@ -95,7 +95,7 @@ function now(): string {
 }
 
 function inventoryPath(): string {
-  return process.env.THREA_AGENTD_INVENTORY || DEFAULT_INVENTORY_PATH
+  return process.env.THREA_HARNESSD_INVENTORY || DEFAULT_INVENTORY_PATH
 }
 
 function openInventory(): Database {
@@ -255,7 +255,7 @@ function commandPath(name: string): string | undefined {
 }
 
 function defaultRepo(): string {
-  const configured = process.env.THREA_AGENTD_REPO
+  const configured = process.env.THREA_HARNESSD_REPO
   if (configured) return resolve(configured)
   const result = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], { stdout: "pipe", stderr: "pipe" })
   if (result.exitCode === 0) return result.stdout.toString().trim()
@@ -346,9 +346,9 @@ function ensureWorktree(options: SpawnOptions): { worktree: string; branch: stri
   if (!existsSync(repo)) die(`repo not found: ${repo}`)
   if (existsSync(worktree)) die(`worktree dir already exists: ${worktree}`)
 
-  console.log(`agentd: fetching ${base} in ${repo}`)
+  console.log(`harnessd: fetching ${base} in ${repo}`)
   run(["git", "-C", repo, "fetch", "origin", base.replace(/^origin\//, "")])
-  console.log(`agentd: creating worktree ${worktree} (${branch} off ${base})`)
+  console.log(`harnessd: creating worktree ${worktree} (${branch} off ${base})`)
   run(["git", "-C", repo, "worktree", "add", "-b", branch, worktree, base])
   maybeSetupWorktree(worktree, options.skipSetup === true)
   return { worktree, branch }
@@ -356,17 +356,17 @@ function ensureWorktree(options: SpawnOptions): { worktree: string; branch: stri
 
 function maybeSetupWorktree(worktree: string, skipSetup: boolean): void {
   if (skipSetup) {
-    console.warn("agentd: --skip-setup: skipping bun run setup:worktree")
+    console.warn("harnessd: --skip-setup: skipping bun run setup:worktree")
     return
   }
   const docker = output(["docker", "ps", "--format", "{{.Names}}"], { allowFailure: true })
   if (docker.exitCode !== 0 || !docker.stdout.split("\n").includes("threa-postgres")) {
-    console.warn("agentd: threa-postgres container not running; skipping setup:worktree")
+    console.warn("harnessd: threa-postgres container not running; skipping setup:worktree")
     return
   }
-  console.log("agentd: running bun run setup:worktree")
+  console.log("harnessd: running bun run setup:worktree")
   const result = run(["bun", "run", "setup:worktree"], { cwd: worktree, allowFailure: true })
-  if (result.exitCode !== 0) console.warn("agentd: setup:worktree reported errors; continuing")
+  if (result.exitCode !== 0) console.warn("harnessd: setup:worktree reported errors; continuing")
 }
 
 function tmuxSession(options: SpawnOptions): string {
@@ -409,20 +409,20 @@ class PiRuntimeSpawner extends RuntimeSpawner {
     if (!commandExists("git")) die("git not found")
     if (!commandExists("tmux")) die("tmux not found")
     if (!commandExists("bun")) die("bun not found")
-    const piBin = process.env.THREA_AGENTD_PI_BIN || commandPath("pi")
-    if (!piBin) die("pi binary not found; set THREA_AGENTD_PI_BIN or put pi on PATH")
+    const piBin = process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")
+    if (!piBin) die("pi binary not found; set THREA_HARNESSD_PI_BIN or put pi on PATH")
 
     const session = tmuxSession(options)
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
     const window = pickTmuxWindow(session, options.name)
-    console.log(`agentd: launching Pi in tmux ${session}:${window}`)
+    console.log(`harnessd: launching Pi in tmux ${session}:${window}`)
     run(["tmux", "new-window", "-t", session, "-a", "-n", window, "-c", worktree, piBin])
 
     if (!options.noRemote) {
-      await Bun.sleep(Number(process.env.THREA_AGENTD_PI_BOOT_WAIT_MS ?? 8000))
+      await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
       run(["tmux", "send-keys", "-t", `${session}:${window}`, "/remote-control", "Enter"])
-      await Bun.sleep(Number(process.env.THREA_AGENTD_PI_REMOTE_WAIT_MS ?? 6000))
+      await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000))
     }
 
     const outputText = capturePane(session, window)
@@ -442,25 +442,25 @@ class ClaudeRuntimeSpawner extends RuntimeSpawner {
     if (!commandExists("git")) die("git not found")
     if (!commandExists("tmux")) die("tmux not found")
     if (!commandExists("bun")) die("bun not found")
-    const claudeBin = process.env.THREA_AGENTD_CLAUDE_BIN || commandPath("claude")
-    if (!claudeBin) die("claude binary not found; set THREA_AGENTD_CLAUDE_BIN or put claude on PATH")
+    const claudeBin = process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")
+    if (!claudeBin) die("claude binary not found; set THREA_HARNESSD_CLAUDE_BIN or put claude on PATH")
 
     const session = tmuxSession(options)
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
-    const channel = process.env.THREA_AGENTD_CLAUDE_CHANNEL || "threa"
+    const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa"
     const channelDir = join(worktree, "extensions", "claude-code-remote")
     const channelEntry = join(channelDir, "src", "index.ts")
     if (!existsSync(channelEntry)) die(`Claude channel entry not found: ${channelEntry}`)
 
-    console.log("agentd: installing Claude channel dependencies")
+    console.log("harnessd: installing Claude channel dependencies")
     run(["bun", "install"], { cwd: channelDir })
 
     const scratchpadUrl = await this.prelinkScratchpad(worktree)
-    if (scratchpadUrl) console.log(`agentd: scratchpad: ${scratchpadUrl}`)
+    if (scratchpadUrl) console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
 
     if (!options.noRegister) {
-      console.log(`agentd: registering Claude MCP server '${channel}'`)
+      console.log(`harnessd: registering Claude MCP server '${channel}'`)
       run([claudeBin, "mcp", "remove", channel, "--scope", "local"], { cwd: worktree, allowFailure: true })
       run([claudeBin, "mcp", "add", channel, "--scope", "local", "--", "bun", channelEntry], { cwd: worktree })
     }
@@ -474,13 +474,13 @@ class ClaudeRuntimeSpawner extends RuntimeSpawner {
       `server:${channel}`,
     ]
     if (!options.noYolo) args.push("--dangerously-skip-permissions")
-    console.log(`agentd: launching Claude Code in tmux ${session}:${window}`)
+    console.log(`harnessd: launching Claude Code in tmux ${session}:${window}`)
     run(["tmux", "new-window", "-t", session, "-a", "-n", window, "-c", worktree, args.map(shellQuote).join(" ")])
 
     if (!options.noAutoAccept) {
-      await Bun.sleep(Number(process.env.THREA_AGENTD_CLAUDE_BOOT_WAIT_MS ?? 5000))
+      await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_BOOT_WAIT_MS ?? 5000))
       run(["tmux", "send-keys", "-t", `${session}:${window}`, "Enter"])
-      await Bun.sleep(Number(process.env.THREA_AGENTD_CLAUDE_ACCEPT_WAIT_MS ?? 6000))
+      await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_ACCEPT_WAIT_MS ?? 6000))
     }
 
     const outputText = capturePane(session, window)
@@ -500,7 +500,7 @@ class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
     const apiKey = process.env.THREA_API_KEY || config.apiKey
     if (!workspaceId || !apiKey) {
-      console.warn("agentd: no Claude channel Threa credentials found; channel will link on startup")
+      console.warn("harnessd: no Claude channel Threa credentials found; channel will link on startup")
       return undefined
     }
 
@@ -529,7 +529,7 @@ class ClaudeRuntimeSpawner extends RuntimeSpawner {
     })
     if (!response.ok) {
       const body = await response.text().catch(() => "")
-      console.warn(`agentd: could not pre-link Claude scratchpad: ${response.status} ${body.slice(0, 300)}`)
+      console.warn(`harnessd: could not pre-link Claude scratchpad: ${response.status} ${body.slice(0, 300)}`)
       return undefined
     }
     const json = (await response.json()) as { data?: { streamUrlPath?: string } }
@@ -562,7 +562,7 @@ function defaultDisplayName(worktree: string, override?: string): string {
 }
 
 function spawnCommand(options: SpawnOptions): string[] {
-  const command = ["threa-agentd", "spawn", options.runtime, "--name", options.name]
+  const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
   if (options.branch) command.push("--branch", options.branch)
   if (options.base) command.push("--base", options.base)
   if (options.repo) command.push("--repo", options.repo)
@@ -607,7 +607,7 @@ async function spawnAgent(options: SpawnOptions): Promise<void> {
       lastOutput: result.output.slice(-4000),
     })
     if (result.output) process.stdout.write(result.output)
-    console.log(`agentd: recorded ${id}`)
+    console.log(`harnessd: recorded ${id}`)
   } catch (error) {
     upsertAgent({ ...agent, status: "error", updatedAt: now(), lastOutput: String(error).slice(-4000) })
     throw error
@@ -633,7 +633,7 @@ function stopAgent(ref: string): void {
   const result = output(["tmux", "kill-window", "-t", target], { allowFailure: true })
   if (result.exitCode !== 0) die(result.stderr.trim() || `tmux kill-window failed for ${target}`)
   upsertAgent({ ...agent, status: "stopped", updatedAt: now() })
-  console.log(`agentd: stopped ${agent.name} (${target})`)
+  console.log(`harnessd: stopped ${agent.name} (${target})`)
 }
 
 function attachAgent(ref: string): void {
@@ -663,8 +663,8 @@ function doctor(): void {
     ["git", commandExists("git"), "required"],
     ["tmux", commandExists("tmux"), "required"],
     ["docker", commandExists("docker"), "needed for setup:worktree"],
-    ["pi", Boolean(process.env.THREA_AGENTD_PI_BIN || commandPath("pi")), "needed for Pi agents"],
-    ["claude", Boolean(process.env.THREA_AGENTD_CLAUDE_BIN || commandPath("claude")), "needed for Claude agents"],
+    ["pi", Boolean(process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")), "needed for Pi agents"],
+    ["claude", Boolean(process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")), "needed for Claude agents"],
     [
       "tmux session 0",
       output(["tmux", "has-session", "-t", "0"], { allowFailure: true }).exitCode === 0,

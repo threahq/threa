@@ -1,4 +1,4 @@
-# Threa agent daemon
+# Threa harness daemon
 
 Local supervisor for Threa-controlled coding agents.
 
@@ -8,16 +8,16 @@ Start by moving the existing global spawn-skill behavior into a Bun CLI. The dae
 
 ## CLI
 
-Initial binary lives at `extensions/agent-daemon/src/index.ts`:
+Initial binary lives at `extensions/harness-daemon/src/index.ts`:
 
 ```bash
-bun extensions/agent-daemon/src/index.ts doctor
-bun extensions/agent-daemon/src/index.ts spawn pi --name explore-foo --branch explore/foo
-bun extensions/agent-daemon/src/index.ts spawn claude --name fix-bar --branch fix/bar
-bun extensions/agent-daemon/src/index.ts do "spawn a pi agent for long chat performance"
-bun extensions/agent-daemon/src/index.ts list
-bun extensions/agent-daemon/src/index.ts attach <agent-id-or-name>
-bun extensions/agent-daemon/src/index.ts stop <agent-id-or-name>
+bun extensions/harness-daemon/src/index.ts doctor
+bun extensions/harness-daemon/src/index.ts spawn pi --name explore-foo --branch explore/foo
+bun extensions/harness-daemon/src/index.ts spawn claude --name fix-bar --branch fix/bar
+bun extensions/harness-daemon/src/index.ts do "spawn a pi agent for long chat performance"
+bun extensions/harness-daemon/src/index.ts list
+bun extensions/harness-daemon/src/index.ts attach <agent-id-or-name>
+bun extensions/harness-daemon/src/index.ts stop <agent-id-or-name>
 ```
 
 The CLI owns the spawn flows directly:
@@ -30,12 +30,12 @@ The CLI owns the spawn flows directly:
 
 Runtime binary overrides:
 
-- `THREA_AGENTD_PI_BIN`
-- `THREA_AGENTD_CLAUDE_BIN`
+- `THREA_HARNESSD_PI_BIN`
+- `THREA_HARNESSD_CLAUDE_BIN`
 
 ## Inventory
 
-V1 inventory is SQLite at `~/.threa/agentd/inventory.sqlite` unless overridden by `THREA_AGENTD_INVENTORY`.
+V1 inventory is SQLite at `~/.threa/harnessd/inventory.sqlite` unless overridden by `THREA_HARNESSD_INVENTORY`.
 
 `attach` switches the current tmux client to the managed agent window when already inside tmux. Outside tmux, it selects the window and attaches to the recorded tmux session.
 
@@ -52,7 +52,7 @@ The first version briefly used JSON, but SQLite is the intended default because 
 
 ## Minimal inference layer
 
-`agentd do <text>` intentionally stays shallow:
+`harnessd do <text>` intentionally stays shallow:
 
 - list/status/inventory -> `list`
 - stop/kill/archive `<ref>` -> `stop`
