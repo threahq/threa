@@ -8,6 +8,7 @@ import {
   createThread,
   archiveStream,
   getWorkspaceBootstrap,
+  getBootstrap,
 } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -46,5 +47,42 @@ describe("Workspace bootstrap excludes threads rooted in archived streams", () =
     // The active root and its thread still appear.
     expect(streamIds.has(activeRoot.id)).toBe(true)
     expect(streamIds.has(activeThread.id)).toBe(true)
+  })
+
+  test("per-stream bootstrap surfaces rootArchivedAt for a thread under an archived root", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("root-archived-at"), "Root ArchivedAt Test")
+    const workspace = await createWorkspace(client, `Root ArchivedAt WS ${testRunId}`)
+
+    const root = await createScratchpad(client, workspace.id, "off")
+    const parentMsg = await sendMessage(client, workspace.id, root.id, "parent")
+    const thread = await createThread(client, workspace.id, root.id, parentMsg.id)
+    await archiveStream(client, workspace.id, root.id)
+
+    const threadBootstrap = await getBootstrap(client, workspace.id, thread.id)
+    expect(threadBootstrap.stream.id).toBe(thread.id)
+    // The thread is active on its own row; the bootstrap carries the root's
+    // archived timestamp so the client can hide the composer without the root
+    // being resident in the workspace stream cache.
+    expect(threadBootstrap.stream.archivedAt).toBeNull()
+    expect(threadBootstrap.rootArchivedAt).not.toBeNull()
+  })
+
+  test("sending to a thread under an archived root is rejected with 403", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("send-block"), "Send Block Test")
+    const workspace = await createWorkspace(client, `Send Block WS ${testRunId}`)
+
+    const root = await createScratchpad(client, workspace.id, "off")
+    const parentMsg = await sendMessage(client, workspace.id, root.id, "parent")
+    const thread = await createThread(client, workspace.id, root.id, parentMsg.id)
+    await archiveStream(client, workspace.id, root.id)
+
+    const { status, data } = await client.post(`/api/workspaces/${workspace.id}/messages`, {
+      streamId: thread.id,
+      content: "reply after archive",
+    })
+    expect(status).toBe(403)
+    expect((data as { error?: string }).error).toBe("Cannot send messages to a thread under an archived stream")
   })
 })

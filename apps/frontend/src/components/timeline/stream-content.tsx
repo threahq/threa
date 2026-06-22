@@ -379,8 +379,21 @@ export function StreamContent({
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
-  const isArchived = stream?.archivedAt != null
   const isSystem = stream?.type === StreamTypes.SYSTEM
+  // Archiving marks only the root row, so a thread under an archived
+  // scratchpad/channel stays "active" on its own row. Resolve the root's
+  // archived state from two sources: the cached workspace streams (covers the
+  // live-archive case — `handleStreamArchived` keeps the root in IDB with
+  // `archivedAt` set) and the per-stream bootstrap's `rootArchivedAt` (covers
+  // a deep link to a thread whose archived root was never loaded into the
+  // client cache, since the workspace bootstrap excludes archived roots).
+  const rootStreamId = isThread ? (stream?.rootStreamId ?? null) : null
+  const rootArchivedFromCache = useMemo(
+    () => (rootStreamId ? (idbStreams.find((candidate) => candidate.id === rootStreamId)?.archivedAt ?? null) : null),
+    [idbStreams, rootStreamId]
+  )
+  const rootArchivedAt = rootArchivedFromCache ?? bootstrap?.rootArchivedAt ?? null
+  const isArchived = stream?.archivedAt != null || rootArchivedAt != null
 
   // Conversation overlay (channels/DMs): URL-derived so a refresh or shared
   // link restores the same view (INV-59). The stream header owns the toggle;
@@ -1633,8 +1646,10 @@ export function StreamContent({
   let disabledReason: string | undefined
   if (isSystem) {
     disabledReason = "System notifications are read-only."
-  } else if (isArchived) {
+  } else if (stream?.archivedAt) {
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."
+  } else if (rootArchivedAt) {
+    disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
   }
 
   const handleJoined = useCallback(
