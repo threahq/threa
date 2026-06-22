@@ -1,10 +1,15 @@
+import { useMemo } from "react"
 import { LayoutGrid } from "lucide-react"
 import { useParams } from "react-router-dom"
+import { StreamTypes } from "@threa/types"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeaderTabs } from "@/components/layout"
+import { resolveStreamName } from "@/lib/streams"
+import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
+import type { ConversationWithStaleness } from "@threa/types"
 
 /**
  * The board: a cross-stream wall of conversations (Threa's topic primitive)
@@ -20,6 +25,25 @@ export function BoardPage() {
 
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   const { data: conversations, isLoading } = useWorkspaceConversations(workspaceId, { limit: 100 })
+  const streams = useWorkspaceStreams(workspaceId)
+  const users = useWorkspaceUsers(workspaceId)
+  const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
+
+  // A scratchpad IS its conversation, so its own name is the best title (the
+  // stored "Scratchpad" topicSummary is noise). For channels/DMs the topic is
+  // the title and the stream is context — never the DM peer as the title, since
+  // that name is a person, not a topic.
+  function labelsFor(conversation: ConversationWithStaleness): { title: string; contextLabel: string } {
+    const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
+    if (streamById.get(conversation.streamId)?.type === StreamTypes.SCRATCHPAD) {
+      return { title: streamName ?? "Scratchpad", contextLabel: "Scratchpad" }
+    }
+    return {
+      title: conversation.topicSummary?.trim() || "Untitled conversation",
+      contextLabel: streamName ?? "Unknown stream",
+    }
+  }
 
   let content
   if (isLoading) {
@@ -43,9 +67,18 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   } else {
     content = (
       <div className="flex flex-col gap-2 px-3">
-        {conversations.map((conversation) => (
-          <BoardCard key={conversation.id} workspaceId={workspaceId} conversation={conversation} />
-        ))}
+        {conversations.map((conversation) => {
+          const { title, contextLabel } = labelsFor(conversation)
+          return (
+            <BoardCard
+              key={conversation.id}
+              workspaceId={workspaceId}
+              conversation={conversation}
+              title={title}
+              contextLabel={contextLabel}
+            />
+          )
+        })}
       </div>
     )
   }

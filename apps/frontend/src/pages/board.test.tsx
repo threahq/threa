@@ -85,4 +85,31 @@ describe("BoardPage", () => {
     const card = (await screen.findByText("CC Teams tokens")).closest("a")
     expect(card?.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/s/stream_1?convView=open&conv=conv_1`)
   })
+
+  it("titles a scratchpad card with the scratchpad's name, not the generic topic", async () => {
+    vi.mocked(workspaceStoreModule.useWorkspaceStreams).mockReturnValue([
+      { id: "stream_sp", type: "scratchpad", displayName: "My Notes" },
+    ] as never)
+    mountBoard([makeConversation({ id: "conv_sp", streamId: "stream_sp", topicSummary: "Scratchpad" })])
+
+    expect(await screen.findByText("My Notes")).toBeTruthy() // title = scratchpad name
+    expect(screen.getByText("Scratchpad")).toBeTruthy() // context line = the type
+  })
+
+  it("keeps a DM peer (a person) as context, never as the card title", async () => {
+    vi.mocked(workspaceStoreModule.useWorkspaceStreams).mockReturnValue([
+      { id: "stream_dm", type: "dm", displayName: null },
+    ] as never)
+    vi.mocked(workspaceStoreModule.useWorkspaceDmPeers).mockReturnValue([
+      { streamId: "stream_dm", userId: "usr_pierre" },
+    ] as never)
+    vi.mocked(workspaceStoreModule.useWorkspaceUsers).mockReturnValue([{ id: "usr_pierre", name: "Pierre" }] as never)
+    mountBoard([makeConversation({ id: "conv_dm", streamId: "stream_dm", topicSummary: "Lunch plans" })])
+
+    const title = await screen.findByText("Lunch plans")
+    expect(title).toBeTruthy() // title = topic
+    // "Pierre" renders as the context line, and is not the title element.
+    expect(screen.getByText("Pierre")).toBeTruthy()
+    expect(title.textContent).not.toContain("Pierre")
+  })
 })
