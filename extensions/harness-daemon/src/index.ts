@@ -86,8 +86,7 @@ Examples:
 }
 
 function die(message: string): never {
-  console.error(`harnessd: ${message}`)
-  process.exit(1)
+  throw new Error(message)
 }
 
 function now(): string {
@@ -714,4 +713,7 @@ async function main(): Promise<void> {
   die(`unknown command: ${command}`)
 }
 
-main().catch((error) => die(error instanceof Error ? error.message : String(error)))
+main().catch((error) => {
+  console.error(`harnessd: ${error instanceof Error ? error.message : String(error)}`)
+  process.exit(1)
+})
