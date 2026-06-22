@@ -8,16 +8,16 @@ Start by formalizing the existing global spawn skills into a Bun CLI. The daemon
 
 ## CLI
 
-Initial binary lives at `apps/agent-daemon/src/index.ts`:
+Initial binary lives at `extensions/agent-daemon/src/index.ts`:
 
 ```bash
-bun apps/agent-daemon/src/index.ts doctor
-bun apps/agent-daemon/src/index.ts spawn pi --name explore-foo --branch explore/foo
-bun apps/agent-daemon/src/index.ts spawn claude --name fix-bar --branch fix/bar
-bun apps/agent-daemon/src/index.ts do "spawn a pi agent for long chat performance"
-bun apps/agent-daemon/src/index.ts list
-bun apps/agent-daemon/src/index.ts attach <agent-id-or-name>
-bun apps/agent-daemon/src/index.ts stop <agent-id-or-name>
+bun extensions/agent-daemon/src/index.ts doctor
+bun extensions/agent-daemon/src/index.ts spawn pi --name explore-foo --branch explore/foo
+bun extensions/agent-daemon/src/index.ts spawn claude --name fix-bar --branch fix/bar
+bun extensions/agent-daemon/src/index.ts do "spawn a pi agent for long chat performance"
+bun extensions/agent-daemon/src/index.ts list
+bun extensions/agent-daemon/src/index.ts attach <agent-id-or-name>
+bun extensions/agent-daemon/src/index.ts stop <agent-id-or-name>
 ```
 
 The CLI delegates to the existing global skill scripts. By default it looks under `~/dev/personal/pi-extensions`; override with:
