@@ -662,7 +662,6 @@ describe("slash command boundary", () => {
     const result = parseMarkdown("/foo/bar")
     const content = result.content?.[0]?.content
 
-    expect(content?.[0]?.type).not.toBe("slashCommand")
     expect(content?.[0]).toEqual({ type: "text", text: "/foo/bar" })
   })
 
