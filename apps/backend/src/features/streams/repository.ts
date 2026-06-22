@@ -9,6 +9,7 @@ import type {
   ThreadSummary,
   E2eActor,
 } from "@threa/types"
+import { StreamTypes } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }
@@ -535,6 +536,21 @@ export const StreamRepository = {
 
     const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
 
+    // A thread inherits its top-level ancestor via `root_stream_id` (INV-62).
+    // Archiving marks only the root row, so an active-only filter still returns
+    // a thread whose root scratchpad/channel was archived — and the sidebar
+    // (this bootstrap's consumer) would show it, since the frontend can't tell
+    // the root is archived once it's pruned from the client cache. Exclude
+    // active threads whose root is archived so they never enter the sidebar.
+    // Applies in every branch because `listWithPreviews` is workspace-bootstrap
+    // only, and a thread under an archived root is clutter in every view that
+    // reads the bootstrap streams.
+    const EXCLUDE_ARCHIVED_ROOT_THREADS = `AND NOT (
+        s.type = '${StreamTypes.THREAD}'
+        AND s.root_stream_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM streams root WHERE root.id = s.root_stream_id AND root.archived_at IS NOT NULL)
+      )`
+
     // CTE to get last message per stream. LEFT JOIN against
     // `e2e_streams` so the workspace bootstrap surfaces the E2E flag
     // inline — without it, cold-loaded sidebar rows have undefined
@@ -584,6 +600,7 @@ export const StreamRepository = {
                 AND s.type = ANY(${types})
                 AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
                 AND (s.visibility = 'public' OR s.id = ANY(${userMembershipStreamIds}))
+                ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
               ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
         )
         return result.rows.map(mapRowToStreamWithPreview)
@@ -594,6 +611,7 @@ export const StreamRepository = {
             WHERE s.workspace_id = ${workspaceId}
               AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
               AND (s.visibility = 'public' OR s.id = ANY(${userMembershipStreamIds}))
+              ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
       return result.rows.map(mapRowToStreamWithPreview)
@@ -605,6 +623,7 @@ export const StreamRepository = {
             WHERE s.workspace_id = ${workspaceId}
               AND s.type = ANY(${types})
               AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+              ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
       return result.rows.map(mapRowToStreamWithPreview)
@@ -614,6 +633,7 @@ export const StreamRepository = {
       sql`${sql.raw(SELECT_WITH_PREVIEW)}
           WHERE s.workspace_id = ${workspaceId}
             AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
+            ${sql.raw(EXCLUDE_ARCHIVED_ROOT_THREADS)}
           ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
     )
     return result.rows.map(mapRowToStreamWithPreview)
