@@ -342,6 +342,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     }),
     [enableMentions, enableChannels, enableCommands, enableEmoji, isKnownSlashCommand]
   )
+  // Same stale-closure guard as the refs above: the paste / beforeinput handlers
+  // live in TipTap's `editorProps` (set once), but these options change when the
+  // command set does, so the handlers must read the latest via the ref.
+  const markdownParseOptionsRef = useRef(markdownParseOptions)
+  markdownParseOptionsRef.current = markdownParseOptions
   const editableValue = useMemo(
     () => emojiAtomToEditableText(value, enableEmoji ? toEmoji : undefined),
     [value, enableEmoji, toEmoji]
@@ -650,7 +655,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           text,
           enableMentions ? getMentionTypeRef.current : undefined,
           enableEmoji ? toEmojiRef.current : undefined,
-          markdownParseOptions
+          markdownParseOptionsRef.current
         )
         if (handled) {
           event.preventDefault()
@@ -683,7 +688,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
               event as InputEvent,
               enableMentions ? getMentionTypeRef.current : undefined,
               enableEmoji ? toEmojiRef.current : undefined,
-              markdownParseOptions
+              markdownParseOptionsRef.current
             )
           ) {
             return true
