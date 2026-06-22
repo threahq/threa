@@ -293,9 +293,45 @@ distribution, so "is it mature enough?" gets a number instead of a guess.
 4. **Mutability UX** → **skip** surfacing "merged/retitled" notices for now
    (such notes get ignored anyway).
 
-With these, the design is settled. What remains is execution: **(0)** measure
-the derived-conversation floor (read-only), then **(1b)** build the authored
-board.
+With these, the design is settled. Step **(0)** — measure the floor — is now
+done (below); what remains is **(1b)** build the authored board.
+
+## Floor measurement — real prod data (2026-06-22)
+
+Read-only pull (`cc_readonly`) over the live `conversations` table to size how
+much the _derived_ path can carry. Scale: **625 conversations / 2 workspaces /
+210 streams / 390 memos.**
+
+**Verdict: derived is more mature than feared on the things that gate a board —
+titles exist, clustering is real, the lifecycle runs. The actual gaps are title
+_quality_ and scratchpad generic titles — both prompt/fallback fixes, not
+architecture.**
+
+- **Titles present, 0% null.** The "wall of Untitled" risk is empirically ~zero.
+  But quality drifts: ~33% of titles run >8 words and lead with "Discussion
+  about …" framing (the `topicSummary` spec says 2–5 words, _no_ framing — it's
+  being ignored); casual one-line messages yield fragment-titles (the message
+  text itself). Only ~23% land in the 3–5-word sweet spot. → cheap pre-work win:
+  tighten the topic-summary prompt; it isn't following its own spec.
+- **Clustering is substantial.** 60% of conversations hold 4–20 messages; 17%
+  singletons, 3% empty shells. Not noise.
+- **Lifecycle works.** 70% active / 25% resolved / 5% stalled — resolution
+  actually happens (feeds the Needs-resolution lens and the resolved state).
+- **Scratchpads = exactly 1 conversation each** (105 scratchpads, 1 convo each)
+  — confirms the decision precisely. But each is titled "Scratchpad" (the stream
+  name), so the board's scratchpad slice would be 105 identical cards. → refine
+  decision #1: apply the first-message-excerpt fallback to the generic
+  "Scratchpad" title too, not just to null.
+- **Heavy concentration.** 454 of 485 DM conversations live in a single DM (an
+  AI-persona DM). A workspace board with no scope filter would be flooded by one
+  stream → the scope/lens filter is load-bearing, not optional.
+- **Memo coverage 11%** (69/625) — modest but real fuel for the Decisions lens.
+- **Realistic Active board ≈ 430 cards** (331 with ≥1 reply) — browsable; not
+  empty, not absurd.
+
+Net: green-light leaning on derived for channels/DMs; extend the title fallback
+to generic scratchpad names; and a quick topic-summary prompt-tightening pass is
+the highest-leverage pre-work before (or alongside) 1b.
 
 ---
 
