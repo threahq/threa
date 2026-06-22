@@ -4,7 +4,7 @@ Local supervisor for Threa-controlled coding agents.
 
 ## V1 intent
 
-Start by formalizing the existing global spawn skills into a Bun CLI. The daemon is not a new Threa backend primitive yet; it is a local lifecycle manager over tmux plus the existing bot-runtime/session-link APIs.
+Start by moving the existing global spawn-skill behavior into a Bun CLI. The daemon is not a new Threa backend primitive yet; it is a local lifecycle manager over git worktrees, tmux, and the existing bot-runtime/session-link APIs.
 
 ## CLI
 
@@ -20,11 +20,18 @@ bun extensions/agent-daemon/src/index.ts attach <agent-id-or-name>
 bun extensions/agent-daemon/src/index.ts stop <agent-id-or-name>
 ```
 
-The CLI delegates to the existing global skill scripts. By default it looks under `~/dev/personal/pi-extensions`; override with:
+The CLI owns the spawn flows directly:
 
-- `THREA_AGENTD_PI_EXTENSIONS_DIR`
-- `THREA_AGENTD_PI_SPAWN_SCRIPT`
-- `THREA_AGENTD_CLAUDE_SPAWN_SCRIPT`
+- creates a git worktree from the configured repo/base ref,
+- optionally runs `bun run setup:worktree`,
+- launches Pi or Claude Code in a tmux window,
+- links Pi with `/remote-control`,
+- installs/registers the Claude channel and pre-links its scratchpad when credentials are available.
+
+Runtime binary overrides:
+
+- `THREA_AGENTD_PI_BIN`
+- `THREA_AGENTD_CLAUDE_BIN`
 
 ## Inventory
 
@@ -37,7 +44,7 @@ Tracked fields:
 - id/name/runtime/status
 - worktree/branch
 - tmux session/window
-- scratchpad URL when parseable from the spawn output
+- scratchpad URL when available from Pi pane capture or Claude pre-link
 - command used to spawn
 - last output tail for debugging
 
