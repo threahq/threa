@@ -486,6 +486,29 @@ describe("resolveSections — Unread section", () => {
     )
     expect(recent?.items.map((i) => i.id)).toEqual(["u1"])
   })
+
+  it("pulls unread streams out of type sections into Unread (All preset path)", () => {
+    const config = {
+      version: SECTIONS_VERSION,
+      basePreset: "all" as const,
+      sections: [
+        { id: "unread", spec: { kind: "unread" as const } },
+        { id: "dms", spec: { kind: "type" as const, streamType: "dm" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "dm_unread", type: StreamTypes.DM, urgency: "activity", activity: 9 }),
+      makeItem({ id: "dm_read", type: StreamTypes.DM, urgency: "quiet", activity: 5 }),
+    ]
+    const getUnreadCount = unreadFrom(new Set(["dm_unread"]))
+
+    expect(shape({ processedStreams, getUnreadCount }, config)).toEqual([
+      { id: "unread", items: ["dm_unread"] },
+      // The unread DM leaves its type section for Unread; the read DM stays.
+      { id: "dms", items: ["dm_read"] },
+    ])
+  })
 })
 
 describe("findSourceLabelId", () => {
