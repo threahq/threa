@@ -21,7 +21,12 @@
  * construction.
  */
 
-import { MENTION_BROADCAST_CHANNEL, MENTION_BROADCAST_HERE } from "@threa/types"
+import {
+  actorTypeFromMentionId,
+  isResolvedChannelLinkId,
+  MENTION_BROADCAST_CHANNEL,
+  MENTION_BROADCAST_HERE,
+} from "@threa/types"
 
 export interface QuoteHref {
   streamId: string
@@ -174,9 +179,12 @@ const MENTION_POINTER_SCHEMES = ["user", "persona", "bot"] as const
  * construction.
  */
 export function parseMentionPointerHref(href: string): ActorHrefPointer | null {
+  // The id must carry the authoritative prefix for its scheme (INV-64, INV-2):
+  // `channel:` → `stream_`, `user:` → `usr_`, etc. A mismatched or prefixless id
+  // (`channel:not_stream`, `user:persona_x`) is rejected, not decoded as resolved.
   if (href.startsWith("channel:")) {
     const id = href.slice("channel:".length)
-    return id ? { kind: "channel", id } : null
+    return isResolvedChannelLinkId(id) ? { kind: "channel", id } : null
   }
   if (href === MENTION_BROADCAST_HERE || href === MENTION_BROADCAST_CHANNEL) {
     return { kind: "mention", mentionType: "broadcast", id: href }
@@ -185,7 +193,7 @@ export function parseMentionPointerHref(href: string): ActorHrefPointer | null {
     const prefix = `${scheme}:`
     if (href.startsWith(prefix)) {
       const id = href.slice(prefix.length)
-      return id ? { kind: "mention", mentionType: scheme, id } : null
+      return actorTypeFromMentionId(id) === scheme ? { kind: "mention", mentionType: scheme, id } : null
     }
   }
   return null

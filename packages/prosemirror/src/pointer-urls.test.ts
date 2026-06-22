@@ -37,6 +37,13 @@ describe("parseMentionPointerHref", () => {
     expect(parseMentionPointerHref("user:")).toBeNull()
     expect(parseMentionPointerHref("channel:")).toBeNull()
   })
+
+  it("returns null when the id prefix mismatches the scheme (INV-64, INV-2)", () => {
+    expect(parseMentionPointerHref("user:persona_1")).toBeNull()
+    expect(parseMentionPointerHref("persona:usr_1")).toBeNull()
+    expect(parseMentionPointerHref("bot:usr_1")).toBeNull()
+    expect(parseMentionPointerHref("channel:usr_1")).toBeNull()
+  })
 })
 
 describe("parseMemoHref", () => {
