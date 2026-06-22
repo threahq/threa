@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { LayoutGrid } from "lucide-react"
+import { AlertCircle, LayoutGrid } from "lucide-react"
 import { useParams } from "react-router-dom"
 import { StreamTypes } from "@threa/types"
 import { Button } from "@/components/ui/button"
@@ -25,7 +25,7 @@ export function BoardPage() {
 }
 
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
-  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
+  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
     useWorkspaceConversations(workspaceId, { limit: 50 })
   const conversations = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
   const streams = useWorkspaceStreams(workspaceId)
@@ -48,6 +48,11 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     }
   }
 
+  // Flat if-chain, not a nested ternary (INV-47 / no-nested-ternary).
+  let loadMoreLabel = "Load more"
+  if (isFetchingNextPage) loadMoreLabel = "Loading…"
+  else if (isFetchNextPageError) loadMoreLabel = "Retry"
+
   let content
   if (isLoading) {
     content = (
@@ -61,10 +66,10 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     // A failed fetch must read as a failure, not as the empty state's upbeat copy.
     content = (
       <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-        <LayoutGrid className="h-8 w-8 text-muted-foreground" />
+        <AlertCircle className="h-8 w-8 text-destructive" />
         <p className="text-sm font-medium">Couldn't load the board</p>
         <p className="max-w-sm text-sm text-muted-foreground">Something went wrong fetching your conversations.</p>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
+        <Button variant="outline" onClick={() => refetch()} className="min-h-11">
           Try again
         </Button>
       </div>
@@ -95,15 +100,17 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
           )
         })}
         {hasNextPage && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-1 self-center"
-            onClick={() => fetchNextPage()}
-            disabled={isFetchingNextPage}
-          >
-            {isFetchingNextPage ? "Loading…" : "Load more"}
-          </Button>
+          <div className="mt-1 flex flex-col items-center gap-1">
+            {isFetchNextPageError && <p className="text-xs text-destructive">Couldn't load more.</p>}
+            <Button
+              variant="ghost"
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+              className="min-h-11 px-6"
+            >
+              {loadMoreLabel}
+            </Button>
+          </div>
         )}
       </div>
     )

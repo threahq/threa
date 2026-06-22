@@ -326,8 +326,15 @@ export const ConversationRepository = {
     const fields = sql`${sql.raw(SELECT_FIELDS)}`
     const access = streamAccessPredicateSql(workspaceId, userId, "conversations.stream_id")
     const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
+    // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
+    // column — because the cursor is minted from a JS Date (ms precision) while
+    // timestamptz stores microseconds. Comparing the raw µs value against an
+    // ms-truncated cursor would skip any row whose activity falls in the same
+    // millisecond as the boundary row but with smaller µs. Truncating both sides
+    // to ms makes the order total at the cursor's own granularity (id breaks ms
+    // ties), so no row is skipped or repeated across pages.
     const cursorCond = options?.cursor
-      ? composeSql`AND (last_activity_at, id) < (${options.cursor.lastActivityAt}::timestamptz, ${options.cursor.id})`
+      ? composeSql`AND (date_trunc('milliseconds', last_activity_at), id) < (${options.cursor.lastActivityAt}::timestamptz, ${options.cursor.id})`
       : sql``
 
     const result = await db.query<ConversationRow>(composeSql`
@@ -337,7 +344,7 @@ export const ConversationRepository = {
         ${statusCond}
         ${cursorCond}
         AND ${access}
-      ORDER BY last_activity_at DESC, id DESC
+      ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
