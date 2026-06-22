@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ConversationWithStaleness } from "@threa/types"
@@ -112,7 +112,8 @@ describe("BoardPage", () => {
   it("does not render the board when the board-view flag is off", async () => {
     const { listByWorkspace } = mountBoard([makeConversation()], { boardFlag: "off" })
     // Gate redirects away — board content never appears and the feed isn't fetched.
-    await Promise.resolve()
+    // Flush effects so a (hypothetical) deferred mount would have its chance to fire.
+    await act(async () => {})
     expect(screen.queryByText("CC Teams tokens")).toBeNull()
     expect(screen.queryByText("Board")).toBeNull()
     expect(listByWorkspace).not.toHaveBeenCalled()
