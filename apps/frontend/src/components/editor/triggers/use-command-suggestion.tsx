@@ -183,9 +183,20 @@ export function useCommandSuggestion({
     renderList,
   })
 
+  // Predicate over the editor's effective command set, for the markdown parser
+  // on paste: a pasted `/cmd` only becomes a command node when it's real.
+  const isKnownCommand = useCallback(
+    (name: string) => {
+      const lower = name.toLowerCase()
+      return commands.some((cmd) => cmd.name.toLowerCase() === lower)
+    },
+    [commands]
+  )
+
   return {
     suggestionConfig,
     renderCommandList: renderSuggestionList,
     isActive,
+    isKnownCommand,
   }
 }

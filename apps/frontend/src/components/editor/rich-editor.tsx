@@ -298,7 +298,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Filtered for autocomplete dropdown only
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion(mentionStreamContext)
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
-  const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion({
+  const {
+    suggestionConfig: commandConfig,
+    renderCommandList,
+    isKnownCommand: isKnownSlashCommand,
+  } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
     includeGiphy: giphyEnabled,
     includeSnippet: snippetEnabled,
@@ -330,11 +334,19 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       enableMentions,
       enableChannels,
       enableSlashCommands: enableCommands,
+      // Pasted markdown only becomes a command node for a real command; a
+      // stray `/User` from a filepath stays text.
+      isKnownCommand: enableCommands ? isKnownSlashCommand : undefined,
       enableEmoji,
       emojiAsText: true,
     }),
-    [enableMentions, enableChannels, enableCommands, enableEmoji]
+    [enableMentions, enableChannels, enableCommands, enableEmoji, isKnownSlashCommand]
   )
+  // Same stale-closure guard as the refs above: the paste / beforeinput handlers
+  // live in TipTap's `editorProps` (set once), but these options change when the
+  // command set does, so the handlers must read the latest via the ref.
+  const markdownParseOptionsRef = useRef(markdownParseOptions)
+  markdownParseOptionsRef.current = markdownParseOptions
   const editableValue = useMemo(
     () => emojiAtomToEditableText(value, enableEmoji ? toEmoji : undefined),
     [value, enableEmoji, toEmoji]
@@ -643,7 +655,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           text,
           enableMentions ? getMentionTypeRef.current : undefined,
           enableEmoji ? toEmojiRef.current : undefined,
-          markdownParseOptions
+          markdownParseOptionsRef.current
         )
         if (handled) {
           event.preventDefault()
@@ -676,7 +688,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
               event as InputEvent,
               enableMentions ? getMentionTypeRef.current : undefined,
               enableEmoji ? toEmojiRef.current : undefined,
-              markdownParseOptions
+              markdownParseOptionsRef.current
             )
           ) {
             return true

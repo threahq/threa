@@ -83,7 +83,9 @@ function TriggerChip({ type, text }: TriggerChipProps) {
   )
 }
 
-const COMMAND_PATTERN = /^(\s*)(\/)([\w-]+)/
+// `(?=\s|$)` keeps the command name a whole token, so a path segment like the
+// `/model` in `/model/checkpoints` isn't rendered as a `/model` command chip.
+const COMMAND_PATTERN = /^(\s*)(\/)([\w-]+)(?=\s|$)/
 
 const CHANNEL_PATTERN = /(?<![a-z0-9])#([a-z][a-z0-9-]*[a-z0-9]|[a-z])(?![a-z0-9_.-])/g
 
