@@ -68,7 +68,20 @@ function renderSection(stream: Stream, update = vi.fn().mockResolvedValue({})) {
 }
 
 describe("DescriptionSection", () => {
-  it("seeds the editor from the stored description markdown", () => {
+  it("seeds the editor from descriptionJson (canonical), not the markdown projection", () => {
+    renderSection(
+      channel({
+        description: "stale markdown",
+        descriptionJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "From JSON" }] }],
+        },
+      })
+    )
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("From JSON")
+  })
+
+  it("falls back to the markdown projection when descriptionJson is absent (legacy rows)", () => {
     renderSection(channel({ description: "Hello **world**" }))
     expect(screen.getByTestId("rich-editor")).toHaveTextContent("Hello **world**")
   })
