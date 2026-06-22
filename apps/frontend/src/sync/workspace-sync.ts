@@ -241,6 +241,7 @@ function toWorkspaceBootstrapStream(stream: CachedStream): WorkspaceBootstrap["s
     displayName: stream.displayName,
     slug: stream.slug,
     description: stream.description,
+    descriptionJson: stream.descriptionJson,
     visibility: stream.visibility,
     parentStreamId: stream.parentStreamId,
     parentMessageId: stream.parentMessageId,

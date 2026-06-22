@@ -20,11 +20,10 @@ function descriptionPlaceholder(streamType: StreamType): string {
  * mentions and emoji as messages — minus image upload and slash commands, which
  * don't belong on a description.
  *
- * Seeds from the stored markdown projection (`stream.description`) and saves the
- * editor's ProseMirror JSON (`descriptionJson`). The canonical store is JSON
- * (the backend derives markdown); parsing the markdown back reconstructs an
- * equivalent doc, so this is the same store-markdown / edit-rich split messages
- * use (INV-58).
+ * Seeds from the canonical ProseMirror (`stream.descriptionJson`) and saves the
+ * editor's JSON back (INV-58) — the same edit-from-JSON path message editing
+ * uses. Markdown (`stream.description`) is only the wire/integrator projection;
+ * it's the seed fallback only for rows cached before `descriptionJson` existed.
  */
 export function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const updateMutation = useUpdateStream(workspaceId, stream.id)
@@ -35,8 +34,10 @@ export function DescriptionSection({ workspaceId, stream }: { workspaceId: strin
 
   const savedMarkdown = (stream.description ?? "").trim()
   const seed = useCallback<() => JSONContent>(
-    () => parseMarkdown(stream.description ?? "", undefined, toEmoji, { enableSlashCommands: false }),
-    [stream.description, toEmoji]
+    () =>
+      stream.descriptionJson ??
+      parseMarkdown(stream.description ?? "", undefined, toEmoji, { enableSlashCommands: false }),
+    [stream.descriptionJson, stream.description, toEmoji]
   )
   const [contentJson, setContentJson] = useState<JSONContent>(seed)
   const [formatOpen, setFormatOpen] = useState(false)
