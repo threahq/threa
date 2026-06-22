@@ -374,17 +374,19 @@ function customSectionPresentation(name: string): SectionPresentation {
 /**
  * Presentation for the Unread section. A priority surface like Important — a
  * plain binary collapse (no tiered "N more" tail, since every row here is one the
- * viewer is working through) — and hidden entirely when the tray is empty, so it
- * never leaves an empty header behind once the viewer has caught up. The header's
- * gold-dot title is supplied as `titleContent` by the stream list (a colored
- * emoji would break the gold-on-paper palette); no icon string here.
+ * viewer is working through). Unlike the smart buckets it is NOT hidden when
+ * empty: once the viewer adds it, it stays put and shows an "all caught up"
+ * placeholder, so catching up doesn't make the whole section (and everything
+ * below it) jump. The header's gold-dot title is supplied as `titleContent` by
+ * the stream list (a colored emoji would break the gold-on-paper palette); no
+ * icon string here.
  */
 const UNREAD_PRESENTATION: SectionPresentation = {
   label: "Unread",
   tiered: false,
   compact: true,
   showPreviewOnHover: true,
-  hideWhenEmpty: true,
+  hideWhenEmpty: false,
   defaultCollapse: "open",
 }
 
