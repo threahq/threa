@@ -527,6 +527,47 @@ describe("BotRuntimeService outbox emission", () => {
       expect(result.stream.id).toBe("stream_1")
     })
 
+    it("threads a description + bot attribution into the scratchpad create", async () => {
+      patchWithTransaction()
+      const streamService = {
+        createScratchpadInTransaction: mock(() => Promise.resolve({ id: "stream_1" })),
+        addBotToStreamOn: mock(() => Promise.resolve()),
+      }
+      const labelAssignmentService = { assignByNameInTransaction: mock(() => Promise.resolve({})) }
+      spyOn(BotRuntimeService.prototype, "repairBotTraitsInTransaction").mockResolvedValue(undefined)
+      spyOn(BotRuntimeService.prototype, "createOrLinkPiRemoteSessionInTransaction").mockResolvedValue({
+        id: "brsl_1",
+        rootStreamId: "stream_1",
+        activeStreamId: "stream_1",
+        runtimeSessionId: "sess_1",
+      } as never)
+      const service = new BotRuntimeService({
+        pool: fakePool,
+        streamService: streamService as never,
+        labelAssignmentService: labelAssignmentService as never,
+      })
+
+      await service.createLinkedScratchpadSession({
+        workspaceId: "ws_1",
+        botId: "bot_1",
+        ownerUserId: "usr_owner",
+        runtimeKind: "pi-local",
+        instanceId: "inst_1",
+        runtimeSessionId: "sess_1",
+        displayName: "Pi remote - threa",
+        description: "Handover: continue the refactor in apps/backend",
+        traits: ["active-scratchpad"],
+      })
+
+      expect(streamService.createScratchpadInTransaction).toHaveBeenCalledWith(
+        fakeQuerier,
+        expect.objectContaining({
+          description: "Handover: continue the refactor in apps/backend",
+          descriptionActor: { id: "bot_1", type: "bot" },
+        })
+      )
+    })
+
     it("rejects and lets the transaction roll back when label assignment fails", async () => {
       patchWithTransaction()
       const streamService = {

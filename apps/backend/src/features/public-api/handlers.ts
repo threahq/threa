@@ -1112,6 +1112,7 @@ export function createPublicApiHandlers({
         localCwd: data.localCwd,
         memoryMode: data.memoryMode,
         labelName: data.labelName,
+        description: data.description,
         traits: requiredRuntimeTraits,
       })
 

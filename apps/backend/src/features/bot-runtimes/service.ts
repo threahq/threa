@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
-import { LabelActorTypes, LabelableResourceTypes, MemoryModes, type MemoryMode } from "@threa/types"
+import { AuthorTypes, LabelActorTypes, LabelableResourceTypes, MemoryModes, type MemoryMode } from "@threa/types"
 import type {
   BotInvocationCapability,
   BotInvocationTrigger,
@@ -254,6 +254,8 @@ export class BotRuntimeService {
     localCwd?: string
     memoryMode?: MemoryMode
     labelName?: string
+    /** Markdown description set on the new scratchpad (e.g. a handover note). */
+    description?: string
     traits: readonly BotTrait[]
   }): Promise<{ link: BotRuntimeSessionLink; stream: Stream }> {
     const { streamService, labelAssignmentService } = this
@@ -265,6 +267,10 @@ export class BotRuntimeService {
       const stream = await streamService.createScratchpadInTransaction(client, {
         workspaceId: params.workspaceId,
         displayName: params.displayName,
+        description: params.description,
+        // Attribute the at-creation description note to the bot so the timeline
+        // row reads "<bot> set the description".
+        descriptionActor: params.description ? { id: params.botId, type: AuthorTypes.BOT } : undefined,
         memoryMode: params.memoryMode ?? MemoryModes.OFF,
         createdBy: params.ownerUserId,
       })

@@ -1547,3 +1547,61 @@ describe("StreamService.updateStream description", () => {
     expect(mockInsertEvent).not.toHaveBeenCalled()
   })
 })
+
+describe("StreamService.createScratchpadInTransaction description", () => {
+  let service: StreamService
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockInsertStream.mockReset()
+    mockInsertMember.mockReset().mockResolvedValue({} as never)
+    mockInsertEvent.mockReset().mockResolvedValue({ id: "evt_1", streamId: "stream_pad" } as never)
+    mockInsertOutbox.mockReset()
+  })
+
+  test("emits a bot-attributed description_set event when created with a description + actor", async () => {
+    mockInsertStream.mockResolvedValue({ id: "stream_pad", workspaceId: "ws_1", description: "Handover note" } as never)
+
+    await service.createScratchpadInTransaction(
+      {} as never,
+      {
+        workspaceId: "ws_1",
+        displayName: "Session",
+        description: "Handover note",
+        descriptionActor: { id: "bot_1", type: "bot" },
+        createdBy: "usr_owner",
+      } as never
+    )
+
+    expect(mockInsertEvent).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        eventType: "description_set",
+        payload: { descriptionMarkdown: "Handover note" },
+        actorId: "bot_1",
+        actorType: "bot",
+      })
+    )
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:description_set",
+      expect.objectContaining({ streamId: "stream_pad" })
+    )
+  })
+
+  test("stores a description without an event when no actor is attributed", async () => {
+    mockInsertStream.mockResolvedValue({ id: "stream_pad", workspaceId: "ws_1", description: "Note" } as never)
+
+    await service.createScratchpadInTransaction(
+      {} as never,
+      {
+        workspaceId: "ws_1",
+        displayName: "Session",
+        description: "Note",
+        createdBy: "usr_owner",
+      } as never
+    )
+
+    expect(mockInsertEvent).not.toHaveBeenCalled()
+  })
+})
