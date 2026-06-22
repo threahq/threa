@@ -6,11 +6,13 @@ which argues a stream is a container and the timeline is one projection. This
 doc designs the **board** as a co-equal interaction mode and as the home for
 "find what matters." No code yet.
 
-> **v2 pivot (after Kris's input + a code audit of the conversations
-> primitive):** the board's "post" is a **conversation** (Threa's AI-derived
-> topic cluster), not a thread; and the headline surface is a **workspace-wide
-> board as your entrypoint**, with per-stream as a scoped filter of the same
-> thing. v1's thread-as-post framing is preserved at the bottom as a fallback.
+> **v3 (after Kris's "turn it on its head"):** the board's "post" is a
+> **conversation**, but conversations are now seeded **two ways** — _authored_
+> (posting from the board declares a new topic; no AI needed) and _derived_ (AI
+> clustering, as before). Authored-first makes the board good from day one and
+> retires the maturity caveats. Headline surface stays a **workspace-wide board
+> as your entrypoint**, per-stream a scoped filter. v1's thread-as-post framing
+> is the de-risking appendix.
 
 ## The thesis
 
@@ -71,6 +73,57 @@ which is the whole "automatic organization that surfaces what matters" ethos
 4. **Extraction latency.** A brand-new message becomes a conversation card
    asynchronously (outbox → worker → LLM). A just-posted topic appears after a
    short delay, not instantly.
+
+## Turning it on its head: authored posts seed conversations (Kris's inversion)
+
+The biggest unlock in this thread. Instead of conversations being _only_
+derived (AI clusters timeline messages → board reads them), let **posting from
+the board start a conversation**. The post is the human-declared boundary: "this
+is a new topic." Its replies live in its thread; that thread _is_ the
+conversation.
+
+This unifies the two origins into one card type:
+
+- **Authored** — you click "New post", write it (and optionally title it). That
+  creates a conversation seeded with the post; replies attach to its thread. The
+  boundary is **declared, not inferred** — no AI required.
+- **Derived** — organic timeline messages still get auto-clustered as today.
+  Quality-dependent, but no longer load-bearing: it's the "we also catch what
+  you didn't explicitly post" bonus on top.
+
+**Why this is the right move: it retires the three caveats** — for authored
+posts, _the AI doesn't have to be great._
+| Caveat (derived-only) | Authored post |
+| --- | --- |
+| Null titles | You write the title (or its first line is the title). Never "Untitled". |
+| Mutable / merges under you | An authored post is a stable artifact; nothing re-clusters it. |
+| Scratchpads = one conversation | You post discrete topics to the scratchpad board → many posts, no AI segmentation needed. The solo-first gap dissolves. |
+
+It also reconciles the two instincts that were in tension: Theo's "**write a
+post**" (deliberate authoring, nested comments, resurfaces on reply) _and_
+Threa's "automatic organization that surfaces what matters" (derived
+conversations) — same board, both feed it. And every authored post is clean,
+human-labeled data, which makes the forcing-function loop below even stronger.
+
+**What it costs (the honest mechanics):**
+
+- A board post = create a message + open its thread (both exist) + **materialize
+  a conversation row** seeded with that message and `topicSummary = the title`.
+  Conversation creation exists only inside the extraction worker today
+  (`boundary-extraction-service.ts`), so this needs a direct
+  "create-conversation-from-message" service path + endpoint (modest).
+- The boundary-extraction worker must **not re-cluster an authored message** —
+  it needs to respect an explicit/locked assignment (a flag on the message or
+  conversation, or "skip messages with a human-declared boundary"). Small
+  addition, but real, and it's the load-bearing correctness bit (INV-20-style:
+  the human assignment wins over the async AI pass).
+- For authored posts where the thread is the conversation, the
+  thread↔conversation relationship is 1:1; derived conversations stay
+  many-messages-in-a-stream. The card renders the same either way.
+
+This is a strong enough reframe that **authored posting becomes the robust core
+of the board, and derived conversations ride alongside** — flipping the risk
+profile (see Phasing/Sequencing below).
 
 ## The workspace board as your entrypoint (Q3)
 
@@ -156,18 +209,32 @@ Q3, it mostly resolves:
 
 ## Phasing
 
-1. **Read-only workspace board (MVP).** `findByWorkspace` → endpoint
-   (access-filtered) → a page rendering conversation cards by `lastActivityAt`,
-   live via existing socket events. Default **Active** lens, **scope = all**.
-   Proves the entrypoint thesis with no write-path or INV-61 risk; titles fall
-   back to entrypoint first-line when null.
+The inversion changes the order. Two candidate entry points:
+
+- **0. Measure the floor (read-only, no build).** Pull a real sample of derived
+  conversations (read-only prod DB) → null-title rate, cluster sizes, status
+  distribution. Answers "how immature is it _today_" with a number, and tells us
+  how much the board would lean on authored vs derived. Cheap, do first.
+- **1a. Read-only derived board.** `findByWorkspace` → access-filtered endpoint
+  → page reusing `conversation-item`/`conversation-list`, Active lens, live via
+  existing sockets. Cheapest code, but quality rides on the AI; doubles as a
+  visual version of step 0.
+- **1b. Authored board (the robust core).** "New post" → create message + thread
+  - materialized conversation (titled) + extractor-skip-authored. More code, but
+    **deterministic and good from day one**, and it's the thing that makes the
+    board independent of AI quality. This is the real product.
+
+Recommended path: **0 → 1b**, letting derived conversations (1a's read) flow in
+alongside as enrichment. Then:
+
 2. **Lenses + scope.** Structural lenses first (Active / Needs-resolution /
    Decisions — all from existing signals), then scope filter (per channel / DMs
    / label), then personal lenses (Mine / Saved — need per-viewer joins).
-3. **Act from the board.** Open a conversation in place, reply to its
-   entrypoint, mark resolved, save/pin — so the board is somewhere you _work_,
-   not just scan. Reuses existing compose + reassign + saved paths.
-   (Later/maybe: per-scratchpad topic segmentation so scratchpad boards work.)
+3. **Full act-from-the-board + corrections.** Reply in place, mark resolved,
+   save/pin, plus the maturity corrections (retitle / merge / split) that feed
+   the eval loop. Reuses existing compose + reassign + saved paths. Per-scratchpad
+   topic segmentation for the _derived_ path becomes optional, since authored
+   posts already make scratchpad boards work.
 
 ## The board as the forcing function for conversation maturity (Kris's reframe)
 
@@ -196,9 +263,10 @@ The feedback loop is already half-built:
 
 ### Sequencing to de-risk (the one caution)
 
-If conversations are currently rough, making them the _default_ entrypoint on
-day one risks a wall of "Untitled" / mis-clustered cards — the product feeling
-broken. So promote in reversible stages:
+The inversion above softens this a lot: an **authored**-first board is clean
+from day one, so the staging below really applies to how much weight we put on
+the **derived** cards. If we lead with derived-only, the risk stands — a wall of
+"Untitled" / mis-clustered cards feels broken — so promote in reversible stages:
 
 1. **Secondary surface** — board ships as a nav item you open deliberately, not
    the landing page. Dogfood it; use the corrections; watch quality climb.
