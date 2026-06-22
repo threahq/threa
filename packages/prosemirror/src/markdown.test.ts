@@ -680,6 +680,20 @@ describe("slash command boundary", () => {
     expect(content?.[0]).toEqual({ type: "slashCommand", attrs: { name: "model" } })
     expect(content?.[1]).toEqual({ type: "text", text: " gpt-4" })
   })
+
+  it("does not materialize a command node for an unknown name when isKnownCommand is supplied", () => {
+    const result = parseMarkdown("/User", undefined, undefined, { isKnownCommand: (name) => name === "help" })
+    const content = result.content?.[0]?.content
+
+    expect(content).toEqual([{ type: "text", text: "/User" }])
+  })
+
+  it("materializes a command node for a known name when isKnownCommand is supplied", () => {
+    const result = parseMarkdown("/help", undefined, undefined, { isKnownCommand: (name) => name === "help" })
+    const content = result.content?.[0]?.content
+
+    expect(content?.[0]).toEqual({ type: "slashCommand", attrs: { name: "help" } })
+  })
 })
 
 describe("@threa/prosemirror table round-trip", () => {

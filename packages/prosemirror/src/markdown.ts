@@ -440,6 +440,13 @@ export interface ParseMarkdownOptions {
   enableSlashCommands?: boolean
   enableEmoji?: boolean
   /**
+   * Only materialize a `slashCommand` node when the name is an actual command.
+   * Supplied by composer surfaces (the editor's known command set) so a pasted
+   * `/User` isn't claimed as a command. Absent → any well-formed `/cmd` is
+   * accepted, matching the prior behavior for backend ingestion and tests.
+   */
+  isKnownCommand?: (name: string) => boolean
+  /**
    * Keep resolved emoji shortcodes as editable text instead of atom nodes.
    * Useful for composer surfaces where mobile browsers struggle with deleting
    * adjacent contenteditable=false emoji atoms.
@@ -855,13 +862,16 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       return "user"
     })
 
-  // The command name must be a whole token: the `(?=\s|$)` boundary stops a
-  // leading filepath like `/User/kristofferremback/dev` (pasted markdown) from
-  // being claimed as a `/User` slash command — only `/cmd`, `/cmd args`, or
-  // `/cmd` at end-of-line match.
+  // Two gates before a leading `/word` becomes a command node:
+  //  1. the `(?=\s|$)` boundary keeps the name a whole token, so a pasted
+  //     filepath like `/User/kristofferremback/dev` isn't claimed as `/User`;
+  //  2. `isKnownCommand` (when supplied) rejects a lone `/User` that clears the
+  //     boundary but isn't a registered command. Absent the predicate, any
+  //     well-formed `/cmd` is accepted (backend ingestion, tests).
   const commandMatch = allowSlashCommands ? text.match(/^(\s*)(\/)([\w-]+)(?=\s|$)/) : null
+  const commandIsKnown = commandMatch ? (options.isKnownCommand?.(commandMatch[3]) ?? true) : false
   let processText = text
-  if (commandMatch) {
+  if (commandMatch && commandIsKnown) {
     if (commandMatch[1]) {
       result.push({ type: "text", text: commandMatch[1] })
     }
