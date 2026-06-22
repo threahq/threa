@@ -1,172 +1,196 @@
 # Exploration: The Board — a second way to interact with a stream
 
-Status: exploration / design. Sibling to
+Status: exploration / design, v2. Sibling to
 [`nonlinear-stream-views-exploration.md`](./nonlinear-stream-views-exploration.md),
 which argues a stream is a container and the timeline is one projection. This
-doc takes the **board** projection seriously as a co-equal interaction mode and
-as the in-stream home for "find what matters." No code yet.
+doc designs the **board** as a co-equal interaction mode and as the home for
+"find what matters." No code yet.
+
+> **v2 pivot (after Kris's input + a code audit of the conversations
+> primitive):** the board's "post" is a **conversation** (Threa's AI-derived
+> topic cluster), not a thread; and the headline surface is a **workspace-wide
+> board as your entrypoint**, with per-stream as a scoped filter of the same
+> thing. v1's thread-as-post framing is preserved at the bottom as a fallback.
 
 ## The thesis
 
 The timeline answers _"what is being said, in order."_ The board answers
-_"what matters in here, right now."_ Same stream, same access boundary
-(INV-62), two ways to interact:
+_"what matters, right now."_ Same content, same access boundary (INV-62), two
+postures:
 
-- **Timeline** — chronological, contiguous (INV-61), append-only feel. The room.
-- **Board** — posts as durable, resurfacing units ordered by what matters, not
-  by when they were typed. The pinboard / forum on the wall of that room.
+- **Timeline** — chronological, contiguous (INV-61), append-only. The room.
+- **Board** — topics as durable, resurfacing cards ordered by what matters, not
+  by when they were typed. The pinboard on the wall.
 
-Both are first-class. A user toggles between them per stream; neither is "the
-real one." This is the same move Linear makes with list vs. board, or GitHub
-with the issues list vs. a project board — one dataset, two postures.
+Neither is "the real one." Linear does this with list vs. board; GitHub with
+the issues list vs. a project board — one dataset, two views.
 
-## Why the board is where "find what matters" grows up
+## The post = a conversation (verified viable)
 
-Threa already _has_ a "find what matters" layer, but it lives **above** the
-stream — cross-workspace and ambient:
+In Threa a reply creates a **thread** (a child stream off a message), so the
+obvious "post" is a thread. But Threa already derives a richer unit: a
+**conversation** — an AI-clustered topic _within_ a stream
+(`boundary-extraction-service.ts`). Kris's instinct was to use that as the post,
+and a code audit says it holds up:
 
-- Sidebar **Important** section + urgency strip — "automatic organization that
-  surfaces what matters" (`docs/design-system.md:824`, `:753-799`).
-- The **quiet collector** — tier-2 GAM extraction lands per-assignee to-do
-  suggestions in the `/saved` _Suggested_ tab; pull-only, no badge
-  (`saved-suggestions/service.ts:39-45`, `config.ts:81-104`).
-- **Memory explorer** — surfaces extracted memos across streams (`/memory`).
+| Need a post must meet    | Conversation today                                                                                                            | Cite                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Stable identity          | `conv_` ULID, persists across reassign/merge/split; emptied → `resolved` shell (undo target), never deleted                   | `repository.ts:470-494`                          |
+| A title to render        | `topicSummary` — a 2–5 word, language-aware topic name (nullable → "Untitled")                                                | `boundary-extraction/config.ts:77-83`            |
+| An entrypoint message    | `messageIds[0]` (first _assigned_; ~chronological)                                                                            | `domain.ts:602`                                  |
+| Resurface on activity    | `lastActivityAt`, bumped on every touch; already the `ORDER BY` of list queries                                               | `repository.ts:497-504`                          |
+| Built-in "matters" state | `status` active/stalled/resolved · `completenessScore` 1–7 · read-time `temporalStaleness`/`effectiveCompleteness`            | `constants.ts:308-315`, `staleness.ts`           |
+| Works beyond channels    | runs on channels, **DMs**, threads, **scratchpads** — all non-E2E streams, user messages only                                 | `boundary-extraction-outbox-handler.ts:23-53`    |
+| Card UI already built    | `conversation-item.tsx` (StatusBadge, 7-seg completeness), `conversation-list.tsx` (sectioned by status), live socket updates | `use-conversations.ts`                           |
+| Knowledge link           | memos carry `source_conversation_id`; "decisions captured here" is one join                                                   | `memos` migration `:16`, `repository.ts:325-341` |
 
-What's missing is the **mid-altitude** surface: _"within this stream, what
-matters?"_ The timeline can't answer that — it's strictly chronological, so the
-important decision from Tuesday is buried under today's chatter. The board is
-exactly that altitude. It can rank and group a single stream's content by
-signals Threa already computes, turning "find what matters" from an
-ambient/global feature into something you can _stand inside a stream and do_.
+**Why this beats thread-as-post.** Conversations _subsume_ threads (a
+conversation spans a root message and its thread replies via
+`findByStreamIncludingThreads`), they exist in DMs and scratchpads where threads
+may not, they're **authored automatically** (no one has to remember to start a
+thread), and they ship with the exact state machine "find what matters" wants.
+It's also more Threa than Facebook: posts are _discovered_, not manually posted —
+which is the whole "automatic organization that surfaces what matters" ethos
+(`design-system.md:824`).
 
-The signals already exist (nothing new on the write path):
+**Honest caveats (decisions, not blockers):**
 
-| Signal             | Source (existing)                                                                                   | Board use                        |
-| ------------------ | --------------------------------------------------------------------------------------------------- | -------------------------------- |
-| Last activity      | `threadSummary.lastReplyAt` (`domain.ts:413-429`)                                                   | resurface old posts on new reply |
-| Heat               | `replyCount`, `participants[≤3]` (`streams/repository.ts:992-1066`)                                 | rank busy posts                  |
-| Topic state        | conversations `status` ACTIVE/STALLED/RESOLVED, `completenessScore` (`conversations/repository.ts`) | "needs resolution" / "open" lens |
-| Captured knowledge | GAM memos w/ `knowledgeType` decision/fact (`memory`)                                               | "decisions" lens, post badges    |
-| Explicit intent    | saved items + quiet-collector suggestions (`saved-suggestions`)                                     | "action items" lens              |
+1. **Mutable posts.** A conversation can be retitled, merged, or split by the
+   next extraction pass. A card you saw yesterday may have absorbed another or
+   changed its name. Fine for a living "what matters" wall; worth a light "this
+   updates itself" mental model, not a fixed-artifact one.
+2. **Null titles.** `topicSummary` can be null → "Untitled conversation". A wall
+   of "Untitled" is bad. Mitigation: fall back to the entrypoint message's
+   stripped first line (INV-60) when title is null.
+3. **Scratchpads degenerate to one post.** The scratchpad path skips AI
+   segmentation and keeps a single conversation per scratchpad
+   (`boundary-extraction-service.ts:218-233`). So a scratchpad board = one card,
+   not a topic board. For a solo-first product this is the biggest gap — either
+   scope the board to channels/DMs first, or later enable topic segmentation for
+   scratchpads (a backend change).
+4. **Extraction latency.** A brand-new message becomes a conversation card
+   asynchronously (outbox → worker → LLM). A just-posted topic appears after a
+   short delay, not instantly.
 
-So the board's default ordering is **last activity** (Theo's "old post comes
-back to the top"), but its _reason for existing_ is that it's the one surface
-where those five signals can compose into lenses: **Active · Unanswered ·
-Decisions · Needs resolution · Mine**.
+## The workspace board as your entrypoint (Q3)
 
-## The one real design fork: what is a "post"?
+Kris: _"a workspace-wide board could be your entrypoint, where a filter/lens
+could be per-stream/channel."_ Agreed — make that the headline, not an add-on:
 
-In Threa a reply creates a **thread** = a child stream hanging off a _message_
-(`parentStreamId` = the stream, `parentMessageId` = the message it replies to,
-`rootStreamId` = the root). A timeline message with `replyCount > 0` already
-renders as a `ThreadCard` (`timeline/thread-card.tsx:11-50`). So a "post" is
-naturally **a top-level message + its thread**. The fork is which top-level
-messages count:
+- **Primary surface:** a workspace-wide board — a cross-stream wall of
+  conversation cards, ordered by `lastActivityAt`, with a **lens** selector and
+  a **scope** filter (all / one channel / DMs / a label).
+- **Per-stream board:** the same view scoped to one stream — a special case, not
+  a separate feature.
+- This is the activity feed's serious sibling: activity is a flat event log
+  ("who pinged me"); the board is the _topic_ log ("what threads of work are
+  alive"). It's a landing surface you _act_ from, not just read.
 
-- **A) Every top-level message is a post.** Truest Facebook analog; board =
-  the timeline re-sorted by activity. Downside: every "lol" is a post; the board
-  is noisy and stops being a "what matters" surface.
-- **B) Only messages that have attracted a thread (`replyCount > 0`) are
-  posts.** Board = the subset that became conversations. Naturally a "what
-  matters" filter — things people engaged with. Downside: a brand-new important
-  post with no replies yet is invisible until someone replies.
-- **C) Hybrid (recommended): a post is a top-level message that is _either_
-  thread-bearing, saved, or carries a captured memo / is an open question.** The
-  board is "what matters," sourced from engagement _and_ Threa's own signals.
-  Start from B's query, union in saved/memo'd/flagged messages.
+**The one real build for this:** a workspace-wide conversation list endpoint.
+`ConversationRepository.findByWorkspace` already exists
+(`repository.ts:270-294`) but is **not wired to any route** — current routes are
+strictly stream-scoped (`routes.ts:484-490`). So the spine query exists; it
+needs an HTTP endpoint plus access filtering via `listAccessibleStreamIds`
+(INV-62), never a raw `stream_members` filter.
 
-Recommendation: ship **B** as the MVP (cheapest — it's exactly
-`findThreadSummaries` ordered differently), evolve to **C** as the "find what
-matters" lenses land. Avoid A; a re-sorted firehose isn't a new mode.
+## Lenses — what I meant, and your "matters is personal" point (Q2)
 
-Note this reuses existing primitives — no new "post" entity (INV-36 / INV-49).
-A post is a message; a thread is its comments; nesting is already unlimited.
+A **lens** is a saved filter+sort over the board, each backed by a signal Threa
+_already_ computes — so the board doesn't decide what matters, it gives you the
+dials. Your point that "what matters is a question for the person" is exactly
+right, so split the dials in two:
+
+**Structural lenses (same signal for everyone):**
+
+- **Active** (default) — `lastActivityAt` desc. The resurfacing wall.
+- **Needs resolution** — `status = stalled`, or high `temporalStaleness` with
+  low `completenessScore`. Loose ends, things hanging.
+- **Decisions / Knowledge** — conversations with a captured memo
+  (`source_conversation_id`, `knowledgeType` decision/fact). What got settled.
+
+**Personal lenses (per-viewer — "matters to _you_"):**
+
+- **Mine / For you** — conversations you authored, participate in
+  (`participantIds`), are @-mentioned in, or have a quiet-collector to-do
+  assigned in (`saved-suggestions`).
+- **Saved** — conversations you explicitly saved/pinned.
+
+Curation, then, is mostly _picking the lens_ — plus explicit save/pin for the
+manual override. And like the quiet collector learns from dismissals, the
+personal lens can get smarter over time (later). The structural lenses are free
+today; personal lenses need a per-viewer join (mentions/saved/participation).
+
+## Default posture per stream type — the Q4 you asked me to explain
+
+Q4 was: _when you open something, which mode do you land in by default?_ Given
+Q3, it mostly resolves:
+
+- **Workspace entrypoint → board.** Landing on "what matters across everything"
+  beats landing in one chronological room.
+- **An individual stream → timeline by default, board a toggle.** Inside one
+  channel/DM you usually want the live conversation; the board is there when you
+  want to triage. Revisit per-type later (a high-traffic channel or a
+  knowledge-base stream might prefer board-default).
+- **Scratchpads → timeline only for now** (the one-conversation limitation
+  above) until per-scratchpad topic segmentation exists.
 
 ## Architecture sketch (reuse-first)
 
-### Route — a real segment, not a query param (INV-59)
-
-Timeline stays `s/:streamId`; board is `s/:streamId/board`. Distinct segments
-for a small fixed view set, per INV-59 ("URLs read naturally"). The toggle is a
-`<Link>`/`navigate()` between segments (INV-40); the view hook reads
-`useParams()` and defaults to timeline for the bare path. Today the stream page
-is one lazy route (`routes/index.tsx:122-125`); add a `board` child.
-
-### Data — one new ordered read, everything else exists
-
-The summary type and per-thread aggregation already exist
-(`streams/repository.ts:992-1066` `findThreadSummaries` → `Map<messageId,
-ThreadSummary>`, participants capped at 3 in SQL). The board needs the same
-shape but **ordered by `lastReplyAt` across the whole stream with pagination**,
-not keyed by a caller-supplied message-id set:
-
-```
-StreamRepository.listPosts(db, { rootStreamId, orderBy: 'lastReplyAt', limit, cursor, lens? })
-  -> { posts: Array<{ message, threadSummary }>, nextCursor }
-```
-
-A repository read (INV-5), called by a `BoardService` (INV-6), behind a thin
-handler `GET /streams/:streamId/board` (INV-34, Zod-validated query INV-55).
-Access is enforced with the canonical `checkStreamAccess` /
-`listAccessibleStreamIds` on the root (INV-62) — never a raw `stream_members`
-filter.
-
-### Live updates — reuse the stream's sync, don't bootstrap twice
-
-When you're in a stream the timeline is already bootstrapped and the socket room
-joined (subscribe-then-bootstrap, INV-53; events land in IDB via the
-`SocketEventGate`). Two layers:
-
-1. **Posts already on screen stay live for free** — a new reply emits
-   `message:updated { updateType: "reply_count", threadSummary }`
-   (`messaging/event-service.ts:355-377`); the board re-sorts on it instead of
-   leaving the card pinned. That single event _is_ the resurface signal.
-2. **The full ordered list** (incl. old posts outside the loaded timeline
-   window) comes from the board endpoint, bootstrapped activity-feed style
-   (`use-activity.ts`: `staleTime: Infinity`, `refetchOnMount`, invalidate on
-   socket event). The board query is invalidated on `message:created` /
-   `message:updated` for the room, same pattern as the activity feed.
-
-This keeps INV-61 untouched: the board is a separate projection; the contiguous
-timeline window keeps its `sequence`/`broadcastSequence` ordering. Resurfacing
-is forbidden in the timeline and free in the board precisely because they're
-different projections (the central claim of the sibling doc).
-
-### Component — `ThreadCard` is already the post card
-
-`ThreadCard` renders participants, reply count, latest-reply preview (stripped
-via `truncateContent`, INV-60), and relative time
-(`timeline/thread-card.tsx`). A `PostCard` is a thin wrapper: same body, plus
-the post's own author/first line as a title and (phase 2) lens badges
-(decision / unanswered / action). It returns null at `replyCount: 0` today, so
-moving to hybrid (C) means lifting that guard for saved/memo'd posts.
+- **Routes (INV-59):** workspace board at a real segment, e.g. `/w/:ws/board`
+  (sibling to `/activity`, `/memory`); per-stream at `s/:streamId/board`. Toggle
+  via `<Link>`/`navigate()` (INV-40); view from `useParams()`.
+- **Backend:** wire `findByWorkspace` behind `GET /workspaces/:ws/board`
+  (handler thin INV-34, Zod query INV-55, `BoardService` owns the read INV-6),
+  access-filtered by `listAccessibleStreamIds` (INV-62). `lens`/`scope`/`cursor`
+  as query params. Per-stream reuses the existing `listByStream`.
+- **Frontend:** the card (`conversation-item`) and list (`conversation-list`)
+  components already exist; the board is a new page that reuses them in a
+  cross-stream layout. Bootstrap activity-feed style (`use-activity.ts`:
+  `staleTime: Infinity`, `refetchOnMount`), stay live via the existing
+  `conversation:created/updated` socket events already handled in
+  `use-conversations.ts` (INV-53).
+- **INV-61 untouched:** the board is a separate projection; the contiguous
+  timeline keeps its `sequence`/`broadcastSequence` order. Resurfacing is
+  forbidden in the timeline and free in the board precisely because they're
+  different projections.
 
 ## Phasing
 
-1. **Read-only recency board (MVP).** Fork B. `s/:streamId/board` lists
-   thread-bearing posts by `lastReplyAt`, re-sorting live on `message:updated`.
-   Proves the "container + projection" thesis and Theo's resurface behavior with
-   zero write-path or INV-61 risk. ~one repo read + one handler + one page,
-   reusing `ThreadCard` and the activity-feed bootstrap pattern.
-2. **"Find what matters" lenses.** Add Active / Unanswered / Decisions / Needs
-   resolution / Mine, each a `lens` param mapping to existing signals
-   (conversations `status`, memos `knowledgeType`, saved, mentions). This is the
-   payoff — the board becomes the per-stream "what matters" surface.
-3. **Post-first composition.** A "New post" affordance that starts a top-level
-   message _intended_ as a post (and optionally opens its thread immediately),
-   so the board is somewhere you _act_, not just read. Reuses the existing
-   compose + thread-create paths.
+1. **Read-only workspace board (MVP).** `findByWorkspace` → endpoint
+   (access-filtered) → a page rendering conversation cards by `lastActivityAt`,
+   live via existing socket events. Default **Active** lens, **scope = all**.
+   Proves the entrypoint thesis with no write-path or INV-61 risk; titles fall
+   back to entrypoint first-line when null.
+2. **Lenses + scope.** Structural lenses first (Active / Needs-resolution /
+   Decisions — all from existing signals), then scope filter (per channel / DMs
+   / label), then personal lenses (Mine / Saved — need per-viewer joins).
+3. **Act from the board.** Open a conversation in place, reply to its
+   entrypoint, mark resolved, save/pin — so the board is somewhere you _work_,
+   not just scan. Reuses existing compose + reassign + saved paths.
+   (Later/maybe: per-scratchpad topic segmentation so scratchpad boards work.)
 
-## Open decisions (yours)
+## Open decisions remaining
 
-1. **Post primitive** — B (thread-bearing only) for MVP, evolving to C
-   (+ saved/memo'd/flagged)? Or do you want A (every message) for a purer
-   Facebook feel? _Lean: B → C._
-2. **Lens set** — which of Active / Unanswered / Decisions / Needs-resolution /
-   Mine matter most for "find what matters"? Drives phase 2 scope.
-3. **Scope** — per-stream board only, or also a **workspace-wide board** (a
-   cross-stream "wall" of what matters everywhere — the activity feed's serious
-   sibling)? Per-stream first is the safe start.
-4. **Default posture per stream type** — channels default to board, scratchpads
-   to timeline, DMs to timeline? (Solo-first: scratchpad board could be a strong
-   personal "what matters" surface.)
+1. **Null-title fallback** — entrypoint first-line (my lean) vs. hide untitled
+   vs. force a title-generation pass?
+2. **Scratchpad gap** — ship board for channels/DMs first and treat scratchpad
+   segmentation as later work, or invest in segmentation up front (it's the
+   solo-first surface)?
+3. **Lens priority** — confirm the structural set (Active / Needs-resolution /
+   Decisions) for phase 2; which personal lens matters most (Mine vs. Saved)?
+4. **Mutability UX** — how loud should "this card merged/retitled" be, if at all?
+
+---
+
+## Appendix: v1 fallback — thread-as-post
+
+If conversations prove too mutable or too dependent on extraction quality, the
+board can fall back to **threads as posts**: top-level messages with
+`replyCount > 0`, ordered by `threadSummary.lastReplyAt`
+(`streams/repository.ts:992-1066`), rendered with the existing `ThreadCard`,
+re-sorting on the existing `message:updated` event
+(`messaging/event-service.ts:355-377`). Cheaper and fully deterministic, but
+loses DMs/scratchpads coverage, the built-in status/completeness state, and the
+"discovered, not authored" quality. Forks considered: (A) every top-level
+message — too noisy; (B) thread-bearing only; (C) hybrid + saved/memo'd. Kept
+here as the de-risking option, not the primary plan.
