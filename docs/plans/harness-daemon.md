@@ -22,6 +22,7 @@ bun extensions/harness-daemon/src/index.ts stop <agent-id-or-name>
 
 The CLI owns the spawn flows directly:
 
+- keeps the entrypoint thin (`src/index.ts`) and splits inventory, tmux, worktree, runtime spawners, shell helpers, and command dispatch into separate modules,
 - creates a git worktree from the configured repo/base ref,
 - optionally runs `bun run setup:worktree`,
 - launches Pi or Claude Code in a tmux window,
