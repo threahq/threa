@@ -22,6 +22,20 @@ interface Dependencies {
 
 export function createConversationHandlers({ conversationService, streamService }: Dependencies) {
   return {
+    /**
+     * Cross-stream board feed. Access is enforced inside the query (INV-62), so
+     * there's no single stream to validate here — unlike {@link listByStream}.
+     */
+    async listByWorkspace(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const query = validateRequest(listConversationsSchema, req.query)
+
+      const conversations = await conversationService.listByWorkspace(workspaceId, userId, query)
+      res.json({ conversations })
+    },
+
     async listByStream(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!

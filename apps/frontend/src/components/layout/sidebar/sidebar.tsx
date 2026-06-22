@@ -111,6 +111,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isSavedPage = splat === "saved" || window.location.pathname.endsWith("/saved")
   const isScheduledPage = splat === "scheduled" || window.location.pathname.includes("/scheduled")
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
+  const isBoardPage = splat === "board" || window.location.pathname.endsWith("/board")
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
@@ -535,6 +536,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
                   isScheduledPage={isScheduledPage}
                   scheduledCount={scheduledCount}
                   isActivityPage={isActivityPage}
+                  isBoardPage={isBoardPage}
                   isMemoryPage={isMemoryPage}
                   isFilesPage={isFilesPage}
                   isLabelsPage={isLabelsPage}

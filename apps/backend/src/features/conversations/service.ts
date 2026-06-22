@@ -52,6 +52,21 @@ export class ConversationService {
     return conversations.map(addStalenessFields)
   }
 
+  /**
+   * Cross-stream feed for the workspace board: all conversations the viewer can
+   * read, newest activity first. Access filtering happens in SQL (INV-62), so
+   * `userId` is required here unlike the stream-scoped {@link listByStream}.
+   */
+  async listByWorkspace(
+    workspaceId: string,
+    userId: string,
+    options?: ListConversationsOptions
+  ): Promise<ConversationWithStaleness[]> {
+    // Single query, INV-30
+    const conversations = await ConversationRepository.findByWorkspaceForViewer(this.pool, workspaceId, userId, options)
+    return conversations.map(addStalenessFields)
+  }
+
   async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {
     // Single query, INV-30
     const conversations = await ConversationRepository.findByMessageId(this.pool, workspaceId, messageId)

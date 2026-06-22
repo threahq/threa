@@ -8,6 +8,8 @@ export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
+  workspaceList: (workspaceId: string, options?: { status?: string; limit?: number }) =>
+    [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
@@ -54,6 +56,31 @@ interface UseConversationsOptions {
   status?: ConversationStatus
   limit?: number
   enabled?: boolean
+}
+
+/**
+ * Cross-stream conversation feed for the workspace board. Read-only bootstrap
+ * (the activity-feed pattern): `staleTime: Infinity` + `refetchOnMount` so the
+ * list is fresh each time the board is opened. Live per-event updates across
+ * streams aren't wired yet — conversation events are delivered only to per-stream
+ * rooms today (see board-view design doc), so that's a follow-up, not a gap here.
+ */
+export function useWorkspaceConversations(
+  workspaceId: string,
+  options?: { status?: ConversationStatus; limit?: number }
+) {
+  const conversationService = useConversationService()
+  const { status, limit } = options ?? {}
+
+  return useQuery({
+    queryKey: conversationKeys.workspaceList(workspaceId, { status, limit }),
+    queryFn: () => conversationService.listByWorkspace(workspaceId, { status, limit }),
+    staleTime: Infinity,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    enabled: !!workspaceId,
+  })
 }
 
 export function useConversations(workspaceId: string, streamId: string, options?: UseConversationsOptions) {

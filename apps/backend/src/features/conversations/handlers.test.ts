@@ -31,12 +31,14 @@ function mockRes() {
 describe("Conversation Handlers", () => {
   const mockValidateStreamAccess = mock(() => Promise.resolve({ id: "stream_1", workspaceId: "ws_1" }))
   const mockListByStream = mock(() => Promise.resolve([] as Record<string, unknown>[]))
+  const mockListByWorkspace = mock(() => Promise.resolve([] as Record<string, unknown>[]))
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
 
   const handlers = createConversationHandlers({
     conversationService: {
       listByStream: mockListByStream,
+      listByWorkspace: mockListByWorkspace,
       getById: mockGetById,
       getMessages: mockGetMessages,
     } as never,
@@ -48,11 +50,13 @@ describe("Conversation Handlers", () => {
   beforeEach(() => {
     mockValidateStreamAccess.mockReset()
     mockListByStream.mockReset()
+    mockListByWorkspace.mockReset()
     mockGetById.mockReset()
     mockGetMessages.mockReset()
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
+    mockListByWorkspace.mockResolvedValue([])
     mockGetById.mockResolvedValue({
       id: "conv_1",
       streamId: "stream_1",
@@ -83,6 +87,31 @@ describe("Conversation Handlers", () => {
       mockValidateStreamAccess.mockRejectedValue(new StreamNotFoundError())
 
       await expect(handlers.listByStream(mockReq(), mockRes())).rejects.toThrow("Stream not found")
+    })
+  })
+
+  describe("listByWorkspace", () => {
+    test("passes workspaceId, userId and validated query to the service", async () => {
+      const res = mockRes()
+      await handlers.listByWorkspace(mockReq({ query: { status: "active", limit: "25" } }), res)
+
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", { status: "active", limit: 25 })
+    })
+
+    test("returns the conversations the service resolves", async () => {
+      const conversations = [{ id: "conv_1" }, { id: "conv_2" }]
+      mockListByWorkspace.mockResolvedValue(conversations)
+      const res = mockRes()
+
+      await handlers.listByWorkspace(mockReq({ query: {} }), res)
+
+      expect((res as unknown as { body: unknown }).body).toEqual({ conversations })
+    })
+
+    test("does not gate on a single stream's access (filtering is in-query)", async () => {
+      await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
+
+      expect(mockValidateStreamAccess).not.toHaveBeenCalled()
     })
   })
 

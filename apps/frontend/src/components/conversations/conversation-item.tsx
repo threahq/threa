@@ -159,7 +159,7 @@ function MessagePreview({ message, workspaceId, getActorName, onMessageClick }: 
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case "active":
       return (
@@ -187,7 +187,7 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
-function CompletenessIndicator({ score }: { score: number }) {
+export function CompletenessIndicator({ score }: { score: number }) {
   const clampedScore = Math.max(1, Math.min(7, score))
   const segments = 7
 

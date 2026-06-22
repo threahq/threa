@@ -7,6 +7,21 @@ export interface ListConversationsParams {
 }
 
 export const conversationsApi = {
+  /**
+   * Cross-stream feed for the workspace board: all conversations the viewer can
+   * read, newest activity first. Access is enforced server-side (INV-62).
+   */
+  async listByWorkspace(workspaceId: string, params?: ListConversationsParams): Promise<ConversationWithStaleness[]> {
+    const searchParams = new URLSearchParams()
+    if (params?.status) searchParams.set("status", params.status)
+    if (params?.limit) searchParams.set("limit", params.limit.toString())
+    const query = searchParams.toString()
+    const res = await api.get<{ conversations: ConversationWithStaleness[] }>(
+      `/api/workspaces/${workspaceId}/conversations${query ? `?${query}` : ""}`
+    )
+    return res.conversations
+  },
+
   async listByStream(
     workspaceId: string,
     streamId: string,

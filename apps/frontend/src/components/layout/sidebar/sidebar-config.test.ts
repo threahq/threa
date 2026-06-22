@@ -201,6 +201,7 @@ describe("moveQuickLink", () => {
     // Move "activity" (last) to the front (over "drafts").
     const moved = moveQuickLink(SMART_SIDEBAR_CONFIG, "activity", "drafts")
     expect(moved.quickLinks.map((l) => l.key)).toEqual([
+      "board",
       "activity",
       "drafts",
       "saved",

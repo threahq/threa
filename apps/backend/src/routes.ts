@@ -481,6 +481,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/attachments/:attachmentId/extraction", ...authed, attachment.getExtraction)
   app.delete("/api/workspaces/:workspaceId/attachments/:attachmentId", ...authed, attachment.delete)
 
+  app.get("/api/workspaces/:workspaceId/conversations", ...authed, conversation.listByWorkspace)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/conversations", ...authed, conversation.listByStream)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.getById)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/messages", ...authed, conversation.getMessages)

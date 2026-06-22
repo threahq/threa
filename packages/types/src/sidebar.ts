@@ -70,7 +70,16 @@ export type SidebarBasePreset = (typeof SIDEBAR_BASE_PRESETS)[number]
  * reorder them and set each one's visibility; the set itself is fixed (these are
  * the workspace's standing views).
  */
-export const SIDEBAR_QUICK_LINKS = ["drafts", "saved", "files", "scheduled", "memory", "labels", "activity"] as const
+export const SIDEBAR_QUICK_LINKS = [
+  "board",
+  "drafts",
+  "saved",
+  "files",
+  "scheduled",
+  "memory",
+  "labels",
+  "activity",
+] as const
 export type SidebarQuickLinkKey = (typeof SIDEBAR_QUICK_LINKS)[number]
 
 /** Stable section id for the Quick Links block — doubles as its collapse-state key. */
