@@ -11,8 +11,9 @@ test.describe("Stream description", () => {
     await loginAndCreateWorkspace(page, "stream-desc")
     await createChannel(page, "design-notes", { switchToAll: false })
 
-    const streamUrl = page.url().split("?")[0]
-    const streamId = streamUrl.match(/\/s\/([^/?]+)/)?.[1]
+    const currentUrl = new URL(page.url())
+    const streamUrl = `${currentUrl.origin}${currentUrl.pathname}`
+    const streamId = currentUrl.searchParams.get("sid") ?? currentUrl.pathname.match(/\/s\/([^/?]+)/)?.[1]
     expect(streamId).toBeTruthy()
 
     // Open stream settings → General tab (the description editor lives there).
@@ -33,9 +34,18 @@ test.describe("Stream description", () => {
     const saveButton = dialog.getByRole("button", { name: "Save" })
     await expect(saveButton).toBeEnabled({ timeout: 5000 })
 
+    // Assert the save goes through the workspace router under /api/* (the routing
+    // contract in docs/system-overview.md), not a hardcoded backend origin.
     const [response] = await Promise.all([
       page.waitForResponse(
-        (r) => r.request().method() === "PATCH" && /\/streams\/[^/]+$/.test(new URL(r.url()).pathname),
+        (r) => {
+          const requestUrl = new URL(r.url())
+          return (
+            r.request().method() === "PATCH" &&
+            requestUrl.pathname.startsWith("/api/") &&
+            requestUrl.pathname.includes(`/streams/${streamId}`)
+          )
+        },
         { timeout: 15000 }
       ),
       saveButton.click(),
