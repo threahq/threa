@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
 import { ServicesProvider, SidebarProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -35,14 +35,38 @@ function makeConversation(overrides: Partial<ConversationWithStaleness> = {}): C
   }
 }
 
+function makeOpeningMessage(overrides: Partial<BoardPostMessage> = {}): BoardPostMessage {
+  return {
+    id: "msg_1",
+    // usr_me isn't in the mocked user cache, so the author renders as a short id
+    // — distinct from any DM-peer name asserted on elsewhere.
+    authorId: "usr_me",
+    authorType: "user",
+    contentMarkdown: "Opening message body.",
+    reactions: {},
+    createdAt: "2026-06-22T12:00:00.000Z",
+    ...overrides,
+  }
+}
+
+function makePost(
+  convOverrides: Partial<ConversationWithStaleness> = {},
+  msgOverrides: Partial<BoardPostMessage> | null = {}
+): BoardPost {
+  return {
+    conversation: makeConversation(convOverrides),
+    openingMessage: msgOverrides === null ? null : makeOpeningMessage(msgOverrides),
+  }
+}
+
 function mountBoard(
-  conversations: ConversationWithStaleness[],
+  posts: BoardPost[],
   opts: { nextCursor?: string | null; fail?: boolean; boardFlag?: "on" | "off" } = {}
 ) {
   const { nextCursor = null, fail = false, boardFlag = "on" } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
-    return { conversations, nextCursor }
+    return { posts, nextCursor }
   })
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   // The board is gated behind the board-view flag, read from the bootstrap cache.
@@ -66,10 +90,13 @@ function mountBoard(
 }
 
 beforeEach(() => {
-  // BoardCard resolves the stream label via the workspace caches.
+  // BoardCard resolves the stream label + author + emoji via the workspace caches.
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
+  vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
   // RelativeTime reads timezone/locale from the preferences context.
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },
@@ -84,16 +111,25 @@ describe("BoardPage", () => {
     expect(await screen.findByText("Nothing on the board yet")).toBeTruthy()
   })
 
-  it("renders a conversation as a card with its title and message count", async () => {
-    mountBoard([makeConversation()])
+  it("renders a post with its topic, body, and message count", async () => {
+    mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
+    expect(screen.getByText("Rotate the tokens before Friday.")).toBeTruthy()
     expect(screen.getByText("3 messages")).toBeTruthy()
   })
 
   it("pluralizes a single message as '1 message'", async () => {
-    mountBoard([makeConversation({ messageIds: ["msg_only"] })])
+    mountBoard([makePost({ messageIds: ["msg_only"] })])
     expect(await screen.findByText("1 message")).toBeTruthy()
     expect(screen.queryByText("1 messages")).toBeNull()
+  })
+
+  it("renders reactions on the opening message", async () => {
+    mountBoard([makePost({}, { reactions: { ":tada:": ["usr_a", "usr_b"] } })])
+    await screen.findByText("CC Teams tokens")
+    // No emoji map in the test cache, so the shortcode renders as-is with its count.
+    expect(screen.getByText(":tada:")).toBeTruthy()
+    expect(screen.getByText("2")).toBeTruthy()
   })
 
   it("shows an error state with a retry, not the empty state, when the fetch fails", async () => {
@@ -104,13 +140,13 @@ describe("BoardPage", () => {
   })
 
   it("offers Load more when there is another page", async () => {
-    mountBoard([makeConversation()], { nextCursor: "2026-06-22T12:00:00.000Z|conv_1" })
+    mountBoard([makePost()], { nextCursor: "2026-06-22T12:00:00.000Z|conv_1" })
     expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy()
   })
 
   it("does not render the board when the board-view flag is off", async () => {
-    const { listByWorkspace } = mountBoard([makeConversation()], { boardFlag: "off" })
+    const { listByWorkspace } = mountBoard([makePost()], { boardFlag: "off" })
     // Gate redirects away — board content never appears and the feed isn't fetched.
     // Flush effects so a (hypothetical) deferred mount would have its chance to fire.
     await act(async () => {})
@@ -119,23 +155,23 @@ describe("BoardPage", () => {
     expect(listByWorkspace).not.toHaveBeenCalled()
   })
 
-  it("links each card to its conversation opened in its stream", async () => {
-    mountBoard([makeConversation()])
+  it("links each post to its conversation opened in its stream", async () => {
+    mountBoard([makePost()])
     const card = (await screen.findByText("CC Teams tokens")).closest("a")
     expect(card?.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/s/stream_1?convView=open&conv=conv_1`)
   })
 
-  it("titles a scratchpad card with the scratchpad's name, not the generic topic", async () => {
+  it("uses the scratchpad's name as the topic, not the generic summary", async () => {
     vi.mocked(workspaceStoreModule.useWorkspaceStreams).mockReturnValue([
       { id: "stream_sp", type: "scratchpad", displayName: "My Notes" },
     ] as never)
-    mountBoard([makeConversation({ id: "conv_sp", streamId: "stream_sp", topicSummary: "Scratchpad" })])
+    mountBoard([makePost({ id: "conv_sp", streamId: "stream_sp", topicSummary: "Scratchpad" })])
 
-    expect(await screen.findByText("My Notes")).toBeTruthy() // title = scratchpad name
+    expect(await screen.findByText("My Notes")).toBeTruthy() // topic = scratchpad name
     expect(screen.getByText("Scratchpad")).toBeTruthy() // context line = the type
   })
 
-  it("keeps a DM peer (a person) as context, never as the card title", async () => {
+  it("keeps a DM peer (a person) as context, never as the post topic", async () => {
     vi.mocked(workspaceStoreModule.useWorkspaceStreams).mockReturnValue([
       { id: "stream_dm", type: "dm", displayName: null },
     ] as never)
@@ -143,12 +179,12 @@ describe("BoardPage", () => {
       { streamId: "stream_dm", userId: "usr_pierre" },
     ] as never)
     vi.mocked(workspaceStoreModule.useWorkspaceUsers).mockReturnValue([{ id: "usr_pierre", name: "Pierre" }] as never)
-    mountBoard([makeConversation({ id: "conv_dm", streamId: "stream_dm", topicSummary: "Lunch plans" })])
+    mountBoard([makePost({ id: "conv_dm", streamId: "stream_dm", topicSummary: "Lunch plans" })])
 
-    const title = await screen.findByText("Lunch plans")
-    expect(title).toBeTruthy() // title = topic
-    // "Pierre" renders as the context line, and is not the title element.
+    const topic = await screen.findByText("Lunch plans")
+    expect(topic).toBeTruthy() // topic = topicSummary
+    // "Pierre" renders as the context line, and is not the topic element.
     expect(screen.getByText("Pierre")).toBeTruthy()
-    expect(title.textContent).not.toContain("Pierre")
+    expect(topic.textContent).not.toContain("Pierre")
   })
 })

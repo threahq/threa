@@ -629,6 +629,32 @@ export interface ConversationWithStaleness extends Conversation {
 }
 
 /**
+ * The opening message of a board post — the conversation's first primary
+ * message, rendered as the post body. A lean projection of {@link Message}: the
+ * fields the board feed needs (author, content, reactions, time), not the full
+ * timeline message. `null` on a post whose opening message was deleted.
+ */
+export interface BoardPostMessage {
+  id: string
+  authorId: string
+  authorType: AuthorType
+  contentMarkdown: string
+  reactions: Record<string, string[]>
+  createdAt: string
+}
+
+/**
+ * One board post: a conversation (the grouping) surfaced as a feed post (the
+ * unit). The card renders `openingMessage` as the post body with the
+ * conversation as context, so the board reads as a re-organized timeline of
+ * messages rather than a conversations list.
+ */
+export interface BoardPost {
+  conversation: ConversationWithStaleness
+  openingMessage: BoardPostMessage | null
+}
+
+/**
  * Memo: Semantic pointer to valuable knowledge.
  * Following GAM paper: lightweight abstracts that guide retrieval at runtime.
  */

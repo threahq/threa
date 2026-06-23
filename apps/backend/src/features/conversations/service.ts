@@ -22,6 +22,26 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
   cursor?: { lastActivityAt: string; id: string }
 }
 
+/**
+ * Opening message of a board post (internal, Date-typed; serialized to the wire
+ * `BoardPostMessage` by the handler). A lean projection of the full message —
+ * the fields the post card renders.
+ */
+export interface BoardPostMessage {
+  id: string
+  authorId: string
+  authorType: Message["authorType"]
+  contentMarkdown: string
+  reactions: Record<string, string[]>
+  createdAt: Date
+}
+
+/** A conversation surfaced as a feed post: the grouping plus its opening message. */
+export interface BoardPost {
+  conversation: ConversationWithStaleness
+  openingMessage: BoardPostMessage | null
+}
+
 export interface ReassignMessageParams {
   workspaceId: string
   /** Target conversation that should become the message's primary home. */
@@ -68,19 +88,33 @@ export class ConversationService {
     workspaceId: string,
     userId: string,
     options?: ListWorkspaceConversationsOptions
-  ): Promise<{ conversations: ConversationWithStaleness[]; nextCursor: string | null }> {
+  ): Promise<{ posts: BoardPost[]; nextCursor: string | null }> {
     const limit = options?.limit ?? 50
-    // Single query, INV-30
     const rows = await ConversationRepository.findByWorkspaceForViewer(this.pool, workspaceId, userId, {
       ...options,
       limit,
     })
     const conversations = rows.map(addStalenessFields)
+
+    // Hydrate each post's opening message (the conversation's first primary
+    // message) so the board renders real post content + reactions, not just a
+    // topic line. One batch read keyed on the opening ids (INV-56); the access
+    // filter already ran in the conversation query, so these ids are all viewer-
+    // readable. `findByIds` carries reactions with each message.
+    const openingIds = conversations.map((c) => c.messageIds[0]).filter((id): id is string => Boolean(id))
+    const openingById: Map<string, Message> =
+      openingIds.length > 0 ? await MessageRepository.findByIds(this.pool, openingIds) : new Map()
+
+    const posts: BoardPost[] = conversations.map((conversation) => {
+      const opening = openingById.get(conversation.messageIds[0])
+      return { conversation, openingMessage: opening ? toBoardPostMessage(opening) : null }
+    })
+
     // A full page means there may be more; the last row's (activity, id) is the
     // next cursor — matching the repo's `(last_activity_at, id) DESC` order.
     const last = conversations.length === limit ? conversations[conversations.length - 1] : null
     const nextCursor = last ? `${last.lastActivityAt.toISOString()}|${last.id}` : null
-    return { conversations, nextCursor }
+    return { posts, nextCursor }
   }
 
   async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {
@@ -222,5 +256,17 @@ export class ConversationService {
         previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
       }
     })
+  }
+}
+
+/** Project a full message down to the board post's opening-message fields. */
+function toBoardPostMessage(message: Message): BoardPostMessage {
+  return {
+    id: message.id,
+    authorId: message.authorId,
+    authorType: message.authorType,
+    contentMarkdown: message.contentMarkdown,
+    reactions: message.reactions,
+    createdAt: message.createdAt,
   }
 }

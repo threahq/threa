@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { ConversationWithStaleness, ConversationStatus, Message } from "@threa/types"
+import type { ConversationWithStaleness, ConversationStatus, Message, BoardPost } from "@threa/types"
 
 export interface ListConversationsParams {
   status?: ConversationStatus
@@ -12,7 +12,7 @@ export interface ListWorkspaceConversationsParams extends ListConversationsParam
 }
 
 export interface WorkspaceConversationsPage {
-  conversations: ConversationWithStaleness[]
+  posts: BoardPost[]
   nextCursor: string | null
 }
 
