@@ -14,10 +14,28 @@ import type { EmbeddingServiceLike } from "./embedding-service"
 import { memoId, eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { MemoTypes, MemoStatuses, AuthorTypes, type MemosCapturedEventPayload } from "@threa/types"
-import { MEMO_GEM_CONFIDENCE_FLOOR, MEMO_SINGLE_MESSAGE_AGE_GATE_MS } from "./config"
+import { MEMO_GEM_CONFIDENCE_FLOOR, MEMO_SINGLE_MESSAGE_AGE_GATE_MS, MEMO_DEDUP_DISTANCE } from "./config"
 
 const MEMORY_CONTEXT_LIMIT = 20
 const MIN_CONVERSATION_MESSAGES = 1
+
+/**
+ * Cosine distance (0 = identical) between two embeddings, matching pgvector's
+ * `<=>` so the in-batch dedup check and the DB dedup check use one threshold.
+ * Embeddings are not assumed pre-normalized.
+ */
+function cosineDistance(a: number[], b: number[]): number {
+  let dot = 0
+  let normA = 0
+  let normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  if (normA === 0 || normB === 0) return 1
+  return 1 - dot / (Math.sqrt(normA) * Math.sqrt(normB))
+}
 
 export interface ProcessResult {
   processed: number
@@ -189,6 +207,7 @@ export class MemoService implements MemoServiceLike {
     const outboxEvents: OutboxEvent[] = []
     const deferredItemIds = new Set<string>()
     let memosCreated = 0
+    let memosDeduped = 0
     let itemsFailed = 0
 
     const convItems = fetchedData.pending.filter((p) => p.itemType === "conversation")
@@ -338,6 +357,34 @@ export class MemoService implements MemoServiceLike {
 
         for (let i = 0; i < contents.length; i++) {
           const content = contents[i]
+          const embedding = embeddings[i]
+
+          // Cross-conversation dedup (INV-20): drop a memo whose knowledge already
+          // exists in this stream from a different conversation. The revision path
+          // above handles repeats within one conversation; this catches the same
+          // fact recurring across conversations. Check memos staged earlier in this
+          // batch (same stream, in-memory) and committed memos (DB), so two
+          // conversations in one batch don't both insert the same memo.
+          const stagedDuplicate = memosToCreate.find(
+            (staged) => cosineDistance(staged.embedding, embedding) < MEMO_DEDUP_DISTANCE
+          )
+          const duplicate =
+            stagedDuplicate ??
+            (await MemoRepository.findNearDuplicate(this.pool, {
+              workspaceId,
+              streamId,
+              embedding,
+              maxDistance: MEMO_DEDUP_DISTANCE,
+              excludeConversationId: conversation.id,
+            }))
+          if (duplicate) {
+            memosDeduped++
+            logger.info(
+              { conversationId: conversation.id, title: content.title, knowledgeType: content.knowledgeType },
+              "Skipped duplicate memo (knowledge already captured in this stream)"
+            )
+            continue
+          }
 
           const memo: MemoToCreate = {
             id: memoId(),
@@ -352,7 +399,7 @@ export class MemoService implements MemoServiceLike {
             knowledgeType: content.knowledgeType,
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
-            embedding: embeddings[i],
+            embedding,
           }
 
           memosToCreate.push(memo)
@@ -470,7 +517,7 @@ export class MemoService implements MemoServiceLike {
 
     const processed = fetchedData.pending.length - deferredItemIds.size
     logger.info(
-      { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated },
+      { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated, memosDeduped },
       "Memo batch processed"
     )
 

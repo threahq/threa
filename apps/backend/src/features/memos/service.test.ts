@@ -92,6 +92,7 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
+  spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
@@ -175,6 +176,22 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(0)
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(outboxInsertMany).not.toHaveBeenCalled()
+  })
+
+  it("drops a memo whose knowledge already exists in the stream from another conversation", async () => {
+    const { service, streamEventInsertMany, outboxInsertMany } = setupService({ memoContents: [memoContent] })
+
+    // The same knowledge was already captured by a different conversation.
+    const existing = { ...memoContent, id: "memo_existing", sourceConversationId: "conv_other" } as never
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({ memo: existing, distance: 0.02 })
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(0)
+    expect(insert).not.toHaveBeenCalled()
     expect(streamEventInsertMany).not.toHaveBeenCalled()
     expect(outboxInsertMany).not.toHaveBeenCalled()
   })

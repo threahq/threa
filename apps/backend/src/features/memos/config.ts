@@ -35,6 +35,18 @@ export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
 export const MEMO_MAX_PER_CONVERSATION = 5
 
 /**
+ * Cross-conversation dedup threshold (pgvector cosine distance, 0 = identical).
+ * A candidate memo within this distance of an existing active memo in the same
+ * stream — but from a different conversation — is treated as the same knowledge
+ * and dropped before insert, so the same fact discussed across several
+ * conversations yields one memo, not one per conversation. Eval-tuned; tighter
+ * (smaller) errs toward keeping near-duplicates, looser risks merging distinct
+ * facts. Cross-language duplicates are handled upstream by a canonical memo
+ * language, since embeddings align weakly across languages.
+ */
+export const MEMO_DEDUP_DISTANCE = 0.15
+
+/**
  * B2 structural boost. A multiplicative factor on the fused RRF score,
  * applied in the *outer* stage of hybrid search (after the inner
  * access-scoped scan — never before it, §3.1). The factor is structural
