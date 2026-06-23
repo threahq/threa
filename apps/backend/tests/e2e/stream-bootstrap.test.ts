@@ -91,7 +91,9 @@ describe("Stream Bootstrap E2E", () => {
     expect(incrementalBootstrap.unreadCount).toBe(memberWorkspaceBootstrap.unreadCounts[channel.id] ?? 0)
     expect(incrementalBootstrap.mentionCount).toBe(memberWorkspaceBootstrap.mentionCounts[channel.id] ?? 0)
     expect(incrementalBootstrap.activityCount).toBe(memberWorkspaceBootstrap.activityCounts[channel.id] ?? 0)
-    expect(getMessageContents(incrementalBootstrap)).toEqual([plainMessage, mentionMessage])
+    // The mention resolves to a real member, so it comes back in pointer form (INV-64).
+    const mentionMessageResolved = `hey [@${memberSlug}](user:${memberUserId}) ${testRunId}`
+    expect(getMessageContents(incrementalBootstrap)).toEqual([plainMessage, mentionMessageResolved])
 
     const fullBootstrap = await getBootstrap(memberClient, workspace.id, channel.id)
     expect(incrementalBootstrap.latestSequence).toBe(fullBootstrap.latestSequence)
