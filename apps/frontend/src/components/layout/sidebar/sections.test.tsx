@@ -50,3 +50,23 @@ describe("SectionHeader open link", () => {
     expect(screen.queryByRole("link", { name: /open/i })).not.toBeInTheDocument()
   })
 })
+
+describe("SectionHeader accessory", () => {
+  it("renders the headerAccessory and keeps its control out of the toggle path", async () => {
+    const onClear = vi.fn()
+    const { onToggle } = renderHeader({
+      headerAccessory: (
+        <button type="button" onClick={onClear}>
+          Clear read
+        </button>
+      ),
+    })
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear read" }))
+
+    // The accessory's own click fires, but the header must not collapse as a side
+    // effect — the right zone stops propagation.
+    expect(onClear).toHaveBeenCalledTimes(1)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+})

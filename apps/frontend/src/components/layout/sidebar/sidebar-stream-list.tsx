@@ -13,6 +13,7 @@ import { useSidebar, type CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection } from "./sections"
@@ -45,11 +46,22 @@ interface AddWiring {
 
 /** Unread section header: a gold thread dot + the label, matching the section
  *  header's uppercase styling. Gold (not a colored emoji) keeps the palette
- *  (DESIGN.md §0). Top-level per INV-18. */
-function UnreadSectionTitle({ label }: { label: string }) {
+ *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (the tray is empty) both
+ *  the dot and label drop to a muted tone so the caught-up header recedes
+ *  instead of advertising itself — the gold dot is reserved for "there's unread
+ *  here". */
+function UnreadSectionTitle({ label, quiet = false }: { label: string; quiet?: boolean }) {
   return (
-    <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+    <span
+      className={cn(
+        "flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide",
+        quiet ? "text-muted-foreground/50" : "text-muted-foreground"
+      )}
+    >
+      <span
+        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", quiet ? "bg-muted-foreground/40" : "bg-primary")}
+        aria-hidden
+      />
       {label}
     </span>
   )
@@ -237,11 +249,13 @@ export function SidebarStreamList({
           const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
           if (section.spec.kind === "label" && !label) return null
           const isUnread = section.spec.kind === "unread"
+          const isEmptyUnread = isUnread && items.length === 0
           // Unread's header is a gold dot + label (a colored emoji would break the
-          // gold-on-paper palette); label sections use their tinted chip.
+          // gold-on-paper palette); label sections use their tinted chip. An empty
+          // tray mutes the dot + label so the caught-up header recedes.
           let titleContent: ReactNode = undefined
           if (label) titleContent = <LabelChip label={label} />
-          else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} />
+          else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
           // Label sections get an "open" affordance to their landing page.
           const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
           const headerLabel = label ? label.name : presentation.label
@@ -249,27 +263,29 @@ export function SidebarStreamList({
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
           const add = addWiringFor(section.spec)
-          // The Unread section keeps a single, same-footprint footer so it never
-          // reflows: an empty tray shows a quiet "All caught up", otherwise the
-          // "Clear read" control (disabled when there's nothing read to flush).
-          // Never both at once.
-          let unreadFooter: ReactNode = undefined
-          if (isUnread) {
-            unreadFooter =
-              items.length === 0 ? (
-                <p className="mt-0.5 flex min-h-[2.25rem] items-center justify-center px-3 text-center text-[11px] italic text-muted-foreground/50">
-                  All caught up
-                </p>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onClearReadUnread}
-                  disabled={!hasReadResidue}
-                  className="mt-0.5 flex min-h-[2.25rem] w-full items-center justify-center px-3 text-[11px] uppercase tracking-wide text-muted-foreground/70 transition-colors enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Clear read
-                </button>
-              )
+          // The Unread section's status rides in its header (right side), not a
+          // footer row — so an empty tray costs only the header, never a band of
+          // dead space. An empty tray shows a quiet "All caught up" and drops its
+          // chevron (state/onToggle below): with no rows there's nothing to
+          // collapse, so the header reads as pure status, not a toggle. A tray
+          // holding already-read members shows the "Clear read" control; a tray
+          // of only fresh unreads shows nothing (no disabled control to read as
+          // noise). Read residue is hidden while collapsed — rows out of view,
+          // the aggregate badge is the signal there. Swapping the accessory never
+          // reflows the list; the header is always present (INV-21).
+          let unreadAccessory: ReactNode = undefined
+          if (isEmptyUnread) {
+            unreadAccessory = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+          } else if (isUnread && hasReadResidue && state !== "collapsed") {
+            unreadAccessory = (
+              <button
+                type="button"
+                onClick={onClearReadUnread}
+                className="rounded px-1 text-[11px] uppercase tracking-wide text-muted-foreground/60 transition-colors hover:text-foreground"
+              >
+                Clear read
+              </button>
+            )
           }
 
           const sectionEl = presentation.tiered ? (
@@ -311,9 +327,9 @@ export function SidebarStreamList({
               activeStreamId={activeStreamId}
               getUnreadCount={getUnreadCount}
               getMentionCount={getMentionCount}
-              state={state}
-              onToggle={onToggle}
-              action={unreadFooter}
+              state={isEmptyUnread ? undefined : state}
+              onToggle={isEmptyUnread ? undefined : onToggle}
+              headerAccessory={unreadAccessory}
               compact={presentation.compact}
               showPreviewOnHover={presentation.showPreviewOnHover}
               scrollContainerRef={scrollContainerRef}
