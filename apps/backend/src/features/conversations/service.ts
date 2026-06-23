@@ -4,11 +4,13 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
+import { AttachmentRepository, toAttachmentSummary, type Attachment } from "../attachments"
+import { LinkPreviewRepository, toLinkPreviewSummary, type LinkPreview } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
-import { StreamTypes, type ConversationStatus } from "@threa/types"
+import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
 
 export { ConversationWithStaleness }
 
@@ -33,6 +35,8 @@ export interface BoardPostMessage {
   authorType: Message["authorType"]
   contentMarkdown: string
   reactions: Record<string, string[]>
+  attachments: AttachmentSummary[]
+  linkPreviews: LinkPreviewSummary[]
   createdAt: Date
 }
 
@@ -113,8 +117,24 @@ export class ConversationService {
       if (openingId) idsToFetch.add(openingId)
       for (const id of recentIds) idsToFetch.add(id)
     }
+    const ids = [...idsToFetch]
     const messageById: Map<string, Message> =
-      idsToFetch.size > 0 ? await MessageRepository.findByIds(this.pool, [...idsToFetch]) : new Map()
+      ids.length > 0 ? await MessageRepository.findByIds(this.pool, ids) : new Map()
+    // Rich content the message row doesn't carry — attachments (images, files,
+    // gallery/download) and completed link previews — keyed by message id so the
+    // board renders posts with the same richness as the timeline.
+    const attachmentsByMessage: Map<string, Attachment[]> =
+      ids.length > 0 ? await AttachmentRepository.findByMessageIds(this.pool, ids) : new Map()
+    const linkPreviewsByMessage: Map<string, LinkPreview[]> =
+      ids.length > 0 ? await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids) : new Map()
+
+    const buildPostMessage = (message: Message): BoardPostMessage => {
+      const attachments = (attachmentsByMessage.get(message.id) ?? []).map(toAttachmentSummary)
+      const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
+        .filter((p) => p.status === "completed")
+        .map((p, i) => toLinkPreviewSummary(p, i))
+      return toBoardPostMessage(message, attachments, linkPreviews)
+    }
 
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!
@@ -122,8 +142,8 @@ export class ConversationService {
       const recentMessages = plan.recentIds
         .map((id) => messageById.get(id))
         .filter((m): m is Message => Boolean(m))
-        .map(toBoardPostMessage)
-      return { conversation, openingMessage: opening ? toBoardPostMessage(opening) : null, recentMessages }
+        .map(buildPostMessage)
+      return { conversation, openingMessage: opening ? buildPostMessage(opening) : null, recentMessages }
     })
 
     // A full page means there may be more; the last row's (activity, id) is the
@@ -275,14 +295,20 @@ export class ConversationService {
   }
 }
 
-/** Project a full message down to the board post's opening-message fields. */
-function toBoardPostMessage(message: Message): BoardPostMessage {
+/** Project a full message + its hydrated rich content down to a board post message. */
+function toBoardPostMessage(
+  message: Message,
+  attachments: AttachmentSummary[],
+  linkPreviews: LinkPreviewSummary[]
+): BoardPostMessage {
   return {
     id: message.id,
     authorId: message.authorId,
     authorType: message.authorType,
     contentMarkdown: message.contentMarkdown,
     reactions: message.reactions,
+    attachments,
+    linkPreviews,
     createdAt: message.createdAt,
   }
 }

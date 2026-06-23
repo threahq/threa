@@ -1,7 +1,7 @@
 export { LinkPreviewRepository } from "./repository"
 export type { LinkPreview, InsertLinkPreviewParams, UpdateLinkPreviewParams, MessageLinkPreview } from "./repository"
 
-export { LinkPreviewService } from "./service"
+export { LinkPreviewService, toLinkPreviewSummary } from "./service"
 export type { LinkPreviewServiceDeps } from "./service"
 
 export { createLinkPreviewHandlers } from "./handlers"

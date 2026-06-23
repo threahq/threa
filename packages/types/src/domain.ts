@@ -640,6 +640,10 @@ export interface BoardPostMessage {
   authorType: AuthorType
   contentMarkdown: string
   reactions: Record<string, string[]>
+  /** Attachments (images/files) on this message — rendered with gallery + download. */
+  attachments: AttachmentSummary[]
+  /** Completed link previews for this message. */
+  linkPreviews: LinkPreviewSummary[]
   createdAt: string
 }
 

@@ -46,6 +46,8 @@ function makeOpeningMessage(overrides: Partial<BoardPostMessage> = {}): BoardPos
     authorType: "user",
     contentMarkdown: "Opening message body.",
     reactions: {},
+    attachments: [],
+    linkPreviews: [],
     createdAt: "2026-06-22T12:00:00.000Z",
     ...overrides,
   }

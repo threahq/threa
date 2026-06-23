@@ -4,13 +4,17 @@ import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, type LucideIcon } from "lucide-react"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
-import { MarkdownContent } from "@/components/ui/markdown-content"
+import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
+import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
+import { AttachmentList } from "@/components/timeline/attachment-list"
+import { LinkPreviewList } from "@/components/timeline/link-preview-list"
 import { MessageReactions } from "@/components/timeline/message-reactions"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useConversationService } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
-import type { AuthorType, BoardPost } from "@threa/types"
+import type { AttachmentSummary, AuthorType, BoardPost, LinkPreviewSummary } from "@threa/types"
 
 interface BoardCardProps {
   workspaceId: string
@@ -40,6 +44,10 @@ interface RenderableMessage {
   contentMarkdown: string
   reactions: Record<string, string[]>
   createdAt: string | Date
+  // Present on feed messages (BoardPostMessage); absent on messages fetched via
+  // getMessages on expand, which carry no enrichment.
+  attachments?: AttachmentSummary[]
+  linkPreviews?: LinkPreviewSummary[]
 }
 
 function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolean {
@@ -158,10 +166,39 @@ interface PostMessageProps {
 }
 
 function PostMessage({ workspaceId, streamId, message, authorName, currentUserId, continuation }: PostMessageProps) {
+  const { formatTime, formatFull } = useFormattedDate()
   const hasReactions = Object.keys(message.reactions).length > 0
-  const body = (
+  const attachments = message.attachments ?? []
+  const linkPreviews = message.linkPreviews ?? []
+
+  const richBody = (
     <>
       <MarkdownContent content={message.contentMarkdown} messageId={message.id} className="text-sm leading-relaxed" />
+      {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
+      {linkPreviews.length > 0 && (
+        <LinkPreviewList
+          messageId={message.id}
+          workspaceId={workspaceId}
+          previews={linkPreviews}
+          hydrateFromApi={false}
+        />
+      )}
+    </>
+  )
+  // The body renders real message content (mentions, attachments, link previews),
+  // so it gets the same markdown context wrappers the timeline uses. Attachments
+  // open the media gallery / download via AttachmentList.
+  const body = (
+    <>
+      <LinkPreviewProvider>
+        {attachments.length > 0 ? (
+          <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
+            {richBody}
+          </AttachmentProvider>
+        ) : (
+          richBody
+        )}
+      </LinkPreviewProvider>
       {hasReactions && (
         <MessageReactions
           reactions={message.reactions}
@@ -174,9 +211,17 @@ function PostMessage({ workspaceId, streamId, message, authorName, currentUserId
   )
 
   if (continuation) {
+    const sentAt = new Date(message.createdAt)
     return (
-      <div className="mt-0.5 flex gap-3">
-        <div className="w-8 shrink-0" aria-hidden />
+      <div className="group mt-0.5 flex gap-3">
+        {/* Gutter reveals the message time on hover (desktop), mirroring the
+            timeline's grouped-continuation micro-time. */}
+        <div
+          className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] tabular-nums leading-5 text-transparent transition-colors group-hover:text-muted-foreground/60"
+          title={formatFull(sentAt)}
+        >
+          {formatTime(sentAt)}
+        </div>
         <div className="min-w-0 flex-1">{body}</div>
       </div>
     )
