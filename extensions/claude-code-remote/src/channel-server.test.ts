@@ -272,3 +272,30 @@ describe("ChannelServer.onReplyTimeout", () => {
     expect(calls.complete[0]?.body.finalMessageMarkdown).toBeUndefined()
   })
 })
+
+describe("ChannelServer.shutdown", () => {
+  test("marks presence offline and fails every in-flight claim", async () => {
+    const presence: Record<string, unknown>[] = []
+    const failed: Array<{ id: string; body: Record<string, unknown> }> = []
+    const client = {
+      upsertPresence: async (body: Record<string, unknown>) => {
+        presence.push(body)
+      },
+      fail: async (id: string, body: Record<string, unknown>) => {
+        failed.push({ id, body })
+      },
+    } as unknown as ThreaClient
+    const server = new ChannelServer(makeConfig(), client)
+    seedInflight(server, makeInvocation({ id: "binv_a", claimToken: "tok_a" }))
+    seedInflight(server, makeInvocation({ id: "binv_b", claimToken: "tok_b" }))
+
+    await (server as unknown as { shutdown: () => Promise<void> }).shutdown()
+
+    expect(presence.at(-1)?.status).toBe("offline")
+    expect(failed.map((entry) => entry.id).sort()).toEqual(["binv_a", "binv_b"])
+    const a = failed.find((entry) => entry.id === "binv_a")
+    expect(a?.body.claimToken).toBe("tok_a")
+    expect(a?.body.errorMessage).toBe("Claude Code channel shut down")
+    expect((server as unknown as { inflight: Map<string, unknown> }).inflight.size).toBe(0)
+  })
+})
