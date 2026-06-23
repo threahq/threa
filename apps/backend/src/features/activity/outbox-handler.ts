@@ -12,6 +12,7 @@ import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type Process
 import type { OutboxHandler } from "../../lib/outbox"
 import type { ActivityService } from "./service"
 import { ActivityRepository, type Activity } from "./repository"
+import { emitActivityCountsForPairs } from "./emit-counts"
 import { withTransaction } from "../../db"
 import { E2eStreamsRepository } from "../e2e-streams"
 
@@ -101,9 +102,11 @@ export class ActivityFeedHandler implements OutboxHandler {
             const activities = await this.processReactionAdded(event)
             await this.publishActivityCreated(activities)
           } else if (event.eventType === "reaction:removed") {
-            // Removed rows don't currently emit a compensating event —
-            // frontend subscribers detect stale entries on next fetch.
+            // Deleting the rows lowers the author's count; the service emits the
+            // recomputed absolute `activity:counts` in the same transaction.
             await this.processReactionRemoved(event)
+          } else if (event.eventType === "messages:moved") {
+            await this.processMessagesMoved(event)
           } else if (event.eventType === "saved_reminder:fired") {
             const activities = await this.processSavedReminderFired(event)
             await this.publishActivityCreated(activities)
@@ -301,6 +304,53 @@ export class ActivityFeedHandler implements OutboxHandler {
       messageId: payload.messageId,
       actorId: payload.userId,
       emoji: payload.emoji,
+    })
+  }
+
+  /**
+   * A message move re-homes its `user_activity` rows from the source stream to
+   * the destination thread (messaging's move transaction already did the
+   * `UPDATE … SET stream_id`). That silently shifts each affected user's
+   * per-stream counts, so recompute BOTH streams for every affected user and
+   * emit `activity:counts` — otherwise the source badge strands high and the
+   * destination reads low.
+   */
+  private async processMessagesMoved(event: { id: bigint; payload: unknown }): Promise<void> {
+    const payload = event.payload as {
+      workspaceId?: unknown
+      sourceStreamId?: unknown
+      destinationStreamId?: unknown
+      movedMessageIds?: unknown
+    }
+    if (
+      !payload ||
+      typeof payload.workspaceId !== "string" ||
+      typeof payload.sourceStreamId !== "string" ||
+      typeof payload.destinationStreamId !== "string" ||
+      !Array.isArray(payload.movedMessageIds) ||
+      payload.movedMessageIds.length === 0
+    ) {
+      logger.debug({ eventId: event.id.toString() }, "ActivityFeedHandler: malformed messages:moved event, skipping")
+      return
+    }
+    const { workspaceId, sourceStreamId, destinationStreamId } = payload
+    const movedMessageIds = payload.movedMessageIds as string[]
+
+    // E2E streams don't surface in the activity feed, so they have no counts to
+    // reconcile (the source-tree check covers a thread under an E2E root).
+    if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, sourceStreamId)) return
+
+    await withTransaction(this.db, async (client) => {
+      const userIds = await ActivityRepository.findUserIdsByMessageIds(client, workspaceId, movedMessageIds)
+      if (userIds.length === 0) return
+      await emitActivityCountsForPairs(
+        client,
+        workspaceId,
+        userIds.flatMap((userId) => [
+          { userId, streamId: sourceStreamId },
+          { userId, streamId: destinationStreamId },
+        ])
+      )
     })
   }
 

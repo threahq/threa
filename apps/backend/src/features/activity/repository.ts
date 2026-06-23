@@ -330,14 +330,39 @@ export const ActivityRepository = {
     }
   },
 
-  async markAsRead(db: Querier, activityId: string, userId: string): Promise<void> {
-    await db.query(sql`
+  /**
+   * Mark one activity row read. Returns the row's workspace + stream (so the
+   * caller can emit the stream's new absolute count) — or null when the row was
+   * already read / not found, which makes the emit idempotent.
+   */
+  async markAsRead(
+    db: Querier,
+    activityId: string,
+    userId: string
+  ): Promise<{ workspaceId: string; streamId: string | null } | null> {
+    const result = await db.query<{ workspace_id: string; stream_id: string | null }>(sql`
       UPDATE user_activity
       SET read_at = NOW()
       WHERE id = ${activityId}
         AND user_id = ${userId}
         AND read_at IS NULL
+      RETURNING workspace_id, stream_id
     `)
+    const row = result.rows[0]
+    return row ? { workspaceId: row.workspace_id, streamId: row.stream_id } : null
+  },
+
+  /** Distinct users with an activity row referencing any of these messages —
+   *  the audience whose per-stream counts a message move must reconcile. */
+  async findUserIdsByMessageIds(db: Querier, workspaceId: string, messageIds: string[]): Promise<string[]> {
+    if (messageIds.length === 0) return []
+    const result = await db.query<{ user_id: string }>(sql`
+      SELECT DISTINCT user_id
+      FROM user_activity
+      WHERE workspace_id = ${workspaceId}
+        AND message_id = ANY(${messageIds})
+    `)
+    return result.rows.map((r) => r.user_id)
   },
 
   async markStreamAsRead(db: Querier, userId: string, streamId: string): Promise<number> {

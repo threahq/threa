@@ -15,7 +15,9 @@ import {
   isBroadcastSlug,
   type JSONContent,
 } from "@threa/types"
-import { withClient } from "../../db"
+import { withClient, withTransaction } from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
+import { emitActivityCountsForPairs } from "./emit-counts"
 import { logger } from "../../lib/logger"
 
 interface ActivityServiceDeps {
@@ -355,6 +357,12 @@ export class ActivityService {
    * Remove the reaction activity rows that `processReactionAdded` created for
    * this exact (message, actor, emoji) triple. Other reactions from the same
    * actor on the same message are left intact.
+   *
+   * Deleting the rows lowers the reacted-to author's unread count, so in the
+   * same transaction (INV-7) recompute each affected (user, stream) absolute
+   * count and emit `activity:counts` — otherwise the badge stays stranded above
+   * the truth on every session (the bug this fixes). Only non-self rows with a
+   * stream move a badge; self rows were inserted already read.
    */
   async processReactionRemoved(params: {
     workspaceId: string
@@ -362,7 +370,15 @@ export class ActivityService {
     actorId: string
     emoji: string
   }): Promise<Activity[]> {
-    return ActivityRepository.deleteReactionForEmoji(this.pool, params)
+    return withTransaction(this.pool, async (client) => {
+      const deleted = await ActivityRepository.deleteReactionForEmoji(client, params)
+      await emitActivityCountsForPairs(
+        client,
+        params.workspaceId,
+        deleted.filter((a) => !a.isSelf && a.streamId).map((a) => ({ userId: a.userId, streamId: a.streamId! }))
+      )
+      return deleted
+    })
   }
 
   /**
@@ -526,8 +542,28 @@ export class ActivityService {
     return ActivityRepository.countUnreadForStream(this.pool, userId, workspaceId, streamId)
   }
 
+  /**
+   * Mark one activity row read and emit the stream's new absolute count so the
+   * badge converges on every session (the bare UPDATE used to emit nothing, so
+   * other tabs/devices stayed stale-high — INV-7). Stream-less saved-reminder
+   * rows carry no per-stream badge, so they skip the emit.
+   */
   async markAsRead(activityId: string, userId: string): Promise<void> {
-    await ActivityRepository.markAsRead(this.pool, activityId, userId)
+    await withTransaction(this.pool, async (client) => {
+      const marked = await ActivityRepository.markAsRead(client, activityId, userId)
+      if (!marked || !marked.streamId) return
+      const { mentionCount, totalCount } = await ActivityRepository.countUnreadForStream(
+        client,
+        userId,
+        marked.workspaceId,
+        marked.streamId
+      )
+      await OutboxRepository.insert(client, "activity:counts", {
+        workspaceId: marked.workspaceId,
+        targetUserId: userId,
+        counts: [{ streamId: marked.streamId, mentionCount, activityCount: totalCount }],
+      })
+    })
   }
 
   async markStreamActivityAsRead(userId: string, streamId: string): Promise<void> {
@@ -537,11 +573,23 @@ export class ActivityService {
     }
   }
 
+  /**
+   * Mark every activity row read and emit a clear-all so all sessions zero
+   * their activity/mention maps (the bare UPDATE used to emit nothing — INV-7).
+   */
   async markAllAsRead(userId: string, workspaceId: string): Promise<void> {
-    const count = await ActivityRepository.markAllAsRead(this.pool, userId, workspaceId)
-    if (count > 0) {
-      logger.debug({ userId, workspaceId, count }, "Marked all activity as read")
-    }
+    await withTransaction(this.pool, async (client) => {
+      const count = await ActivityRepository.markAllAsRead(client, userId, workspaceId)
+      if (count > 0) {
+        await OutboxRepository.insert(client, "activity:counts", {
+          workspaceId,
+          targetUserId: userId,
+          counts: [],
+          clearAll: true,
+        })
+        logger.debug({ userId, workspaceId, count }, "Marked all activity as read")
+      }
+    })
   }
 }
 

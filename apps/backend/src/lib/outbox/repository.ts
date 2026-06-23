@@ -75,6 +75,7 @@ export type OutboxEventType =
   | "invitation:accepted"
   | "invitation:revoked"
   | "activity:created"
+  | "activity:counts"
   | "saved:upserted"
   | "saved:deleted"
   | "saved_reminder:fired"
@@ -570,6 +571,26 @@ export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
   }
 }
 
+/**
+ * Absolute activity/mention counts for a target user, emitted when a path
+ * LOWERS or re-homes `user_activity` truth without creating a row (reaction
+ * removal, message move, Activity-page mark-read). The client SETS its per-
+ * stream counter maps from `counts` (and zeroes them all first when `clearAll`),
+ * so a count the `activity:created` family would otherwise strand converges —
+ * live and on offline catch-up replay. User-scoped like `activity:created`, but
+ * deliberately NOT consumed by the push handler (it notifies on nothing).
+ */
+export interface ActivityCountsOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  counts: Array<{
+    streamId: string
+    mentionCount: number
+    activityCount: number
+  }>
+  /** Zero every activity/mention count before applying `counts` (mark-all-read). */
+  clearAll?: boolean
+}
+
 export interface SavedUpsertedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   saved: SavedMessageView
@@ -797,6 +818,7 @@ export interface OutboxEventPayloadMap {
   "invitation:accepted": InvitationAcceptedOutboxPayload
   "invitation:revoked": InvitationRevokedOutboxPayload
   "activity:created": ActivityCreatedOutboxPayload
+  "activity:counts": ActivityCountsOutboxPayload
   "saved:upserted": SavedUpsertedOutboxPayload
   "saved:deleted": SavedDeletedOutboxPayload
   "saved_reminder:fired": SavedReminderFiredOutboxPayload
@@ -921,6 +943,7 @@ export function isAuthorScopedEvent(event: OutboxEvent): event is OutboxEvent<Au
 /** Events that are scoped to a specific target user (delivered to that user's sockets) */
 export type UserScopedEventType =
   | "activity:created"
+  | "activity:counts"
   | "saved:upserted"
   | "saved:deleted"
   | "saved_reminder:fired"
@@ -935,6 +958,7 @@ export type UserScopedEventType =
 
 const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "activity:created",
+  "activity:counts",
   "saved:upserted",
   "saved:deleted",
   "saved_reminder:fired",

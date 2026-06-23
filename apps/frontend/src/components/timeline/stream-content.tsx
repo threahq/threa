@@ -1507,7 +1507,15 @@ export function StreamContent({
     lastReadEventId,
     enabled: autoMarkEnabled,
   })
-  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, { enabled: autoMarkEnabled, partial: !atLastRow })
+  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, {
+    enabled: autoMarkEnabled,
+    partial: !atLastRow,
+    // Heal target: when the viewer is caught up (atLastRow) but activity is
+    // stranded with no new message to scroll past, lastSeenEventId is undefined;
+    // re-marking up to the current read pointer clears the stuck activity rows.
+    readPointerEventId: lastReadEventId,
+    atLastRow,
+  })
 
   const isMobile = useIsMobile()
   const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)

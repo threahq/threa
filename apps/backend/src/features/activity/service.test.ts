@@ -8,6 +8,7 @@ import { PersonaRepository } from "../agents"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import * as dbModule from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
 import type { Stream } from "../streams"
 import type { Activity } from "./repository"
 
@@ -62,6 +63,7 @@ function fakeActivity(context: Record<string, unknown>): Activity[] {
 
 function setupService() {
   spyOn(dbModule, "withClient").mockImplementation(async (_pool: any, fn: any) => fn({} as any))
+  spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as any))
 
   return new ActivityService({ pool: {} as any })
 }
@@ -833,6 +835,100 @@ describe("ActivityService mention extraction", () => {
     expect(insertBatch.mock.calls[0][1]).toMatchObject({
       userIds: [TARGET_USER_ID],
       activityType: ActivityTypes.MENTION,
+    })
+  })
+})
+
+describe("ActivityService activity:counts convergence emits", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("markAllAsRead emits a clearAll when rows were marked read", async () => {
+    const service = setupService()
+    spyOn(ActivityRepository, "markAllAsRead").mockResolvedValue(3)
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    await service.markAllAsRead(TARGET_USER_ID, WORKSPACE_ID)
+
+    expect(insert.mock.calls[0]?.[1]).toBe("activity:counts")
+    expect(insert.mock.calls[0]?.[2]).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      targetUserId: TARGET_USER_ID,
+      clearAll: true,
+      counts: [],
+    })
+  })
+
+  it("markAllAsRead emits nothing when no rows were unread", async () => {
+    const service = setupService()
+    spyOn(ActivityRepository, "markAllAsRead").mockResolvedValue(0)
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    await service.markAllAsRead(TARGET_USER_ID, WORKSPACE_ID)
+
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("markAsRead emits the stream's recomputed absolute count", async () => {
+    const service = setupService()
+    spyOn(ActivityRepository, "markAsRead").mockResolvedValue({ workspaceId: WORKSPACE_ID, streamId: STREAM_ID })
+    spyOn(ActivityRepository, "countUnreadForStream").mockResolvedValue({ mentionCount: 1, totalCount: 4 })
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    await service.markAsRead("act_1", TARGET_USER_ID)
+
+    expect(insert.mock.calls[0]?.[1]).toBe("activity:counts")
+    expect(insert.mock.calls[0]?.[2]).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      targetUserId: TARGET_USER_ID,
+      counts: [{ streamId: STREAM_ID, mentionCount: 1, activityCount: 4 }],
+    })
+  })
+
+  it("markAsRead emits nothing for an already-read row", async () => {
+    const service = setupService()
+    spyOn(ActivityRepository, "markAsRead").mockResolvedValue(null)
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    await service.markAsRead("act_1", TARGET_USER_ID)
+
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("markAsRead emits nothing for a stream-less (saved-reminder) row", async () => {
+    const service = setupService()
+    spyOn(ActivityRepository, "markAsRead").mockResolvedValue({ workspaceId: WORKSPACE_ID, streamId: null })
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    await service.markAsRead("act_1", TARGET_USER_ID)
+
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("processReactionRemoved emits the recomputed count for the reacted-to author, not the reactor self-row", async () => {
+    const service = setupService()
+    spyOn(ActivityRepository, "deleteReactionForEmoji").mockResolvedValue([
+      { userId: USER_ID, streamId: STREAM_ID, isSelf: false } as any,
+      { userId: TARGET_USER_ID, streamId: STREAM_ID, isSelf: true } as any,
+    ])
+    const countPairs = spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
+      new Map([[`${USER_ID}:${STREAM_ID}`, { mentionCount: 0, totalCount: 2 }]])
+    )
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+
+    await service.processReactionRemoved({
+      workspaceId: WORKSPACE_ID,
+      messageId: MESSAGE_ID,
+      actorId: TARGET_USER_ID,
+      emoji: ":eyes:",
+    })
+
+    // Only the non-self author row is recomputed/emitted.
+    expect(countPairs.mock.calls[0]?.[2]).toEqual([{ userId: USER_ID, streamId: STREAM_ID }])
+    expect(insert.mock.calls[0]?.[2]).toMatchObject({
+      targetUserId: USER_ID,
+      counts: [{ streamId: STREAM_ID, mentionCount: 0, activityCount: 2 }],
     })
   })
 })

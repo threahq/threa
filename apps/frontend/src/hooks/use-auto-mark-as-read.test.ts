@@ -284,4 +284,72 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenLastCalledWith("stream_b", "event_shared", { partial: false })
     expect(mockMarkAsRead).toHaveBeenCalledTimes(2)
   })
+
+  it("heals a stranded badge: re-marks the read pointer when caught up with no new event seen", () => {
+    // lastEventId undefined (nothing new scrolled past) but the viewer is at the
+    // last row with activity still elevated — the phantom-badge case. Re-mark up
+    // to the current pointer to clear the stranded activity rows, as a full mark
+    // so the badge zeroes optimistically instead of glowing on.
+    unreadCount = 0
+    activityCount = 2
+
+    renderHook(() =>
+      useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_pointer", atLastRow: true })
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_123", "event_pointer", { partial: false })
+  })
+
+  it("does NOT heal while unread sits below the fold (not at the last row)", () => {
+    // Clearing activity is whole-stream, so a heal with unread below would wipe
+    // activity for messages the viewer hasn't reached. Gated on atLastRow.
+    unreadCount = 0
+    activityCount = 2
+
+    renderHook(() =>
+      useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_pointer", atLastRow: false })
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
+  it("does NOT heal without a read pointer to mark up to", () => {
+    unreadCount = 0
+    activityCount = 2
+
+    renderHook(() =>
+      useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: null, atLastRow: true })
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
+
+  it("does NOT advance the pointer when unread sits below with nothing seen and no activity", () => {
+    // Progressive-read contract: no seen-but-unmarked event and zero activity →
+    // nothing to mark; the heal must not fabricate a read.
+    unreadCount = 3
+    activityCount = 0
+
+    renderHook(() =>
+      useAutoMarkAsRead("ws_123", "stream_123", undefined, { readPointerEventId: "event_pointer", atLastRow: false })
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+  })
 })

@@ -1430,6 +1430,25 @@ export interface ActivityCreatedPayload {
   }
 }
 
+/**
+ * Absolute per-stream activity/mention counts, emitted when a path lowers or
+ * re-homes `user_activity` truth without creating a row (reaction removal,
+ * message move, Activity-page mark-read). Clients SET counters from `counts`
+ * (and zero all of them first when `clearAll`), so a count the
+ * `activity:created` family would otherwise strand converges — live and on
+ * offline catch-up replay.
+ */
+export interface ActivityCountsPayload {
+  workspaceId: string
+  targetUserId: string
+  counts: Array<{
+    streamId: string
+    mentionCount: number
+    activityCount: number
+  }>
+  clearAll?: boolean
+}
+
 export interface MarkAsReadInput {
   lastEventId: string
 }

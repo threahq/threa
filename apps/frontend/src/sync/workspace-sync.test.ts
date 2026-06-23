@@ -1615,6 +1615,38 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
 
     cleanup()
   })
+
+  it("applies activity:counts: per-stream SET converges one stream; clearAll zeroes all", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient) // activityCounts { stream_1: 1, stream_2: 1 }
+    const { emit, cleanup } = register(queryClient)
+
+    // A reaction removal recomputed stream_1 to 0; stream_2 is untouched.
+    emit("activity:counts", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      counts: [{ streamId: "stream_1", mentionCount: 0, activityCount: 0 }],
+    })
+
+    let bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.activityCounts.stream_1).toBe(0)
+    expect(bootstrap?.activityCounts.stream_2).toBe(1)
+    expect(bootstrap?.mentionCounts.stream_1).toBe(0)
+    expect(bootstrap?.unreadActivityCount).toBe(1)
+
+    // Mark-all-read clears every stream's activity/mention.
+    emit("activity:counts", { workspaceId: "ws_1", targetUserId: "member_1", counts: [], clearAll: true })
+    bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.activityCounts).toEqual({})
+    expect(bootstrap?.unreadActivityCount).toBe(0)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadActivityCount).toBe(0)
+    })
+
+    cleanup()
+  })
 })
 
 describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {

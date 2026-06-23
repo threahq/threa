@@ -159,6 +159,35 @@ export function applyActivityCounts(
   }
 }
 
+/**
+ * Apply an `activity:counts` event — the absolute per-stream counts the backend
+ * emits when a path LOWERS or re-homes `user_activity` truth without creating a
+ * row (reaction removal, message move re-homing the rows, Activity-page
+ * mark-read). Each listed stream is SET (LWW, like `applyActivityCounts`);
+ * `clearAll` zeroes every activity/mention count first (mark-all-read) so
+ * streams the event doesn't list also drop. The message-unread maps
+ * (`unreadCounts`, `latestOrdinals`) ride their own absolute event family and
+ * are left untouched.
+ */
+export function applyActivityCountsBatch(
+  state: UnreadCounterState,
+  counts: Array<{ streamId: string; mentionCount: number; activityCount: number }>,
+  opts?: { clearAll?: boolean }
+): UnreadCounterState {
+  const mentionCounts = opts?.clearAll ? {} : { ...state.mentionCounts }
+  const activityCounts = opts?.clearAll ? {} : { ...state.activityCounts }
+  for (const c of counts) {
+    mentionCounts[c.streamId] = c.mentionCount
+    activityCounts[c.streamId] = c.activityCount
+  }
+  return {
+    ...state,
+    mentionCounts,
+    activityCounts,
+    unreadActivityCount: sumCounts(activityCounts),
+  }
+}
+
 /** The counter slice of a workspace bootstrap (`messageCounts` are the latest ordinals). */
 export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterState {
   return {

@@ -19,6 +19,7 @@ import type {
   FeatureFlags,
   LastMessagePreview,
   ActivityCreatedPayload,
+  ActivityCountsPayload,
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
@@ -51,6 +52,7 @@ import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
   applyActivityCounts,
+  applyActivityCountsBatch,
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamReadSet,
@@ -1362,6 +1364,17 @@ export function registerWorkspaceSocketHandlers(
     invalidateActivityFeed(true)
   }
 
+  // Absolute activity/mention counts emitted when a path lowers or re-homes
+  // user_activity truth without creating a row (reaction removal, message move,
+  // Activity-page mark-read). SET per stream (clearAll zeroes all first), so a
+  // count the activity:created family would strand converges — live and via
+  // catch-up replay (user-scoped, sync-logged like activity:created).
+  const handleActivityCounts = (payload: ActivityCountsPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    commitCounter((state) => applyActivityCountsBatch(state, payload.counts, { clearAll: payload.clearAll }))
+    invalidateActivityFeed(true)
+  }
+
   // GAM memo extraction: surface new memos in the memory explorer without a
   // manual refresh. memo:created is workspace-group routed (sync log + emit),
   // so registering here puts memos on the sync catch-up path like every
@@ -1697,6 +1710,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
+  socket.on("activity:counts", handleActivityCounts)
   socket.on("memo:created", handleMemoCreated)
   socket.on("invitation:sent", handleInvitationChanged)
   socket.on("invitation:accepted", handleInvitationChanged)
@@ -1746,6 +1760,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)
+    socket.off("activity:counts", handleActivityCounts)
     socket.off("memo:created", handleMemoCreated)
     socket.off("invitation:sent", handleInvitationChanged)
     socket.off("invitation:accepted", handleInvitationChanged)

@@ -455,6 +455,7 @@ export type {
   // Activity
   Activity,
   ActivityCreatedPayload,
+  ActivityCountsPayload,
   // Saved messages
   SavedMessageView,
   SavedMessageSnapshot,

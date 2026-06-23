@@ -5,6 +5,7 @@ import {
   applyStreamReadSet,
   applyStreamsReadAllOrdinals,
   applyActivityCounts,
+  applyActivityCountsBatch,
   type UnreadCounterState,
 } from "./unread-counters"
 
@@ -212,5 +213,55 @@ describe("applyActivityCounts", () => {
     const once = applyActivityCounts(state, "s1", { mentionCount: 0, activityCount: 2 })
     expect(applyActivityCounts(once, "s1", { mentionCount: 0, activityCount: 2 })).toEqual(once)
     expect(once.unreadActivityCount).toBe(2)
+  })
+})
+
+describe("applyActivityCountsBatch", () => {
+  it("SETS the listed streams' absolute counts and rederives the total", () => {
+    // s1 was stuck at 2 (a reaction removal cleared its rows); the event carries
+    // the recomputed 0, so the badge drops without touching s2.
+    const state = makeState({
+      mentionCounts: { s1: 1, s2: 1 },
+      activityCounts: { s1: 2, s2: 3 },
+      unreadActivityCount: 5,
+    })
+    const next = applyActivityCountsBatch(state, [{ streamId: "s1", mentionCount: 0, activityCount: 0 }])
+    expect(next.activityCounts).toEqual({ s1: 0, s2: 3 })
+    expect(next.mentionCounts).toEqual({ s1: 0, s2: 1 })
+    expect(next.unreadActivityCount).toBe(3)
+  })
+
+  it("clearAll zeroes every map first, then applies the listed counts (mark-all-read)", () => {
+    const state = makeState({
+      mentionCounts: { s1: 1, s2: 2 },
+      activityCounts: { s1: 2, s2: 3 },
+      unreadActivityCount: 5,
+    })
+    const next = applyActivityCountsBatch(state, [], { clearAll: true })
+    expect(next.activityCounts).toEqual({})
+    expect(next.mentionCounts).toEqual({})
+    expect(next.unreadActivityCount).toBe(0)
+  })
+
+  it("re-homes a move: source drops, destination rises, total unchanged", () => {
+    const state = makeState({ activityCounts: { src: 2, dst: 0 }, unreadActivityCount: 2 })
+    const next = applyActivityCountsBatch(state, [
+      { streamId: "src", mentionCount: 0, activityCount: 0 },
+      { streamId: "dst", mentionCount: 0, activityCount: 2 },
+    ])
+    expect(next.activityCounts).toEqual({ src: 0, dst: 2 })
+    expect(next.unreadActivityCount).toBe(2)
+  })
+
+  it("leaves the message-unread maps untouched (separate event family)", () => {
+    const state = makeState({
+      unreadCounts: { s1: 4 },
+      latestOrdinals: { s1: 9 },
+      activityCounts: { s1: 2 },
+      unreadActivityCount: 2,
+    })
+    const next = applyActivityCountsBatch(state, [{ streamId: "s1", mentionCount: 0, activityCount: 0 }])
+    expect(next.unreadCounts).toEqual({ s1: 4 })
+    expect(next.latestOrdinals).toEqual({ s1: 9 })
   })
 })
