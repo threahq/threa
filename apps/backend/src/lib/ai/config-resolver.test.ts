@@ -7,7 +7,7 @@ describe("StaticConfigResolver", () => {
     const resolver = createStaticConfigResolver()
 
     const boundaryConfig = await resolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
-    expect(boundaryConfig.modelId).toBe("openrouter:openai/gpt-5.4-nano")
+    expect(boundaryConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
     expect(boundaryConfig.temperature).toBe(0.2)
     expect(boundaryConfig.systemPrompt).toBeDefined()
 
@@ -16,11 +16,11 @@ describe("StaticConfigResolver", () => {
     expect(streamNamingConfig.temperature).toBe(0.3)
 
     const memoClassifierConfig = await resolver.resolve(COMPONENT_PATHS.MEMO_CLASSIFIER)
-    expect(memoClassifierConfig.modelId).toBe("openrouter:openai/gpt-5.4-nano")
+    expect(memoClassifierConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
     expect(memoClassifierConfig.temperature).toBe(0.1)
 
     const memoMemorizerConfig = await resolver.resolve(COMPONENT_PATHS.MEMO_MEMORIZER)
-    expect(memoMemorizerConfig.modelId).toBe("openrouter:openai/gpt-5.4-nano")
+    expect(memoMemorizerConfig.modelId).toBe("openrouter:openai/gpt-5.4-mini")
     expect(memoMemorizerConfig.temperature).toBe(0.3)
 
     const companionConfig = await resolver.resolve(COMPONENT_PATHS.COMPANION_AGENT)

@@ -19,6 +19,16 @@ export interface WorkspaceSettings {
    * additive on top of this (UserPreferences.statusPresets).
    */
   userStatusPresets: StatusPreset[]
+  /**
+   * Canonical language for extracted memos (a language name or BCP-47 tag, e.g.
+   * "English" / "sv"). When set, every memo is written in this one language
+   * regardless of the conversation's language, so a bilingual workspace doesn't
+   * store the same knowledge twice (and embedding dedup, which aligns weakly
+   * across languages, stays reliable). `null` lets each memo follow its
+   * conversation's language; the backend then defaults to the participants'
+   * primary language.
+   */
+  memoLanguage: string | null
   createdAt: string
   updatedAt: string
 }
@@ -27,12 +37,14 @@ export interface WorkspaceSettings {
 export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" | "createdAt" | "updatedAt"> = {
   defaultWorkSchedule: DEFAULT_WORK_SCHEDULE,
   userStatusPresets: SYSTEM_DEFAULT_STATUSES,
+  memoLanguage: null,
 }
 
 /** Partial update — only provided fields are changed. */
 export interface UpdateWorkspaceSettingsInput {
   defaultWorkSchedule?: WorkSchedule
   userStatusPresets?: StatusPreset[]
+  memoLanguage?: string | null
 }
 
 /** Valid top-level settings keys that can be overridden. */

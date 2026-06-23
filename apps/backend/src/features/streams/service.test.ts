@@ -1223,6 +1223,39 @@ describe("StreamService.createScratchpad (E2E)", () => {
       })
     )
   })
+
+  test("defaults memoryMode off for a companion scratchpad (extract-from-bots is opt-in)", async () => {
+    await service.create({
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      createdBy: "usr_owner",
+      companionPersonaId: "persona_x",
+    } as never)
+
+    expect(mockInsertStream).toHaveBeenCalledWith({}, expect.objectContaining({ memoryMode: "off" }))
+  })
+
+  test("keeps memoryMode auto for a plain scratchpad", async () => {
+    await service.create({
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      createdBy: "usr_owner",
+    } as never)
+
+    expect(mockInsertStream).toHaveBeenCalledWith({}, expect.objectContaining({ memoryMode: "auto" }))
+  })
+
+  test("respects an explicit memoryMode on a companion scratchpad", async () => {
+    await service.create({
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      createdBy: "usr_owner",
+      companionPersonaId: "persona_x",
+      memoryMode: "auto",
+    } as never)
+
+    expect(mockInsertStream).toHaveBeenCalledWith({}, expect.objectContaining({ memoryMode: "auto" }))
+  })
 })
 
 // The stream:read / stream:read_all payloads carry absolute read positions

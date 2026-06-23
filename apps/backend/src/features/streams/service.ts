@@ -444,6 +444,16 @@ export class StreamService {
     const id = streamId()
 
     const normalizedDescription = normalizeStreamDescription({ description: params.description })
+
+    // A companion scratchpad is a chat with an AI persona. Extracting durable
+    // knowledge from those is opt-in, not default: the model's own turns aren't
+    // organizational decisions, so memory starts off and the owner can turn it
+    // on. Plain scratchpads keep auto.
+    const hasCompanion =
+      (params.companionMode !== undefined && params.companionMode !== CompanionModes.OFF) ||
+      Boolean(params.companionPersonaId)
+    const memoryMode = params.memoryMode ?? (hasCompanion ? MemoryModes.OFF : MemoryModes.AUTO)
+
     const stream = await StreamRepository.insert(db, {
       id,
       workspaceId: params.workspaceId,
@@ -454,7 +464,7 @@ export class StreamService {
       visibility: Visibilities.PRIVATE,
       companionMode: params.companionMode ?? CompanionModes.OFF,
       companionPersonaId: params.companionPersonaId,
-      memoryMode: params.memoryMode,
+      memoryMode,
       createdBy: params.createdBy,
     })
 

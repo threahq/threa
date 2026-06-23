@@ -13,6 +13,7 @@ import type { StreamEvent } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
+import { WorkspaceSettingsRepository } from "../workspace-settings"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
@@ -81,7 +82,8 @@ const classification: ConversationClassification = {
 }
 
 function setupService(options: { memoContents: MemoContent[] }) {
-  const fakeClient = {} as PoolClient
+  const clientQuery = mock(async () => ({ rows: [] }))
+  const fakeClient = { query: clientQuery } as unknown as PoolClient
   spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
     fn(fakeClient)) as typeof dbModule.withClient)
   spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
@@ -92,6 +94,8 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
+  spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+  spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
@@ -127,20 +131,22 @@ function setupService(options: { memoContents: MemoContent[] }) {
     messageFormatter: { formatMessages: async () => "formatted conversation" } as never,
   })
 
-  return { service, streamEventInsertMany, outboxInsert, outboxInsertMany, insertedStreamEvent }
+  return { service, streamEventInsertMany, outboxInsert, outboxInsertMany, insertedStreamEvent, clientQuery }
 }
 
 describe("MemoService.processBatch — memos:captured timeline event (INV-62)", () => {
   afterEach(() => mock.restore())
 
   it("appends a memos:captured stream event with memo provenance in the save transaction", async () => {
-    const { service, streamEventInsertMany, outboxInsertMany, insertedStreamEvent } = setupService({
+    const { service, streamEventInsertMany, outboxInsertMany, insertedStreamEvent, clientQuery } = setupService({
       memoContents: [memoContent],
     })
 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(1)
+    // Insert transaction serializes same-stream batches via a per-stream advisory lock (INV-20).
+    expect(clientQuery).toHaveBeenCalledWith("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${STREAM_ID}`])
     expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({
         streamId: STREAM_ID,
@@ -175,6 +181,22 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(0)
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(outboxInsertMany).not.toHaveBeenCalled()
+  })
+
+  it("drops a memo whose knowledge already exists in the stream from another conversation", async () => {
+    const { service, streamEventInsertMany, outboxInsertMany } = setupService({ memoContents: [memoContent] })
+
+    // The same knowledge was already captured by a different conversation.
+    const existing = { ...memoContent, id: "memo_existing", sourceConversationId: "conv_other" } as never
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({ memo: existing, distance: 0.02 })
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(0)
+    expect(insert).not.toHaveBeenCalled()
     expect(streamEventInsertMany).not.toHaveBeenCalled()
     expect(outboxInsertMany).not.toHaveBeenCalled()
   })

@@ -3,7 +3,7 @@
 import { z } from "zod"
 import { CONVERSATION_STATUSES } from "@threa/types"
 
-export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
 /** Low temperature for classification consistency. */
 export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
@@ -75,8 +75,9 @@ Use it whenever the new message gives you evidence the prior placement was wrong
 - confidence: 0.0 to 1.0 confidence in this classification overall.
 
 ## Naming new conversations
-When you set newConversationTopic, write a short title of 2-5 words that names the topic itself:
-- Lead with the subject. Do NOT add framing like "Discussion about", "Chat about", "Conversation regarding", "Thoughts on", "Questions about", and do NOT describe the tone ("Casual chat", "Quick question"). That a conversation discusses something is already implied — name the thing, not the act of discussing it.
+When you set newConversationTopic, write a short title of 2-5 words that names the topic itself. Never exceed 5 words.
+- Lead with the subject. Do NOT add framing like "Discussion about", "Chat about", "Conversation regarding", "Thoughts on", "Questions about", and do NOT describe the tone ("Casual chat", "Quick question", "Banter about"). That a conversation discusses something is already implied — name the thing, not the act of discussing it.
+- Never use a vague catch-all label as a title: "General chat", "Reaction message", "Random", "Misc", "Off-topic", and the like name nothing and become a magnet that wrongly absorbs later messages. Always name the concrete subject the messages are actually about; if a short opener has no subject of its own, name what it is reacting to.
 - Do NOT state which language the conversation is in (never write "in Swedish", "auf Deutsch", etc.); that label is noise next to the conversation.
 - Write the title in the dominant language of the conversation, not English by default. If the participants are talking in Swedish, the title is in Swedish; if in Japanese, in Japanese. When the messages mix languages, follow the language the topic is actually discussed in and reuse the participants' own phrasing.
 - Keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation. Never translate, localize, or re-spell them — carry the participants' own words into the title verbatim.

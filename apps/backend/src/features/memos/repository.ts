@@ -340,6 +340,61 @@ export const MemoRepository = {
     return result.rows.map(mapRowToMemo)
   },
 
+  /**
+   * Closest active memo in `streamId` whose abstract embedding sits within
+   * `maxDistance` (pgvector cosine distance) of `embedding`, ignoring memos
+   * already attached to `excludeConversationId`. Drives the cross-conversation
+   * dedup gate (INV-20): the per-conversation revision path handles repeats
+   * within one conversation; this catches the same knowledge recurring across
+   * different conversations before a duplicate row is inserted. Returns null
+   * when nothing is close enough.
+   */
+  async findNearDuplicate(
+    db: Querier,
+    params: {
+      workspaceId: string
+      streamId: string
+      embedding: number[]
+      maxDistance: number
+      excludeConversationId: string
+    }
+  ): Promise<{ memo: Memo; distance: number } | null> {
+    const { workspaceId, streamId, embedding, maxDistance, excludeConversationId } = params
+    const embeddingLiteral = `[${embedding.join(",")}]`
+
+    const result = await db.query<MemoRow & { distance: number }>(sql`
+      WITH stream_memos AS (
+        SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+               m.embedding <=> ${embeddingLiteral}::vector AS distance
+        FROM memos m
+        JOIN conversations c ON m.source_conversation_id = c.id
+        WHERE c.stream_id = ${streamId}
+          AND m.workspace_id = ${workspaceId}
+          AND m.status = 'active'
+          AND m.embedding IS NOT NULL
+          AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND m.source_conversation_id IS DISTINCT FROM ${excludeConversationId}
+        UNION
+        SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+               m.embedding <=> ${embeddingLiteral}::vector AS distance
+        FROM memos m
+        JOIN messages msg ON m.source_message_id = msg.id
+        WHERE msg.stream_id = ${streamId}
+          AND m.workspace_id = ${workspaceId}
+          AND m.status = 'active'
+          AND m.embedding IS NOT NULL
+          AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+      )
+      SELECT * FROM stream_memos
+      ORDER BY distance ASC
+      LIMIT 1
+    `)
+
+    const row = result.rows[0]
+    if (!row) return null
+    return { memo: mapRowToMemo(row), distance: row.distance }
+  },
+
   async insert(db: Querier, params: InsertMemoParams): Promise<Memo> {
     const result = await db.query<MemoRow>(sql`
       INSERT INTO memos (
