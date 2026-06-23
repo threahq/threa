@@ -47,6 +47,14 @@ interface SectionHeaderProps {
   addMenuActions?: SidebarActionItem[] | null
   /** Smaller header style used for nested subsections (e.g. "With activity" / "Rest"). */
   nested?: boolean
+  /**
+   * Trailing status/control rendered on the right of the header — used by the
+   * Unread section for its "All caught up" status and "Clear read" control.
+   * Lives in the header (not a footer row) so the status costs no extra row and
+   * swapping it never reflows the list below (INV-21). Sits left of the
+   * collapsed-state aggregate badge.
+   */
+  headerAccessory?: ReactNode
 }
 
 /** Section header with chevron state indicator. Consistent across all sidebar sections. */
@@ -64,6 +72,7 @@ export function SectionHeader({
   addTooltip,
   addMenuActions,
   nested = false,
+  headerAccessory,
 }: SectionHeaderProps) {
   const isInteractive = !!onToggle && !!state
   const isCollapsed = state === "collapsed"
@@ -128,6 +137,7 @@ export function SectionHeader({
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
+      {headerAccessory}
       {titleHref && (
         <Link
           to={titleHref}
@@ -300,7 +310,8 @@ interface StreamSectionProps {
   getMentionCount: (streamId: string) => number
   state?: CollapseState
   onToggle?: () => void
-  action?: ReactNode
+  /** Trailing header status/control (e.g. Unread's "All caught up" / "Clear read"). */
+  headerAccessory?: ReactNode
   /** Show compact view (title only, no preview) */
   compact?: boolean
   /** Show preview on hover when compact (only works with compact=true) */
@@ -343,7 +354,7 @@ export function StreamSection({
   getMentionCount,
   state = "open",
   onToggle,
-  action,
+  headerAccessory,
   compact = false,
   showPreviewOnHover = false,
   scrollContainerRef,
@@ -388,16 +399,15 @@ export function StreamSection({
         onAdd={onAdd}
         addTooltip={addTooltip}
         addMenuActions={addMenuActions}
+        headerAccessory={headerAccessory}
       />
 
       {!isCollapsed && items.length > 0 && <div className="mt-1 flex flex-col gap-0.5">{items.map(renderRow)}</div>}
-
-      {!isCollapsed && action}
     </div>
   )
 }
 
-interface TieredStreamSectionProps extends Omit<StreamSectionProps, "action" | "state" | "onToggle"> {
+interface TieredStreamSectionProps extends Omit<StreamSectionProps, "state" | "onToggle"> {
   /** Parent section key (drives the "more" persistence key). */
   sectionKey: string
   /** Current parent open/collapsed state. */
@@ -411,7 +421,6 @@ interface TieredStreamSectionProps extends Omit<StreamSectionProps, "action" | "
   moreState: CollapseState
   /** Toggle the inline "more" expander. */
   onToggleMore: () => void
-  action?: ReactNode
 }
 
 /** Soft cap on visible items when the more expander is collapsed. */
@@ -444,7 +453,6 @@ export function TieredStreamSection({
   onToggle,
   moreState,
   onToggleMore,
-  action,
   compact = false,
   showPreviewOnHover = false,
   scrollContainerRef,
@@ -511,8 +519,6 @@ export function TieredStreamSection({
       {!isCollapsed && hasMore && (
         <MoreDivider isOpen={isMoreOpen} hiddenCount={quietHidden.length} onToggle={onToggleMore} />
       )}
-
-      {!isCollapsed && action}
     </div>
   )
 }
