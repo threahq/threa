@@ -9,6 +9,7 @@ import type {
   SidebarConfig,
   StreamContextBagPayload,
   StreamType,
+  ThreaDocument,
   ToolPrivacyCategory,
   ToolPrivacyPolicy,
   WorkspaceRoleSlug,
@@ -68,6 +69,12 @@ export interface CachedStream {
   displayName: string | null
   slug: string | null
   description: string | null
+  /**
+   * Canonical rich-text description (ProseMirror). The editor seeds from this;
+   * `description` markdown is only the wire/integrator projection + a legacy
+   * fallback (rows cached before this field existed leave it undefined).
+   */
+  descriptionJson?: ThreaDocument | null
   visibility: "public" | "private"
   parentStreamId: string | null
   parentMessageId: string | null

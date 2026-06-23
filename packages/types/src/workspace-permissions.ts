@@ -7,6 +7,7 @@
 export const WORKSPACE_PERMISSION_SCOPES = {
   MESSAGES_SEARCH: "messages:search",
   STREAMS_READ: "streams:read",
+  STREAMS_WRITE: "streams:write",
   MESSAGES_READ: "messages:read",
   MESSAGES_WRITE: "messages:write",
   USERS_READ: "users:read",
@@ -50,6 +51,11 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
     slug: WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
     name: "Read streams",
     description: "Grants access to list and search accessible streams in a workspace.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE,
+    name: "Write streams",
+    description: "Grants access to set a stream's description (rich text) on accessible streams.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
@@ -171,6 +177,7 @@ export interface WorkspaceRoleDefinition {
 const READ_AND_SELF_SERVE: readonly WorkspacePermissionSlug[] = Object.freeze([
   WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH,
   WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
+  WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE,
   WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
   WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
   WORKSPACE_PERMISSION_SCOPES.USERS_READ,

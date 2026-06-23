@@ -19,6 +19,7 @@ import {
   AGENT_STEP_TYPES,
   SOURCE_TYPES,
   LABELABLE_RESOURCE_TYPES,
+  STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
@@ -150,6 +151,11 @@ export const createRuntimeSessionSchema = z.object({
   memoryMode: z.enum(MEMORY_MODES).optional(),
   // Optional owner-scoped label name to assign to the created scratchpad stream.
   labelName: z.string().trim().min(1).max(100).regex(/\S/).optional(),
+  // Optional markdown description set on the new scratchpad (parsed to rich text,
+  // same as message content) — e.g. an orchestrator's handover note. Surfaces as
+  // a "set the description" timeline row and in the agent's prompt context. Only
+  // applied when the session creates a fresh scratchpad, not on resume.
+  description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH).optional(),
 })
 
 export const renameRuntimeSessionSchema = z.object({
@@ -295,6 +301,12 @@ export const sendMessageSchema = z.object({
 
 export const updateMessageSchema = z.object({
   content: z.string().min(1, "content is required"),
+})
+
+export const updateStreamSchema = z.object({
+  // Markdown, parsed server-side to the canonical ProseMirror description (same
+  // wire format as message `content`). An empty string clears the description.
+  description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH),
 })
 
 export const findMessagesByMetadataSchema = z.object({
