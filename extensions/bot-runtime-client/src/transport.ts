@@ -183,7 +183,7 @@ export class BotRuntimeTransport {
     instanceId: string = this.hello.instanceId
   ): Promise<void> {
     if (steps.length === 0) return
-    const ack = await this.emitWrite("bot:invocation:steps", {
+    const { sent, ack } = await this.emitWrite("bot:invocation:steps", {
       invocationId,
       instanceId,
       claimToken,
@@ -194,6 +194,15 @@ export class BotRuntimeTransport {
       if (!ack.ok) this.logFn(`steps rejected (${ack.code ?? "?"}): ${ack.message ?? ""}`)
       return
     }
+    if (sent) {
+      // The frame is in flight; the ack just didn't arrive in time. Steps have
+      // no server-side idempotency key (each write takes the next step_number),
+      // so re-POSTing would duplicate the trace row — and spend the very edge
+      // request we're avoiding. Drop and trust the in-flight frame.
+      this.logFn("steps ack timed out; relying on the in-flight frame (no HTTP retry)")
+      return
+    }
+    // Socket was down — the frame never left, so HTTP is the only path and can't duplicate.
     await this.httpRecordStepsFallback(invocationId, claimToken, steps, statusText, instanceId)
   }
 
@@ -209,7 +218,7 @@ export class BotRuntimeTransport {
     claimTtlSeconds: number,
     instanceId: string = this.hello.instanceId
   ): Promise<{ notFound: boolean }> {
-    const ack = await this.emitWrite("bot:invocation:renew", {
+    const { ack } = await this.emitWrite("bot:invocation:renew", {
       invocationId,
       instanceId,
       claimToken,
@@ -220,6 +229,10 @@ export class BotRuntimeTransport {
       if (ack.code === "NOT_FOUND") return { notFound: true }
       this.logFn(`renew rejected (${ack.code ?? "?"}); retrying over HTTP`)
     }
+    // Renew is an idempotent CAS (re-setting claim_expires_at is harmless), so —
+    // unlike steps — we retry over HTTP on ANY missing ack (not sent OR timed
+    // out). The lease must not lapse because the socket flapped; a redundant
+    // renew when the WS frame also lands just re-sets the same expiry.
     return this.httpRenewFallback(invocationId, claimToken, claimTtlSeconds, instanceId)
   }
 
@@ -230,42 +243,48 @@ export class BotRuntimeTransport {
    * `/bot-runtime/presence` payload.
    */
   async updatePresence(body: Record<string, unknown>): Promise<void> {
-    const ack = await this.emitWrite("bot:presence:update", body)
+    const { ack } = await this.emitWrite("bot:presence:update", body)
     if (ack) {
       if (!ack.ok) this.logFn(`presence rejected (${ack.code ?? "?"}): ${ack.message ?? ""}`)
       return
     }
+    // Idempotent upsert on (workspace, bot, instance) — safe to retry over HTTP on
+    // any missing ack; a redundant upsert when the WS frame lands is last-writer-wins.
     await this.httpPresenceFallback(body)
   }
 
   // --- Socket write primitive -----------------------------------------------
 
   /**
-   * Emit a write event and await its ack. Resolves to the ack when the server
-   * answers, or `null` when there is no live socket or the ack times out — `null`
-   * is the caller's signal that the transport failed and HTTP should take over.
+   * Emit a write event and await its ack.
+   *
+   * `sent` distinguishes the two failure modes that look identical at the ack
+   * layer but must NOT be handled the same way: `sent: false` means the frame
+   * never left (no live socket / `emit` threw), so an HTTP retry is the only
+   * way the write lands and is safe; `sent: true, ack: null` means the frame IS
+   * in flight but the server didn't ack within the timeout — re-POSTing it would
+   * duplicate a non-idempotent write (a trace step has no server-side dedup key),
+   * so a best-effort caller must drop rather than retry. Idempotent writes
+   * (renew CAS, presence upsert) ignore the distinction and retry on either.
    */
-  private emitWrite(event: string, payload: unknown): Promise<BotWriteAck | null> {
+  private emitWrite(event: string, payload: unknown): Promise<{ sent: boolean; ack: BotWriteAck | null }> {
     const socket = this.socket
-    if (!socket || !this.connected) return Promise.resolve(null)
+    if (!socket || !this.connected) return Promise.resolve({ sent: false, ack: null })
     return new Promise((resolve) => {
       let settled = false
-      const done = (value: BotWriteAck | null) => {
+      const done = (result: { sent: boolean; ack: BotWriteAck | null }) => {
         if (settled) return
         settled = true
-        resolve(value)
+        resolve(result)
       }
       try {
         socket.timeout(this.wsAckTimeoutMs).emit(event, payload, (err: unknown, ack: unknown) => {
-          if (err) {
-            done(null)
-            return
-          }
-          done(normalizeAck(ack))
+          // Either way the frame was sent; only the ack is in question.
+          done({ sent: true, ack: err ? null : normalizeAck(ack) })
         })
       } catch (error) {
         this.logFn(`socket emit ${event} threw: ${summarize(error)}`)
-        done(null)
+        done({ sent: false, ack: null })
       }
     })
   }

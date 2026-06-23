@@ -122,3 +122,56 @@ describe("HTTP fallback (no socket connected)", () => {
     expect(calls).toHaveLength(0)
   })
 })
+
+describe("WS frame sent but ack timed out (idempotency)", () => {
+  // Drive the connected path without a real server: a socket whose
+  // `.timeout().emit` fires the callback with a timeout error — i.e. the frame
+  // was sent, the server just didn't ack in time (slow processing).
+  function attachTimingOutSocket(transport: BotRuntimeTransport): void {
+    const socket = {
+      timeout: () => ({
+        emit: (_event: string, _payload: unknown, cb: (err: unknown, ack?: unknown) => void) => {
+          cb(new Error("operation has timed out"))
+        },
+      }),
+    }
+    ;(transport as unknown as { socket: unknown; connected: boolean }).socket = socket
+    ;(transport as unknown as { connected: boolean }).connected = true
+  }
+
+  it("does NOT re-POST steps on a timed-out ack — the in-flight frame would duplicate the trace row", async () => {
+    const calls = stubFetch(() => new Response("{}", { status: 200 }))
+    const transport = makeTransport()
+    attachTimingOutSocket(transport)
+
+    await transport.recordSteps("binv_1", "tok_1", [{ stepType: "thinking", content: "a" }], "Working…")
+
+    expect(calls).toHaveLength(0)
+  })
+
+  it("DOES retry renew over HTTP on a timed-out ack (idempotent CAS — the lease must not lapse)", async () => {
+    const calls = stubFetch(() => new Response("{}", { status: 200 }))
+    const transport = makeTransport()
+    attachTimingOutSocket(transport)
+
+    const result = await transport.renewClaim("binv_1", "tok_1", 120)
+
+    expect(result).toEqual({ notFound: false })
+    expect(calls.some((c) => c.url.includes("/bot-invocations/binv_1/renew"))).toBe(true)
+  })
+
+  it("DOES retry presence over HTTP on a timed-out ack (idempotent upsert)", async () => {
+    const calls = stubFetch(() => new Response("{}", { status: 200 }))
+    const transport = makeTransport()
+    attachTimingOutSocket(transport)
+
+    await transport.updatePresence({
+      runtimeKind: "pi-local",
+      instanceId: "inst_42",
+      status: "busy",
+      acceptingInvocations: false,
+    })
+
+    expect(calls.some((c) => c.url.includes("/bot-runtime/presence"))).toBe(true)
+  })
+})
