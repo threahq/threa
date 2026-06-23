@@ -1,3 +1,5 @@
+import { MOBILE_BREAKPOINT } from "@/hooks/use-mobile"
+
 /**
  * Persists the last-measured composer height and applies it as a global
  * fallback CSS variable on `:root` before the editor zone mounts.
@@ -19,26 +21,56 @@
  * composer's layout effect later corrects any residual drift pre-paint (and
  * notifies the timeline to re-anchor in the same frame), so there is no
  * visible jump.
+ *
+ * The persisted value and boot fallback are keyed by viewport class. The
+ * desktop composer carries an always-on bottom action bar and larger `sm:`
+ * shell padding the collapsed mobile composer doesn't, so its empty height
+ * (~140px) is far taller than mobile's (~80px). A single shared key let a
+ * height measured on one viewport seed the other's boot fallback — a mobile
+ * height applied on desktop reserves too little, so the taller desktop
+ * composer overlaps the last message and the scroll engine (which offsets by
+ * the same variable) can't bring it into view until live measurement catches
+ * up, and never if that measurement stalls.
  */
 
-const STORAGE_KEY = "threa:composer-height"
 const CSS_VAR = "--composer-height"
 
-// Sensible default when nothing has been persisted yet (e.g. brand-new
-// install). Matches the composer's empty-state height on standard density.
-const DEFAULT_HEIGHT_PX = 80
+const STORAGE_KEY_DESKTOP = "threa:composer-height:desktop"
+const STORAGE_KEY_MOBILE = "threa:composer-height:mobile"
+
+// Boot fallback when nothing is persisted yet for this viewport (e.g. a
+// brand-new install). Mobile matches the collapsed empty-state composer;
+// desktop must clear the editor + always-on action bar + `sm:` shell padding so
+// the timeline reserves enough space before the composer mounts and measures.
+const DEFAULT_HEIGHT_MOBILE_PX = 80
+const DEFAULT_HEIGHT_DESKTOP_PX = 144
+
+// Floor for the desktop boot value. A persisted desktop value below this is too
+// small to be a real desktop composer — a stale one-line disabled-banner
+// measurement, or a value left over from before per-viewport keying — and would
+// under-reserve, so it's raised to the floor. Kept below the empty desktop
+// composer height so a genuine measurement is never floored *up* (which would
+// over-reserve and reintroduce the reload jump this module exists to avoid).
+const MIN_HEIGHT_DESKTOP_PX = 120
 
 // Bounds that filter out clearly-bogus values from `localStorage` (corrupt
 // data, future viewport changes that no longer reflect the current chrome).
-// Inside this window the persisted value is "close enough" that the
-// post-mount correction is sub-pixel from the user's perspective.
 const MIN_HEIGHT_PX = 40
 const MAX_HEIGHT_PX = 400
 
-function readPersisted(): number | null {
+function isDesktopViewport(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false
+  return window.matchMedia(`(min-width: ${MOBILE_BREAKPOINT}px)`).matches
+}
+
+function storageKey(isDesktop: boolean): string {
+  return isDesktop ? STORAGE_KEY_DESKTOP : STORAGE_KEY_MOBILE
+}
+
+function readPersisted(key: string): number | null {
   if (typeof localStorage === "undefined") return null
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     if (!raw) return null
     const parsed = Number.parseInt(raw, 10)
     if (!Number.isFinite(parsed)) return null
@@ -50,18 +82,23 @@ function readPersisted(): number | null {
 }
 
 /**
- * Reads the persisted composer height (if any) and applies it as the global
- * `--composer-height` fallback on `:root`. Called once at app boot from
- * `main.tsx`. Safe to call before React mounts.
+ * Reads the persisted composer height for the current viewport (if any) and
+ * applies it as the global `--composer-height` fallback on `:root`. Called once
+ * at app boot from `main.tsx`. Safe to call before React mounts.
  */
 export function applyPersistedComposerHeight(): void {
   if (typeof document === "undefined") return
-  const persisted = readPersisted() ?? DEFAULT_HEIGHT_PX
-  document.documentElement.style.setProperty(CSS_VAR, `${persisted}px`)
+  const isDesktop = isDesktopViewport()
+  const persisted = readPersisted(storageKey(isDesktop))
+  const applied = isDesktop
+    ? Math.max(persisted ?? DEFAULT_HEIGHT_DESKTOP_PX, MIN_HEIGHT_DESKTOP_PX)
+    : (persisted ?? DEFAULT_HEIGHT_MOBILE_PX)
+  document.documentElement.style.setProperty(CSS_VAR, `${applied}px`)
 }
 
 /**
- * Persists a freshly-measured composer height for the next page load.
+ * Persists a freshly-measured composer height for the next page load, keyed by
+ * the current viewport so mobile and desktop never seed each other's fallback.
  * No-op when the value is outside the sanity window so corrupt measurements
  * (e.g. during a transient layout glitch) don't poison subsequent boots.
  */
@@ -70,7 +107,7 @@ export function persistComposerHeight(heightPx: number): void {
   const rounded = Math.round(heightPx)
   if (rounded < MIN_HEIGHT_PX || rounded > MAX_HEIGHT_PX) return
   try {
-    localStorage.setItem(STORAGE_KEY, String(rounded))
+    localStorage.setItem(storageKey(isDesktopViewport()), String(rounded))
   } catch {
     // Storage quota / private-mode failures shouldn't crash the render path.
   }
