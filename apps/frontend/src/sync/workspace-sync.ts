@@ -18,6 +18,7 @@ import type {
   WorkspaceSettings,
   FeatureFlags,
   LastMessagePreview,
+  Activity,
   ActivityCreatedPayload,
   SavedUpsertedPayload,
   SavedDeletedPayload,
@@ -50,11 +51,12 @@ import {
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
-  applyActivityCounts,
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamReadSet,
   applyStreamsReadAllOrdinals,
+  bootstrapActivityCacheFields,
+  upsertActivity,
 } from "./unread-counters"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
 
@@ -285,10 +287,6 @@ function mergeSidebarStream(
   }
 }
 
-function sumActivityCounts(activityCounts: Record<string, number>): number {
-  return Object.values(activityCounts).reduce((sum, count) => sum + count, 0)
-}
-
 function setMutedState(
   mutedStreamIds: Set<string>,
   streamId: string,
@@ -330,8 +328,6 @@ export function mergeReconnectWorkspaceBootstrap({
     workspaceBootstrap.streamMemberships.map((membership) => [membership.streamId, membership])
   )
   const unreadCounts = { ...workspaceBootstrap.unreadCounts }
-  const mentionCounts = { ...workspaceBootstrap.mentionCounts }
-  const activityCounts = { ...workspaceBootstrap.activityCounts }
   // The latest message ordinals (sync phase 2c). A stream's ordinal must
   // stay paired with whichever unreadCounts source wins for it — the implied
   // read position is latestOrdinal − unreadCount, so mixing a local unread
@@ -367,14 +363,6 @@ export function mergeReconnectWorkspaceBootstrap({
           delete messageCounts[streamId]
         }
       }
-      for (const [streamId, count] of Object.entries(localUnreadState.mentionCounts)) {
-        if (successfulStreamIds.has(streamId)) continue
-        mentionCounts[streamId] = count
-      }
-      for (const [streamId, count] of Object.entries(localUnreadState.activityCounts)) {
-        if (successfulStreamIds.has(streamId)) continue
-        activityCounts[streamId] = count
-      }
       for (const streamId of localUnreadState.mutedStreamIds) {
         if (successfulStreamIds.has(streamId)) continue
         mutedStreamIds.add(streamId)
@@ -395,8 +383,6 @@ export function mergeReconnectWorkspaceBootstrap({
 
     if (localUnreadState) {
       unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
-      mentionCounts[streamId] = localUnreadState.mentionCounts[streamId] ?? 0
-      activityCounts[streamId] = localUnreadState.activityCounts[streamId] ?? 0
       const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
       if (localOrdinal !== undefined) {
         messageCounts[streamId] = localOrdinal
@@ -429,8 +415,6 @@ export function mergeReconnectWorkspaceBootstrap({
     }
 
     unreadCounts[streamId] = bootstrap.unreadCount
-    mentionCounts[streamId] = bootstrap.mentionCount
-    activityCounts[streamId] = bootstrap.activityCount
     setMutedState(mutedStreamIds, streamId, bootstrap.stream.type, bootstrap.membership?.notificationLevel)
   }
 
@@ -438,8 +422,6 @@ export function mergeReconnectWorkspaceBootstrap({
     streamsById.delete(streamId)
     membershipsByStreamId.delete(streamId)
     delete unreadCounts[streamId]
-    delete mentionCounts[streamId]
-    delete activityCounts[streamId]
     delete messageCounts[streamId]
     mutedStreamIds.delete(streamId)
   }
@@ -449,9 +431,10 @@ export function mergeReconnectWorkspaceBootstrap({
     streams: Array.from(streamsById.values()),
     streamMemberships: Array.from(membershipsByStreamId.values()),
     unreadCounts,
-    mentionCounts,
-    activityCounts,
-    unreadActivityCount: sumActivityCounts(activityCounts),
+    // Activities are user-scoped: the reconnect bootstrap carries the viewer's
+    // full unread set, so it is authoritative (no per-stream merge). The count
+    // fields derive from it.
+    ...bootstrapActivityCacheFields(workspaceBootstrap),
     messageCounts,
     mutedStreamIds: Array.from(mutedStreamIds),
   }
@@ -1331,32 +1314,28 @@ export function registerWorkspaceSocketHandlers(
   const handleActivityCreated = (payload: ActivityCreatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    const { streamId, activityType, isSelf } = payload.activity
-    // Absolute per-stream counts for the target user (sync phase 2c);
-    // undefined on legacy payloads.
-    const counts = payload.counts
-
-    if (counts) {
-      // Absolute counts apply for self rows too — the backend inserts those
-      // already read, so the counts simply restate the unchanged truth (LWW).
-      commitCounter((state) => applyActivityCounts(state, streamId, counts))
-    } else if (!isSelf) {
-      // Legacy payload (relative bump). Self rows (the user's own message or
-      // reaction) show in the feed but must not inflate unread counts — the
-      // backend inserts them already read.
-      commitCounter((state) => ({
-        ...state,
-        mentionCounts:
-          activityType === "mention"
-            ? { ...state.mentionCounts, [streamId]: (state.mentionCounts[streamId] ?? 0) + 1 }
-            : state.mentionCounts,
-        activityCounts: {
-          ...state.activityCounts,
-          [streamId]: (state.activityCounts[streamId] ?? 0) + 1,
-        },
-        unreadActivityCount: (state.unreadActivityCount ?? 0) + 1,
-      }))
+    const a = payload.activity
+    // The held set is the source of truth (D3/D4): upsert the row by its stable
+    // id so a replayed event (sync-log catch-up, INV-53) updates in place rather
+    // than duplicating; the derived counts follow. Self rows are skipped inside
+    // upsertActivity. The payload's absolute `counts` are intentionally ignored —
+    // the badge derives from the held rows, never a separately maintained number.
+    const held: Activity = {
+      id: a.id,
+      workspaceId: payload.workspaceId,
+      userId: payload.targetUserId,
+      activityType: a.activityType,
+      streamId: a.streamId,
+      messageId: a.messageId,
+      actorId: a.actorId,
+      actorType: a.actorType,
+      context: a.context,
+      readAt: null,
+      createdAt: a.createdAt,
+      isSelf: a.isSelf,
+      emoji: a.emoji ?? null,
     }
+    commitCounter((state) => upsertActivity(state, held))
 
     // Invalidate activity feed so it refetches when the page is mounted
     // (coalesced to one invalidation at flush during catch-up).
@@ -1891,9 +1870,7 @@ export async function applyWorkspaceBootstrap(
           id: workspaceId,
           workspaceId,
           unreadCounts: bootstrap.unreadCounts,
-          mentionCounts: bootstrap.mentionCounts,
-          activityCounts: bootstrap.activityCounts,
-          unreadActivityCount: bootstrap.unreadActivityCount,
+          ...bootstrapActivityCacheFields(bootstrap),
           latestOrdinals: bootstrap.messageCounts,
           mutedStreamIds: bootstrap.mutedStreamIds,
           _cachedAt: now,
@@ -1968,9 +1945,7 @@ export async function applyWorkspaceBootstrap(
       id: workspaceId,
       workspaceId,
       unreadCounts: bootstrap.unreadCounts,
-      mentionCounts: bootstrap.mentionCounts,
-      activityCounts: bootstrap.activityCounts,
-      unreadActivityCount: bootstrap.unreadActivityCount,
+      ...bootstrapActivityCacheFields(bootstrap),
       latestOrdinals: bootstrap.messageCounts,
       mutedStreamIds: bootstrap.mutedStreamIds,
       _cachedAt: now,
@@ -2100,9 +2075,7 @@ export async function applyReconnectBootstrapBatch(
           id: workspaceId,
           workspaceId,
           unreadCounts: finalBootstrap.unreadCounts,
-          mentionCounts: finalBootstrap.mentionCounts,
-          activityCounts: finalBootstrap.activityCounts,
-          unreadActivityCount: finalBootstrap.unreadActivityCount,
+          ...bootstrapActivityCacheFields(finalBootstrap),
           latestOrdinals: finalBootstrap.messageCounts,
           mutedStreamIds: finalBootstrap.mutedStreamIds,
           _cachedAt: now,
@@ -2186,9 +2159,7 @@ export async function applyReconnectBootstrapBatch(
       id: workspaceId,
       workspaceId,
       unreadCounts: finalBootstrap.unreadCounts,
-      mentionCounts: finalBootstrap.mentionCounts,
-      activityCounts: finalBootstrap.activityCounts,
-      unreadActivityCount: finalBootstrap.unreadActivityCount,
+      ...bootstrapActivityCacheFields(finalBootstrap),
       latestOrdinals: finalBootstrap.messageCounts,
       mutedStreamIds: finalBootstrap.mutedStreamIds,
       _cachedAt: now,

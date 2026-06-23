@@ -58,7 +58,10 @@ async function putCountersIdb(workspaceId: string, mutators: CounterMutator[]): 
   if (mutators.length === 0) return
   const state = await db.unreadState.get(workspaceId)
   if (!state) return
-  await db.unreadState.put({ ...state, ...fold(mutators, state), _cachedAt: Date.now() })
+  // Normalize the held set before folding: a row cached before `unreadActivities`
+  // shipped lacks it, and the mutators read it directly.
+  const seed = { ...state, unreadActivities: state.unreadActivities ?? [] }
+  await db.unreadState.put({ ...seed, ...fold(mutators, seed), _cachedAt: Date.now() })
 }
 
 /** Write the latest preview per stream to IDB. Must run inside an open `rw`

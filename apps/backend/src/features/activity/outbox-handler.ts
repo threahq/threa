@@ -357,6 +357,7 @@ export class ActivityFeedHandler implements OutboxHandler {
               context: activity.context,
               createdAt: activity.createdAt.toISOString(),
               isSelf: activity.isSelf,
+              emoji: activity.emoji,
             },
           })
         }

@@ -83,7 +83,14 @@ export function useAutoMarkAsRead(
     const unreadCount = getUnreadCount(streamId)
     const activityCount = getActivityCount(streamId)
 
-    if (unreadCount === 0 && activityCount === 0) return
+    // D5 heal: a fully-read (`!partial`) open still fires `markAsRead` once even
+    // when nothing is locally elevated. `lastEventId` is then the true tail, so
+    // the resulting `stream:read` clears server-side activity that arrived with no
+    // new message to scroll past (e.g. a reaction while caught up) and couples
+    // other devices. The dedup ref below gates it to once per caught-up tail. A
+    // PARTIAL (mid-window frontier) open with nothing elevated still no-ops —
+    // its `lastEventId` isn't the tail, so emitting `stream:read` would be wrong.
+    if (unreadCount === 0 && activityCount === 0 && partial) return
 
     // Skip if already marked this event at the same partial-ness AND no pending
     // activities to clear. Activities can arrive via activity:created while we're

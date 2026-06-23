@@ -160,6 +160,7 @@ describe("useUnreadCounts", () => {
       mentionCounts: { stream_1: 0 },
       activityCounts: { stream_1: 0 },
       unreadActivityCount: 0,
+      unreadActivities: [],
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })
@@ -206,6 +207,7 @@ describe("useUnreadCounts", () => {
       mentionCounts: { stream_1: 0 },
       activityCounts: { stream_1: 0 },
       unreadActivityCount: 0,
+      unreadActivities: [],
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })

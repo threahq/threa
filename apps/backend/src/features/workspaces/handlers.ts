@@ -199,11 +199,12 @@ export function createWorkspaceHandlers({
         userId
       )
 
-      const [unreadCountsMap, activityCounts] = await Promise.all([
+      const [unreadCountsMap, activityCounts, unreadActivities] = await Promise.all([
         streamService.getUnreadCounts(
           streamMemberships.map((m) => ({ streamId: m.streamId, lastReadEventId: m.lastReadEventId }))
         ),
         activityService?.getUnreadCounts(userId, workspaceId),
+        activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
       ])
       const unreadCounts: Record<string, number> = {}
       const messageCounts: Record<string, number> = {}
@@ -266,6 +267,7 @@ export function createWorkspaceHandlers({
           mentionCounts,
           activityCounts: activityCountsPerStream,
           unreadActivityCount: activityCounts?.total ?? 0,
+          unreadActivities: unreadActivities ?? [],
           mutedStreamIds,
           dmPeers,
           userPreferences,
