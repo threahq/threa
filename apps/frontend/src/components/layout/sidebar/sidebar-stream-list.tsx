@@ -257,7 +257,7 @@ export function SidebarStreamList({
           if (isUnread) {
             unreadFooter =
               items.length === 0 ? (
-                <p className="mt-0.5 px-3 py-1 text-center text-[11px] italic text-muted-foreground/50">
+                <p className="mt-0.5 flex min-h-[2.25rem] items-center justify-center px-3 text-center text-[11px] italic text-muted-foreground/50">
                   All caught up
                 </p>
               ) : (
@@ -265,7 +265,7 @@ export function SidebarStreamList({
                   type="button"
                   onClick={onClearReadUnread}
                   disabled={!hasReadResidue}
-                  className="mt-0.5 flex w-full items-center justify-center px-3 py-1 text-[11px] uppercase tracking-wide text-muted-foreground/70 transition-colors enabled:hover:text-foreground disabled:opacity-40"
+                  className="mt-0.5 flex min-h-[2.25rem] w-full items-center justify-center px-3 text-[11px] uppercase tracking-wide text-muted-foreground/70 transition-colors enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Clear read
                 </button>

@@ -243,14 +243,19 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
   const row = dragEnabled ? <DraggableStreamRow streamId={stream.id}>{item}</DraggableStreamRow> : item
-  const dimmed = opts.dimReadRows && opts.getUnreadCount(stream.id) === 0
-  return dimmed ? (
-    <div key={stream.id} className="opacity-50 transition-opacity">
-      {row}
-    </div>
-  ) : (
-    <Fragment key={stream.id}>{row}</Fragment>
-  )
+  // The Unread section dims already-read rows in place. Keep a stable <div>
+  // wrapper there (toggling opacity via class) so reading a row animates instead
+  // of remounting it — a <div>/<Fragment> swap would change the element type and
+  // tear down the row. Other sections stay wrapper-free.
+  if (opts.dimReadRows) {
+    const dimmed = opts.getUnreadCount(stream.id) === 0
+    return (
+      <div key={stream.id} className={cn("transition-opacity", dimmed && "opacity-50")}>
+        {row}
+      </div>
+    )
+  }
+  return <Fragment key={stream.id}>{row}</Fragment>
 }
 
 /** Sum unread counts across a list of streams. */

@@ -49,13 +49,14 @@ export type SidebarSectionSpec =
    */
   | { kind: "custom"; sectionId: string; name: string; streamIds: string[] }
   /**
-   * The Unread section: every stream the viewer has unread (non-muted) messages
-   * in, regardless of the bucket / type / custom section / label it otherwise
-   * sits in. When present it **trumps the smart/type buckets** — an unread stream
-   * is pulled out of them and shown here instead. A stream filed into a custom
-   * section or carrying a pinned label keeps its hard location: it stays in that
-   * home (rendered dimmed) AND surfaces here, so it never looks like it's in two
-   * places at once. Draws no membership of its own; the unread signal is live.
+   * The Unread tray: an opt-in section that gathers the viewer's unread streams
+   * into one place. When present it **trumps every other section** — a member is
+   * drawn out of its smart/type bucket AND its custom-section / label home and
+   * shown only here, so there's one copy (no dimmed duplicate). Carries no
+   * persisted membership of its own: the set is resolved on the client and is
+   * sticky for the session (see `useStickyUnread`) — a stream enters when it goes
+   * unread and stays, de-emphasized, until the viewer leaves the workspace or
+   * clears it, rather than tracking the live unread signal moment to moment.
    */
   | { kind: "unread" }
   /**
