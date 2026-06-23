@@ -6,7 +6,7 @@ import { PersonaAvatar } from "@/components/persona-avatar"
 import { RelativeTime } from "@/components/relative-time"
 import { useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { stripMarkdown } from "@/lib/markdown/strip"
+import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import type { BoardPost } from "@threa/types"
 
 interface BoardCardProps {
@@ -44,7 +44,7 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
   const to = `/w/${workspaceId}/s/${conversation.streamId}?convView=open&conv=${conversation.id}`
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
   const messageCount = conversation.messageIds.length
-  const body = openingMessage ? stripMarkdown(openingMessage.contentMarkdown).trim() : ""
+  const body = openingMessage ? stripMarkdownToInline(openingMessage.contentMarkdown, toEmoji).trim() : ""
 
   const authorId = openingMessage?.authorId ?? null
   const authorType = openingMessage?.authorType ?? null
@@ -99,9 +99,7 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
 
           {topic && <p className="mt-0.5 truncate text-xs text-muted-foreground">{topic}</p>}
 
-          {body && (
-            <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-relaxed line-clamp-4">{body}</p>
-          )}
+          {body && <p className="mt-1.5 break-words text-sm leading-relaxed line-clamp-4">{body}</p>}
 
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
             {visibleReactions.map(([shortcode, users]) => (

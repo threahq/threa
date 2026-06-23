@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, render, screen } from "@testing-library/react"
+import { act, render, screen, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
@@ -130,6 +130,25 @@ describe("BoardPage", () => {
     // No emoji map in the test cache, so the shortcode renders as-is with its count.
     expect(screen.getByText(":tada:")).toBeTruthy()
     expect(screen.getByText("2")).toBeTruthy()
+  })
+
+  it("groups posts into recency sections under the right headers", async () => {
+    // Timestamps relative to now so the buckets are deterministic regardless of
+    // when the suite runs (recencyBucket compares against the current day).
+    const today = new Date().toISOString()
+    const fiveDaysAgo = new Date(Date.now() - 5 * 86_400_000).toISOString()
+    mountBoard([
+      makePost({ id: "conv_today", topicSummary: "Fresh topic", lastActivityAt: today }),
+      makePost({ id: "conv_old", streamId: "stream_2", topicSummary: "Older topic", lastActivityAt: fiveDaysAgo }),
+    ])
+
+    const todaySection = (await screen.findByText("Today")).closest("section")
+    const weekSection = screen.getByText("Earlier this week").closest("section")
+    expect(todaySection).not.toBeNull()
+    expect(weekSection).not.toBeNull()
+    // Each post sits under its own recency header.
+    expect(within(todaySection as HTMLElement).getByText("Fresh topic")).toBeTruthy()
+    expect(within(weekSection as HTMLElement).getByText("Older topic")).toBeTruthy()
   })
 
   it("shows an error state with a retry, not the empty state, when the fetch fails", async () => {
