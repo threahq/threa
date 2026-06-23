@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
@@ -63,12 +63,16 @@ function makePost(
 
 function mountBoard(
   posts: BoardPost[],
-  opts: { nextCursor?: string | null; fail?: boolean; boardFlag?: "on" | "off" } = {}
+  opts: { nextCursor?: string | null; fail?: boolean; boardFlag?: "on" | "off"; failMessages?: boolean } = {}
 ) {
-  const { nextCursor = null, fail = false, boardFlag = "on" } = opts
+  const { nextCursor = null, fail = false, boardFlag = "on", failMessages = false } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
     return { posts, nextCursor }
+  })
+  const getMessages = vi.fn(async () => {
+    if (failMessages) throw new Error("boom")
+    return []
   })
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   // The board is gated behind the board-view flag, read from the bootstrap cache.
@@ -76,9 +80,7 @@ function mountBoard(
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ServicesProvider
-          services={{ conversations: { listByWorkspace, getMessages: vi.fn(async () => []) } as never }}
-        >
+        <ServicesProvider services={{ conversations: { listByWorkspace, getMessages } as never }}>
           <SidebarProvider>
             <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board`]}>
               <Routes>
@@ -131,6 +133,17 @@ describe("BoardPage", () => {
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)])
     expect(await screen.findByText("1 more message")).toBeTruthy()
     expect(screen.queryByText("1 more messages")).toBeNull()
+  })
+
+  it("offers a retry when expanding the middle fails", async () => {
+    const recent = [
+      makeOpeningMessage({ id: "m3" }),
+      makeOpeningMessage({ id: "m4" }),
+      makeOpeningMessage({ id: "m5" }),
+    ]
+    mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)], { failMessages: true })
+    fireEvent.click(await screen.findByText("1 more message"))
+    expect(await screen.findByText("Couldn't load messages. Retry.")).toBeTruthy()
   })
 
   it("shows no expander when the whole conversation already fits", async () => {

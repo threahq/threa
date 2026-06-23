@@ -63,7 +63,11 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
   const hiddenCount = Math.max(0, messageCount - (openingMessage ? 1 : 0) - recentMessages.length)
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
 
-  const { data: allMessages } = useQuery({
+  const {
+    data: allMessages,
+    isError: expandFailed,
+    refetch: refetchMessages,
+  } = useQuery({
     queryKey: conversationKeys.messages(conversation.id),
     queryFn: () => conversationService.getMessages(workspaceId, conversation.id),
     enabled: expanded,
@@ -74,7 +78,7 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
   // Collapsed: just the trailing replies the feed already carried.
   const replies: RenderableMessage[] =
     expanded && allMessages ? allMessages.filter((m) => m.id !== openingMessage?.id) : recentMessages
-  const loadingMore = expanded && !allMessages
+  const loadingMore = expanded && !allMessages && !expandFailed
 
   return (
     <div className="rounded-xl border bg-card p-3 sm:p-4">
@@ -102,7 +106,7 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
           />
         )}
 
-        {(replies.length > 0 || hiddenCount > 0 || loadingMore) && (
+        {(replies.length > 0 || hiddenCount > 0 || loadingMore || (expanded && expandFailed)) && (
           <div className="ml-3 mt-1 flex flex-col gap-1 border-l pl-3 sm:ml-4 sm:pl-4">
             {!expanded && hiddenCount > 0 && (
               <button
@@ -115,6 +119,15 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
               </button>
             )}
             {loadingMore && <span className="py-0.5 text-xs text-muted-foreground">Loading messages…</span>}
+            {expanded && expandFailed && (
+              <button
+                type="button"
+                onClick={() => void refetchMessages()}
+                className="w-fit py-0.5 text-xs text-destructive underline underline-offset-2"
+              >
+                Couldn't load messages. Retry.
+              </button>
+            )}
             {replies.map((message) => (
               <PostMessage
                 key={message.id}
