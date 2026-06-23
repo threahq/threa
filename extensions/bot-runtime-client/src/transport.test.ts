@@ -75,16 +75,24 @@ describe("HTTP fallback (no socket connected)", () => {
 
     expect(calls).toHaveLength(2)
     expect(calls[0]!.url).toBe("https://app.example.test/api/v1/workspaces/ws_1/bot-invocations/binv_1/steps")
-    expect(calls[0]!.body).toMatchObject({
+    // One object comparison per POST (INV-24); each carries a minted idempotency key.
+    expect(calls[0]!.body).toEqual({
       instanceId: "inst_42",
       claimToken: "tok_1",
       stepType: "thinking",
       content: "a",
       statusText: "Working…",
+      clientStepId: expect.any(String),
     })
-    // Each step carries a minted idempotency key so a re-send dedups server-side.
-    expect(typeof calls[0]!.body!.clientStepId).toBe("string")
-    expect(calls[1]!.body).toMatchObject({ stepType: "tool_call", content: "b" })
+    expect(calls[1]!.body).toEqual({
+      instanceId: "inst_42",
+      claimToken: "tok_1",
+      stepType: "tool_call",
+      content: "b",
+      statusText: "Working…",
+      clientStepId: expect.any(String),
+    })
+    // Distinct keys per step so each frame dedups independently.
     expect(calls[0]!.body!.clientStepId).not.toBe(calls[1]!.body!.clientStepId)
   })
 
@@ -176,5 +184,31 @@ describe("WS frame sent but ack timed out (idempotency)", () => {
     })
 
     expect(calls.some((c) => c.url.includes("/bot-runtime/presence"))).toBe(true)
+  })
+})
+
+describe("the routed writes never reject (best-effort contract)", () => {
+  // Callers (the renew setInterval, pi-remote's per-step await) rely on these
+  // resolving even when the HTTP fallback's fetch throws — the fallbacks swallow
+  // internally. This locks that contract so a future edit can't reintroduce an
+  // unhandled rejection / aborted turn.
+  it("recordSteps / renewClaim / updatePresence all resolve when fetch throws", async () => {
+    stubFetch(() => {
+      throw new Error("network down")
+    })
+    const transport = makeTransport() // not connected → HTTP fallback path
+
+    await expect(
+      transport.recordSteps("binv_1", "tok_1", [{ stepType: "thinking", content: "a" }])
+    ).resolves.toBeUndefined()
+    await expect(transport.renewClaim("binv_1", "tok_1", 120)).resolves.toEqual({ notFound: false })
+    await expect(
+      transport.updatePresence({
+        runtimeKind: "pi-local",
+        instanceId: "inst_42",
+        status: "busy",
+        acceptingInvocations: false,
+      })
+    ).resolves.toBeUndefined()
   })
 })

@@ -621,15 +621,21 @@ export class ChannelServer {
     this.renewTimer = setInterval(() => {
       for (const [id, entry] of [...this.inflight]) {
         // renewClaim prefers the socket and falls back to HTTP on its own (the
-        // lease must never lapse because the socket flapped); it never throws.
-        void this.transport.renewClaim(id, entry.invocation.claimToken, CLAIM_TTL_SECONDS).then((result) => {
-          if (result.notFound) {
-            // The claim's gone server-side; drop it and resync presence so a
-            // last-in-flight loss doesn't strand the runtime as busy.
-            this.clearInflight(id)
-            void this.syncPresence()
-          }
-        })
+        // lease must never lapse because the socket flapped); it never rejects.
+        // The trailing .catch is fire-and-forget hygiene: a discarded promise in
+        // a setInterval must never surface as an unhandled rejection, even if a
+        // future transport edit broke the no-reject contract or the .then body threw.
+        void this.transport
+          .renewClaim(id, entry.invocation.claimToken, CLAIM_TTL_SECONDS)
+          .then((result) => {
+            if (result.notFound) {
+              // The claim's gone server-side; drop it and resync presence so a
+              // last-in-flight loss doesn't strand the runtime as busy.
+              this.clearInflight(id)
+              void this.syncPresence()
+            }
+          })
+          .catch((error) => log(`renew ${id} failed: ${this.summarize(error)}`))
       }
     }, RENEW_INTERVAL_MS)
   }

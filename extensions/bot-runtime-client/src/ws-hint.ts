@@ -17,8 +17,11 @@ export function parseWsHint(value: unknown): WsHint | undefined {
   if (!isObject(value)) return undefined
   const url = typeof value.url === "string" ? value.url.trim() : ""
   if (!url) return undefined
-  const path = typeof value.path === "string" && value.path.trim() ? value.path : "/socket.io/"
-  const namespace = typeof value.namespace === "string" && value.namespace.trim() ? value.namespace : "/bot"
+  // Use the trimmed value, not the raw one — `buildBotSocketUrl` concatenates
+  // `namespace` onto the pathname verbatim, so a stray-whitespace hint would
+  // otherwise produce a malformed connect URL.
+  const path = typeof value.path === "string" && value.path.trim() ? value.path.trim() : "/socket.io/"
+  const namespace = typeof value.namespace === "string" && value.namespace.trim() ? value.namespace.trim() : "/bot"
   return { url, path, namespace }
 }
 

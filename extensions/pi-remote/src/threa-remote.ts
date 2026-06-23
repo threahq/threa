@@ -705,15 +705,19 @@ async function recordInvocationTraceStep(
   // The high-volume path: a turn fires one of these per tool call + per
   // assistant message (150+ in a long turn). Routing them over the socket is
   // the whole point — each one was an edge-Worker request on HTTP. Best-effort:
-  // the transport never throws and a dropped trace step only dulls the trace.
+  // the transport doesn't reject (its HTTP fallback swallows), and the explicit
+  // `.catch` restores the swallow the pre-migration POST had, so a dropped trace
+  // step only dulls the trace and can never abort the turn.
   if (transport) {
-    await transport.recordSteps(
-      invocation.id,
-      invocation.claimToken,
-      [{ stepType, content: trimmed }],
-      status,
-      getInvocationInstanceId(invocation)
-    )
+    await transport
+      .recordSteps(
+        invocation.id,
+        invocation.claimToken,
+        [{ stepType, content: trimmed }],
+        status,
+        getInvocationInstanceId(invocation)
+      )
+      .catch(() => undefined)
     return
   }
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/steps`, {
@@ -1063,12 +1067,11 @@ async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void
   // turn runs to completion and surfaces the gone claim at complete() (404). We
   // do log it, so the otherwise-silent "claim vanished server-side" is observable.
   if (transport) {
-    const { notFound } = await transport.renewClaim(
-      invocation.id,
-      invocation.claimToken,
-      120,
-      getInvocationInstanceId(invocation)
-    )
+    // The transport doesn't reject (its HTTP fallback swallows); the `.catch`
+    // is defense-in-depth so a renew can never abort the surrounding claim pass.
+    const { notFound } = await transport
+      .renewClaim(invocation.id, invocation.claimToken, 120, getInvocationInstanceId(invocation))
+      .catch(() => ({ notFound: false }))
     if (notFound) {
       console.error(`[threa-remote] renew ${invocation.id}: claim gone server-side; turn will close on completion`)
     }
