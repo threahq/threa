@@ -1058,10 +1058,20 @@ async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void
   if (!config) return
   // The transport prefers the socket and falls back to HTTP itself (the lease
   // must never lapse because the socket flapped); it never throws, so a renew
-  // failure no longer aborts the surrounding claim pass. A gone claim
-  // (`notFound`) is left for the eventual complete() to surface, as before.
+  // failure no longer aborts the surrounding claim pass. Unlike claude-code-remote
+  // we don't drop the turn on `notFound` — pi is mid-execution locally, so the
+  // turn runs to completion and surfaces the gone claim at complete() (404). We
+  // do log it, so the otherwise-silent "claim vanished server-side" is observable.
   if (transport) {
-    await transport.renewClaim(invocation.id, invocation.claimToken, 120, getInvocationInstanceId(invocation))
+    const { notFound } = await transport.renewClaim(
+      invocation.id,
+      invocation.claimToken,
+      120,
+      getInvocationInstanceId(invocation)
+    )
+    if (notFound) {
+      console.error(`[threa-remote] renew ${invocation.id}: claim gone server-side; turn will close on completion`)
+    }
     return
   }
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/renew`, {

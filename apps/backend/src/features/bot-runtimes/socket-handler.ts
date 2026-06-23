@@ -76,7 +76,10 @@ const statusTextSchema = z.string().max(200).optional()
 // POST /bot-runtime/presence. Mirrors `upsertPresenceSchema` (INV-31 keeps the
 // HTTP body and the WS frame in lockstep; the duplication is deliberate to
 // avoid a runtime import edge from bot-runtimes back into public-api).
-const presenceUpdateSchema = z
+// Exported so a parity test can assert these stay in lockstep with their HTTP
+// counterparts (the duplication is deliberate — see above — so a test is the
+// guard against field-level drift).
+export const presenceUpdateSchema = z
   .object({
     runtimeKind: z.enum(BOT_RUNTIME_KINDS),
     instanceId: instanceIdSchema,
@@ -95,7 +98,7 @@ const presenceUpdateSchema = z
 
 // WS frame for `bot:invocation:renew` — POST /bot-invocations/:id/renew, with
 // the invocation id moved from the path into the frame.
-const invocationRenewSchema = z.object({
+export const invocationRenewSchema = z.object({
   invocationId: invocationIdSchema,
   instanceId: instanceIdSchema,
   claimToken: claimTokenSchema,
@@ -105,7 +108,7 @@ const invocationRenewSchema = z.object({
 // WS frame for `bot:invocation:steps` — the batched form of
 // POST /bot-invocations/:id/steps. A single step is a one-element array, so the
 // noisy per-tool-call fan-out coalesces into one frame + one ack.
-const invocationStepFrameSchema = z.object({
+export const invocationStepFrameSchema = z.object({
   stepType: z.enum(AGENT_STEP_TYPES),
   content: z.string().min(1).max(10_000),
   // Client idempotency key: a step re-sent under the same id dedups server-side.
