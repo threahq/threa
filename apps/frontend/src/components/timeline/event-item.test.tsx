@@ -113,6 +113,26 @@ describe("EventItem", () => {
       expect(screen.getByTestId("message-event")).toBeInTheDocument()
     })
 
+    it.each(["thread_created", "stream_archived", "stream_unarchived"] as const)(
+      "should render SystemEvent for %s events",
+      (eventType) => {
+        const event: StreamEvent = {
+          id: `evt_${eventType}`,
+          streamId,
+          sequence: "1",
+          eventType,
+          actorId: "member_123",
+          actorType: "user",
+          createdAt: new Date().toISOString(),
+          payload: {},
+        }
+
+        render(<EventItem event={event} workspaceId={workspaceId} streamId={streamId} />)
+
+        expect(screen.getByTestId("system-event")).toBeInTheDocument()
+      }
+    )
+
     it("should render MemoCapturedEvent for memos:captured events", () => {
       const event: StreamEvent = {
         id: "evt_capture",
