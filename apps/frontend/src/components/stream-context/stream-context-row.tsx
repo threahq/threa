@@ -249,7 +249,10 @@ export function StreamContextRow({
               {badge}
               <span className="truncate text-sm font-medium leading-snug">{primaryText}</span>
               {item.category === "link" && (
-                <ExternalLink className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                // Persistent (not hover-gated) so a link row reads as "opens
+                // externally" at a glance, distinct from the rows that jump to
+                // the message — and visible on touch, where there is no hover.
+                <ExternalLink className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
               )}
             </div>
             {secondaryText && <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondaryText}</p>}
@@ -263,7 +266,7 @@ export function StreamContextRow({
               onClick={() => jumpTarget && onJumpToMessage(jumpTarget)}
               aria-label="Go to message"
               title="Go to message"
-              className="relative z-20 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              className="relative z-20 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
             >
               <CornerDownRight className="size-3.5" />
             </button>

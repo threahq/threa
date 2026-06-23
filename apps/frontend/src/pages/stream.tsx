@@ -147,16 +147,18 @@ export function StreamPage() {
     )
   }
 
-  // "In this stream" overview panel. Ephemeral view chrome (INV-59) like the
+  // "In this stream" overview panel. The `context` param doubles as open-state
+  // (present ⇒ open) and the selected category filter ("all" by default); the
+  // panel reads/writes the filter value. Ephemeral view chrome (INV-59) like the
   // conversation overlay, so toggling replaces history rather than pushing.
-  const isContextOpen = searchParams.get("context") === "open"
+  const isContextOpen = searchParams.get("context") !== null
 
   const setContextOpen = (open: boolean) => {
     setSearchParams(
       (prev) => {
         const newParams = new URLSearchParams(prev)
         if (open) {
-          newParams.set("context", "open")
+          newParams.set("context", "all")
         } else {
           newParams.delete("context")
         }
@@ -165,6 +167,23 @@ export function StreamPage() {
       { replace: true }
     )
   }
+
+  // A thread opens in the same right-edge panel slot, so the context overlay
+  // must yield it — and its `?context` param must not outlive the thread, or it
+  // silently reopens when the thread closes. Opening a thread from the panel
+  // already clears it (openThreadFromContext); this covers opening one from the
+  // timeline while the panel is open.
+  useEffect(() => {
+    if (!isPanelOpen || !isContextOpen) return
+    setSearchParams(
+      (prev) => {
+        const newParams = new URLSearchParams(prev)
+        newParams.delete("context")
+        return newParams
+      },
+      { replace: true }
+    )
+  }, [isPanelOpen, isContextOpen, setSearchParams])
 
   // Jump to a source message from the panel: scroll the timeline to it and
   // dismiss the overlay so the message is visible underneath. A fresh push

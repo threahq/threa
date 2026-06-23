@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -17,21 +17,13 @@ interface StreamContextSurfaceProps {
 /**
  * Hosts the "In this stream" overview: a right-side slide-out on desktop and a
  * bottom drawer on mobile. The same {@link StreamContextPanel} renders inside
- * both. Desktop stays mounted so the slide transition can play on close.
+ * both. Desktop uses the Radix Dialog primitive (not a hand-rolled overlay) so
+ * focus is trapped while open, returned to the trigger on close, and the closed
+ * panel leaves the tab order entirely instead of lingering off-screen.
  */
 export function StreamContextSurface(props: StreamContextSurfaceProps) {
   const { isMobile } = useSidebar()
   const { open, onClose } = props
-
-  // Escape closes the desktop slide-out (the mobile drawer handles its own).
-  useEffect(() => {
-    if (isMobile || !open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [isMobile, open, onClose])
 
   const panel = (
     <StreamContextPanel
@@ -59,27 +51,26 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
   }
 
   return (
-    <>
-      <div
-        aria-hidden
-        onClick={onClose}
-        className={cn(
-          "fixed inset-0 z-40 bg-black/40 transition-opacity duration-300",
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      <div
-        role="dialog"
-        aria-label="In this stream"
-        aria-hidden={!open}
-        className={cn(
-          "fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-full flex-col border-l bg-background shadow-xl",
-          "transition-transform duration-300 ease-out",
-          open ? "translate-x-0" : "pointer-events-none translate-x-full"
-        )}
-      >
-        {panel}
-      </div>
-    </>
+    <DialogPrimitive.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          className={cn(
+            "fixed inset-0 z-40 bg-black/40",
+            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+          )}
+        />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          className={cn(
+            "fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-full flex-col border-l bg-background shadow-xl outline-none",
+            "transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out",
+            "data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right data-[state=closed]:duration-200 data-[state=open]:duration-300"
+          )}
+        >
+          <DialogPrimitive.Title className="sr-only">In this stream</DialogPrimitive.Title>
+          {panel}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   )
 }

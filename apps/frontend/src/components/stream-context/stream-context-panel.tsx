@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
+import { useSearchParams } from "react-router-dom"
 import { PanelRight, Sparkles } from "lucide-react"
 import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -17,6 +18,12 @@ const CATEGORY_LABELS: Record<ContextCategory, string> = {
   file: "Files",
   memo: "Memories",
   thread: "Threads",
+}
+
+function parseFilter(raw: string | null): Filter {
+  if (raw === "all") return "all"
+  if (raw && (CONTEXT_CATEGORIES as string[]).includes(raw)) return raw as ContextCategory
+  return "all"
 }
 
 /** A gold milestone dot + date label seated on the timeline spine. */
@@ -51,7 +58,23 @@ export function StreamContextPanel({
   const events = useStreamEvents(streamId)
   const isLoading = events === undefined
   const { items, counts, total } = useMemo(() => deriveStreamContext(events), [events])
-  const [filter, setFilter] = useState<Filter>("all")
+
+  // The active filter lives in the URL (the `context` param doubles as the
+  // open-state + the selected category), so a refresh or shared link lands on
+  // the same view (INV-59). Changing it replaces history — it's view chrome,
+  // not navigation.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filter = parseFilter(searchParams.get("context"))
+  const setFilter = (value: Filter) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.set("context", value)
+        return next
+      },
+      { replace: true }
+    )
+  }
 
   // A previously-selected filter can empty out as the live event set changes
   // (e.g. a thread's last reply scrolls out of the loaded window); fall back to
@@ -106,7 +129,9 @@ export function StreamContextPanel({
           className="absolute bottom-3 left-6 top-3 w-px bg-gradient-to-b from-primary/40 via-border to-border"
         />
         {groups.map((group) => (
-          <div key={group.label} className="pt-3 first:pt-0">
+          // Key on a stable item id, not the display label (date labels can
+          // repeat across years and would collide).
+          <div key={group.items[0].key} className="pt-3 first:pt-0">
             <TimelineDayMarker label={group.label} />
             {group.items.map((item) => (
               <StreamContextRow
@@ -147,6 +172,7 @@ export function StreamContextPanel({
               <button
                 key={chip.value}
                 type="button"
+                aria-pressed={active}
                 onClick={() => setFilter(chip.value)}
                 className={cn(
                   "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
@@ -163,7 +189,9 @@ export function StreamContextPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2">{body}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        {body}
+      </div>
     </div>
   )
 }

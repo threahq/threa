@@ -149,6 +149,10 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
       // `message_link` previews point at other in-app messages, not the web —
       // they belong to "related", not the external-links list.
       if (preview.contentType === "message_link") continue
+      // The href renders into an <a> (React does not sanitize href), and unlike
+      // the bare/markdown passes this URL never went through an http(s) regex —
+      // gate the scheme so a non-http preview url can't reach the anchor.
+      if (!/^https?:\/\//i.test(preview.url)) continue
       const norm = normalizeUrl(preview.url)
       seenInMessage.add(norm)
       const existing = links.get(norm)
