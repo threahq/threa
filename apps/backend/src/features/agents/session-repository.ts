@@ -1,5 +1,6 @@
 import type { AgentSessionStatus, AgentStepType, TraceSource } from "@threa/types"
 import { AgentSessionStatuses, AgentStepTypes } from "@threa/types"
+import { isUniqueViolation } from "@threa/backend-common"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
@@ -166,6 +167,13 @@ export interface AppendStepParams {
   tokensUsed?: number
   startedAt: Date
   completedAt?: Date
+  /**
+   * Client-supplied idempotency key. When set, a re-send under the same key
+   * dedups to the row the first append created instead of inserting a duplicate
+   * step (partial-unique `agent_session_steps_client_step_id_key`). Callers that
+   * omit it keep the prior behavior unchanged.
+   */
+  clientStepId?: string
 }
 
 // Mappers
@@ -663,33 +671,52 @@ export const AgentSessionRepository = {
     }
 
     while (true) {
-      const result = await db.query<StepRow>(
-        sql`
-          INSERT INTO agent_session_steps (
-            id, session_id, step_number, step_type, content,
-            content_ciphertext, content_envelope, sources,
-            message_id, tokens_used, started_at, completed_at
+      try {
+        const result = await db.query<StepRow>(
+          sql`
+            INSERT INTO agent_session_steps (
+              id, session_id, step_number, step_type, content,
+              content_ciphertext, content_envelope, sources,
+              message_id, tokens_used, started_at, completed_at, client_step_id
+            )
+            SELECT
+              ${params.id},
+              ${params.sessionId},
+              COALESCE(MAX(step_number), 0) + 1,
+              ${params.stepType},
+              ${params.content != null ? JSON.stringify(params.content) : null},
+              ${params.contentCiphertext ?? null},
+              ${params.contentEnvelope ? JSON.stringify(params.contentEnvelope) : null},
+              ${params.sources ? JSON.stringify(params.sources) : null},
+              ${params.messageId ?? null},
+              ${params.tokensUsed ?? null},
+              ${params.startedAt},
+              ${params.completedAt ?? null},
+              ${params.clientStepId ?? null}
+            FROM agent_session_steps
+            WHERE session_id = ${params.sessionId}
+            ON CONFLICT (session_id, step_number) DO NOTHING
+            RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
+          `
+        )
+        if (result.rows[0]) return mapRowToStep(result.rows[0])
+        // No row: a concurrent insert took this step_number. Recompute MAX+1 and retry.
+      } catch (error) {
+        // A re-send under the same idempotency key hits the partial-unique index
+        // (step_number is free, so the step_number ON CONFLICT didn't fire — the
+        // client_step_id collision surfaces as a raw 23505). Return the row the
+        // first append created rather than appending a duplicate trace step.
+        if (params.clientStepId && isUniqueViolation(error, "agent_session_steps_client_step_id_key")) {
+          const existing = await db.query<StepRow>(
+            sql`
+              SELECT ${sql.raw(STEP_SELECT_FIELDS)} FROM agent_session_steps
+              WHERE session_id = ${params.sessionId} AND client_step_id = ${params.clientStepId}
+            `
           )
-          SELECT
-            ${params.id},
-            ${params.sessionId},
-            COALESCE(MAX(step_number), 0) + 1,
-            ${params.stepType},
-            ${params.content != null ? JSON.stringify(params.content) : null},
-            ${params.contentCiphertext ?? null},
-            ${params.contentEnvelope ? JSON.stringify(params.contentEnvelope) : null},
-            ${params.sources ? JSON.stringify(params.sources) : null},
-            ${params.messageId ?? null},
-            ${params.tokensUsed ?? null},
-            ${params.startedAt},
-            ${params.completedAt ?? null}
-          FROM agent_session_steps
-          WHERE session_id = ${params.sessionId}
-          ON CONFLICT (session_id, step_number) DO NOTHING
-          RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
-        `
-      )
-      if (result.rows[0]) return mapRowToStep(result.rows[0])
+          if (existing.rows[0]) return mapRowToStep(existing.rows[0])
+        }
+        throw error
+      }
     }
   },
 

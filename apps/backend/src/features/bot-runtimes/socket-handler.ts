@@ -108,6 +108,8 @@ const invocationRenewSchema = z.object({
 const invocationStepFrameSchema = z.object({
   stepType: z.enum(AGENT_STEP_TYPES),
   content: z.string().min(1).max(10_000),
+  // Client idempotency key: a step re-sent under the same id dedups server-side.
+  clientStepId: z.string().min(1).max(128).optional(),
 })
 const invocationStepsSchema = z.object({
   invocationId: invocationIdSchema,

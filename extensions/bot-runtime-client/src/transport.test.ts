@@ -75,14 +75,17 @@ describe("HTTP fallback (no socket connected)", () => {
 
     expect(calls).toHaveLength(2)
     expect(calls[0]!.url).toBe("https://app.example.test/api/v1/workspaces/ws_1/bot-invocations/binv_1/steps")
-    expect(calls[0]!.body).toEqual({
+    expect(calls[0]!.body).toMatchObject({
       instanceId: "inst_42",
       claimToken: "tok_1",
       stepType: "thinking",
       content: "a",
       statusText: "Working…",
     })
+    // Each step carries a minted idempotency key so a re-send dedups server-side.
+    expect(typeof calls[0]!.body!.clientStepId).toBe("string")
     expect(calls[1]!.body).toMatchObject({ stepType: "tool_call", content: "b" })
+    expect(calls[0]!.body!.clientStepId).not.toBe(calls[1]!.body!.clientStepId)
   })
 
   it("renews over HTTP and reports notFound on a 404", async () => {

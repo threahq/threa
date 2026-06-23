@@ -1127,7 +1127,7 @@ export function createPublicApiHandlers({
         invocationId: req.params.invocationId,
         instanceId: data.instanceId,
         claimToken: data.claimToken,
-        steps: [{ stepType: data.stepType, content: data.content }],
+        steps: [{ stepType: data.stepType, content: data.content, clientStepId: data.clientStepId }],
         statusText: data.statusText,
       })
       res.json({

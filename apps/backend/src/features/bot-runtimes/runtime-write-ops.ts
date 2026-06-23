@@ -76,6 +76,8 @@ export interface RenewClaimResult {
 export interface RecordStepFrame {
   stepType: AgentStepType
   content: string
+  /** Client idempotency key — a re-send under the same key dedups to the first row. */
+  clientStepId?: string
 }
 
 export interface RecordStepsParams {

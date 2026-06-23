@@ -202,6 +202,10 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
     })
     const recorded: RecordStepResult[] = []
     for (const frame of params.steps) {
+      // The frames share one sink, so hand it this frame's idempotency key before
+      // driving its events through the projector (today's wire writes one step per
+      // frame, so a single pending value is consumed by the one `record` call).
+      sink.pendingClientStepId = frame.clientStepId
       for (const event of botInvocationStepEvents({
         stepType: frame.stepType,
         content: sanitizeInvocationStepContent(frame.content),

@@ -110,6 +110,14 @@ interface BotInvocationTraceSinkDeps {
 export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
   /** The last persisted step row — the `/steps` handler's response body needs its id. */
   lastStep: AgentSessionStep | null = null
+  /**
+   * Idempotency key for the NEXT step this sink records. The frames in a batch
+   * share one projector + sink, so the caller sets this before driving each
+   * frame's events through the projector; `record` consumes it so a re-sent step
+   * dedups to the existing row. Today's wire writes one step per frame, so a
+   * single pending value per frame is sufficient.
+   */
+  pendingClientStepId: string | undefined = undefined
 
   constructor(private readonly deps: BotInvocationTraceSinkDeps) {}
 
@@ -130,6 +138,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         messageId: step.messageId,
         startedAt,
         completedAt,
+        clientStepId: this.pendingClientStepId,
       })
       await AgentSessionRepository.updateCurrentStepType(client, sessionId, step.stepType)
       return inserted

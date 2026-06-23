@@ -183,11 +183,14 @@ export class BotRuntimeTransport {
     instanceId: string = this.hello.instanceId
   ): Promise<void> {
     if (steps.length === 0) return
+    // Stamp each frame with an idempotency key (shared across the WS frame and the
+    // HTTP fallback) so the server can never persist the same step twice.
+    const keyed = steps.map((step) => ({ ...step, clientStepId: step.clientStepId ?? crypto.randomUUID() }))
     const { sent, ack } = await this.emitWrite("bot:invocation:steps", {
       invocationId,
       instanceId,
       claimToken,
-      steps,
+      steps: keyed,
       ...(statusText ? { statusText } : {}),
     })
     if (ack) {
@@ -195,15 +198,15 @@ export class BotRuntimeTransport {
       return
     }
     if (sent) {
-      // The frame is in flight; the ack just didn't arrive in time. Steps have
-      // no server-side idempotency key (each write takes the next step_number),
-      // so re-POSTing would duplicate the trace row — and spend the very edge
-      // request we're avoiding. Drop and trust the in-flight frame.
+      // The frame is in flight; the ack just didn't arrive in time. Steps are
+      // best-effort, so rather than re-POST (an edge request we're avoiding,
+      // dedup'd server-side or not) we drop and trust the in-flight frame.
       this.logFn("steps ack timed out; relying on the in-flight frame (no HTTP retry)")
       return
     }
-    // Socket was down — the frame never left, so HTTP is the only path and can't duplicate.
-    await this.httpRecordStepsFallback(invocationId, claimToken, steps, statusText, instanceId)
+    // Socket was down — the frame never left, so HTTP is the only path. The
+    // idempotency key still guards against a late WS delivery racing this POST.
+    await this.httpRecordStepsFallback(invocationId, claimToken, keyed, statusText, instanceId)
   }
 
   /**
@@ -317,6 +320,7 @@ export class BotRuntimeTransport {
             claimToken,
             stepType: step.stepType,
             content: step.content,
+            ...(step.clientStepId ? { clientStepId: step.clientStepId } : {}),
             ...(statusText ? { statusText } : {}),
           }),
         })

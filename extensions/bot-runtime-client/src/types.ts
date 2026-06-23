@@ -15,6 +15,12 @@ export interface BotWriteAck {
 export interface StepFrame {
   stepType: string
   content: string
+  /**
+   * Idempotency key. The transport mints one per frame if absent and sends the
+   * same value over WS and the HTTP fallback, so a step can never be persisted
+   * twice under the same key (the server dedups on it).
+   */
+  clientStepId?: string
 }
 
 /** The `bot:hello` registration payload — mirrors the server's `helloSchema`. */
