@@ -1,7 +1,6 @@
 import { useMemo } from "react"
 import { AlertCircle, LayoutGrid } from "lucide-react"
 import { Navigate, useParams } from "react-router-dom"
-import { StreamTypes } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -83,26 +82,16 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
   const sections = useMemo(() => groupByRecency(posts, Date.now()), [posts])
 
-  // A scratchpad IS its conversation, so its own name is the best topic (the
-  // stored "Scratchpad" topicSummary is noise). For channels/DMs the topic is
-  // the topicSummary and the stream is context — never the DM peer as the topic,
-  // since that name is a person, not a topic.
+  // Where the post lives — the stream's own name (channel #slug, DM peer,
+  // scratchpad name), used as the card's locator. The glyph follows the type.
   function labelsFor(conversation: ConversationWithStaleness): {
-    title: string
     contextLabel: string
     streamType: string | undefined
   } {
     const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
-    const streamType = streamById.get(conversation.streamId)?.type
-    if (streamType === StreamTypes.SCRATCHPAD) {
-      return { title: streamName ?? "Scratchpad", contextLabel: "Scratchpad", streamType }
-    }
     return {
-      // The body carries the content, so an absent topic just omits the subject
-      // line rather than showing an "Untitled" placeholder.
-      title: conversation.topicSummary?.trim() ?? "",
       contextLabel: streamName ?? "Unknown stream",
-      streamType,
+      streamType: streamById.get(conversation.streamId)?.type,
     }
   }
 
@@ -161,13 +150,12 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
             </h2>
             <div className="flex flex-col gap-3">
               {section.posts.map((post) => {
-                const { title, contextLabel, streamType } = labelsFor(post.conversation)
+                const { contextLabel, streamType } = labelsFor(post.conversation)
                 return (
                   <BoardCard
                     key={post.conversation.id}
                     workspaceId={workspaceId}
                     post={post}
-                    topic={title}
                     contextLabel={contextLabel}
                     streamType={streamType}
                   />

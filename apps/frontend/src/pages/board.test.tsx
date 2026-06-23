@@ -130,10 +130,9 @@ describe("BoardPage", () => {
     expect(await screen.findByText("Nothing on the board yet")).toBeTruthy()
   })
 
-  it("renders a post with its topic and opening-message body", async () => {
+  it("renders the opening-message body", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
-    expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
-    expect(screen.getByText("Rotate the tokens before Friday.")).toBeTruthy()
+    expect(await screen.findByText("Rotate the tokens before Friday.")).toBeTruthy()
   })
 
   it("collapses the middle as an 'N more messages' expander, pluralizing the count", async () => {
@@ -162,13 +161,13 @@ describe("BoardPage", () => {
   it("shows no expander when the whole conversation already fits", async () => {
     const recent = [makeOpeningMessage({ id: "m2" }), makeOpeningMessage({ id: "m3" })]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3"] }, { id: "m1" }, recent)])
-    await screen.findByText("CC Teams tokens")
+    await screen.findAllByText("Opening message body.")
     expect(screen.queryByText(/more messages?$/)).toBeNull()
   })
 
   it("renders reactions on the opening message", async () => {
-    mountBoard([makePost({}, { reactions: { ":tada:": ["usr_a", "usr_b"] } })])
-    await screen.findByText("CC Teams tokens")
+    mountBoard([makePost({ messageIds: ["m1"] }, { id: "m1", reactions: { ":tada:": ["usr_a", "usr_b"] } })])
+    await screen.findByText("Opening message body.")
     // No emoji map in the test cache, so the shortcode renders as-is with its count.
     expect(screen.getByText(":tada:")).toBeTruthy()
     expect(screen.getByText("2")).toBeTruthy()
@@ -180,8 +179,14 @@ describe("BoardPage", () => {
     const today = new Date().toISOString()
     const fiveDaysAgo = new Date(Date.now() - 5 * 86_400_000).toISOString()
     mountBoard([
-      makePost({ id: "conv_today", topicSummary: "Fresh topic", lastActivityAt: today }),
-      makePost({ id: "conv_old", streamId: "stream_2", topicSummary: "Older topic", lastActivityAt: fiveDaysAgo }),
+      makePost(
+        { id: "conv_today", messageIds: ["a1"], lastActivityAt: today },
+        { id: "a1", contentMarkdown: "Fresh body" }
+      ),
+      makePost(
+        { id: "conv_old", streamId: "stream_2", messageIds: ["b1"], lastActivityAt: fiveDaysAgo },
+        { id: "b1", contentMarkdown: "Older body" }
+      ),
     ])
 
     const todaySection = (await screen.findByText("Today")).closest("section")
@@ -189,8 +194,8 @@ describe("BoardPage", () => {
     expect(todaySection).not.toBeNull()
     expect(weekSection).not.toBeNull()
     // Each post sits under its own recency header.
-    expect(within(todaySection as HTMLElement).getByText("Fresh topic")).toBeTruthy()
-    expect(within(weekSection as HTMLElement).getByText("Older topic")).toBeTruthy()
+    expect(within(todaySection as HTMLElement).getByText("Fresh body")).toBeTruthy()
+    expect(within(weekSection as HTMLElement).getByText("Older body")).toBeTruthy()
   })
 
   it("shows an error state with a retry, not the empty state, when the fetch fails", async () => {
@@ -202,7 +207,7 @@ describe("BoardPage", () => {
 
   it("offers Load more when there is another page", async () => {
     mountBoard([makePost()], { nextCursor: "2026-06-22T12:00:00.000Z|conv_1" })
-    expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
+    expect(await screen.findByText("Opening message body.")).toBeTruthy()
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy()
   })
 
@@ -211,7 +216,7 @@ describe("BoardPage", () => {
     // Gate redirects away — board content never appears and the feed isn't fetched.
     // Flush effects so a (hypothetical) deferred mount would have its chance to fire.
     await act(async () => {})
-    expect(screen.queryByText("CC Teams tokens")).toBeNull()
+    expect(screen.queryByText("Opening message body.")).toBeNull()
     expect(screen.queryByText("Board")).toBeNull()
     expect(listByWorkspace).not.toHaveBeenCalled()
   })
@@ -227,17 +232,16 @@ describe("BoardPage", () => {
     expect(permalink).toBeTruthy()
   })
 
-  it("uses the scratchpad's name as the topic, not the generic summary", async () => {
+  it("uses the scratchpad's name as the card's stream locator", async () => {
     vi.mocked(workspaceStoreModule.useWorkspaceStreams).mockReturnValue([
       { id: "stream_sp", type: "scratchpad", displayName: "My Notes" },
     ] as never)
-    mountBoard([makePost({ id: "conv_sp", streamId: "stream_sp", topicSummary: "Scratchpad" })])
+    mountBoard([makePost({ id: "conv_sp", streamId: "stream_sp" })])
 
-    expect(await screen.findByText("My Notes")).toBeTruthy() // topic = scratchpad name
-    expect(screen.getByText("Scratchpad")).toBeTruthy() // context line = the type
+    expect(await screen.findByText("My Notes")).toBeTruthy() // header locator = scratchpad name
   })
 
-  it("keeps a DM peer (a person) as context, never as the post topic", async () => {
+  it("resolves a DM peer as the card's stream locator", async () => {
     vi.mocked(workspaceStoreModule.useWorkspaceStreams).mockReturnValue([
       { id: "stream_dm", type: "dm", displayName: null },
     ] as never)
@@ -245,12 +249,9 @@ describe("BoardPage", () => {
       { streamId: "stream_dm", userId: "usr_pierre" },
     ] as never)
     vi.mocked(workspaceStoreModule.useWorkspaceUsers).mockReturnValue([{ id: "usr_pierre", name: "Pierre" }] as never)
-    mountBoard([makePost({ id: "conv_dm", streamId: "stream_dm", topicSummary: "Lunch plans" })])
+    mountBoard([makePost({ id: "conv_dm", streamId: "stream_dm", messageIds: ["d1"] }, { id: "d1" })])
 
-    const topic = await screen.findByText("Lunch plans")
-    expect(topic).toBeTruthy() // topic = topicSummary
-    // "Pierre" renders as the context line, and is not the topic element.
-    expect(screen.getByText("Pierre")).toBeTruthy()
-    expect(topic.textContent).not.toContain("Pierre")
+    // The DM peer's name is the header locator (where the post lives).
+    expect(await screen.findByText("Pierre")).toBeTruthy()
   })
 })
