@@ -143,10 +143,15 @@ rather than per-phase edits.
    drifted within weeks, e.g. agent-runtime). Prefer rows whose code hasn't moved
    recently and the concepts that prevent recurring bugs; defer everything in
    "In flux right now" until the work settles.
+3. **Granularity calls settled while documenting recent features** (decided 2026-06-23).
+   `messages-and-timeline` is one doc covering lifecycle and read-state, not a split.
+   Snippets fold into `message-composer` (they have no backend of their own), and giphy
+   is covered briefly there too rather than as a standalone doc. `claude-code-channel`
+   gets its own architecture doc as one concrete bot-runtime kind, leaving the broader
+   `bot-runtimes` row for later.
 
 ## Open questions
 
-1. **Granularity calls** to make at writing time: split user-settings from
+1. **Remaining granularity calls** to make at writing time: split user-settings from
    workspace-settings or merge; whether public-api belongs in `public/` (developer
-   audience) or its own bucket; whether giphy folds into message-composer; whether
-   messages-and-timeline is one doc or splits (lifecycle vs. unreads).
+   audience) or its own bucket.

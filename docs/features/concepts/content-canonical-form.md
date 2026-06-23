@@ -8,6 +8,7 @@ public_site: false
 summary: >
   ProseMirror contentJson is the internal canon for message content; markdown is only the
   wire format at the system boundary, and any surface that shows a snippet strips it first.
+related: [public/message-composer.md, public/messages-and-timeline.md]
 ---
 
 ## The principle
