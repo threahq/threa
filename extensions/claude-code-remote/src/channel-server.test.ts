@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import type { BotRuntimeTransport } from "@threa/bot-runtime-client"
 import { ChannelServer, buildInstructions, formatInvocationContent, parsePermissionVerdict } from "./channel-server"
 import type { ThreaChannelConfig } from "./config"
 import type { ClaimedInvocation, ThreaClient } from "./threa-client"
@@ -37,6 +38,26 @@ function makeFakeClient() {
     },
   }
   return { client: client as unknown as ThreaClient, calls }
+}
+
+/**
+ * A transport stub recording the presence/step writes ChannelServer now routes
+ * through the socket transport (previously direct ThreaClient HTTP calls).
+ */
+function makeFakeTransport() {
+  const presence: Record<string, unknown>[] = []
+  const transport = {
+    connect: async () => {},
+    disconnect: () => {},
+    socketConnected: false,
+    sendHello: () => {},
+    recordSteps: async () => {},
+    renewClaim: async () => ({ notFound: false }),
+    updatePresence: async (body: Record<string, unknown>) => {
+      presence.push(body)
+    },
+  }
+  return { transport: transport as unknown as BotRuntimeTransport, presence }
 }
 
 /** Seed an in-flight turn the way handleClaimed would, with a harmless deadline timer. */
@@ -182,7 +203,8 @@ describe("buildInstructions", () => {
 describe("ChannelServer.handleSend", () => {
   test("posts an interim message to the turn's stream and keeps the request open", async () => {
     const { client, calls } = makeFakeClient()
-    const server = new ChannelServer(makeConfig(), client)
+    const { transport } = makeFakeTransport()
+    const server = new ChannelServer(makeConfig(), client, transport)
     const invocation = makeInvocation({ id: "binv_send", responseStreamId: "stream_turn" })
     seedInflight(server, invocation)
 
@@ -210,7 +232,8 @@ describe("ChannelServer.handleSend", () => {
 
   test("errors without posting when the invocation is not open", async () => {
     const { client, calls } = makeFakeClient()
-    const server = new ChannelServer(makeConfig(), client)
+    const { transport } = makeFakeTransport()
+    const server = new ChannelServer(makeConfig(), client, transport)
 
     const res = (await (
       server as unknown as { handleSend: (id: string, text: string) => Promise<{ isError?: boolean }> }
@@ -222,7 +245,8 @@ describe("ChannelServer.handleSend", () => {
 
   test("reports a closed turn when the idle timeout fires mid-send", async () => {
     const { client, calls } = makeFakeClient()
-    const server = new ChannelServer(makeConfig(), client)
+    const { transport } = makeFakeTransport()
+    const server = new ChannelServer(makeConfig(), client, transport)
     const invocation = makeInvocation({ id: "binv_race", responseStreamId: "stream_turn" })
     seedInflight(server, invocation)
 
@@ -251,7 +275,8 @@ describe("ChannelServer.handleSend", () => {
 describe("ChannelServer.onReplyTimeout", () => {
   test("posts the no-reply notice when the turn sent nothing", async () => {
     const { client, calls } = makeFakeClient()
-    const server = new ChannelServer(makeConfig(), client)
+    const { transport } = makeFakeTransport()
+    const server = new ChannelServer(makeConfig(), client, transport)
     seedInflight(server, makeInvocation({ id: "binv_silent" }), 0)
 
     await (server as unknown as { onReplyTimeout: (id: string) => Promise<void> }).onReplyTimeout("binv_silent")
@@ -263,7 +288,8 @@ describe("ChannelServer.onReplyTimeout", () => {
 
   test("closes silently when the turn already sent interim messages", async () => {
     const { client, calls } = makeFakeClient()
-    const server = new ChannelServer(makeConfig(), client)
+    const { transport } = makeFakeTransport()
+    const server = new ChannelServer(makeConfig(), client, transport)
     seedInflight(server, makeInvocation({ id: "binv_progress" }), 2)
 
     await (server as unknown as { onReplyTimeout: (id: string) => Promise<void> }).onReplyTimeout("binv_progress")
@@ -275,17 +301,14 @@ describe("ChannelServer.onReplyTimeout", () => {
 
 describe("ChannelServer.shutdown", () => {
   test("marks presence offline and fails every in-flight claim", async () => {
-    const presence: Record<string, unknown>[] = []
     const failed: Array<{ id: string; body: Record<string, unknown> }> = []
     const client = {
-      upsertPresence: async (body: Record<string, unknown>) => {
-        presence.push(body)
-      },
       fail: async (id: string, body: Record<string, unknown>) => {
         failed.push({ id, body })
       },
     } as unknown as ThreaClient
-    const server = new ChannelServer(makeConfig(), client)
+    const { transport, presence } = makeFakeTransport()
+    const server = new ChannelServer(makeConfig(), client, transport)
     seedInflight(server, makeInvocation({ id: "binv_a", claimToken: "tok_a" }))
     seedInflight(server, makeInvocation({ id: "binv_b", claimToken: "tok_b" }))
 

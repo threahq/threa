@@ -1,11 +1,5 @@
 const FETCH_TIMEOUT_MS = 30_000
 
-export interface WsHint {
-  url: string
-  path: string
-  namespace: string
-}
-
 export interface RuntimeSessionLink {
   linkId: string
   rootStreamId: string
@@ -67,30 +61,6 @@ export class ThreaApiError extends Error {
   }
 }
 
-export function isObject(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value)
-}
-
-export function parseWsHint(value: unknown): WsHint | undefined {
-  if (!isObject(value)) return undefined
-  const url = typeof value.url === "string" ? value.url.trim() : ""
-  if (!url) return undefined
-  const path = typeof value.path === "string" && value.path.trim() ? value.path : "/socket.io/"
-  const namespace = typeof value.namespace === "string" && value.namespace.trim() ? value.namespace : "/bot"
-  return { url, path, namespace }
-}
-
-/**
- * Append the `/bot` namespace to the pathname while preserving any query string.
- * Naive `${url}${namespace}` concat breaks staging URLs that carry `?region=…`.
- */
-export function buildBotSocketUrl(hint: WsHint): string {
-  const parsed = new URL(hint.url)
-  const trimmedPath = parsed.pathname.replace(/\/$/, "")
-  parsed.pathname = `${trimmedPath}${hint.namespace}`
-  return parsed.toString()
-}
-
 export interface ThreaClientOptions {
   baseUrl: string
   workspaceId: string
@@ -142,19 +112,6 @@ export class ThreaClient {
     return body.data
   }
 
-  /** The wsUrl hint is served by the edge workspace-router at `/api/workspaces/:id/config` (NOT /api/v1). */
-  async resolveWsHint(): Promise<WsHint | undefined> {
-    const body = await this.request<{ wsUrl?: string }>(`/api/workspaces/${this.opts.workspaceId}/config`)
-    return parseWsHint({ url: body.wsUrl })
-  }
-
-  async upsertPresence(body: Record<string, unknown>): Promise<void> {
-    await this.request(this.workspacePath("/bot-runtime/presence"), {
-      method: "POST",
-      body: JSON.stringify(body),
-    })
-  }
-
   async createSession(body: Record<string, unknown>): Promise<RuntimeSessionLink> {
     const result = await this.request<{ data: RuntimeSessionLink }>(this.workspacePath("/bot-runtime/sessions"), {
       method: "POST",
@@ -169,20 +126,6 @@ export class ThreaClient {
       { method: "POST", body: JSON.stringify(body) }
     )
     return result.data
-  }
-
-  async renew(invocationId: string, body: Record<string, unknown>): Promise<void> {
-    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/renew`), {
-      method: "POST",
-      body: JSON.stringify(body),
-    })
-  }
-
-  async recordStep(invocationId: string, body: Record<string, unknown>): Promise<void> {
-    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/steps`), {
-      method: "POST",
-      body: JSON.stringify(body),
-    })
   }
 
   async complete(invocationId: string, body: Record<string, unknown>): Promise<void> {
