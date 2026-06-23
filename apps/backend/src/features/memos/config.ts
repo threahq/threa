@@ -234,7 +234,7 @@ How to write memos:
 2. EXTRACT, DON'T SUMMARIZE. Capture the durable conclusion — the decision, the answer, the fact, the procedure that was worked out — not a play-by-play of the discussion. A memo is what someone would want to recall in six months, never a transcript of who said what.
 3. BE TERSE. An abstract is a few sentences at most. If it reads like a recap of the conversation, rewrite it down to the bare conclusion.
 4. OMIT THE FORGETTABLE. Greetings, status pings, back-and-forth, and unresolved tangents produce no memo. Returning very few memos — or only the one thing that actually mattered — is correct and expected.
-5. WRITE IN THE CONVERSATION'S LANGUAGE. Use the same language the participants used. Do NOT translate (e.g. a Swedish conversation produces Swedish memos).
+{{MEMO_LANGUAGE_RULE}}
 6. BE FACTUAL. State the knowledge directly. No meta-commentary like "this memo captures..." or "the team discussed...".
 7. Use consistent vocabulary with prior memos when the same concept reappears.
 8. RESOLVE PRONOUNS when possible - If you can determine who "he/she/they" refers to from the conversation, use their actual name. If unclear (e.g., conversation continues from offline), leave the pronoun. When in doubt, preserve the original wording.
@@ -242,11 +242,27 @@ How to write memos:
 
 Output ONLY valid JSON matching the schema.`
 
-export function getMemorizerSystemPrompt(timezone?: string): string {
+/**
+ * Rule 5 of the memorizer prompt. With a canonical `memoLanguage` every memo is
+ * written in that one language regardless of the conversation's language, so a
+ * bilingual workspace stops storing the same knowledge twice. Without it, memos
+ * follow the conversation (prior behavior).
+ */
+function memoLanguageRule(memoLanguage?: string | null): string {
+  if (memoLanguage && memoLanguage.trim().length > 0) {
+    return `5. WRITE EVERY MEMO IN ${memoLanguage.trim()}. Translate the knowledge into ${memoLanguage.trim()} no matter what language the conversation used, but keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation.`
+  }
+  return `5. WRITE IN THE CONVERSATION'S LANGUAGE. Use the same language the participants used. Do NOT translate (e.g. a Swedish conversation produces Swedish memos).`
+}
+
+export function getMemorizerSystemPrompt(timezone?: string, memoLanguage?: string | null): string {
   const now = new Date()
   const tz = timezone ?? "UTC"
   const today = formatDate(now, tz, "YYYY-MM-DD")
-  return MEMORIZER_SYSTEM_PROMPT_TEMPLATE.replace("{{CURRENT_DATE}}", today)
+  return MEMORIZER_SYSTEM_PROMPT_TEMPLATE.replace("{{CURRENT_DATE}}", today).replace(
+    "{{MEMO_LANGUAGE_RULE}}",
+    memoLanguageRule(memoLanguage)
+  )
 }
 
 export const MEMORIZER_CONVERSATION_PROMPT = `Extract the memos worth remembering from this conversation.

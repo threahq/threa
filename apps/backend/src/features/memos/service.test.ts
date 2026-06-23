@@ -13,6 +13,7 @@ import type { StreamEvent } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
+import { WorkspaceSettingsRepository } from "../workspace-settings"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
@@ -93,6 +94,7 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+  spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())

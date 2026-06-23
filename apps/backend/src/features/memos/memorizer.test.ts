@@ -43,6 +43,13 @@ describe("getMemorizerSystemPrompt", () => {
     expect(prompt).toContain("WRITE IN THE CONVERSATION'S LANGUAGE")
     expect(prompt).toContain("Do NOT translate")
   })
+
+  it("should force a canonical memo language when one is configured", () => {
+    const prompt = getMemorizerSystemPrompt("UTC", "English")
+
+    expect(prompt).toContain("WRITE EVERY MEMO IN English")
+    expect(prompt).not.toContain("WRITE IN THE CONVERSATION'S LANGUAGE")
+  })
 })
 
 describe("memoSetSchema", () => {

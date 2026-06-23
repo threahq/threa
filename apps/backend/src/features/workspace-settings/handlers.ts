@@ -7,6 +7,8 @@ import { validateRequest } from "../../lib/validation"
 const updateWorkspaceSettingsSchema = z.object({
   defaultWorkSchedule: workScheduleSchema.optional(),
   userStatusPresets: statusPresetsSchema.optional(),
+  // Language name or BCP-47 tag; null clears the override back to per-conversation.
+  memoLanguage: z.string().trim().min(1).max(40).nullable().optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

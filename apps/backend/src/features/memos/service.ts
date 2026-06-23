@@ -5,6 +5,7 @@ import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
+import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { MemoRepository, type Memo } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { MemoClassifier } from "./classifier"
@@ -35,6 +36,19 @@ function cosineDistance(a: number[], b: number[]): number {
   }
   if (normA === 0 || normB === 0) return 1
   return 1 - dot / (Math.sqrt(normA) * Math.sqrt(normB))
+}
+
+/** Key with the highest count, or undefined when the map is empty. */
+function mostCommon(counts: Map<string, number>): string | undefined {
+  let best: string | undefined
+  let bestCount = 0
+  for (const [key, count] of counts) {
+    if (count > bestCount) {
+      best = key
+      bestCount = count
+    }
+  }
+  return best
 }
 
 export interface ProcessResult {
@@ -179,12 +193,24 @@ export class MemoService implements MemoServiceLike {
       }
 
       const authorTimezones = new Map<string, string | null>()
+      const localeCounts = new Map<string, number>()
       if (authorIds.size > 0) {
         const members = await UserRepository.findByIds(client, workspaceId, Array.from(authorIds))
         for (const member of members) {
           authorTimezones.set(member.id, member.timezone)
+          if (member.locale) localeCounts.set(member.locale, (localeCounts.get(member.locale) ?? 0) + 1)
         }
       }
+
+      // Canonical memo language: the workspace admin setting wins; otherwise
+      // default to the participants' most common locale so a single-language
+      // stream gets consistent memos (and cross-language duplicates can't form).
+      const overrides = await WorkspaceSettingsRepository.findOverrides(client, workspaceId)
+      const settingLanguage = overrides.find((o) => o.key === "memoLanguage")?.value
+      const memoLanguage =
+        typeof settingLanguage === "string" && settingLanguage.trim().length > 0
+          ? settingLanguage.trim()
+          : mostCommon(localeCounts)
 
       return {
         pending,
@@ -195,6 +221,7 @@ export class MemoService implements MemoServiceLike {
         existingConversationMemos,
         formattedConversations,
         authorTimezones,
+        memoLanguage,
       }
     })
 
@@ -329,6 +356,7 @@ export class MemoService implements MemoServiceLike {
               existingTags: fetchedData.existingTags,
               workspaceId,
               authorTimezone,
+              memoLanguage: fetchedData.memoLanguage,
             })
           : await this.memorizer.memorizeConversation(formattedMessages, {
               memoryContext,
@@ -336,6 +364,7 @@ export class MemoService implements MemoServiceLike {
               existingTags: fetchedData.existingTags,
               workspaceId,
               authorTimezone,
+              memoLanguage: fetchedData.memoLanguage,
             })
 
         if (contents.length === 0) {

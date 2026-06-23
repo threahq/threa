@@ -34,6 +34,12 @@ export interface MemorizerContext {
   workspaceId: string
   /** Author's timezone for date anchoring (IANA identifier, e.g., "America/New_York") */
   authorTimezone?: string
+  /**
+   * Canonical language for every memo (language name or BCP-47 tag). When set,
+   * memos are written in this language regardless of the conversation's; when
+   * omitted, memos follow the conversation's language.
+   */
+  memoLanguage?: string | null
 }
 
 export class Memorizer {
@@ -90,7 +96,7 @@ export class Memorizer {
       model: config.modelId,
       schema: memoSetSchema,
       messages: [
-        { role: "system", content: getMemorizerSystemPrompt(context.authorTimezone) },
+        { role: "system", content: getMemorizerSystemPrompt(context.authorTimezone, context.memoLanguage) },
         { role: "user", content: prompt },
       ],
       temperature: config.temperature,
