@@ -541,7 +541,7 @@ describe("useVisualViewport on iOS WebKit", () => {
   // iOS's pan and threw the composer off-screen) and never scroll the page.
   const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
   const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight")
-  const originalPlatform = Object.getOwnPropertyDescriptor(Navigator.prototype, "platform")
+  const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform")
 
   let fakeVV: FakeVisualViewport
   let innerHeight: number
@@ -561,7 +561,8 @@ describe("useVisualViewport on iOS WebKit", () => {
     if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
     else Reflect.deleteProperty(window, "visualViewport")
     if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
-    if (originalPlatform) Object.defineProperty(Navigator.prototype, "platform", originalPlatform)
+    if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform)
+    else Reflect.deleteProperty(navigator, "platform")
     document.documentElement.style.removeProperty("--viewport-height")
     vi.restoreAllMocks()
   })
