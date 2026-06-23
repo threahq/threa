@@ -93,6 +93,44 @@ export function useVisualViewport(enabled: boolean): boolean {
     const vv = window.visualViewport
     const docEl = document.documentElement
 
+    // iOS WebKit ignores `interactive-widget=resizes-content`: the on-screen
+    // keyboard overlays the layout viewport instead of shrinking it
+    // (`window.innerHeight` stays full; only `visualViewport.height` shrinks),
+    // and WebKit pans the visual viewport itself to keep the focused field
+    // visible. The Chrome-Android machinery below fights that — it shrinks
+    // `--viewport-height` to the visual height and `scrollTo(0,0)`s to cancel
+    // the pan — which threw the bottom-anchored composer off-screen on iPhone.
+    // Stay passive here: never touch `--viewport-height` (iOS resolves `100dvh`
+    // correctly, so AppShell's fallback is right; the buggy `dvh` resolution
+    // the pinning works around is Chrome-only) and never cancel the pan, so
+    // WebKit's native keyboard avoidance lifts the composer into view. Only the
+    // open/closed boolean is reported (it gates safe-area padding and
+    // pull-to-refresh).
+    if (isIOS()) {
+      const measureOpen = () => {
+        const vvHeight = vv ? vv.height : window.innerHeight
+        const open = isEditableFocused() && vvHeight < window.innerHeight - KEYBOARD_THRESHOLD
+        setIsKeyboardOpen((prev) => (prev !== open ? open : prev))
+      }
+      measureOpen()
+      if (vv) {
+        vv.addEventListener("resize", measureOpen)
+        vv.addEventListener("scroll", measureOpen)
+      }
+      window.addEventListener("resize", measureOpen)
+      document.addEventListener("focusin", measureOpen)
+      document.addEventListener("focusout", measureOpen)
+      return () => {
+        if (vv) {
+          vv.removeEventListener("resize", measureOpen)
+          vv.removeEventListener("scroll", measureOpen)
+        }
+        window.removeEventListener("resize", measureOpen)
+        document.removeEventListener("focusin", measureOpen)
+        document.removeEventListener("focusout", measureOpen)
+      }
+    }
+
     baseHeight.current = window.innerHeight
     // Last value written to --viewport-height so we can skip redundant style
     // writes during the rAF poll loop and avoid invalidating every consumer
@@ -341,4 +379,17 @@ function isEditable(el: HTMLElement): boolean {
 function isEditableFocused(): boolean {
   const el = document.activeElement
   return el instanceof HTMLElement && isEditable(el)
+}
+
+/**
+ * True on iOS WebKit (iPhone/iPad — Safari and every iOS browser share the
+ * engine). Distinguishes the keyboard-overlay behavior, not the OS: iPadOS 13+
+ * reports as "MacIntel", told apart from a real Mac by its touch points (a
+ * trackpad reports 0). Called inside the effect, not memoized at module load,
+ * so tests can stub `navigator` before mounting the hook.
+ */
+function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false
+  if (/iPhone|iPod|iPad/.test(navigator.platform)) return true
+  return /Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1
 }

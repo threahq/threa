@@ -533,3 +533,108 @@ describe("useVisualViewport", () => {
     expect(document.documentElement.style.getPropertyValue("--viewport-height")).toBe("")
   })
 })
+
+describe("useVisualViewport on iOS WebKit", () => {
+  // iOS overlays the keyboard instead of resizing the layout viewport and pans
+  // the visual viewport itself. The hook must stay passive there: report the
+  // open/closed boolean but never touch `--viewport-height` (driving it fought
+  // iOS's pan and threw the composer off-screen) and never scroll the page.
+  const originalVisualViewport = Object.getOwnPropertyDescriptor(window, "visualViewport")
+  const originalInnerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight")
+  const originalPlatform = Object.getOwnPropertyDescriptor(Navigator.prototype, "platform")
+
+  let fakeVV: FakeVisualViewport
+  let innerHeight: number
+
+  beforeEach(() => {
+    innerHeight = INNER_HEIGHT_DEFAULT
+    fakeVV = new FakeVisualViewport(INNER_HEIGHT_DEFAULT)
+
+    Object.defineProperty(window, "innerHeight", { configurable: true, get: () => innerHeight })
+    Object.defineProperty(window, "visualViewport", { configurable: true, get: () => fakeVV })
+    Object.defineProperty(navigator, "platform", { configurable: true, get: () => "iPhone" })
+
+    document.documentElement.style.removeProperty("--viewport-height")
+  })
+
+  afterEach(() => {
+    if (originalVisualViewport) Object.defineProperty(window, "visualViewport", originalVisualViewport)
+    else Reflect.deleteProperty(window, "visualViewport")
+    if (originalInnerHeight) Object.defineProperty(window, "innerHeight", originalInnerHeight)
+    if (originalPlatform) Object.defineProperty(Navigator.prototype, "platform", originalPlatform)
+    document.documentElement.style.removeProperty("--viewport-height")
+    vi.restoreAllMocks()
+  })
+
+  it("never writes --viewport-height — even on a real keyboard open", () => {
+    const { result } = renderHook(() => useVisualViewport(true))
+    expect(document.documentElement.style.getPropertyValue("--viewport-height")).toBe("")
+
+    const editable = document.createElement("div")
+    editable.contentEditable = "true"
+    Object.defineProperty(editable, "isContentEditable", { configurable: true, get: () => true })
+    editable.tabIndex = 0
+    document.body.appendChild(editable)
+    editable.focus()
+
+    // Keyboard overlays: innerHeight stays full, only the visual viewport shrinks.
+    act(() => {
+      fakeVV.height = 500
+      fakeVV.emitResize()
+    })
+
+    expect(result.current).toBe(true)
+    expect(document.documentElement.style.getPropertyValue("--viewport-height")).toBe("")
+
+    editable.remove()
+  })
+
+  it("does not scroll the page to cancel iOS's visual-viewport pan", () => {
+    const scrollSpy = vi.spyOn(window, "scrollTo")
+    renderHook(() => useVisualViewport(true))
+
+    const editable = document.createElement("div")
+    editable.contentEditable = "true"
+    Object.defineProperty(editable, "isContentEditable", { configurable: true, get: () => true })
+    editable.tabIndex = 0
+    document.body.appendChild(editable)
+    editable.focus()
+
+    act(() => {
+      fakeVV.height = 500
+      fakeVV.offsetTop = 120 // iOS panned the page up under the keyboard
+      fakeVV.emitResize()
+    })
+
+    expect(scrollSpy).not.toHaveBeenCalled()
+
+    editable.remove()
+  })
+
+  it("reports the keyboard closed again when the visual viewport grows back", () => {
+    const editable = document.createElement("div")
+    editable.contentEditable = "true"
+    Object.defineProperty(editable, "isContentEditable", { configurable: true, get: () => true })
+    editable.tabIndex = 0
+    document.body.appendChild(editable)
+    editable.focus()
+
+    const { result } = renderHook(() => useVisualViewport(true))
+
+    act(() => {
+      fakeVV.height = 500
+      fakeVV.emitResize()
+    })
+    expect(result.current).toBe(true)
+
+    act(() => {
+      editable.blur()
+      fakeVV.height = 800
+      fakeVV.offsetTop = 0
+      fakeVV.emitResize()
+    })
+    expect(result.current).toBe(false)
+
+    editable.remove()
+  })
+})
