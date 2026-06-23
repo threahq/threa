@@ -439,6 +439,7 @@ export type {
   MovedFromProvenance,
   CapturedMemoSummary,
   MemosCapturedEventPayload,
+  DescriptionSetEventPayload,
   // Workspaces
   CreateWorkspaceInput,
   WorkspaceBootstrap,
@@ -645,6 +646,7 @@ export {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD,
   // Voice transcription model picker
   VOICE_TRANSCRIPTION_MODELS,
   type VoiceTranscriptionModelOption,

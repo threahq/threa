@@ -1489,6 +1489,7 @@ describe("StreamService.updateStream description", () => {
     mockFindById.mockReset()
     mockUpdate.mockReset()
     mockInsertOutbox.mockReset()
+    mockInsertEvent.mockReset().mockResolvedValue({ id: "evt_1", streamId: "stream_1" } as never)
   })
 
   test("persists the canonical descriptionJson plus its derived markdown and emits stream:updated", async () => {
@@ -1528,5 +1529,56 @@ describe("StreamService.updateStream description", () => {
     const params = mockUpdate.mock.calls[0]![2] as Record<string, unknown>
     expect(params).not.toHaveProperty("description")
     expect(params).not.toHaveProperty("descriptionJson")
+  })
+
+  test("appends a description_set timeline event + outbox when an actor changes the description", async () => {
+    mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    // First read = pre-update snapshot; second = the post-update re-read.
+    mockFindById
+      .mockResolvedValueOnce({ id: "stream_1", workspaceId: "ws_1", description: "Old" } as never)
+      .mockResolvedValueOnce({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
+
+    await service.updateStream("stream_1", {
+      descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "New" }] }] },
+      actorId: "usr_1",
+    })
+
+    expect(mockInsertEvent).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        eventType: "description_set",
+        payload: { descriptionMarkdown: "New" },
+        actorId: "usr_1",
+        actorType: "user",
+      })
+    )
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:description_set",
+      expect.objectContaining({ streamId: "stream_1", event: expect.objectContaining({ id: "evt_1" }) })
+    )
+  })
+
+  test("does not append a description_set event when the markdown is unchanged (no-op re-save)", async () => {
+    mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+    mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "Same" } as never)
+
+    await service.updateStream("stream_1", {
+      descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Same" }] }] },
+      actorId: "usr_1",
+    })
+
+    expect(mockInsertEvent).not.toHaveBeenCalled()
+  })
+
+  test("does not append a description_set event when no actor is provided", async () => {
+    mockUpdate.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
+    mockFindById.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1", description: "New" } as never)
+
+    await service.updateStream("stream_1", {
+      descriptionJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "New" }] }] },
+    })
+
+    expect(mockInsertEvent).not.toHaveBeenCalled()
   })
 })

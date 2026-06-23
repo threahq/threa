@@ -667,6 +667,7 @@ export function createStreamHandlers({
         slug,
         description,
         descriptionJson,
+        actorId: userId,
         visibility,
         memoryMode,
         sealedName,

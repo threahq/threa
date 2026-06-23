@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react"
 import * as messageEventModule from "./message-event"
 import * as membershipEventModule from "./membership-event"
 import * as memoCapturedEventModule from "./memo-captured-event"
+import * as descriptionSetEventModule from "./description-set-event"
 import * as systemEventModule from "./system-event"
 import { EventItem } from "./event-item"
 import type { StreamEvent } from "@threa/types"
@@ -26,6 +27,9 @@ beforeEach(() => {
   vi.spyOn(memoCapturedEventModule, "MemoCapturedEvent").mockImplementation((() => (
     <div data-testid="memo-captured-event" />
   )) as unknown as typeof memoCapturedEventModule.MemoCapturedEvent)
+  vi.spyOn(descriptionSetEventModule, "DescriptionSetEvent").mockImplementation((() => (
+    <div data-testid="description-set-event" />
+  )) as unknown as typeof descriptionSetEventModule.DescriptionSetEvent)
 })
 
 const createMessageEvent = (messageId: string, contentMarkdown: string): StreamEvent => ({
@@ -152,6 +156,24 @@ describe("EventItem", () => {
       render(<EventItem event={event} workspaceId={workspaceId} streamId={streamId} />)
 
       expect(screen.getByTestId("memo-captured-event")).toBeInTheDocument()
+    })
+
+    it("should render DescriptionSetEvent for description_set events", () => {
+      const event: StreamEvent = {
+        id: "evt_desc",
+        streamId,
+        sequence: "11",
+        broadcastSequence: "8",
+        eventType: "description_set",
+        actorId: "member_123",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+        payload: { descriptionMarkdown: "About this channel" },
+      }
+
+      render(<EventItem event={event} workspaceId={workspaceId} streamId={streamId} />)
+
+      expect(screen.getByTestId("description-set-event")).toBeInTheDocument()
     })
   })
 })

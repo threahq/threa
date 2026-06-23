@@ -479,8 +479,9 @@ export interface CachedSidebarConfig {
 export interface CachedMarkdownBlockCollapse {
   id: string
   messageId: string
-  /** Block kind — lets us clear collapse state scoped to a block type. */
-  kind: "code" | "blockquote" | "quote-reply"
+  /** Block kind — lets us clear collapse state scoped to a block type. Mirrors
+   * `MarkdownBlockKind` (kept as a literal here to keep the db layer dependency-free). */
+  kind: "code" | "blockquote" | "quote-reply" | "description"
   collapsed: boolean
   updatedAt: number
 }
