@@ -32,6 +32,7 @@ function fakeStream(overrides: Partial<Stream> = {}): Stream {
     displayName: "General",
     slug: "general",
     description: null,
+    descriptionJson: null,
     visibility: Visibilities.PUBLIC,
     parentStreamId: null,
     parentMessageId: null,

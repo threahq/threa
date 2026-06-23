@@ -12,6 +12,7 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
     displayName: null,
     slug: null,
     description: null,
+    descriptionJson: null,
     visibility: "private",
     parentStreamId: "stream_channel",
     parentMessageId: "msg_1",
