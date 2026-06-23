@@ -151,6 +151,11 @@ export const createRuntimeSessionSchema = z.object({
   memoryMode: z.enum(MEMORY_MODES).optional(),
   // Optional owner-scoped label name to assign to the created scratchpad stream.
   labelName: z.string().trim().min(1).max(100).regex(/\S/).optional(),
+  // Optional markdown description set on the new scratchpad (parsed to rich text,
+  // same as message content) — e.g. an orchestrator's handover note. Surfaces as
+  // a "set the description" timeline row and in the agent's prompt context. Only
+  // applied when the session creates a fresh scratchpad, not on resume.
+  description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH).optional(),
 })
 
 export const renameRuntimeSessionSchema = z.object({

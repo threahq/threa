@@ -105,6 +105,13 @@ export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema
    * `stream_policies` in the same transaction.
    */
   allowedToolCategories?: ToolPrivacyPolicy
+  /**
+   * Who to attribute a `description_set` timeline row to when the scratchpad is
+   * created with a `description`. Set by callers that want the description to
+   * show as a system event at creation (e.g. a bot harness leaving a handover
+   * note). Omitted = store the description but emit no event.
+   */
+  descriptionActor?: { id: string; type: AuthorType }
 }
 
 const createChannelParamsSchema = z.object({
@@ -484,6 +491,13 @@ export class StreamService {
       stream,
     })
 
+    // Announce a description set at creation as a timeline row (after
+    // stream:created so it lands once the stream exists in caches). Only when an
+    // actor is attributed — a description with no actor stays silent.
+    if (stream.description && params.descriptionActor) {
+      await this.emitDescriptionSet(db, stream, params.descriptionActor.id, params.descriptionActor.type)
+    }
+
     return stream
   }
 
@@ -779,6 +793,33 @@ export class StreamService {
     })
   }
 
+  /**
+   * Append a `description_set` broadcast timeline event (+ outbox) in the
+   * caller's transaction for a stream whose description was just set. The
+   * markdown snapshot rides the payload so the row renders without a fetch
+   * (INV-61). Shared by the update path and the create-with-description path.
+   */
+  private async emitDescriptionSet(
+    client: Querier,
+    stream: Stream,
+    actorId: string,
+    actorType: AuthorType
+  ): Promise<void> {
+    const event = await StreamEventRepository.insert(client, {
+      id: eventId(),
+      streamId: stream.id,
+      eventType: "description_set",
+      payload: { descriptionMarkdown: stream.description } satisfies DescriptionSetEventPayload,
+      actorId,
+      actorType,
+    })
+    await OutboxRepository.insert(client, "stream:description_set", {
+      workspaceId: stream.workspaceId,
+      streamId: stream.id,
+      event,
+    })
+  }
+
   async updateStream(
     streamId: string,
     data: {
@@ -897,20 +938,8 @@ export class StreamService {
         // Timeline row for the description change (INV-61 broadcast event):
         // "X set/cleared the description". Carries the markdown snapshot so the
         // row renders the body without a fetch, like message_created.
-        if (wantsDescriptionEvent && result.description !== previousDescription) {
-          const event = await StreamEventRepository.insert(client, {
-            id: eventId(),
-            streamId: result.id,
-            eventType: "description_set",
-            payload: { descriptionMarkdown: result.description } satisfies DescriptionSetEventPayload,
-            actorId,
-            actorType: actorType ?? "user",
-          })
-          await OutboxRepository.insert(client, "stream:description_set", {
-            workspaceId: result.workspaceId,
-            streamId: result.id,
-            event,
-          })
+        if (wantsDescriptionEvent && actorId != null && result.description !== previousDescription) {
+          await this.emitDescriptionSet(client, result, actorId, actorType ?? "user")
         }
         return result
       })
