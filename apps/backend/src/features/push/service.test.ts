@@ -21,6 +21,7 @@ function makeActivityPayload(): ActivityCreatedOutboxPayload {
       context: {},
       createdAt: new Date().toISOString(),
       isSelf: false,
+      emoji: null,
     },
   }
 }

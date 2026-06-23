@@ -297,6 +297,7 @@ describe("ActivityFeedHandler", () => {
         context: { contentPreview: "hey @alice" },
         createdAt: "2025-01-01T00:00:00.000Z",
         isSelf: false,
+        emoji: null,
       },
     })
   })
@@ -377,6 +378,7 @@ describe("ActivityFeedHandler", () => {
         context: { contentPreview: "hey @bob" },
         createdAt: "2025-01-01T00:00:00.000Z",
         isSelf: false,
+        emoji: null,
       },
     }
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", want)

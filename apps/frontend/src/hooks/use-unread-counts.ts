@@ -5,6 +5,7 @@ import { workspaceKeys } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db } from "@/db"
+import { deriveActivityCounts } from "@/sync/unread-counters"
 import type { WorkspaceBootstrap } from "@threa/types"
 
 export function useUnreadCounts(workspaceId: string) {
@@ -34,28 +35,28 @@ export function useUnreadCounts(workspaceId: string) {
       const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
       const hadActivity = (current?.activityCounts[streamId] ?? 0) > 0
 
-      // A partial read advances the read pointer to a mid-window event with
-      // unread still below it. Zeroing the counters optimistically would be
-      // wrong AND sticky: the ordinal read position MAX-merges (see
-      // `applyStreamReadOrdinal`), so once forced to "read = latest" the
-      // server's `stream:read` for the mid event can never restore the
-      // remaining count. So for a partial read only the read POINTER moves
-      // optimistically; the badge resolves to the true remainder on the
+      // Coupling (D2/D4): reading a stream clears its held activity rows on BOTH
+      // the partial and full paths — activity (e.g. a reaction) is read by opening
+      // the stream regardless of message scroll position. The derived activity/
+      // mention counts follow the rows.
+      //
+      // Message unread (`unreadCounts`) is separate and stays on the FULL path
+      // only: a partial read advances the read pointer to a mid-window event with
+      // unread still below it. Zeroing it optimistically would be wrong AND
+      // sticky — the ordinal read position MAX-merges (see `applyStreamReadOrdinal`),
+      // so once forced to "read = latest" the server's `stream:read` for the mid
+      // event can never restore the remaining count. So for a partial read only
+      // the read POINTER moves; the badge resolves to the true remainder on the
       // `stream:read` round-trip.
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
-        const clearedActivity = old.activityCounts[streamId] ?? 0
-        const counters = partial
-          ? {}
-          : {
-              unreadCounts: { ...old.unreadCounts, [streamId]: 0 },
-              mentionCounts: { ...old.mentionCounts, [streamId]: 0 },
-              activityCounts: { ...old.activityCounts, [streamId]: 0 },
-              unreadActivityCount: Math.max(0, (old.unreadActivityCount ?? 0) - clearedActivity),
-            }
+        const rows = (old.unreadActivities ?? []).filter((a) => a.streamId !== streamId)
+        const messageCounters = partial ? {} : { unreadCounts: { ...old.unreadCounts, [streamId]: 0 } }
         return {
           ...old,
-          ...counters,
+          unreadActivities: rows,
+          ...deriveActivityCounts(rows),
+          ...messageCounters,
           streamMemberships: old.streamMemberships.map((existingMembership) =>
             existingMembership.streamId === streamId ? { ...existingMembership, ...membership } : existingMembership
           ),
@@ -75,14 +76,15 @@ export function useUnreadCounts(workspaceId: string) {
       await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships], async () => {
         const now = Date.now()
         const state = await db.unreadState.get(workspaceId)
-        if (state && !partial) {
-          const clearedActivity = state.activityCounts[streamId] ?? 0
+        if (state) {
+          // Activity drop applies on both paths; `unreadCounts` only on the full
+          // path (mirrors the query-cache branch above).
+          const rows = state.unreadActivities.filter((a) => a.streamId !== streamId)
           await db.unreadState.put({
             ...state,
-            unreadCounts: { ...state.unreadCounts, [streamId]: 0 },
-            mentionCounts: { ...state.mentionCounts, [streamId]: 0 },
-            activityCounts: { ...state.activityCounts, [streamId]: 0 },
-            unreadActivityCount: Math.max(0, state.unreadActivityCount - clearedActivity),
+            unreadActivities: rows,
+            ...deriveActivityCounts(rows),
+            ...(partial ? {} : { unreadCounts: { ...state.unreadCounts, [streamId]: 0 } }),
             _cachedAt: now,
           })
         }
@@ -171,22 +173,19 @@ export function useUnreadCounts(workspaceId: string) {
   const markAllAsReadMutation = useMutation({
     mutationFn: () => workspaceService.markAllAsRead(workspaceId),
     onSuccess: (updatedStreamIds) => {
+      // Mark-all-read clears every stream's message unread AND the held activity
+      // set (the derived activity/mention counts follow to zero).
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const newUnread = { ...old.unreadCounts }
-        const newMention = { ...old.mentionCounts }
-        const newActivity = { ...old.activityCounts }
         for (const streamId of updatedStreamIds) {
           newUnread[streamId] = 0
-          newMention[streamId] = 0
-          newActivity[streamId] = 0
         }
         return {
           ...old,
           unreadCounts: newUnread,
-          mentionCounts: newMention,
-          activityCounts: newActivity,
-          unreadActivityCount: 0,
+          unreadActivities: [],
+          ...deriveActivityCounts([]),
         }
       })
 
@@ -194,19 +193,14 @@ export function useUnreadCounts(workspaceId: string) {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return
         const newUnread = { ...state.unreadCounts }
-        const newMention = { ...state.mentionCounts }
-        const newActivity = { ...state.activityCounts }
         for (const streamId of updatedStreamIds) {
           newUnread[streamId] = 0
-          newMention[streamId] = 0
-          newActivity[streamId] = 0
         }
         await db.unreadState.put({
           ...state,
           unreadCounts: newUnread,
-          mentionCounts: newMention,
-          activityCounts: newActivity,
-          unreadActivityCount: 0,
+          unreadActivities: [],
+          ...deriveActivityCounts([]),
           _cachedAt: Date.now(),
         })
       })

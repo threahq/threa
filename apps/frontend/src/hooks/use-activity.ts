@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useActivityService } from "@/contexts"
 import { workspaceKeys } from "./use-workspaces"
 import { db } from "@/db"
+import { deriveActivityCounts } from "@/sync/unread-counters"
 import type { Activity, WorkspaceBootstrap } from "@threa/types"
 
 export const activityKeys = {
@@ -42,65 +43,27 @@ export function useMarkActivityRead(workspaceId: string) {
     onMutate: async (activityId: string) => {
       await queryClient.cancelQueries({ queryKey: activityKeys.list(workspaceId) })
 
-      let target: Activity | undefined
       queryClient.setQueriesData<Activity[]>({ queryKey: activityKeys.list(workspaceId) }, (old) => {
         if (!old) return old
-        return old.map((a) => {
-          if (a.id !== activityId) return a
-          target ??= a
-          return { ...a, readAt: new Date().toISOString() }
-        })
+        return old.map((a) => (a.id === activityId ? { ...a, readAt: new Date().toISOString() } : a))
       })
 
-      // Decrement the per-stream counts together with the workspace total:
-      // absolute counter events rederive the total as Σ activityCounts
-      // (sync phase 2c), so a total-only decrement would resurrect on the
-      // next apply. Rows already read (or self rows) never counted. When the
-      // row isn't in any cached list we can't resolve its stream — decrement
-      // the total alone and let the next absolute apply settle it.
-      const wasUnread = target ? !target.readAt && !target.isSelf : true
-      const streamId = target?.streamId
-      const isMention = target?.activityType === "mention"
-      if (!wasUnread) return { previousUnreadState: undefined }
-
+      // The held set is the source of truth (D3/D4): drop the read row by id and
+      // re-derive the count projection. Self / already-read rows are never in the
+      // set, so a no-op filter just leaves the counts where they were.
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
-        return {
-          ...old,
-          unreadActivityCount: Math.max(0, (old.unreadActivityCount ?? 0) - 1),
-          ...(streamId
-            ? {
-                activityCounts: {
-                  ...old.activityCounts,
-                  [streamId]: Math.max(0, (old.activityCounts[streamId] ?? 0) - 1),
-                },
-                mentionCounts: isMention
-                  ? { ...old.mentionCounts, [streamId]: Math.max(0, (old.mentionCounts[streamId] ?? 0) - 1) }
-                  : old.mentionCounts,
-              }
-            : {}),
-        }
+        const rows = (old.unreadActivities ?? []).filter((a) => a.id !== activityId)
+        return { ...old, unreadActivities: rows, ...deriveActivityCounts(rows) }
       })
 
       const previousUnreadState = await db.unreadState.get(workspaceId)
       if (previousUnreadState) {
+        const rows = previousUnreadState.unreadActivities.filter((a) => a.id !== activityId)
         await db.unreadState.put({
           ...previousUnreadState,
-          unreadActivityCount: Math.max(0, previousUnreadState.unreadActivityCount - 1),
-          ...(streamId
-            ? {
-                activityCounts: {
-                  ...previousUnreadState.activityCounts,
-                  [streamId]: Math.max(0, (previousUnreadState.activityCounts[streamId] ?? 0) - 1),
-                },
-                mentionCounts: isMention
-                  ? {
-                      ...previousUnreadState.mentionCounts,
-                      [streamId]: Math.max(0, (previousUnreadState.mentionCounts[streamId] ?? 0) - 1),
-                    }
-                  : previousUnreadState.mentionCounts,
-              }
-            : {}),
+          unreadActivities: rows,
+          ...deriveActivityCounts(rows),
           _cachedAt: Date.now(),
         })
       }
@@ -127,42 +90,19 @@ export function useMarkAllActivityRead(workspaceId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: activityKeys.list(workspaceId) })
 
+      // Mark-all clears the held set; the derived counts follow to zero.
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
-        const clearedMentionCounts: Record<string, number> = {}
-        const clearedActivityCounts: Record<string, number> = {}
-        for (const key of Object.keys(old.mentionCounts)) {
-          clearedMentionCounts[key] = 0
-        }
-        for (const key of Object.keys(old.activityCounts)) {
-          clearedActivityCounts[key] = 0
-        }
-        return {
-          ...old,
-          mentionCounts: clearedMentionCounts,
-          activityCounts: clearedActivityCounts,
-          unreadActivityCount: 0,
-        }
+        return { ...old, unreadActivities: [], ...deriveActivityCounts([]) }
       })
 
       void db.transaction("rw", [db.unreadState], async () => {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return
-
-        const clearedMentionCounts: Record<string, number> = {}
-        const clearedActivityCounts: Record<string, number> = {}
-        for (const key of Object.keys(state.mentionCounts)) {
-          clearedMentionCounts[key] = 0
-        }
-        for (const key of Object.keys(state.activityCounts)) {
-          clearedActivityCounts[key] = 0
-        }
-
         await db.unreadState.put({
           ...state,
-          mentionCounts: clearedMentionCounts,
-          activityCounts: clearedActivityCounts,
-          unreadActivityCount: 0,
+          unreadActivities: [],
+          ...deriveActivityCounts([]),
           _cachedAt: Date.now(),
         })
       })

@@ -17,6 +17,8 @@ import type { SyncEventSource } from "./socket-event-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import type { QueryClient } from "@tanstack/react-query"
+import { commitCounterMutation } from "./catch-up-batch"
+import { dropReactionActivity, rehomeActivities } from "./unread-counters"
 
 // ============================================================================
 // Bootstrap application — writes stream bootstrap data to IndexedDB
@@ -813,6 +815,16 @@ export function registerStreamSocketHandlers(
           : [...old.streams, { ...payload.thread, lastMessagePreview: null }],
       }
     })
+
+    // Re-home held activity rows from the source stream to the destination (D4):
+    // the server UPDATEs user_activity.stream_id on a move with no counter event.
+    // This handler fires once per subscribed stream (source AND destination), so
+    // gate on the source to apply the workspace-wide rehome exactly once.
+    if (payload.sourceStreamId === streamId) {
+      commitCounterMutation(queryClient, workspaceId, (s) =>
+        rehomeActivities(s, payload.sourceStreamId, payload.destinationStreamId)
+      )
+    }
   }
 
   const handleReactionAdded = async (payload: ReactionPayload) => {
@@ -839,6 +851,13 @@ export function registerStreamSocketHandlers(
       }
       return { ...p, reactions }
     })
+
+    // Drop the held activity row this reaction produced (D4): the server deleted
+    // the user_activity row without a counter event, so the derived activity/
+    // mention counts fall to match the feed without a separate emit.
+    commitCounterMutation(queryClient, workspaceId, (s) =>
+      dropReactionActivity(s, { messageId: payload.messageId, actorId: payload.userId, emoji: payload.emoji })
+    )
   }
 
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {

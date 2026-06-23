@@ -1,33 +1,34 @@
-import type { WorkspaceBootstrap } from "@threa/types"
+import type { Activity, WorkspaceBootstrap } from "@threa/types"
 
 /**
- * Pure state math for the unread counter family (sync phase 2c).
+ * Pure state math for the unread counter family.
  *
- * The four counter events (`stream:activity`, `stream:read`,
- * `stream:read_all`, `activity:created`) carry ABSOLUTE values so clients set
- * counters instead of incrementing — replayed and duplicated events converge.
- * Per stream the client keeps one number pair: the latest message ordinal
- * (`latestOrdinals`, the stream's total message count) and the unread count.
- * The read position is implicit — `lastReadOrdinal = latestOrdinal − unread`
- * — so every pre-existing code path that "zeroes the unread count" (local
- * mark-as-read, legacy event fallbacks) stays coherent for free: zeroing
- * unread IS advancing the read position to latest.
+ * MESSAGE unread (`unreadCounts` + `latestOrdinals`) is an absolute ordinal
+ * model (sync phase 2c): the read position is implicit as latestOrdinal −
+ * unread, so zeroing unread == advancing read to latest. Ordinals max-merge
+ * (monotonic stream facts); duplicate/out-of-order applies converge.
  *
- * Merge disciplines (PR #872 design decisions):
- * - Stream ordinals MAX-MERGE. They are monotonic stream facts, so duplicate
- *   and out-of-order applies (sweep-rescued late sync ids) converge without
- *   extra bookkeeping.
- * - Activity/mention counts LWW-SET in delivery order. They can legitimately
- *   DECREASE (reaction removal deletes activity rows and emits no
- *   compensating event), so a plain set is the only safe apply.
- * - `unreadActivityCount` is never on the wire: it is derived as
- *   Σ activityCounts whenever an absolute apply touches activity counts.
+ * ACTIVITY unread is DERIVED, not maintained. `unreadActivities` is the held
+ * set of the viewer's unread activity rows (the source of truth); the
+ * `activityCounts` / `mentionCounts` / `unreadActivityCount` fields are a pure
+ * projection of it (`deriveActivityCounts`), recomputed on every change. A
+ * derived count can never outrun the rows the feed can show, so a phantom badge
+ * (a count with nothing behind it) is structurally impossible. Rows are keyed by
+ * `Activity.id`, so a replayed `activity:created` upserts in place rather than
+ * duplicating; coupling (reading a stream) drops that stream's rows; bootstrap
+ * replaces the set wholesale, so any transient drift converges to server truth.
+ * See docs/plans/activity-counters-derive-from-data.md.
  */
 
 export interface UnreadCounterState {
   unreadCounts: Record<string, number>
-  mentionCounts: Record<string, number>
+  /** Held set of the viewer's unread activity rows — the source of truth for badge + glow. */
+  unreadActivities: Activity[]
+  /** Derived from `unreadActivities`: per-stream total unread. */
   activityCounts: Record<string, number>
+  /** Derived from `unreadActivities`: per-stream mention-type unread. */
+  mentionCounts: Record<string, number>
+  /** Derived: `unreadActivities.length`. */
   unreadActivityCount: number
   /**
    * Latest message ordinal per stream, seeded from bootstrap `messageCounts`
@@ -38,8 +39,85 @@ export interface UnreadCounterState {
   latestOrdinals?: Record<string, number>
 }
 
-function sumCounts(counts: Record<string, number>): number {
-  return Object.values(counts).reduce((sum, count) => sum + count, 0)
+/** Per-stream activity + mention counts (and total) derived from the held unread rows. */
+export function deriveActivityCounts(rows: Activity[]): {
+  activityCounts: Record<string, number>
+  mentionCounts: Record<string, number>
+  unreadActivityCount: number
+} {
+  const activityCounts: Record<string, number> = {}
+  const mentionCounts: Record<string, number> = {}
+  for (const row of rows) {
+    if (!row.streamId) continue
+    activityCounts[row.streamId] = (activityCounts[row.streamId] ?? 0) + 1
+    if (row.activityType === "mention") {
+      mentionCounts[row.streamId] = (mentionCounts[row.streamId] ?? 0) + 1
+    }
+  }
+  return { activityCounts, mentionCounts, unreadActivityCount: rows.length }
+}
+
+/** Set the held activity rows and re-derive the count projection in one step. */
+function withActivities(state: UnreadCounterState, rows: Activity[]): UnreadCounterState {
+  return { ...state, unreadActivities: rows, ...deriveActivityCounts(rows) }
+}
+
+/**
+ * Upsert an `activity:created` row into the held set, keyed by `id` so a
+ * replayed event (sync-log catch-up, INV-53) updates in place instead of
+ * duplicating. Self rows are never held — they don't count as unread.
+ */
+export function upsertActivity(state: UnreadCounterState, activity: Activity): UnreadCounterState {
+  if (activity.isSelf) return state
+  const rows = state.unreadActivities.filter((a) => a.id !== activity.id)
+  rows.push(activity)
+  return withActivities(state, rows)
+}
+
+/** Drop every held row for a stream — coupling: reading the stream clears its activity. */
+export function dropActivitiesForStream(state: UnreadCounterState, streamId: string): UnreadCounterState {
+  if (!state.unreadActivities.some((a) => a.streamId === streamId)) return state
+  return withActivities(
+    state,
+    state.unreadActivities.filter((a) => a.streamId !== streamId)
+  )
+}
+
+/** Drop the held reaction row matching a `reaction:removed` (message + actor + emoji). */
+export function dropReactionActivity(
+  state: UnreadCounterState,
+  match: { messageId: string; actorId: string; emoji: string }
+): UnreadCounterState {
+  const rows = state.unreadActivities.filter(
+    (a) =>
+      !(
+        a.activityType === "reaction" &&
+        a.messageId === match.messageId &&
+        a.actorId === match.actorId &&
+        a.emoji === match.emoji
+      )
+  )
+  if (rows.length === state.unreadActivities.length) return state
+  return withActivities(state, rows)
+}
+
+/** Re-home held rows from a moved message's source stream to its destination. */
+export function rehomeActivities(
+  state: UnreadCounterState,
+  fromStreamId: string,
+  toStreamId: string
+): UnreadCounterState {
+  if (!state.unreadActivities.some((a) => a.streamId === fromStreamId)) return state
+  return withActivities(
+    state,
+    state.unreadActivities.map((a) => (a.streamId === fromStreamId ? { ...a, streamId: toStreamId } : a))
+  )
+}
+
+/** Clear the held set — mark-all-read. */
+export function clearActivities(state: UnreadCounterState): UnreadCounterState {
+  if (state.unreadActivities.length === 0) return state
+  return withActivities(state, [])
 }
 
 /**
@@ -79,13 +157,11 @@ export function applyStreamActivityOrdinal(
 
 /**
  * Apply a `stream:read` absolute read position. The read position max-merges
- * (a stale read event can never regress unread); a read position ahead of
- * the locally-known latest is itself a lower bound on latest. Messages that
- * arrived after the read position stay unread — strictly better than the
- * legacy unconditional zero, which over-cleared when a message raced the
- * read event. Mention/activity counts zero in delivery order (the backend
- * clears the stream's activity rows on mark-as-read), LWW like all activity
- * counts.
+ * (a stale read event can never regress unread); a read position ahead of the
+ * locally-known latest is itself a lower bound on latest. Messages that arrived
+ * after the read position stay unread. Coupling (D2): reading the stream also
+ * drops its held activity rows, so the derived activity/mention counts for it
+ * fall to zero without a separate counter event.
  */
 export function applyStreamReadOrdinal(
   state: UnreadCounterState,
@@ -97,14 +173,11 @@ export function applyStreamReadOrdinal(
   const prevRead =
     prevLatest === undefined ? lastReadOrdinal : Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0))
   const read = Math.max(prevRead, lastReadOrdinal)
-  const activityCounts = { ...state.activityCounts, [streamId]: 0 }
+  const next = dropActivitiesForStream(state, streamId)
   return {
-    ...state,
-    latestOrdinals: { ...state.latestOrdinals, [streamId]: latest },
-    unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, latest - read) },
-    mentionCounts: { ...state.mentionCounts, [streamId]: 0 },
-    activityCounts,
-    unreadActivityCount: sumCounts(activityCounts),
+    ...next,
+    latestOrdinals: { ...next.latestOrdinals, [streamId]: latest },
+    unreadCounts: { ...next.unreadCounts, [streamId]: Math.max(0, latest - read) },
   }
 }
 
@@ -113,8 +186,8 @@ export function applyStreamReadOrdinal(
  * `applyStreamReadOrdinal`, the read position is SET, not max-merged: an
  * explicit "mark as unread" moves the pointer BACKWARD, so unread must be
  * allowed to rise. The latest ordinal is still a monotonic stream fact and
- * max-merges. Mention/activity counts are left untouched — restoring those
- * badges for the re-unread range is a deliberate follow-up.
+ * max-merges. Held activity rows are left untouched — restoring activity for a
+ * re-unread range is a deliberate follow-up (see the design note's out-of-scope).
  */
 export function applyStreamReadSet(
   state: UnreadCounterState,
@@ -142,32 +215,43 @@ export function applyStreamsReadAllOrdinals(
 }
 
 /**
- * Apply an `activity:created` absolute count pair for the target user's
- * stream (LWW set), rederiving the workspace total as Σ activityCounts.
+ * The activity fields for a persisted cache row, derived from the bootstrap's
+ * held rows (the count fields follow the rows, never the reverse). Pre-rollout
+ * snapshots without `unreadActivities` fall back to the legacy count fields.
  */
-export function applyActivityCounts(
-  state: UnreadCounterState,
-  streamId: string,
-  counts: { mentionCount: number; activityCount: number }
-): UnreadCounterState {
-  const activityCounts = { ...state.activityCounts, [streamId]: counts.activityCount }
-  return {
-    ...state,
-    mentionCounts: { ...state.mentionCounts, [streamId]: counts.mentionCount },
-    activityCounts,
-    unreadActivityCount: sumCounts(activityCounts),
+export function bootstrapActivityCacheFields(bootstrap: WorkspaceBootstrap): {
+  unreadActivities: Activity[]
+  activityCounts: Record<string, number>
+  mentionCounts: Record<string, number>
+  unreadActivityCount: number
+} {
+  const rows = bootstrap.unreadActivities
+  if (!rows) {
+    return {
+      unreadActivities: [],
+      activityCounts: bootstrap.activityCounts,
+      mentionCounts: bootstrap.mentionCounts,
+      unreadActivityCount: bootstrap.unreadActivityCount,
+    }
   }
+  return { unreadActivities: rows, ...deriveActivityCounts(rows) }
 }
 
 /** The counter slice of a workspace bootstrap (`messageCounts` are the latest ordinals). */
 export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterState {
-  return {
+  // `unreadActivities` is the activity source of truth; the count fields are a
+  // derived projection. Pre-rollout snapshots lack the rows — fall back to the
+  // bootstrap's legacy count fields in that case (absent rows read as []).
+  const rows = bootstrap.unreadActivities
+  const base: UnreadCounterState = {
     unreadCounts: bootstrap.unreadCounts,
-    mentionCounts: bootstrap.mentionCounts,
+    unreadActivities: rows ?? [],
     activityCounts: bootstrap.activityCounts,
+    mentionCounts: bootstrap.mentionCounts,
     unreadActivityCount: bootstrap.unreadActivityCount,
     latestOrdinals: bootstrap.messageCounts,
   }
+  return rows ? withActivities(base, rows) : base
 }
 
 /** Write a counter slice back onto a workspace bootstrap object. */
@@ -175,6 +259,7 @@ export function withCounterState(bootstrap: WorkspaceBootstrap, state: UnreadCou
   return {
     ...bootstrap,
     unreadCounts: state.unreadCounts,
+    unreadActivities: state.unreadActivities,
     mentionCounts: state.mentionCounts,
     activityCounts: state.activityCounts,
     unreadActivityCount: state.unreadActivityCount,

@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from "dexie"
 import type {
+  Activity,
   AuthorType,
   CompanionMode,
   E2eActor,
@@ -441,6 +442,12 @@ export interface CachedUnreadState {
   mentionCounts: Record<string, number>
   activityCounts: Record<string, number>
   unreadActivityCount: number
+  /**
+   * Held set of the viewer's unread activity rows — the source of truth the
+   * badge/glow counts derive from. Absent for rows cached before the field
+   * shipped (reads as []); see sync/unread-counters.ts.
+   */
+  unreadActivities: Activity[]
   /**
    * Latest message ordinal per stream (sync phase 2c) — seeded from
    * bootstrap `messageCounts`, max-merged from `stream:activity`. The read

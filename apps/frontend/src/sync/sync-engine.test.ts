@@ -257,6 +257,7 @@ async function seedRevealableWorkspace(workspaceId: string): Promise<void> {
       mentionCounts: {},
       activityCounts: {},
       unreadActivityCount: 0,
+      unreadActivities: [],
       mutedStreamIds: [],
       _cachedAt: cachedAt,
     }),
@@ -1243,9 +1244,9 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     await vi.waitFor(async () => {
       const unread = await db.unreadState.get("ws_1")
-      // Log order: counts set to 2, read zeroes them, counts set to 1.
+      // Log order: a row added, read drops it, a later row added — derived to 1.
       expect(unread?.activityCounts["stream_x"]).toBe(1)
-      expect(unread?.mentionCounts["stream_x"]).toBe(0)
+      expect(unread?.mentionCounts["stream_x"]).toBe(1)
       expect(unread?.unreadActivityCount).toBe(1)
       // The read position covers all 5 snapshot messages.
       expect(unread?.unreadCounts["stream_x"]).toBe(0)
@@ -1273,8 +1274,8 @@ describe("SyncEngine sync cursor (active mode)", () => {
   it("commits catch-up counters atomically — the badge never paints the intermediate bounce", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     // A run of activity→read→activity→read→activity that, applied per entry,
-    // bounces the stream's activity count 1, 0, 1, 0, 2. The user must only ever
-    // see the final 2; the zeroes and the early 1 are replay noise.
+    // bounces the stream's activity count 1, 0, 1, 0, 1. The user must only ever
+    // see the final 1; the zeroes and the early 1 are replay noise.
     const catchUp = vi
       .fn()
       .mockResolvedValueOnce({
@@ -1294,15 +1295,15 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await engine.onConnect(asSocket(new MockSocket()))
 
     await vi.waitFor(async () => {
-      expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(2)
+      expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
     })
 
     // Every value the IDB-backed badge could have observed. The read entries
-    // would zero the count mid-replay; an atomic commit never persists that 0.
+    // drop the stream's rows mid-replay; an atomic commit never persists that 0.
     const observed = putSpy.mock.calls
       .map((call) => (call[0] as { activityCounts?: Record<string, number> }).activityCounts?.["stream_x"])
       .filter((value): value is number => value !== undefined)
-    expect(observed).toContain(2)
+    expect(observed).toContain(1)
     expect(observed).not.toContain(0)
 
     putSpy.mockRestore()
@@ -1445,8 +1446,8 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
 
     // Live duplicate of log entry 11 lands during the pause window. Its log
-    // copy applies below; re-applying the buffered copy AFTER entry 12 would
-    // regress the LWW activity counts back to 2.
+    // copy applies below; the held set upserts by id, so the duplicate is
+    // idempotent — entries 11 and 12 are two distinct rows (derived count 2).
     const duplicate = activityCountsEntry("11", { mentionCount: 0, activityCount: 2 })
     socket.trigger("activity:created", { ...(duplicate.payload as object), syncId: "11" })
 
@@ -1456,12 +1457,12 @@ describe("SyncEngine sync cursor (active mode)", () => {
     })
 
     await vi.waitFor(async () => {
-      expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
+      expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(2)
     })
     expect(engine.getSyncCursor()).toBe("12")
     // Give any stray (incorrect) splice apply a chance to land before re-checking.
     await new Promise((resolve) => setTimeout(resolve, 10))
-    expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
+    expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(2)
     engine.destroy()
   })
 

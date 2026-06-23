@@ -1278,6 +1278,14 @@ export interface WorkspaceBootstrap {
   mentionCounts: Record<string, number>
   activityCounts: Record<string, number>
   unreadActivityCount: number
+  /**
+   * The viewer's unread activity rows (`read_at IS NULL AND is_self = FALSE`),
+   * newest-first and capped, at snapshot time. This is the held set the Activity
+   * badge and per-stream glow derive from, so a count can never outrun the feed.
+   * Optional: snapshots cached before the field shipped lack it (absent reads as
+   * empty).
+   */
+  unreadActivities?: Activity[]
   mutedStreamIds: string[]
   userPreferences: UserPreferences
   /** Viewer's persisted sidebar layout for this workspace (defaults to the Smart preset). */
@@ -1439,6 +1447,8 @@ export interface ActivityCreatedPayload {
     context: Record<string, unknown>
     createdAt: string
     isSelf: boolean
+    /** Reaction emoji (null for non-reaction rows); lets the client drop the held row on reaction:removed. */
+    emoji: string | null
   }
 }
 

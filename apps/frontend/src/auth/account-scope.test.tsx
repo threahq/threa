@@ -137,6 +137,7 @@ describe("AccountScope", () => {
         mentionCounts: {},
         activityCounts: {},
         unreadActivityCount: 0,
+        unreadActivities: [],
         mutedStreamIds: [],
         _cachedAt: Date.now(),
       },

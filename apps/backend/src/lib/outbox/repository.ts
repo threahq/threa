@@ -582,6 +582,8 @@ export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
      * unread counts either.
      */
     isSelf: boolean
+    /** Reaction emoji (null for non-reaction rows); lets the client drop the held row on reaction:removed. */
+    emoji: string | null
   }
 }
 

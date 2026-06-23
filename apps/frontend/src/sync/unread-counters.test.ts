@@ -1,22 +1,51 @@
 import { describe, it, expect } from "vitest"
+import type { Activity } from "@threa/types"
 import {
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamReadSet,
   applyStreamsReadAllOrdinals,
-  applyActivityCounts,
+  deriveActivityCounts,
+  upsertActivity,
+  dropActivitiesForStream,
+  dropReactionActivity,
+  rehomeActivities,
+  clearActivities,
   type UnreadCounterState,
 } from "./unread-counters"
 
-function makeState(overrides: Partial<UnreadCounterState> = {}): UnreadCounterState {
+function act(id: string, streamId: string | null, activityType = "message", extra: Partial<Activity> = {}): Activity {
   return {
+    id,
+    workspaceId: "ws_1",
+    userId: "usr_1",
+    activityType,
+    streamId,
+    messageId: `msg_${id}`,
+    actorId: "usr_2",
+    actorType: "user",
+    context: {},
+    readAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    isSelf: false,
+    emoji: null,
+    ...extra,
+  }
+}
+
+function makeState(overrides: Partial<UnreadCounterState> = {}): UnreadCounterState {
+  const merged: UnreadCounterState = {
     unreadCounts: {},
-    mentionCounts: {},
+    unreadActivities: [],
     activityCounts: {},
+    mentionCounts: {},
     unreadActivityCount: 0,
     latestOrdinals: {},
     ...overrides,
   }
+  // The count fields are a derived projection — keep them consistent with the
+  // held rows so a hand-built state is never internally contradictory.
+  return { ...merged, ...deriveActivityCounts(merged.unreadActivities) }
 }
 
 describe("applyStreamActivityOrdinal", () => {
@@ -59,8 +88,6 @@ describe("applyStreamActivityOrdinal", () => {
   })
 
   it("keeps newer messages unread when an own send applies out of order", () => {
-    // Someone else's message 7 already applied, then own message 6 arrives late:
-    // read advances to 6, message 7 stays unread.
     const other = applyStreamActivityOrdinal(seeded, "s1", 7, { isOwnMessage: false, isViewing: false })
     const own = applyStreamActivityOrdinal(other, "s1", 6, { isOwnMessage: true, isViewing: false })
     expect(own.unreadCounts.s1).toBe(1)
@@ -77,7 +104,6 @@ describe("applyStreamActivityOrdinal", () => {
     const next = applyStreamActivityOrdinal(noBaseline, "s1", 9, { isOwnMessage: false, isViewing: false })
     expect(next.unreadCounts.s1).toBe(3)
     expect(next.latestOrdinals?.s1).toBe(9)
-    // The seeded baseline makes the SAME event idempotent from here on.
     const again = applyStreamActivityOrdinal(next, "s1", 9, { isOwnMessage: false, isViewing: false })
     expect(again.unreadCounts.s1).toBe(3)
   })
@@ -90,26 +116,26 @@ describe("applyStreamActivityOrdinal", () => {
 })
 
 describe("applyStreamReadOrdinal", () => {
+  // s1 has 2 unread mentions, s2 has 1 unread message; 3 unread messages on s1.
   const seeded = makeState({
     unreadCounts: { s1: 3 },
-    mentionCounts: { s1: 2 },
-    activityCounts: { s1: 2, s2: 1 },
-    unreadActivityCount: 3,
+    unreadActivities: [act("a1", "s1", "mention"), act("a2", "s1", "mention"), act("a3", "s2")],
     latestOrdinals: { s1: 8 },
   })
 
   it("leaves messages past the read position unread", () => {
-    // Read up to ordinal 6 of 8: two messages remain unread.
     const next = applyStreamReadOrdinal(seeded, "s1", 6)
     expect(next.unreadCounts.s1).toBe(2)
   })
 
-  it("zeroes mention/activity counts and rederives the workspace total", () => {
+  it("drops the stream's activity rows on read (coupling) and rederives the total", () => {
     const next = applyStreamReadOrdinal(seeded, "s1", 8)
     expect(next.unreadCounts.s1).toBe(0)
-    expect(next.mentionCounts.s1).toBe(0)
-    expect(next.activityCounts.s1).toBe(0)
-    expect(next.unreadActivityCount).toBe(1) // s2's count survives
+    expect(next.unreadActivities.map((a) => a.streamId)).toEqual(["s2"])
+    expect(next.activityCounts.s1 ?? 0).toBe(0)
+    expect(next.mentionCounts.s1 ?? 0).toBe(0)
+    expect(next.activityCounts.s2).toBe(1)
+    expect(next.unreadActivityCount).toBe(1) // s2's row survives
   })
 
   it("never regresses the read position on a stale read event", () => {
@@ -131,15 +157,11 @@ describe("applyStreamReadOrdinal", () => {
     expect(next.latestOrdinals?.s1).toBe(7)
   })
 
-  it("lands in log order between two absolute activity applies", () => {
-    // activity counts 2 → read zeroes → activity counts 1: final state is the
-    // last entry's absolute value, exactly as the log orders them.
-    let state = makeState()
-    state = applyActivityCounts(state, "s1", { mentionCount: 1, activityCount: 2 })
+  it("a later activity re-adds after a read dropped the stream's rows", () => {
+    let state = makeState({ unreadActivities: [act("a1", "s1", "mention")] })
     state = applyStreamReadOrdinal(state, "s1", 5)
-    expect(state.activityCounts.s1).toBe(0)
-    state = applyActivityCounts(state, "s1", { mentionCount: 0, activityCount: 1 })
-    expect(state.mentionCounts.s1).toBe(0)
+    expect(state.unreadActivityCount).toBe(0)
+    state = upsertActivity(state, act("a2", "s1"))
     expect(state.activityCounts.s1).toBe(1)
     expect(state.unreadActivityCount).toBe(1)
   })
@@ -148,15 +170,11 @@ describe("applyStreamReadOrdinal", () => {
 describe("applyStreamReadSet", () => {
   const seeded = makeState({
     unreadCounts: { s1: 0 },
-    mentionCounts: { s1: 0 },
-    activityCounts: { s1: 0, s2: 1 },
-    unreadActivityCount: 1,
+    unreadActivities: [act("a1", "s2")],
     latestOrdinals: { s1: 8 },
   })
 
   it("moves the pointer BACKWARD and raises unread (the mark-unread case)", () => {
-    // Fully read (0 unread of 8); mark unread from ordinal 6 → pointer to 5,
-    // so messages 6,7,8 are unread.
     const next = applyStreamReadSet(seeded, "s1", 5)
     expect(next.unreadCounts.s1).toBe(3)
   })
@@ -167,11 +185,11 @@ describe("applyStreamReadSet", () => {
     expect(unread.unreadCounts.s1).toBe(4)
   })
 
-  it("leaves mention/activity counts untouched (restoration is a follow-up)", () => {
+  it("leaves held activity untouched (re-unread restoration is a follow-up)", () => {
     const next = applyStreamReadSet(seeded, "s1", 2)
-    expect(next.mentionCounts.s1).toBe(seeded.mentionCounts.s1)
-    expect(next.activityCounts.s1).toBe(seeded.activityCounts.s1)
-    expect(next.unreadActivityCount).toBe(seeded.unreadActivityCount)
+    expect(next.unreadActivities).toBe(seeded.unreadActivities)
+    expect(next.activityCounts.s2).toBe(1)
+    expect(next.unreadActivityCount).toBe(1)
   })
 
   it("clamps unread at zero when the pointer is at or past latest", () => {
@@ -181,11 +199,10 @@ describe("applyStreamReadSet", () => {
 })
 
 describe("applyStreamsReadAllOrdinals", () => {
-  it("applies each stream's absolute read position", () => {
+  it("applies each stream's read position and drops its activity (coupling)", () => {
     const state = makeState({
       unreadCounts: { s1: 2, s2: 5 },
-      activityCounts: { s1: 1, s2: 2 },
-      unreadActivityCount: 3,
+      unreadActivities: [act("a1", "s1"), act("a2", "s2"), act("a3", "s2", "mention")],
       latestOrdinals: { s1: 4, s2: 10 },
     })
     const next = applyStreamsReadAllOrdinals(state, [
@@ -193,24 +210,104 @@ describe("applyStreamsReadAllOrdinals", () => {
       { streamId: "s2", lastReadOrdinal: 10 },
     ])
     expect(next.unreadCounts).toEqual({ s1: 0, s2: 0 })
-    expect(next.activityCounts).toEqual({ s1: 0, s2: 0 })
+    expect(next.unreadActivities).toEqual([])
+    expect(next.activityCounts).toEqual({})
     expect(next.unreadActivityCount).toBe(0)
   })
 })
 
-describe("applyActivityCounts", () => {
-  it("sets absolute counts and derives the total as Σ activityCounts", () => {
-    const state = makeState({ activityCounts: { s1: 1, s2: 4 }, unreadActivityCount: 5 })
-    const next = applyActivityCounts(state, "s1", { mentionCount: 2, activityCount: 3 })
-    expect(next.mentionCounts.s1).toBe(2)
-    expect(next.activityCounts).toEqual({ s1: 3, s2: 4 })
-    expect(next.unreadActivityCount).toBe(7)
+describe("deriveActivityCounts", () => {
+  it("groups by stream and filters mentions", () => {
+    const d = deriveActivityCounts([act("a1", "s1", "mention"), act("a2", "s1"), act("a3", "s2", "mention")])
+    expect(d.activityCounts).toEqual({ s1: 2, s2: 1 })
+    expect(d.mentionCounts).toEqual({ s1: 1, s2: 1 })
+    expect(d.unreadActivityCount).toBe(3)
   })
 
-  it("converges on duplicate apply and allows decreases (LWW)", () => {
-    const state = makeState({ activityCounts: { s1: 5 }, unreadActivityCount: 5 })
-    const once = applyActivityCounts(state, "s1", { mentionCount: 0, activityCount: 2 })
-    expect(applyActivityCounts(once, "s1", { mentionCount: 0, activityCount: 2 })).toEqual(once)
-    expect(once.unreadActivityCount).toBe(2)
+  it("counts stream-less rows in the total but not per-stream", () => {
+    const d = deriveActivityCounts([act("a1", "s1"), act("a2", null, "saved_reminder")])
+    expect(d.activityCounts).toEqual({ s1: 1 })
+    expect(d.unreadActivityCount).toBe(2)
+  })
+})
+
+describe("upsertActivity", () => {
+  it("adds a row and derives its counts", () => {
+    const next = upsertActivity(makeState(), act("a1", "s1", "mention"))
+    expect(next.unreadActivities).toHaveLength(1)
+    expect(next.activityCounts.s1).toBe(1)
+    expect(next.mentionCounts.s1).toBe(1)
+    expect(next.unreadActivityCount).toBe(1)
+  })
+
+  it("is idempotent by id — a replayed event never duplicates", () => {
+    const once = upsertActivity(makeState(), act("a1", "s1"))
+    const twice = upsertActivity(once, act("a1", "s1"))
+    expect(twice.unreadActivities).toHaveLength(1)
+    expect(twice.unreadActivityCount).toBe(1)
+  })
+
+  it("skips self rows (they do not count as unread)", () => {
+    const next = upsertActivity(makeState(), act("a1", "s1", "message", { isSelf: true }))
+    expect(next.unreadActivities).toHaveLength(0)
+    expect(next.unreadActivityCount).toBe(0)
+  })
+})
+
+describe("dropActivitiesForStream", () => {
+  it("drops only that stream's rows", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1"), act("a2", "s2")] })
+    const next = dropActivitiesForStream(state, "s1")
+    expect(next.unreadActivities.map((a) => a.streamId)).toEqual(["s2"])
+    expect(next.activityCounts).toEqual({ s2: 1 })
+    expect(next.unreadActivityCount).toBe(1)
+  })
+
+  it("is a no-op (same reference) when the stream has no rows", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s2")] })
+    expect(dropActivitiesForStream(state, "s1")).toBe(state)
+  })
+})
+
+describe("dropReactionActivity", () => {
+  const state = makeState({
+    unreadActivities: [
+      act("a1", "s1", "reaction", { messageId: "m1", actorId: "u2", emoji: "👍" }),
+      act("a2", "s1", "reaction", { messageId: "m1", actorId: "u2", emoji: "🎉" }),
+    ],
+  })
+
+  it("drops only the row matching message + actor + emoji", () => {
+    const next = dropReactionActivity(state, { messageId: "m1", actorId: "u2", emoji: "👍" })
+    expect(next.unreadActivities.map((a) => a.emoji)).toEqual(["🎉"])
+    expect(next.unreadActivityCount).toBe(1)
+  })
+
+  it("is a no-op when nothing matches", () => {
+    expect(dropReactionActivity(state, { messageId: "m1", actorId: "u2", emoji: "❤️" })).toBe(state)
+  })
+})
+
+describe("rehomeActivities", () => {
+  it("moves rows from the source stream to the destination", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1"), act("a2", "s3")] })
+    const next = rehomeActivities(state, "s1", "s2")
+    expect(next.activityCounts).toEqual({ s2: 1, s3: 1 })
+    expect(next.unreadActivities.find((a) => a.id === "a1")?.streamId).toBe("s2")
+  })
+
+  it("is a no-op when the source has no rows", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s3")] })
+    expect(rehomeActivities(state, "s1", "s2")).toBe(state)
+  })
+})
+
+describe("clearActivities", () => {
+  it("empties the held set and its derived counts", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1"), act("a2", "s2")] })
+    const next = clearActivities(state)
+    expect(next.unreadActivities).toEqual([])
+    expect(next.activityCounts).toEqual({})
+    expect(next.unreadActivityCount).toBe(0)
   })
 })

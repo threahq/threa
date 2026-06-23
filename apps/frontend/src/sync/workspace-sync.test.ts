@@ -25,6 +25,7 @@ import {
   type StreamMember,
   type StreamWithPreview,
   type WorkspaceBootstrap,
+  type Activity,
 } from "@threa/types"
 import { assignmentId } from "@/hooks/use-labels"
 import type { Socket } from "socket.io-client"
@@ -368,9 +369,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     })
 
     expect(merged.unreadCounts.stream_visible).toBe(1)
-    expect(merged.mentionCounts.stream_visible).toBe(1)
-    expect(merged.activityCounts.stream_visible).toBe(1)
-    expect(merged.unreadActivityCount).toBe(1)
     expect(
       merged.streamMemberships.find((membership) => membership.streamId === "stream_visible")?.lastReadEventId
     ).toBe("evt_new")
@@ -434,6 +432,7 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
         mentionCounts: { stream_failed: 1 },
         activityCounts: { stream_failed: 2 },
         unreadActivityCount: 2,
+        unreadActivities: [],
         mutedStreamIds: ["stream_failed"],
         _cachedAt: Date.now(),
       },
@@ -444,8 +443,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
       merged.streamMemberships.find((membership) => membership.streamId === "stream_failed")?.lastReadEventId
     ).toBe("evt_cached")
     expect(merged.unreadCounts.stream_failed).toBe(3)
-    expect(merged.mentionCounts.stream_failed).toBe(1)
-    expect(merged.activityCounts.stream_failed).toBe(2)
     expect(merged.mutedStreamIds).toContain("stream_failed")
   })
 
@@ -486,6 +483,7 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
       mentionCounts: { stream_terminal: 1 },
       activityCounts: { stream_terminal: 2 },
       unreadActivityCount: 2,
+      unreadActivities: [],
       mutedStreamIds: ["stream_terminal"],
     })
 
@@ -840,6 +838,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       mentionCounts: {},
       activityCounts: {},
       unreadActivityCount: 0,
+      unreadActivities: [],
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })
@@ -1309,6 +1308,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       mentionCounts: { stream_1: 0 },
       activityCounts: { stream_1: 0 },
       unreadActivityCount: 0,
+      unreadActivities: [],
       mutedStreamIds: [],
       _cachedAt: Date.now(),
     })
@@ -1364,7 +1364,31 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
    * Fixture: stream_1 has 5 messages, 1 unread (implied read position 4),
    * 1 mention + 1 activity; stream_2 contributes 1 activity to the total.
    */
+  function fixtureActivity(id: string, streamId: string, activityType: string): Activity {
+    return {
+      id,
+      workspaceId: "ws_1",
+      userId: "member_1",
+      activityType,
+      streamId,
+      messageId: `msg_${id}`,
+      actorId: "member_2",
+      actorType: "user",
+      context: {},
+      readAt: null,
+      createdAt: new Date().toISOString(),
+      isSelf: false,
+      emoji: null,
+    }
+  }
+
   async function seedCounterFixture(queryClient: QueryClient) {
+    // The held set is the source of truth: stream_1 has one unread mention,
+    // stream_2 one unread message. The count fields below are their projection.
+    const unreadActivities = [
+      fixtureActivity("act_s1", "stream_1", "mention"),
+      fixtureActivity("act_s2", "stream_2", "message"),
+    ]
     queryClient.setQueryData(
       workspaceKeys.bootstrap("ws_1"),
       makeBootstrap({
@@ -1374,6 +1398,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
         mentionCounts: { stream_1: 1 },
         activityCounts: { stream_1: 1, stream_2: 1 },
         unreadActivityCount: 2,
+        unreadActivities,
         messageCounts: { stream_1: 5 },
       })
     )
@@ -1395,6 +1420,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
       mentionCounts: { stream_1: 1 },
       activityCounts: { stream_1: 1, stream_2: 1 },
       unreadActivityCount: 2,
+      unreadActivities,
       latestOrdinals: { stream_1: 5 },
       mutedStreamIds: [],
       _cachedAt: now,
@@ -1524,9 +1550,9 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
 
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(bootstrap?.unreadCounts.stream_1).toBe(1)
-    expect(bootstrap?.mentionCounts.stream_1).toBe(0)
-    expect(bootstrap?.activityCounts.stream_1).toBe(0)
-    // Σ activityCounts: stream_2's activity survives.
+    expect(bootstrap?.mentionCounts.stream_1 ?? 0).toBe(0)
+    expect(bootstrap?.activityCounts.stream_1 ?? 0).toBe(0)
+    // stream_1's rows dropped on read (coupling); stream_2's activity survives.
     expect(bootstrap?.unreadActivityCount).toBe(1)
 
     await vi.waitFor(async () => {
@@ -1555,7 +1581,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
 
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(bootstrap?.unreadCounts.stream_1).toBe(0)
-    expect(bootstrap?.activityCounts).toEqual({ stream_1: 0, stream_2: 0 })
+    expect(bootstrap?.activityCounts).toEqual({})
     expect(bootstrap?.unreadActivityCount).toBe(0)
 
     await vi.waitFor(async () => {
@@ -1567,7 +1593,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
-  it("sets activity:created counts as absolutes — duplicates converge, decreases apply", async () => {
+  it("upserts activity:created rows by id (idempotent) and derives counts from the held set", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
     const { emit, cleanup } = register(queryClient)
@@ -1575,7 +1601,6 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     const payload = {
       workspaceId: "ws_1",
       targetUserId: "member_1",
-      counts: { mentionCount: 2, activityCount: 3 },
       activity: {
         id: "act_1",
         activityType: "mention",
@@ -1589,28 +1614,34 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
         emoji: null,
       },
     }
+    // A duplicate (sync-log replay) must upsert by id, never double-count.
     emit("activity:created", payload)
     emit("activity:created", payload)
 
     let bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    // Fixture seeded stream_1 with one mention (act_s1); act_1 adds a second.
     expect(bootstrap?.mentionCounts.stream_1).toBe(2)
-    expect(bootstrap?.activityCounts.stream_1).toBe(3)
-    expect(bootstrap?.unreadActivityCount).toBe(4) // 3 + stream_2's 1
+    expect(bootstrap?.activityCounts.stream_1).toBe(2)
+    expect(bootstrap?.unreadActivityCount).toBe(3) // stream_1: 2, stream_2: 1
 
-    // A lower absolute (reaction removal raced an insert) applies as-is (LWW).
+    // A distinct id adds another held row.
+    emit("activity:created", { ...payload, activity: { ...payload.activity, id: "act_2", messageId: "msg_2" } })
+    bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.activityCounts.stream_1).toBe(3)
+    expect(bootstrap?.unreadActivityCount).toBe(4)
+
+    // A self row is never held (it doesn't count as unread).
     emit("activity:created", {
       ...payload,
-      counts: { mentionCount: 1, activityCount: 1 },
-      activity: { ...payload.activity, id: "act_2" },
+      activity: { ...payload.activity, id: "act_self", messageId: "msg_self", isSelf: true },
     })
     bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
-    expect(bootstrap?.activityCounts.stream_1).toBe(1)
-    expect(bootstrap?.unreadActivityCount).toBe(2)
+    expect(bootstrap?.unreadActivityCount).toBe(4)
 
     await vi.waitFor(async () => {
       const state = await db.unreadState.get("ws_1")
-      expect(state?.activityCounts.stream_1).toBe(1)
-      expect(state?.unreadActivityCount).toBe(2)
+      expect(state?.unreadActivityCount).toBe(4)
+      expect(state?.unreadActivities.length).toBe(4)
     })
 
     cleanup()
@@ -1656,6 +1687,7 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
         mentionCounts: {},
         activityCounts: {},
         unreadActivityCount: 0,
+        unreadActivities: [],
         latestOrdinals: { stream_fresh: 11 },
         mutedStreamIds: [],
         _cachedAt: fetchStartedAt + 500,
