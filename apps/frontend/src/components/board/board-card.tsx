@@ -11,6 +11,7 @@ import { LinkPreviewList } from "@/components/timeline/link-preview-list"
 import { MessageReactions } from "@/components/timeline/message-reactions"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useConversationService } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
@@ -67,15 +68,14 @@ function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolea
  * in on click. The stream it lives in is the header locator, not a topic line.
  */
 export function BoardCard({ workspaceId, post, contextLabel, streamType }: BoardCardProps) {
-  const { conversation, openingMessage, recentMessages } = post
+  const { conversation, openingMessage, recentMessages, totalReplies } = post
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const [expanded, setExpanded] = useState(false)
 
   const streamId = conversation.streamId
-  const messageCount = conversation.messageIds.length
-  const hiddenCount = Math.max(0, messageCount - (openingMessage ? 1 : 0) - recentMessages.length)
+  const hiddenCount = Math.max(0, totalReplies - recentMessages.length)
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
 
   const {
@@ -113,8 +113,14 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   return (
     <div className="rounded-xl border bg-card p-3 sm:p-4">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate font-medium">{contextLabel}</span>
+        {/* The stream the post lives in — a real link back into it (INV-40). */}
+        <Link
+          to={`/w/${workspaceId}/s/${streamId}`}
+          className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
+        >
+          <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate font-medium">{contextLabel}</span>
+        </Link>
         <RelativeTime date={conversation.lastActivityAt} terse className="ml-auto shrink-0" />
       </div>
 
@@ -167,7 +173,11 @@ interface PostMessageProps {
 
 function PostMessage({ workspaceId, streamId, message, authorName, currentUserId, continuation }: PostMessageProps) {
   const { formatTime, formatFull } = useFormattedDate()
+  const { openUserProfile } = useUserProfile()
   const hasReactions = Object.keys(message.reactions).length > 0
+  // Users open their profile on click (same as the timeline); other actor types
+  // (persona/bot/system) are non-interactive.
+  const interactiveName = message.authorType === "user" && Boolean(message.authorId)
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
 
@@ -239,7 +249,17 @@ function PostMessage({ workspaceId, streamId, message, authorName, currentUserId
       />
       <div className="min-w-0 flex-1">
         <div className="mb-0.5 flex items-baseline gap-2">
-          <span className="truncate text-sm font-semibold">{authorName}</span>
+          {interactiveName ? (
+            <button
+              type="button"
+              onClick={() => openUserProfile(message.authorId)}
+              className="truncate text-left text-sm font-semibold hover:underline"
+            >
+              {authorName}
+            </button>
+          ) : (
+            <span className="truncate text-sm font-semibold">{authorName}</span>
+          )}
           {/* Permalink to the message in its stream timeline — the body is
               interactive, so navigation lives on the timestamp instead. */}
           <Link

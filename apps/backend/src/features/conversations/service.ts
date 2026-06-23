@@ -40,11 +40,16 @@ export interface BoardPostMessage {
   createdAt: Date
 }
 
-/** A conversation surfaced as a feed post: the grouping, its opening message, and the latest replies. */
+/** A conversation surfaced as a feed post: the grouping, its origin message, and the latest replies. */
 export interface BoardPost {
   conversation: ConversationWithStaleness
+  /** The post's origin: the conversation's first message, or — for a thread —
+   * the parent message in the parent stream that the thread descends from. */
   openingMessage: BoardPostMessage | null
+  /** The trailing reply messages (up to 3), chronological. */
   recentMessages: BoardPostMessage[]
+  /** Total replies under the origin (excludes the origin). Drives the "N more" gap. */
+  totalReplies: number
 }
 
 export interface ReassignMessageParams {
@@ -101,20 +106,39 @@ export class ConversationService {
     })
     const conversations = rows.map(addStalenessFields)
 
-    // Hydrate each post's opening message plus its last few replies so the board
+    // Resolve each conversation's stream so a thread post can show its true
+    // origin: a thread is its own stream, so its `messageIds` are the replies and
+    // the originating message lives in the parent stream (`parentMessageId`),
+    // never a member of the thread conversation.
+    const streamIds = [...new Set(conversations.map((c) => c.streamId))]
+    const streamById = new Map(
+      (streamIds.length > 0 ? await StreamRepository.findByIds(this.pool, streamIds) : []).map((s) => [s.id, s])
+    )
+
+    // Hydrate each post's origin message plus its last few replies so the board
     // renders real post content + reactions, not just a topic line. One batch
     // read over the union of needed ids (INV-56); the access filter already ran
     // in the conversation query, so these ids are all viewer-readable.
-    // `findByIds` carries reactions with each message.
-    const planByConversation = new Map<string, { openingId: string | undefined; recentIds: string[] }>()
+    const planByConversation = new Map<
+      string,
+      { originId: string | undefined; recentIds: string[]; totalReplies: number }
+    >()
     const idsToFetch = new Set<string>()
     for (const conversation of conversations) {
+      const stream = streamById.get(conversation.streamId)
       const ids = conversation.messageIds
-      const openingId = ids[0]
-      // Last 3, never including the opening at index 0.
-      const recentIds = ids.length > 1 ? ids.slice(Math.max(1, ids.length - 3)) : []
-      planByConversation.set(conversation.id, { openingId, recentIds })
-      if (openingId) idsToFetch.add(openingId)
+      let originId: string | undefined
+      let replyIds: string[]
+      if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
+        originId = stream.parentMessageId
+        replyIds = ids
+      } else {
+        originId = ids[0]
+        replyIds = ids.slice(1)
+      }
+      const recentIds = replyIds.slice(Math.max(0, replyIds.length - 3))
+      planByConversation.set(conversation.id, { originId, recentIds, totalReplies: replyIds.length })
+      if (originId) idsToFetch.add(originId)
       for (const id of recentIds) idsToFetch.add(id)
     }
     const ids = [...idsToFetch]
@@ -138,12 +162,17 @@ export class ConversationService {
 
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!
-      const opening = plan.openingId ? messageById.get(plan.openingId) : undefined
+      const opening = plan.originId ? messageById.get(plan.originId) : undefined
       const recentMessages = plan.recentIds
         .map((id) => messageById.get(id))
         .filter((m): m is Message => Boolean(m))
         .map(buildPostMessage)
-      return { conversation, openingMessage: opening ? buildPostMessage(opening) : null, recentMessages }
+      return {
+        conversation,
+        openingMessage: opening ? buildPostMessage(opening) : null,
+        recentMessages,
+        totalReplies: plan.totalReplies,
+      }
     })
 
     // A full page means there may be more; the last row's (activity, id) is the

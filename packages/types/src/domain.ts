@@ -656,13 +656,20 @@ export interface BoardPostMessage {
  */
 export interface BoardPost {
   conversation: ConversationWithStaleness
+  /**
+   * The post's origin message: the conversation's first message, or — for a
+   * thread conversation — the parent message in the parent stream the thread
+   * descends from (it isn't a member of the thread conversation itself).
+   */
   openingMessage: BoardPostMessage | null
   /**
-   * Up to the last three messages of the conversation, excluding the opening,
-   * in chronological order. The collapsed card shows opening + a "N more"
-   * expander + these; expanding fetches the full message list.
+   * Up to the last three reply messages (excluding the origin), chronological.
+   * The collapsed card shows origin + a "N more" expander + these; expanding
+   * fetches the full message list.
    */
   recentMessages: BoardPostMessage[]
+  /** Total replies under the origin (excludes it). Drives the "N more" gap. */
+  totalReplies: number
 }
 
 /**

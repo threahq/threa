@@ -10,6 +10,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as messageReactionsModule from "@/hooks/use-message-reactions"
+import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 
 const WORKSPACE_ID = "ws_1"
@@ -56,12 +57,16 @@ function makeOpeningMessage(overrides: Partial<BoardPostMessage> = {}): BoardPos
 function makePost(
   convOverrides: Partial<ConversationWithStaleness> = {},
   msgOverrides: Partial<BoardPostMessage> | null = {},
-  recentMessages: BoardPostMessage[] = []
+  recentMessages: BoardPostMessage[] = [],
+  totalReplies?: number
 ): BoardPost {
+  const conversation = makeConversation(convOverrides)
   return {
-    conversation: makeConversation(convOverrides),
+    conversation,
     openingMessage: msgOverrides === null ? null : makeOpeningMessage(msgOverrides),
     recentMessages,
+    // Default mirrors a non-thread post: every message after the origin is a reply.
+    totalReplies: totalReplies ?? Math.max(0, conversation.messageIds.length - 1),
   }
 }
 
@@ -118,6 +123,8 @@ beforeEach(() => {
     toggleReaction: vi.fn(),
     toggleByEmoji: vi.fn(),
   } as unknown as ReturnType<typeof messageReactionsModule.useMessageReactions>)
+  // Author names open the profile via UserProfileProvider, not mounted here.
+  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
   // RelativeTime reads timezone/locale from the preferences context.
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },
