@@ -48,17 +48,12 @@ import {
   type LabelAssignment,
   BotInvocationCapabilities,
   BotInvocationTriggers,
-  BotRuntimeKinds,
   MemoryModes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-  PI_TOOL_TRACE_FORMAT,
-  PI_TOOL_TRACE_SECTION_LABELS,
-  PiToolTraceSectionLabels,
   THREA_CALLBACK_TOKEN_HEADER,
   sentViaApiKey,
   type AuthorType,
   type JSONContent,
-  type PiToolTraceSectionLabel,
   type SealedTurnContext,
 } from "@threa/types"
 import {
@@ -66,14 +61,13 @@ import {
   BotRuntimeInstanceRepository,
   assertManifestAllows,
   type BotInvocation,
-  type BotRuntimeInstance,
+  type BotRuntimeWriteOps,
 } from "../bot-runtimes"
 import {
   insertCommandCompletedEvent,
   insertCommandFailedEvent,
   parseRuntimeCommandInvocationMetadata,
 } from "../commands"
-import type { BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
@@ -94,12 +88,8 @@ import {
 } from "../agents"
 import { buildSealedTurnContext } from "./sealed-turn-context"
 import { encodeCursor, decodeCursor } from "./cursor"
-import {
-  botInvocationStepEvents,
-  createBotInvocationTraceProjector,
-  serializeTraceStep,
-  synthesizeReplyOnlyBotTrace,
-} from "./trace-steps"
+import { serializeTraceStep, synthesizeReplyOnlyBotTrace } from "./trace-steps"
+import { createBotRuntimeWriteOps } from "./runtime-write-ops"
 import { listMyBotsSchema } from "./schemas"
 import type {
   WireStream,
@@ -618,6 +608,13 @@ export interface PublicApiDeps {
   attachmentService: AttachmentService
   botChannelService: BotChannelService
   botRuntimeService: BotRuntimeService
+  /**
+   * The shared presence/renew/steps write path. Production wires the single
+   * instance also handed to the `/bot` socket (INV-13); when omitted (tests,
+   * standalone handler construction) it is built from the deps below so the
+   * REST handlers behave identically without every caller threading it.
+   */
+  botRuntimeWriteOps?: BotRuntimeWriteOps
   streamService: StreamService
   eventService: EventService
   labelService: LabelService
@@ -626,113 +623,13 @@ export interface PublicApiDeps {
   io: Server
 }
 
-const SENSITIVE_VALUE_PATTERNS = [
-  /\b(?:sk|rk|pk|lf|wos|gh[a-z]|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\b(?:Authorization|X-Api-Key|api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;\"'}]+/gi,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-]
-
-function redactSensitiveText(text: string): string {
-  let redacted = text
-  for (const pattern of SENSITIVE_VALUE_PATTERNS) redacted = redacted.replace(pattern, "[REDACTED]")
-  return redacted
-}
-
-function sanitizeStatusText(statusText?: string | null): string | null {
-  const trimmed = redactSensitiveText(statusText?.trim() ?? "")
-  if (!trimmed) return null
-  const allowed = new Set([
-    "Thinking…",
-    "Loaded context…",
-    "Running shell command…",
-    "Reading file…",
-    "Reading sensitive file…",
-    "Writing file…",
-    "Editing file…",
-    "Searching files…",
-    "Listing directory…",
-    "Using tool…",
-    "Tool finished",
-    "Tool failed",
-    "Working…",
-    "Composing response…",
-    "Sent response",
-  ])
-  if (allowed.has(trimmed)) return trimmed
-  return "Working…"
-}
-
-const TRACE_HEADLINE_MAX_CHARS = 200
-const TRACE_BODY_MAX_CHARS = 10_000
-const TRACE_LANG_MAX_CHARS = 32
-const TRACE_MAX_SECTIONS = 16
-
-const TRACE_SECTION_LABEL_SET: ReadonlySet<string> = new Set(PI_TOOL_TRACE_SECTION_LABELS)
-
-interface SafeTraceSection {
-  label: PiToolTraceSectionLabel
-  body: string
-  lang: string | null
-}
-
-function clampString(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value
-}
-
-function sanitizeTraceSection(section: unknown): SafeTraceSection | null {
-  if (!section || typeof section !== "object" || Array.isArray(section)) return null
-  const item = section as Record<string, unknown>
-  const rawLabel = typeof item.label === "string" ? item.label : ""
-  if (!TRACE_SECTION_LABEL_SET.has(rawLabel)) return null
-  const label = rawLabel as PiToolTraceSectionLabel
-  if (label === PiToolTraceSectionLabels.ARGUMENTS) {
-    return { label, body: "Tool arguments omitted for safety.", lang: null }
-  }
-  if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) {
-    return { label, body: "Tool output omitted for safety.", lang: null }
-  }
-  const body = typeof item.body === "string" ? clampString(redactSensitiveText(item.body), TRACE_BODY_MAX_CHARS) : ""
-  const lang = typeof item.lang === "string" ? clampString(item.lang, TRACE_LANG_MAX_CHARS) : null
-  return { label, body, lang }
-}
-
-// Trace step content is stored as-received from the bot runtime, after
-// best-effort sanitization. The official Pi extension is the security
-// boundary — it is responsible for never forwarding raw tool stdout, file
-// contents, or credentials. Third-party runtimes inherit the trust level
-// of the API key holder; the allowlist + regex here is defense-in-depth,
-// not a guarantee. Do not loosen this (relax the allowlist, drop the
-// length caps, or pass arbitrary fields through) without revisiting the
-// threat model — see extensions/pi-remote/ for the trusted-runtime
-// contract.
-export function sanitizeInvocationStepContent(content: string): string {
-  const redacted = redactSensitiveText(content)
-  try {
-    const parsed = JSON.parse(redacted) as unknown
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return redacted
-    const trace = parsed as Record<string, unknown>
-    if (trace.format !== PI_TOOL_TRACE_FORMAT || !Array.isArray(trace.sections)) return redacted
-    const headline =
-      typeof trace.headline === "string"
-        ? clampString(redactSensitiveText(trace.headline), TRACE_HEADLINE_MAX_CHARS)
-        : ""
-    const sections = trace.sections
-      .slice(0, TRACE_MAX_SECTIONS)
-      .map(sanitizeTraceSection)
-      .filter((section): section is SafeTraceSection => section !== null)
-    return JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections })
-  } catch {
-    return redacted
-  }
-}
-
 export function createPublicApiHandlers({
   searchService,
   memoExplorerService,
   attachmentService,
   botChannelService,
   botRuntimeService,
+  botRuntimeWriteOps: providedWriteOps,
   streamService,
   eventService,
   labelService,
@@ -740,6 +637,8 @@ export function createPublicApiHandlers({
   pool,
   io,
 }: PublicApiDeps) {
+  const botRuntimeWriteOps =
+    providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
     if (req.userApiKey) {
@@ -888,95 +787,6 @@ export function createPublicApiHandlers({
     return attachment
   }
 
-  /**
-   * Fan a presence update out to every stream the bot is a member of. Frontend
-   * subscribes via the stream room and patches its cached bootstrap. Keeps the
-   * UI in sync without any client-side polling.
-   */
-  async function broadcastBotPresence(
-    workspaceId: string,
-    botId: string,
-    presence: BotRuntimeInstance | null
-  ): Promise<void> {
-    const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
-    if (streamIds.length === 0) return
-    // Only pi-local runtimes create scratchpad session links; skip the lookup
-    // when there's no presence or the runtime kind can't have linked sessions.
-    const links =
-      presence?.runtimeKind === BotRuntimeKinds.PI_LOCAL
-        ? await botRuntimeService.findActivePiRemoteSessionsForStreams({ workspaceId, botId, streamIds })
-        : new Map<string, { instanceId: string; runtimeSessionId: string }>()
-    const payload = {
-      workspaceId,
-      botId,
-      presence: presence
-        ? {
-            botId: presence.botId,
-            runtimeKind: presence.runtimeKind,
-            instanceId: presence.instanceId,
-            displayName: presence.displayName,
-            status: presence.status,
-            acceptingInvocations: presence.acceptingInvocations,
-            statusText: presence.statusText,
-            lastSeenAt: presence.lastSeenAt.toISOString(),
-          }
-        : null,
-    }
-    const runtimeSessionId =
-      typeof presence?.capabilities.runtimeSessionId === "string" ? presence.capabilities.runtimeSessionId : null
-    for (const streamId of streamIds) {
-      const link = links.get(streamId)
-      const streamPresence =
-        link && (!presence || presence.instanceId !== link.instanceId || runtimeSessionId !== link.runtimeSessionId)
-          ? null
-          : payload.presence
-      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("bot_runtime:presence", {
-        ...payload,
-        presence: streamPresence,
-        streamId,
-      })
-    }
-  }
-
-  /**
-   * Touch presence as part of an invocation-side request (claim / step) so the
-   * Pi runtime does not need to send a separate heartbeat per poll tick. The
-   * caller decides which status to record; `statusText` is optional.
-   */
-  async function touchAndBroadcastPresence(params: {
-    workspaceId: string
-    botId: string
-    runtimeKind: BotRuntimeKind
-    instanceId: string
-    runtimeSessionId?: string
-    status: BotRuntimeStatus
-    acceptingInvocations: boolean
-    statusText?: string | null
-  }): Promise<void> {
-    try {
-      const presence = await botRuntimeService.upsertPresenceFromBotKey({
-        workspaceId: params.workspaceId,
-        botId: params.botId,
-        runtimeKind: params.runtimeKind,
-        instanceId: params.instanceId,
-        status: params.status,
-        acceptingInvocations: params.acceptingInvocations,
-        capabilities: params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : undefined,
-        statusText: sanitizeStatusText(params.statusText),
-        mergeCapabilities: true,
-        // Invocation-side touch carries no BIK; preserve the key the live
-        // session registered rather than clearing it on every poll tick.
-        retainBik: true,
-      })
-      await broadcastBotPresence(params.workspaceId, params.botId, presence)
-    } catch (err) {
-      logger.warn(
-        { err, workspaceId: params.workspaceId, botId: params.botId },
-        "Failed to update bot runtime presence"
-      )
-    }
-  }
-
   return {
     async uploadAttachment(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -1034,23 +844,20 @@ export function createPublicApiHandlers({
     async upsertBotRuntimePresence(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(upsertPresenceSchema, req.body)
-      const presence = await botRuntimeService.upsertPresenceFromBotKey({
+      const presence = await botRuntimeWriteOps.applyPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         runtimeKind: data.runtimeKind,
         instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
         displayName: data.displayName,
         status: data.status,
         acceptingInvocations: data.acceptingInvocations,
-        capabilities: {
-          ...data.capabilities,
-          ...(data.runtimeSessionId && { runtimeSessionId: data.runtimeSessionId }),
-        },
-        statusText: sanitizeStatusText(data.statusText),
+        capabilities: data.capabilities,
+        statusText: data.statusText,
         publicKey: data.publicKey,
         publicKeyId: data.publicKeyId,
       })
-      await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({
         data: {
           ...presence,
@@ -1186,7 +993,7 @@ export function createPublicApiHandlers({
       // Claim doubles as a heartbeat: refresh presence as "available" on every
       // poll so Pi does not need a separate /presence call per tick. If a claim
       // lands we'll overwrite to "busy" right after.
-      await touchAndBroadcastPresence({
+      await botRuntimeWriteOps.touchPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         runtimeKind: data.runtimeKind,
@@ -1206,7 +1013,7 @@ export function createPublicApiHandlers({
         claimToken: randomUUID(),
       })
       if (!invocation) return res.json({ data: null })
-      await touchAndBroadcastPresence({
+      await botRuntimeWriteOps.touchPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         runtimeKind: data.runtimeKind,
@@ -1300,7 +1107,7 @@ export function createPublicApiHandlers({
     async renewBotInvocationClaim(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(renewInvocationClaimSchema, req.body)
-      const renewed = await botRuntimeService.renewInvocationClaim({
+      const renewed = await botRuntimeWriteOps.renewClaim({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         invocationId: req.params.invocationId,
@@ -1308,91 +1115,24 @@ export function createPublicApiHandlers({
         claimToken: data.claimToken,
         claimTtlSeconds: data.claimTtlSeconds,
       })
-      if (!renewed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-      // A claim renewal is the external runtime's liveness signal between trace
-      // steps. Bot invocations reuse the invocation id as the agent session id,
-      // so bump the session heartbeat too — otherwise a long-running turn that
-      // renews its claim but goes longer than orphan-session-cleanup's stale
-      // threshold without POSTing /steps is falsely marked orphaned (FAILED)
-      // while it is in fact alive. Mirrors the enclave's session-heartbeat
-      // callback and the in-process companion's heartbeat interval. No-ops for
-      // session-control invocations, which create no agent session.
-      await AgentSessionRepository.updateHeartbeat(pool, req.params.invocationId)
-      res.json({
-        data: {
-          invocationId: renewed.id,
-          status: renewed.status,
-          claimExpiresAt: renewed.claimExpiresAt?.toISOString() ?? null,
-        },
-      })
+      res.json({ data: renewed })
     },
 
     async recordBotInvocationStep(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(recordInvocationStepSchema, req.body)
-      const claim = await botRuntimeService.findActiveClaim({
+      const result = await botRuntimeWriteOps.recordSteps({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         invocationId: req.params.invocationId,
         instanceId: data.instanceId,
         claimToken: data.claimToken,
+        steps: [{ stepType: data.stepType, content: data.content }],
+        statusText: data.statusText,
       })
-      if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-      await assertStreamAccessible(req, claim.responseStreamId)
-      const [bot, runtimePresence] = await Promise.all([
-        BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
-        botRuntimeService.findPresenceByInstance({
-          workspaceId: req.workspaceId!,
-          botId: req.botApiKey.botId,
-          instanceId: data.instanceId,
-        }),
-      ])
-      // Reject-undeclared (INV-11): a runtime that declared a manifest without
-      // trace can't post /steps. Unenforced for legacy (null-manifest) runtimes.
-      assertManifestAllows(runtimePresence?.manifest ?? null, "trace")
-      // Normalize the wire frame into AgentEvents and run them through the
-      // shared TraceProjector — the same event → step state machine the
-      // in-process companion and the enclave project through; only the sink
-      // (append-on-complete + socket emits) is invocation-specific (#5).
-      const { projector, sink } = createBotInvocationTraceProjector({
-        pool,
-        io,
-        workspaceId: req.workspaceId!,
-        sessionId: claim.id,
-        streamId: claim.responseStreamId,
-        triggerMessageId: claim.sourceMessageId,
-        personaName: bot?.name ?? "",
+      res.json({
+        data: { invocationId: result.invocationId, sessionId: result.sessionId, stepId: result.steps[0].stepId },
       })
-      for (const event of botInvocationStepEvents({
-        stepType: data.stepType,
-        content: sanitizeInvocationStepContent(data.content),
-      })) {
-        await projector.handle(event)
-      }
-      const step = sink.lastStep
-      if (!step) throw new HttpError("Failed to record step", { status: 500, code: "INTERNAL_ERROR" })
-      // Step recording also serves as a busy heartbeat — keeps the runtime's
-      // presence statusText in sync with the most recent trace step so Pi
-      // does not need to send a separate /presence call alongside each step.
-      // Capabilities is fully overwritten on upsert, so we have to re-supply
-      // the runtime's session id for untargeted invocations; otherwise the
-      // scratchpad's session-link filter would treat the runtime as stale and
-      // hide its presence mid-run.
-      const persistedRuntimeSessionId =
-        typeof runtimePresence?.capabilities.runtimeSessionId === "string"
-          ? runtimePresence.capabilities.runtimeSessionId
-          : undefined
-      await touchAndBroadcastPresence({
-        workspaceId: req.workspaceId!,
-        botId: req.botApiKey.botId,
-        runtimeKind: runtimePresence?.runtimeKind ?? BotRuntimeKinds.PI_LOCAL,
-        instanceId: data.instanceId,
-        runtimeSessionId: claim.targetRuntimeSessionId ?? persistedRuntimeSessionId,
-        status: "busy",
-        acceptingInvocations: false,
-        statusText: sanitizeStatusText(data.statusText),
-      })
-      res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },
 
     /**

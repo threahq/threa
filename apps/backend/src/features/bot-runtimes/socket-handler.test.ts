@@ -1,9 +1,11 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Server } from "socket.io"
+import { HttpError } from "@threa/backend-common"
 import type { BotRuntimeService } from "./service"
 import type { BotApiKeyService } from "../public-api"
 import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
-import { attachBotNamespace, type BotHelloResponse } from "./socket-handler"
+import { attachBotNamespace, type BotHelloResponse, type BotWriteAck } from "./socket-handler"
+import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import { BotSocketRegistry } from "./bot-socket-registry"
 
 // Minimal fakes that exercise the public surface of the namespace handler
@@ -79,11 +81,26 @@ function setup(overrides?: {
   upsertPresenceFromBotKey?: (...args: unknown[]) => Promise<unknown>
   getBootstrapForRuntime?: (...args: unknown[]) => Promise<unknown>
   validateKey?: (...args: unknown[]) => Promise<unknown>
+  applyPresence?: (...args: unknown[]) => Promise<unknown>
+  touchPresence?: (...args: unknown[]) => Promise<unknown>
+  renewClaim?: (...args: unknown[]) => Promise<unknown>
+  recordSteps?: (...args: unknown[]) => Promise<unknown>
 }) {
   const botRuntimeService = {
     upsertPresenceFromBotKey: mock(overrides?.upsertPresenceFromBotKey ?? (async () => ({}))),
     getBootstrapForRuntime: mock(overrides?.getBootstrapForRuntime ?? (async () => makeBootstrap())),
   } as unknown as BotRuntimeService
+
+  const botRuntimeWriteOps = {
+    applyPresence: mock(overrides?.applyPresence ?? (async () => ({}))),
+    touchPresence: mock(overrides?.touchPresence ?? (async () => {})),
+    renewClaim: mock(
+      overrides?.renewClaim ?? (async () => ({ invocationId: "binv_1", status: "claimed", claimExpiresAt: null }))
+    ),
+    recordSteps: mock(
+      overrides?.recordSteps ?? (async () => ({ invocationId: "binv_1", sessionId: "binv_1", steps: [] }))
+    ),
+  } as unknown as BotRuntimeWriteOps
 
   const botApiKeyService = {
     validateKey: mock(overrides?.validateKey ?? (async () => ({}))),
@@ -103,6 +120,7 @@ function setup(overrides?: {
   attachBotNamespace({
     io,
     botRuntimeService,
+    botRuntimeWriteOps,
     botApiKeyService,
     botSocketRegistry,
     // Disable revalidation timer in tests — the periodic ticker is covered
@@ -113,7 +131,7 @@ function setup(overrides?: {
   const socket = makeFakeSocket()
   connectionHandler!(socket)
 
-  return { socket, botRuntimeService, botApiKeyService, botSocketRegistry }
+  return { socket, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry }
 }
 
 const VALID_HELLO = {
@@ -363,5 +381,153 @@ describe("attachBotNamespace bot:hello", () => {
         lastSeenAt: link.lastSeenAt!.toISOString(),
       },
     ])
+  })
+})
+
+describe("bot:invocation:steps", () => {
+  const VALID_STEPS = {
+    invocationId: "binv_1",
+    instanceId: "inst_42",
+    claimToken: "tok_1",
+    steps: [{ stepType: "thinking", content: "Considering the plan" }],
+    statusText: "Thinking…",
+  }
+
+  it("persists batched steps through the shared write ops and acks the result", async () => {
+    const { socket, botRuntimeWriteOps } = setup({
+      recordSteps: async () => ({
+        invocationId: "binv_1",
+        sessionId: "binv_1",
+        steps: [{ stepId: "step_1", stepNumber: 1 }],
+      }),
+    })
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger("bot:invocation:steps", VALID_STEPS, ack)
+
+    // Same persistence path the REST handler calls (INV-35): the frame is handed
+    // straight to recordSteps with its steps array intact.
+    const call = (botRuntimeWriteOps.recordSteps as ReturnType<typeof mock>).mock.calls[0]?.[0]
+    expect(call).toMatchObject({
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      invocationId: "binv_1",
+      claimToken: "tok_1",
+      steps: [{ stepType: "thinking", content: "Considering the plan" }],
+    })
+    const resp = ack.mock.calls[0]?.[0] as BotWriteAck & { ok: true }
+    expect(resp.ok).toBe(true)
+    expect(resp.data).toEqual({
+      invocationId: "binv_1",
+      sessionId: "binv_1",
+      steps: [{ stepId: "step_1", stepNumber: 1 }],
+    })
+  })
+
+  it("rejects a malformed frame without touching the write ops", async () => {
+    const { socket, botRuntimeWriteOps } = setup()
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger("bot:invocation:steps", { invocationId: "binv_1", steps: [] }, ack)
+
+    const resp = ack.mock.calls[0]?.[0] as BotWriteAck
+    expect(resp).toEqual({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:steps payload" })
+    expect((botRuntimeWriteOps.recordSteps as ReturnType<typeof mock>).mock.calls.length).toBe(0)
+  })
+
+  it("maps an HttpError from the write ops to a terminal ack code", async () => {
+    const { socket } = setup({
+      recordSteps: async () => {
+        throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      },
+    })
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger("bot:invocation:steps", VALID_STEPS, ack)
+
+    expect(ack.mock.calls[0]?.[0]).toEqual({
+      ok: false,
+      code: "NOT_FOUND",
+      message: "Invocation claim not found",
+    })
+  })
+})
+
+describe("bot:invocation:renew", () => {
+  it("renews the claim and acks the new expiry", async () => {
+    const { socket, botRuntimeWriteOps } = setup({
+      renewClaim: async () => ({
+        invocationId: "binv_1",
+        status: "claimed",
+        claimExpiresAt: "2026-05-26T12:02:00.000Z",
+      }),
+    })
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger(
+      "bot:invocation:renew",
+      { invocationId: "binv_1", instanceId: "inst_42", claimToken: "tok_1" },
+      ack
+    )
+
+    expect((botRuntimeWriteOps.renewClaim as ReturnType<typeof mock>).mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      invocationId: "binv_1",
+      claimToken: "tok_1",
+      claimTtlSeconds: 60,
+    })
+    const resp = ack.mock.calls[0]?.[0] as BotWriteAck & { ok: true }
+    expect(resp.ok).toBe(true)
+    expect(resp.data).toEqual({ invocationId: "binv_1", status: "claimed", claimExpiresAt: "2026-05-26T12:02:00.000Z" })
+  })
+
+  it("acks a 404 as a terminal NOT_FOUND so the client drops the claim", async () => {
+    const { socket } = setup({
+      renewClaim: async () => {
+        throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      },
+    })
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger(
+      "bot:invocation:renew",
+      { invocationId: "binv_gone", instanceId: "inst_42", claimToken: "tok_1" },
+      ack
+    )
+
+    expect(ack.mock.calls[0]?.[0]).toMatchObject({ ok: false, code: "NOT_FOUND" })
+  })
+})
+
+describe("bot:presence:update", () => {
+  it("applies presence through the shared write ops and acks ok", async () => {
+    const { socket, botRuntimeWriteOps } = setup()
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger(
+      "bot:presence:update",
+      { runtimeKind: "pi-local", instanceId: "inst_42", status: "busy", acceptingInvocations: false },
+      ack
+    )
+
+    expect((botRuntimeWriteOps.applyPresence as ReturnType<typeof mock>).mock.calls[0]?.[0]).toMatchObject({
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      status: "busy",
+      acceptingInvocations: false,
+    })
+    expect(ack.mock.calls[0]?.[0]).toEqual({ ok: true })
+  })
+
+  it("rejects a malformed presence frame", async () => {
+    const { socket, botRuntimeWriteOps } = setup()
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger("bot:presence:update", { instanceId: "inst_42" }, ack)
+
+    expect(ack.mock.calls[0]?.[0]).toMatchObject({ ok: false, code: "INVALID_PAYLOAD" })
+    expect((botRuntimeWriteOps.applyPresence as ReturnType<typeof mock>).mock.calls.length).toBe(0)
   })
 })

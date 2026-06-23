@@ -18,7 +18,7 @@ import {
   registerVoiceGateway,
   createPolishTranscript,
 } from "./features/voice-transcription"
-import { BotApiKeyService } from "./features/public-api"
+import { BotApiKeyService, createBotRuntimeWriteOps } from "./features/public-api"
 import {
   EnclaveRuntimesService,
   EnclaveClaimService,
@@ -605,6 +605,11 @@ export async function startServer(): Promise<ServerInstance> {
   })
   io.adapter(createAdapter(pools.realtime))
 
+  // Transport-agnostic bot-runtime background writes (presence/renew/steps).
+  // One instance shared by the HTTP routes and the `/bot` WebSocket namespace
+  // so both transports persist through the identical path (INV-13).
+  const botRuntimeWriteOps = createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
+
   registerRoutes(app, {
     pool,
     io,
@@ -655,6 +660,7 @@ export async function startServer(): Promise<ServerInstance> {
     enclaveClaimNudge,
     botApiKeyService,
     botRuntimeService,
+    botRuntimeWriteOps,
     storage,
     ai,
     controlPlaneClient,
@@ -683,7 +689,7 @@ export async function startServer(): Promise<ServerInstance> {
   // Bot runtime namespace — runtimes authenticate with a `threa_bk_*` key and
   // get invocation pushes over WebSocket so they no longer poll the HTTP
   // claim endpoint every second.
-  attachBotNamespace({ io, botRuntimeService, botApiKeyService, botSocketRegistry })
+  attachBotNamespace({ io, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry })
 
   registerSocketHandlers(io, {
     pool,
