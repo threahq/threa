@@ -113,9 +113,9 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
   /**
    * Idempotency key for the NEXT step this sink records. The frames in a batch
    * share one projector + sink, so the caller sets this before driving each
-   * frame's events through the projector; `record` consumes it so a re-sent step
-   * dedups to the existing row. Today's wire writes one step per frame, so a
-   * single pending value per frame is sufficient.
+   * frame's events through the projector; `record` consumes it one-shot (reads
+   * then clears) so a re-sent step dedups to the existing row and the key can
+   * never leak into a following step.
    */
   pendingClientStepId: string | undefined = undefined
 
@@ -125,6 +125,13 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     const { pool, io, workspaceId, sessionId, streamId, triggerMessageId, personaName } = this.deps
     const completedAt = new Date()
     const startedAt = new Date(completedAt.getTime() - (step.durationMs ?? 0))
+    // Consume the idempotency key as a one-shot: clear it before the insert so a
+    // frame that ever produces two `record()` calls can't carry the first call's
+    // key into the second (which would dedup to the first row and silently drop
+    // the second step). Today's wire is one step per frame, but this keeps the
+    // invariant from depending on that.
+    const clientStepId = this.pendingClientStepId
+    this.pendingClientStepId = undefined
     // Append + currentStepType must run in one transaction. appendStep is
     // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
     // append distinct rows instead of clobbering each other.
@@ -138,7 +145,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         messageId: step.messageId,
         startedAt,
         completedAt,
-        clientStepId: this.pendingClientStepId,
+        clientStepId,
       })
       await AgentSessionRepository.updateCurrentStepType(client, sessionId, step.stepType)
       return inserted

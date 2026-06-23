@@ -263,12 +263,13 @@ export class BotRuntimeTransport {
    *
    * `sent` distinguishes the two failure modes that look identical at the ack
    * layer but must NOT be handled the same way: `sent: false` means the frame
-   * never left (no live socket / `emit` threw), so an HTTP retry is the only
-   * way the write lands and is safe; `sent: true, ack: null` means the frame IS
-   * in flight but the server didn't ack within the timeout — re-POSTing it would
-   * duplicate a non-idempotent write (a trace step has no server-side dedup key),
-   * so a best-effort caller must drop rather than retry. Idempotent writes
-   * (renew CAS, presence upsert) ignore the distinction and retry on either.
+   * never left (no live socket / `emit` threw), so an HTTP retry is the only way
+   * the write lands and is safe; `sent: true, ack: null` means the frame IS in
+   * flight but the server didn't ack within the timeout. Steps carry a
+   * `client_step_id` so a re-POST would dedup rather than duplicate, but it would
+   * still bill an edge request the WS path exists to avoid — so a best-effort
+   * caller drops on `sent` instead of retrying. Idempotent writes (renew CAS,
+   * presence upsert) ignore the distinction and retry on either.
    */
   private emitWrite(event: string, payload: unknown): Promise<{ sent: boolean; ack: BotWriteAck | null }> {
     const socket = this.socket
