@@ -1,0 +1,16 @@
+{
+  "name": "@threa/harness-daemon",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "threa-harnessd": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
