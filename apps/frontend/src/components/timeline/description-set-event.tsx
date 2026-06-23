@@ -95,7 +95,7 @@ function DescriptionBody({ markdown }: { markdown: string }) {
       {collapsed && (
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent to-muted/20"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent to-background"
         />
       )}
       {canToggle && (
@@ -139,8 +139,8 @@ export function DescriptionSetEvent({ event, workspaceId }: DescriptionSetEventP
 
   return (
     <div className="py-2 px-3 sm:px-6">
-      <p className="mb-1.5 text-center text-sm text-muted-foreground">{actor} set the description</p>
-      <div className="mx-auto max-w-2xl rounded-md border bg-muted/20 px-3 py-2">
+      <p className="text-center text-sm text-muted-foreground">{actor} set the description</p>
+      <div className="mx-auto mt-1.5 max-w-2xl border-l-2 border-border pl-3.5">
         <MarkdownBlockProvider messageId={event.id}>
           <DescriptionBody markdown={markdown} />
         </MarkdownBlockProvider>
