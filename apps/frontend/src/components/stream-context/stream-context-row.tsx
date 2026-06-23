@@ -141,7 +141,7 @@ export function StreamContextRow({
           href={item.url}
           target="_blank"
           rel="noreferrer noopener"
-          className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Open {primaryText}</span>
         </a>
@@ -157,7 +157,7 @@ export function StreamContextRow({
         <button
           type="button"
           onClick={() => item.sourceMessageId && onJumpToMessage(item.sourceMessageId)}
-          className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Go to message with {primaryText}</span>
         </button>
@@ -178,7 +178,7 @@ export function StreamContextRow({
         <button
           type="button"
           onClick={() => item.sourceMessageId && onJumpToMessage(item.sourceMessageId)}
-          className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Go to message with {primaryText}</span>
         </button>
@@ -199,7 +199,7 @@ export function StreamContextRow({
         <button
           type="button"
           onClick={() => onOpenMemo(item.memoId)}
-          className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Open memory {primaryText}</span>
         </button>
@@ -221,7 +221,7 @@ export function StreamContextRow({
         <button
           type="button"
           onClick={() => onOpenThread(item.threadId)}
-          className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <span className="sr-only">Open thread</span>
         </button>
@@ -235,33 +235,41 @@ export function StreamContextRow({
   const showJump = item.category === "link" && jumpTarget != null
 
   return (
-    <div className="group relative flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/70">
-      {primaryAction}
-      {leading}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          {badge}
-          <span className="truncate text-sm font-medium leading-snug">{primaryText}</span>
-          {item.category === "link" && (
-            <ExternalLink className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+    <div className="group relative flex gap-3">
+      {/* spine node — the leading visual sits on the timeline, its ring masking
+          the line passing behind it (the line is drawn once by the panel). */}
+      <div className="flex w-12 shrink-0 justify-center">
+        <div className="mt-2 rounded-md ring-4 ring-background">{leading}</div>
+      </div>
+      <div className="relative min-w-0 flex-1 rounded-lg py-2 pr-2 transition-colors group-hover:bg-accent/50">
+        {primaryAction}
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              {badge}
+              <span className="truncate text-sm font-medium leading-snug">{primaryText}</span>
+              {item.category === "link" && (
+                <ExternalLink className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+              )}
+            </div>
+            {secondaryText && <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondaryText}</p>}
+          </div>
+          <span className="pointer-events-none shrink-0 pt-0.5 text-[11px] tabular-nums text-muted-foreground">
+            {time}
+          </span>
+          {showJump && (
+            <button
+              type="button"
+              onClick={() => jumpTarget && onJumpToMessage(jumpTarget)}
+              aria-label="Go to message"
+              title="Go to message"
+              className="relative z-20 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+            >
+              <CornerDownRight className="size-3.5" />
+            </button>
           )}
         </div>
-        {secondaryText && <p className="mt-0.5 truncate text-xs text-muted-foreground">{secondaryText}</p>}
       </div>
-      <span className="pointer-events-none shrink-0 self-start pt-0.5 text-[11px] tabular-nums text-muted-foreground">
-        {time}
-      </span>
-      {showJump && (
-        <button
-          type="button"
-          onClick={() => jumpTarget && onJumpToMessage(jumpTarget)}
-          aria-label="Go to message"
-          title="Go to message"
-          className="relative z-10 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-        >
-          <CornerDownRight className="size-3.5" />
-        </button>
-      )}
     </div>
   )
 }

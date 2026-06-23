@@ -4,6 +4,7 @@ import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui
 import { Skeleton } from "@/components/ui/skeleton"
 import { useStreamEvents } from "@/stores/stream-store"
 import { deriveStreamContext } from "@/lib/stream-context/derive"
+import { groupItemsByDay } from "@/lib/stream-context/grouping"
 import { CONTEXT_CATEGORIES, type ContextCategory } from "@/lib/stream-context/types"
 import { cn } from "@/lib/utils"
 import { StreamContextRow } from "./stream-context-row"
@@ -16,6 +17,18 @@ const CATEGORY_LABELS: Record<ContextCategory, string> = {
   file: "Files",
   memo: "Memories",
   thread: "Threads",
+}
+
+/** A gold milestone dot + date label seated on the timeline spine. */
+function TimelineDayMarker({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="flex w-12 shrink-0 justify-center">
+        <span className="size-2.5 rounded-full bg-primary/80 ring-4 ring-background" />
+      </div>
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+    </div>
+  )
 }
 
 interface StreamContextPanelProps {
@@ -83,17 +96,29 @@ export function StreamContextPanel({
       </div>
     )
   } else {
+    const groups = groupItemsByDay(visible, new Date())
     body = (
-      <div className="flex flex-col gap-0.5">
-        {visible.map((item) => (
-          <StreamContextRow
-            key={item.key}
-            workspaceId={workspaceId}
-            item={item}
-            onJumpToMessage={onJumpToMessage}
-            onOpenThread={onOpenThread}
-            onOpenMemo={onOpenMemo}
-          />
+      <div className="relative pb-2">
+        {/* the spine — one continuous line behind every node; a hint of gold at
+            its origin (the golden thread) fading down. */}
+        <div
+          aria-hidden
+          className="absolute bottom-3 left-6 top-3 w-px bg-gradient-to-b from-primary/40 via-border to-border"
+        />
+        {groups.map((group) => (
+          <div key={group.label} className="pt-3 first:pt-0">
+            <TimelineDayMarker label={group.label} />
+            {group.items.map((item) => (
+              <StreamContextRow
+                key={item.key}
+                workspaceId={workspaceId}
+                item={item}
+                onJumpToMessage={onJumpToMessage}
+                onOpenThread={onOpenThread}
+                onOpenMemo={onOpenMemo}
+              />
+            ))}
+          </div>
         ))}
       </div>
     )
