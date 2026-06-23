@@ -1641,7 +1641,7 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     await vi.waitFor(async () => {
       const state = await db.unreadState.get("ws_1")
       expect(state?.unreadActivityCount).toBe(4)
-      expect(state?.unreadActivities.length).toBe(4)
+      expect(state?.unreadActivities?.length).toBe(4)
     })
 
     cleanup()

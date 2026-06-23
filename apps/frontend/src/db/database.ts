@@ -444,10 +444,10 @@ export interface CachedUnreadState {
   unreadActivityCount: number
   /**
    * Held set of the viewer's unread activity rows — the source of truth the
-   * badge/glow counts derive from. Absent for rows cached before the field
-   * shipped (reads as []); see sync/unread-counters.ts.
+   * badge/glow counts derive from. Optional because rows cached before the field
+   * shipped lack it; readers normalize with `?? []`. See sync/unread-counters.ts.
    */
-  unreadActivities: Activity[]
+  unreadActivities?: Activity[]
   /**
    * Latest message ordinal per stream (sync phase 2c) — seeded from
    * bootstrap `messageCounts`, max-merged from `stream:activity`. The read

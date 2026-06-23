@@ -165,6 +165,17 @@ describe("applyStreamReadOrdinal", () => {
     expect(state.activityCounts.s1).toBe(1)
     expect(state.unreadActivityCount).toBe(1)
   })
+
+  it("does not drop held activity on a strictly stale read (below the current position)", () => {
+    // Caught up at ordinal 8; a reaction then arrives. A stale read-to-3 (e.g.
+    // out-of-order delivery) must not wipe activity that arrived after the real read.
+    let state = makeState({ unreadCounts: { s1: 0 }, latestOrdinals: { s1: 8 } })
+    state = upsertActivity(state, act("a1", "s1", "mention"))
+    expect(state.unreadActivityCount).toBe(1)
+    expect(applyStreamReadOrdinal(state, "s1", 3).unreadActivityCount).toBe(1)
+    // A read at the current position (the D5 caught-up heal) still clears it.
+    expect(applyStreamReadOrdinal(state, "s1", 8).unreadActivityCount).toBe(0)
+  })
 })
 
 describe("applyStreamReadSet", () => {
@@ -289,16 +300,18 @@ describe("dropReactionActivity", () => {
 })
 
 describe("rehomeActivities", () => {
-  it("moves rows from the source stream to the destination", () => {
-    const state = makeState({ unreadActivities: [act("a1", "s1"), act("a2", "s3")] })
-    const next = rehomeActivities(state, "s1", "s2")
-    expect(next.activityCounts).toEqual({ s2: 1, s3: 1 })
+  it("re-homes only the moved messages' rows, leaving the rest in the source stream", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1"), act("a2", "s1"), act("a3", "s3")] })
+    // Only a1's message moved; a2 stays in s1.
+    const next = rehomeActivities(state, "s1", "s2", ["msg_a1"])
+    expect(next.activityCounts).toEqual({ s1: 1, s2: 1, s3: 1 })
     expect(next.unreadActivities.find((a) => a.id === "a1")?.streamId).toBe("s2")
+    expect(next.unreadActivities.find((a) => a.id === "a2")?.streamId).toBe("s1")
   })
 
-  it("is a no-op when the source has no rows", () => {
-    const state = makeState({ unreadActivities: [act("a1", "s3")] })
-    expect(rehomeActivities(state, "s1", "s2")).toBe(state)
+  it("is a no-op when no moved message has a held row", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1")] })
+    expect(rehomeActivities(state, "s1", "s2", ["msg_other"])).toBe(state)
   })
 })
 

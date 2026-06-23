@@ -79,7 +79,7 @@ export function useUnreadCounts(workspaceId: string) {
         if (state) {
           // Activity drop applies on both paths; `unreadCounts` only on the full
           // path (mirrors the query-cache branch above).
-          const rows = state.unreadActivities.filter((a) => a.streamId !== streamId)
+          const rows = (state.unreadActivities ?? []).filter((a) => a.streamId !== streamId)
           await db.unreadState.put({
             ...state,
             unreadActivities: rows,

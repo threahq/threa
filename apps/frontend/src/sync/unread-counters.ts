@@ -105,12 +105,18 @@ export function dropReactionActivity(
 export function rehomeActivities(
   state: UnreadCounterState,
   fromStreamId: string,
-  toStreamId: string
+  toStreamId: string,
+  messageIds: readonly string[]
 ): UnreadCounterState {
-  if (!state.unreadActivities.some((a) => a.streamId === fromStreamId)) return state
+  // `messages:moved` can move a subset of a stream's messages, so re-home only
+  // the rows for the moved messages — not every row in the source stream.
+  const moved = new Set(messageIds)
+  const shouldRehome = (a: Activity): boolean =>
+    a.streamId === fromStreamId && a.messageId !== null && moved.has(a.messageId)
+  if (!state.unreadActivities.some(shouldRehome)) return state
   return withActivities(
     state,
-    state.unreadActivities.map((a) => (a.streamId === fromStreamId ? { ...a, streamId: toStreamId } : a))
+    state.unreadActivities.map((a) => (shouldRehome(a) ? { ...a, streamId: toStreamId } : a))
   )
 }
 
@@ -173,7 +179,12 @@ export function applyStreamReadOrdinal(
   const prevRead =
     prevLatest === undefined ? lastReadOrdinal : Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0))
   const read = Math.max(prevRead, lastReadOrdinal)
-  const next = dropActivitiesForStream(state, streamId)
+  // Coupling (D2): drop the stream's held activity on a read that is at or ahead
+  // of the current position — this includes the caught-up D5 heal, where the read
+  // does not advance (lastReadOrdinal === prevRead). A strictly stale/out-of-order
+  // read (lastReadOrdinal < prevRead) must NOT wipe activity that arrived after
+  // the real read.
+  const next = lastReadOrdinal >= prevRead ? dropActivitiesForStream(state, streamId) : state
   return {
     ...next,
     latestOrdinals: { ...next.latestOrdinals, [streamId]: latest },
@@ -215,9 +226,11 @@ export function applyStreamsReadAllOrdinals(
 }
 
 /**
- * The activity fields for a persisted cache row, derived from the bootstrap's
- * held rows (the count fields follow the rows, never the reverse). Pre-rollout
- * snapshots without `unreadActivities` fall back to the legacy count fields.
+ * The activity fields for a persisted cache row, always derived from the
+ * bootstrap's held rows so a persisted row can never carry counts that disagree
+ * with its rows. A pre-rollout bootstrap without `unreadActivities` derives
+ * zeros (the badge is briefly low but honest) and self-heals on the next
+ * bootstrap that carries rows.
  */
 export function bootstrapActivityCacheFields(bootstrap: WorkspaceBootstrap): {
   unreadActivities: Activity[]
@@ -225,33 +238,22 @@ export function bootstrapActivityCacheFields(bootstrap: WorkspaceBootstrap): {
   mentionCounts: Record<string, number>
   unreadActivityCount: number
 } {
-  const rows = bootstrap.unreadActivities
-  if (!rows) {
-    return {
-      unreadActivities: [],
-      activityCounts: bootstrap.activityCounts,
-      mentionCounts: bootstrap.mentionCounts,
-      unreadActivityCount: bootstrap.unreadActivityCount,
-    }
-  }
+  const rows = bootstrap.unreadActivities ?? []
   return { unreadActivities: rows, ...deriveActivityCounts(rows) }
 }
 
 /** The counter slice of a workspace bootstrap (`messageCounts` are the latest ordinals). */
 export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterState {
-  // `unreadActivities` is the activity source of truth; the count fields are a
-  // derived projection. Pre-rollout snapshots lack the rows — fall back to the
-  // bootstrap's legacy count fields in that case (absent rows read as []).
-  const rows = bootstrap.unreadActivities
-  const base: UnreadCounterState = {
+  // `unreadActivities` is the activity source of truth; the count fields are
+  // always its derived projection (a pre-rollout snapshot without rows derives
+  // zeros and self-heals on the next bootstrap that carries rows).
+  const rows = bootstrap.unreadActivities ?? []
+  return {
     unreadCounts: bootstrap.unreadCounts,
-    unreadActivities: rows ?? [],
-    activityCounts: bootstrap.activityCounts,
-    mentionCounts: bootstrap.mentionCounts,
-    unreadActivityCount: bootstrap.unreadActivityCount,
+    unreadActivities: rows,
+    ...deriveActivityCounts(rows),
     latestOrdinals: bootstrap.messageCounts,
   }
-  return rows ? withActivities(base, rows) : base
 }
 
 /** Write a counter slice back onto a workspace bootstrap object. */

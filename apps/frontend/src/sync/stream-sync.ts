@@ -822,7 +822,7 @@ export function registerStreamSocketHandlers(
     // gate on the source to apply the workspace-wide rehome exactly once.
     if (payload.sourceStreamId === streamId) {
       commitCounterMutation(queryClient, workspaceId, (s) =>
-        rehomeActivities(s, payload.sourceStreamId, payload.destinationStreamId)
+        rehomeActivities(s, payload.sourceStreamId, payload.destinationStreamId, payload.movedMessageIds)
       )
     }
   }

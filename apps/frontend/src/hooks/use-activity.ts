@@ -59,7 +59,7 @@ export function useMarkActivityRead(workspaceId: string) {
 
       const previousUnreadState = await db.unreadState.get(workspaceId)
       if (previousUnreadState) {
-        const rows = previousUnreadState.unreadActivities.filter((a) => a.id !== activityId)
+        const rows = (previousUnreadState.unreadActivities ?? []).filter((a) => a.id !== activityId)
         await db.unreadState.put({
           ...previousUnreadState,
           unreadActivities: rows,
