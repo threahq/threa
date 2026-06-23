@@ -124,6 +124,7 @@ import {
   listMessagesSchema,
   sendMessageSchema,
   updateMessageSchema,
+  updateStreamSchema,
   listMembersSchema,
   listUsersSchema,
   searchMemosSchema,
@@ -1974,6 +1975,47 @@ export function createPublicApiHandlers({
       }
 
       res.json({ data: serializeStream(stream, context) })
+    },
+
+    async updateStream(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const streamId = req.params.streamId
+
+      const { description } = validateRequest(updateStreamSchema, req.body)
+      await assertStreamAccessible(req, streamId)
+
+      // Attribute the change (drives the `description_set` timeline event):
+      // user keys act as the key owner, workspace keys as the bot. Descriptions
+      // are plaintext metadata (never sealed), so unlike message send there's no
+      // E2E gate — a description carries no ciphertext.
+      let actorId: string
+      let actorType: AuthorType
+      if (req.userApiKey) {
+        actorId = req.user!.id
+        actorType = AuthorTypes.USER
+      } else if (req.botApiKey) {
+        const bot = await BotRepository.findById(pool, workspaceId, req.botApiKey.botId)
+        if (!bot || bot.archivedAt) {
+          throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+        }
+        actorId = bot.id
+        actorType = AuthorTypes.BOT
+      } else {
+        throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+      }
+
+      const updated = await streamService.updateStream(streamId, { description, actorId, actorType })
+      if (!updated || updated.archivedAt) {
+        throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      let context: DisplayNameContext | undefined
+      if (updated.type === "thread" && updated.displayName === null && updated.parentStreamId) {
+        const parent = await StreamRepository.findById(pool, updated.parentStreamId)
+        if (parent) context = { parentStream: parent }
+      }
+
+      res.json({ data: serializeStream(updated, context) })
     },
 
     async listMembers(req: Request, res: Response) {

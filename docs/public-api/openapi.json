@@ -2683,6 +2683,107 @@
           "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
+      },
+      "patch": {
+        "operationId": "updateStream",
+        "summary": "Set a stream's description",
+        "tags": ["Streams"],
+        "description": "Set the stream's description from markdown (parsed to rich text, same as message content). Send an empty string to clear it. User-scoped keys attribute the change to the key owner; workspace-scoped keys to the bot.",
+        "security": [{ "apiKey": ["streams:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "streamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Stream ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "description": { "type": "string", "maxLength": 10000 } },
+                "required": ["description"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "type": { "type": "string", "enum": ["scratchpad", "channel", "dm", "thread", "system"] },
+                        "displayName": { "type": "string" },
+                        "slug": { "type": "string" },
+                        "description": { "type": "string" },
+                        "visibility": { "type": "string" },
+                        "memoryMode": {
+                          "type": "string",
+                          "enum": ["auto", "off"],
+                          "description": "GAM memory automation gate: 'auto' extracts memos, 'off' disables it"
+                        },
+                        "parentStreamId": { "type": "string" },
+                        "rootStreamId": { "type": "string" },
+                        "parentMessageId": { "type": "string" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "archivedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
       }
     },
     "/api/v1/workspaces/{workspaceId}/streams/{streamId}/members": {
