@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { StreamTypes, type JSONContent, type Stream, type StreamType } from "@threa/types"
 import { Button } from "@/components/ui/button"
@@ -33,21 +33,23 @@ export function DescriptionSection({ workspaceId, stream }: { workspaceId: strin
   const editorRef = useRef<RichEditorHandle>(null)
 
   const savedMarkdown = (stream.description ?? "").trim()
-  const seed = useCallback<() => JSONContent>(
-    () =>
-      stream.descriptionJson ??
-      parseMarkdown(stream.description ?? "", undefined, toEmoji, { enableSlashCommands: false }),
-    [stream.descriptionJson, stream.description, toEmoji]
-  )
-  const [contentJson, setContentJson] = useState<JSONContent>(seed)
+  // Seed from the canonical ProseMirror; markdown is only the legacy fallback.
+  const seedContent = (): JSONContent =>
+    stream.descriptionJson ??
+    parseMarkdown(stream.description ?? "", undefined, toEmoji, { enableSlashCommands: false })
+  const [contentJson, setContentJson] = useState<JSONContent>(seedContent)
   const [formatOpen, setFormatOpen] = useState(false)
 
-  // Re-seed when the saved description changes underneath us (another device,
-  // a socket update). Mirrors AISettings' re-seed-on-saved-change.
+  // Re-seed only when the SAVED description changes by value (another device, a
+  // socket update). Keyed on the markdown projection, NOT the descriptionJson
+  // object — its identity churns on every unrelated stream-cache write, and
+  // depending on that would reset the editor mid-edit and drop in-progress
+  // typing. The body still seeds from the canonical JSON at fire time.
   useEffect(() => {
-    setContentJson(seed())
+    setContentJson(seedContent())
     setFormatOpen(false)
-  }, [seed])
+    // Intentionally keyed on `savedMarkdown` only — see comment above.
+  }, [savedMarkdown])
 
   const currentMarkdown = useMemo(() => serializeToMarkdown(contentJson).trim(), [contentJson])
   const isDirty = currentMarkdown !== savedMarkdown
@@ -61,7 +63,7 @@ export function DescriptionSection({ workspaceId, stream }: { workspaceId: strin
   }
 
   const handleReset = () => {
-    setContentJson(seed())
+    setContentJson(seedContent())
     setFormatOpen(false)
   }
 

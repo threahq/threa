@@ -104,4 +104,32 @@ describe("DescriptionSection", () => {
 
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", "stream_chan", { descriptionJson: edited }))
   })
+
+  it("preserves an in-progress edit when the stream object updates without a description change", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const update = vi.fn().mockResolvedValue({})
+    const wrap = (stream: Stream) => (
+      <QueryClientProvider client={queryClient}>
+        <ServicesProvider services={{ streams: { update } as unknown as StreamService }}>
+          <DescriptionSection workspaceId="ws_1" stream={stream} />
+        </ServicesProvider>
+      </QueryClientProvider>
+    )
+    const { rerender } = render(wrap(channel({ description: null, descriptionJson: null })))
+
+    const edited: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "draft" }] }],
+    }
+    act(() => lastOnChange?.(edited))
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+
+    // An unrelated stream-cache write lands: a new stream object with a new
+    // descriptionJson identity, but the saved description (markdown) is
+    // unchanged. The editor must NOT reset — re-seeding here would drop the edit.
+    rerender(wrap(channel({ description: null, descriptionJson: { type: "doc", content: [{ type: "paragraph" }] } })))
+
+    expect(screen.getByTestId("rich-editor")).toHaveTextContent("draft")
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled()
+  })
 })
