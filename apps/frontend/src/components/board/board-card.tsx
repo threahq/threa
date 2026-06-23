@@ -2,16 +2,14 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, type LucideIcon } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { PersonaAvatar } from "@/components/persona-avatar"
+import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
+import { MarkdownContent } from "@/components/ui/markdown-content"
+import { MessageReactions } from "@/components/timeline/message-reactions"
 import { useActors } from "@/hooks"
-import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
-import { stripMarkdownToInline } from "@/lib/markdown/strip"
-import type { ActorLookup } from "@/hooks/use-actors"
 import type { AuthorType, BoardPost } from "@threa/types"
 
 interface BoardCardProps {
@@ -31,8 +29,6 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
   dm: User,
 }
 
-const MAX_REACTIONS = 4
-
 /** The fields the post renderer reads — satisfied by both `BoardPostMessage`
  * (feed payload) and a full `Message` (fetched on expand). */
 interface RenderableMessage {
@@ -45,16 +41,18 @@ interface RenderableMessage {
 }
 
 /**
- * One board post: a conversation rendered as a threaded feed post. The opening
- * message is the body, the latest replies sit beneath it, and a collapsed
- * "N more messages" gap fills in on click. The conversation is context (header),
- * not the unit. Each message links to itself in its stream timeline — no
- * conversations pane. Width is constrained by the page to match the timeline.
+ * One board post: a conversation rendered as a feed post. The opening message is
+ * the body, the latest replies stack beneath it, and a collapsed "N more
+ * messages" gap fills in on click. Messages render through the same primitives as
+ * the timeline (`ActorAvatar`, `MarkdownContent`, `MessageReactions`) so a board
+ * message reads exactly like a real message. The card itself delimits the
+ * conversation, so replies aren't indented. The conversation is context (header),
+ * not the unit.
  */
 export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }: BoardCardProps) {
   const { conversation, openingMessage, recentMessages } = post
-  const actors = useActors(workspaceId)
-  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const { getActorName } = useActors(workspaceId)
+  const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const [expanded, setExpanded] = useState(false)
 
@@ -94,52 +92,49 @@ export function BoardCard({ workspaceId, post, topic, contextLabel, streamType }
         <RelativeTime date={conversation.lastActivityAt} terse className="ml-auto shrink-0" />
       </div>
 
-      <div className="mt-2">
+      <div className="mt-3 flex flex-col gap-3">
         {openingMessage && (
           <PostMessage
             workspaceId={workspaceId}
             streamId={streamId}
             message={openingMessage}
-            actors={actors}
-            toEmoji={toEmoji}
+            authorName={getActorName(openingMessage.authorId, openingMessage.authorType)}
+            currentUserId={currentUserId}
             emphasis
           />
         )}
 
-        {(replies.length > 0 || hiddenCount > 0 || loadingMore || (expanded && expandFailed)) && (
-          <div className="ml-3 mt-1 flex flex-col gap-1 border-l pl-3 sm:ml-4 sm:pl-4">
-            {!expanded && hiddenCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setExpanded(true)}
-                className="flex w-fit items-center gap-1 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <ChevronDown className="h-3.5 w-3.5" />
-                {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
-              </button>
-            )}
-            {loadingMore && <span className="py-0.5 text-xs text-muted-foreground">Loading messages…</span>}
-            {expanded && expandFailed && (
-              <button
-                type="button"
-                onClick={() => void refetchMessages()}
-                className="w-fit py-0.5 text-xs text-destructive underline underline-offset-2"
-              >
-                Couldn't load messages. Retry.
-              </button>
-            )}
-            {replies.map((message) => (
-              <PostMessage
-                key={message.id}
-                workspaceId={workspaceId}
-                streamId={streamId}
-                message={message}
-                actors={actors}
-                toEmoji={toEmoji}
-              />
-            ))}
-          </div>
+        {!expanded && hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+            {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
+          </button>
         )}
+        {loadingMore && <span className="text-xs text-muted-foreground">Loading messages…</span>}
+        {expanded && expandFailed && (
+          <button
+            type="button"
+            onClick={() => void refetchMessages()}
+            className="w-fit text-xs text-destructive underline underline-offset-2"
+          >
+            Couldn't load messages. Retry.
+          </button>
+        )}
+
+        {replies.map((message) => (
+          <PostMessage
+            key={message.id}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            message={message}
+            authorName={getActorName(message.authorId, message.authorType)}
+            currentUserId={currentUserId}
+          />
+        ))}
       </div>
     </div>
   )
@@ -149,79 +144,47 @@ interface PostMessageProps {
   workspaceId: string
   streamId: string
   message: RenderableMessage
-  actors: ActorLookup
-  toEmoji: (shortcode: string) => string | null
-  /** The opening post — slightly larger body clamp than a reply. */
+  authorName: string
+  currentUserId: string | null
+  /** The opening post — a slightly larger avatar than a reply. */
   emphasis?: boolean
 }
 
-function PostMessage({ workspaceId, streamId, message, actors, toEmoji, emphasis }: PostMessageProps) {
-  const name = actors.getActorName(message.authorId, message.authorType)
-  const avatar = actors.getActorAvatar(message.authorId, message.authorType)
-  const body = stripMarkdownToInline(message.contentMarkdown, toEmoji).trim()
-  const to = `/w/${workspaceId}/s/${streamId}?m=${message.id}`
+function PostMessage({ workspaceId, streamId, message, authorName, currentUserId, emphasis }: PostMessageProps) {
+  const hasReactions = Object.keys(message.reactions).length > 0
 
   return (
-    <Link to={to} className="-mx-2 block rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/50">
-      <div className="flex items-start gap-2">
-        {message.authorType === "persona" ? (
-          <PersonaAvatar slug={avatar.slug} fallback={avatar.fallback} size={emphasis ? "md" : "sm"} />
-        ) : (
-          <Avatar className={cn("shrink-0 rounded-[8px]", emphasis ? "h-8 w-8" : "h-6 w-6")}>
-            {avatar.avatarUrl && <AvatarImage src={avatar.avatarUrl} alt={name} />}
-            <AvatarFallback
-              className={cn(
-                "rounded-[8px] bg-muted text-xs text-foreground",
-                message.authorType === "bot" && "bg-emerald-500/10 text-emerald-600",
-                message.authorType === "system" && "bg-blue-500/10 text-blue-500"
-              )}
-            >
-              {avatar.fallback}
-            </AvatarFallback>
-          </Avatar>
-        )}
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-medium">{name}</span>
-            <RelativeTime date={message.createdAt} terse className="ml-auto shrink-0 text-xs text-muted-foreground" />
-          </div>
-          {body && (
-            <p className={cn("mt-0.5 break-words text-sm leading-relaxed", emphasis ? "line-clamp-4" : "line-clamp-2")}>
-              {body}
-            </p>
-          )}
-          <ReactionChips reactions={message.reactions} toEmoji={toEmoji} />
+    <div className="flex items-start gap-2 sm:gap-3">
+      <ActorAvatar
+        actorId={message.authorId}
+        actorType={message.authorType}
+        workspaceId={workspaceId}
+        size={emphasis ? "md" : "sm"}
+        alt={authorName}
+        showStatus={false}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate text-sm font-semibold">{authorName}</span>
+          {/* Permalink to the message in its stream timeline — the one navigation
+              affordance, so the interactive message body isn't wrapped in a link. */}
+          <Link
+            to={`/w/${workspaceId}/s/${streamId}?m=${message.id}`}
+            className="shrink-0 text-xs text-muted-foreground hover:underline"
+          >
+            <RelativeTime date={message.createdAt} terse />
+          </Link>
         </div>
+        <MarkdownContent content={message.contentMarkdown} messageId={message.id} className="text-sm leading-relaxed" />
+        {hasReactions && (
+          <MessageReactions
+            reactions={message.reactions}
+            workspaceId={workspaceId}
+            messageId={message.id}
+            currentUserId={currentUserId}
+          />
+        )}
       </div>
-    </Link>
-  )
-}
-
-function ReactionChips({
-  reactions,
-  toEmoji,
-}: {
-  reactions: Record<string, string[]>
-  toEmoji: (shortcode: string) => string | null
-}) {
-  const sorted = Object.entries(reactions)
-    .filter(([, users]) => users.length > 0)
-    .sort((a, b) => b[1].length - a[1].length)
-  if (sorted.length === 0) return null
-
-  const visible = sorted.slice(0, MAX_REACTIONS)
-  const overflow = sorted.length - visible.length
-
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-      {visible.map(([shortcode, users]) => (
-        <span key={shortcode} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 leading-none">
-          <span>{toEmoji(shortcode) ?? shortcode}</span>
-          <span>{users.length}</span>
-        </span>
-      ))}
-      {overflow > 0 && <span>+{overflow}</span>}
     </div>
   )
 }

@@ -7,7 +7,9 @@ import { BoardPage } from "./board"
 import { ServicesProvider, SidebarProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
+import * as messageReactionsModule from "@/hooks/use-message-reactions"
 import * as contextsModule from "@/contexts"
 
 const WORKSPACE_ID = "ws_1"
@@ -103,6 +105,17 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
+  // BoardCard reads the viewer id for reaction state; sourced from auth, which
+  // isn't mounted in this harness.
+  vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+  // Reactions reuse the timeline's <MessageReactions>, whose toggle hook reaches
+  // for the SyncEngine. Stub the hook so the real component still renders.
+  vi.spyOn(messageReactionsModule, "useMessageReactions").mockReturnValue({
+    addReaction: vi.fn(),
+    removeReaction: vi.fn(),
+    toggleReaction: vi.fn(),
+    toggleByEmoji: vi.fn(),
+  } as unknown as ReturnType<typeof messageReactionsModule.useMessageReactions>)
   // RelativeTime reads timezone/locale from the preferences context.
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },
@@ -203,10 +216,15 @@ describe("BoardPage", () => {
     expect(listByWorkspace).not.toHaveBeenCalled()
   })
 
-  it("links the opening message to itself in its stream timeline (no conversations pane)", async () => {
+  it("permalinks each message to itself in its stream timeline (no conversations pane)", async () => {
     mountBoard([makePost()])
-    const link = (await screen.findByText("Opening message body.")).closest("a")
-    expect(link?.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/s/stream_1?m=msg_1`)
+    await screen.findByText("Opening message body.")
+    // The body renders as a real message (not wrapped in a link); the timestamp
+    // is the permalink into the stream.
+    const permalink = screen
+      .getAllByRole("link")
+      .find((a) => a.getAttribute("href") === `/w/${WORKSPACE_ID}/s/stream_1?m=msg_1`)
+    expect(permalink).toBeTruthy()
   })
 
   it("uses the scratchpad's name as the topic, not the generic summary", async () => {
