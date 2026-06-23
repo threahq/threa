@@ -50,7 +50,16 @@ describe("emitActivityCountsForPairs", () => {
     ])
 
     expect(countSpy.mock.calls[0]?.[2]).toEqual([{ userId: "usr_a", streamId: "stream_1" }])
-    expect(insert.mock.calls).toHaveLength(1)
+    expect(insert.mock.calls.map(([, eventType, payload]) => ({ eventType, payload }))).toEqual([
+      {
+        eventType: "activity:counts",
+        payload: {
+          workspaceId: WS,
+          targetUserId: "usr_a",
+          counts: [{ streamId: "stream_1", mentionCount: 0, activityCount: 1 }],
+        },
+      },
+    ])
   })
 
   it("emits nothing for an empty pair list", async () => {

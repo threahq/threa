@@ -360,9 +360,9 @@ export class ActivityService {
    *
    * Deleting the rows lowers the reacted-to author's unread count, so in the
    * same transaction (INV-7) recompute each affected (user, stream) absolute
-   * count and emit `activity:counts` — otherwise the badge stays stranded above
-   * the truth on every session (the bug this fixes). Only non-self rows with a
-   * stream move a badge; self rows were inserted already read.
+   * count and emit `activity:counts`, keeping the badge from sitting above
+   * database truth. Only non-self rows with a stream move a badge; self rows
+   * were inserted already read.
    */
   async processReactionRemoved(params: {
     workspaceId: string
@@ -543,10 +543,9 @@ export class ActivityService {
   }
 
   /**
-   * Mark one activity row read and emit the stream's new absolute count so the
-   * badge converges on every session (the bare UPDATE used to emit nothing, so
-   * other tabs/devices stayed stale-high — INV-7). Stream-less saved-reminder
-   * rows carry no per-stream badge, so they skip the emit.
+   * Mark one activity row read and emit the stream's new absolute count in the
+   * same transaction (INV-7) so the badge converges on every session. Stream-less
+   * saved-reminder rows carry no per-stream badge, so they skip the emit.
    */
   async markAsRead(activityId: string, userId: string): Promise<void> {
     await withTransaction(this.pool, async (client) => {
@@ -574,8 +573,8 @@ export class ActivityService {
   }
 
   /**
-   * Mark every activity row read and emit a clear-all so all sessions zero
-   * their activity/mention maps (the bare UPDATE used to emit nothing — INV-7).
+   * Mark every activity row read and emit a clear-all in the same transaction
+   * (INV-7) so all sessions zero their activity/mention maps.
    */
   async markAllAsRead(userId: string, workspaceId: string): Promise<void> {
     await withTransaction(this.pool, async (client) => {

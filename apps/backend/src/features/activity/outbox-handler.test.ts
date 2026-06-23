@@ -94,6 +94,23 @@ function makeMessageCreatedEvent(
   }
 }
 
+function makeMessagesMovedEvent(
+  id: bigint,
+  overrides?: { workspaceId?: string; sourceStreamId?: string; destinationStreamId?: string; movedMessageIds?: unknown }
+) {
+  return {
+    id,
+    eventType: "messages:moved" as const,
+    payload: {
+      workspaceId: overrides?.workspaceId ?? "ws_test",
+      sourceStreamId: overrides?.sourceStreamId ?? "stream_src",
+      destinationStreamId: overrides?.destinationStreamId ?? "stream_dst",
+      movedMessageIds: "movedMessageIds" in (overrides ?? {}) ? overrides!.movedMessageIds : ["msg_1", "msg_2"],
+    },
+    createdAt: new Date(),
+  }
+}
+
 describe("ActivityFeedHandler", () => {
   beforeEach(() => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
@@ -473,5 +490,75 @@ describe("ActivityFeedHandler", () => {
     await new Promise((r) => setTimeout(r, 300))
 
     expect(result).toEqual({ status: "processed", processedIds: [1n, 2n, 3n] })
+  })
+
+  it("processMessagesMoved emits activity:counts for source and destination per affected user", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([makeMessagesMovedEvent(1n)] as any)
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({}))
+    spyOn(ActivityRepository, "findUserIdsByMessageIds").mockResolvedValue(["usr_a"])
+    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
+      new Map([
+        ["usr_a:stream_src", { mentionCount: 0, totalCount: 0 }],
+        ["usr_a:stream_dst", { mentionCount: 0, totalCount: 2 }],
+      ])
+    )
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const { handler } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(insert.mock.calls.filter((c) => c[1] === "activity:counts").map((c) => c[2])).toEqual([
+      {
+        workspaceId: "ws_test",
+        targetUserId: "usr_a",
+        counts: [
+          { streamId: "stream_src", mentionCount: 0, activityCount: 0 },
+          { streamId: "stream_dst", mentionCount: 0, activityCount: 2 },
+        ],
+      },
+    ])
+  })
+
+  it("processMessagesMoved skips a malformed payload (empty movedMessageIds) before the E2E check", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      makeMessagesMovedEvent(1n, { movedMessageIds: [] }),
+    ] as any)
+    const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const { handler } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(insert).not.toHaveBeenCalled()
+    expect(isE2e).not.toHaveBeenCalled()
+  })
+
+  it("processMessagesMoved skips when the source stream is E2E", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([makeMessagesMovedEvent(1n)] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const findUsers = spyOn(ActivityRepository, "findUserIdsByMessageIds").mockResolvedValue([])
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const { handler } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(findUsers).not.toHaveBeenCalled()
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("processMessagesMoved emits nothing when no user has activity on the moved messages", async () => {
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([makeMessagesMovedEvent(1n)] as any)
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({}))
+    spyOn(ActivityRepository, "findUserIdsByMessageIds").mockResolvedValue([])
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const { handler } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(insert).not.toHaveBeenCalled()
   })
 })
