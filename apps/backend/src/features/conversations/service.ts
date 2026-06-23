@@ -36,10 +36,11 @@ export interface BoardPostMessage {
   createdAt: Date
 }
 
-/** A conversation surfaced as a feed post: the grouping plus its opening message. */
+/** A conversation surfaced as a feed post: the grouping, its opening message, and the latest replies. */
 export interface BoardPost {
   conversation: ConversationWithStaleness
   openingMessage: BoardPostMessage | null
+  recentMessages: BoardPostMessage[]
 }
 
 export interface ReassignMessageParams {
@@ -96,18 +97,33 @@ export class ConversationService {
     })
     const conversations = rows.map(addStalenessFields)
 
-    // Hydrate each post's opening message (the conversation's first primary
-    // message) so the board renders real post content + reactions, not just a
-    // topic line. One batch read keyed on the opening ids (INV-56); the access
-    // filter already ran in the conversation query, so these ids are all viewer-
-    // readable. `findByIds` carries reactions with each message.
-    const openingIds = conversations.map((c) => c.messageIds[0]).filter((id): id is string => Boolean(id))
-    const openingById: Map<string, Message> =
-      openingIds.length > 0 ? await MessageRepository.findByIds(this.pool, openingIds) : new Map()
+    // Hydrate each post's opening message plus its last few replies so the board
+    // renders real post content + reactions, not just a topic line. One batch
+    // read over the union of needed ids (INV-56); the access filter already ran
+    // in the conversation query, so these ids are all viewer-readable.
+    // `findByIds` carries reactions with each message.
+    const planByConversation = new Map<string, { openingId: string | undefined; recentIds: string[] }>()
+    const idsToFetch = new Set<string>()
+    for (const conversation of conversations) {
+      const ids = conversation.messageIds
+      const openingId = ids[0]
+      // Last 3, never including the opening at index 0.
+      const recentIds = ids.length > 1 ? ids.slice(Math.max(1, ids.length - 3)) : []
+      planByConversation.set(conversation.id, { openingId, recentIds })
+      if (openingId) idsToFetch.add(openingId)
+      for (const id of recentIds) idsToFetch.add(id)
+    }
+    const messageById: Map<string, Message> =
+      idsToFetch.size > 0 ? await MessageRepository.findByIds(this.pool, [...idsToFetch]) : new Map()
 
     const posts: BoardPost[] = conversations.map((conversation) => {
-      const opening = openingById.get(conversation.messageIds[0])
-      return { conversation, openingMessage: opening ? toBoardPostMessage(opening) : null }
+      const plan = planByConversation.get(conversation.id)!
+      const opening = plan.openingId ? messageById.get(plan.openingId) : undefined
+      const recentMessages = plan.recentIds
+        .map((id) => messageById.get(id))
+        .filter((m): m is Message => Boolean(m))
+        .map(toBoardPostMessage)
+      return { conversation, openingMessage: opening ? toBoardPostMessage(opening) : null, recentMessages }
     })
 
     // A full page means there may be more; the last row's (activity, id) is the

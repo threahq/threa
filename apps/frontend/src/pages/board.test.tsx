@@ -51,11 +51,13 @@ function makeOpeningMessage(overrides: Partial<BoardPostMessage> = {}): BoardPos
 
 function makePost(
   convOverrides: Partial<ConversationWithStaleness> = {},
-  msgOverrides: Partial<BoardPostMessage> | null = {}
+  msgOverrides: Partial<BoardPostMessage> | null = {},
+  recentMessages: BoardPostMessage[] = []
 ): BoardPost {
   return {
     conversation: makeConversation(convOverrides),
     openingMessage: msgOverrides === null ? null : makeOpeningMessage(msgOverrides),
+    recentMessages,
   }
 }
 
@@ -74,7 +76,9 @@ function mountBoard(
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ServicesProvider services={{ conversations: { listByWorkspace } as never }}>
+        <ServicesProvider
+          services={{ conversations: { listByWorkspace, getMessages: vi.fn(async () => []) } as never }}
+        >
           <SidebarProvider>
             <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board`]}>
               <Routes>
@@ -111,17 +115,29 @@ describe("BoardPage", () => {
     expect(await screen.findByText("Nothing on the board yet")).toBeTruthy()
   })
 
-  it("renders a post with its topic, body, and message count", async () => {
+  it("renders a post with its topic and opening-message body", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     expect(await screen.findByText("CC Teams tokens")).toBeTruthy()
     expect(screen.getByText("Rotate the tokens before Friday.")).toBeTruthy()
-    expect(screen.getByText("3 messages")).toBeTruthy()
   })
 
-  it("pluralizes a single message as '1 message'", async () => {
-    mountBoard([makePost({ messageIds: ["msg_only"] })])
-    expect(await screen.findByText("1 message")).toBeTruthy()
-    expect(screen.queryByText("1 messages")).toBeNull()
+  it("collapses the middle as an 'N more messages' expander, pluralizing the count", async () => {
+    // 5 messages: opening + 3 recent shown + 1 hidden in the middle.
+    const recent = [
+      makeOpeningMessage({ id: "m3" }),
+      makeOpeningMessage({ id: "m4" }),
+      makeOpeningMessage({ id: "m5" }),
+    ]
+    mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)])
+    expect(await screen.findByText("1 more message")).toBeTruthy()
+    expect(screen.queryByText("1 more messages")).toBeNull()
+  })
+
+  it("shows no expander when the whole conversation already fits", async () => {
+    const recent = [makeOpeningMessage({ id: "m2" }), makeOpeningMessage({ id: "m3" })]
+    mountBoard([makePost({ messageIds: ["m1", "m2", "m3"] }, { id: "m1" }, recent)])
+    await screen.findByText("CC Teams tokens")
+    expect(screen.queryByText(/more messages?$/)).toBeNull()
   })
 
   it("renders reactions on the opening message", async () => {
@@ -174,10 +190,10 @@ describe("BoardPage", () => {
     expect(listByWorkspace).not.toHaveBeenCalled()
   })
 
-  it("links each post to its conversation opened in its stream", async () => {
+  it("links the opening message to itself in its stream timeline (no conversations pane)", async () => {
     mountBoard([makePost()])
-    const card = (await screen.findByText("CC Teams tokens")).closest("a")
-    expect(card?.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/s/stream_1?convView=open&conv=conv_1`)
+    const link = (await screen.findByText("Opening message body.")).closest("a")
+    expect(link?.getAttribute("href")).toBe(`/w/${WORKSPACE_ID}/s/stream_1?m=msg_1`)
   })
 
   it("uses the scratchpad's name as the topic, not the generic summary", async () => {

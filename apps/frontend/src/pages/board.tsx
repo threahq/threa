@@ -114,13 +114,16 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   let content
   if (isLoading) {
     content = (
-      <div className="flex flex-col gap-0.5">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div key={i} className="flex items-start gap-3 px-3 py-2.5 sm:px-4 sm:py-3">
-            <Skeleton className="h-9 w-9 shrink-0 rounded-[10px]" />
-            <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-3.5 w-2/5" />
-              <Skeleton className="h-3 w-3/5" />
+      <div className="flex flex-col gap-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="rounded-xl border bg-card p-4">
+            <Skeleton className="h-3 w-1/3" />
+            <div className="mt-3 flex items-start gap-2">
+              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-3.5 w-1/4" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
             </div>
           </div>
         ))}
@@ -152,11 +155,11 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     content = (
       <div className="flex flex-col">
         {sections.map((section) => (
-          <section key={section.label} className="mb-2">
-            <h2 className="px-3 pb-1 pt-3 text-xs font-medium uppercase tracking-wider text-muted-foreground sm:px-4">
+          <section key={section.label} className="mb-4">
+            <h2 className="px-1 pb-1.5 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               {section.label}
             </h2>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-3">
               {section.posts.map((post) => {
                 const { title, contextLabel, streamType } = labelsFor(post.conversation)
                 return (
@@ -200,7 +203,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         tabs={[{ value: "all", label: "All", href: `/w/${workspaceId}/board` }]}
       />
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="py-2">{content}</main>
+        <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">{content}</main>
       </ScrollArea>
     </div>
   )

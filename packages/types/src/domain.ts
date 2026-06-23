@@ -645,13 +645,20 @@ export interface BoardPostMessage {
 
 /**
  * One board post: a conversation (the grouping) surfaced as a feed post (the
- * unit). The card renders `openingMessage` as the post body with the
- * conversation as context, so the board reads as a re-organized timeline of
- * messages rather than a conversations list.
+ * unit). The card renders `openingMessage` as the post body and `recentMessages`
+ * as the latest replies beneath it, with a collapsed "N more" gap between — so
+ * the board reads as a re-organized timeline of messages rather than a
+ * conversations list.
  */
 export interface BoardPost {
   conversation: ConversationWithStaleness
   openingMessage: BoardPostMessage | null
+  /**
+   * Up to the last three messages of the conversation, excluding the opening,
+   * in chronological order. The collapsed card shows opening + a "N more"
+   * expander + these; expanding fetches the full message list.
+   */
+  recentMessages: BoardPostMessage[]
 }
 
 /**
