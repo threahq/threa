@@ -275,6 +275,8 @@ export interface StreamUpdatedOutboxPayload extends WorkspaceScopedPayload {
 export interface StreamArchivedOutboxPayload extends WorkspaceScopedPayload {
   streamId: string
   stream: Stream
+  /** The timeline event row, so clients append it live (first-class broadcast). */
+  event: StreamEvent
   /**
    * Active descendant thread ids (any depth) so the event can be routed to
    * their stream rooms too — a client viewing a thread only joins the
@@ -289,6 +291,8 @@ export interface StreamArchivedOutboxPayload extends WorkspaceScopedPayload {
 export interface StreamUnarchivedOutboxPayload extends WorkspaceScopedPayload {
   streamId: string
   stream: Stream
+  /** See {@link StreamArchivedOutboxPayload.event}. */
+  event: StreamEvent
   /** See {@link StreamArchivedOutboxPayload.threadStreamIds}. */
   threadStreamIds?: string[]
 }

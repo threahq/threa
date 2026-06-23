@@ -100,6 +100,8 @@ export function EventItem({
       )
 
     case "thread_created":
+    case "stream_archived":
+    case "stream_unarchived":
       return (
         <div data-event-id={event.id}>
           <SystemEvent event={event} />

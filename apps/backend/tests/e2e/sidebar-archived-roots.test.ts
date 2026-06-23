@@ -166,4 +166,39 @@ describe("Workspace bootstrap excludes threads rooted in archived streams", () =
       socket.disconnect()
     }
   })
+
+  test("stream:archived delivers the timeline event row live to the root room", async () => {
+    // First-class treatment: the outbox payload carries the event row, so a
+    // client in the root stream room receives it as a live timeline append
+    // (like member_joined) — not just a stream-cache mutation that only
+    // surfaces on the next bootstrap. The event row has a sequence and
+    // broadcast slot, so it lands in the right timeline position.
+    const client = new TestClient()
+    await loginAs(client, testEmail("live-event-row"), "Live Event Row Test")
+    const workspace = await createWorkspace(client, `Live Event Row WS ${testRunId}`)
+
+    const root = await createScratchpad(client, workspace.id, "off")
+    await sendMessage(client, workspace.id, root.id, "a message before archive")
+
+    const socket = createSocket(client)
+    try {
+      await connectSocket(socket)
+      await joinRoom(socket, `ws:${workspace.id}:stream:${root.id}`)
+
+      const eventPromise = waitForEvent<{
+        streamId: string
+        event: { id: string; eventType: string; sequence: string }
+      }>(socket, "stream:archived")
+      await archiveStream(client, workspace.id, root.id)
+      const payload = await eventPromise
+
+      expect(payload.streamId).toBe(root.id)
+      // The event row is in the payload — first-class live append.
+      expect(payload.event).toBeDefined()
+      expect(payload.event.eventType).toBe("stream_archived")
+      expect(BigInt(payload.event.sequence)).toBeGreaterThan(0n)
+    } finally {
+      socket.disconnect()
+    }
+  })
 })

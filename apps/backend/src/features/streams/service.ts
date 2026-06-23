@@ -732,7 +732,7 @@ export class StreamService {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })
       if (stream) {
         const evtId = eventId()
-        await StreamEventRepository.insert(client, {
+        const event = await StreamEventRepository.insert(client, {
           id: evtId,
           streamId: stream.id,
           eventType: "stream_archived",
@@ -748,6 +748,9 @@ export class StreamService {
         // the payload it would never learn the root was archived and the
         // composer would stay live until a refresh. Threads inherit access
         // from the root (INV-62), so their rooms reach the same audience.
+        // The event row ships in the payload so clients append it as a
+        // first-class timeline row (broadcast slot, live append) — not just
+        // a stream-cache mutation that only surfaces on the next bootstrap.
         const threadStreamIds =
           stream.type === StreamTypes.THREAD
             ? []
@@ -757,6 +760,7 @@ export class StreamService {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
           stream,
+          event,
           threadStreamIds,
         })
       }
@@ -769,7 +773,7 @@ export class StreamService {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: null })
       if (stream) {
         const evtId = eventId()
-        await StreamEventRepository.insert(client, {
+        const event = await StreamEventRepository.insert(client, {
           id: evtId,
           streamId: stream.id,
           eventType: "stream_unarchived",
@@ -782,6 +786,7 @@ export class StreamService {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
           stream,
+          event,
           threadStreamIds:
             stream.type === StreamTypes.THREAD
               ? []
