@@ -20,24 +20,6 @@ import { MEMO_GEM_CONFIDENCE_FLOOR, MEMO_SINGLE_MESSAGE_AGE_GATE_MS, MEMO_DEDUP_
 const MEMORY_CONTEXT_LIMIT = 20
 const MIN_CONVERSATION_MESSAGES = 1
 
-/**
- * Cosine distance (0 = identical) between two embeddings, matching pgvector's
- * `<=>` so the in-batch dedup check and the DB dedup check use one threshold.
- * Embeddings are not assumed pre-normalized.
- */
-function cosineDistance(a: number[], b: number[]): number {
-  let dot = 0
-  let normA = 0
-  let normB = 0
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i]
-    normA += a[i] * a[i]
-    normB += b[i] * b[i]
-  }
-  if (normA === 0 || normB === 0) return 1
-  return 1 - dot / (Math.sqrt(normA) * Math.sqrt(normB))
-}
-
 /** Key with the highest count, or undefined when the map is empty. */
 function mostCommon(counts: Map<string, number>): string | undefined {
   let best: string | undefined
@@ -49,6 +31,20 @@ function mostCommon(counts: Map<string, number>): string | undefined {
     }
   }
   return best
+}
+
+/**
+ * Resolve a `users.locale` (BCP-47, e.g. "sv-SE") to an English language name
+ * ("Swedish") so the memorizer prompt reads "WRITE EVERY MEMO IN Swedish", not
+ * "…IN sv-SE". Falls back to the raw value if the runtime can't resolve it.
+ */
+function localeToLanguageName(locale: string): string {
+  const primary = locale.split(/[-_]/)[0]
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(primary) ?? locale
+  } catch {
+    return locale
+  }
 }
 
 export interface ProcessResult {
@@ -71,15 +67,6 @@ interface MemoToCreate {
   tags: string[]
   status: import("@threa/types").MemoStatus
   embedding: number[]
-}
-
-interface OutboxEvent {
-  eventType: "memo:created"
-  payload: {
-    workspaceId: string
-    memoId: string
-    memo: import("@threa/types").Memo
-  }
 }
 
 export interface MemoServiceLike {
@@ -207,10 +194,10 @@ export class MemoService implements MemoServiceLike {
       // stream gets consistent memos (and cross-language duplicates can't form).
       const overrides = await WorkspaceSettingsRepository.findOverrides(client, workspaceId)
       const settingLanguage = overrides.find((o) => o.key === "memoLanguage")?.value
-      const memoLanguage =
-        typeof settingLanguage === "string" && settingLanguage.trim().length > 0
-          ? settingLanguage.trim()
-          : mostCommon(localeCounts)
+      const explicitLanguage =
+        typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
+      const fallbackLocale = mostCommon(localeCounts)
+      const memoLanguage = explicitLanguage ?? (fallbackLocale ? localeToLanguageName(fallbackLocale) : undefined)
 
       return {
         pending,
@@ -231,7 +218,6 @@ export class MemoService implements MemoServiceLike {
 
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
     const memosToCreate: MemoToCreate[] = []
-    const outboxEvents: OutboxEvent[] = []
     const deferredItemIds = new Set<string>()
     let memosCreated = 0
     let memosDeduped = 0
@@ -386,36 +372,11 @@ export class MemoService implements MemoServiceLike {
 
         for (let i = 0; i < contents.length; i++) {
           const content = contents[i]
-          const embedding = embeddings[i]
 
-          // Cross-conversation dedup (INV-20): drop a memo whose knowledge already
-          // exists in this stream from a different conversation. The revision path
-          // above handles repeats within one conversation; this catches the same
-          // fact recurring across conversations. Check memos staged earlier in this
-          // batch (same stream, in-memory) and committed memos (DB), so two
-          // conversations in one batch don't both insert the same memo.
-          const stagedDuplicate = memosToCreate.find(
-            (staged) => cosineDistance(staged.embedding, embedding) < MEMO_DEDUP_DISTANCE
-          )
-          const duplicate =
-            stagedDuplicate ??
-            (await MemoRepository.findNearDuplicate(this.pool, {
-              workspaceId,
-              streamId,
-              embedding,
-              maxDistance: MEMO_DEDUP_DISTANCE,
-              excludeConversationId: conversation.id,
-            }))
-          if (duplicate) {
-            memosDeduped++
-            logger.info(
-              { conversationId: conversation.id, title: content.title, knowledgeType: content.knowledgeType },
-              "Skipped duplicate memo (knowledge already captured in this stream)"
-            )
-            continue
-          }
-
-          const memo: MemoToCreate = {
+          // Build the candidate; the cross-conversation dedup decision happens
+          // in the insert transaction under a per-stream lock (see below), where
+          // it can see both committed and same-batch rows authoritatively.
+          memosToCreate.push({
             id: memoId(),
             workspaceId,
             memoType: MemoTypes.CONVERSATION,
@@ -428,19 +389,8 @@ export class MemoService implements MemoServiceLike {
             knowledgeType: content.knowledgeType,
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
-            embedding,
-          }
-
-          memosToCreate.push(memo)
-          outboxEvents.push({
-            eventType: "memo:created",
-            payload: {
-              workspaceId,
-              memoId: memo.id,
-              memo: this.toWireMemoFromData(memo),
-            },
+            embedding: embeddings[i],
           })
-          memosCreated++
         }
 
         logger.info(
@@ -466,15 +416,45 @@ export class MemoService implements MemoServiceLike {
     // Save all results in one transaction so the memo rows, their outbox
     // events, and the memos:captured timeline events commit atomically.
     await withTransaction(this.pool, async (client) => {
+      // Serialize batches for this stream so a concurrent batch can't read the
+      // dedup gate and insert the same memo in the window before this one
+      // commits (INV-20). Transaction-scoped: released on commit/rollback.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+
+      const createdMemos: MemoToCreate[] = []
       for (const memoData of memosToCreate) {
+        // Authoritative cross-conversation dedup (INV-20): under the lock this
+        // sees committed memos from other batches AND survivors already inserted
+        // earlier in this same transaction (uncommitted rows are visible to it),
+        // so it subsumes the in-batch check. Excludes the candidate's own
+        // conversation — same-conversation repeats are the revision path's job.
+        const duplicate = await MemoRepository.findNearDuplicate(client, {
+          workspaceId,
+          streamId,
+          embedding: memoData.embedding,
+          maxDistance: MEMO_DEDUP_DISTANCE,
+          excludeConversationId: memoData.sourceConversationId ?? "",
+        })
+        if (duplicate) {
+          memosDeduped++
+          logger.info(
+            { conversationId: memoData.sourceConversationId, title: memoData.title },
+            "Skipped duplicate memo (knowledge already captured in this stream)"
+          )
+          continue
+        }
+
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
         await MemoRepository.updateEmbedding(client, memoData.id, embedding)
+        await OutboxRepository.insert(client, "memo:created", {
+          workspaceId,
+          memoId: memoData.id,
+          memo: this.toWireMemoFromData(memoData),
+        })
+        createdMemos.push(memoData)
       }
-
-      for (const event of outboxEvents) {
-        await OutboxRepository.insert(client, event.eventType, event.payload)
-      }
+      memosCreated = createdMemos.length
 
       // Memory capture is visible in situ (INV-62): append one broadcast
       // timeline event per conversation that yielded memos, in the same
@@ -483,7 +463,7 @@ export class MemoService implements MemoServiceLike {
       // they were extracted from. Batched (INV-56): one sequence allocation
       // covers every capture event in the batch.
       const memosByConversation = new Map<string, MemoToCreate[]>()
-      for (const memo of memosToCreate) {
+      for (const memo of createdMemos) {
         if (!memo.sourceConversationId) {
           // Conversation-type memos always carry sourceConversationId; a miss
           // here is a data bug worth surfacing, not silently skipping (INV-11).

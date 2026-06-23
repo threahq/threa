@@ -82,7 +82,8 @@ const classification: ConversationClassification = {
 }
 
 function setupService(options: { memoContents: MemoContent[] }) {
-  const fakeClient = {} as PoolClient
+  const clientQuery = mock(async () => ({ rows: [] }))
+  const fakeClient = { query: clientQuery } as unknown as PoolClient
   spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
     fn(fakeClient)) as typeof dbModule.withClient)
   spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
@@ -130,20 +131,22 @@ function setupService(options: { memoContents: MemoContent[] }) {
     messageFormatter: { formatMessages: async () => "formatted conversation" } as never,
   })
 
-  return { service, streamEventInsertMany, outboxInsert, outboxInsertMany, insertedStreamEvent }
+  return { service, streamEventInsertMany, outboxInsert, outboxInsertMany, insertedStreamEvent, clientQuery }
 }
 
 describe("MemoService.processBatch — memos:captured timeline event (INV-62)", () => {
   afterEach(() => mock.restore())
 
   it("appends a memos:captured stream event with memo provenance in the save transaction", async () => {
-    const { service, streamEventInsertMany, outboxInsertMany, insertedStreamEvent } = setupService({
+    const { service, streamEventInsertMany, outboxInsertMany, insertedStreamEvent, clientQuery } = setupService({
       memoContents: [memoContent],
     })
 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(1)
+    // Insert transaction serializes same-stream batches via a per-stream advisory lock (INV-20).
+    expect(clientQuery).toHaveBeenCalledWith("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${STREAM_ID}`])
     expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({
         streamId: STREAM_ID,
