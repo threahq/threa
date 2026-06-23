@@ -79,8 +79,10 @@ truth. The unread-activity collection becomes a synced dataset
 **counts it**:
 
 - workspace badge = size of the held unread set (display-capped, e.g. `99+`);
-- per-stream glow = rows in the set grouped by `streamId`;
-- mention glow = those rows filtered to `activity_type = 'mention'`.
+- per-stream activity count (`getActivityCount`) = the set's rows grouped by `streamId`;
+- per-stream mention count (`getMentionCount`) = those rows filtered to `activity_type = 'mention'`.
+
+These are the two per-stream selectors the sidebar already consumes; the model re-derives both from the held set and preserves their current meaning — the mention indicator is **not** widened to all activity.
 
 Because the badge and the feed read the **same** dataset, they cannot disagree.
 This makes a deliberate trade: the badge reflects _what the client holds_, never a
@@ -92,17 +94,20 @@ the whole point. Exactness beyond the cap is sacrificed to kill the phantom.
 The same events drive the collection, applied as row operations and reconciled
 against server truth on bootstrap/reconnect:
 
-| Event                    | Apply                                                                                                                            |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `activity:created`       | append the carried row (payload already includes the full `activity`, `outbox-handler.ts:343-361`); ignore its absolute `counts` |
-| `stream:read` (coupling) | drop the set's rows for that `streamId`                                                                                          |
-| `reaction:removed`       | drop the matching row (`messageId`, `actorId`, `emoji`)                                                                          |
-| `messages:moved`         | re-home affected rows' `streamId`                                                                                                |
-| mark-all-read            | clear the set                                                                                                                    |
+| Event                    | Apply                                                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `activity:created`       | upsert the carried row by its stable `activity.id` (payload includes the full `activity`, `outbox-handler.ts:343-361`); ignore its absolute `counts` — plain append would duplicate on sync-log replay |
+| `stream:read` (coupling) | drop the set's rows for that `streamId`                                                                                                                                                                |
+| `reaction:removed`       | drop the matching row (`messageId`, `actorId`, `emoji`)                                                                                                                                                |
+| `messages:moved`         | re-home affected rows' `streamId`                                                                                                                                                                      |
+| mark-all-read            | clear the set                                                                                                                                                                                          |
 
 Because the set is small (sparse) and reconcilable, a missed event self-heals at
 the next bootstrap — and even while momentarily stale the badge stays consistent
-with the feed (never phantom). This is the key difference from the maintained
+with the feed (never phantom). Rows are keyed by `activity.id`, so a replayed
+`activity:created` (sync-log catch-up, INV-53) upserts in place rather than
+duplicating; bootstrap replaces the held set wholesale, so transient drift
+converges to server truth. This is the key difference from the maintained
 counter: a missed event can make the set briefly _incomplete_, but never make the
 badge _outrun_ the data.
 
