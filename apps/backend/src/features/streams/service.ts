@@ -302,6 +302,19 @@ export class StreamService {
       throw new HttpError("Cannot send messages to an archived stream", { status: 403 })
     }
 
+    // A thread inherits its lifecycle from its root (INV-62): archiving marks
+    // only the root row, so the thread itself stays "active" and would otherwise
+    // still accept writes. Reject when the thread's root is archived so an
+    // archived scratchpad/channel seals every nested thread too. The sidebar
+    // already hides these (listWithPreviews excludes them), but this is the
+    // authoritative gate covering deep links, the API, and move-to-thread.
+    if (stream.type === StreamTypes.THREAD && stream.rootStreamId) {
+      const root = await this.getStreamById(stream.rootStreamId)
+      if (root?.archivedAt) {
+        throw new HttpError("Cannot send messages to a thread under an archived stream", { status: 403 })
+      }
+    }
+
     const isMember = await this.isMember(stream.id, params.userId)
     if (!isMember) {
       throw new HttpError("Not a member of this stream", { status: 403 })
@@ -719,7 +732,7 @@ export class StreamService {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })
       if (stream) {
         const evtId = eventId()
-        await StreamEventRepository.insert(client, {
+        const event = await StreamEventRepository.insert(client, {
           id: evtId,
           streamId: stream.id,
           eventType: "stream_archived",
@@ -730,10 +743,25 @@ export class StreamService {
           actorType: "user",
         })
 
+        // Route to the root's room AND its descendant thread rooms: a thread
+        // viewer only joins the thread's room, so without the thread ids in
+        // the payload it would never learn the root was archived and the
+        // composer would stay live until a refresh. Threads inherit access
+        // from the root (INV-62), so their rooms reach the same audience.
+        // The event row ships in the payload so clients append it as a
+        // first-class timeline row (broadcast slot, live append) — not just
+        // a stream-cache mutation that only surfaces on the next bootstrap.
+        const threadStreamIds =
+          stream.type === StreamTypes.THREAD
+            ? []
+            : await StreamRepository.listThreadIdsByRoot(client, stream.workspaceId, stream.id)
+
         await OutboxRepository.insert(client, "stream:archived", {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
           stream,
+          event,
+          threadStreamIds,
         })
       }
       return stream
@@ -745,7 +773,7 @@ export class StreamService {
       const stream = await StreamRepository.update(client, streamId, { archivedAt: null })
       if (stream) {
         const evtId = eventId()
-        await StreamEventRepository.insert(client, {
+        const event = await StreamEventRepository.insert(client, {
           id: evtId,
           streamId: stream.id,
           eventType: "stream_unarchived",
@@ -758,6 +786,11 @@ export class StreamService {
           workspaceId: stream.workspaceId,
           streamId: stream.id,
           stream,
+          event,
+          threadStreamIds:
+            stream.type === StreamTypes.THREAD
+              ? []
+              : await StreamRepository.listThreadIdsByRoot(client, stream.workspaceId, stream.id),
         })
       }
       return stream

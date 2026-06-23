@@ -121,11 +121,15 @@ export type CommandEventType = (typeof COMMAND_EVENT_TYPES)[number]
  * - Edits / deletes / reactions are delivered live as payload *patches* onto
  *   the original message row, not as appended rows, so a broadcast slot for
  *   them would never be filled by live delivery.
- * - Legacy/no-longer-emitted types (thread_created, companion_response,
- *   stream_archived/unarchived) ride along in bootstrap windows without slots.
+ * - Legacy/no-longer-emitted types (thread_created, companion_response) ride
+ *   along in bootstrap windows without slots. (stream_archived/unarchived are
+ *   first-class broadcast events — they render as timeline rows and are
+ *   delivered live with a broadcast slot, like member_joined.)
  */
 export const TIMELINE_BROADCAST_EVENT_TYPES = [
   "message_created",
+  "stream_archived",
+  "stream_unarchived",
   "member_joined",
   "member_added",
   "member_left",

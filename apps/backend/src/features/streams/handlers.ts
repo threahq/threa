@@ -902,12 +902,20 @@ export function createStreamHandlers({
       // value. See `writeBootstrapEventsAndStream` in stream-sync.ts.
       const snapshotAt = new Date().toISOString()
 
-      const [members, botMemberIds, membership, latestSequence, activityCounts] = await Promise.all([
+      const [members, botMemberIds, membership, latestSequence, activityCounts, rootStream] = await Promise.all([
         streamService.getMembers(streamId),
         streamService.getBotMemberIds(workspaceId, streamId),
         streamService.getMembership(streamId, userId),
         eventService.getLatestSequence(streamId),
         activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
+        // For a thread, fetch the root so the bootstrap can surface
+        // `rootArchivedAt` — archiving marks only the root row, so the thread's
+        // own `archivedAt` can't tell the client it is sealed. No-op (null) for
+        // non-threads and threads whose root is missing (dangling root_stream_id
+        // is possible under INV-1's FK-less schema).
+        stream.type === StreamTypes.THREAD && stream.rootStreamId
+          ? streamService.getStreamById(stream.rootStreamId)
+          : Promise.resolve(null),
       ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
@@ -985,6 +993,7 @@ export function createStreamHandlers({
       res.json({
         data: {
           stream,
+          rootArchivedAt: rootStream?.archivedAt ?? null,
           events: eventsWithLinkPreviews,
           sharedMessages,
           members,

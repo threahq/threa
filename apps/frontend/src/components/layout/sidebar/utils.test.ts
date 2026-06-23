@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
-import { calculateUrgency, categorizeStream } from "./utils"
+import { calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./utils"
 
 function makeStream(overrides: Partial<StreamWithPreview> = {}): StreamWithPreview {
   return {
@@ -181,5 +181,50 @@ describe("categorizeStream", () => {
       },
     })
     expect(categorizeStream(stream, 5, "quiet")).toBe("recent")
+  })
+})
+
+describe("isSidebarStreamVisible", () => {
+  const memberStreamIds = new Set(["stream_member"])
+  const archivedStreamIds = new Set(["stream_archived_root"])
+
+  it("hides a stream that is itself archived", () => {
+    const stream = makeStream({ id: "stream_archived", archivedAt: "2026-01-01T00:00:00Z" })
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(false)
+  })
+
+  it("hides a thread whose root stream is archived, at any nesting depth", () => {
+    const thread = makeStream({
+      id: "stream_thread",
+      type: StreamTypes.THREAD,
+      rootStreamId: "stream_archived_root",
+      visibility: Visibilities.PRIVATE,
+    })
+    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds)).toBe(false)
+  })
+
+  it("keeps a thread whose root stream is active", () => {
+    const thread = makeStream({
+      id: "stream_thread",
+      type: StreamTypes.THREAD,
+      rootStreamId: "stream_active_root",
+      visibility: Visibilities.PRIVATE,
+    })
+    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds)).toBe(true)
+  })
+
+  it("shows a public stream the viewer is a member of", () => {
+    const stream = makeStream({ id: "stream_member", visibility: Visibilities.PUBLIC })
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(true)
+  })
+
+  it("hides a public stream the viewer is not a member of", () => {
+    const stream = makeStream({ id: "stream_other", visibility: Visibilities.PUBLIC })
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(false)
+  })
+
+  it("shows a non-public stream regardless of membership (access already gated by bootstrap)", () => {
+    const stream = makeStream({ id: "stream_private", visibility: Visibilities.PRIVATE })
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(true)
   })
 })

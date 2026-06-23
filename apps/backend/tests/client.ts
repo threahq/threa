@@ -162,6 +162,8 @@ export interface Stream {
   visibility: string
   companionMode: string
   workspaceId: string
+  rootStreamId?: string | null
+  archivedAt?: string | null
 }
 
 export interface Message {
@@ -513,6 +515,8 @@ export async function createThread(
 
 export interface BootstrapData {
   stream: Stream
+  /** The root's archivedAt for a thread under an archived root; null/absent otherwise. */
+  rootArchivedAt?: string | null
   events: StreamEvent[]
   members: StreamMember[]
   membership: { streamId: string; memberId: string; notificationLevel: string | null } | null

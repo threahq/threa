@@ -334,6 +334,41 @@ describe("StreamService.resolveWritableMessageStream", () => {
     expect((error as HttpError).status).toBe(403)
     expect((error as HttpError).message).toBe("Not a member of this stream")
   })
+
+  test("should throw 403 when a thread's root stream is archived", async () => {
+    const getStreamByIdSpy = spyOn(service, "getStreamById")
+    // First call resolves the target thread (active itself); second call
+    // resolves its root, which is archived — the thread inherits the seal.
+    getStreamByIdSpy
+      .mockResolvedValueOnce({
+        id: "stream_thread",
+        workspaceId: "ws_1",
+        type: "thread",
+        rootStreamId: "stream_root",
+        archivedAt: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: "stream_root",
+        workspaceId: "ws_1",
+        type: "scratchpad",
+        archivedAt: new Date(),
+      } as never)
+    const isMemberSpy = spyOn(service, "isMember").mockResolvedValue(true)
+
+    const error = await service
+      .resolveWritableMessageStream({
+        workspaceId: "ws_1",
+        userId: "usr_1",
+        target: { streamId: "stream_thread" },
+      })
+      .catch((e) => e)
+
+    expect(error).toBeInstanceOf(HttpError)
+    expect((error as HttpError).status).toBe(403)
+    expect((error as HttpError).message).toBe("Cannot send messages to a thread under an archived stream")
+    // Membership is never checked once the root-archived seal is detected.
+    expect(isMemberSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe("StreamService.findOrCreateDm", () => {
