@@ -63,6 +63,7 @@ export interface MessageService {
 }
 
 export interface ConversationService {
+  listByWorkspace: typeof conversationsApi.listByWorkspace
   listByStream: typeof conversationsApi.listByStream
   getById: typeof conversationsApi.getById
   getMessages: typeof conversationsApi.getMessages

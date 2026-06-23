@@ -33,6 +33,7 @@ import {
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
+import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -52,7 +53,10 @@ import { calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./ut
 import type { StreamItemData } from "./types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
-import { StreamTypes, Visibilities, LabelableResourceTypes } from "@threa/types"
+import { StreamTypes, Visibilities, LabelableResourceTypes, type SidebarQuickLinkKey } from "@threa/types"
+
+/** The flag-gated Board quick-link key — one constant for the filter + the editor. */
+const BOARD_QUICK_LINK_KEY: SidebarQuickLinkKey = "board"
 
 interface SidebarProps {
   workspaceId: string
@@ -112,6 +116,13 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isSavedPage = splat === "saved" || window.location.pathname.endsWith("/saved")
   const isScheduledPage = splat === "scheduled" || window.location.pathname.includes("/scheduled")
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
+  const isBoardPage = splat === "board" || window.location.pathname.endsWith("/board")
+  // The Board is gated behind the board-view flag — hide its quick link (and its
+  // editor row) for users without it, matching the route + endpoint gates.
+  const boardEnabled = useFeatureFlag(workspaceId, "board-view") === "on"
+  const boardQuickLinks = boardEnabled
+    ? sidebarConfig.quickLinks
+    : sidebarConfig.quickLinks.filter((link) => link.key !== BOARD_QUICK_LINK_KEY)
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
@@ -548,7 +559,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
               hasQuickLinksSection ? (
                 <SidebarQuickLinks
                   workspaceId={workspaceId}
-                  quickLinks={sidebarConfig.quickLinks}
+                  quickLinks={boardQuickLinks}
                   isDraftsPage={isDraftsPage}
                   draftCount={draftCount}
                   isSavedPage={isSavedPage}
@@ -556,6 +567,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
                   isScheduledPage={isScheduledPage}
                   scheduledCount={scheduledCount}
                   isActivityPage={isActivityPage}
+                  isBoardPage={isBoardPage}
                   isMemoryPage={isMemoryPage}
                   isFilesPage={isFilesPage}
                   isLabelsPage={isLabelsPage}
@@ -580,7 +592,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           </>
         }
       />
-      <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
+      <SidebarEditorDialog
+        workspaceId={workspaceId}
+        open={isEditorOpen}
+        onOpenChange={setIsEditorOpen}
+        hiddenQuickLinkKeys={boardEnabled ? undefined : [BOARD_QUICK_LINK_KEY]}
+      />
       {labelRemovePrompt && (
         <RemoveLabelDialog
           open

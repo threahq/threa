@@ -1,4 +1,5 @@
-import { sql, type Querier } from "../../db"
+import { sql, composeSql, type Querier } from "../../db"
+import { streamAccessPredicateSql } from "../streams"
 import { ConversationStatuses, type ConversationStatus } from "@threa/types"
 
 interface ConversationRow {
@@ -288,6 +289,62 @@ export const ConversationRepository = {
       SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
       WHERE workspace_id = ${workspaceId}
       ORDER BY last_activity_at DESC
+      LIMIT ${limit}
+    `)
+    return result.rows.map(mapRowToConversation)
+  },
+
+  /**
+   * Cross-stream conversation feed for the workspace board. Differs from
+   * {@link findByWorkspace} in three board-critical ways:
+   *  - access-filtered in SQL via the canonical thread→root predicate (INV-62),
+   *    so the LIMIT counts only conversations the viewer can actually read;
+   *  - empty resolved shells (`cardinality(message_ids) = 0`, left behind when a
+   *    conversation's last message is reassigned away) are excluded so the board
+   *    shows real topics, not tombstones; and
+   *  - keyset-paginated on the total order `(last_activity_at, id) DESC` so the
+   *    full board is reachable a page at a time instead of silently truncating
+   *    at the first page. `id` is the tiebreaker that makes the order total (and
+   *    the cursor unambiguous) when timestamps collide.
+   *
+   * `composeSql` (not `sql`) because the access predicate and the optional
+   * status/cursor conditions are nested fragments; `SELECT_FIELDS` is pre-resolved
+   * through `sql` so its raw text inlines rather than being parametrized. An
+   * absent optional condition splices in as an empty fragment.
+   */
+  async findByWorkspaceForViewer(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    options?: {
+      status?: ConversationStatus
+      limit?: number
+      cursor?: { lastActivityAt: string; id: string }
+    }
+  ): Promise<Conversation[]> {
+    const limit = options?.limit ?? 50
+    const fields = sql`${sql.raw(SELECT_FIELDS)}`
+    const access = streamAccessPredicateSql(workspaceId, userId, "conversations.stream_id")
+    const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
+    // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
+    // column — because the cursor is minted from a JS Date (ms precision) while
+    // timestamptz stores microseconds. Comparing the raw µs value against an
+    // ms-truncated cursor would skip any row whose activity falls in the same
+    // millisecond as the boundary row but with smaller µs. Truncating both sides
+    // to ms makes the order total at the cursor's own granularity (id breaks ms
+    // ties), so no row is skipped or repeated across pages.
+    const cursorCond = options?.cursor
+      ? composeSql`AND (date_trunc('milliseconds', last_activity_at), id) < (${options.cursor.lastActivityAt}::timestamptz, ${options.cursor.id})`
+      : sql``
+
+    const result = await db.query<ConversationRow>(composeSql`
+      SELECT ${fields} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND cardinality(message_ids) > 0
+        ${statusCond}
+        ${cursorCond}
+        AND ${access}
+      ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)

@@ -2,13 +2,34 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
+import type { FeatureFlagService } from "../feature-flags"
 import { CONVERSATION_STATUSES } from "@threa/types"
 import { validateRequest } from "../../lib/validation"
+import { HttpError } from "../../lib/errors"
 
 const listConversationsSchema = z.object({
   status: z.enum(CONVERSATION_STATUSES).optional(),
   limit: z.coerce.number().min(1).max(100).optional(),
 })
+
+// The board feed adds keyset pagination: `cursor` is an opaque `"<iso>|<id>"`
+// minted by a prior page's `nextCursor`.
+const listWorkspaceConversationsSchema = listConversationsSchema.extend({
+  cursor: z.string().min(1).optional(),
+})
+
+// Parse the opaque cursor, failing loudly (INV-11/32) on a malformed value
+// rather than silently restarting at page 1.
+function decodeBoardCursor(cursor: string | undefined): { lastActivityAt: string; id: string } | undefined {
+  if (!cursor) return undefined
+  const sep = cursor.indexOf("|")
+  const lastActivityAt = sep === -1 ? "" : cursor.slice(0, sep)
+  const id = sep === -1 ? "" : cursor.slice(sep + 1)
+  if (!lastActivityAt || !id || Number.isNaN(Date.parse(lastActivityAt))) {
+    throw new HttpError("Invalid board cursor", { status: 400, code: "INVALID_CURSOR" })
+  }
+  return { lastActivityAt, id }
+}
 
 const reassignMessageParamsSchema = z.object({
   conversationId: z.string().min(1),
@@ -18,10 +39,36 @@ const reassignMessageParamsSchema = z.object({
 interface Dependencies {
   conversationService: ConversationService
   streamService: StreamService
+  featureFlagService: FeatureFlagService
 }
 
-export function createConversationHandlers({ conversationService, streamService }: Dependencies) {
+export function createConversationHandlers({ conversationService, streamService, featureFlagService }: Dependencies) {
   return {
+    /**
+     * Cross-stream board feed. Access is enforced inside the query (INV-62), so
+     * there's no single stream to validate here — unlike {@link listByStream}.
+     * Gated behind the `board-view` feature flag: a viewer without it gets a 404,
+     * so the board isn't reachable even by hitting the endpoint directly.
+     */
+    async listByWorkspace(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const boardFlag = await featureFlagService.getFlag(workspaceId, userId, "board-view")
+      if (boardFlag !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      const query = validateRequest(listWorkspaceConversationsSchema, req.query)
+
+      const result = await conversationService.listByWorkspace(workspaceId, userId, {
+        status: query.status,
+        limit: query.limit,
+        cursor: decodeBoardCursor(query.cursor),
+      })
+      res.json(result)
+    },
+
     async listByStream(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!

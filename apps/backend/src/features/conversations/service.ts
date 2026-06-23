@@ -17,6 +17,11 @@ export interface ListConversationsOptions {
   limit?: number
 }
 
+export interface ListWorkspaceConversationsOptions extends ListConversationsOptions {
+  /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
+  cursor?: { lastActivityAt: string; id: string }
+}
+
 export interface ReassignMessageParams {
   workspaceId: string
   /** Target conversation that should become the message's primary home. */
@@ -50,6 +55,32 @@ export class ConversationService {
     // Single query, INV-30
     const conversations = await ConversationRepository.findByStreamIncludingThreads(this.pool, streamId, options)
     return conversations.map(addStalenessFields)
+  }
+
+  /**
+   * Cross-stream feed for the workspace board: conversations the viewer can read,
+   * newest activity first, keyset-paginated. Access filtering happens in SQL
+   * (INV-62), so `userId` is required here unlike the stream-scoped
+   * {@link listByStream}. Returns `nextCursor` (opaque `"<iso>|<id>"`) when a full
+   * page came back, so the board pages on instead of silently truncating.
+   */
+  async listByWorkspace(
+    workspaceId: string,
+    userId: string,
+    options?: ListWorkspaceConversationsOptions
+  ): Promise<{ conversations: ConversationWithStaleness[]; nextCursor: string | null }> {
+    const limit = options?.limit ?? 50
+    // Single query, INV-30
+    const rows = await ConversationRepository.findByWorkspaceForViewer(this.pool, workspaceId, userId, {
+      ...options,
+      limit,
+    })
+    const conversations = rows.map(addStalenessFields)
+    // A full page means there may be more; the last row's (activity, id) is the
+    // next cursor — matching the repo's `(last_activity_at, id) DESC` order.
+    const last = conversations.length === limit ? conversations[conversations.length - 1] : null
+    const nextCursor = last ? `${last.lastActivityAt.toISOString()}|${last.id}` : null
+    return { conversations, nextCursor }
   }
 
   async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {

@@ -65,6 +65,7 @@ describe("SidebarEditorDialog", () => {
       // inside its row (so they appear in the DOM right after it), then the
       // sibling stream sections follow.
       "Reorder Quick Links",
+      "Reorder Board",
       "Reorder Drafts",
       "Reorder Saved",
       "Reorder Files",

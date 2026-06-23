@@ -6,7 +6,36 @@ export interface ListConversationsParams {
   limit?: number
 }
 
+export interface ListWorkspaceConversationsParams extends ListConversationsParams {
+  /** Opaque keyset cursor from a prior page's `nextCursor`. */
+  cursor?: string
+}
+
+export interface WorkspaceConversationsPage {
+  conversations: ConversationWithStaleness[]
+  nextCursor: string | null
+}
+
 export const conversationsApi = {
+  /**
+   * Cross-stream feed for the workspace board: conversations the viewer can read,
+   * newest activity first, keyset-paginated. Access is enforced server-side
+   * (INV-62). A non-null `nextCursor` means there's another page.
+   */
+  async listByWorkspace(
+    workspaceId: string,
+    params?: ListWorkspaceConversationsParams
+  ): Promise<WorkspaceConversationsPage> {
+    const searchParams = new URLSearchParams()
+    if (params?.status) searchParams.set("status", params.status)
+    if (params?.limit) searchParams.set("limit", params.limit.toString())
+    if (params?.cursor) searchParams.set("cursor", params.cursor)
+    const query = searchParams.toString()
+    return api.get<WorkspaceConversationsPage>(
+      `/api/workspaces/${workspaceId}/conversations${query ? `?${query}` : ""}`
+    )
+  },
+
   async listByStream(
     workspaceId: string,
     streamId: string,

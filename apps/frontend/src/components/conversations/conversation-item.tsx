@@ -48,7 +48,9 @@ export function ConversationItem({
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{topicSummary || "Untitled conversation"}</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-muted-foreground">{messageIds.length} messages</span>
+                    <span className="text-xs text-muted-foreground">
+                      {messageIds.length} {messageIds.length === 1 ? "message" : "messages"}
+                    </span>
                     <StatusBadge status={status} />
                   </div>
                 </div>
@@ -159,7 +161,7 @@ function MessagePreview({ message, workspaceId, getActorName, onMessageClick }: 
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status }: { status: string }) {
   switch (status) {
     case "active":
       return (
@@ -187,7 +189,7 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
-function CompletenessIndicator({ score }: { score: number }) {
+export function CompletenessIndicator({ score }: { score: number }) {
   const clampedScore = Math.max(1, Math.min(7, score))
   const segments = 7
 

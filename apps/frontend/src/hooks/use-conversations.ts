@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
@@ -8,6 +8,8 @@ export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
+  workspaceList: (workspaceId: string, options?: { status?: string; limit?: number }) =>
+    [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
@@ -54,6 +56,35 @@ interface UseConversationsOptions {
   status?: ConversationStatus
   limit?: number
   enabled?: boolean
+}
+
+/**
+ * Cross-stream conversation feed for the workspace board, keyset-paginated.
+ * Read-only bootstrap (the activity-feed pattern): `staleTime: Infinity` +
+ * `refetchOnMount` so the list is fresh on open. Unlike the activity feed (which
+ * gets live updates via workspace-room socket handlers) the board has no socket
+ * subscription yet — conversation events are delivered only to per-stream rooms
+ * today (see board-view design doc) — so `refetchOnReconnect` is left ON: a
+ * reconnect is the board's only refresh path until cross-stream events land.
+ */
+export function useWorkspaceConversations(
+  workspaceId: string,
+  options?: { status?: ConversationStatus; limit?: number }
+) {
+  const conversationService = useConversationService()
+  const { status, limit } = options ?? {}
+
+  return useInfiniteQuery({
+    queryKey: conversationKeys.workspaceList(workspaceId, { status, limit }),
+    queryFn: ({ pageParam }) => conversationService.listByWorkspace(workspaceId, { status, limit, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    staleTime: Infinity,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
+    enabled: !!workspaceId,
+  })
 }
 
 export function useConversations(workspaceId: string, streamId: string, options?: UseConversationsOptions) {

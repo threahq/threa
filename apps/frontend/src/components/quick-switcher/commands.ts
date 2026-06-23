@@ -6,6 +6,7 @@ import {
   CalendarClock,
   FileText,
   Hash,
+  LayoutGrid,
   ListTodo,
   Paperclip,
   Search,
@@ -212,9 +213,19 @@ export const commands: Command[] = [
       openSearch()
     },
   },
-  // Destination commands mirror the sidebar's Quick Links block (drafts, saved,
-  // files, scheduled, memory, labels, activity) so every standing view is
+  // Destination commands mirror the sidebar's Quick Links block (board, drafts,
+  // saved, files, scheduled, memory, labels, activity) so every standing view is
   // reachable from the palette, in the same order.
+  {
+    id: "view-board",
+    label: "View Board",
+    icon: LayoutGrid,
+    keywords: ["board", "posts", "topics", "conversations", "overview"],
+    action: ({ workspaceId, navigate, closeDialog }) => {
+      closeDialog()
+      navigate(`/w/${workspaceId}/board`)
+    },
+  },
   {
     id: "view-drafts",
     label: "View Drafts",

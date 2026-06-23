@@ -266,7 +266,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const search = createSearchHandlers({ pool, searchService })
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
-  const conversation = createConversationHandlers({ conversationService, streamService })
+  const conversation = createConversationHandlers({ conversationService, streamService, featureFlagService })
   const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
@@ -481,6 +481,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/attachments/:attachmentId/extraction", ...authed, attachment.getExtraction)
   app.delete("/api/workspaces/:workspaceId/attachments/:attachmentId", ...authed, attachment.delete)
 
+  app.get("/api/workspaces/:workspaceId/conversations", ...authed, conversation.listByWorkspace)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/conversations", ...authed, conversation.listByStream)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.getById)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/messages", ...authed, conversation.getMessages)
