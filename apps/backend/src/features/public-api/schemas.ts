@@ -19,6 +19,7 @@ import {
   AGENT_STEP_TYPES,
   SOURCE_TYPES,
   LABELABLE_RESOURCE_TYPES,
+  STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
@@ -295,6 +296,12 @@ export const sendMessageSchema = z.object({
 
 export const updateMessageSchema = z.object({
   content: z.string().min(1, "content is required"),
+})
+
+export const updateStreamSchema = z.object({
+  // Markdown, parsed server-side to the canonical ProseMirror description (same
+  // wire format as message `content`). An empty string clears the description.
+  description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH),
 })
 
 export const findMessagesByMetadataSchema = z.object({

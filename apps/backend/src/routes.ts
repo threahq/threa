@@ -903,6 +903,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.STREAMS_READ),
     publicApi.getStream
   )
+  app.patch(
+    "/api/v1/workspaces/:workspaceId/streams/:streamId",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE),
+    publicApi.updateStream
+  )
   app.get(
     "/api/v1/workspaces/:workspaceId/streams/:streamId/members",
     ...publicMiddleware,
