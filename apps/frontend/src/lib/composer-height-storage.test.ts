@@ -1,14 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { MOBILE_BREAKPOINT } from "@/hooks/use-mobile"
 import { applyPersistedComposerHeight, persistComposerHeight } from "./composer-height-storage"
 
 const DESKTOP_KEY = "threa:composer-height:desktop"
 const MOBILE_KEY = "threa:composer-height:mobile"
 
-// `isDesktopViewport` checks `matchMedia("(min-width: 640px)")`; everything else
-// the module reads (pointer, mobile) is irrelevant here.
+// Match the exact query `isDesktopViewport` issues. A loose `includes("min-width")`
+// match would let a regressed breakpoint value (or query shape) still flip
+// desktop detection and pass — this fails instead (INV-23). Built from the
+// shared constant so a deliberate breakpoint change doesn't false-fail.
+const DESKTOP_MEDIA_QUERY = `(min-width: ${MOBILE_BREAKPOINT}px)`
+
 function stubViewport(isDesktop: boolean) {
   vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query.includes("min-width") ? isDesktop : false,
+    matches: query === DESKTOP_MEDIA_QUERY ? isDesktop : false,
     media: query,
     onchange: null,
     addListener: () => {},
