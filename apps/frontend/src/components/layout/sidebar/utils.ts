@@ -65,6 +65,16 @@ export function calculateUrgency(
   return "quiet"
 }
 
+/**
+ * Whether a stream counts as unread for the dedicated Unread section: it has
+ * unread messages and isn't muted. A muted stream reads as "quiet" urgency even
+ * with unread messages (see {@link calculateUrgency}) and must not resurface —
+ * the same rule {@link categorizeStream} uses to keep muted unreads out of Recent.
+ */
+export function isUnreadStream(stream: { urgency: UrgencyLevel }, unreadCount: number): boolean {
+  return unreadCount > 0 && stream.urgency !== "quiet"
+}
+
 /** Categorize stream into smart section */
 export function categorizeStream(stream: StreamWithPreview, unreadCount: number, urgency: UrgencyLevel): SectionKey {
   if (urgency === "mentions" || (urgency === "ai" && unreadCount > 0)) {

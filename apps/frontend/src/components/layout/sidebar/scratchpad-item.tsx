@@ -37,6 +37,8 @@ interface ScratchpadItemProps {
   compact?: boolean
   showPreviewOnHover?: boolean
   scrollContainerRef?: RefObject<HTMLDivElement | null>
+  /** Trailing "· home" hint — set only in the Unread section. See {@link StreamItem}. */
+  homeHint?: string
 }
 
 export function ScratchpadItem({
@@ -49,6 +51,7 @@ export function ScratchpadItem({
   compact = false,
   showPreviewOnHover = false,
   scrollContainerRef,
+  homeHint,
 }: ScratchpadItemProps) {
   const navigate = useNavigate()
   const archiveStream = useArchiveStream(workspaceId)
@@ -194,6 +197,7 @@ export function ScratchpadItem({
                     <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
                       {name}
                       {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
+                      {homeHint && <span className="text-xs text-muted-foreground font-normal"> · {homeHint}</span>}
                     </span>
                   )}
                   <div className="ml-auto flex items-center gap-1.5">

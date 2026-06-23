@@ -43,6 +43,18 @@ interface AddWiring {
   addMenuActions?: SidebarActionItem[]
 }
 
+/** Unread section header: a gold thread dot + the label, matching the section
+ *  header's uppercase styling. Gold (not a colored emoji) keeps the palette
+ *  (DESIGN.md §0). Top-level per INV-18. */
+function UnreadSectionTitle({ label }: { label: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden />
+      {label}
+    </span>
+  )
+}
+
 interface SidebarStreamListProps {
   workspaceId: string
   hasError: boolean
@@ -89,6 +101,12 @@ interface SidebarStreamListProps {
    * when set to "ask".
    */
   onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
+  /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
+  homeHintFor: (streamId: string) => string | null
+  /** True when the Unread tray holds already-read members — shows the "Clear read" affordance. */
+  hasReadResidue: boolean
+  /** Flush the read members from the Unread tray (they return to their home sections). */
+  onClearReadUnread: () => void
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -111,6 +129,9 @@ export function SidebarStreamList({
   onFileStreamToSection,
   onAssignStreamLabel,
   onStreamMovedFromLabel,
+  homeHintFor,
+  hasReadResidue,
+  onClearReadUnread,
   scrollContainerRef,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
@@ -215,7 +236,12 @@ export function SidebarStreamList({
           // cache; a section whose label was archived/deleted is an orphan — skip it.
           const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
           if (section.spec.kind === "label" && !label) return null
-          const titleContent = label ? <LabelChip label={label} /> : undefined
+          const isUnread = section.spec.kind === "unread"
+          // Unread's header is a gold dot + label (a colored emoji would break the
+          // gold-on-paper palette); label sections use their tinted chip.
+          let titleContent: ReactNode = undefined
+          if (label) titleContent = <LabelChip label={label} />
+          else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} />
           // Label sections get an "open" affordance to their landing page.
           const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
           const headerLabel = label ? label.name : presentation.label
@@ -223,6 +249,28 @@ export function SidebarStreamList({
           const state = getSectionState(section.id, presentation.defaultCollapse)
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
           const add = addWiringFor(section.spec)
+          // The Unread section keeps a single, same-footprint footer so it never
+          // reflows: an empty tray shows a quiet "All caught up", otherwise the
+          // "Clear read" control (disabled when there's nothing read to flush).
+          // Never both at once.
+          let unreadFooter: ReactNode = undefined
+          if (isUnread) {
+            unreadFooter =
+              items.length === 0 ? (
+                <p className="mt-0.5 flex min-h-[2.25rem] items-center justify-center px-3 text-center text-[11px] italic text-muted-foreground/50">
+                  All caught up
+                </p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClearReadUnread}
+                  disabled={!hasReadResidue}
+                  className="mt-0.5 flex min-h-[2.25rem] w-full items-center justify-center px-3 text-[11px] uppercase tracking-wide text-muted-foreground/70 transition-colors enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Clear read
+                </button>
+              )
+          }
 
           const sectionEl = presentation.tiered ? (
             <TieredStreamSection
@@ -265,10 +313,13 @@ export function SidebarStreamList({
               getMentionCount={getMentionCount}
               state={state}
               onToggle={onToggle}
+              action={unreadFooter}
               compact={presentation.compact}
               showPreviewOnHover={presentation.showPreviewOnHover}
               scrollContainerRef={scrollContainerRef}
               streamDragEnabled={streamDragEnabled}
+              dimReadRows={isUnread}
+              homeHintFor={isUnread ? homeHintFor : undefined}
             />
           )
 

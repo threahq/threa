@@ -25,6 +25,9 @@ const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
     name: z.string().trim().min(1).max(MAX_CUSTOM_SECTION_NAME_LENGTH),
     streamIds: z.array(z.string().min(1).max(64)).max(MAX_CUSTOM_SECTION_STREAM_IDS).optional().default([]),
   }),
+  // Unread section: draws no membership of its own (the unread signal is live),
+  // so the spec carries nothing beyond its kind.
+  z.object({ kind: z.literal("unread") }),
   z.object({ kind: z.literal("quicklinks") }),
 ])
 

@@ -27,6 +27,9 @@ import { SMART_SECTIONS } from "./config"
  */
 export type { SidebarConfig, SidebarSection, SidebarSectionSpec, SidebarBasePreset }
 
+/** Stable section id for the Unread section — doubles as its collapse-state key. */
+export const UNREAD_SECTION_ID = "unread"
+
 /**
  * Section id for a label lens. Deterministic (one section per label) so the
  * toggle below is idempotent and the id doubles as the collapse-state key.
@@ -77,6 +80,8 @@ export function sectionIdForSpec(spec: SidebarSectionSpec): string {
       return labelSectionId(spec.labelId)
     case "custom":
       return customSectionId(spec.sectionId)
+    case "unread":
+      return UNREAD_SECTION_ID
     case "quicklinks":
       return QUICK_LINKS_SECTION_ID
   }
@@ -366,11 +371,31 @@ function customSectionPresentation(name: string): SectionPresentation {
   }
 }
 
+/**
+ * Presentation for the Unread section. A priority surface like Important — a
+ * plain binary collapse (no tiered "N more" tail, since every row here is one the
+ * viewer is working through). Unlike the smart buckets it is NOT hidden when
+ * empty: once the viewer adds it, it stays put and shows an "all caught up"
+ * placeholder, so catching up doesn't make the whole section (and everything
+ * below it) jump. The header's gold-dot title is supplied as `titleContent` by
+ * the stream list (a colored emoji would break the gold-on-paper palette); no
+ * icon string here.
+ */
+const UNREAD_PRESENTATION: SectionPresentation = {
+  label: "Unread",
+  tiered: false,
+  compact: true,
+  showPreviewOnHover: true,
+  hideWhenEmpty: false,
+  defaultCollapse: "open",
+}
+
 /** Resolve how a section should render from its spec. */
 export function sectionPresentation(spec: SidebarSectionSpec): SectionPresentation {
   if (spec.kind === "type") return TYPE_PRESENTATION[spec.streamType]
   if (spec.kind === "label") return LABEL_PRESENTATION
   if (spec.kind === "custom") return customSectionPresentation(spec.name)
+  if (spec.kind === "unread") return UNREAD_PRESENTATION
   if (spec.kind === "quicklinks") return QUICK_LINKS_PRESENTATION
 
   const config = SMART_SECTIONS[spec.bucket]

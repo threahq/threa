@@ -191,6 +191,12 @@ interface StreamItemProps {
   showPreviewOnHover?: boolean
   /** Reference to scroll container for position tracking */
   scrollContainerRef?: RefObject<HTMLDivElement | null>
+  /**
+   * A trailing "· home" hint naming where this stream lives (its custom section
+   * or pinned label). Set only in the Unread section, where a row is drawn out of
+   * its home — so the viewer still sees where it belongs without a duplicate row.
+   */
+  homeHint?: string
 }
 
 export function StreamItem({
@@ -204,6 +210,7 @@ export function StreamItem({
   compact = false,
   showPreviewOnHover = false,
   scrollContainerRef,
+  homeHint,
 }: StreamItemProps) {
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
@@ -337,6 +344,7 @@ export function StreamItem({
         showPreviewOnHover={showPreviewOnHover}
         showUrgencyStrip={showUrgencyStrip}
         scrollContainerRef={scrollContainerRef}
+        homeHint={homeHint}
       />
     )
   }
@@ -383,14 +391,16 @@ export function StreamItem({
                     className={cn(
                       "truncate text-sm",
                       hasUnread ? "font-semibold" : "font-medium",
-                      // The truncation ellipsis inherits the color of this element. When a grey parent-stream
-                      // context trails the title it's the usual cut point, so tint the container grey (and keep
-                      // the title itself at foreground) so the ellipsis matches the text it's shortening.
-                      threadRootContext && "text-muted-foreground/60"
+                      // The truncation ellipsis inherits the color of this element. When a grey trailing
+                      // context (parent stream, or the Unread "· home" hint) trails the title it's the usual
+                      // cut point, so tint the container grey (and keep the title itself at foreground) so the
+                      // ellipsis matches the text it's shortening.
+                      (threadRootContext || homeHint) && "text-muted-foreground/60"
                     )}
                   >
-                    {threadRootContext ? <span className="text-foreground">{name}</span> : name}
+                    {threadRootContext || homeHint ? <span className="text-foreground">{name}</span> : name}
                     {threadRootContext && <span className="font-normal text-xs"> · {threadRootContext}</span>}
+                    {!threadRootContext && homeHint && <span className="font-normal text-xs"> · {homeHint}</span>}
                   </span>
                   {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
                     <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />

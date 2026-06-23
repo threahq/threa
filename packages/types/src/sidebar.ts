@@ -49,6 +49,17 @@ export type SidebarSectionSpec =
    */
   | { kind: "custom"; sectionId: string; name: string; streamIds: string[] }
   /**
+   * The Unread tray: an opt-in section that gathers the viewer's unread streams
+   * into one place. When present it **trumps every other section** — a member is
+   * drawn out of its smart/type bucket AND its custom-section / label home and
+   * shown only here, so there's one copy (no dimmed duplicate). Carries no
+   * persisted membership of its own: the set is resolved on the client and is
+   * sticky for the session (see `useStickyUnread`) — a stream enters when it goes
+   * unread and stays, de-emphasized, until the viewer leaves the workspace or
+   * clears it, rather than tracking the live unread signal moment to moment.
+   */
+  | { kind: "unread" }
+  /**
    * The Quick Links block (Drafts / Saved / Files / …). A position-only marker:
    * the links themselves — their order and per-link visibility — live in
    * {@link SidebarConfig.quickLinks}, independent of this section's placement, so
@@ -190,6 +201,7 @@ function isRenderableSectionSpec(spec: SidebarSectionSpec | undefined | null): s
         typeof spec.name === "string" &&
         spec.name.trim().length > 0
       )
+    case "unread":
     case "quicklinks":
       return true
     default:
