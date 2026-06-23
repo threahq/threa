@@ -172,11 +172,20 @@ export class BotRuntimeTransport {
    * have, not load-bearing, so a failure is logged and dropped rather than
    * surfaced. This is the high-volume op the whole exercise targets.
    */
-  async recordSteps(invocationId: string, claimToken: string, steps: StepFrame[], statusText?: string): Promise<void> {
+  async recordSteps(
+    invocationId: string,
+    claimToken: string,
+    steps: StepFrame[],
+    statusText?: string,
+    // The instance that holds the claim. Defaults to the hello instance; the
+    // override exists for runtimes (pi-remote) whose claim instance can differ
+    // from the session instance the transport registered with.
+    instanceId: string = this.hello.instanceId
+  ): Promise<void> {
     if (steps.length === 0) return
     const ack = await this.emitWrite("bot:invocation:steps", {
       invocationId,
-      instanceId: this.hello.instanceId,
+      instanceId,
       claimToken,
       steps,
       ...(statusText ? { statusText } : {}),
@@ -185,7 +194,7 @@ export class BotRuntimeTransport {
       if (!ack.ok) this.logFn(`steps rejected (${ack.code ?? "?"}): ${ack.message ?? ""}`)
       return
     }
-    await this.httpRecordStepsFallback(invocationId, claimToken, steps, statusText)
+    await this.httpRecordStepsFallback(invocationId, claimToken, steps, statusText, instanceId)
   }
 
   /**
@@ -194,10 +203,15 @@ export class BotRuntimeTransport {
    * all retry over HTTP. Returns `{ notFound: true }` when the claim is gone
    * (the caller should drop it); the caller never lets it silently lapse.
    */
-  async renewClaim(invocationId: string, claimToken: string, claimTtlSeconds: number): Promise<{ notFound: boolean }> {
+  async renewClaim(
+    invocationId: string,
+    claimToken: string,
+    claimTtlSeconds: number,
+    instanceId: string = this.hello.instanceId
+  ): Promise<{ notFound: boolean }> {
     const ack = await this.emitWrite("bot:invocation:renew", {
       invocationId,
-      instanceId: this.hello.instanceId,
+      instanceId,
       claimToken,
       claimTtlSeconds,
     })
@@ -206,7 +220,7 @@ export class BotRuntimeTransport {
       if (ack.code === "NOT_FOUND") return { notFound: true }
       this.logFn(`renew rejected (${ack.code ?? "?"}); retrying over HTTP`)
     }
-    return this.httpRenewFallback(invocationId, claimToken, claimTtlSeconds)
+    return this.httpRenewFallback(invocationId, claimToken, claimTtlSeconds, instanceId)
   }
 
   /**
@@ -270,7 +284,8 @@ export class BotRuntimeTransport {
     invocationId: string,
     claimToken: string,
     steps: StepFrame[],
-    statusText?: string
+    statusText: string | undefined,
+    instanceId: string
   ): Promise<void> {
     // The HTTP /steps endpoint takes one step per request, so a batched WS frame
     // unrolls into N posts here. Best-effort: swallow per-step failures.
@@ -279,7 +294,7 @@ export class BotRuntimeTransport {
         await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/steps`), {
           method: "POST",
           body: JSON.stringify({
-            instanceId: this.hello.instanceId,
+            instanceId,
             claimToken,
             stepType: step.stepType,
             content: step.content,
@@ -295,12 +310,13 @@ export class BotRuntimeTransport {
   private async httpRenewFallback(
     invocationId: string,
     claimToken: string,
-    claimTtlSeconds: number
+    claimTtlSeconds: number,
+    instanceId: string
   ): Promise<{ notFound: boolean }> {
     try {
       const res = await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/renew`), {
         method: "POST",
-        body: JSON.stringify({ instanceId: this.hello.instanceId, claimToken, claimTtlSeconds }),
+        body: JSON.stringify({ instanceId, claimToken, claimTtlSeconds }),
       })
       if (res.status === 404) return { notFound: true }
       if (!res.ok) this.logFn(`renew HTTP fallback ${res.status}`)
