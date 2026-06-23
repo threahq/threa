@@ -7,9 +7,9 @@ import { z } from "zod"
 import { KNOWLEDGE_TYPES, type KnowledgeType, type StreamType } from "@threa/types"
 import { formatDate } from "../../lib/temporal"
 
-export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
-export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
 export const MEMO_TEMPERATURES = {
   classification: 0.1,
