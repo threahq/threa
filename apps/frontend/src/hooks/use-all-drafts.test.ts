@@ -9,7 +9,7 @@ import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
-import { useAllDrafts } from "./use-all-drafts"
+import { streamIdsWithLoadedDraft, useAllDrafts, type DraftType, type UnifiedDraft } from "./use-all-drafts"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const UNLOCKED_SESSION = {
@@ -182,5 +182,53 @@ describe("useAllDrafts E2E drafts", () => {
 
     await waitFor(() => expect(result.current.drafts.some((d) => d.id === "draft_locked")).toBe(true))
     expect(result.current.drafts.find((d) => d.id === "draft_locked")!.preview).toBe("Encrypted draft")
+  })
+})
+
+describe("streamIdsWithLoadedDraft", () => {
+  function unifiedDraft(overrides: Partial<UnifiedDraft> = {}): UnifiedDraft {
+    return {
+      id: "draft_1",
+      type: "channel" as DraftType,
+      streamId: "stream_1",
+      displayName: "General",
+      preview: "hello",
+      attachmentCount: 0,
+      updatedAt: 1000,
+      href: "/w/ws_1/s/stream_1",
+      groupLabel: "General",
+      isStashed: false,
+      ...overrides,
+    }
+  }
+
+  it("includes streams with a loaded draft but excludes stashed ones", () => {
+    const ids = streamIdsWithLoadedDraft([
+      unifiedDraft({ id: "draft_loaded", streamId: "stream_loaded", isStashed: false }),
+      unifiedDraft({ id: "draft_stashed", streamId: "stream_stashed", isStashed: true }),
+    ])
+    expect(ids).toEqual(new Set(["stream_loaded"]))
+  })
+
+  it("does not flag a stream whose only draft for the scope is stashed", () => {
+    const ids = streamIdsWithLoadedDraft([
+      unifiedDraft({ id: "draft_a", streamId: "stream_x", isStashed: true }),
+      unifiedDraft({ id: "draft_b", streamId: "stream_x", isStashed: true }),
+    ])
+    expect(ids.has("stream_x")).toBe(false)
+  })
+
+  it("excludes thread replies and scratchpads — only a stream's own composer draft counts", () => {
+    const ids = streamIdsWithLoadedDraft([
+      unifiedDraft({ id: "draft_thread", type: "thread", streamId: "stream_parent" }),
+      unifiedDraft({ id: "draft_scratch", type: "scratchpad", streamId: "draft_scratchpad_1" }),
+      unifiedDraft({ id: "draft_dm", type: "dm", streamId: "stream_dm" }),
+    ])
+    expect(ids).toEqual(new Set(["stream_dm"]))
+  })
+
+  it("ignores rows without a resolved stream id", () => {
+    const ids = streamIdsWithLoadedDraft([unifiedDraft({ streamId: null })])
+    expect(ids.size).toBe(0)
   })
 })

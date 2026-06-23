@@ -185,6 +185,25 @@ function resolveDraftLocation(
 }
 
 /**
+ * Stream ids whose composer holds a *loaded* (checked-in, non-stashed) draft,
+ * derived from {@link useAllDrafts} output. A stashed draft holds no composer
+ * pointer for its scope, so it is excluded — the sidebar hint marks only streams
+ * the user stepped away from without stashing. Thread replies and scratchpads are
+ * excluded too: a thread draft is not the stream's own composer draft, and a
+ * scratchpad is itself a draft. Empty drafts are already dropped upstream, so a
+ * row here is real, unsent content.
+ */
+export function streamIdsWithLoadedDraft(drafts: UnifiedDraft[]): Set<string> {
+  const ids = new Set<string>()
+  for (const draft of drafts) {
+    if (draft.isStashed || !draft.streamId) continue
+    if (draft.type === "thread" || draft.type === "scratchpad") continue
+    ids.add(draft.streamId)
+  }
+  return ids
+}
+
+/**
  * Hook to get all drafts (scratchpads + messages + stashed snapshots) for a
  * workspace. Returns a unified list sorted by recency; rows carry a
  * `groupLabel` so the drafts page can cluster them per stream/thread.

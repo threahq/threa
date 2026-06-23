@@ -24,4 +24,11 @@ export interface StreamItemData extends StreamWithPreview {
    * row, so the leaf reads this as plain data without touching the session.
    */
   nameDecrypting?: boolean
+  /**
+   * True when the stream's composer holds an unsent draft that is loaded (not
+   * stashed) — the user stepped away without sending or stashing. Computed once
+   * in the sidebar builder and read by the row to show a draft hint, mirroring
+   * `nameDecrypting`.
+   */
+  hasLoadedDraft?: boolean
 }
