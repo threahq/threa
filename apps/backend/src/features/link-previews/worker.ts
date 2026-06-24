@@ -527,7 +527,7 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
     }
 
     // Network work runs outside any DB transaction (INV-41).
-    // Message link previews are already completed at insert time — skip fetch entirely.
+    // In-app link previews are already completed at insert time — skip fetch entirely.
     const fetchResults = await Promise.allSettled(
       pendingPreviews.map(async (p) => {
         const existing = await deps.linkPreviewService.getPreviewById(workspaceId, p.id)

@@ -70,7 +70,7 @@ export class LinkPreviewService {
   /**
    * Extract URLs from message content and create pending link preview records.
    * Returns the preview IDs and URLs that need to be fetched.
-   * Internal message permalinks are detected and marked as completed immediately.
+   * In-app links (message, stream, memo) are detected and marked as completed immediately.
    */
   async extractAndCreatePending(
     workspaceId: string,
