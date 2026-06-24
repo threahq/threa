@@ -6,74 +6,124 @@ on:
     types: [completed]
     branches: [main]
 
+permissions:
+  actions: read
+  contents: read
+
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
       - name: Send Threa notification
+        uses: actions/github-script@v7
         env:
           THREA_BOT_API_KEY: ${{ secrets.THREA_BOT_API_KEY }}
-          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
-          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
-          RUN_URL: ${{ github.event.workflow_run.html_url }}
-          ACTOR: ${{ github.event.workflow_run.triggering_actor.login }}
-        run: |
-          # Exit early for conclusions we don't care about
-          case "$WORKFLOW_NAME/$CONCLUSION" in
-            "Deploy Cloudflare/success"|"Deploy Cloudflare/failure"|"Deploy Cloudflare/timed_out") ;;
-            "CI/failure"|"CI/timed_out") ;;
-            *)
-              echo "No notification needed ($WORKFLOW_NAME / $CONCLUSION)"
-              exit 0
-              ;;
-          esac
+        with:
+          script: |
+            const run = context.payload.workflow_run
+            const workflow = run.name
+            const conclusion = run.conclusion
+            const headSha = run.head_sha
+            const runUrl = run.html_url
+            const actor = run.triggering_actor?.login ?? run.actor?.login ?? "unknown"
 
-          SHORT_SHA="${HEAD_SHA:0:7}"
-          FIRST_LINE="${COMMIT_MSG%%$'\n'*}"
+            // Deploy: every conclusion worth surfacing. CI: only failures (success is
+            // implied by the deploy that follows it).
+            const announce =
+              (workflow === "Deploy Cloudflare" && ["success", "failure", "timed_out"].includes(conclusion)) ||
+              (workflow === "CI" && ["failure", "timed_out"].includes(conclusion))
+            if (!announce) {
+              core.info(`No notification needed (${workflow} / ${conclusion})`)
+              return
+            }
 
-          case "$CONCLUSION" in
-            success)   ICON="✅"; STATUS="succeeded" ;;
-            failure)   ICON="❌"; STATUS="failed" ;;
-            timed_out) ICON="⏱"; STATUS="timed out" ;;
-            *)         ICON="⚠️"; STATUS="$CONCLUSION" ;;
-          esac
+            const icon = { success: "✅", failure: "❌", timed_out: "⏱" }[conclusion] ?? "⚠️"
+            const status = { success: "succeeded", failure: "failed", timed_out: "timed out" }[conclusion] ?? conclusion
+            const short = (s) => s.slice(0, 7)
+            const firstLine = (msg) => (msg ?? "").split("\n", 1)[0]
 
-          # Build message with printf to avoid multiline YAML indentation issues
-          MESSAGE=$(printf '%s **%s %s** on `main`\n\n`%s` — %s\nby @%s · [View run](%s)' \
-            "$ICON" "$WORKFLOW_NAME" "$STATUS" "$SHORT_SHA" "$FIRST_LINE" "$ACTOR" "$RUN_URL")
+            // A deploy announces every commit since the last successful deploy, not just its
+            // tip. Close-together merges collapse into one deploy — the intermediate deploys
+            // are cancelled by concurrency (deploy-cloudflare.yml), so without this their
+            // commits would never be announced. The compare API walks prev-tip → this-tip;
+            // any failure falls back to the single head commit.
+            const MAX_LISTED = 20
+            let commits = [{ sha: headSha, message: run.head_commit?.message }]
+            let omitted = 0
+            if (workflow === "Deploy Cloudflare") {
+              try {
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: "deploy-cloudflare.yml",
+                  branch: "main",
+                  status: "success",
+                  per_page: 30,
+                })
+                const prev = data.workflow_runs.find((r) => r.id < run.id && r.head_sha !== headSha)
+                if (prev) {
+                  const cmp = await github.rest.repos.compareCommitsWithBasehead({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    basehead: `${prev.head_sha}...${headSha}`,
+                  })
+                  const list = (cmp.data.commits ?? []).map((c) => ({ sha: c.sha, message: c.commit.message }))
+                  if (list.length > 0) {
+                    omitted = Math.max(0, list.length - MAX_LISTED)
+                    commits = list.slice(-MAX_LISTED)
+                  }
+                }
+              } catch (err) {
+                core.warning(`commit range lookup failed, using head commit only: ${err.message}`)
+              }
+            }
 
-          # clientMessageId keys on the message's identity (workflow + commit + conclusion),
-          # not the run id, so a commit deployed twice — re-runs, GitHub workflow_run
-          # redelivery, or overlapping runs from close-together merges — collapses onto one
-          # message via the backend's ON CONFLICT (stream_id, client_message_id) guard. The
-          # content is fully derived from those three, so same key ⇒ identical message.
-          # metadata lets future tooling query "every CI failure for commit X" etc. (AND-containment).
-          PAYLOAD=$(jq -n \
-            --arg content "$MESSAGE" \
-            --arg clientMessageId "ghactions:${WORKFLOW_NAME}:${HEAD_SHA}:${CONCLUSION}" \
-            --arg workflow "$WORKFLOW_NAME" \
-            --arg run_id "$WORKFLOW_RUN_ID" \
-            --arg conclusion "$CONCLUSION" \
-            --arg sha "$HEAD_SHA" \
-            --arg actor "$ACTOR" \
-            '{
-              content: $content,
-              clientMessageId: $clientMessageId,
+            let content
+            if (commits.length === 1 && omitted === 0) {
+              content =
+                `${icon} **${workflow} ${status}** on \`main\`\n\n` +
+                `\`${short(commits[0].sha)}\` — ${firstLine(commits[0].message)}\n` +
+                `by @${actor} · [View run](${runUrl})`
+            } else {
+              const total = commits.length + omitted
+              const lines = commits.map((c) => `- \`${short(c.sha)}\` — ${firstLine(c.message)}`)
+              if (omitted > 0) lines.unshift(`- …and ${omitted} earlier`)
+              content =
+                `${icon} **${workflow} ${status}** on \`main\` — ${total} commits\n\n` +
+                `${lines.join("\n")}\n` +
+                `by @${actor} · [View run](${runUrl})`
+            }
+
+            // clientMessageId keys on the message's identity (workflow + deploy tip + conclusion),
+            // not the run id, so a tip deployed twice — re-runs, workflow_run redelivery, overlapping
+            // close-together merges — collapses onto one message via the backend's
+            // ON CONFLICT (stream_id, client_message_id) guard. metadata lets future tooling query
+            // "every CI failure for commit X" etc. (AND-containment).
+            const payload = {
+              content,
+              clientMessageId: `ghactions:${workflow}:${headSha}:${conclusion}`,
               metadata: {
                 source: "github-actions",
-                "github.workflow.name": $workflow,
-                "github.workflow.run_id": $run_id,
-                "github.workflow.conclusion": $conclusion,
-                "github.commit.sha": $sha,
-                "github.actor": $actor
-              }
-            }')
+                "github.workflow.name": workflow,
+                "github.workflow.run_id": String(run.id),
+                "github.workflow.conclusion": conclusion,
+                "github.commit.sha": headSha,
+                "github.commit.count": String(commits.length + omitted),
+                "github.actor": actor,
+              },
+            }
 
-          curl -f --show-error -X POST \
-            "https://app.threa.io/api/v1/workspaces/ws_01KJDZZV5H57W3H2SJ11PA554B/streams/stream_01KP36GA56WZREGN6VTKREWRM9/messages" \
-            -H "Authorization: Bearer $THREA_BOT_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+            const res = await fetch(
+              "https://app.threa.io/api/v1/workspaces/ws_01KJDZZV5H57W3H2SJ11PA554B/streams/stream_01KP36GA56WZREGN6VTKREWRM9/messages",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${process.env.THREA_BOT_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+              }
+            )
+            if (!res.ok) {
+              throw new Error(`Threa API ${res.status}: ${await res.text()}`)
+            }
