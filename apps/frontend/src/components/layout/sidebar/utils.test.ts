@@ -65,6 +65,14 @@ describe("calculateUrgency", () => {
     expect(calculateUrgency(streamWith("user"), 0, 0, false, 2)).toBe("activity")
   })
 
+  it("colors activity-only persona streams gold (ai), not generic blue", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.PERSONA), 0, 0, false, 2)).toBe("ai")
+  })
+
+  it("colors activity-only bot streams green (bot), not generic blue", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.BOT), 0, 0, false, 2)).toBe("bot")
+  })
+
   it("prefers mentions over the activity fallback", () => {
     expect(calculateUrgency(streamWith("user"), 0, 1, false, 2)).toBe("mentions")
   })
@@ -141,19 +149,21 @@ describe("categorizeStream", () => {
   })
 
   it("promotes activity-only streams to 'recent' even when the cached preview is stale", () => {
-    // A notification arrived via the always-joined user room (urgency "activity")
-    // before the per-stream stream:activity bumped the unread count. The sidebar
-    // row glows, so it must not sink into "other" just because its last cached
-    // message is older than 7 days.
+    // A notification arrived via the always-joined user room before the per-stream
+    // stream:activity bumped the unread count (activityCount > 0, unreadCount 0).
+    // The row glows — now in its actor's color ("ai" for a persona, no longer a
+    // literal "activity") — so it must not sink into "other" just because its last
+    // cached message is older than 7 days. Section placement reads activityCount,
+    // not the color.
     const stream = makeStream({
       lastMessagePreview: {
-        authorId: "user_2",
-        authorType: "user",
+        authorId: "persona_1",
+        authorType: AuthorTypes.PERSONA,
         content: "hello",
         createdAt: "2026-03-01T12:00:00Z", // >7 days ago
       },
     })
-    expect(categorizeStream(stream, 0, "activity")).toBe("recent")
+    expect(categorizeStream(stream, 0, "ai", 2)).toBe("recent")
   })
 
   it("puts streams with no preview and no unread in 'other'", () => {
