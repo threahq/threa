@@ -288,7 +288,7 @@ export class LinkPreviewService {
   }
 }
 
-function toLinkPreviewSummary(preview: LinkPreview, position: number): LinkPreviewSummary {
+export function toLinkPreviewSummary(preview: LinkPreview, position: number): LinkPreviewSummary {
   return {
     id: preview.id,
     url: preview.url,

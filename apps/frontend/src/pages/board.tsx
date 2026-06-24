@@ -1,23 +1,56 @@
 import { useMemo } from "react"
 import { AlertCircle, LayoutGrid } from "lucide-react"
 import { Navigate, useParams } from "react-router-dom"
-import { StreamTypes } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeaderTabs } from "@/components/layout"
 import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
+import { localStartOfDayMs } from "@/lib/dates"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, ConversationWithStaleness } from "@threa/types"
 
 /**
- * The board: a cross-stream wall of conversations (Threa's topic primitive)
- * ordered by recent activity — the read-only foundation of the board view
- * (slice 1). Lenses and a scope filter land as tabs here later; for now a single
- * "All" tab shows everything the viewer can read.
+ * Coarse recency bucket for a post's last activity, in device-local time
+ * (INV-42). The board is ordered by activity desc, so consecutive posts fall into
+ * monotonic buckets — grouping them gives the feed structure without disturbing
+ * the recency order. Day boundaries, not 24h windows, so "Yesterday" matches the
+ * user's calendar.
+ */
+function recencyBucket(date: Date | string, nowMs: number): string {
+  const daysAgo = Math.round((localStartOfDayMs(new Date(nowMs)) - localStartOfDayMs(new Date(date))) / 86_400_000)
+  if (daysAgo <= 0) return "Today"
+  if (daysAgo === 1) return "Yesterday"
+  if (daysAgo <= 6) return "Earlier this week"
+  if (daysAgo <= 30) return "This month"
+  return "Older"
+}
+
+interface BoardSection {
+  label: string
+  posts: BoardPost[]
+}
+
+/** Fold the recency-sorted feed into consecutive buckets, preserving order. */
+function groupByRecency(posts: BoardPost[], nowMs: number): BoardSection[] {
+  const sections: BoardSection[] = []
+  for (const post of posts) {
+    const label = recencyBucket(post.conversation.lastActivityAt, nowMs)
+    const last = sections[sections.length - 1]
+    if (last?.label === label) last.posts.push(post)
+    else sections.push({ label, posts: [post] })
+  }
+  return sections
+}
+
+/**
+ * The board: a cross-stream feed of posts (each conversation surfaced as a
+ * message-led post) ordered by recent activity, grouped into recency sections.
+ * Lenses and a scope filter land as tabs here later; for now a single "All" tab
+ * shows everything the viewer can read.
  */
 export function BoardPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -42,24 +75,23 @@ function BoardPageGate({ workspaceId }: { workspaceId: string }) {
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
     useWorkspaceConversations(workspaceId, { limit: 50 })
-  const conversations = useMemo(() => data?.pages.flatMap((page) => page.conversations) ?? [], [data])
+  const posts = useMemo(() => data?.pages.flatMap((page) => page.posts) ?? [], [data])
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
+  const sections = useMemo(() => groupByRecency(posts, Date.now()), [posts])
 
-  // A scratchpad IS its conversation, so its own name is the best title (the
-  // stored "Scratchpad" topicSummary is noise). For channels/DMs the topic is
-  // the title and the stream is context — never the DM peer as the title, since
-  // that name is a person, not a topic.
-  function labelsFor(conversation: ConversationWithStaleness): { title: string; contextLabel: string } {
+  // Where the post lives — the stream's own name (channel #slug, DM peer,
+  // scratchpad name), used as the card's locator. The glyph follows the type.
+  function labelsFor(conversation: ConversationWithStaleness): {
+    contextLabel: string
+    streamType: string | undefined
+  } {
     const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
-    if (streamById.get(conversation.streamId)?.type === StreamTypes.SCRATCHPAD) {
-      return { title: streamName ?? "Scratchpad", contextLabel: "Scratchpad" }
-    }
     return {
-      title: conversation.topicSummary?.trim() || "Untitled conversation",
       contextLabel: streamName ?? "Unknown stream",
+      streamType: streamById.get(conversation.streamId)?.type,
     }
   }
 
@@ -71,9 +103,18 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   let content
   if (isLoading) {
     content = (
-      <div className="flex flex-col gap-2 px-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-lg" />
+      <div className="flex flex-col gap-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="rounded-xl border bg-card p-4">
+            <Skeleton className="h-3 w-1/3" />
+            <div className="mt-3 flex items-start gap-2">
+              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-3.5 w-1/4" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
+            </div>
+          </div>
         ))}
       </div>
     )
@@ -89,7 +130,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         </Button>
       </div>
     )
-  } else if (conversations.length === 0) {
+  } else if (posts.length === 0) {
     content = (
       <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
         <LayoutGrid className="h-8 w-8 text-muted-foreground" />
@@ -101,19 +142,28 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     )
   } else {
     content = (
-      <div className="flex flex-col gap-2 px-3">
-        {conversations.map((conversation) => {
-          const { title, contextLabel } = labelsFor(conversation)
-          return (
-            <BoardCard
-              key={conversation.id}
-              workspaceId={workspaceId}
-              conversation={conversation}
-              title={title}
-              contextLabel={contextLabel}
-            />
-          )
-        })}
+      <div className="flex flex-col">
+        {sections.map((section) => (
+          <section key={section.label} className="mb-4">
+            <h2 className="px-1 pb-1.5 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              {section.label}
+            </h2>
+            <div className="flex flex-col gap-3">
+              {section.posts.map((post) => {
+                const { contextLabel, streamType } = labelsFor(post.conversation)
+                return (
+                  <BoardCard
+                    key={post.conversation.id}
+                    workspaceId={workspaceId}
+                    post={post}
+                    contextLabel={contextLabel}
+                    streamType={streamType}
+                  />
+                )
+              })}
+            </div>
+          </section>
+        ))}
         {hasNextPage && (
           <div className="mt-1 flex flex-col items-center gap-1">
             {isFetchNextPageError && <p className="text-xs text-destructive">Couldn't load more.</p>}
@@ -141,7 +191,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         tabs={[{ value: "all", label: "All", href: `/w/${workspaceId}/board` }]}
       />
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="py-2">{content}</main>
+        <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">{content}</main>
       </ScrollArea>
     </div>
   )

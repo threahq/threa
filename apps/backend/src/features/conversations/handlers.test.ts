@@ -32,7 +32,7 @@ describe("Conversation Handlers", () => {
   const mockValidateStreamAccess = mock(() => Promise.resolve({ id: "stream_1", workspaceId: "ws_1" }))
   const mockListByStream = mock(() => Promise.resolve([] as Record<string, unknown>[]))
   const mockListByWorkspace = mock(() =>
-    Promise.resolve({ conversations: [] as Record<string, unknown>[], nextCursor: null as string | null })
+    Promise.resolve({ posts: [] as Record<string, unknown>[], nextCursor: null as string | null })
   )
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
@@ -63,7 +63,7 @@ describe("Conversation Handlers", () => {
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
-    mockListByWorkspace.mockResolvedValue({ conversations: [], nextCursor: null })
+    mockListByWorkspace.mockResolvedValue({ posts: [], nextCursor: null })
     mockGetFlag.mockResolvedValue("on")
     mockGetById.mockResolvedValue({
       id: "conv_1",
@@ -140,14 +140,14 @@ describe("Conversation Handlers", () => {
     })
 
     test("returns the paged result the service resolves", async () => {
-      const conversations = [{ id: "conv_1" }, { id: "conv_2" }]
-      mockListByWorkspace.mockResolvedValue({ conversations, nextCursor: "2026-06-22T12:00:00.000Z|conv_2" })
+      const posts = [{ conversation: { id: "conv_1" } }, { conversation: { id: "conv_2" } }]
+      mockListByWorkspace.mockResolvedValue({ posts, nextCursor: "2026-06-22T12:00:00.000Z|conv_2" })
       const res = mockRes()
 
       await handlers.listByWorkspace(mockReq({ query: {} }), res)
 
       expect((res as unknown as { body: unknown }).body).toEqual({
-        conversations,
+        posts,
         nextCursor: "2026-06-22T12:00:00.000Z|conv_2",
       })
     })

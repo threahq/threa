@@ -278,6 +278,8 @@ export type {
   SourceItem,
   Conversation,
   ConversationWithStaleness,
+  BoardPost,
+  BoardPostMessage,
   Memo,
   PendingMemoItem,
   MemoStreamState,

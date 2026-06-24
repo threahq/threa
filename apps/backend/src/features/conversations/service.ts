@@ -4,11 +4,13 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
+import { AttachmentRepository, toAttachmentSummary } from "../attachments"
+import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
-import { StreamTypes, type ConversationStatus } from "@threa/types"
+import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
 
 export { ConversationWithStaleness }
 
@@ -20,6 +22,34 @@ export interface ListConversationsOptions {
 export interface ListWorkspaceConversationsOptions extends ListConversationsOptions {
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
+}
+
+/**
+ * Opening message of a board post (internal, Date-typed; serialized to the wire
+ * `BoardPostMessage` by the handler). A lean projection of the full message —
+ * the fields the post card renders.
+ */
+export interface BoardPostMessage {
+  id: string
+  authorId: string
+  authorType: Message["authorType"]
+  contentMarkdown: string
+  reactions: Record<string, string[]>
+  attachments: AttachmentSummary[]
+  linkPreviews: LinkPreviewSummary[]
+  createdAt: Date
+}
+
+/** A conversation surfaced as a feed post: the grouping, its origin message, and the latest replies. */
+export interface BoardPost {
+  conversation: ConversationWithStaleness
+  /** The post's origin: the conversation's first message, or — for a thread —
+   * the parent message in the parent stream that the thread descends from. */
+  openingMessage: BoardPostMessage | null
+  /** The trailing reply messages (up to 3), chronological. */
+  recentMessages: BoardPostMessage[]
+  /** Total replies under the origin (excludes the origin). Drives the "N more" gap. */
+  totalReplies: number
 }
 
 export interface ReassignMessageParams {
@@ -68,19 +98,109 @@ export class ConversationService {
     workspaceId: string,
     userId: string,
     options?: ListWorkspaceConversationsOptions
-  ): Promise<{ conversations: ConversationWithStaleness[]; nextCursor: string | null }> {
+  ): Promise<{ posts: BoardPost[]; nextCursor: string | null }> {
     const limit = options?.limit ?? 50
-    // Single query, INV-30
     const rows = await ConversationRepository.findByWorkspaceForViewer(this.pool, workspaceId, userId, {
       ...options,
       limit,
     })
     const conversations = rows.map(addStalenessFields)
+
+    // Resolve each conversation's stream so a thread post can show its true
+    // origin: a thread is its own stream, so its `messageIds` are the replies and
+    // the originating message lives in the parent stream (`parentMessageId`),
+    // never a member of the thread conversation.
+    const streamIds = [...new Set(conversations.map((c) => c.streamId))]
+    const streamById = new Map(
+      (streamIds.length > 0 ? await StreamRepository.findByIds(this.pool, streamIds) : []).map((s) => [s.id, s])
+    )
+
+    // Hydrate each post's origin message plus its last few replies so the board
+    // renders real post content + reactions, not just a topic line. One batch
+    // read over the union of needed ids (INV-56); the access filter already ran
+    // in the conversation query, so these ids are all viewer-readable.
+    const planByConversation = new Map<
+      string,
+      { originId: string | undefined; recentIds: string[]; totalReplies: number }
+    >()
+    const idsToFetch = new Set<string>()
+    for (const conversation of conversations) {
+      const stream = streamById.get(conversation.streamId)
+      const ids = conversation.messageIds
+      let originId: string | undefined
+      let replyIds: string[]
+      if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
+        originId = stream.parentMessageId
+        replyIds = ids
+      } else {
+        originId = ids[0]
+        replyIds = ids.slice(1)
+      }
+      const recentIds = replyIds.slice(Math.max(0, replyIds.length - 3))
+      planByConversation.set(conversation.id, { originId, recentIds, totalReplies: replyIds.length })
+      if (originId) idsToFetch.add(originId)
+      for (const id of recentIds) idsToFetch.add(id)
+    }
+    const ids = [...idsToFetch]
+    const messageById: Map<string, Message> =
+      ids.length > 0 ? await MessageRepository.findByIds(this.pool, ids) : new Map()
+    const hydratedById = await this.hydrateBoardMessages(workspaceId, [...messageById.values()])
+
+    const posts: BoardPost[] = conversations.map((conversation) => {
+      const plan = planByConversation.get(conversation.id)!
+      const opening = plan.originId ? hydratedById.get(plan.originId) : undefined
+      const recentMessages = plan.recentIds
+        .map((id) => hydratedById.get(id))
+        .filter((m): m is BoardPostMessage => Boolean(m))
+      return {
+        conversation,
+        openingMessage: opening ?? null,
+        recentMessages,
+        totalReplies: plan.totalReplies,
+      }
+    })
+
     // A full page means there may be more; the last row's (activity, id) is the
     // next cursor — matching the repo's `(last_activity_at, id) DESC` order.
     const last = conversations.length === limit ? conversations[conversations.length - 1] : null
     const nextCursor = last ? `${last.lastActivityAt.toISOString()}|${last.id}` : null
-    return { conversations, nextCursor }
+    return { posts, nextCursor }
+  }
+
+  /**
+   * Enrich a set of messages with their attachments + completed link previews —
+   * the rich content the message row doesn't carry. One batch read each (INV-56).
+   * Shared by the board feed and the board's on-expand message fetch so both
+   * render the same richness as the timeline.
+   */
+  private async hydrateBoardMessages(workspaceId: string, messages: Message[]): Promise<Map<string, BoardPostMessage>> {
+    const byId = new Map<string, BoardPostMessage>()
+    const ids = messages.map((m) => m.id)
+    if (ids.length === 0) return byId
+    const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
+    const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
+    for (const message of messages) {
+      const attachments = (attachmentsByMessage.get(message.id) ?? []).map(toAttachmentSummary)
+      const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
+        .filter((p) => p.status === "completed")
+        .map((p, i) => toLinkPreviewSummary(p, i))
+      byId.set(message.id, toBoardPostMessage(message, attachments, linkPreviews))
+    }
+    return byId
+  }
+
+  /**
+   * The full conversation as board post messages (enriched with attachments +
+   * link previews), in message order — backs the board card's "N more" expand so
+   * the revealed middle messages read exactly like the opening + recent run.
+   */
+  async getBoardMessages(workspaceId: string, conversationId: string): Promise<BoardPostMessage[]> {
+    const conversation = await ConversationRepository.findById(this.pool, conversationId)
+    if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return []
+    const messagesMap = await MessageRepository.findByIds(this.pool, conversation.messageIds)
+    const ordered = conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => Boolean(m))
+    const hydratedById = await this.hydrateBoardMessages(workspaceId, ordered)
+    return conversation.messageIds.map((id) => hydratedById.get(id)).filter((m): m is BoardPostMessage => Boolean(m))
   }
 
   async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {
@@ -222,5 +342,23 @@ export class ConversationService {
         previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
       }
     })
+  }
+}
+
+/** Project a full message + its hydrated rich content down to a board post message. */
+function toBoardPostMessage(
+  message: Message,
+  attachments: AttachmentSummary[],
+  linkPreviews: LinkPreviewSummary[]
+): BoardPostMessage {
+  return {
+    id: message.id,
+    authorId: message.authorId,
+    authorType: message.authorType,
+    contentMarkdown: message.contentMarkdown,
+    reactions: message.reactions,
+    attachments,
+    linkPreviews,
+    createdAt: message.createdAt,
   }
 }

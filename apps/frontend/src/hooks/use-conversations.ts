@@ -13,6 +13,7 @@ export const conversationKeys = {
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
+  boardMessages: (conversationId: string) => ["conversations", conversationId, "board-messages"] as const,
 }
 
 interface ConversationCreatedPayload {

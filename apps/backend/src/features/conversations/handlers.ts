@@ -117,6 +117,34 @@ export function createConversationHandlers({ conversationService, streamService,
     },
 
     /**
+     * The board card's "N more" expand: the full conversation as enriched board
+     * post messages (attachments + link previews), so revealed middle messages
+     * read like the rest of the post. Board-gated (404 without the flag), same
+     * as the workspace feed.
+     */
+    async getBoardMessages(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId } = req.params
+
+      const boardFlag = await featureFlagService.getFlag(workspaceId, userId, "board-view")
+      if (boardFlag !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const messages = await conversationService.getBoardMessages(workspaceId, conversationId)
+      res.json({ messages })
+    },
+
+    /**
      * User correction from the timeline conversation overlay: make
      * `conversationId` the message's primary conversation. Applies the move
      * and records it as boundary-extraction feedback.

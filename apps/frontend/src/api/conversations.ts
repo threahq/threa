@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { ConversationWithStaleness, ConversationStatus, Message } from "@threa/types"
+import type { ConversationWithStaleness, ConversationStatus, Message, BoardPost, BoardPostMessage } from "@threa/types"
 
 export interface ListConversationsParams {
   status?: ConversationStatus
@@ -12,7 +12,7 @@ export interface ListWorkspaceConversationsParams extends ListConversationsParam
 }
 
 export interface WorkspaceConversationsPage {
-  conversations: ConversationWithStaleness[]
+  posts: BoardPost[]
   nextCursor: string | null
 }
 
@@ -61,6 +61,18 @@ export const conversationsApi = {
   async getMessages(workspaceId: string, conversationId: string): Promise<Message[]> {
     const res = await api.get<{ messages: Message[] }>(
       `/api/workspaces/${workspaceId}/conversations/${conversationId}/messages`
+    )
+    return res.messages
+  },
+
+  /**
+   * The board card's "N more" expand: the full conversation as enriched board
+   * post messages (attachments + link previews), so revealed messages render
+   * with the same richness as the opening + recent run.
+   */
+  async getBoardMessages(workspaceId: string, conversationId: string): Promise<BoardPostMessage[]> {
+    const res = await api.get<{ messages: BoardPostMessage[] }>(
+      `/api/workspaces/${workspaceId}/conversations/${conversationId}/board-messages`
     )
     return res.messages
   },

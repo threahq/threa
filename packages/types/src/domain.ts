@@ -637,6 +637,50 @@ export interface ConversationWithStaleness extends Conversation {
 }
 
 /**
+ * The opening message of a board post — the conversation's first primary
+ * message, rendered as the post body. A lean projection of {@link Message}: the
+ * fields the board feed needs (author, content, reactions, time), not the full
+ * timeline message. `null` on a post whose opening message was deleted.
+ */
+export interface BoardPostMessage {
+  id: string
+  authorId: string
+  authorType: AuthorType
+  contentMarkdown: string
+  reactions: Record<string, string[]>
+  /** Attachments (images/files) on this message — rendered with gallery + download. */
+  attachments: AttachmentSummary[]
+  /** Completed link previews for this message. */
+  linkPreviews: LinkPreviewSummary[]
+  createdAt: string
+}
+
+/**
+ * One board post: a conversation (the grouping) surfaced as a feed post (the
+ * unit). The card renders `openingMessage` as the post body and `recentMessages`
+ * as the latest replies beneath it, with a collapsed "N more" gap between — so
+ * the board reads as a re-organized timeline of messages rather than a
+ * conversations list.
+ */
+export interface BoardPost {
+  conversation: ConversationWithStaleness
+  /**
+   * The post's origin message: the conversation's first message, or — for a
+   * thread conversation — the parent message in the parent stream the thread
+   * descends from (it isn't a member of the thread conversation itself).
+   */
+  openingMessage: BoardPostMessage | null
+  /**
+   * Up to the last three reply messages (excluding the origin), chronological.
+   * The collapsed card shows origin + a "N more" expander + these; expanding
+   * fetches the full message list.
+   */
+  recentMessages: BoardPostMessage[]
+  /** Total replies under the origin (excludes it). Drives the "N more" gap. */
+  totalReplies: number
+}
+
+/**
  * Memo: Semantic pointer to valuable knowledge.
  * Following GAM paper: lightweight abstracts that guide retrieval at runtime.
  */
