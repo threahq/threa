@@ -3,6 +3,7 @@ import { Children, isValidElement, type ReactNode, type MouseEvent } from "react
 import { useNavigate, useParams } from "react-router-dom"
 import { parseGiphyHref, parseMemoHref, parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
+import { resolveInternalAppPath } from "@/lib/internal-url"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
@@ -14,22 +15,6 @@ import { QuoteReplyBlock } from "./quote-reply-block"
 import { BlockquoteBlock } from "./blockquote-block"
 import { SharedMessagePointerBlock } from "./shared-message-block"
 import CodeBlock from "./code-block"
-
-/**
- * Treat any link to our own origin as in-app navigation. Without this, a
- * markdown link like `https://app.threa.io/w/.../s/...?m=msg_xxx` rendered
- * inside the installed PWA on Android hops to a Custom Tab (browser chrome,
- * "open in Firefox") because `target="_blank"` forces a new browsing context.
- */
-function resolveInternalAppPath(href: string): string | null {
-  try {
-    const url = new URL(href, window.location.origin)
-    if (url.origin !== window.location.origin) return null
-    return `${url.pathname}${url.search}${url.hash}`
-  } catch {
-    return null
-  }
-}
 
 // The serializer emits these prefixes verbatim, no marks or extra text. Match
 // the shape exactly so a mixed paragraph like "FYI Shared a message from
