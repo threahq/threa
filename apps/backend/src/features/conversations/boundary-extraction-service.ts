@@ -65,6 +65,22 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContextBase: null }
       }
 
+      // Authored board posts declare their conversation synchronously at
+      // creation. The message:created outbox still fires for them, but the async
+      // pass must never re-cluster or move a human-declared boundary (INV-20) —
+      // short-circuit with the conversation it already owns.
+      if (message.isAuthoredBoundary) {
+        const authoredPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          authoredSkip: true,
+          authoredPrimary,
+          validUpdateTargets: new Set<string>(),
+        }
+      }
+
       if (stream.type === StreamTypes.SCRATCHPAD) {
         const existingConversations = await ConversationRepository.findByStream(client, stream.id)
         return {
@@ -167,6 +183,11 @@ export class BoundaryExtractionService {
     if (!fetchedData.message || !fetchedData.stream) {
       logger.warn({ messageId, streamId }, "Message or stream not found for boundary extraction")
       return null
+    }
+
+    if (fetchedData.authoredSkip) {
+      logger.debug({ messageId, streamId }, "Skipping boundary extraction for authored board post")
+      return fetchedData.authoredPrimary ?? null
     }
 
     const {
@@ -389,6 +410,13 @@ export class BoundaryExtractionService {
             reassignedMessage = m
             messagesById.set(r.messageId, m)
           }
+        }
+
+        // An authored board post is a human-declared boundary: the async pass
+        // never moves it out of the conversation it seeded (INV-20).
+        if (reassignedMessage?.isAuthoredBoundary) {
+          logger.warn({ messageId: r.messageId }, "Skipping reassignment of an authored board post")
+          continue
         }
 
         await ConversationRepository.removePrimaryMessage(client, workspaceId, fromConvId, r.messageId)

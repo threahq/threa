@@ -260,7 +260,7 @@ export async function startServer(): Promise<ServerInstance> {
   const streamNamingService = config.useStubAI
     ? new StubStreamNamingService()
     : new StreamNamingService(pool, ai, configResolver, messageFormatter)
-  const conversationService = new ConversationService(pool)
+  const conversationService = new ConversationService(pool, eventService)
   const userPreferencesService = new UserPreferencesService(pool)
   const workspaceSettingsService = new WorkspaceSettingsService(pool)
   const featureFlagService = new FeatureFlagService(pool)

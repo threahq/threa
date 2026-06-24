@@ -1,7 +1,8 @@
 import { useEffect } from "react"
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
 import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
+import type { CreateBoardPostParams, WorkspaceConversationsPage } from "@/api/conversations"
 import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
 
 export const conversationKeys = {
@@ -85,6 +86,37 @@ export function useWorkspaceConversations(
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     enabled: !!workspaceId,
+  })
+}
+
+/**
+ * Author a board post (create message + seeded conversation in one request).
+ * The backend materializes the conversation synchronously, so on success the
+ * returned post is prepended to every cached board page for this workspace —
+ * the author sees it instantly, newest-activity-first, without a refetch. The
+ * board has no socket subscription yet (conversation events are per-stream
+ * only), so this optimistic insert is the author's live update path; other
+ * viewers see it on their next board open / reconnect.
+ */
+export function useCreateBoardPost(workspaceId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (params: CreateBoardPostParams) => conversationService.createBoardPost(workspaceId, params),
+    onSuccess: (post) => {
+      queryClient.setQueriesData<InfiniteData<WorkspaceConversationsPage>>(
+        { queryKey: [...conversationKeys.all, "workspaceList", workspaceId] },
+        (old) => {
+          if (!old || old.pages.length === 0) return old
+          // Idempotent: a reconnect refetch may already carry the post.
+          const exists = old.pages.some((page) => page.posts.some((p) => p.conversation.id === post.conversation.id))
+          if (exists) return old
+          const [first, ...rest] = old.pages
+          return { ...old, pages: [{ ...first, posts: [post, ...first.posts] }, ...rest] }
+        }
+      )
+    },
   })
 }
 

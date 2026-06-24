@@ -42,6 +42,7 @@ function createMessage(overrides: Partial<Message> & { id: string }): Message {
     replyCount: 0,
     reactions: {},
     metadata: {},
+    isAuthoredBoundary: false,
     clientMessageId: null,
     sentVia: null,
     editedAt: null,

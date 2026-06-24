@@ -3,11 +3,11 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import type { Socket } from "socket.io-client"
-import type { ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, ConversationWithStaleness } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { SocketEventGate } from "@/sync/socket-event-gate"
-import { useConversations, conversationKeys } from "./use-conversations"
+import { useConversations, useCreateBoardPost, conversationKeys } from "./use-conversations"
 
 const WORKSPACE_ID = "ws_1"
 const STREAM_ID = "stream_1"
@@ -155,5 +155,66 @@ describe("useConversations event registration", () => {
     expect(queryClient.getQueryData(listKey())).toEqual([makeConversation("conv_1")])
 
     gate.dispose()
+  })
+})
+
+describe("useCreateBoardPost", () => {
+  function makePost(conversationId: string): BoardPost {
+    return {
+      conversation: makeConversation(conversationId),
+      openingMessage: null,
+      recentMessages: [],
+      totalReplies: 0,
+    }
+  }
+
+  function workspaceListKey() {
+    return conversationKeys.workspaceList(WORKSPACE_ID, { limit: 50 })
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("prepends the created post to the cached board page", async () => {
+    const post = makePost("conv_new")
+    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
+      createBoardPost: vi.fn().mockResolvedValue(post),
+    } as unknown as contextsModule.ConversationService)
+
+    const { queryClient, wrapper } = createWrapper()
+    queryClient.setQueryData(workspaceListKey(), {
+      pages: [{ posts: [makePost("conv_old")], nextCursor: null }],
+      pageParams: [undefined],
+    })
+
+    const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
+    await act(async () => {
+      await result.current.mutateAsync({ streamId: STREAM_ID, contentJson: { type: "doc", content: [] } })
+    })
+
+    const data = queryClient.getQueryData(workspaceListKey()) as { pages: { posts: BoardPost[] }[] }
+    expect(data.pages[0].posts.map((p) => p.conversation.id)).toEqual(["conv_new", "conv_old"])
+  })
+
+  it("does not duplicate a post already present in the cache (idempotent)", async () => {
+    const post = makePost("conv_dupe")
+    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
+      createBoardPost: vi.fn().mockResolvedValue(post),
+    } as unknown as contextsModule.ConversationService)
+
+    const { queryClient, wrapper } = createWrapper()
+    queryClient.setQueryData(workspaceListKey(), {
+      pages: [{ posts: [makePost("conv_dupe")], nextCursor: null }],
+      pageParams: [undefined],
+    })
+
+    const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
+    await act(async () => {
+      await result.current.mutateAsync({ streamId: STREAM_ID, contentJson: { type: "doc", content: [] } })
+    })
+
+    const data = queryClient.getQueryData(workspaceListKey()) as { pages: { posts: BoardPost[] }[] }
+    expect(data.pages[0].posts.map((p) => p.conversation.id)).toEqual(["conv_dupe"])
   })
 })

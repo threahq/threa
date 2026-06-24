@@ -36,6 +36,19 @@ const reassignMessageParamsSchema = z.object({
   messageId: z.string().min(1),
 })
 
+// Authored board post. `contentMarkdown` is intentionally not accepted — the
+// backend derives it from `contentJson` (INV-58), same as message creation, so
+// the stored markdown can't diverge from the canonical JSON.
+const createAuthoredPostSchema = z.object({
+  streamId: z.string().min(1, "streamId is required"),
+  contentJson: z.object({
+    type: z.literal("doc"),
+    content: z.array(z.any()),
+  }),
+  title: z.string().trim().max(500).optional(),
+  attachmentIds: z.array(z.string()).optional(),
+})
+
 interface Dependencies {
   conversationService: ConversationService
   streamService: StreamService
@@ -67,6 +80,36 @@ export function createConversationHandlers({ conversationService, streamService,
         cursor: decodeBoardCursor(query.cursor),
       })
       res.json(result)
+    },
+
+    /**
+     * Author a board post: create a message in the picked stream + a conversation
+     * seeded with it. Board-gated (404 without the flag), and the author must be
+     * able to post into the target stream — validated the same way as reads
+     * (public visibility + thread root membership).
+     */
+    async createAuthoredPost(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const boardFlag = await featureFlagService.getFlag(workspaceId, userId, "board-view")
+      if (boardFlag !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      const body = validateRequest(createAuthoredPostSchema, req.body)
+
+      await streamService.validateStreamAccess(body.streamId, workspaceId, userId)
+
+      const post = await conversationService.createAuthoredPost({
+        workspaceId,
+        streamId: body.streamId,
+        userId,
+        contentJson: body.contentJson,
+        title: body.title,
+        attachmentIds: body.attachmentIds,
+      })
+      res.status(201).json({ post })
     },
 
     async listByStream(req: Request, res: Response) {

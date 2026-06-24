@@ -135,6 +135,12 @@ export interface CreateMessageParams {
   /** External references (string->string) attached to the message. Reserved prefix: `threa.*`. */
   metadata?: Record<string, string>
   /**
+   * Marks the message as an authored board-post boundary so the async
+   * boundary-extraction worker skips it (the conversation is seeded
+   * synchronously by the authored-post path). Defaults to false.
+   */
+  isAuthoredBoundary?: boolean
+  /**
    * Present when the sharer has acknowledged a privacy warning in the
    * share modal. Backend still independently verifies whether the share
    * crosses a privacy boundary before consulting this flag.
@@ -542,6 +548,7 @@ export class EventService {
       clientMessageId: params.clientMessageId,
       sentVia: params.sentVia,
       metadata,
+      isAuthoredBoundary: params.isAuthoredBoundary,
       ciphertext: params.ciphertext,
       envelope: params.envelope,
       e2eVersion: params.e2eVersion,
