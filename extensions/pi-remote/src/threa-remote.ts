@@ -702,12 +702,11 @@ async function recordInvocationTraceStep(
   const trimmed = truncateForTrace(content)
   if (!trimmed) return
   const status = statusText?.trim().slice(0, 160)
-  // The high-volume path: a turn fires one of these per tool call + per
-  // assistant message (150+ in a long turn). Routing them over the socket is
-  // the whole point — each one was an edge-Worker request on HTTP. Best-effort:
-  // the transport doesn't reject (its HTTP fallback swallows), and the explicit
-  // `.catch` restores the swallow the pre-migration POST had, so a dropped trace
-  // step only dulls the trace and can never abort the turn.
+  // High-volume, best-effort path (one per tool call + per assistant message,
+  // 150+ in a long turn). The transport routes these over the socket — the cost
+  // win — and doesn't reject (its HTTP fallback swallows); the `.catch` is the
+  // safety boundary so a dropped trace step only dulls the trace, never aborts
+  // the turn.
   if (transport) {
     await transport
       .recordSteps(
@@ -1060,15 +1059,12 @@ async function tryRebindLegacySessionInstance(ctx: ExtensionContext): Promise<vo
 
 async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void> {
   if (!config) return
-  // The transport prefers the socket and falls back to HTTP itself (the lease
-  // must never lapse because the socket flapped); it never throws, so a renew
-  // failure no longer aborts the surrounding claim pass. Unlike claude-code-remote
-  // we don't drop the turn on `notFound` — pi is mid-execution locally, so the
-  // turn runs to completion and surfaces the gone claim at complete() (404). We
-  // do log it, so the otherwise-silent "claim vanished server-side" is observable.
+  // pi runs the turn locally, so a `notFound` (claim gone server-side) does NOT
+  // drop it — the turn completes and surfaces the gone claim at complete() (404);
+  // we just log it so that loss isn't silent.
   if (transport) {
-    // The transport doesn't reject (its HTTP fallback swallows); the `.catch`
-    // is defense-in-depth so a renew can never abort the surrounding claim pass.
+    // The transport doesn't reject (its HTTP fallback swallows); the `.catch` is
+    // the safety boundary so a renew can never abort the surrounding claim pass.
     const { notFound } = await transport
       .renewClaim(invocation.id, invocation.claimToken, 120, getInvocationInstanceId(invocation))
       .catch(() => ({ notFound: false }))

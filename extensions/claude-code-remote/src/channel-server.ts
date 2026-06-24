@@ -620,17 +620,20 @@ export class ChannelServer {
   private startRenewTimer(): void {
     this.renewTimer = setInterval(() => {
       for (const [id, entry] of [...this.inflight]) {
-        // renewClaim prefers the socket and falls back to HTTP on its own (the
-        // lease must never lapse because the socket flapped); it never rejects.
-        // The trailing .catch is fire-and-forget hygiene: a discarded promise in
-        // a setInterval must never surface as an unhandled rejection, even if a
-        // future transport edit broke the no-reject contract or the .then body threw.
+        // The .catch is fire-and-forget hygiene: a discarded promise in a
+        // setInterval must never surface as an unhandled rejection (it's the
+        // safety boundary if the .then body throws).
         void this.transport
           .renewClaim(id, entry.invocation.claimToken, CLAIM_TTL_SECONDS)
           .then((result) => {
             if (result.notFound) {
               // The claim's gone server-side; drop it and resync presence so a
-              // last-in-flight loss doesn't strand the runtime as busy.
+              // last-in-flight loss doesn't strand the runtime as busy. Clear the
+              // active-turn pointer too if this was it, so a relayed permission
+              // prompt can't target a stream whose turn is no longer live.
+              if (this.activeTurnStreamId === entry.invocation.responseStreamId) {
+                this.activeTurnStreamId = undefined
+              }
               this.clearInflight(id)
               void this.syncPresence()
             }

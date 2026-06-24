@@ -132,12 +132,13 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     // invariant from depending on that.
     const clientStepId = this.pendingClientStepId
     this.pendingClientStepId = undefined
+    const stepId = generateStepId()
     // Append + currentStepType must run in one transaction. appendStep is
     // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
     // append distinct rows instead of clobbering each other.
     const persisted = await withTransaction(pool, async (client) => {
       const inserted = await AgentSessionRepository.appendStep(client, {
-        id: generateStepId(),
+        id: stepId,
         sessionId,
         stepType: step.stepType,
         content: step.content,
@@ -147,24 +148,35 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         completedAt,
         clientStepId,
       })
-      await AgentSessionRepository.updateCurrentStepType(client, sessionId, step.stepType)
+      // Only advance current_step_type on a real insert. On an idempotent dedup
+      // appendStep returns the pre-existing row (a different id than the one we
+      // generated); its type was set when it first landed, and re-setting it from
+      // this replay would write the replay's type and regress to an older step.
+      if (inserted.id === stepId) {
+        await AgentSessionRepository.updateCurrentStepType(client, sessionId, inserted.stepType)
+      }
       return inserted
     })
     this.lastStep = persisted
-    io.to(`ws:${workspaceId}:agent_session:${sessionId}`).emit("agent_session:step:completed", {
-      sessionId,
-      step: serializeTraceStep(persisted),
-    })
-    io.to(`ws:${workspaceId}:stream:${streamId}`).emit("agent_session:progress", {
-      workspaceId,
-      streamId,
-      sessionId,
-      triggerMessageId,
-      personaName,
-      stepCount: persisted.stepNumber,
-      messageCount: 0,
-      currentStepType: persisted.stepType,
-    })
+    // A deduped replay was already broadcast when it first landed — re-emitting it
+    // (with its older stepNumber/type) would flicker the live indicators backward,
+    // so the broadcast is gated on the row being freshly inserted by this call.
+    if (persisted.id === stepId) {
+      io.to(`ws:${workspaceId}:agent_session:${sessionId}`).emit("agent_session:step:completed", {
+        sessionId,
+        step: serializeTraceStep(persisted),
+      })
+      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("agent_session:progress", {
+        workspaceId,
+        streamId,
+        sessionId,
+        triggerMessageId,
+        personaName,
+        stepCount: persisted.stepNumber,
+        messageCount: 0,
+        currentStepType: persisted.stepType,
+      })
+    }
   }
 
   async open(params: { stepType: AgentStepType }): Promise<BotOpenStep> {

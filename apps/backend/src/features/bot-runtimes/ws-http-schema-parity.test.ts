@@ -10,6 +10,12 @@ import { upsertPresenceSchema, renewInvocationClaimSchema, recordInvocationStepS
 // is intentionally stricter on the WS side (it becomes a Socket.IO room segment),
 // so it is excluded.
 
+// One object comparison per case (INV-24): assert the WS and HTTP results are
+// the SAME value, so a parity break surfaces as a single readable `{ ws, http }`
+// diff rather than a chain of narrow booleans.
+const parity = (ws: unknown, http: unknown, expected: unknown) =>
+  expect({ ws, http }).toEqual({ ws: expected, http: expected })
+
 describe("WS ↔ HTTP schema parity", () => {
   describe("step: stepType / content / clientStepId", () => {
     const wsStep = (over: Record<string, unknown>) =>
@@ -24,22 +30,15 @@ describe("WS ↔ HTTP schema parity", () => {
       })
 
     it("accepts and bounds clientStepId identically (the recently-added field)", () => {
-      expect(wsStep({ clientStepId: "key-1" }).success).toBe(true)
-      expect(httpStep({ clientStepId: "key-1" }).success).toBe(true)
-      // optional on both
-      expect(wsStep({}).success).toBe(true)
-      expect(httpStep({}).success).toBe(true)
-      // >128 rejected on both
+      parity(wsStep({ clientStepId: "key-1" }).success, httpStep({ clientStepId: "key-1" }).success, true)
+      parity(wsStep({}).success, httpStep({}).success, true) // optional on both
       const tooLong = "x".repeat(129)
-      expect(wsStep({ clientStepId: tooLong }).success).toBe(false)
-      expect(httpStep({ clientStepId: tooLong }).success).toBe(false)
+      parity(wsStep({ clientStepId: tooLong }).success, httpStep({ clientStepId: tooLong }).success, false)
     })
 
     it("rejects empty content and unknown stepType identically", () => {
-      expect(wsStep({ content: "" }).success).toBe(false)
-      expect(httpStep({ content: "" }).success).toBe(false)
-      expect(wsStep({ stepType: "bogus" }).success).toBe(false)
-      expect(httpStep({ stepType: "bogus" }).success).toBe(false)
+      parity(wsStep({ content: "" }).success, httpStep({ content: "" }).success, false)
+      parity(wsStep({ stepType: "bogus" }).success, httpStep({ stepType: "bogus" }).success, false)
     })
   })
 
@@ -52,15 +51,12 @@ describe("WS ↔ HTTP schema parity", () => {
     it("defaults claimTtlSeconds to 60 on both", () => {
       const ws = wsRenew({})
       const http = httpRenew({})
-      expect(ws.success && ws.data.claimTtlSeconds).toBe(60)
-      expect(http.success && http.data.claimTtlSeconds).toBe(60)
+      parity(ws.success && ws.data.claimTtlSeconds, http.success && http.data.claimTtlSeconds, 60)
     })
 
     it("enforces the same 15..300 bounds on both", () => {
-      expect(wsRenew({ claimTtlSeconds: 14 }).success).toBe(false)
-      expect(httpRenew({ claimTtlSeconds: 14 }).success).toBe(false)
-      expect(wsRenew({ claimTtlSeconds: 301 }).success).toBe(false)
-      expect(httpRenew({ claimTtlSeconds: 301 }).success).toBe(false)
+      parity(wsRenew({ claimTtlSeconds: 14 }).success, httpRenew({ claimTtlSeconds: 14 }).success, false)
+      parity(wsRenew({ claimTtlSeconds: 301 }).success, httpRenew({ claimTtlSeconds: 301 }).success, false)
     })
   })
 
@@ -68,16 +64,22 @@ describe("WS ↔ HTTP schema parity", () => {
     const base = { runtimeKind: "pi-local", instanceId: "inst", status: "busy", acceptingInvocations: false }
 
     it("accepts a valid body on both", () => {
-      expect(presenceUpdateSchema.safeParse(base).success).toBe(true)
-      expect(upsertPresenceSchema.safeParse(base).success).toBe(true)
+      parity(presenceUpdateSchema.safeParse(base).success, upsertPresenceSchema.safeParse(base).success, true)
     })
 
     it("rejects an unknown status and a missing acceptingInvocations on both", () => {
-      expect(presenceUpdateSchema.safeParse({ ...base, status: "bogus" }).success).toBe(false)
-      expect(upsertPresenceSchema.safeParse({ ...base, status: "bogus" }).success).toBe(false)
+      const badStatus = { ...base, status: "bogus" }
+      parity(
+        presenceUpdateSchema.safeParse(badStatus).success,
+        upsertPresenceSchema.safeParse(badStatus).success,
+        false
+      )
       const { acceptingInvocations: _omit, ...noAccepting } = base
-      expect(presenceUpdateSchema.safeParse(noAccepting).success).toBe(false)
-      expect(upsertPresenceSchema.safeParse(noAccepting).success).toBe(false)
+      parity(
+        presenceUpdateSchema.safeParse(noAccepting).success,
+        upsertPresenceSchema.safeParse(noAccepting).success,
+        false
+      )
     })
   })
 })

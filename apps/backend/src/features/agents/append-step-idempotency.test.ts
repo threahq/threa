@@ -69,8 +69,7 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
 
     const result = await AgentSessionRepository.appendStep(db, { ...baseParams, clientStepId: "key-1" })
 
-    expect(result.id).toBe("step_orig")
-    expect(result.stepNumber).toBe(5)
+    expect({ id: result.id, stepNumber: result.stepNumber }).toEqual({ id: "step_orig", stepNumber: 5 })
   })
 
   it("returns the freshly inserted row on the happy path", async () => {
@@ -78,8 +77,7 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
 
     const result = await AgentSessionRepository.appendStep(db, { ...baseParams, clientStepId: "key-1" })
 
-    expect(result.id).toBe("step_new")
-    expect(result.stepNumber).toBe(2)
+    expect({ id: result.id, stepNumber: result.stepNumber }).toEqual({ id: "step_new", stepNumber: 2 })
   })
 
   it("rethrows a unique violation when no client_step_id was supplied (no dedup escape hatch)", async () => {

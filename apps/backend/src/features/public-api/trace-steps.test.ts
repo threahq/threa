@@ -68,7 +68,12 @@ function arrangeSink() {
     contentCiphertext: null,
     contentEnvelope: null,
   } as unknown as AgentSessionStep
-  const appendStep = spyOn(AgentSessionRepository, "appendStep").mockResolvedValue(persisted)
+  // Echo the generated id like a real INSERT does — the sink compares the row's
+  // id to the id it generated to tell a fresh insert from an idempotent dedup.
+  const appendStep = spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (
+    _db: unknown,
+    params: { id: string }
+  ) => ({ ...persisted, id: params.id })) as never)
   const updateCurrentStepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(
     undefined as never
   )
@@ -107,7 +112,7 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     // Post-hoc frame: the row lands already completed.
     expect(params.completedAt).toEqual(params.startedAt)
     expect(updateCurrentStepType).toHaveBeenCalledWith(expect.anything(), "binv_1", AgentStepTypes.TOOL_CALL)
-    expect(sink.lastStep?.id).toBe("step_persisted")
+    expect(sink.lastStep?.stepNumber).toBe(3)
   })
 
   it("emits step:completed to the session room and progress to the stream room", async () => {
@@ -122,7 +127,7 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     expect(completedCall?.[0]).toBe("agent_session:step:completed")
     expect(completedCall?.[1]).toMatchObject({
       sessionId: "binv_1",
-      step: { id: "step_persisted", stepNumber: 3, stepType: AgentStepTypes.TOOL_CALL },
+      step: { id: expect.any(String), stepNumber: 3, stepType: AgentStepTypes.TOOL_CALL },
     })
     expect(progressCall?.[0]).toBe("agent_session:progress")
     expect(progressCall?.[1]).toEqual({
@@ -135,6 +140,45 @@ describe("BotInvocationTraceSink via the shared projector", () => {
       messageCount: 0,
       currentStepType: AgentStepTypes.TOOL_CALL,
     })
+  })
+
+  it("on an idempotency-key dedup it skips the current_step_type advance and the broadcast", async () => {
+    const emit = mock((_event: string, _payload: unknown) => {})
+    const io = { to: () => ({ emit }) } as unknown as Server
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn({} as never)) as never)
+    // Dedup: appendStep returns a PRE-EXISTING row whose id is NOT the one the
+    // sink generated for this call — the signal that this was a deduped replay.
+    const deduped = {
+      id: "step_already_there",
+      sessionId: "binv_1",
+      stepNumber: 1,
+      stepType: AgentStepTypes.THINKING,
+    } as unknown as AgentSessionStep
+    spyOn(AgentSessionRepository, "appendStep").mockResolvedValue(deduped)
+    const updateCurrentStepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(
+      undefined as never
+    )
+    const { projector, sink } = createBotInvocationTraceProjector({
+      pool: {} as Pool,
+      io,
+      workspaceId: "ws_1",
+      sessionId: "binv_1",
+      streamId: "stream_1",
+      triggerMessageId: "msg_trigger",
+      personaName: "Pi",
+    })
+
+    for (const event of botInvocationStepEvents({ stepType: AgentStepTypes.TOOL_CALL, content: "{}" })) {
+      await projector.handle(event)
+    }
+
+    // No backward flicker of the live indicators, no current_step_type regress —
+    // the row was already broadcast when it first landed.
+    expect(updateCurrentStepType).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+    // …but the response still resolves to the pre-existing row (idempotent).
+    expect(sink.lastStep?.id).toBe("step_already_there")
   })
 
   it("records a thinking frame as a single completed THINKING row", async () => {
