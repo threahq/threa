@@ -65,11 +65,17 @@ export function InAppLinkPreviewCard({
   }, [workspaceId, preview.id, hydrate])
 
   if (loading) {
+    // Mirror the resolved card's header-bar + body so resolving doesn't shift
+    // following timeline rows (INV-21).
     return (
-      <div className="rounded-lg border bg-card max-w-md animate-pulse">
-        <div className="flex items-center gap-2 px-3 py-2">
+      <div className="overflow-hidden rounded-lg border bg-card max-w-md animate-pulse">
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/30">
           <div className="h-4 w-4 rounded bg-muted" />
+          <div className="h-3 w-20 rounded bg-muted" />
+        </div>
+        <div className="px-3 py-2 space-y-1.5">
           <div className="h-3 w-32 rounded bg-muted" />
+          <div className="h-3 w-full rounded bg-muted" />
         </div>
       </div>
     )
