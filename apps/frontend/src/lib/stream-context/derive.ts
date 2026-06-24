@@ -170,10 +170,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         refCount: 1,
       })
     }
-    const addBareLink = (rawUrl: string) => {
-      // Plain-text URLs picked out of node text can carry trailing prose
-      // punctuation ("see https://x."); `link` mark hrefs come through clean.
-      const url = rawUrl.replace(/[.,;:!?]+$/, "")
+    const addBareLink = (url: string) => {
       const norm = normalizeUrl(url)
       if (seenInMessage.has(norm)) return
       seenInMessage.add(norm)

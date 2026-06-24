@@ -301,6 +301,24 @@ describe("collectLinkUrls", () => {
     expect(collectLinkUrls(doc)).toEqual(["https://example.com/docs", "https://example.org/x"])
   })
 
+  it("preserves a link mark href verbatim, even when it ends in significant punctuation", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [linkText("wiki", "https://example.com/Yahoo!")] }],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com/Yahoo!"])
+  })
+
+  it("trims trailing sentence punctuation from a plain-text URL only", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "see https://example.com/docs." }] }],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com/docs"])
+  })
+
   it("does not scan a linked text node's display text for stray URLs", () => {
     const doc: JSONContent = {
       type: "doc",

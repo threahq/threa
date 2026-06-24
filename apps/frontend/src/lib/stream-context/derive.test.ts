@@ -148,6 +148,18 @@ describe("deriveStreamContext", () => {
     expect(links[0].url).toBe("https://example.com")
   })
 
+  it("keeps an authoritative link href verbatim when its last character is significant", () => {
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", {
+        contentJson: linkDoc("https://example.com/Yahoo!"),
+      }),
+    ]
+
+    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
+    expect(links).toHaveLength(1)
+    expect(links[0].url).toBe("https://example.com/Yahoo!")
+  })
+
   it("dedups a repeated link by URL, keeps the newest occurrence, and counts refs", () => {
     const events = [
       messageEvent("2026-06-23T09:00:00.000Z", {

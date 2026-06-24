@@ -114,13 +114,15 @@ export function collectGiphyEmbeds(content: JSONContent): GiphyEmbedRef[] {
  * INCLUDING duplicates — callers dedup and ref-count.
  *
  * Reads from the node tree, never serialized markdown: a `link` mark's `href`
- * is the authoritative target and is immune to the emphasis markers that
- * contaminate a regex over markdown (a bold URL serializes to `**https://x**`,
- * whose trailing `**` leaks into the captured string). Text nodes that are NOT
- * inside a link mark are scanned for plain-text URLs (pasted without an
- * autolink); their raw `.text` carries no markdown syntax, so that scan stays
- * clean. Custom-protocol links (`giphy:`/`memo:`/`attachment:`/`quote:`) are
- * excluded by the `https?:` gate.
+ * is the authoritative target — returned verbatim — and is immune to the
+ * emphasis markers that contaminate a regex over markdown (a bold URL
+ * serializes to `**https://x**`, whose trailing `**` leaks into the captured
+ * string). Text nodes that are NOT inside a link mark are scanned for plain-text
+ * URLs (pasted without an autolink); those pick up trailing sentence
+ * punctuation from the prose around them, so it's trimmed — a thing we must
+ * never do to an authoritative href, whose final `!`/`.`/etc. may be
+ * significant. Custom-protocol links (`giphy:`/`memo:`/`attachment:`/`quote:`)
+ * are excluded by the `https?:` gate.
  */
 export function collectLinkUrls(content: JSONContent): string[] {
   const urls: string[] = []
@@ -134,7 +136,7 @@ export function collectLinkUrls(content: JSONContent): string[] {
           if (typeof href === "string" && /^https?:\/\//i.test(href)) urls.push(href)
         }
       } else {
-        for (const match of node.text.matchAll(BARE_URL_IN_TEXT)) urls.push(match[0])
+        for (const match of node.text.matchAll(BARE_URL_IN_TEXT)) urls.push(match[0].replace(/[.,;:!?]+$/, ""))
       }
     }
     if (node.content) {
