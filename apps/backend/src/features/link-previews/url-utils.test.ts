@@ -5,6 +5,7 @@ import {
   detectContentType,
   isBlockedUrl,
   parseMessagePermalink,
+  parseInAppLink,
   parseGitHubUrl,
   parseLinearUrl,
 } from "./url-utils"
@@ -291,6 +292,49 @@ describe("parseMessagePermalink", () => {
 
   test("returns null for invalid URL", () => {
     expect(parseMessagePermalink("not-a-url", origins)).toBeNull()
+  })
+})
+
+describe("parseInAppLink", () => {
+  const origins = ["https://app.threa.io", "http://localhost:5173"]
+
+  test("parses a message link (stream path with ?m=)", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/s/stream_456?m=msg_789", origins)).toEqual({
+      kind: "message",
+      workspaceId: "ws_123",
+      streamId: "stream_456",
+      messageId: "msg_789",
+    })
+  })
+
+  test("parses a bare stream link (no ?m=)", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/s/stream_456", origins)).toEqual({
+      kind: "stream",
+      workspaceId: "ws_123",
+      streamId: "stream_456",
+    })
+  })
+
+  test("parses a memo link", () => {
+    expect(parseInAppLink("http://localhost:5173/w/ws_abc/memos/memo_1", origins)).toEqual({
+      kind: "memo",
+      workspaceId: "ws_abc",
+      memoId: "memo_1",
+    })
+  })
+
+  test("returns null for unrecognized origin", () => {
+    expect(parseInAppLink("https://evil.com/w/ws_123/s/stream_456", origins)).toBeNull()
+    expect(parseInAppLink("https://evil.com/w/ws_123/memos/memo_1", origins)).toBeNull()
+  })
+
+  test("returns null for non-resource paths", () => {
+    expect(parseInAppLink("https://app.threa.io/w/ws_123/drafts", origins)).toBeNull()
+    expect(parseInAppLink("https://app.threa.io/w/ws_123", origins)).toBeNull()
+  })
+
+  test("returns null for invalid URL", () => {
+    expect(parseInAppLink("not-a-url", origins)).toBeNull()
   })
 })
 

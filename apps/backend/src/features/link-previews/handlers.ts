@@ -44,14 +44,15 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
 
     /**
      * GET /api/workspaces/:workspaceId/link-previews/:linkPreviewId/resolve
-     * Returns different data depending on the viewer's access tier.
+     * Resolves an in-app link (message, stream, or memo) to viewer-scoped,
+     * access-tiered data. Returns different data depending on the viewer's access tier.
      */
-    async resolveMessageLink(req: Request, res: Response, next: NextFunction) {
+    async resolveInAppLink(req: Request, res: Response, next: NextFunction) {
       try {
         const { workspaceId, linkPreviewId } = req.params
         const userId = req.user!.id
 
-        const data = await linkPreviewService.resolveMessageLink(workspaceId, userId, linkPreviewId)
+        const data = await linkPreviewService.resolveInAppLink(workspaceId, userId, linkPreviewId)
         if (!data) {
           res.status(404).json({ error: "Not found" })
           return

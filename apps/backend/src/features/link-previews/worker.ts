@@ -14,7 +14,7 @@ import {
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
 } from "./config"
-import { isRedditUrl, resolveFetchUserAgent } from "@threa/types"
+import { isInAppLinkContentType, isRedditUrl, resolveFetchUserAgent } from "@threa/types"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const log = logger.child({ module: "link-preview-worker" })
@@ -534,7 +534,7 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
         if (!existing) {
           return { id: p.id, skipped: true }
         }
-        if (existing.contentType === "message_link") {
+        if (isInAppLinkContentType(existing.contentType)) {
           return { id: p.id, skipped: true }
         }
         const isGitHubUrl = parseGitHubUrl(p.url) !== null

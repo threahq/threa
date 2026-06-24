@@ -1,5 +1,6 @@
 import {
   categoryFromMime,
+  isInAppLinkContentType,
   type AttachmentSummary,
   type CapturedMemoSummary,
   type JSONContent,
@@ -139,9 +140,9 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     // ── Links: rich previews first, then any bare markdown URLs not covered.
     const seenInMessage = new Set<string>()
     for (const preview of payload.linkPreviews ?? []) {
-      // `message_link` previews point at other in-app messages, not the web —
-      // they belong to "related", not the external-links list.
-      if (preview.contentType === "message_link") continue
+      // In-app links (message / stream / memo) point at other workspace
+      // resources, not the web — they belong to "related", not the external-links list.
+      if (isInAppLinkContentType(preview.contentType)) continue
       // The href renders into an <a> (React does not sanitize href), and unlike
       // the bare/markdown passes this URL never went through an http(s) regex —
       // gate the scheme so a non-http preview url can't reach the anchor.

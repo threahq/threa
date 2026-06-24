@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { LinkPreviewCard } from "./link-preview-card"
-import { MessageLinkPreviewCard } from "./message-link-preview-card"
-import type { LinkPreviewSummary } from "@threa/types"
+import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
+import { isInAppLinkContentType, type LinkPreviewSummary } from "@threa/types"
 
 const DEFAULT_VISIBLE_COUNT = 3
 
@@ -96,11 +96,12 @@ export function LinkPreviewList({
   return (
     <div className={cn("flex flex-col gap-2 mt-2", className)}>
       {displayedPreviews.map((preview) => {
-        // Message link previews use a specialized card with permission-checked resolve
-        if (preview.contentType === "message_link") {
+        // In-app links (message / stream / memo) use a specialized card with
+        // permission-checked resolve instead of a network-fetched web card.
+        if (isInAppLinkContentType(preview.contentType)) {
           return (
             <PreviewRenderBoundary key={preview.id}>
-              <MessageLinkPreviewCard
+              <InAppLinkPreviewCard
                 preview={preview}
                 workspaceId={workspaceId}
                 messageId={messageId}

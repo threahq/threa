@@ -6,6 +6,15 @@ export interface MessagePermalink {
   messageId: string
 }
 
+/**
+ * A parsed reference to an in-app resource linked from a message.
+ * The `kind` selects which resolver and preview card the link drives.
+ */
+export type InAppLinkRef =
+  | { kind: "message"; workspaceId: string; streamId: string; messageId: string }
+  | { kind: "stream"; workspaceId: string; streamId: string }
+  | { kind: "memo"; workspaceId: string; memoId: string }
+
 export type LinearUrlMatch =
   | {
       type: "linear_issue"
@@ -87,6 +96,40 @@ export function parseMessagePermalink(url: string, appOrigins: string[]): Messag
       streamId: pathMatch[2],
       messageId,
     }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Parse any in-app resource link (message, stream, or memo) from a URL.
+ * Recognized shapes (origin must be a known app origin):
+ * - `{origin}/w/{workspaceId}/s/{streamId}?m={messageId}` → message
+ * - `{origin}/w/{workspaceId}/s/{streamId}` → stream
+ * - `{origin}/w/{workspaceId}/memos/{memoId}` → memo
+ * Returns null if the origin isn't recognized or no shape matches.
+ */
+export function parseInAppLink(url: string, appOrigins: string[]): InAppLinkRef | null {
+  try {
+    const parsed = new URL(url)
+    if (!appOrigins.some((o) => o === parsed.origin)) return null
+
+    const streamMatch = parsed.pathname.match(/^\/w\/([^/]+)\/s\/([^/]+)$/)
+    if (streamMatch) {
+      const [, workspaceId, streamId] = streamMatch
+      const messageId = parsed.searchParams.get("m")
+      return messageId
+        ? { kind: "message", workspaceId, streamId, messageId }
+        : { kind: "stream", workspaceId, streamId }
+    }
+
+    const memoMatch = parsed.pathname.match(/^\/w\/([^/]+)\/memos\/([^/]+)$/)
+    if (memoMatch) {
+      const [, workspaceId, memoId] = memoMatch
+      return { kind: "memo", workspaceId, memoId }
+    }
+
+    return null
   } catch {
     return null
   }

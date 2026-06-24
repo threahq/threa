@@ -1282,15 +1282,16 @@ export interface LinearPreview {
   fetchedAt: string
 }
 
-/** Access tiers for message link previews, resolved per-viewer at render time. */
-export type MessageLinkAccessTier = "full" | "private" | "cross_workspace"
+/** Access tiers for in-app link previews, resolved per-viewer at render time. */
+export type InAppLinkAccessTier = "full" | "private" | "cross_workspace"
 
 /**
- * Resolved message link preview data returned by the permission-checked resolve endpoint.
+ * Resolved in-app message link data returned by the permission-checked resolve endpoint.
  * Content fields are only populated for the "full" access tier.
  */
 export interface MessageLinkPreviewData {
-  accessTier: MessageLinkAccessTier
+  kind: "message"
+  accessTier: InAppLinkAccessTier
   /** Author display name (full tier only) */
   authorName?: string
   /** Author avatar URL path (full tier only) */
@@ -1302,3 +1303,47 @@ export interface MessageLinkPreviewData {
   /** Whether the target message has been deleted */
   deleted?: boolean
 }
+
+/**
+ * Resolved in-app stream link data. Content fields are only populated for the
+ * "full" access tier; a viewer without access sees just the tier.
+ */
+export interface StreamLinkPreviewData {
+  kind: "stream"
+  accessTier: InAppLinkAccessTier
+  /** Resolved stream display label (full tier only) */
+  streamName?: string
+  /** Stream type — channel / scratchpad / dm (full tier only) */
+  streamType?: StreamType
+  /** Visibility — public / private (full tier only) */
+  visibility?: Visibility
+  /** Markdown projection of the stream description (full tier only) */
+  description?: string
+  /** Whether the target stream no longer exists / is archived */
+  deleted?: boolean
+}
+
+/**
+ * Resolved in-app memo link data. Content fields are only populated for the
+ * "full" access tier.
+ */
+export interface MemoLinkPreviewData {
+  kind: "memo"
+  accessTier: InAppLinkAccessTier
+  /** Memo title (full tier only) */
+  title?: string
+  /** Memo abstract (full tier only) */
+  abstract?: string
+  /** Knowledge type of the memo (full tier only) */
+  knowledgeType?: KnowledgeType
+  /** Source stream display label the memo was captured from (full tier only) */
+  sourceStreamName?: string
+  /** Whether the target memo no longer exists */
+  deleted?: boolean
+}
+
+/**
+ * Discriminated union returned by the permission-checked in-app link resolve
+ * endpoint. The `kind` mirrors the link preview's in-app content type.
+ */
+export type InAppLinkPreviewData = MessageLinkPreviewData | StreamLinkPreviewData | MemoLinkPreviewData
