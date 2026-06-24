@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threa/types"
 import {
   collectAttachmentReferenceIds,
+  collectGiphyEmbeds,
   collectLinkUrls,
   collectMentionSlugs,
   collectQuoteReplyMessageIds,
@@ -338,5 +339,59 @@ describe("collectLinkUrls", () => {
     }
 
     expect(collectLinkUrls(doc)).toEqual([])
+  })
+})
+
+const giphyEmbed = (giphyUrl: string, attrs: Record<string, unknown> = {}): JSONContent => ({
+  type: "giphyEmbed",
+  attrs: { giphyUrl, ...attrs },
+})
+
+describe("collectGiphyEmbeds", () => {
+  it("reads giphy attrs straight from the node, in document order", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [giphyEmbed("https://media.giphy.com/a.gif", { title: "first", width: 2, height: 1 })],
+        },
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/b.gif")] },
+      ],
+    }
+
+    expect(collectGiphyEmbeds(doc)).toEqual([
+      { giphyUrl: "https://media.giphy.com/a.gif", title: "first", width: 2, height: 1 },
+      { giphyUrl: "https://media.giphy.com/b.gif", title: "", width: undefined, height: undefined },
+    ])
+  })
+
+  it("dedupes by giphyUrl, first title wins", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/a.gif", { title: "keep" })] },
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/a.gif", { title: "drop" })] },
+      ],
+    }
+
+    expect(collectGiphyEmbeds(doc)).toEqual([
+      { giphyUrl: "https://media.giphy.com/a.gif", title: "keep", width: undefined, height: undefined },
+    ])
+  })
+
+  it("ignores embeds with a missing or empty giphyUrl", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "giphyEmbed", attrs: { title: "no url" } }] },
+        { type: "paragraph", content: [giphyEmbed("", { title: "empty" })] },
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/real.gif")] },
+      ],
+    }
+
+    expect(collectGiphyEmbeds(doc)).toEqual([
+      { giphyUrl: "https://media.giphy.com/real.gif", title: "", width: undefined, height: undefined },
+    ])
   })
 })

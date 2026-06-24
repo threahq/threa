@@ -63,6 +63,53 @@ export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
 const BARE_URL_IN_TEXT = /https?:\/\/[^\s<>()[\]]+/g
 
 /**
+ * An inline Giphy embed lifted from the node tree. Mirrors the `giphyEmbed`
+ * node attrs; `title` falls back to `""` when the node carried none.
+ */
+export interface GiphyEmbedRef {
+  giphyUrl: string
+  title: string
+  width?: number
+  height?: number
+}
+
+/**
+ * Inline Giphy GIFs (`giphyEmbed` nodes), de-duplicated by `giphyUrl` with the
+ * first occurrence's title winning. Reads the node attrs directly rather than
+ * re-parsing the `[title](giphy:…)` markdown serialization.
+ */
+export function collectGiphyEmbeds(content: JSONContent): GiphyEmbedRef[] {
+  const refs: GiphyEmbedRef[] = []
+  const seen = new Set<string>()
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "giphyEmbed") {
+      const giphyUrl = node.attrs?.giphyUrl
+      if (typeof giphyUrl === "string" && giphyUrl.length > 0 && !seen.has(giphyUrl)) {
+        seen.add(giphyUrl)
+        const title = node.attrs?.title
+        const width = node.attrs?.width
+        const height = node.attrs?.height
+        refs.push({
+          giphyUrl,
+          title: typeof title === "string" ? title : "",
+          width: typeof width === "number" ? width : undefined,
+          height: typeof height === "number" ? height : undefined,
+        })
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return refs
+}
+
+/**
  * External (http/https) URLs the document points at, in document order,
  * INCLUDING duplicates — callers dedup and ref-count.
  *

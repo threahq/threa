@@ -6,9 +6,8 @@ import {
   type LinkPreviewSummary,
   type ThreadSummary,
 } from "@threa/types"
-import { collectLinkUrls } from "@threa/prosemirror"
+import { collectGiphyEmbeds, collectLinkUrls } from "@threa/prosemirror"
 import { stripMarkdownToInline } from "@/lib/markdown"
-import { extractGiphyRefs } from "@/lib/markdown/giphy-refs"
 import type { CachedEvent } from "@/db"
 import {
   CONTEXT_CATEGORIES,
@@ -33,21 +32,6 @@ interface MessageEventPayload {
 interface MemosCapturedPayload {
   memos?: CapturedMemoSummary[]
 }
-
-// Fallback only (events cached before `contentJson` reached the payload). The
-// primary path walks the node tree via `collectLinkUrls`, which reads `link`
-// mark hrefs directly and is immune to the emphasis markers that contaminate a
-// regex over serialized markdown — a bold URL serializes to `**https://x**`,
-// and the bare pattern below would otherwise capture the trailing `**`.
-
-// Mirrors the markdown link serialization (`[text](url)`), narrowed to web
-// URLs so the custom protocols (`giphy:`, `memo:`, `attachment:`, `quote:`)
-// and bare `#channel` / `@mention` code spans never match.
-const MARKDOWN_LINK_PATTERN = /\[(?:\\.|[^\\\]])*\]\((https?:\/\/[^)\s]+)\)/g
-
-// A web URL pasted as plain text (no link mark, no preview). The markdown-link
-// pass runs first and records its URLs, so this only adds genuinely-bare ones.
-const BARE_URL_PATTERN = /https?:\/\/[^\s<>()[\]]+/g
 
 const SNIPPET_MAX = 120
 
@@ -187,9 +171,9 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
       })
     }
     const addBareLink = (rawUrl: string) => {
-      // Trailing prose punctuation and any markdown emphasis run that leaked in
-      // via the serialized-markdown fallback (`**`, `*`, `~`, `` ` ``).
-      const url = rawUrl.replace(/[.,;:!?*~`]+$/, "")
+      // Plain-text URLs picked out of node text can carry trailing prose
+      // punctuation ("see https://x."); `link` mark hrefs come through clean.
+      const url = rawUrl.replace(/[.,;:!?]+$/, "")
       const norm = normalizeUrl(url)
       if (seenInMessage.has(norm)) return
       seenInMessage.add(norm)
@@ -214,12 +198,13 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         refCount: 1,
       })
     }
-    if (payload.contentJson) {
-      for (const url of collectLinkUrls(payload.contentJson)) addBareLink(url)
-    } else {
-      const markdown = payload.contentMarkdown ?? ""
-      for (const match of markdown.matchAll(MARKDOWN_LINK_PATTERN)) addBareLink(match[1])
-      for (const match of markdown.matchAll(BARE_URL_PATTERN)) addBareLink(match[0])
+    // Body links + inline media read from the structured document (INV-58),
+    // never the serialized markdown — a regex over `**[x](url)**` leaks the
+    // bold markers into the URL. E2E messages whose content isn't decrypted
+    // carry a placeholder doc and simply contribute nothing here.
+    const contentJson = payload.contentJson
+    if (contentJson) {
+      for (const url of collectLinkUrls(contentJson)) addBareLink(url)
     }
 
     // ── Attachments → media (image/gif/video) or files (everything else).
@@ -263,7 +248,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     }
 
     // ── Inline Giphy GIFs (not attachments) → media.
-    for (const ref of extractGiphyRefs(payload.contentMarkdown ?? "")) {
+    for (const ref of contentJson ? collectGiphyEmbeds(contentJson) : []) {
       if (media.has(ref.giphyUrl)) continue
       media.set(ref.giphyUrl, {
         key: `media:${ref.giphyUrl}`,

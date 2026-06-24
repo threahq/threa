@@ -40,9 +40,11 @@ export {
 } from "./pointer-urls"
 export {
   collectAttachmentReferenceIds,
+  collectGiphyEmbeds,
   collectLinkUrls,
   collectMentionSlugs,
   collectQuoteReplyMessageIds,
+  type GiphyEmbedRef,
 } from "./extractors"
 
 export type { JSONContent, JSONContentMark, ThreaDocument } from "@threa/types"

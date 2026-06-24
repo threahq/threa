@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import { buildGiphyHref } from "@threa/prosemirror"
+import type { JSONContent } from "@threa/types"
 import type { CachedEvent } from "@/db"
 import { deriveStreamContext } from "./derive"
 import type { FileContextItem, LinkContextItem, MediaContextItem, ThreadContextItem } from "./types"
@@ -8,6 +8,24 @@ let seq = 0
 beforeEach(() => {
   seq = 0
 })
+
+/** A one-paragraph doc whose text nodes carry `link` marks for each URL. */
+function linkDoc(...urls: string[]): JSONContent {
+  return {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: urls.map((url) => ({ type: "text", text: url, marks: [{ type: "link", attrs: { href: url } }] })),
+      },
+    ],
+  }
+}
+
+/** A one-paragraph doc holding a single inline Giphy embed. */
+function giphyDoc(giphyUrl: string, attrs: { title?: string; width?: number; height?: number } = {}): JSONContent {
+  return { type: "doc", content: [{ type: "giphyEmbed", attrs: { giphyUrl, ...attrs } }] }
+}
 function messageEvent(createdAt: string, payload: Record<string, unknown>): CachedEvent {
   seq += 1
   return {
@@ -50,10 +68,26 @@ describe("deriveStreamContext", () => {
     expect(result.counts).toEqual({ link: 0, media: 0, file: 0, memo: 0, thread: 0 })
   })
 
-  it("extracts external links from rich previews and bare markdown, with a github badge", () => {
+  it("extracts external links from rich previews and the document body, with a github badge", () => {
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
-        contentMarkdown: "see [the PR](https://github.com/acme/repo/pull/42) and https://example.com/docs",
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "see " },
+                {
+                  type: "text",
+                  text: "the PR",
+                  marks: [{ type: "link", attrs: { href: "https://github.com/acme/repo/pull/42" } }],
+                },
+                { type: "text", text: " and https://example.com/docs" },
+              ],
+            },
+          ],
+        },
         linkPreviews: [
           {
             id: "lp_1",
@@ -80,18 +114,17 @@ describe("deriveStreamContext", () => {
     expect(pr?.badge).toBe("PR")
     expect(pr?.sourceMessageId).toBe("msg_1")
 
-    // The bare markdown URL with no preview still surfaces.
+    // The plain-text URL in the body with no preview still surfaces.
     const bare = items.find((i): i is LinkContextItem => i.category === "link" && i.url.includes("example.com"))
     expect(bare?.title).toBeNull()
     expect(bare?.badge).toBeNull()
   })
 
-  it("reads links from contentJson, so a bold URL is not broken by trailing ** (markdown-parse bug)", () => {
+  it("reads links from contentJson, so a bold link keeps a clean URL (no trailing ** leak)", () => {
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
-        // What a markdown scan would see for a bold autolink — the `**` must
-        // NOT leak into the surfaced URL.
-        contentMarkdown: "**[https://example.com](https://example.com)**",
+        // Serialized, this is `**[https://example.com](https://example.com)**`;
+        // reading the `link` mark's href keeps the `**` out of the URL.
         contentJson: {
           type: "doc",
           content: [
@@ -115,25 +148,13 @@ describe("deriveStreamContext", () => {
     expect(links[0].url).toBe("https://example.com")
   })
 
-  it("falls back to markdown when contentJson is absent, stripping leaked emphasis markers", () => {
-    const events = [
-      messageEvent("2026-06-23T10:00:00.000Z", {
-        contentMarkdown: "**https://example.com**",
-      }),
-    ]
-
-    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
-    expect(links).toHaveLength(1)
-    expect(links[0].url).toBe("https://example.com")
-  })
-
   it("dedups a repeated link by URL, keeps the newest occurrence, and counts refs", () => {
     const events = [
       messageEvent("2026-06-23T09:00:00.000Z", {
-        contentMarkdown: "[old](https://example.com/page/)",
+        contentJson: linkDoc("https://example.com/page/"),
       }),
       messageEvent("2026-06-23T11:00:00.000Z", {
-        contentMarkdown: "[new](https://example.com/page)",
+        contentJson: linkDoc("https://example.com/page"),
       }),
     ]
 
@@ -191,8 +212,15 @@ describe("deriveStreamContext", () => {
   })
 
   it("extracts inline Giphy GIFs as media", () => {
-    const href = buildGiphyHref({ giphyUrl: "https://media.giphy.com/media/abc/giphy.gif", width: 200, height: 150 })
-    const events = [messageEvent("2026-06-23T10:00:00.000Z", { contentMarkdown: `[party](${href})` })]
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", {
+        contentJson: giphyDoc("https://media.giphy.com/media/abc/giphy.gif", {
+          title: "party",
+          width: 200,
+          height: 150,
+        }),
+      }),
+    ]
     const media = deriveStreamContext(events).items.filter((i): i is MediaContextItem => i.category === "media")
     expect(media).toHaveLength(1)
     expect(media[0].mediaKind).toBe("gif")
@@ -244,7 +272,7 @@ describe("deriveStreamContext", () => {
 
   it("orders all items newest-first across categories", () => {
     const events = [
-      messageEvent("2026-06-23T08:00:00.000Z", { contentMarkdown: "[a](https://a.example.com)" }),
+      messageEvent("2026-06-23T08:00:00.000Z", { contentJson: linkDoc("https://a.example.com") }),
       messageEvent("2026-06-23T09:00:00.000Z", {
         attachments: [{ id: "att_1", filename: "x.pdf", mimeType: "application/pdf", sizeBytes: 10 }],
       }),
