@@ -209,6 +209,12 @@ export function useUnreadCounts(workspaceId: string) {
 
   const markAsRead = useCallback(
     (streamId: string, lastEventId: string, opts?: { partial?: boolean }) => {
+      // Never advance the read pointer to an optimistic event: its temp_ id has no
+      // server stream_events row, so persisting it pins the watermark to sequence 0
+      // and reports the whole stream — including the user's own messages — as
+      // unread. The auto-read effect re-fires with the real id once the server echo
+      // swaps it in.
+      if (lastEventId.startsWith("temp_")) return
       markAsReadMutation.mutate({ streamId, lastEventId, partial: opts?.partial })
     },
     [markAsReadMutation]
