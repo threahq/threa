@@ -79,7 +79,7 @@ function mountBoard(
     if (fail) throw new Error("boom")
     return { posts, nextCursor }
   })
-  const getMessages = vi.fn(async () => {
+  const getBoardMessages = vi.fn(async () => {
     if (failMessages) throw new Error("boom")
     return []
   })
@@ -89,7 +89,7 @@ function mountBoard(
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ServicesProvider services={{ conversations: { listByWorkspace, getMessages } as never }}>
+        <ServicesProvider services={{ conversations: { listByWorkspace, getBoardMessages } as never }}>
           <SidebarProvider>
             <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board`]}>
               <Routes>

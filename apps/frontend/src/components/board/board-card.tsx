@@ -8,6 +8,8 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { LinkPreviewList } from "@/components/timeline/link-preview-list"
+import { MemoPreviewList } from "@/components/timeline/memo-preview-list"
+import { GiphyPreviewList } from "@/components/timeline/giphy-preview-list"
 import { MessageReactions } from "@/components/timeline/message-reactions"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -83,8 +85,8 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     isError: expandFailed,
     refetch: refetchMessages,
   } = useQuery({
-    queryKey: conversationKeys.messages(conversation.id),
-    queryFn: () => conversationService.getMessages(workspaceId, conversation.id),
+    queryKey: conversationKeys.boardMessages(conversation.id),
+    queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
     enabled: expanded,
     staleTime: 60_000,
   })
@@ -193,6 +195,10 @@ function PostMessage({ workspaceId, streamId, message, authorName, currentUserId
           hydrateFromApi={false}
         />
       )}
+      {/* Memo + giphy embeds are parsed from the markdown, so they render here
+          just like the timeline — no extra payload needed. */}
+      <MemoPreviewList contentMarkdown={message.contentMarkdown} />
+      <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
     </>
   )
   // The body renders real message content (mentions, attachments, link previews),

@@ -4,8 +4,8 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
-import { AttachmentRepository, toAttachmentSummary, type Attachment } from "../attachments"
-import { LinkPreviewRepository, toLinkPreviewSummary, type LinkPreview } from "../link-previews"
+import { AttachmentRepository, toAttachmentSummary } from "../attachments"
+import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { conversationFeedbackId } from "../../lib/id"
@@ -144,32 +144,17 @@ export class ConversationService {
     const ids = [...idsToFetch]
     const messageById: Map<string, Message> =
       ids.length > 0 ? await MessageRepository.findByIds(this.pool, ids) : new Map()
-    // Rich content the message row doesn't carry — attachments (images, files,
-    // gallery/download) and completed link previews — keyed by message id so the
-    // board renders posts with the same richness as the timeline.
-    const attachmentsByMessage: Map<string, Attachment[]> =
-      ids.length > 0 ? await AttachmentRepository.findByMessageIds(this.pool, ids) : new Map()
-    const linkPreviewsByMessage: Map<string, LinkPreview[]> =
-      ids.length > 0 ? await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids) : new Map()
-
-    const buildPostMessage = (message: Message): BoardPostMessage => {
-      const attachments = (attachmentsByMessage.get(message.id) ?? []).map(toAttachmentSummary)
-      const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
-        .filter((p) => p.status === "completed")
-        .map((p, i) => toLinkPreviewSummary(p, i))
-      return toBoardPostMessage(message, attachments, linkPreviews)
-    }
+    const hydratedById = await this.hydrateBoardMessages(workspaceId, [...messageById.values()])
 
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!
-      const opening = plan.originId ? messageById.get(plan.originId) : undefined
+      const opening = plan.originId ? hydratedById.get(plan.originId) : undefined
       const recentMessages = plan.recentIds
-        .map((id) => messageById.get(id))
-        .filter((m): m is Message => Boolean(m))
-        .map(buildPostMessage)
+        .map((id) => hydratedById.get(id))
+        .filter((m): m is BoardPostMessage => Boolean(m))
       return {
         conversation,
-        openingMessage: opening ? buildPostMessage(opening) : null,
+        openingMessage: opening ?? null,
         recentMessages,
         totalReplies: plan.totalReplies,
       }
@@ -180,6 +165,42 @@ export class ConversationService {
     const last = conversations.length === limit ? conversations[conversations.length - 1] : null
     const nextCursor = last ? `${last.lastActivityAt.toISOString()}|${last.id}` : null
     return { posts, nextCursor }
+  }
+
+  /**
+   * Enrich a set of messages with their attachments + completed link previews —
+   * the rich content the message row doesn't carry. One batch read each (INV-56).
+   * Shared by the board feed and the board's on-expand message fetch so both
+   * render the same richness as the timeline.
+   */
+  private async hydrateBoardMessages(workspaceId: string, messages: Message[]): Promise<Map<string, BoardPostMessage>> {
+    const byId = new Map<string, BoardPostMessage>()
+    const ids = messages.map((m) => m.id)
+    if (ids.length === 0) return byId
+    const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
+    const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
+    for (const message of messages) {
+      const attachments = (attachmentsByMessage.get(message.id) ?? []).map(toAttachmentSummary)
+      const linkPreviews = (linkPreviewsByMessage.get(message.id) ?? [])
+        .filter((p) => p.status === "completed")
+        .map((p, i) => toLinkPreviewSummary(p, i))
+      byId.set(message.id, toBoardPostMessage(message, attachments, linkPreviews))
+    }
+    return byId
+  }
+
+  /**
+   * The full conversation as board post messages (enriched with attachments +
+   * link previews), in message order — backs the board card's "N more" expand so
+   * the revealed middle messages read exactly like the opening + recent run.
+   */
+  async getBoardMessages(workspaceId: string, conversationId: string): Promise<BoardPostMessage[]> {
+    const conversation = await ConversationRepository.findById(this.pool, conversationId)
+    if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return []
+    const messagesMap = await MessageRepository.findByIds(this.pool, conversation.messageIds)
+    const ordered = conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => Boolean(m))
+    const hydratedById = await this.hydrateBoardMessages(workspaceId, ordered)
+    return conversation.messageIds.map((id) => hydratedById.get(id)).filter((m): m is BoardPostMessage => Boolean(m))
   }
 
   async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {

@@ -485,6 +485,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId/conversations", ...authed, conversation.listByStream)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.getById)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/messages", ...authed, conversation.getMessages)
+  app.get(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/board-messages",
+    ...authed,
+    conversation.getBoardMessages
+  )
   app.post(
     "/api/workspaces/:workspaceId/conversations/:conversationId/messages/:messageId/reassign",
     ...authed,
