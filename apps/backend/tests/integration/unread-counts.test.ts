@@ -3,6 +3,7 @@ import { Pool } from "pg"
 import { withTransaction } from "./setup"
 import { StreamService, StreamEventRepository, StreamMemberRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
+import { ActivityService } from "../../src/features/activity"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
 import { setupTestDatabase, testMessageContent } from "./setup"
 
@@ -10,11 +11,13 @@ describe("Unread Counts", () => {
   let pool: Pool
   let streamService: StreamService
   let eventService: EventService
+  let activityService: ActivityService
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
     streamService = new StreamService(pool)
     eventService = new EventService(pool)
+    activityService = new ActivityService({ pool })
   })
 
   afterAll(async () => {
@@ -22,6 +25,7 @@ describe("Unread Counts", () => {
   })
 
   beforeEach(async () => {
+    await pool.query("DELETE FROM user_activity")
     await pool.query("DELETE FROM reactions")
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
@@ -651,6 +655,99 @@ describe("Unread Counts", () => {
 
     test("returns an empty set for empty memberIds", async () => {
       expect(await StreamMemberRepository.membersReadThrough(pool, streamId(), [], 1n)).toEqual(new Set())
+    })
+  })
+
+  // End-to-end coverage for the born-read insert path: a message notification
+  // for a message the recipient has ALREADY read must land already read
+  // (read_at set), so the read-time clear can't race ahead of the async row and
+  // leave it stuck unread. Exercises the real service → repository UNNEST insert.
+  describe("born-read activity insert", () => {
+    async function setupDmWithMembers(): Promise<{
+      testStreamId: string
+      testWorkspaceId: string
+      authorId: string
+      readerId: string
+    }> {
+      const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
+      const authorId = userId()
+      const readerId = userId()
+
+      await withTransaction(pool, async (client) => {
+        await client.query(
+          `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'dm', 'private', $3)`,
+          [testStreamId, testWorkspaceId, authorId]
+        )
+        await StreamMemberRepository.insert(client, testStreamId, authorId)
+        await StreamMemberRepository.insert(client, testStreamId, readerId)
+      })
+
+      return { testStreamId, testWorkspaceId, authorId, readerId }
+    }
+
+    async function readActivityReadAt(userIdValue: string, messageIdValue: string): Promise<Date | null> {
+      const result = await pool.query<{ read_at: Date | null }>(
+        `SELECT read_at FROM user_activity WHERE user_id = $1 AND message_id = $2 AND activity_type = 'message'`,
+        [userIdValue, messageIdValue]
+      )
+      expect(result.rows).toHaveLength(1)
+      return result.rows[0].read_at
+    }
+
+    test("recipient who already read through the message gets a born-read row", async () => {
+      const { testStreamId, testWorkspaceId, authorId, readerId } = await setupDmWithMembers()
+
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId,
+        authorType: "user",
+        ...testMessageContent("already read"),
+      })
+
+      const events = await StreamEventRepository.list(pool, testStreamId)
+      await streamService.markAsRead(testWorkspaceId, testStreamId, readerId, events[0].id)
+
+      const activities = await activityService.processMessageNotifications({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        messageId: message.id,
+        actorId: authorId,
+        actorType: "user",
+        contentMarkdown: "already read",
+        excludeUserIds: new Set(),
+      })
+
+      const readerRow = activities.find((a) => a.userId === readerId)
+      expect(readerRow?.readAt).not.toBeNull()
+      expect(await readActivityReadAt(readerId, message.id)).not.toBeNull()
+    })
+
+    test("recipient who has not read the message gets an unread row", async () => {
+      const { testStreamId, testWorkspaceId, authorId, readerId } = await setupDmWithMembers()
+
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId,
+        authorType: "user",
+        ...testMessageContent("still unread"),
+      })
+
+      const activities = await activityService.processMessageNotifications({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        messageId: message.id,
+        actorId: authorId,
+        actorType: "user",
+        contentMarkdown: "still unread",
+        excludeUserIds: new Set(),
+      })
+
+      const readerRow = activities.find((a) => a.userId === readerId)
+      expect(readerRow?.readAt).toBeNull()
+      expect(await readActivityReadAt(readerId, message.id)).toBeNull()
     })
   })
 })
