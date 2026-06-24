@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threa/types"
-import { collectAttachmentReferenceIds, collectMentionSlugs, collectQuoteReplyMessageIds } from "./extractors"
+import {
+  collectAttachmentReferenceIds,
+  collectLinkUrls,
+  collectMentionSlugs,
+  collectQuoteReplyMessageIds,
+} from "./extractors"
 
 const quoteReply = (messageId: string): JSONContent => ({
   type: "quoteReply",
@@ -240,5 +245,98 @@ describe("collectMentionSlugs", () => {
     }
 
     expect(collectMentionSlugs(doc)).toEqual(["real"])
+  })
+})
+
+const linkText = (text: string, href: string, extraMarks: { type: string }[] = []): JSONContent => ({
+  type: "text",
+  text,
+  marks: [{ type: "link", attrs: { href } }, ...extraMarks],
+})
+
+describe("collectLinkUrls", () => {
+  it("reads the href from a link mark, even when the link is also bold", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("the PR", "https://github.com/acme/repo/pull/42", [{ type: "bold" }])],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://github.com/acme/repo/pull/42"])
+  })
+
+  it("does not let bold emphasis leak into a bare URL (the markdown-parse bug)", () => {
+    // An autolinked URL inside a bold span. Reading the href keeps it clean;
+    // a regex over the serialized `**https://example.com**` would capture the
+    // trailing `**`.
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("https://example.com", "https://example.com", [{ type: "bold" }])],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com"])
+  })
+
+  it("finds plain-text URLs in text nodes that carry no link mark", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "see https://example.com/docs and https://example.org/x" }],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com/docs", "https://example.org/x"])
+  })
+
+  it("does not scan a linked text node's display text for stray URLs", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("click https://evil.example here", "https://good.example")],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://good.example"])
+  })
+
+  it("keeps document-order duplicates for callers to ref-count", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [linkText("home", "https://example.com")] },
+        { type: "paragraph", content: [{ type: "text", text: "again https://example.com" }] },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com", "https://example.com"])
+  })
+
+  it("excludes custom-protocol links (giphy/memo/attachment/quote)", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("a gif", "giphy:https://media.giphy.com/abc/giphy.gif?w=1&h=2")],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual([])
   })
 })

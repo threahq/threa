@@ -2,9 +2,11 @@ import {
   categoryFromMime,
   type AttachmentSummary,
   type CapturedMemoSummary,
+  type JSONContent,
   type LinkPreviewSummary,
   type ThreadSummary,
 } from "@threa/types"
+import { collectLinkUrls } from "@threa/prosemirror"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { extractGiphyRefs } from "@/lib/markdown/giphy-refs"
 import type { CachedEvent } from "@/db"
@@ -20,6 +22,7 @@ import {
 interface MessageEventPayload {
   messageId: string
   contentMarkdown?: string
+  contentJson?: JSONContent
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
   replyCount?: number
@@ -30,6 +33,12 @@ interface MessageEventPayload {
 interface MemosCapturedPayload {
   memos?: CapturedMemoSummary[]
 }
+
+// Fallback only (events cached before `contentJson` reached the payload). The
+// primary path walks the node tree via `collectLinkUrls`, which reads `link`
+// mark hrefs directly and is immune to the emphasis markers that contaminate a
+// regex over serialized markdown — a bold URL serializes to `**https://x**`,
+// and the bare pattern below would otherwise capture the trailing `**`.
 
 // Mirrors the markdown link serialization (`[text](url)`), narrowed to web
 // URLs so the custom protocols (`giphy:`, `memo:`, `attachment:`, `quote:`)
@@ -178,7 +187,9 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
       })
     }
     const addBareLink = (rawUrl: string) => {
-      const url = rawUrl.replace(/[.,;:!?]+$/, "")
+      // Trailing prose punctuation and any markdown emphasis run that leaked in
+      // via the serialized-markdown fallback (`**`, `*`, `~`, `` ` ``).
+      const url = rawUrl.replace(/[.,;:!?*~`]+$/, "")
       const norm = normalizeUrl(url)
       if (seenInMessage.has(norm)) return
       seenInMessage.add(norm)
@@ -203,9 +214,13 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         refCount: 1,
       })
     }
-    const markdown = payload.contentMarkdown ?? ""
-    for (const match of markdown.matchAll(MARKDOWN_LINK_PATTERN)) addBareLink(match[1])
-    for (const match of markdown.matchAll(BARE_URL_PATTERN)) addBareLink(match[0])
+    if (payload.contentJson) {
+      for (const url of collectLinkUrls(payload.contentJson)) addBareLink(url)
+    } else {
+      const markdown = payload.contentMarkdown ?? ""
+      for (const match of markdown.matchAll(MARKDOWN_LINK_PATTERN)) addBareLink(match[1])
+      for (const match of markdown.matchAll(BARE_URL_PATTERN)) addBareLink(match[0])
+    }
 
     // ── Attachments → media (image/gif/video) or files (everything else).
     for (const attachment of payload.attachments ?? []) {

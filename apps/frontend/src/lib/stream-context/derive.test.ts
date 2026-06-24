@@ -86,6 +86,47 @@ describe("deriveStreamContext", () => {
     expect(bare?.badge).toBeNull()
   })
 
+  it("reads links from contentJson, so a bold URL is not broken by trailing ** (markdown-parse bug)", () => {
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", {
+        // What a markdown scan would see for a bold autolink — the `**` must
+        // NOT leak into the surfaced URL.
+        contentMarkdown: "**[https://example.com](https://example.com)**",
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                {
+                  type: "text",
+                  text: "https://example.com",
+                  marks: [{ type: "link", attrs: { href: "https://example.com" } }, { type: "bold" }],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ]
+
+    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
+    expect(links).toHaveLength(1)
+    expect(links[0].url).toBe("https://example.com")
+  })
+
+  it("falls back to markdown when contentJson is absent, stripping leaked emphasis markers", () => {
+    const events = [
+      messageEvent("2026-06-23T10:00:00.000Z", {
+        contentMarkdown: "**https://example.com**",
+      }),
+    ]
+
+    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
+    expect(links).toHaveLength(1)
+    expect(links[0].url).toBe("https://example.com")
+  })
+
   it("dedups a repeated link by URL, keeps the newest occurrence, and counts refs", () => {
     const events = [
       messageEvent("2026-06-23T09:00:00.000Z", {
