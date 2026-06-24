@@ -316,13 +316,21 @@ export class ActivityFeedHandler implements OutboxHandler {
    * under absolute semantics.
    */
   private async publishActivityCreated(activities: Activity[]): Promise<void> {
-    if (activities.length === 0) return
+    // A born-read recipient row (read_at set at insert because the recipient had
+    // already read the source message) must not push a live activity:created: the
+    // client holds every non-self event as unread (the payload carries no read_at
+    // to check), so emitting one would re-add the row to the badge the instant the
+    // read cleared it. Self rows are also born read but stay emittable — the client
+    // skips them via isSelf, and the emission still refreshes the Activity feed.
+    // Born-read recipient rows surface as read on the feed's next fetch instead.
+    const emittable = activities.filter((activity) => activity.isSelf || activity.readAt === null)
+    if (emittable.length === 0) return
 
     await withTransaction(this.db, async (client) => {
       // Activities from one source event share a workspace, but group
       // defensively rather than assume it.
       const byWorkspace = new Map<string, Activity[]>()
-      for (const activity of activities) {
+      for (const activity of emittable) {
         const group = byWorkspace.get(activity.workspaceId) ?? []
         group.push(activity)
         byWorkspace.set(activity.workspaceId, group)

@@ -66,6 +66,13 @@ export interface InsertActivityBatchParams {
    * read so they show in the feed without inflating unread counts.
    */
   isSelf?: boolean
+  /**
+   * Recipients whose read watermark already covers this message. Their rows are
+   * inserted already read (read_at = NOW()) so an activity for a message the user
+   * has already read never resurfaces as unread — the same born-read treatment as
+   * self rows, applied per user rather than to the whole batch.
+   */
+  readUserIds?: ReadonlySet<string>
   /** Required when activityType === "reaction"; NULL for all other types. */
   emoji?: string | null
 }
@@ -164,8 +171,11 @@ export const ActivityRepository = {
     const ids = params.userIds.map(() => activityId())
     const contextJson = JSON.stringify(params.context ?? {})
     const isSelf = params.isSelf ?? false
-    const readAt = isSelf ? new Date() : null
     const emoji = params.emoji ?? null
+    // read_at is per-row: self rows are always born read; non-self rows are born
+    // read only for recipients whose watermark already covers this message.
+    const nowIso = new Date().toISOString()
+    const readAt = params.userIds.map((userId) => (isSelf || params.readUserIds?.has(userId) ? nowIso : null))
 
     const result = await db.query<ActivityRow>(sql`
       INSERT INTO user_activity (
@@ -174,7 +184,7 @@ export const ActivityRepository = {
       )
       SELECT
         id, workspace_id, user_id, activity_type, stream_id, message_id,
-        actor_id, actor_type, context, ${isSelf}, ${readAt}, ${emoji}
+        actor_id, actor_type, context, ${isSelf}, read_at, ${emoji}
       FROM UNNEST(
         ${ids}::text[],
         ${params.userIds.map(() => params.workspaceId)}::text[],
@@ -184,8 +194,9 @@ export const ActivityRepository = {
         ${params.userIds.map(() => params.messageId)}::text[],
         ${params.userIds.map(() => params.actorId)}::text[],
         ${params.userIds.map(() => params.actorType)}::text[],
-        ${params.userIds.map(() => contextJson)}::jsonb[]
-      ) AS t(id, workspace_id, user_id, activity_type, stream_id, message_id, actor_id, actor_type, context)
+        ${params.userIds.map(() => contextJson)}::jsonb[],
+        ${readAt}::timestamptz[]
+      ) AS t(id, workspace_id, user_id, activity_type, stream_id, message_id, actor_id, actor_type, context, read_at)
       ${conflictClauseFor(params.activityType)}
       RETURNING ${sql.raw(USER_ACTIVITY_COLUMNS)}
     `)
