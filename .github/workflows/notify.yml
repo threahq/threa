@@ -6,6 +6,8 @@ on:
     types: [completed]
     branches: [main]
 
+# actions:read lists prior deploy runs; contents:read walks the commit range
+# between the last deploy and this one. Both are reads — no write scope needed.
 permissions:
   actions: read
   contents: read
@@ -58,7 +60,10 @@ jobs:
                   workflow_id: "deploy-cloudflare.yml",
                   branch: "main",
                   status: "success",
-                  per_page: 30,
+                  // Max page — the previous distinct-commit deploy is normally run N-1, but a
+                  // burst of same-sha re-runs could push it back; 100 is a comfortable margin
+                  // before the graceful head-commit-only fallback kicks in.
+                  per_page: 100,
                 })
                 const prev = data.workflow_runs.find((r) => r.id < run.id && r.head_sha !== headSha)
                 if (prev) {
