@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, type MouseEvent } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   CornerDownRight,
   ExternalLink,
@@ -16,6 +17,7 @@ import { useFormattedDate } from "@/hooks"
 import { formatFileSize } from "@/lib/file-size"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
 import { cn } from "@/lib/utils"
+import { resolveInternalAppPath } from "@/lib/internal-url"
 import type { ContextItem, LinkContextItem, MediaContextItem } from "@/lib/stream-context/types"
 
 interface StreamContextRowProps {
@@ -118,6 +120,7 @@ export function StreamContextRow({
   onOpenThread,
   onOpenMemo,
 }: StreamContextRowProps) {
+  const navigate = useNavigate()
   const { formatRelative } = useFormattedDate()
   const time = formatRelative(new Date(item.createdAt), undefined, { terse: true })
 
@@ -136,7 +139,24 @@ export function StreamContextRow({
       if (item.refCount > 1) secondaryText = `${secondaryText} · ${item.refCount}×`
       if (item.badge)
         badge = <BadgePill label={item.badge} tone={item.previewKind === "linear" ? "linear" : "github"} />
-      primaryAction = (
+      // A link to our own origin routes in-app (react-router), matching how the
+      // message body renders links (lib/markdown/components.tsx). Modifier- and
+      // middle-clicks fall through to the native <a> so "open in new tab" still
+      // works. External links keep opening in a new browsing context.
+      const internalPath = resolveInternalAppPath(item.url)
+      primaryAction = internalPath ? (
+        <a
+          href={internalPath}
+          onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+            e.preventDefault()
+            navigate(internalPath)
+          }}
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Open {primaryText}</span>
+        </a>
+      ) : (
         <a
           href={item.url}
           target="_blank"
