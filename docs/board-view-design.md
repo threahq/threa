@@ -200,14 +200,115 @@ Q3, it mostly resolves:
   as query params. Per-stream reuses the existing `listByStream`.
 - **Frontend:** the card (`conversation-item`) and list (`conversation-list`)
   components already exist; the board is a new page that reuses them in a
-  cross-stream layout. Bootstrap activity-feed style (`use-activity.ts`:
-  `staleTime: Infinity`, `refetchOnMount`), stay live via the existing
-  `conversation:created/updated` socket events already handled in
-  `use-conversations.ts` (INV-53).
+  cross-stream layout. **Liveness and optimism ride the sync engine (IDB +
+  `SocketEventGate`), NOT React-Query — see "Realtime / sync model" below.**
+  Slice 1's React-Query `use-conversations` board hook is a deliberate stopgap
+  (it refetch-on-opens and feels junky), scheduled for migration onto the rails.
 - **INV-61 untouched:** the board is a separate projection; the contiguous
   timeline keeps its `sequence`/`broadcastSequence` order. Resurfacing is
   forbidden in the timeline and free in the board precisely because they're
   different projections.
+
+## Realtime / sync model — the board must ride the sync engine, not React-Query (Kris's "it feels junky")
+
+Dogfooding turned up the real risk to this whole idea: **it doesn't feel
+instant.** Kris typed a direct reply in a stream, opened the board, and his
+activity wasn't there — a refresh fixed it. For a surface meant to be a
+co-equal _way to interact_ (not just a read-only digest), seconds-late is
+disqualifying. The cause is two stacked problems, and the fix is to stop
+treating the conversation as an async digest and put it on the same rails as the
+timeline.
+
+**Root cause: conversations live on a different data-plane than messages.**
+
+- **Messages/timeline are instant** because they ride the sync engine:
+  IDB tables (`events`, `pendingMessages`, `streams` in
+  `apps/frontend/src/db/database.ts`) ← applied in `syncId` order by
+  `SocketEventGate` / `SyncEngine` (`apps/frontend/src/sync/`), read reactively
+  off IDB, and **optimistically** written on send as `pendingMessages` +
+  `events` with `_status: "pending"`, swapped when the authoritative
+  `message:created` socket event lands.
+- **Conversations are NOT in IDB at all.** `use-conversations.ts` is pure
+  React-Query (`useQuery`/`useInfiniteQuery`), refetch-on-open. So the board
+  **cannot** be live or optimistic no matter how fast the backend is. This — not
+  the AI — is the dominant cause of the junk.
+
+**Second cause: the bump is async even when it needn't be.** Message creation is
+fully synchronous (`messaging/event-service.ts`), but conversation assignment
+and the `last_activity_at` bump the board orders on happen _after_ the LLM:
+`message:created` → outbox → boundary-extraction worker → `extractor.extract()`
+(≈0.5–3s) → Phase-3 txn calls `bumpActivityForIds`. Yet the bump itself is just
+`UPDATE conversations SET last_activity_at = NOW()` — zero AI. It's slow only
+because it's bundled into the worker. (Proof a synchronous assignment path is
+viable: **scratchpads already assign in-transaction, no LLM**,
+`boundary-extraction-service.ts:218`.)
+
+### The reframe: explicit/implicit → **determinable / inferred** → sync / async
+
+Kris's instinct ("explicit conversations sync, implicit async") is right; the
+sharper axis is **"can we know the conversation from structure, without the
+AI?"** Most of what _feels_ interactive already can:
+
+| You send…                            | Conversation knowable w/o AI?     | Treatment                                  |
+| ------------------------------------ | --------------------------------- | ------------------------------------------ |
+| An **authored post**                 | Yes — you declared it             | **sync**: create + bump in the message txn |
+| A **reply inside a thread**          | Yes — the thread's conversation   | **sync**: bump in txn                      |
+| A **quote-reply** to a message       | Yes — that message's conversation | **sync**: bump in txn                      |
+| A **scratchpad** message             | Yes — the single conversation     | **sync** (already is)                      |
+| **Free-form** new line, busy channel | No — AI must cluster              | **async**: worker — fine, it's ambient     |
+
+Today threads and quote-replies _compute_ the structural signal
+(`parentMessageConversations`, `quotedConversations`) but feed it to the LLM as a
+mere candidate instead of taking it as a shortcut
+(`boundary-extraction-service.ts:100-122`). Kris's exact junky case — a direct
+reply — is structurally determinable, so it never needed to be async.
+
+### The plan
+
+**Backend:**
+
+- **Synchronous deterministic bump (C).** For the determinable rows above, write
+  the assignment + `last_activity_at = NOW()` in the **same transaction** as the
+  message (`messaging/event-service.ts`), and emit `conversation:bumped`
+  synchronously (event-source + projection together, INV-7). The LLM worker still
+  runs after to refine/split/merge — but the field the board sorts on is already
+  correct. Sync-bumping the structural parent is correct even if a later pass
+  splits the topic: the parent thread genuinely did just get activity.
+- **Deliver `conversation:*` to the workspace/user room (B).** Today
+  `delivery-groups.ts` routes them to per-stream rooms only, so the workspace
+  board never receives them. Add the workspace/user delivery group.
+
+**Frontend — put conversations on the sync rails (the actual fix):**
+
+1. Add a **`conversations` IDB store** (Dexie version bump in `db/database.ts`,
+   alongside `events`/`streams`).
+2. Board bootstrap **seeds IDB** (a one-shot fetch to fill the store is fine;
+   what's wrong is treating that query as the live store), subscribe-then-fetch
+   per INV-53.
+3. Apply `conversation:*` through **`SocketEventGate`** into the IDB store, in
+   `syncId` order, exactly like `message:created`.
+4. Board **reads conversations reactively from IDB** (the project's IDB-observer
+   pattern), so a card re-sorts the instant its row changes.
+5. **Optimism = a local pending IDB write**, not a query mutation: on a
+   determinable send, write the bumped `lastActivityAt` to the IDB conversation
+   row locally and reconcile when the authoritative `conversation:bumped`
+   arrives — the same `_status: "pending"` swap messages already use.
+
+**Ambient AI clustering stays async (E)** — nobody drives those cards in real
+time, so worker latency there is invisible.
+
+Net: determinable send → sync backend bump → authoritative event over the socket
+→ applied to IDB by the gate → board re-sorts live; and your own action shows
+instantly via the optimistic IDB write before the round-trip returns. The same
+mechanism that makes the timeline feel instant, now under the board.
+
+### Open decision
+
+Keep the **conversation as the single board card and make its bump synchronous**
+(C — recommended; one primitive, no dual render path, INV-29/43-clean), _or_
+**render interactive cards directly from thread/message data and treat the
+conversation row as pure async enrichment** (more faithful to "the thread is the
+synchronous backbone," but two card-fueling paths). Lean: C.
 
 ## Phasing
 
