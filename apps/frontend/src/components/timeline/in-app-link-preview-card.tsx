@@ -13,6 +13,7 @@ import type {
   MessageLinkPreviewData,
   StreamLinkPreviewData,
   MemoLinkPreviewData,
+  StreamType,
 } from "@threa/types"
 
 interface InAppLinkPreviewCardProps {
@@ -46,6 +47,7 @@ export function InAppLinkPreviewCard({
     }
 
     let mounted = true
+    setLoading(true)
     linkPreviewsApi
       .resolveInAppLink(workspaceId, preview.id)
       .then((result) => {
@@ -164,6 +166,17 @@ function MessageLinkCard({
   )
 }
 
+function streamKindLabel(streamType?: StreamType): string {
+  switch (streamType) {
+    case "channel":
+      return "Channel"
+    case "scratchpad":
+      return "Scratchpad"
+    default:
+      return "Conversation"
+  }
+}
+
 function StreamLinkCard({
   data,
   preview,
@@ -185,7 +198,7 @@ function StreamLinkCard({
   const visibilityLabel = data.visibility === "private" ? "Private" : "Public"
   const body = (
     <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5 min-w-0">
+      <div className="flex items-center gap-1.5">
         <Hash className="h-3.5 w-3.5 text-primary shrink-0" />
         <span className="text-sm font-medium text-foreground truncate">{data.streamName ?? "Conversation"}</span>
       </div>
@@ -203,7 +216,7 @@ function StreamLinkCard({
       header={
         <>
           <Hash className="h-4 w-4 text-primary shrink-0" />
-          <span className="text-xs text-muted-foreground">Conversation</span>
+          <span className="text-xs text-muted-foreground">{streamKindLabel(data.streamType)}</span>
           <DismissButton previewId={preview.id} onDismiss={onDismiss} />
         </>
       }
@@ -246,7 +259,7 @@ function MemoLinkCard({
   const internalPath = getInternalPath(preview.url)
   const body = (
     <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5 min-w-0">
+      <div className="flex items-center gap-1.5">
         <Brain className="h-3.5 w-3.5 text-primary shrink-0" />
         <span className="text-sm font-medium text-foreground truncate">{data.title ?? "Memory"}</span>
       </div>
