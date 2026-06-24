@@ -38,6 +38,13 @@ export {
   type MemoHref,
   type GiphyHref,
 } from "./pointer-urls"
-export { collectAttachmentReferenceIds, collectMentionSlugs, collectQuoteReplyMessageIds } from "./extractors"
+export {
+  collectAttachmentReferenceIds,
+  collectGiphyEmbeds,
+  collectLinkUrls,
+  collectMentionSlugs,
+  collectQuoteReplyMessageIds,
+  type GiphyEmbedRef,
+} from "./extractors"
 
 export type { JSONContent, JSONContentMark, ThreaDocument } from "@threa/types"

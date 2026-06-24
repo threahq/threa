@@ -60,6 +60,96 @@ export function collectQuoteReplyMessageIds(content: JSONContent): string[] {
   return ordered
 }
 
+const BARE_URL_IN_TEXT = /https?:\/\/[^\s<>()[\]]+/g
+
+/**
+ * An inline Giphy embed lifted from the node tree. Mirrors the `giphyEmbed`
+ * node attrs; `title` falls back to `""` when the node carried none.
+ */
+export interface GiphyEmbedRef {
+  giphyUrl: string
+  title: string
+  width?: number
+  height?: number
+}
+
+/**
+ * Inline Giphy GIFs (`giphyEmbed` nodes), de-duplicated by `giphyUrl` with the
+ * first occurrence's title winning. Reads the node attrs directly rather than
+ * re-parsing the `[title](giphy:…)` markdown serialization.
+ */
+export function collectGiphyEmbeds(content: JSONContent): GiphyEmbedRef[] {
+  const refs: GiphyEmbedRef[] = []
+  const seen = new Set<string>()
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "giphyEmbed") {
+      const giphyUrl = node.attrs?.giphyUrl
+      if (typeof giphyUrl === "string" && giphyUrl.length > 0 && !seen.has(giphyUrl)) {
+        seen.add(giphyUrl)
+        const title = node.attrs?.title
+        const width = node.attrs?.width
+        const height = node.attrs?.height
+        refs.push({
+          giphyUrl,
+          title: typeof title === "string" ? title : "",
+          width: typeof width === "number" ? width : undefined,
+          height: typeof height === "number" ? height : undefined,
+        })
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return refs
+}
+
+/**
+ * External (http/https) URLs the document points at, in document order,
+ * INCLUDING duplicates — callers dedup and ref-count.
+ *
+ * Reads from the node tree, never serialized markdown: a `link` mark's `href`
+ * is the authoritative target — returned verbatim — and is immune to the
+ * emphasis markers that contaminate a regex over markdown (a bold URL
+ * serializes to `**https://x**`, whose trailing `**` leaks into the captured
+ * string). Text nodes that are NOT inside a link mark are scanned for plain-text
+ * URLs (pasted without an autolink); those pick up trailing sentence
+ * punctuation from the prose around them, so it's trimmed — a thing we must
+ * never do to an authoritative href, whose final `!`/`.`/etc. may be
+ * significant. Custom-protocol links (`giphy:`/`memo:`/`attachment:`/`quote:`)
+ * are excluded by the `https?:` gate.
+ */
+export function collectLinkUrls(content: JSONContent): string[] {
+  const urls: string[] = []
+
+  const walk = (node: JSONContent): void => {
+    if (node.type === "text" && typeof node.text === "string") {
+      const linkMarks = (node.marks ?? []).filter((mark) => mark.type === "link")
+      if (linkMarks.length > 0) {
+        for (const mark of linkMarks) {
+          const href = mark.attrs?.href
+          if (typeof href === "string" && /^https?:\/\//i.test(href)) urls.push(href)
+        }
+      } else {
+        for (const match of node.text.matchAll(BARE_URL_IN_TEXT)) urls.push(match[0].replace(/[.,;:!?]+$/, ""))
+      }
+    }
+    if (node.content) {
+      for (const child of node.content) {
+        walk(child)
+      }
+    }
+  }
+
+  walk(content)
+  return urls
+}
+
 /**
  * Skips `uploading`/`error` nodes to mirror the markdown serializer's omission
  * rule (markdown.ts), and dedupes preserving first-seen order.

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threa/types"
-import { collectAttachmentReferenceIds, collectMentionSlugs, collectQuoteReplyMessageIds } from "./extractors"
+import {
+  collectAttachmentReferenceIds,
+  collectGiphyEmbeds,
+  collectLinkUrls,
+  collectMentionSlugs,
+  collectQuoteReplyMessageIds,
+} from "./extractors"
 
 const quoteReply = (messageId: string): JSONContent => ({
   type: "quoteReply",
@@ -240,5 +246,170 @@ describe("collectMentionSlugs", () => {
     }
 
     expect(collectMentionSlugs(doc)).toEqual(["real"])
+  })
+})
+
+const linkText = (text: string, href: string, extraMarks: { type: string }[] = []): JSONContent => ({
+  type: "text",
+  text,
+  marks: [{ type: "link", attrs: { href } }, ...extraMarks],
+})
+
+describe("collectLinkUrls", () => {
+  it("reads the href from a link mark, even when the link is also bold", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("the PR", "https://github.com/acme/repo/pull/42", [{ type: "bold" }])],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://github.com/acme/repo/pull/42"])
+  })
+
+  it("does not let bold emphasis leak into a bare URL (the markdown-parse bug)", () => {
+    // An autolinked URL inside a bold span. Reading the href keeps it clean;
+    // a regex over the serialized `**https://example.com**` would capture the
+    // trailing `**`.
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("https://example.com", "https://example.com", [{ type: "bold" }])],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com"])
+  })
+
+  it("finds plain-text URLs in text nodes that carry no link mark", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "see https://example.com/docs and https://example.org/x" }],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com/docs", "https://example.org/x"])
+  })
+
+  it("preserves a link mark href verbatim, even when it ends in significant punctuation", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [linkText("wiki", "https://example.com/Yahoo!")] }],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com/Yahoo!"])
+  })
+
+  it("trims trailing sentence punctuation from a plain-text URL only", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "see https://example.com/docs." }] }],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com/docs"])
+  })
+
+  it("does not scan a linked text node's display text for stray URLs", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("click https://evil.example here", "https://good.example")],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://good.example"])
+  })
+
+  it("keeps document-order duplicates for callers to ref-count", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [linkText("home", "https://example.com")] },
+        { type: "paragraph", content: [{ type: "text", text: "again https://example.com" }] },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual(["https://example.com", "https://example.com"])
+  })
+
+  it("excludes custom-protocol links (giphy/memo/attachment/quote)", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [linkText("a gif", "giphy:https://media.giphy.com/abc/giphy.gif?w=1&h=2")],
+        },
+      ],
+    }
+
+    expect(collectLinkUrls(doc)).toEqual([])
+  })
+})
+
+const giphyEmbed = (giphyUrl: string, attrs: Record<string, unknown> = {}): JSONContent => ({
+  type: "giphyEmbed",
+  attrs: { giphyUrl, ...attrs },
+})
+
+describe("collectGiphyEmbeds", () => {
+  it("reads giphy attrs straight from the node, in document order", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [giphyEmbed("https://media.giphy.com/a.gif", { title: "first", width: 2, height: 1 })],
+        },
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/b.gif")] },
+      ],
+    }
+
+    expect(collectGiphyEmbeds(doc)).toEqual([
+      { giphyUrl: "https://media.giphy.com/a.gif", title: "first", width: 2, height: 1 },
+      { giphyUrl: "https://media.giphy.com/b.gif", title: "", width: undefined, height: undefined },
+    ])
+  })
+
+  it("dedupes by giphyUrl, first title wins", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/a.gif", { title: "keep" })] },
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/a.gif", { title: "drop" })] },
+      ],
+    }
+
+    expect(collectGiphyEmbeds(doc)).toEqual([
+      { giphyUrl: "https://media.giphy.com/a.gif", title: "keep", width: undefined, height: undefined },
+    ])
+  })
+
+  it("ignores embeds with a missing or empty giphyUrl", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "giphyEmbed", attrs: { title: "no url" } }] },
+        { type: "paragraph", content: [giphyEmbed("", { title: "empty" })] },
+        { type: "paragraph", content: [giphyEmbed("https://media.giphy.com/real.gif")] },
+      ],
+    }
+
+    expect(collectGiphyEmbeds(doc)).toEqual([
+      { giphyUrl: "https://media.giphy.com/real.gif", title: "", width: undefined, height: undefined },
+    ])
   })
 })

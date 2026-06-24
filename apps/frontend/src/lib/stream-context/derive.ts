@@ -2,11 +2,12 @@ import {
   categoryFromMime,
   type AttachmentSummary,
   type CapturedMemoSummary,
+  type JSONContent,
   type LinkPreviewSummary,
   type ThreadSummary,
 } from "@threa/types"
+import { collectGiphyEmbeds, collectLinkUrls } from "@threa/prosemirror"
 import { stripMarkdownToInline } from "@/lib/markdown"
-import { extractGiphyRefs } from "@/lib/markdown/giphy-refs"
 import type { CachedEvent } from "@/db"
 import {
   CONTEXT_CATEGORIES,
@@ -20,6 +21,7 @@ import {
 interface MessageEventPayload {
   messageId: string
   contentMarkdown?: string
+  contentJson?: JSONContent
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
   replyCount?: number
@@ -30,15 +32,6 @@ interface MessageEventPayload {
 interface MemosCapturedPayload {
   memos?: CapturedMemoSummary[]
 }
-
-// Mirrors the markdown link serialization (`[text](url)`), narrowed to web
-// URLs so the custom protocols (`giphy:`, `memo:`, `attachment:`, `quote:`)
-// and bare `#channel` / `@mention` code spans never match.
-const MARKDOWN_LINK_PATTERN = /\[(?:\\.|[^\\\]])*\]\((https?:\/\/[^)\s]+)\)/g
-
-// A web URL pasted as plain text (no link mark, no preview). The markdown-link
-// pass runs first and records its URLs, so this only adds genuinely-bare ones.
-const BARE_URL_PATTERN = /https?:\/\/[^\s<>()[\]]+/g
 
 const SNIPPET_MAX = 120
 
@@ -177,8 +170,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         refCount: 1,
       })
     }
-    const addBareLink = (rawUrl: string) => {
-      const url = rawUrl.replace(/[.,;:!?]+$/, "")
+    const addBareLink = (url: string) => {
       const norm = normalizeUrl(url)
       if (seenInMessage.has(norm)) return
       seenInMessage.add(norm)
@@ -203,9 +195,14 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
         refCount: 1,
       })
     }
-    const markdown = payload.contentMarkdown ?? ""
-    for (const match of markdown.matchAll(MARKDOWN_LINK_PATTERN)) addBareLink(match[1])
-    for (const match of markdown.matchAll(BARE_URL_PATTERN)) addBareLink(match[0])
+    // Body links + inline media read from the structured document (INV-58),
+    // never the serialized markdown — a regex over `**[x](url)**` leaks the
+    // bold markers into the URL. E2E messages whose content isn't decrypted
+    // carry a placeholder doc and simply contribute nothing here.
+    const contentJson = payload.contentJson
+    if (contentJson) {
+      for (const url of collectLinkUrls(contentJson)) addBareLink(url)
+    }
 
     // ── Attachments → media (image/gif/video) or files (everything else).
     for (const attachment of payload.attachments ?? []) {
@@ -248,7 +245,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     }
 
     // ── Inline Giphy GIFs (not attachments) → media.
-    for (const ref of extractGiphyRefs(payload.contentMarkdown ?? "")) {
+    for (const ref of contentJson ? collectGiphyEmbeds(contentJson) : []) {
       if (media.has(ref.giphyUrl)) continue
       media.set(ref.giphyUrl, {
         key: `media:${ref.giphyUrl}`,

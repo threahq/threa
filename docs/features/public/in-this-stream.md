@@ -17,13 +17,16 @@ summary: >
 the messages themselves. It reads the messages already loaded in the open stream and
 pulls out five kinds of context:
 
-- **Links.** External URLs, gathered from the message link-preview cards plus any bare
-  or markdown URLs in the text. The same URL across several messages collapses to one
+- **Links.** External URLs, gathered from the message link-preview cards plus any other
+  URLs in the text. Those are read from the message's rich-text nodes (the `link` mark's
+  target and plain-text URLs), not by parsing serialized markdown, so a bold or
+  italicized link keeps a clean URL. The same URL across several messages collapses to one
   row with a `2×` count. A GitHub or Linear link carries a small `PR` / `Issue` badge
   when the integration produced a rich preview for it.
 - **Media.** Images, GIFs, and videos. This covers uploaded image/video attachments and
-  inline Giphy GIFs, each shown as a thumbnail (a play overlay for video, a `GIF` tag for
-  animated ones).
+  inline Giphy GIFs — the GIFs are read from the message's `giphyEmbed` nodes, the same
+  structured-document source as links — each shown as a thumbnail (a play overlay for
+  video, a `GIF` tag for animated ones).
 - **Files.** Every other attachment, bucketed by kind (pdf, doc, sheet, slide, code,
   archive, audio, other) with a category icon.
 - **Memories.** Memos that the memory system captured from this stream's conversations,
