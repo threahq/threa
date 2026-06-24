@@ -1,7 +1,13 @@
 import type { Pool, PoolClient } from "pg"
 import { ActivityRepository, type Activity } from "./repository"
 import { UserRepository } from "../workspaces"
-import { StreamRepository, StreamMemberRepository, resolveNotificationLevelsForStream, type Stream } from "../streams"
+import {
+  StreamRepository,
+  StreamMemberRepository,
+  StreamEventRepository,
+  resolveNotificationLevelsForStream,
+  type Stream,
+} from "../streams"
 import { PersonaRepository } from "../agents"
 import { collectMentionSlugs } from "@threa/prosemirror"
 import { BotRepository } from "../public-api"
@@ -98,15 +104,19 @@ export class ActivityService {
       const contentPreview = contentMarkdown.slice(0, 200)
       const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
 
+      const mentionedUserIds = [...userIds]
+      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, mentionedUserIds)
+
       return ActivityRepository.insertBatch(client, {
         workspaceId,
-        userIds: [...userIds],
+        userIds: mentionedUserIds,
         activityType: ActivityTypes.MENTION,
         streamId,
         messageId,
         actorId,
         actorType,
         context: { contentPreview, authorName, ...streamContext },
+        readUserIds,
       })
     })
   }
@@ -240,6 +250,8 @@ export class ActivityService {
         })
         .map((row) => row.memberId)
 
+      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, eligibleUserIds)
+
       return ActivityRepository.insertBatch(client, {
         workspaceId,
         userIds: eligibleUserIds,
@@ -249,8 +261,29 @@ export class ActivityService {
         actorId,
         actorType,
         context: { contentPreview, authorName, ...streamContext },
+        readUserIds,
       })
     })
+  }
+
+  /**
+   * Of `userIds`, which have already read past this message in the stream? Their
+   * activity rows are born read (see {@link ActivityRepository.insertBatch}) so a
+   * notification for a message the recipient has already read never lands as
+   * unread — closing the race where the read-time clear runs before the async
+   * activity row exists. Returns an empty set when the message has no event row
+   * yet (nothing to compare against), leaving every recipient unread.
+   */
+  private async resolveAlreadyReadRecipients(
+    client: PoolClient,
+    streamId: string,
+    messageId: string,
+    userIds: string[]
+  ): Promise<Set<string>> {
+    if (userIds.length === 0) return new Set()
+    const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
+    if (!messageEvent) return new Set()
+    return StreamMemberRepository.membersReadThrough(client, streamId, userIds, messageEvent.sequence)
   }
 
   /**

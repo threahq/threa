@@ -242,4 +242,36 @@ describe("useUnreadCounts", () => {
     expect(bootstrap?.unreadCounts.stream_1).toBe(2)
     expect(await db.unreadState.get("ws_1")).toMatchObject({ unreadCounts: { stream_1: 2 } })
   })
+
+  it("skips an optimistic temp_ read pointer but still sends a confirmed event id", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_new",
+      lastReadAt: new Date().toISOString(),
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    // A temp_ id is an unconfirmed optimistic event with no server stream_events
+    // row; persisting it would pin the watermark to sequence 0 and report the whole
+    // stream — including the user's own messages — as unread. The mutation is skipped.
+    act(() => {
+      result.current.markAsRead("stream_1", "temp_optimistic")
+    })
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+
+    // The real event id (after the server echo swaps it in) is sent normally.
+    act(() => {
+      result.current.markAsRead("stream_1", "event_new")
+    })
+    await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalledWith("ws_1", "stream_1", "event_new"))
+  })
 })

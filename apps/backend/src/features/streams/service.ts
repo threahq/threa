@@ -1812,20 +1812,31 @@ export class StreamService {
     eventId: string
   ): Promise<StreamMember | null> {
     return withTransaction(this.pool, async (client) => {
+      // The read pointer must reference a real event in THIS stream. A client can
+      // briefly hold an optimistic event id (temp_…) as its frontier right after a
+      // send, before the server echo swaps it for the persisted id. Persisting an
+      // id with no stream_events row pins last_read_seq to 0 (the unread query's
+      // COALESCE(sequence, 0)), so every message — including the author's own —
+      // reports unread until the watermark is overwritten. Resolve first, no-op on
+      // a miss rather than corrupting the pointer.
+      const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
+      if (!position) {
+        logger.warn({ workspaceId, streamId, memberId, eventId }, "Ignored mark-as-read: event not found in stream")
+        return StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+      }
+
       const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId: eventId })
       if (membership) {
         // Absolute read position (sync phase 2c): clients derive unread as
-        // latestOrdinal - lastReadOrdinal, so the event carries where this
-        // read lands in message-ordinal space. A missing event mirrors the
-        // unread query's COALESCE(sequence, 0) convention.
-        const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
+        // latestOrdinal - lastReadOrdinal, so the event carries where this read
+        // lands in message-ordinal space.
         await OutboxRepository.insert(client, "stream:read", {
           workspaceId,
           authorId: memberId,
           streamId,
           lastReadEventId: eventId,
-          lastReadSequence: (position?.sequence ?? 0n).toString(),
-          lastReadOrdinal: position?.messageOrdinal ?? 0,
+          lastReadSequence: position.sequence.toString(),
+          lastReadOrdinal: position.messageOrdinal,
         })
       }
       return membership

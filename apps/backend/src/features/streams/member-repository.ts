@@ -217,6 +217,32 @@ export const StreamMemberRepository = {
     return result.rows[0] ? mapRowToMember(result.rows[0]) : null
   },
 
+  /**
+   * Of `memberIds`, which have a read watermark at or past `sequence`? Resolves
+   * each member's last_read_event_id to its event sequence and keeps those that
+   * are >= the target. Members with no watermark (or one that no longer resolves
+   * to an event) are treated as behind and omitted. Used to born-read an activity
+   * whose source message the recipient has already read — closing the race where
+   * the read-time activity clear runs before the async activity row is written.
+   */
+  async membersReadThrough(
+    db: Querier,
+    streamId: string,
+    memberIds: string[],
+    sequence: bigint
+  ): Promise<Set<string>> {
+    if (memberIds.length === 0) return new Set()
+    const result = await db.query<{ member_id: string }>(sql`
+      SELECT sm.member_id
+      FROM stream_members sm
+      JOIN stream_events se ON se.id = sm.last_read_event_id
+      WHERE sm.stream_id = ${streamId}
+        AND sm.member_id = ANY(${memberIds})
+        AND se.sequence >= ${sequence.toString()}
+    `)
+    return new Set(result.rows.map((row) => row.member_id))
+  },
+
   async delete(db: Querier, streamId: string, memberId: string): Promise<boolean> {
     const result = await db.query(sql`
       DELETE FROM stream_members

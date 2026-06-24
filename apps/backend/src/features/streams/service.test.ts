@@ -1265,11 +1265,13 @@ describe("StreamService.markAsRead", () => {
   let service: StreamService
   const mockMemberUpdate = spyOn(StreamMemberRepository, "update")
   const mockGetMessageOrdinalForEvent = spyOn(StreamEventRepository, "getMessageOrdinalForEvent")
+  const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
 
   beforeEach(() => {
     service = new StreamService({} as never)
     mockMemberUpdate.mockReset()
     mockGetMessageOrdinalForEvent.mockReset()
+    mockFindByStreamAndMember.mockReset()
     mockInsertOutbox.mockReset()
     mockInsertOutbox.mockResolvedValue({} as never)
   })
@@ -1291,20 +1293,26 @@ describe("StreamService.markAsRead", () => {
     })
   })
 
-  test("mirrors the unread query's zero convention when the read event is missing", async () => {
-    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+  test("ignores a read pointer that doesn't resolve to a real event — no watermark write, no stream:read", async () => {
+    // An optimistic temp_ id (or any id with no stream_events row) would pin the
+    // unread query's COALESCE(sequence, 0) to 0 and report the whole stream — incl.
+    // the user's own messages — as unread. Resolve first; no-op on a miss.
     mockGetMessageOrdinalForEvent.mockResolvedValue(null)
+    mockFindByStreamAndMember.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "usr_1",
+      lastReadEventId: "evt_real",
+    } as never)
 
-    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_gone")
+    const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "temp_optimistic")
 
-    expect(mockInsertOutbox).toHaveBeenCalledWith(
-      {},
-      "stream:read",
-      expect.objectContaining({ lastReadSequence: "0", lastReadOrdinal: 0 })
-    )
+    expect(mockMemberUpdate).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+    expect(result?.lastReadEventId).toBe("evt_real")
   })
 
   test("emits nothing for a non-member", async () => {
+    mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 })
     mockMemberUpdate.mockResolvedValue(null)
 
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")

@@ -48,19 +48,19 @@ export function calculateUrgency(
 
   if (mentionCount > 0) return "mentions"
 
-  if (unreadCount > 0) {
+  // Unread messages or unread activity both light the row; color either case by
+  // the last author so a persona reads gold, a bot green, a human (or unknown)
+  // blue. activityCount counts on its own because a notification can reach the
+  // always-joined per-user room (activity:created) before the per-stream
+  // stream:activity that drives unreadCount — e.g. before the stream-room join
+  // lands, or while briefly disconnected — so the row never stays quiet for
+  // something the Activity feed is already showing.
+  if (unreadCount > 0 || activityCount > 0) {
     const authorType = stream.lastMessagePreview?.authorType
     if (authorType === AuthorTypes.PERSONA) return "ai"
     if (authorType === AuthorTypes.BOT) return "bot"
     return "activity"
   }
-
-  // A notification reached the always-joined per-user room (activity:created)
-  // but the per-stream stream:activity that drives unreadCount was missed — e.g.
-  // before the stream-room join lands, or while it's briefly disconnected. Light
-  // the stream so the sidebar never stays quiet for something the Activity feed
-  // is already showing.
-  if (activityCount > 0) return "activity"
 
   return "quiet"
 }
@@ -76,19 +76,25 @@ export function isUnreadStream(stream: { urgency: UrgencyLevel }, unreadCount: n
 }
 
 /** Categorize stream into smart section */
-export function categorizeStream(stream: StreamWithPreview, unreadCount: number, urgency: UrgencyLevel): SectionKey {
+export function categorizeStream(
+  stream: StreamWithPreview,
+  unreadCount: number,
+  urgency: UrgencyLevel,
+  activityCount = 0
+): SectionKey {
   if (urgency === "mentions" || (urgency === "ai" && unreadCount > 0)) {
     return "important"
   }
 
   // A stream the user is still catching up on stays in Recent regardless of age
   // or whether a preview has been cached yet — it should never sink into
-  // "Everything else". This covers unread messages and activity-only streams: a
-  // notification can arrive via the always-joined user room (urgency "activity")
-  // before the per-stream stream:activity bumps the unread count. Muted streams
-  // (urgency "quiet") are excluded — muting is an explicit deprioritization
-  // signal, so unread messages in a muted stream should not resurface.
-  if (urgency !== "quiet" && (unreadCount > 0 || urgency === "activity")) {
+  // "Everything else". This covers unread messages and activity-only streams. The
+  // activity signal is read from activityCount, not urgency: an activity-only row
+  // now carries its actor's color (gold/green/blue), so urgency no longer spells
+  // "activity". Muted streams (urgency "quiet") are excluded — muting is an
+  // explicit deprioritization signal, so unread messages in a muted stream should
+  // not resurface.
+  if (urgency !== "quiet" && (unreadCount > 0 || activityCount > 0)) {
     return "recent"
   }
 

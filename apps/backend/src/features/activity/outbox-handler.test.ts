@@ -302,6 +302,53 @@ describe("ActivityFeedHandler", () => {
     })
   })
 
+  it("does not publish activity:created for born-read recipient rows", async () => {
+    // A born-read row (read_at set because the recipient had already read the
+    // message) must not push a live event — the client would re-add it to the
+    // badge it just cleared. The unread recipient still gets their event.
+    const bornRead = {
+      id: "act_bornread",
+      workspaceId: "ws_test",
+      userId: "usr_caughtup",
+      activityType: "message",
+      streamId: "stream_test",
+      messageId: "msg_test",
+      actorId: "usr_author",
+      actorType: "user",
+      context: {},
+      readAt: new Date("2025-01-01T00:00:00Z"),
+      createdAt: new Date("2025-01-01T00:00:00Z"),
+      isSelf: false,
+      emoji: null,
+    }
+    const unread = { ...bornRead, id: "act_unread", userId: "usr_behind", readAt: null }
+
+    const event = makeMessageCreatedEvent(1n)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
+      new Map([["usr_behind:stream_test", { mentionCount: 0, totalCount: 1 }]])
+    )
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => callback({} as any))
+
+    const { handler, activityService } = createHandler()
+    ;(activityService.processMessageNotifications as any).mockResolvedValue([bornRead, unread])
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(insertSpy).toHaveBeenCalledWith(
+      {},
+      "activity:created",
+      expect.objectContaining({ targetUserId: "usr_behind" })
+    )
+    expect(insertSpy).not.toHaveBeenCalledWith(
+      {},
+      "activity:created",
+      expect.objectContaining({ targetUserId: "usr_caughtup" })
+    )
+  })
+
   it("should return no_events when batch is empty", async () => {
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([])
 

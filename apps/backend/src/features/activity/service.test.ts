@@ -3,7 +3,12 @@ import { ActivityTypes, AuthorTypes, CompanionModes, NotificationLevels, StreamT
 import { ActivityService } from "./service"
 import { ActivityRepository } from "./repository"
 import { UserRepository } from "../workspaces"
-import { StreamRepository, StreamMemberRepository, resolveNotificationLevelsForStream } from "../streams"
+import {
+  StreamRepository,
+  StreamMemberRepository,
+  StreamEventRepository,
+  resolveNotificationLevelsForStream,
+} from "../streams"
 import { PersonaRepository } from "../agents"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
@@ -63,6 +68,10 @@ function fakeActivity(context: Record<string, unknown>): Activity[] {
 
 function setupService() {
   spyOn(dbModule, "withClient").mockImplementation(async (_pool: any, fn: any) => fn({} as any))
+  // Born-read lookups default to "no resolvable message event / nobody caught
+  // up", so recipients insert unread as before; born-read tests override these.
+  spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue(null)
+  spyOn(StreamMemberRepository, "membersReadThrough").mockResolvedValue(new Set())
 
   return new ActivityService({ pool: {} as any })
 }
@@ -287,6 +296,59 @@ describe("ActivityService author name resolution", () => {
     })
 
     expect(capturedContext?.authorName).toBeNull()
+  })
+})
+
+describe("ActivityService born-read for already-read recipients", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("passes only caught-up recipients to insertBatch as readUserIds", async () => {
+    const service = setupService()
+    const stream = fakeStream()
+    const BEHIND_USER_ID = "usr_behind"
+
+    spyOn(StreamRepository, "findById").mockResolvedValue(stream)
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([
+      { memberId: TARGET_USER_ID },
+      { memberId: BEHIND_USER_ID },
+    ] as any)
+    const resolveModule = await import("../streams")
+    spyOn(resolveModule, "resolveNotificationLevelsForStream").mockResolvedValue([
+      { memberId: TARGET_USER_ID, effectiveLevel: NotificationLevels.ACTIVITY },
+      { memberId: BEHIND_USER_ID, effectiveLevel: NotificationLevels.ACTIVITY },
+    ] as any)
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+
+    // The message resolves to sequence 50; TARGET has read through it, BEHIND hasn't.
+    ;(StreamEventRepository.findByMessageId as any).mockResolvedValue({ id: "evt_msg", sequence: 50n })
+    ;(StreamMemberRepository.membersReadThrough as any).mockResolvedValue(new Set([TARGET_USER_ID]))
+
+    let captured: { userIds?: string[]; readUserIds?: ReadonlySet<string> } = {}
+    spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) => {
+      captured = { userIds: params.userIds, readUserIds: params.readUserIds }
+      return []
+    })
+
+    await service.processMessageNotifications({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hello",
+      excludeUserIds: new Set(),
+    })
+
+    expect(captured.userIds).toEqual([TARGET_USER_ID, BEHIND_USER_ID])
+    expect(captured.readUserIds && [...captured.readUserIds]).toEqual([TARGET_USER_ID])
+    expect(StreamMemberRepository.membersReadThrough).toHaveBeenCalledWith(
+      {},
+      STREAM_ID,
+      [TARGET_USER_ID, BEHIND_USER_ID],
+      50n
+    )
   })
 })
 

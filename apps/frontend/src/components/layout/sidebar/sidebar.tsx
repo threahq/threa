@@ -169,7 +169,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         const activityCount = getActivityCount(stream.id)
         const isMuted = mutedStreamIdSet.has(stream.id)
         const urgency = calculateUrgency(streamWithPreview, unreadCount, mentionCount, isMuted, activityCount)
-        const section = categorizeStream(streamWithPreview, unreadCount, urgency)
+        const section = categorizeStream(streamWithPreview, unreadCount, urgency, activityCount)
         const dmPeerUserId = dmPeerByStreamId.get(stream.id) ?? dmPeerByStreamId.get(stream.rootStreamId ?? "")
 
         // DM names are viewer-specific and can be stale/null in the cached stream

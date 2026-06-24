@@ -594,4 +594,63 @@ describe("Unread Counts", () => {
       expect(await StreamEventRepository.countMessagesThrough(pool, testStreamId, events[1].sequence)).toBe(2)
     })
   })
+
+  describe("membersReadThrough", () => {
+    test("includes members at or past the target sequence, excludes behind / unread / dangling watermarks", async () => {
+      const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
+      const atTarget = userId()
+      const past = userId()
+      const behind = userId()
+      const unread = userId()
+      const dangling = userId()
+
+      await withTransaction(pool, async (client) => {
+        await client.query(
+          `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
+          [testStreamId, testWorkspaceId, atTarget]
+        )
+        for (const m of [atTarget, past, behind, unread, dangling]) {
+          await StreamMemberRepository.insert(client, testStreamId, m)
+        }
+      })
+
+      // Three message events; the middle one is the target whose activity we'd born-read.
+      for (const body of ["first", "target", "third"]) {
+        await eventService.createMessage({
+          workspaceId: testWorkspaceId,
+          streamId: testStreamId,
+          authorId: atTarget,
+          authorType: "user",
+          ...testMessageContent(body),
+        })
+      }
+
+      const events = await StreamEventRepository.list(pool, testStreamId)
+      const [firstEvent, targetEvent, thirdEvent] = events
+
+      await withTransaction(pool, async (client) => {
+        await StreamMemberRepository.update(client, testStreamId, atTarget, { lastReadEventId: targetEvent.id })
+        await StreamMemberRepository.update(client, testStreamId, past, { lastReadEventId: thirdEvent.id })
+        await StreamMemberRepository.update(client, testStreamId, behind, { lastReadEventId: firstEvent.id })
+        await StreamMemberRepository.update(client, testStreamId, dangling, { lastReadEventId: "evt_does_not_exist" })
+        // `unread` keeps its null watermark (never read).
+      })
+
+      const result = await StreamMemberRepository.membersReadThrough(
+        pool,
+        testStreamId,
+        [atTarget, past, behind, unread, dangling],
+        targetEvent.sequence
+      )
+
+      // `atTarget` proves the >= boundary — a `>` would wrongly drop a reader sitting
+      // exactly on the message; behind / unread / dangling are all excluded.
+      expect(result).toEqual(new Set([atTarget, past]))
+    })
+
+    test("returns an empty set for empty memberIds", async () => {
+      expect(await StreamMemberRepository.membersReadThrough(pool, streamId(), [], 1n)).toEqual(new Set())
+    })
+  })
 })
