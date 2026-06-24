@@ -45,11 +45,15 @@ jobs:
           MESSAGE=$(printf '%s **%s %s** on `main`\n\n`%s` — %s\nby @%s · [View run](%s)' \
             "$ICON" "$WORKFLOW_NAME" "$STATUS" "$SHORT_SHA" "$FIRST_LINE" "$ACTOR" "$RUN_URL")
 
-          # clientMessageId dedupes on accidental workflow_run redelivery (race-safe via backend ON CONFLICT).
+          # clientMessageId keys on the message's identity (workflow + commit + conclusion),
+          # not the run id, so a commit deployed twice — re-runs, GitHub workflow_run
+          # redelivery, or overlapping runs from close-together merges — collapses onto one
+          # message via the backend's ON CONFLICT (stream_id, client_message_id) guard. The
+          # content is fully derived from those three, so same key ⇒ identical message.
           # metadata lets future tooling query "every CI failure for commit X" etc. (AND-containment).
           PAYLOAD=$(jq -n \
             --arg content "$MESSAGE" \
-            --arg clientMessageId "ghactions:${WORKFLOW_RUN_ID}:${CONCLUSION}" \
+            --arg clientMessageId "ghactions:${WORKFLOW_NAME}:${HEAD_SHA}:${CONCLUSION}" \
             --arg workflow "$WORKFLOW_NAME" \
             --arg run_id "$WORKFLOW_RUN_ID" \
             --arg conclusion "$CONCLUSION" \

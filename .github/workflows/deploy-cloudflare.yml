@@ -6,6 +6,15 @@ on:
     types: [completed]
     branches: [main]
 
+# Collapse overlapping runs for the same commit into one. Close-together merges
+# can fire the workflow_run trigger more than once for a single head_sha; without
+# this each fires a full deploy (and a duplicate notify). Keyed on head_sha so
+# distinct commits still deploy independently; cancel-in-progress is safe because
+# the superseded run is byte-identical (same ref).
+concurrency:
+  group: deploy-cloudflare-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
 jobs:
   deploy-frontend:
     name: Deploy Frontend
