@@ -1,8 +1,10 @@
 import type { Server } from "socket.io"
 import { z } from "zod"
-import { BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } from "@threa/types"
+import { AGENT_STEP_TYPES, BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } from "@threa/types"
+import { HttpError } from "@threa/backend-common"
 import type { BotRuntimeService } from "./service"
 import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
+import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import type { BotApiKeyService } from "../public-api"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 import { createBotSocketAuthMiddleware, readSocketToken, type BotSocketData } from "./socket-auth"
@@ -63,9 +65,76 @@ const helloSchema = z
 
 export type BotHelloPayload = z.infer<typeof helloSchema>
 
+// Bot invocation ids are prefixed ULIDs; bound loosely, the claim-token CAS is
+// the real authorization (the socket identity proves the bot, not the claim).
+const invocationIdSchema = z.string().min(1).max(64)
+const claimTokenSchema = z.string().min(1).max(256)
+const claimTtlSecondsSchema = z.number().int().min(15).max(300).optional().default(60)
+const statusTextSchema = z.string().max(200).optional()
+
+// WS frame for `bot:presence:update` — the socket-borne equivalent of
+// POST /bot-runtime/presence. Mirrors `upsertPresenceSchema` (INV-31 keeps the
+// HTTP body and the WS frame in lockstep; the duplication is deliberate to
+// avoid a runtime import edge from bot-runtimes back into public-api).
+// Exported so a parity test can assert these stay in lockstep with their HTTP
+// counterparts (the duplication is deliberate — see above — so a test is the
+// guard against field-level drift).
+export const presenceUpdateSchema = z
+  .object({
+    runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+    instanceId: instanceIdSchema,
+    runtimeSessionId: runtimeSessionIdSchema.optional(),
+    displayName: z.string().max(100).optional().nullable(),
+    status: z.enum(BOT_RUNTIME_STATUSES),
+    acceptingInvocations: z.boolean(),
+    capabilities: z.record(z.string(), z.unknown()).optional(),
+    statusText: statusTextSchema,
+    ...botIdentityKeyFields,
+  })
+  .refine(bothOrNeitherBotIdentityKey, {
+    message: "publicKey and publicKeyId must be provided together",
+    path: ["publicKey"],
+  })
+
+// WS frame for `bot:invocation:renew` — POST /bot-invocations/:id/renew, with
+// the invocation id moved from the path into the frame.
+export const invocationRenewSchema = z.object({
+  invocationId: invocationIdSchema,
+  instanceId: instanceIdSchema,
+  claimToken: claimTokenSchema,
+  claimTtlSeconds: claimTtlSecondsSchema,
+})
+
+// WS frame for `bot:invocation:steps` — the batched form of
+// POST /bot-invocations/:id/steps. A single step is a one-element array, so the
+// noisy per-tool-call fan-out coalesces into one frame + one ack.
+export const invocationStepFrameSchema = z.object({
+  stepType: z.enum(AGENT_STEP_TYPES),
+  content: z.string().min(1).max(10_000),
+  // Client idempotency key: a step re-sent under the same id dedups server-side.
+  clientStepId: z.string().min(1).max(128).optional(),
+})
+const invocationStepsSchema = z.object({
+  invocationId: invocationIdSchema,
+  instanceId: instanceIdSchema,
+  claimToken: claimTokenSchema,
+  steps: z.array(invocationStepFrameSchema).min(1).max(50),
+  statusText: statusTextSchema,
+})
+
+/**
+ * Ack for the `/bot` write events. `ok: true` carries the same payload the REST
+ * route returns; `ok: false` carries a `code` (the `HttpError` code, or
+ * `INVALID_PAYLOAD` / `INTERNAL_ERROR`) so the client can tell terminal from
+ * transient. A client treats any ack — ok or not — as "the server handled it";
+ * only a missing ack or a dead socket triggers the HTTP fallback.
+ */
+export type BotWriteAck = { ok: true; data?: Record<string, unknown> } | { ok: false; code: string; message: string }
+
 interface BotSocketHandlerDeps {
   io: Server
   botRuntimeService: BotRuntimeService
+  botRuntimeWriteOps: BotRuntimeWriteOps
   botApiKeyService: BotApiKeyService
   botSocketRegistry: BotSocketRegistry
   /**
@@ -94,7 +163,7 @@ interface JoinedRoomState {
  * `BroadcastHandler` to the rooms joined here.
  */
 export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
-  const { io, botRuntimeService, botApiKeyService, botSocketRegistry } = deps
+  const { io, botRuntimeService, botRuntimeWriteOps, botApiKeyService, botSocketRegistry } = deps
   const keyRevalidationIntervalMs = deps.keyRevalidationIntervalMs ?? 60_000
   const namespace = io.of("/bot")
 
@@ -240,6 +309,96 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
       }
     })
 
+    // Background-write events. These move the noisy runtime chatter
+    // (presence/heartbeat, claim renewal, trace steps) off the HTTP path — every
+    // HTTP POST is a billed edge request, while these frames ride the already-open
+    // socket. They persist through the SAME `botRuntimeWriteOps` the REST routes
+    // call (INV-35), so the two transports can never diverge. Authorization is the
+    // socket's validated `threa_bk_*` key (workspace + bot + scope) plus the
+    // per-claim `claimToken` carried in the frame — the socket identity alone does
+    // not authorize a specific claim's writes.
+    socket.on("bot:presence:update", async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+      const parsed = presenceUpdateSchema.safeParse(payload)
+      if (!parsed.success) {
+        ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:presence:update payload" })
+        return
+      }
+      const data = parsed.data
+      try {
+        await botRuntimeWriteOps.applyPresence({
+          workspaceId,
+          botId,
+          runtimeKind: data.runtimeKind,
+          instanceId: data.instanceId,
+          runtimeSessionId: data.runtimeSessionId,
+          displayName: data.displayName,
+          status: data.status,
+          acceptingInvocations: data.acceptingInvocations,
+          capabilities: data.capabilities,
+          statusText: data.statusText,
+          publicKey: data.publicKey,
+          publicKeyId: data.publicKeyId,
+        })
+        ack?.({ ok: true })
+      } catch (err) {
+        ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:presence:update" }))
+      }
+    })
+
+    socket.on(
+      "bot:invocation:renew",
+      async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+        const parsed = invocationRenewSchema.safeParse(payload)
+        if (!parsed.success) {
+          ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:renew payload" })
+          return
+        }
+        const data = parsed.data
+        try {
+          const renewed = await botRuntimeWriteOps.renewClaim({
+            workspaceId,
+            botId,
+            invocationId: data.invocationId,
+            instanceId: data.instanceId,
+            claimToken: data.claimToken,
+            claimTtlSeconds: data.claimTtlSeconds,
+          })
+          ack?.({ ok: true, data: { ...renewed } })
+        } catch (err) {
+          ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:renew" }))
+        }
+      }
+    )
+
+    socket.on(
+      "bot:invocation:steps",
+      async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+        const parsed = invocationStepsSchema.safeParse(payload)
+        if (!parsed.success) {
+          ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:steps payload" })
+          return
+        }
+        const data = parsed.data
+        try {
+          const result = await botRuntimeWriteOps.recordSteps({
+            workspaceId,
+            botId,
+            invocationId: data.invocationId,
+            instanceId: data.instanceId,
+            claimToken: data.claimToken,
+            steps: data.steps,
+            statusText: data.statusText,
+          })
+          ack?.({
+            ok: true,
+            data: { invocationId: result.invocationId, sessionId: result.sessionId, steps: result.steps },
+          })
+        } catch (err) {
+          ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:steps" }))
+        }
+      }
+    )
+
     socket.on("disconnect", () => {
       if (revalidationTimer) clearInterval(revalidationTimer)
       if (joined) {
@@ -247,6 +406,23 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
       }
     })
   })
+}
+
+/**
+ * Map a thrown write-op error to a `BotWriteAck`. `HttpError` (claim-not-found,
+ * manifest-rejected, stream-inaccessible) carries a definitive `code` the client
+ * trusts as terminal — it will not retry over HTTP. Anything else is logged and
+ * surfaced as `INTERNAL_ERROR`.
+ */
+function toWriteErrorAck(
+  err: unknown,
+  ctx: { workspaceId: string; botId: string; event: string }
+): { ok: false; code: string; message: string } {
+  if (err instanceof HttpError) {
+    return { ok: false, code: err.code ?? "ERROR", message: err.message }
+  }
+  logger.error({ err, ...ctx }, "bot socket write event failed")
+  return { ok: false, code: "INTERNAL_ERROR", message: "Internal error" }
 }
 
 export interface SerializedBotInvocation {

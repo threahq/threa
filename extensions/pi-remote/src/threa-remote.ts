@@ -13,7 +13,7 @@ import {
 } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { io as openSocket, type Socket } from "socket.io-client"
+import { BotRuntimeTransport, type BotRuntimeHello } from "@threa/bot-runtime-client"
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -33,12 +33,6 @@ const BUSY_HEARTBEAT_MS = 15_000
 // catch the rare missed-emit / mid-flight-disconnect case (plan §5).
 const WS_BACKSTOP_POLL_MS = 30_000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
-// How long to wait after a failed `/api/workspaces/:id/config` lookup before
-// re-trying. Without this, a transient network blip on the very first resolve
-// would permanently downgrade us to HTTP polling for the process lifetime —
-// the resolver short-circuits whenever `botWsHint` is unset and never retried
-// on its own.
-const WS_RESOLVE_RETRY_MS = 60_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
@@ -105,16 +99,6 @@ type RuntimeSessionLink = {
    * pending-invocation replay to rows we haven't already seen.
    */
   wsCursor?: string
-}
-
-type WsHint = {
-  url: string
-  path: string
-  namespace: string
-}
-
-type WorkspaceConfigResponse = {
-  wsUrl?: string
 }
 
 type ConfigPatch = Pick<
@@ -189,11 +173,10 @@ let lastBusyHeartbeatAt = 0
 let lastPollDebugSummary: string | undefined
 let pollingRunId = 0
 let fallbackRuntimeSessionId: string | undefined
-let botSocket: Socket | undefined
-let botWsConnected = false
-let botWsHint: WsHint | undefined
-let lastBotWsSummary: string | undefined
-let lastWsResolveAttemptAt = 0
+// Owns the /bot socket + routes presence/renew/steps over it (HTTP fallback
+// when the socket is down). Built lazily once the session ctx is known; torn
+// down + rebuilt on a workspace/auth change so it never reuses a stale target.
+let transport: BotRuntimeTransport | undefined
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -316,10 +299,7 @@ function acquireConfigLockSync(): (() => void) | undefined {
   return undefined
 }
 
-function buildPersistedConfig(
-  inMemory: Config,
-  onDisk: Partial<Config> | undefined
-): Record<string, unknown> {
+function buildPersistedConfig(inMemory: Config, onDisk: Partial<Config> | undefined): Record<string, unknown> {
   // Start from on-disk fields so hand-edited / unknown top-level keys the
   // runtime doesn't manage survive the write. Overlay every field the runtime
   // has in-memory but skip undefined optionals so a hand-edited defaultLabel
@@ -617,19 +597,27 @@ async function heartbeat(
 ): Promise<void> {
   if (!config) return
   const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`, {
-    method: "POST",
-    body: JSON.stringify({
-      runtimeKind: "pi-local",
-      instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
-      runtimeSessionId,
-      displayName: presenceDisplayNameFromCwd(ctx?.cwd) ?? config.defaultDisplayName,
-      status,
-      acceptingInvocations: status === "available",
-      capabilities: buildRuntimeCapabilities(ctx),
-      statusText,
-    }),
-  })
+  const body = {
+    runtimeKind: "pi-local",
+    instanceId: ctx ? getSessionInstanceId(ctx) : ensureInstanceId(),
+    runtimeSessionId,
+    displayName: presenceDisplayNameFromCwd(ctx?.cwd) ?? config.defaultDisplayName,
+    status,
+    acceptingInvocations: status === "available",
+    capabilities: buildRuntimeCapabilities(ctx),
+    statusText,
+  }
+  // Prefer the socket once the transport exists (it falls back to HTTP itself
+  // when the socket is down); before the transport is built (a heartbeat that
+  // fires pre-enable) go straight to HTTP.
+  if (transport) {
+    await transport.updatePresence(body)
+  } else {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  }
 }
 
 async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionContext): Promise<boolean> {
@@ -640,207 +628,62 @@ async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionCo
   return true
 }
 
-type FetchWsHintResult = { hint: WsHint } | { error: string }
-
-async function fetchWsHintFromConfig(baseUrl: string, workspaceId: string, apiKey: string): Promise<FetchWsHintResult> {
-  try {
-    const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/api/workspaces/${workspaceId}/config`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    })
-    if (!response.ok) return { error: `HTTP ${response.status}` }
-    const workspaceConfig = (await response.json()) as WorkspaceConfigResponse
-    const parsed = parseWsHint({ url: workspaceConfig.wsUrl })
-    if (!parsed) return { error: "missing wsUrl" }
-    return { hint: parsed }
-  } catch (error) {
-    return { error: summarizeError(error) }
-  }
-}
-
-async function resolveBotWsHint(ctx: ExtensionContext, opts?: { force?: boolean }): Promise<void> {
-  if (!config || botWsHint) return
-  const now = Date.now()
-  if (!opts?.force && lastWsResolveAttemptAt > 0 && now - lastWsResolveAttemptAt < WS_RESOLVE_RETRY_MS) return
-  lastWsResolveAttemptAt = now
-  const result = await fetchWsHintFromConfig(config.baseUrl, config.workspaceId, config.apiKey)
-  if ("hint" in result) {
-    botWsHint = result.hint
-    noteWsDebug(ctx, `resolved ${result.hint.url}`)
-    return
-  }
-  noteWsDebug(ctx, `workspace config failed: ${result.error}`)
-}
-
-function buildBotSocketUrl(hint: WsHint): string {
-  // `hint.url` is the workspace's wsUrl as-is from the workspace-router. In
-  // staging it carries a query string (`https://ws-staging.threa.io?region=staging`)
-  // and naive string concat (`${url}${namespace}`) produces a malformed
-  // `…?region=staging/bot` that Socket.IO will reject. Parse the URL and
-  // append the namespace to the pathname so query/hash survive untouched.
-  const parsed = new URL(hint.url)
-  const trimmedPath = parsed.pathname.replace(/\/$/, "")
-  parsed.pathname = `${trimmedPath}${hint.namespace}`
-  return parsed.toString()
-}
-
-function parseWsHint(value: unknown): WsHint | undefined {
-  if (!isObject(value)) return undefined
-  const url = typeof value.url === "string" ? value.url.trim() : ""
-  if (!url) return undefined
-  const path = typeof value.path === "string" && value.path.trim() ? value.path : "/socket.io/"
-  const namespace = typeof value.namespace === "string" && value.namespace.trim() ? value.namespace : "/bot"
-  return { url, path, namespace }
-}
-
-function buildBotHelloPayload(ctx: ExtensionContext, sinceCursor: string | undefined): Record<string, unknown> {
-  return {
+/**
+ * Build (once) the transport that owns the `/bot` socket for this Pi session.
+ * The hello capabilities are a snapshot — model/thinking changes still reach the
+ * server via the per-turn presence updates, which carry fresh capabilities — and
+ * the cold-start cursor comes from the persisted session link so the bootstrap
+ * only replays unseen events. The transport persists each new cursor back via
+ * `onBootstrap`. Returns undefined only when no config is loaded.
+ */
+function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTransport | undefined {
+  if (!config) return undefined
+  if (transport) return transport
+  const link = getCurrentSessionLink(ctx)
+  const hello: BotRuntimeHello = {
     instanceId: getSessionInstanceId(ctx),
     runtimeKind: "pi-local",
     runtimeSessionId: getRuntimeSessionId(ctx),
-    displayName: presenceDisplayNameFromCwd(ctx.cwd) ?? config?.defaultDisplayName,
+    displayName: presenceDisplayNameFromCwd(ctx.cwd) ?? config.defaultDisplayName,
     supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
     capabilities: buildRuntimeCapabilities(ctx),
-    ...(sinceCursor ? { sinceCursor } : {}),
+    ...(link?.wsCursor ? { sinceCursor: link.wsCursor } : {}),
   }
+  transport = new BotRuntimeTransport({
+    baseUrl: config.baseUrl,
+    workspaceId: config.workspaceId,
+    apiKey: config.apiKey,
+    hello,
+    reconnectionDelayMaxMs: WS_RECONNECTION_DELAY_MAX_MS,
+    fetchTimeoutMs: FETCH_TIMEOUT_MS,
+    callbacks: {
+      onInvocationAvailable: () => void claimIfIdle(pi, ctx).catch(() => undefined),
+      onBootstrap: (bootstrap) => {
+        if (bootstrap.serverGeneratedAt) {
+          const current = getCurrentSessionLink(ctx)
+          if (current) {
+            current.wsCursor = bootstrap.serverGeneratedAt
+            saveConfig()
+          }
+        }
+        if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) {
+          void claimIfIdle(pi, ctx).catch(() => undefined)
+        }
+      },
+    },
+    log: (summary) => emitPollDebug(ctx, `ws ${summary}`),
+  })
+  return transport
 }
 
-function noteWsDebug(ctx: ExtensionContext, summary: string): void {
-  lastBotWsSummary = `${new Date().toISOString()} ${summary}`
-  emitPollDebug(ctx, `ws ${summary}`)
-}
-
-function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
-  if (!config || !botWsHint || botSocket) return
-  if (!isEnabled(ctx)) return
-
-  const hint = botWsHint
-  const token = config.apiKey
-  let socket: Socket
-  try {
-    socket = openSocket(buildBotSocketUrl(hint), {
-      path: hint.path,
-      auth: { token },
-      transports: ["websocket"],
-      reconnection: true,
-      reconnectionDelayMax: WS_RECONNECTION_DELAY_MAX_MS,
-    })
-  } catch (error) {
-    // Connection construction itself failed (malformed URL etc.). Fall back to
-    // polling silently; the next heartbeat refreshes the hint.
-    noteWsDebug(ctx, `attach failed: ${summarizeError(error)}`)
-    return
-  }
-  botSocket = socket
-
-  socket.on("connect", () => {
-    botWsConnected = true
-    noteWsDebug(ctx, `connect ${socket.id ?? ""}`)
-    sendBotHello(pi, ctx)
-  })
-
-  socket.on("disconnect", (reason) => {
-    botWsConnected = false
-    noteWsDebug(ctx, `disconnect ${String(reason)}`)
-  })
-
-  socket.on("connect_error", (error) => {
-    botWsConnected = false
-    noteWsDebug(ctx, `connect_error ${summarizeError(error)}`)
-  })
-
-  socket.on("bot_invocation:available", (payload: unknown) => {
-    const invocationId = isObject(payload) && typeof payload.invocationId === "string" ? payload.invocationId : ""
-    noteWsDebug(ctx, `available ${invocationId}`)
-    void claimIfIdle(pi, ctx).catch(() => undefined)
-  })
-
-  socket.on("bot_invocation:claimed", (payload: unknown) => {
-    const invocationId = isObject(payload) && typeof payload.invocationId === "string" ? payload.invocationId : ""
-    noteWsDebug(ctx, `claimed ${invocationId}`)
-  })
-
-  socket.on("bot:active_actor_changed", () => {
-    noteWsDebug(ctx, "active_actor_changed")
-  })
-
-  socket.on("bot:resync", (payload: unknown) => {
-    const reason = isObject(payload) && typeof payload.reason === "string" ? payload.reason : ""
-    noteWsDebug(ctx, `resync ${reason}`)
-    sendBotHello(pi, ctx)
-  })
-}
-
-function formatHelloAckDetails(details: unknown): string {
-  if (!isObject(details)) return ""
-  const parts = Object.entries(details).map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
-  return parts.length > 0 ? ` (${parts.join("; ")})` : ""
-}
-
-function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
-  if (!botSocket || !config) return
-  const sessionLink = getCurrentSessionLink(ctx)
-  const payload = buildBotHelloPayload(ctx, sessionLink?.wsCursor)
-  botSocket.emit("bot:hello", payload, (ack: unknown) => {
-    if (!isObject(ack)) {
-      noteWsDebug(ctx, "bot:hello ack missing")
-      return
-    }
-    if (ack.ok !== true) {
-      // Fail loud: leaving the socket up with `botWsConnected = true` would
-      // keep us on the 30s WS backstop poll while no event will ever reach
-      // us (no room join happened). Drop the socket so polling resumes at
-      // the fast (3s) floor.
-      const message = typeof ack.error === "string" ? ack.error : "unknown error"
-      const details = formatHelloAckDetails((ack as { details?: unknown }).details)
-      noteWsDebug(ctx, `bot:hello rejected: ${message}${details}`)
-      setRemoteStatus(ctx, `Threa remote: WS handshake rejected — ${message}`, "error")
-      tearDownBotWebSocket()
-      // Gate re-resolve so a persistently-rejecting server doesn't get
-      // hammered every poll tick (~3s when WS is down). `tearDownBotWebSocket`
-      // resets the throttle so a `/configure` retries immediately; we set it
-      // here AFTER teardown to apply the 60s backoff specifically to the
-      // handshake-failure path. The next user-initiated path (`enableRemote`,
-      // `createRemoteSession`) passes `{ force: true }` and bypasses this.
-      lastWsResolveAttemptAt = Date.now()
-      return
-    }
-    if (typeof ack.serverGeneratedAt === "string") {
-      const link = getCurrentSessionLink(ctx)
-      if (link) {
-        link.wsCursor = ack.serverGeneratedAt
-        saveConfig()
-      }
-    }
-    const hasAvailable = Array.isArray(ack.availableInvocations) && ack.availableInvocations.length > 0
-    const hasOwned = Array.isArray(ack.ownedClaims) && ack.ownedClaims.length > 0
-    noteWsDebug(
-      ctx,
-      `bot:hello ack pending=${hasAvailable ? (ack.availableInvocations as unknown[]).length : 0} owned=${
-        hasOwned ? (ack.ownedClaims as unknown[]).length : 0
-      }`
-    )
-    if (hasAvailable || hasOwned) {
-      void claimIfIdle(pi, ctx).catch(() => undefined)
-    }
-  })
-}
-
-function tearDownBotWebSocket(): void {
-  if (botSocket) {
-    try {
-      botSocket.removeAllListeners()
-      botSocket.disconnect()
-    } catch {
-      // ignore — socket may already be closed
-    }
-  }
-  botSocket = undefined
-  botWsConnected = false
-  // Clear the cached hint and resolve-throttle so a subsequent
-  // `/remote-control configure` to a different workspace doesn't reuse the
-  // previous workspace's wsUrl when we attach again.
-  botWsHint = undefined
-  lastWsResolveAttemptAt = 0
+/**
+ * Drop the socket and forget the transport so the next enable/configure rebuilds
+ * it fresh — `BotRuntimeTransport.disconnect()` is terminal (it won't reconnect),
+ * which is exactly what we want when the workspace/auth target changes.
+ */
+function teardownTransport(): void {
+  transport?.disconnect()
+  transport = undefined
 }
 
 function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
@@ -858,6 +701,24 @@ async function recordInvocationTraceStep(
   if (!config) return
   const trimmed = truncateForTrace(content)
   if (!trimmed) return
+  const status = statusText?.trim().slice(0, 160)
+  // High-volume, best-effort path (one per tool call + per assistant message,
+  // 150+ in a long turn). The transport routes these over the socket — the cost
+  // win — and doesn't reject (its HTTP fallback swallows); the `.catch` is the
+  // safety boundary so a dropped trace step only dulls the trace, never aborts
+  // the turn.
+  if (transport) {
+    await transport
+      .recordSteps(
+        invocation.id,
+        invocation.claimToken,
+        [{ stepType, content: trimmed }],
+        status,
+        getInvocationInstanceId(invocation)
+      )
+      .catch(() => undefined)
+    return
+  }
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/steps`, {
     method: "POST",
     body: JSON.stringify({
@@ -865,7 +726,7 @@ async function recordInvocationTraceStep(
       claimToken: invocation.claimToken,
       stepType,
       content: trimmed,
-      statusText: statusText?.trim().slice(0, 160),
+      statusText: status,
     }),
   }).catch(() => undefined)
 }
@@ -1198,18 +1059,28 @@ async function tryRebindLegacySessionInstance(ctx: ExtensionContext): Promise<vo
 
 async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void> {
   if (!config) return
-  const body = await request<{ data: { claimExpiresAt: string | null } }>(
-    `/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/renew`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        instanceId: getInvocationInstanceId(invocation),
-        claimToken: invocation.claimToken,
-        claimTtlSeconds: 120,
-      }),
+  // pi runs the turn locally, so a `notFound` (claim gone server-side) does NOT
+  // drop it — the turn completes and surfaces the gone claim at complete() (404);
+  // we just log it so that loss isn't silent.
+  if (transport) {
+    // The transport doesn't reject (its HTTP fallback swallows); the `.catch` is
+    // the safety boundary so a renew can never abort the surrounding claim pass.
+    const { notFound } = await transport
+      .renewClaim(invocation.id, invocation.claimToken, 120, getInvocationInstanceId(invocation))
+      .catch(() => ({ notFound: false }))
+    if (notFound) {
+      console.error(`[threa-remote] renew ${invocation.id}: claim gone server-side; turn will close on completion`)
     }
-  )
-  invocation.claimExpiresAt = body.data.claimExpiresAt
+    return
+  }
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/renew`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: getInvocationInstanceId(invocation),
+      claimToken: invocation.claimToken,
+      claimTtlSeconds: 120,
+    }),
+  }).catch(() => undefined)
 }
 
 async function renewActiveClaims(): Promise<void> {
@@ -1232,7 +1103,7 @@ function basePollMs(): number {
   // When the `/bot` socket is up the server pushes new work within a frame,
   // so the poll is just a safety net for the rare missed-emit case (plan §5).
   // Drop to a 30s backstop instead of the 3s spin we run without WS.
-  if (botWsConnected) return Math.max(WS_BACKSTOP_POLL_MS, config?.pollMs ?? WS_BACKSTOP_POLL_MS)
+  if (transport?.socketConnected) return Math.max(WS_BACKSTOP_POLL_MS, config?.pollMs ?? WS_BACKSTOP_POLL_MS)
   return Math.max(1000, config?.pollMs ?? 3000)
 }
 
@@ -1334,7 +1205,7 @@ async function configureRemote(ctx: ExtensionCommandContext, args: string): Prom
   // If the workspace, base URL, or API key changed, the cached WS hint and any
   // open socket belong to the previous workspace. Tear them down so the next
   // /remote-control on resolves fresh against the new target.
-  if (changedAuthOrTarget) tearDownBotWebSocket()
+  if (changedAuthOrTarget) teardownTransport()
   ctx.ui.notify(`Saved Threa remote config to ${CONFIG_PATH}`, "info")
 }
 
@@ -1358,7 +1229,7 @@ async function disableRemote(ctx: ExtensionContext): Promise<void> {
   if (!config) return
   const link = setCurrentSessionEnabled(ctx, false)
   stopPolling()
-  tearDownBotWebSocket()
+  teardownTransport()
   await failPending("Threa remote disabled", ctx)
   await heartbeat("offline", undefined, ctx).catch(() => undefined)
   setRemoteStatus(ctx, "Threa remote: off")
@@ -1374,9 +1245,8 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   }
   await tryRebindLegacySessionInstance(ctx)
   lastBusyHeartbeatAt = 0
-  await resolveBotWsHint(ctx, { force: true })
   await heartbeat("available", undefined, ctx)
-  attachBotWebSocket(pi, ctx)
+  await ensureTransport(pi, ctx)?.connect()
   startPolling(pi, ctx)
   ctx.ui.notify("Threa remote enabled for this Pi session", "info")
 }
@@ -2357,14 +2227,12 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
     pollInFlightRunId = runId
     let delayMs = basePollMs()
     try {
-      // Self-heal the /bot socket: if the initial /config resolve failed
-      // (transient blip on enable / session_start), retry in the background.
-      // The resolver throttles itself to WS_RESOLVE_RETRY_MS so a persistent
-      // failure (e.g. baseUrl bypassing the workspace-router → 404) doesn't
-      // hammer the endpoint at the poll cadence.
-      if (isEnabled(ctx) && !botSocket && !botWsHint) {
-        await resolveBotWsHint(ctx)
-        if (botWsHint) attachBotWebSocket(pi, ctx)
+      // Self-heal the /bot socket: if the hint resolve failed on enable /
+      // session_start (transient blip), retry it here. connect() is guarded, so
+      // while Socket.IO is mid-reconnect (socket present, not yet connected)
+      // this is a no-op rather than a second dial.
+      if (isEnabled(ctx) && !transport?.socketConnected) {
+        await ensureTransport(pi, ctx)?.connect()
       }
       const contactedServer = await claimIfIdle(pi, ctx)
       if (contactedServer) notePollSuccess(ctx)
@@ -2583,13 +2451,9 @@ export const __testing = {
   formatShortDuration,
   defaultDisplayNameFor,
   formatLocalTime,
-  parseWsHint,
-  buildBotSocketUrl,
-  fetchWsHintFromConfig,
   sanitizeInstanceIdSegment,
   createInstanceId,
   migrateInstanceId,
-  formatHelloAckDetails,
   appendCapped,
   formatShellResult,
   execShellCommand,
@@ -2598,7 +2462,6 @@ export const __testing = {
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
   WS_BACKSTOP_POLL_MS,
-  WS_RESOLVE_RETRY_MS,
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -2671,9 +2534,8 @@ export default function (pi: ExtensionAPI): void {
                 `steered=${steeredInvocations.length}`,
                 `lastPoll=${lastPollDebugSummary ?? "<none>"}`,
                 `lastFailure=${lastPollFailureSummary ?? "<none>"}`,
-                `ws=${botWsConnected ? "connected" : botWsHint ? "disconnected" : "<no hint>"}`,
+                `ws=${transport?.socketConnected ? "connected" : transport ? "disconnected" : "<off>"}`,
                 `wsCursor=${link?.wsCursor ?? "<none>"}`,
-                `lastWs=${lastBotWsSummary ?? "<none>"}`,
               ].join("\n")
             : ""
         ctx.ui.notify(
@@ -2719,8 +2581,7 @@ export default function (pi: ExtensionAPI): void {
         return
       }
       await createRemoteSession(ctx, trimmedArgs)
-      await resolveBotWsHint(ctx, { force: true })
-      attachBotWebSocket(pi, ctx)
+      await ensureTransport(pi, ctx)?.connect()
       startPolling(pi, ctx)
     },
   })
@@ -2734,9 +2595,8 @@ export default function (pi: ExtensionAPI): void {
     }
     await tryRebindLegacySessionInstance(ctx)
     lastBusyHeartbeatAt = 0
-    await resolveBotWsHint(ctx, { force: true })
     await heartbeat("available", undefined, ctx)
-    attachBotWebSocket(pi, ctx)
+    await ensureTransport(pi, ctx)?.connect()
     startPolling(pi, ctx)
     if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
   })
@@ -2851,7 +2711,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (event, ctx) => {
     stopPolling()
-    tearDownBotWebSocket()
+    teardownTransport()
     if (event.reason === "reload" && config && isEnabled(ctx)) {
       setRemoteStatus(ctx, "Threa remote: reloading…")
       return

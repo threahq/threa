@@ -221,6 +221,8 @@ export const recordInvocationStepSchema = z.object({
   stepType: z.enum(AGENT_STEP_TYPES),
   content: z.string().min(1).max(10_000),
   statusText: z.string().max(200).optional(),
+  // Client idempotency key: a step re-sent under the same id dedups server-side.
+  clientStepId: z.string().min(1).max(128).optional(),
 })
 
 // These base64 fields are persisted verbatim and only decrypted later (in the

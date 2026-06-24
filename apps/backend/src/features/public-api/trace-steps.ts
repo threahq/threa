@@ -110,6 +110,14 @@ interface BotInvocationTraceSinkDeps {
 export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
   /** The last persisted step row — the `/steps` handler's response body needs its id. */
   lastStep: AgentSessionStep | null = null
+  /**
+   * Idempotency key for the NEXT step this sink records. The frames in a batch
+   * share one projector + sink, so the caller sets this before driving each
+   * frame's events through the projector; `record` consumes it one-shot (reads
+   * then clears) so a re-sent step dedups to the existing row and the key can
+   * never leak into a following step.
+   */
+  pendingClientStepId: string | undefined = undefined
 
   constructor(private readonly deps: BotInvocationTraceSinkDeps) {}
 
@@ -117,12 +125,20 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     const { pool, io, workspaceId, sessionId, streamId, triggerMessageId, personaName } = this.deps
     const completedAt = new Date()
     const startedAt = new Date(completedAt.getTime() - (step.durationMs ?? 0))
+    // Consume the idempotency key as a one-shot: clear it before the insert so a
+    // frame that ever produces two `record()` calls can't carry the first call's
+    // key into the second (which would dedup to the first row and silently drop
+    // the second step). Today's wire is one step per frame, but this keeps the
+    // invariant from depending on that.
+    const clientStepId = this.pendingClientStepId
+    this.pendingClientStepId = undefined
+    const stepId = generateStepId()
     // Append + currentStepType must run in one transaction. appendStep is
     // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
     // append distinct rows instead of clobbering each other.
     const persisted = await withTransaction(pool, async (client) => {
       const inserted = await AgentSessionRepository.appendStep(client, {
-        id: generateStepId(),
+        id: stepId,
         sessionId,
         stepType: step.stepType,
         content: step.content,
@@ -130,25 +146,37 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         messageId: step.messageId,
         startedAt,
         completedAt,
+        clientStepId,
       })
-      await AgentSessionRepository.updateCurrentStepType(client, sessionId, step.stepType)
+      // Only advance current_step_type on a real insert. On an idempotent dedup
+      // appendStep returns the pre-existing row (a different id than the one we
+      // generated); its type was set when it first landed, and re-setting it from
+      // this replay would write the replay's type and regress to an older step.
+      if (inserted.id === stepId) {
+        await AgentSessionRepository.updateCurrentStepType(client, sessionId, inserted.stepType)
+      }
       return inserted
     })
     this.lastStep = persisted
-    io.to(`ws:${workspaceId}:agent_session:${sessionId}`).emit("agent_session:step:completed", {
-      sessionId,
-      step: serializeTraceStep(persisted),
-    })
-    io.to(`ws:${workspaceId}:stream:${streamId}`).emit("agent_session:progress", {
-      workspaceId,
-      streamId,
-      sessionId,
-      triggerMessageId,
-      personaName,
-      stepCount: persisted.stepNumber,
-      messageCount: 0,
-      currentStepType: persisted.stepType,
-    })
+    // A deduped replay was already broadcast when it first landed — re-emitting it
+    // (with its older stepNumber/type) would flicker the live indicators backward,
+    // so the broadcast is gated on the row being freshly inserted by this call.
+    if (persisted.id === stepId) {
+      io.to(`ws:${workspaceId}:agent_session:${sessionId}`).emit("agent_session:step:completed", {
+        sessionId,
+        step: serializeTraceStep(persisted),
+      })
+      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("agent_session:progress", {
+        workspaceId,
+        streamId,
+        sessionId,
+        triggerMessageId,
+        personaName,
+        stepCount: persisted.stepNumber,
+        messageCount: 0,
+        currentStepType: persisted.stepType,
+      })
+    }
   }
 
   async open(params: { stepType: AgentStepType }): Promise<BotOpenStep> {

@@ -47,7 +47,7 @@ import { createLinkPreviewHandlers } from "./features/link-previews"
 import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
 import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
-import { BotRuntimeService } from "./features/bot-runtimes"
+import { BotRuntimeService, type BotRuntimeWriteOps } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
 import {
@@ -150,6 +150,7 @@ interface Dependencies {
   enclaveClaimNudge: EnclaveClaimWaiter | null
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
+  botRuntimeWriteOps: BotRuntimeWriteOps
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
@@ -206,6 +207,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     enclaveClaimNudge,
     botApiKeyService,
     botRuntimeService,
+    botRuntimeWriteOps,
     storage,
     ai,
     controlPlaneClient,
@@ -769,6 +771,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     attachmentService,
     botChannelService,
     botRuntimeService,
+    botRuntimeWriteOps,
     streamService,
     eventService,
     labelService,

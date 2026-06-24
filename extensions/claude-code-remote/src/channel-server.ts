@@ -1,19 +1,11 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { io as openSocket, type Socket } from "socket.io-client"
+import { BotRuntimeTransport } from "@threa/bot-runtime-client"
 import { z } from "zod"
 import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
 import type { ThreaChannelConfig } from "./config"
-import {
-  buildBotSocketUrl,
-  isObject,
-  ThreaApiError,
-  ThreaClient,
-  type ClaimedInvocation,
-  type RuntimeSessionLink,
-  type WsHint,
-} from "./threa-client"
+import { ThreaClient, type ClaimedInvocation, type RuntimeSessionLink } from "./threa-client"
 
 const RUNTIME_KIND = "claude-code-channel"
 const SUPPORTED_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
@@ -121,10 +113,8 @@ function log(message: string): void {
 
 export class ChannelServer {
   private readonly mcp: Server
+  private readonly transport: BotRuntimeTransport
   private link: RuntimeSessionLink | undefined
-  private socket: Socket | undefined
-  private socketConnected = false
-  private connectingSocket = false
   private claiming = false
   private stopped = false
   private pollTimer: ReturnType<typeof setTimeout> | undefined
@@ -140,7 +130,8 @@ export class ChannelServer {
 
   constructor(
     private readonly config: ThreaChannelConfig,
-    private readonly client: ThreaClient
+    private readonly client: ThreaClient,
+    transport?: BotRuntimeTransport
   ) {
     const capabilities: Record<string, unknown> = {
       experimental: { "claude/channel": {} },
@@ -153,6 +144,31 @@ export class ChannelServer {
       { name: CHANNEL_SOURCE, version: "0.1.0" },
       { capabilities, instructions: buildInstructions(config.permissionRelay) }
     )
+    // The transport owns the /bot socket and routes presence/renew/steps over it
+    // (HTTP fallback when the socket is down). Injectable for tests.
+    this.transport =
+      transport ??
+      new BotRuntimeTransport({
+        baseUrl: config.baseUrl,
+        workspaceId: config.workspaceId,
+        apiKey: config.apiKey,
+        hello: {
+          instanceId: config.instanceId,
+          runtimeKind: RUNTIME_KIND,
+          runtimeSessionId: config.runtimeSessionId,
+          displayName: config.displayName,
+          supportedCapabilities: [...SUPPORTED_CAPABILITIES],
+          capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
+          manifest: { output: { reply: true, trace: true, sources: false } },
+        },
+        callbacks: {
+          onInvocationAvailable: () => void this.claimDrain(),
+          onBootstrap: (bootstrap) => {
+            if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
+          },
+        },
+        log,
+      })
     this.registerHandlers()
   }
 
@@ -227,7 +243,7 @@ export class ChannelServer {
   async start(): Promise<void> {
     await this.verifyPrincipal()
     await this.ensureLink()
-    await this.connectSocket()
+    await this.transport.connect()
     this.startRenewTimer()
     this.startPoll()
     await this.claimDrain()
@@ -253,19 +269,14 @@ export class ChannelServer {
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
     // Fast, idempotent teardown first so SIGTERM cleanup isn't held hostage by
-    // slow fail() calls when Threa is the thing that's unreachable.
-    if (this.socket) {
-      try {
-        this.socket.removeAllListeners()
-        this.socket.disconnect()
-      } catch {
-        // already closed
-      }
-    }
+    // slow writes when Threa is the thing that's unreachable. Dropping the socket
+    // before the offline push means updatePresence falls straight to HTTP rather
+    // than waiting on an ack from a connection that's already going away.
+    this.transport.disconnect()
     const inflight = [...this.inflight]
     for (const [, entry] of inflight) clearTimeout(entry.deadline)
     this.inflight.clear()
-    await this.client.upsertPresence(this.presenceBody("offline")).catch(() => undefined)
+    await this.transport.updatePresence(this.presenceBody("offline")).catch(() => undefined)
     await Promise.allSettled(
       inflight.map(([id, entry]) =>
         this.client.fail(id, {
@@ -360,14 +371,13 @@ export class ChannelServer {
     // belongs in this invocation's stream (see handlePermissionRequest).
     this.activeTurnStreamId = invocation.responseStreamId
     await this.syncPresence()
-    await this.client
-      .recordStep(invocation.id, {
-        instanceId: this.config.instanceId,
-        claimToken: invocation.claimToken,
-        stepType: "thinking",
-        content: "Forwarded to Claude Code.",
-        statusText: "Working in Claude Code…",
-      })
+    await this.transport
+      .recordSteps(
+        invocation.id,
+        invocation.claimToken,
+        [{ stepType: "thinking", content: "Forwarded to Claude Code." }],
+        "Working in Claude Code…"
+      )
       .catch(() => undefined)
     const content = await this.buildChannelContent(invocation)
     await this.notify("notifications/claude/channel", {
@@ -605,105 +615,30 @@ export class ChannelServer {
       .catch((error) => log(`permission relay send failed: ${this.summarize(error)}`))
   }
 
-  // --- Socket ---------------------------------------------------------------
-
-  private async connectSocket(): Promise<void> {
-    // resolveWsHint is a network call; guard so the boot call and the first
-    // poll tick can't both pass it and open two sockets.
-    if (this.socket || this.connectingSocket || this.stopped) return
-    this.connectingSocket = true
-    try {
-      let hint: WsHint | undefined
-      try {
-        hint = await this.client.resolveWsHint()
-      } catch (error) {
-        log(`ws hint resolve failed (falling back to polling): ${this.summarize(error)}`)
-      }
-      if (hint) this.attachSocket(hint)
-    } finally {
-      this.connectingSocket = false
-    }
-  }
-
-  private attachSocket(hint: WsHint): void {
-    if (this.socket || this.stopped) return
-    let socket: Socket
-    try {
-      socket = openSocket(buildBotSocketUrl(hint), {
-        path: hint.path,
-        auth: { token: this.config.apiKey },
-        transports: ["websocket"],
-        reconnection: true,
-        reconnectionDelayMax: 30_000,
-      })
-    } catch (error) {
-      log(`socket attach failed (polling only): ${this.summarize(error)}`)
-      return
-    }
-    this.socket = socket
-    socket.on("connect", () => {
-      this.socketConnected = true
-      this.sendHello()
-    })
-    socket.on("disconnect", () => {
-      this.socketConnected = false
-    })
-    socket.on("connect_error", (error) => {
-      this.socketConnected = false
-      log(`socket connect_error: ${this.summarize(error)}`)
-    })
-    socket.on("bot_invocation:available", () => void this.claimDrain())
-    socket.on("bot:resync", () => this.sendHello())
-  }
-
-  private sendHello(): void {
-    if (!this.socket) return
-    this.socket.emit(
-      "bot:hello",
-      {
-        instanceId: this.config.instanceId,
-        runtimeKind: RUNTIME_KIND,
-        runtimeSessionId: this.config.runtimeSessionId,
-        displayName: this.config.displayName,
-        supportedCapabilities: [...SUPPORTED_CAPABILITIES],
-        capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
-        manifest: { output: { reply: true, trace: true, sources: false } },
-      },
-      (ack: unknown) => {
-        if (!isObject(ack) || ack.ok !== true) {
-          log(`bot:hello rejected: ${isObject(ack) ? String(ack.error) : "no ack"}`)
-          return
-        }
-        const available = Array.isArray(ack.availableInvocations) ? ack.availableInvocations.length : 0
-        const owned = Array.isArray(ack.ownedClaims) ? ack.ownedClaims.length : 0
-        if (available > 0 || owned > 0) void this.claimDrain()
-      }
-    )
-  }
-
   // --- Timers ---------------------------------------------------------------
 
   private startRenewTimer(): void {
     this.renewTimer = setInterval(() => {
       for (const [id, entry] of [...this.inflight]) {
-        this.client
-          .renew(id, {
-            instanceId: this.config.instanceId,
-            claimToken: entry.invocation.claimToken,
-            claimTtlSeconds: CLAIM_TTL_SECONDS,
-          })
-          .catch((error) => {
-            if (error instanceof ThreaApiError && error.status === 404) {
+        // The .catch is fire-and-forget hygiene: a discarded promise in a
+        // setInterval must never surface as an unhandled rejection (it's the
+        // safety boundary if the .then body throws).
+        void this.transport
+          .renewClaim(id, entry.invocation.claimToken, CLAIM_TTL_SECONDS)
+          .then((result) => {
+            if (result.notFound) {
               // The claim's gone server-side; drop it and resync presence so a
-              // last-in-flight 404 doesn't strand the runtime as busy.
+              // last-in-flight loss doesn't strand the runtime as busy. Clear the
+              // active-turn pointer too if this was it, so a relayed permission
+              // prompt can't target a stream whose turn is no longer live.
+              if (this.activeTurnStreamId === entry.invocation.responseStreamId) {
+                this.activeTurnStreamId = undefined
+              }
               this.clearInflight(id)
               void this.syncPresence()
-            } else {
-              // Surface other failures: a swallowed renew error can let the claim
-              // lapse silently, after which the eventual reply 404s and is lost.
-              log(`renew ${id} failed: ${this.summarize(error)}`)
             }
           })
+          .catch((error) => log(`renew ${id} failed: ${this.summarize(error)}`))
       }
     }, RENEW_INTERVAL_MS)
   }
@@ -712,9 +647,9 @@ export class ChannelServer {
     const tick = async () => {
       if (this.stopped) return
       if (!this.link) await this.ensureLink()
-      if (!this.socket) await this.connectSocket()
+      if (!this.transport.socketConnected) await this.transport.connect()
       await this.claimDrain()
-      const delay = this.socketConnected ? WS_BACKSTOP_POLL_MS : this.config.pollMs
+      const delay = this.transport.socketConnected ? WS_BACKSTOP_POLL_MS : this.config.pollMs
       this.pollTimer = setTimeout(() => void tick(), delay)
     }
     this.pollTimer = setTimeout(() => void tick(), this.config.pollMs)
@@ -725,8 +660,8 @@ export class ChannelServer {
   /** Push presence derived from the current in-flight count, so rapid transitions converge on the truth. */
   private async syncPresence(): Promise<void> {
     const busy = this.inflight.size > 0
-    await this.client
-      .upsertPresence(this.presenceBody(busy ? "busy" : "available", busy ? "Working in Claude Code…" : undefined))
+    await this.transport
+      .updatePresence(this.presenceBody(busy ? "busy" : "available", busy ? "Working in Claude Code…" : undefined))
       .catch(() => undefined)
   }
 

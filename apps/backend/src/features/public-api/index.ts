@@ -1,4 +1,5 @@
 export { createPublicApiHandlers, serializeBot, type PublicApiDeps } from "./handlers"
+export { createBotRuntimeWriteOps, type BotRuntimeWriteOpsDeps } from "./runtime-write-ops"
 export { serializeTraceStep, botInvocationStepEvents, BotInvocationTraceSink } from "./trace-steps"
 export {
   publicSearchSchema,

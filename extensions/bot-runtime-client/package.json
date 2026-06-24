@@ -1,0 +1,24 @@
+{
+  "name": "@threa/bot-runtime-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared transport for Threa bot-runtime extensions: owns the /bot WebSocket and routes background writes (presence/renew/steps) over the socket with an HTTP fallback, so the noisy chatter stops billing the edge Worker.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "socket.io-client": "^4.8.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -374,29 +374,6 @@ describe("Pi remote trace safety", () => {
     })
   })
 
-  test("parseWsHint accepts the workspace config wsUrl shape", () => {
-    expect(__testing.parseWsHint({ url: "wss://eu.threa.io", path: "/socket.io/", namespace: "/bot" })).toEqual({
-      url: "wss://eu.threa.io",
-      path: "/socket.io/",
-      namespace: "/bot",
-    })
-  })
-
-  test("parseWsHint defaults the Socket.IO path and namespace when the server omits them", () => {
-    expect(__testing.parseWsHint({ url: "wss://eu.threa.io" })).toEqual({
-      url: "wss://eu.threa.io",
-      path: "/socket.io/",
-      namespace: "/bot",
-    })
-  })
-
-  test("parseWsHint rejects payloads without a url so we do not dial blank origins", () => {
-    expect(__testing.parseWsHint({ path: "/socket.io/", namespace: "/bot" })).toBeUndefined()
-    expect(__testing.parseWsHint(null)).toBeUndefined()
-    expect(__testing.parseWsHint("wss://eu.threa.io")).toBeUndefined()
-    expect(__testing.parseWsHint({ url: "   " })).toBeUndefined()
-  })
-
   test("preserves an existing wsCursor when migrating session state", () => {
     const migrated = __testing.migrateSessionState({
       baseUrl: "https://app.threa.io",
@@ -419,93 +396,6 @@ describe("Pi remote trace safety", () => {
 
   test("WS_BACKSTOP_POLL_MS is the 30s safety cadence described in the plan", () => {
     expect(__testing.WS_BACKSTOP_POLL_MS).toBe(30_000)
-  })
-})
-
-describe("buildBotSocketUrl", () => {
-  test("appends the namespace to a bare wsUrl", () => {
-    expect(__testing.buildBotSocketUrl({ url: "https://eu.threa.io", path: "/socket.io/", namespace: "/bot" })).toBe(
-      "https://eu.threa.io/bot"
-    )
-  })
-
-  test("does not double the slash when wsUrl already has a trailing slash", () => {
-    expect(__testing.buildBotSocketUrl({ url: "https://eu.threa.io/", path: "/socket.io/", namespace: "/bot" })).toBe(
-      "https://eu.threa.io/bot"
-    )
-  })
-
-  test("preserves a query string on the wsUrl (staging routes region via ?region=…)", () => {
-    // Regression: prior `${url}${namespace}` concat produced
-    // `https://ws-staging.threa.io?region=staging/bot`, which Socket.IO rejects.
-    expect(
-      __testing.buildBotSocketUrl({
-        url: "https://ws-staging.threa.io?region=staging",
-        path: "/socket.io/",
-        namespace: "/bot",
-      })
-    ).toBe("https://ws-staging.threa.io/bot?region=staging")
-  })
-
-  test("nests under an existing pathname when the wsUrl already has one", () => {
-    expect(
-      __testing.buildBotSocketUrl({ url: "https://gateway.threa.io/api/", path: "/socket.io/", namespace: "/bot" })
-    ).toBe("https://gateway.threa.io/api/bot")
-  })
-})
-
-describe("fetchWsHintFromConfig", () => {
-  const originalFetch = globalThis.fetch
-  let calls: Array<{ url: string; init?: RequestInit }>
-
-  beforeEach(() => {
-    calls = []
-  })
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch
-  })
-
-  function mockFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>): void {
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
-      calls.push({ url, init })
-      return handler(url, init)
-    }) as typeof fetch
-  }
-
-  test("returns the parsed hint when the workspace router responds with a wsUrl", async () => {
-    mockFetch(() => new Response(JSON.stringify({ region: "eu-north-1", wsUrl: "wss://eu.threa.io" })))
-    const result = await __testing.fetchWsHintFromConfig("https://app.threa.io/", "ws_123", "threa_bk_test")
-    expect(result).toEqual({ hint: { url: "wss://eu.threa.io", path: "/socket.io/", namespace: "/bot" } })
-    expect(calls[0]?.url).toBe("https://app.threa.io/api/workspaces/ws_123/config")
-    expect((calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe("Bearer threa_bk_test")
-  })
-
-  test("surfaces HTTP failures so callers can log and fall back to polling", async () => {
-    mockFetch(() => new Response("not found", { status: 404 }))
-    expect(await __testing.fetchWsHintFromConfig("https://app.threa.io", "ws_123", "threa_bk_test")).toEqual({
-      error: "HTTP 404",
-    })
-  })
-
-  test("reports missing-wsUrl when the body omits the field (e.g. wrong endpoint hit)", async () => {
-    mockFetch(() => new Response(JSON.stringify({ region: "eu-north-1" })))
-    expect(await __testing.fetchWsHintFromConfig("https://app.threa.io", "ws_123", "threa_bk_test")).toEqual({
-      error: "missing wsUrl",
-    })
-  })
-
-  test("surfaces network errors so the resolver doesn't throw out of the polling loop", async () => {
-    mockFetch(() => {
-      throw new Error("ECONNREFUSED")
-    })
-    const result = await __testing.fetchWsHintFromConfig("https://app.threa.io", "ws_123", "threa_bk_test")
-    expect("error" in result && result.error).toContain("ECONNREFUSED")
-  })
-
-  test("WS_RESOLVE_RETRY_MS gates retries to once a minute", () => {
-    expect(__testing.WS_RESOLVE_RETRY_MS).toBe(60_000)
   })
 })
 
@@ -569,26 +459,6 @@ describe("migrateInstanceId", () => {
 
   test("returns a fresh id when the stored value is an empty string", () => {
     expect(__testing.migrateInstanceId("")).toMatch(/^pi-[0-9a-f]{8}$/)
-  })
-})
-
-describe("formatHelloAckDetails", () => {
-  test("renders Zod fieldErrors as a parenthesized summary", () => {
-    expect(
-      __testing.formatHelloAckDetails({
-        instanceId: ["instanceId must be 1-64 chars of [A-Za-z0-9_-]"],
-      })
-    ).toBe(' (instanceId: ["instanceId must be 1-64 chars of [A-Za-z0-9_-]"])')
-  })
-
-  test("returns empty when details are missing or not an object", () => {
-    expect(__testing.formatHelloAckDetails(undefined)).toBe("")
-    expect(__testing.formatHelloAckDetails(null)).toBe("")
-    expect(__testing.formatHelloAckDetails("nope")).toBe("")
-  })
-
-  test("returns empty when details are an empty object (server sent the field but no entries)", () => {
-    expect(__testing.formatHelloAckDetails({})).toBe("")
   })
 })
 
@@ -795,7 +665,15 @@ describe("buildPersistedConfig", () => {
         baseUrl: "https://app.threa.io",
         workspaceId: "ws_123",
         apiKey: "threa_bk_test",
-        linkedSessions: { session_a: { linkId: "a", rootStreamId: "s1", activeStreamId: "s1", runtimeSessionId: "rs1", streamUrlPath: "/s1" } },
+        linkedSessions: {
+          session_a: {
+            linkId: "a",
+            rootStreamId: "s1",
+            activeStreamId: "s1",
+            runtimeSessionId: "rs1",
+            streamUrlPath: "/s1",
+          },
+        },
       } as never,
       {
         defaultLabel: "coding",
@@ -833,12 +711,24 @@ describe("buildPersistedConfig", () => {
         workspaceId: "ws_123",
         apiKey: "threa_bk_test",
         linkedSessions: {
-          session_b: { linkId: "b", rootStreamId: "s1", activeStreamId: "s1", runtimeSessionId: "rs2", streamUrlPath: "/s1" },
+          session_b: {
+            linkId: "b",
+            rootStreamId: "s1",
+            activeStreamId: "s1",
+            runtimeSessionId: "rs2",
+            streamUrlPath: "/s1",
+          },
         },
       } as never,
       {
         linkedSessions: {
-          session_a: { linkId: "a", rootStreamId: "s1", activeStreamId: "s1", runtimeSessionId: "rs1", streamUrlPath: "/s1" },
+          session_a: {
+            linkId: "a",
+            rootStreamId: "s1",
+            activeStreamId: "s1",
+            runtimeSessionId: "rs1",
+            streamUrlPath: "/s1",
+          },
         },
       } as never
     )

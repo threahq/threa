@@ -3,17 +3,19 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@threa/pi-remote-extension",
-      "dependencies": {
-        "@threa/bot-runtime-client": "file:../bot-runtime-client",
+      "name": "@threa/bot-runtime-client",
+      "devDependencies": {
+        "@types/bun": "latest",
+        "socket.io-client": "^4.8.1",
+        "typescript": "^5.9.3",
+      },
+      "peerDependencies": {
         "socket.io-client": "^4.8.1",
       },
     },
   },
   "packages": {
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
-
-    "@threa/bot-runtime-client": ["@threa/bot-runtime-client@file:../bot-runtime-client", { "devDependencies": { "@types/bun": "latest", "socket.io-client": "^4.8.1", "typescript": "^5.9.3" }, "peerDependencies": { "socket.io-client": "^4.8.1" } }],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

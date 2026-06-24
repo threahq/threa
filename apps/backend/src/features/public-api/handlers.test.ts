@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels } from "@threa/types"
-import { sanitizeInvocationStepContent } from "./handlers"
+import { sanitizeInvocationStepContent } from "./sanitize"
 
 function parse(content: string) {
   return JSON.parse(content) as Record<string, unknown>

@@ -19,3 +19,14 @@ export {
 export { createBotSocketAuthMiddleware, type BotSocketData } from "./socket-auth"
 export { assertManifestAllows } from "./assert-manifest-allows"
 export { ExternalTurnDriver } from "./external-turn-driver"
+export type {
+  BotRuntimeWriteOps,
+  ApplyPresenceParams,
+  TouchPresenceParams,
+  RenewClaimParams,
+  RenewClaimResult,
+  RecordStepFrame,
+  RecordStepsParams,
+  RecordStepResult,
+  RecordStepsResult,
+} from "./runtime-write-ops"
