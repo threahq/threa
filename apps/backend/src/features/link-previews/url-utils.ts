@@ -1,11 +1,5 @@
 import type { LinkPreviewContentType } from "@threa/types"
 
-export interface MessagePermalink {
-  workspaceId: string
-  streamId: string
-  messageId: string
-}
-
 /**
  * A parsed reference to an in-app resource linked from a message.
  * The `kind` selects which resolver and preview card the link drives.
@@ -72,34 +66,6 @@ export type GitHubUrlMatch =
       parentType: "pull_request" | "issue"
       number: number
     }
-
-/**
- * Parse an internal message permalink from a URL.
- * Expected format: {origin}/w/{workspaceId}/s/{streamId}?m={messageId}
- * Returns null if the URL doesn't match the expected pattern or the origin isn't recognized.
- */
-export function parseMessagePermalink(url: string, appOrigins: string[]): MessagePermalink | null {
-  try {
-    const parsed = new URL(url)
-    const origin = parsed.origin
-
-    if (!appOrigins.some((o) => o === origin)) return null
-
-    const pathMatch = parsed.pathname.match(/^\/w\/([^/]+)\/s\/([^/]+)$/)
-    if (!pathMatch) return null
-
-    const messageId = parsed.searchParams.get("m")
-    if (!messageId) return null
-
-    return {
-      workspaceId: pathMatch[1],
-      streamId: pathMatch[2],
-      messageId,
-    }
-  } catch {
-    return null
-  }
-}
 
 /**
  * Parse any in-app resource link (message, stream, or memo) from a URL.

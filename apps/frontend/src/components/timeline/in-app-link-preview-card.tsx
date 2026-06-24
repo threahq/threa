@@ -4,6 +4,7 @@ import { MessageSquare, Hash, Brain, Lock, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
+import { stripMarkdownToInline } from "@/lib/markdown"
 import { linkPreviewsApi } from "@/api"
 import { LinkPreviewBody } from "./link-preview-body"
 import type {
@@ -271,7 +272,9 @@ function MemoLinkCard({
         <Brain className="h-3.5 w-3.5 text-primary shrink-0" />
         <span className="text-sm font-medium text-foreground truncate">{data.title ?? "Memory"}</span>
       </div>
-      {data.abstract && <p className="mt-1 text-xs text-muted-foreground line-clamp-3">{data.abstract}</p>}
+      {data.abstract && (
+        <p className="mt-1 text-xs text-muted-foreground line-clamp-3">{stripMarkdownToInline(data.abstract)}</p>
+      )}
       {data.sourceStreamName && (
         <span className="mt-1.5 inline-block text-[10px] text-muted-foreground truncate">
           From #{data.sourceStreamName}
