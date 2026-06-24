@@ -74,8 +74,12 @@ jobs:
                   })
                   const list = (cmp.data.commits ?? []).map((c) => ({ sha: c.sha, message: c.commit.message }))
                   if (list.length > 0) {
-                    omitted = Math.max(0, list.length - MAX_LISTED)
+                    // compareCommitsWithBasehead caps `commits` at 250; total_commits is the true
+                    // range size, so the "N commits" header and the omitted count stay honest even
+                    // when the listed bullets are capped.
+                    const total = cmp.data.total_commits ?? list.length
                     commits = list.slice(-MAX_LISTED)
+                    omitted = Math.max(0, total - commits.length)
                   }
                 }
               } catch (err) {
