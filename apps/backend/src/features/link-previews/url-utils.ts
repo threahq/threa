@@ -225,9 +225,11 @@ export function extractUrls(markdown: string, appOrigins?: string[]): string[] {
     let url = (match[1] ?? match[2])?.trim()
     if (!url) continue
 
-    // For bare URLs (group 2), strip unbalanced trailing parentheses
+    // For bare URLs (group 2), trim trailing markdown that the greedy match swallowed.
+    // Emphasis markers strip first so a wrapped paren URL (`**…/Foo_(bar)**`) is balanced
+    // again before the paren pass runs.
     if (match[2]) {
-      url = stripUnbalancedTrailingParens(url)
+      url = stripUnbalancedTrailingParens(stripTrailingMarkdownMarkers(url))
     }
 
     // Skip non-http protocols and internal links
@@ -271,6 +273,15 @@ function stripUnbalancedTrailingParens(url: string): string {
     }
   }
   return url
+}
+
+/**
+ * Strip trailing markdown emphasis/code markers (`*`, `_`, `~`, `` ` ``) that the bare-URL
+ * match greedily swallowed when the URL sits inside emphasis, e.g. `**PR: https://…/1070**`.
+ * The link mark href in the message is clean; only the serialized-markdown scan leaks these.
+ */
+function stripTrailingMarkdownMarkers(url: string): string {
+  return url.replace(/[*_~`]+$/, "")
 }
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "avif"])
