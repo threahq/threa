@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { StreamContextRow } from "./stream-context-row"
 import * as hooks from "@/hooks"
-import type { LinkContextItem } from "@/lib/stream-context/types"
+import type { ContextItem, FileContextItem, LinkContextItem, MediaContextItem } from "@/lib/stream-context/types"
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -37,19 +37,52 @@ function LocationProbe() {
   return <div data-testid="location">{`${loc.pathname}${loc.search}`}</div>
 }
 
-function renderRow(item: LinkContextItem) {
-  return render(
+function renderRow(item: ContextItem) {
+  const onOpenGallery = vi.fn()
+  const onJumpToMessage = vi.fn()
+  render(
     <MemoryRouter initialEntries={["/start"]}>
       <StreamContextRow
         workspaceId="ws_1"
         item={item}
-        onJumpToMessage={vi.fn()}
+        onJumpToMessage={onJumpToMessage}
         onOpenThread={vi.fn()}
         onOpenMemo={vi.fn()}
+        onOpenGallery={onOpenGallery}
       />
       <LocationProbe />
     </MemoryRouter>
   )
+  return { onOpenGallery, onJumpToMessage }
+}
+
+const itemBase = { createdAt: "2026-06-24T10:00:00.000Z", sourceMessageId: "msg_1", snippet: "" }
+
+function mediaItem(overrides: Partial<MediaContextItem> = {}): MediaContextItem {
+  return {
+    ...itemBase,
+    key: "media:att_img",
+    category: "media",
+    mediaKind: "image",
+    attachmentId: "att_img",
+    giphyUrl: null,
+    filename: "shot.png",
+    ...overrides,
+  }
+}
+
+function fileItem(overrides: Partial<FileContextItem> = {}): FileContextItem {
+  return {
+    ...itemBase,
+    key: "file:att_pdf",
+    category: "file",
+    attachmentId: "att_pdf",
+    fileCategory: "pdf",
+    mimeType: "application/pdf",
+    filename: "spec.pdf",
+    sizeBytes: 10,
+    ...overrides,
+  }
 }
 
 describe("StreamContextRow link", () => {
@@ -74,5 +107,43 @@ describe("StreamContextRow link", () => {
     expect(anchor).toHaveAttribute("target", "_blank")
     expect(anchor).toHaveAttribute("rel", expect.stringContaining("noopener"))
     expect(screen.getByTestId("location")).toHaveTextContent("/start")
+  })
+})
+
+describe("StreamContextRow gallery open", () => {
+  it("opens an uploaded media item in the gallery by attachment id", async () => {
+    const { onOpenGallery } = renderRow(mediaItem())
+    await userEvent.click(screen.getByRole("button", { name: /open shot\.png/i }))
+    expect(onOpenGallery).toHaveBeenCalledWith("att_img")
+  })
+
+  it("opens an inline Giphy item in the gallery by its sentinel key", async () => {
+    const { onOpenGallery } = renderRow(
+      mediaItem({
+        key: "media:giphy",
+        mediaKind: "gif",
+        attachmentId: null,
+        giphyUrl: "https://media.giphy.com/media/abc/giphy.gif",
+        filename: "party",
+      })
+    )
+    await userEvent.click(screen.getByRole("button", { name: /open party/i }))
+    expect(onOpenGallery).toHaveBeenCalledWith("giphy:https://media.giphy.com/media/abc/giphy.gif")
+  })
+
+  it("opens a previewable file (pdf) in the gallery", async () => {
+    const { onOpenGallery, onJumpToMessage } = renderRow(fileItem())
+    await userEvent.click(screen.getByRole("button", { name: /open spec\.pdf/i }))
+    expect(onOpenGallery).toHaveBeenCalledWith("att_pdf")
+    expect(onJumpToMessage).not.toHaveBeenCalled()
+  })
+
+  it("jumps to the message for a non-previewable file instead of opening the gallery", async () => {
+    const { onOpenGallery, onJumpToMessage } = renderRow(
+      fileItem({ fileCategory: "archive", mimeType: "application/zip", filename: "bundle.zip" })
+    )
+    await userEvent.click(screen.getByRole("button", { name: /go to message with bundle\.zip/i }))
+    expect(onJumpToMessage).toHaveBeenCalledWith("msg_1")
+    expect(onOpenGallery).not.toHaveBeenCalled()
   })
 })

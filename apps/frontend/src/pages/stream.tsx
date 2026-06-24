@@ -63,7 +63,7 @@ import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
-import { StreamContextSurface } from "@/components/stream-context"
+import { StreamContextSurface, StreamContextGallery, useStreamGallery } from "@/components/stream-context"
 import { memoDeepLink } from "@/lib/memo-url"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
@@ -211,6 +211,10 @@ export function StreamPage() {
   const openMemoFromContext = (memoId: string) => {
     navigate(memoDeepLink(workspaceId!, memoId))
   }
+
+  // The in-stream media gallery (links/media/files opened from the panel), keyed
+  // off `?smedia=` — separate from the per-message gallery's `?media=`.
+  const streamGallery = useStreamGallery()
 
   const { openUserProfile } = useUserProfile()
   const { openStreamSettings } = useStreamSettings()
@@ -790,15 +794,25 @@ export function StreamPage() {
   )
 
   const streamContextSurface = stream && !isThread && !isDraft && (
-    <StreamContextSurface
-      workspaceId={workspaceId}
-      streamId={streamId}
-      open={isContextOpen}
-      onClose={() => setContextOpen(false)}
-      onJumpToMessage={jumpToMessageFromContext}
-      onOpenThread={openThreadFromContext}
-      onOpenMemo={openMemoFromContext}
-    />
+    <>
+      <StreamContextSurface
+        workspaceId={workspaceId}
+        streamId={streamId}
+        open={isContextOpen}
+        onClose={() => setContextOpen(false)}
+        onJumpToMessage={jumpToMessageFromContext}
+        onOpenThread={openThreadFromContext}
+        onOpenMemo={openMemoFromContext}
+        onOpenGallery={streamGallery.openGallery}
+      />
+      <StreamContextGallery
+        workspaceId={workspaceId}
+        streamId={streamId}
+        selectedKey={streamGallery.selectedKey}
+        onSelect={streamGallery.openGallery}
+        onClose={streamGallery.closeGallery}
+      />
+    </>
   )
 
   // On mobile, thread panel takes over the full screen
