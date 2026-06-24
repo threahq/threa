@@ -39,7 +39,9 @@ export function InAppLinkPreviewCard({
 
   useEffect(() => {
     if (!hydrate) {
-      setLoading(true)
+      // Hydration deferred (e.g. board feed): don't fetch and don't sit on a
+      // perpetual skeleton — collapse until a caller flips hydrate on.
+      setLoading(false)
       return
     }
 
@@ -179,28 +181,16 @@ function StreamLinkCard({
     return <MinimalCard icon={<Lock />} label="A private conversation" previewId={preview.id} onDismiss={onDismiss} />
   }
 
-  if (data.deleted) {
-    return (
-      <MinimalCard
-        icon={<Hash />}
-        label="This conversation is no longer available"
-        italic
-        previewId={preview.id}
-        onDismiss={onDismiss}
-      />
-    )
-  }
-
   const internalPath = getInternalPath(preview.url)
   const visibilityLabel = data.visibility === "private" ? "Private" : "Public"
   const body = (
     <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 min-w-0">
         <Hash className="h-3.5 w-3.5 text-primary shrink-0" />
         <span className="text-sm font-medium text-foreground truncate">{data.streamName ?? "Conversation"}</span>
       </div>
       {data.description && (
-        <MarkdownContent content={data.description} className="mt-1 text-xs text-muted-foreground" />
+        <p className="mt-1 text-xs text-muted-foreground line-clamp-3">{stripMarkdownToInline(data.description)}</p>
       )}
       <span className="mt-1.5 inline-block text-[10px] uppercase tracking-wide text-muted-foreground">
         {visibilityLabel}
@@ -253,22 +243,10 @@ function MemoLinkCard({
     )
   }
 
-  if (data.deleted) {
-    return (
-      <MinimalCard
-        icon={<Brain />}
-        label="This memory is no longer available"
-        italic
-        previewId={preview.id}
-        onDismiss={onDismiss}
-      />
-    )
-  }
-
   const internalPath = getInternalPath(preview.url)
   const body = (
     <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 min-w-0">
         <Brain className="h-3.5 w-3.5 text-primary shrink-0" />
         <span className="text-sm font-medium text-foreground truncate">{data.title ?? "Memory"}</span>
       </div>

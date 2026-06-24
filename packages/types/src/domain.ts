@@ -1319,8 +1319,6 @@ export interface StreamLinkPreviewData {
   visibility?: Visibility
   /** Markdown projection of the stream description (full tier only) */
   description?: string
-  /** Whether the target stream no longer exists / is archived */
-  deleted?: boolean
 }
 
 /**
@@ -1338,8 +1336,6 @@ export interface MemoLinkPreviewData {
   knowledgeType?: KnowledgeType
   /** Source stream display label the memo was captured from (full tier only) */
   sourceStreamName?: string
-  /** Whether the target memo no longer exists */
-  deleted?: boolean
 }
 
 /**
