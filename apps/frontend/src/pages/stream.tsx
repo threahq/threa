@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react"
-import { useParams, useSearchParams } from "react-router-dom"
+import { useParams, useSearchParams, useNavigate } from "react-router-dom"
 import {
   MoreHorizontal,
   Pencil,
@@ -17,6 +17,7 @@ import {
   Tag,
   Link2,
   Layers,
+  PanelRight,
   ChevronDown,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -62,6 +63,8 @@ import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { StreamContextSurface } from "@/components/stream-context"
+import { memoDeepLink } from "@/lib/memo-url"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -84,6 +87,7 @@ function getStreamTypeLabel(type: StreamType): string {
 export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const { stream, isDraft, error, rename, archive, unarchive } = useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
@@ -141,6 +145,71 @@ export function StreamPage() {
       // updates for refresh/share (INV-59).
       { replace: true }
     )
+  }
+
+  // "In this stream" overview panel. The `context` param doubles as open-state
+  // (present ⇒ open) and the selected category filter ("all" by default); the
+  // panel reads/writes the filter value. Ephemeral view chrome (INV-59) like the
+  // conversation overlay, so toggling replaces history rather than pushing.
+  const isContextOpen = searchParams.get("context") !== null
+
+  const setContextOpen = (open: boolean) => {
+    setSearchParams(
+      (prev) => {
+        const newParams = new URLSearchParams(prev)
+        if (open) {
+          newParams.set("context", "all")
+        } else {
+          newParams.delete("context")
+        }
+        return newParams
+      },
+      { replace: true }
+    )
+  }
+
+  // A thread opens in the same right-edge panel slot, so the context overlay
+  // must yield it — and its `?context` param must not outlive the thread, or it
+  // silently reopens when the thread closes. Opening a thread from the panel
+  // already clears it (openThreadFromContext); this covers opening one from the
+  // timeline while the panel is open.
+  useEffect(() => {
+    if (!isPanelOpen || !isContextOpen) return
+    setSearchParams(
+      (prev) => {
+        const newParams = new URLSearchParams(prev)
+        newParams.delete("context")
+        return newParams
+      },
+      { replace: true }
+    )
+  }, [isPanelOpen, isContextOpen, setSearchParams])
+
+  // Jump to a source message from the panel: scroll the timeline to it and
+  // dismiss the overlay so the message is visible underneath. A fresh push
+  // gives StreamContent's `?m=` effect a new location key to act on.
+  const jumpToMessageFromContext = (messageId: string) => {
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      newParams.set("m", messageId)
+      newParams.delete("context")
+      return newParams
+    })
+  }
+
+  // Opening a thread reuses the thread/stream panel slot, so the context
+  // overlay must yield it the right edge.
+  const openThreadFromContext = (threadId: string) => {
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      newParams.delete("context")
+      newParams.set("panel", threadId)
+      return newParams
+    })
+  }
+
+  const openMemoFromContext = (memoId: string) => {
+    navigate(memoDeepLink(workspaceId!, memoId))
   }
 
   const { openUserProfile } = useUserProfile()
@@ -561,6 +630,19 @@ export function StreamPage() {
               <Search className="h-4 w-4" />
             </Button>
           )}
+          {stream && !isThread && !isDraft && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("h-8 w-8", isContextOpen && "bg-accent text-accent-foreground")}
+              title="In this stream — links, files & memories"
+              aria-label="In this stream"
+              aria-pressed={isContextOpen}
+              onClick={() => setContextOpen(!isContextOpen)}
+            >
+              <PanelRight className="h-4 w-4" />
+            </Button>
+          )}
           {(isChannel || isDm) && (
             // Split button (the `GroupedItem` pattern from message-context-menu):
             // primary tap toggles the conversation overlay; the chevron lists
@@ -707,6 +789,18 @@ export function StreamPage() {
     </>
   )
 
+  const streamContextSurface = stream && !isThread && !isDraft && (
+    <StreamContextSurface
+      workspaceId={workspaceId}
+      streamId={streamId}
+      open={isContextOpen}
+      onClose={() => setContextOpen(false)}
+      onJumpToMessage={jumpToMessageFromContext}
+      onOpenThread={openThreadFromContext}
+      onOpenMemo={openMemoFromContext}
+    />
+  )
+
   // On mobile, thread panel takes over the full screen
   if (isMobile && isPanelOpen) {
     return (
@@ -746,6 +840,7 @@ export function StreamPage() {
         </ThreadPanelSlot>
       </div>
       {conversationPanel}
+      {streamContextSurface}
     </>
   )
 }
