@@ -28,11 +28,13 @@ export function StreamContextGallery({
   onClose,
 }: StreamContextGalleryProps) {
   const events = useStreamEvents(streamId)
-  // Derive only while the gallery is open (a key is present) — this mount lives
-  // for the whole stream view, so deriving on every render would be wasteful.
+  // Derive only while the gallery is open — this mount lives for the whole
+  // stream view. Gate on the boolean, not `selectedKey`: the key changes on
+  // every prev/next step, which would re-run the O(events) scan each time.
+  const isGalleryOpen = selectedKey != null
   const contextItems = useMemo(
-    () => (selectedKey == null ? [] : deriveStreamContext(events).items),
-    [events, selectedKey]
+    () => (isGalleryOpen ? deriveStreamContext(events).items : []),
+    [events, isGalleryOpen]
   )
   const { items, initialIndex } = useStreamContextGalleryItems(workspaceId, contextItems, selectedKey)
 
