@@ -123,7 +123,14 @@ export {
 } from "./use-mentionables"
 export type { MentionStreamContext } from "./use-mentionables"
 
-export { useAllDrafts, streamIdsWithLoadedDraft, type UnifiedDraft, type DraftType } from "./use-all-drafts"
+export {
+  useAllDrafts,
+  useDraftSummary,
+  streamIdsWithLoadedDraft,
+  type UnifiedDraft,
+  type DraftType,
+  type DraftSummary,
+} from "./use-all-drafts"
 
 export { useFormattedDate } from "./use-formatted-date"
 

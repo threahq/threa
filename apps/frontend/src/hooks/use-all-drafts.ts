@@ -92,6 +92,17 @@ function truncatePreview(content: string, maxLength: number = 80): string {
 }
 
 /**
+ * A draft carries real, unsent payload: a non-empty body, an attachment, or a
+ * sealed E2E body (whose plaintext `contentJson` is the empty placeholder at
+ * rest, so it counts on the strength of its ciphertext). The single
+ * qualification predicate shared by the explorer build and the sidebar summary
+ * so a draft counts identically in both — the badge can't drift from the list.
+ */
+function draftHasPayload(draft: CachedDraft): boolean {
+  return draft.ciphertext != null || !isEmptyContent(draft.contentJson) || (draft.attachments?.length ?? 0) > 0
+}
+
+/**
  * The explorer preview for a draft row. Plaintext rows read `contentJson`
  * directly; E2E rows (ciphertext at rest) read the decrypted body from the shared
  * cache via `previewMap`, falling back to a status label so a sealed draft still
@@ -340,11 +351,7 @@ export function useAllDrafts(workspaceId: string) {
       const loadedId = loadedByScope.get(scope) ?? null
       const loadedDraft = loadedId ? draftsById.get(loadedId) : undefined
 
-      const isE2e = loadedDraft?.ciphertext != null
-      const hasContent = !isEmptyContent(loadedDraft?.contentJson)
-      const hasAttachments = (loadedDraft?.attachments?.length ?? 0) > 0
-
-      if (loadedDraft && (hasContent || hasAttachments || isE2e)) {
+      if (loadedDraft && draftHasPayload(loadedDraft)) {
         const displayName = scratchpad.displayName ?? streamFallbackLabel("scratchpad", "sidebar")
         result.push({
           id: scratchpad.id,
@@ -372,13 +379,7 @@ export function useAllDrafts(workspaceId: string) {
       // supports them.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
 
-      // An E2E draft's `contentJson` is the empty placeholder (the body is sealed),
-      // so it counts as content on the strength of its ciphertext — otherwise it
-      // would be dropped from the explorer entirely.
-      const isE2e = draft.ciphertext != null
-      const hasContent = !isEmptyContent(draft.contentJson)
-      const hasAttachments = (draft.attachments?.length ?? 0) > 0
-      if (!isE2e && !hasContent && !hasAttachments) continue
+      if (!draftHasPayload(draft)) continue
 
       const resolved = resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
       const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
@@ -446,4 +447,72 @@ export function useAllDrafts(workspaceId: string) {
     draftCount: drafts.length,
     deleteDraft,
   }
+}
+
+export interface DraftSummary {
+  /** Total unsent drafts for the workspace (matches the drafts-explorer row count). */
+  draftCount: number
+  /**
+   * Comma-joined, sorted stream ids whose composer holds an unsent loaded
+   * (non-stashed) draft. A string, not a Set, so a consumer can memoize on it
+   * by value: it changes only when the *set* of streams-with-a-draft changes,
+   * not when a draft's body changes — keeping the sidebar's per-row map stable
+   * across keystrokes.
+   */
+  loadedDraftStreamIdSignature: string
+}
+
+/**
+ * Lightweight draft rollup for the sidebar — the badge count plus which streams
+ * carry an unsent loaded draft. Derived straight from the raw draft store with
+ * NO preview building, sealed-body decryption, location resolution, or sort, so
+ * a keystroke's debounced draft save doesn't rebuild the full {@link useAllDrafts}
+ * explorer model (which it does on every change) just to read two values off it.
+ * Shares {@link draftHasPayload} with the explorer so the count never drifts.
+ */
+export function useDraftSummary(workspaceId: string): DraftSummary {
+  const draftScratchpads = useDraftScratchpadsFromStore(workspaceId)
+  const allDrafts = useDraftsFromStore(workspaceId)
+  const composerLoaded = useComposerLoadedFromStore(workspaceId)
+
+  const loadedByScope = useMemo(() => {
+    const map = new Map<string, string | null>()
+    for (const row of composerLoaded) map.set(row.scope, row.draftId)
+    return map
+  }, [composerLoaded])
+
+  const draftsById = useMemo(() => {
+    const map = new Map<string, CachedDraft>()
+    for (const draft of allDrafts) map.set(draft.id, draft)
+    return map
+  }, [allDrafts])
+
+  return useMemo(() => {
+    let draftCount = 0
+    const loadedDraftStreamIds = new Set<string>()
+
+    // Scratchpads count via their loaded draft (the `stream:{scratchpadId}` scope).
+    for (const scratchpad of draftScratchpads ?? []) {
+      const loadedId = loadedByScope.get(`stream:${scratchpad.id}`) ?? null
+      const loadedDraft = loadedId ? draftsById.get(loadedId) : undefined
+      if (loadedDraft && draftHasPayload(loadedDraft)) draftCount++
+    }
+
+    for (const draft of allDrafts) {
+      const parsed = parseDraftMessageKey(draft.scope)
+      if (!parsed) continue
+      // Scratchpad-scoped rows are counted above; skip them and their siblings.
+      if (parsed.type === "stream" && isDraftId(parsed.id)) continue
+      if (!draftHasPayload(draft)) continue
+      draftCount++
+      // A non-thread stream draft that is the loaded (not stashed) one for its
+      // scope surfaces as the per-row "unsent draft" hint — mirrors
+      // `streamIdsWithLoadedDraft` over the built explorer list.
+      if (parsed.type === "stream" && loadedByScope.get(draft.scope) === draft.id) {
+        loadedDraftStreamIds.add(parsed.id)
+      }
+    }
+
+    return { draftCount, loadedDraftStreamIdSignature: [...loadedDraftStreamIds].sort().join(",") }
+  }, [draftScratchpads, allDrafts, loadedByScope, draftsById])
 }

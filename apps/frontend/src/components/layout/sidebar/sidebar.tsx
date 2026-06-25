@@ -9,8 +9,7 @@ import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
 import {
   useActivityCounts,
-  useAllDrafts,
-  streamIdsWithLoadedDraft,
+  useDraftSummary,
   createDmDraftId,
   useDraftScratchpads,
   useLiveSavedCount,
@@ -93,7 +92,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { createScratchpad } = useDraftScratchpads(workspaceId)
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
-  const { drafts: allDrafts } = useAllDrafts(workspaceId)
+  const { draftCount, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
   const assignLabel = useAssignLabel(workspaceId)
@@ -110,7 +109,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // decrypt settles — including a failure, which leaves the overlaid row unchanged.
   const isSealedNamePending = useSealedNamePendingResolver(workspaceId)
 
-  const draftCount = allDrafts.length
   const savedCount = useLiveSavedCount(workspaceId)
   const scheduledCount = useLiveScheduledCount(workspaceId)
   const isDraftsPage = splat === "drafts" || window.location.pathname.endsWith("/drafts")
@@ -147,13 +145,10 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   }, [idbStreams])
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
-  // draft, surfaced as a per-row hint. The signature string keeps the derived
-  // Set referentially stable across draft edits that don't change membership, so
-  // the heavy `processedStreams` map below doesn't rebuild on every keystroke.
-  const loadedDraftStreamIdSignature = useMemo(
-    () => [...streamIdsWithLoadedDraft(allDrafts)].sort().join(","),
-    [allDrafts]
-  )
+  // draft, surfaced as a per-row hint. `loadedDraftStreamIdSignature` (from the
+  // lightweight summary) keeps this Set referentially stable across draft edits
+  // that don't change membership, so the heavy `processedStreams` map below
+  // doesn't rebuild on every keystroke.
   const streamsWithLoadedDraft = useMemo(
     () => new Set(loadedDraftStreamIdSignature ? loadedDraftStreamIdSignature.split(",") : []),
     [loadedDraftStreamIdSignature]

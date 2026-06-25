@@ -9,7 +9,13 @@ import { seedDecryption, clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
-import { streamIdsWithLoadedDraft, useAllDrafts, type DraftType, type UnifiedDraft } from "./use-all-drafts"
+import {
+  streamIdsWithLoadedDraft,
+  useAllDrafts,
+  useDraftSummary,
+  type DraftType,
+  type UnifiedDraft,
+} from "./use-all-drafts"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const UNLOCKED_SESSION = {
@@ -230,5 +236,37 @@ describe("streamIdsWithLoadedDraft", () => {
   it("ignores rows without a resolved stream id", () => {
     const ids = streamIdsWithLoadedDraft([unifiedDraft({ streamId: null })])
     expect(ids.size).toBe(0)
+  })
+})
+
+describe("useDraftSummary", () => {
+  it("counts unsent drafts and flags loaded-draft streams without building the explorer model", async () => {
+    // A loaded (pointed) stream draft, a stashed stream draft, a thread draft,
+    // and an empty draft that should be dropped.
+    await db.drafts.bulkAdd([
+      syncedDraft({ id: "draft_loaded", scope: "stream:stream_1", contentJson: makeDoc("loaded") }),
+      syncedDraft({ id: "draft_stashed", scope: "stream:stream_2", contentJson: makeDoc("stashed") }),
+      syncedDraft({ id: "draft_thread", scope: "thread:msg_1", contentJson: makeDoc("reply") }),
+      syncedDraft({ id: "draft_empty", scope: "stream:stream_3", contentJson: EMPTY_DOC }),
+    ])
+    await db.composerLoaded.put({ scope: "stream:stream_1", workspaceId, draftId: "draft_loaded" })
+
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => ({ summary: useDraftSummary(workspaceId), all: useAllDrafts(workspaceId) }), {
+      wrapper,
+    })
+
+    await waitFor(() => expect(result.current.all.drafts.length).toBe(3))
+
+    // Empty draft dropped; loaded/stashed/thread counted; only the loaded
+    // non-thread stream surfaces as a draft hint.
+    expect(result.current.summary.draftCount).toBe(3)
+    expect(result.current.summary.loadedDraftStreamIdSignature).toBe("stream_1")
+
+    // Drift guard: the lightweight summary must agree with the full explorer
+    // model it replaces in the sidebar.
+    expect(result.current.summary.draftCount).toBe(result.current.all.drafts.length)
+    const expectedSignature = [...streamIdsWithLoadedDraft(result.current.all.drafts)].sort().join(",")
+    expect(result.current.summary.loadedDraftStreamIdSignature).toBe(expectedSignature)
   })
 })
