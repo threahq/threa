@@ -194,8 +194,7 @@ export function useAppUpdate(): void {
       // mid-install at unmount would fire after teardown, and a worker that
       // ends `redundant` (superseded by a newer build) would never self-remove.
       const installCleanups: Array<() => void> = []
-      const onUpdateFound = () => {
-        const installing = registration.installing
+      const trackInstalling = (installing: ServiceWorker | null): void => {
         if (!installing) return
         const onStateChange = () => {
           if (installing.state === "installed" || installing.state === "redundant") {
@@ -206,6 +205,12 @@ export function useAppUpdate(): void {
         installing.addEventListener("statechange", onStateChange)
         installCleanups.push(() => installing.removeEventListener("statechange", onStateChange))
       }
+      // A worker already mid-install at mount (the app opened while the SW was
+      // still downloading the new build) fired `updatefound` before this effect
+      // attached — track it directly so it still announces the moment it parks,
+      // not on the next poll/focus.
+      trackInstalling(registration.installing)
+      const onUpdateFound = () => trackInstalling(registration.installing)
       registration.addEventListener("updatefound", onUpdateFound)
       cleanup = () => {
         registration.removeEventListener("updatefound", onUpdateFound)
