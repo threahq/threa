@@ -71,24 +71,36 @@ async function findWaitingWorker(registration: ServiceWorkerRegistration): Promi
  * common path is instant and offline: message the parked worker to `skipWaiting`,
  * reload on `controllerchange`.
  *
- * Both fallbacks escalate to `runSwRecovery` rather than a plain reload, because
- * the SW serves `index.html` cache-first from precache with no network
- * revalidation — a bare `window.location.reload()` while the old worker still
- * controls the page just re-serves the same stale shell. Recovery unregisters
- * the worker and wipes CacheStorage (what `/recover` does), so the reload after
- * it lands the new build. Reached only when no worker is parked (still
- * installing, or a byte-identical bundle) or `controllerchange` never fires.
+ * Offline-first is the binding constraint: a plain reload can never be worse
+ * than staying put, because the SW serves the shell from precache with zero
+ * network. So every fallback here is a plain reload — never the cache-wiping
+ * recovery — unless there is genuinely nothing local to serve (no controller at
+ * all), where a fresh network fetch is the only way forward anyway. Wiping
+ * CacheStorage to chase freshness would strand a user on a flaky connection
+ * (and iOS standalone routinely drops `controllerchange` after `skipWaiting`,
+ * which previously tripped that wipe on a worker that had actually activated).
  */
 export async function reloadForUpdate(): Promise<void> {
+  // A reload lands the new build whenever something can already control the
+  // page (the parked worker activated, or another tab already swapped it in).
+  // Only when nothing controls us is recovery — unregister + cache wipe + fresh
+  // fetch — the right tool, since there is no cached shell to go stale anyway.
+  const reloadOrRecover = (): void => {
+    if (navigator.serviceWorker?.controller) window.location.reload()
+    else void swRecovery.runSwRecovery({ force: true })
+  }
+
   const registration = await navigator.serviceWorker?.getRegistration()
   if (!registration) {
-    await swRecovery.runSwRecovery({ force: true })
+    reloadOrRecover()
     return
   }
 
   const waiting = await findWaitingWorker(registration)
   if (!waiting) {
-    await swRecovery.runSwRecovery({ force: true })
+    // The build we toasted for is gone: another tab activated it (the controller
+    // is the new worker, so a reload lands it) or it raced away. Reload, never wipe.
+    reloadOrRecover()
     return
   }
 
@@ -100,14 +112,13 @@ export async function reloadForUpdate(): Promise<void> {
     if (fallbackTimer) clearTimeout(fallbackTimer)
     window.location.reload()
   }
-  const escalate = (): void => {
-    if (settled) return
-    settled = true
-    void swRecovery.runSwRecovery({ force: true })
-  }
 
   navigator.serviceWorker.addEventListener("controllerchange", reloadOnce, { once: true })
-  fallbackTimer = setTimeout(escalate, RELOAD_FALLBACK_TIMEOUT_MS)
+  // If controllerchange never fires (iOS standalone drops it after skipWaiting),
+  // reload anyway: the worker has usually activated, so the reload lands the new
+  // build from cache; if it hasn't, we reload onto the cached old shell
+  // offline-safely and the next check re-parks + re-announces it.
+  fallbackTimer = setTimeout(reloadOnce, RELOAD_FALLBACK_TIMEOUT_MS)
   waiting.postMessage({ type: SW_MSG_SKIP_WAITING })
 }
 
@@ -178,19 +189,28 @@ export function useAppUpdate(): void {
     void navigator.serviceWorker?.getRegistration().then((registration) => {
       if (!registration || disposed) return
       announceIfWaiting(registration)
+      // Track per-install statechange listeners so unmount (workspace switch
+      // remounts AppUpdateChecker) tears them down too — otherwise a worker
+      // mid-install at unmount would fire after teardown, and a worker that
+      // ends `redundant` (superseded by a newer build) would never self-remove.
+      const installCleanups: Array<() => void> = []
       const onUpdateFound = () => {
         const installing = registration.installing
         if (!installing) return
         const onStateChange = () => {
-          if (installing.state === "installed") {
+          if (installing.state === "installed" || installing.state === "redundant") {
             installing.removeEventListener("statechange", onStateChange)
-            announceIfWaiting(registration)
           }
+          if (installing.state === "installed" && !disposed) announceIfWaiting(registration)
         }
         installing.addEventListener("statechange", onStateChange)
+        installCleanups.push(() => installing.removeEventListener("statechange", onStateChange))
       }
       registration.addEventListener("updatefound", onUpdateFound)
-      cleanup = () => registration.removeEventListener("updatefound", onUpdateFound)
+      cleanup = () => {
+        registration.removeEventListener("updatefound", onUpdateFound)
+        for (const remove of installCleanups) remove()
+      }
     })
     return () => {
       disposed = true

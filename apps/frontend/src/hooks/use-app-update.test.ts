@@ -79,10 +79,17 @@ describe("reloadForUpdate", () => {
     return registration as unknown as FakeRegistration
   }
 
-  const setServiceWorker = (registration: FakeRegistration | null): { fire(type: string): void } => {
+  const setServiceWorker = (
+    registration: FakeRegistration | null,
+    opts?: { controller?: unknown }
+  ): { fire(type: string): void } => {
     const listeners: Record<string, Array<() => void>> = {}
     const sw = {
       getRegistration: vi.fn(async () => registration),
+      // `controller` is the page's active worker. Present = something already
+      // controls the page, so reloadForUpdate prefers a plain (offline-safe)
+      // reload over the cache-wiping recovery.
+      controller: opts?.controller ?? null,
       addEventListener: vi.fn((type: string, cb: () => void) => {
         ;(listeners[type] ??= []).push(cb)
       }),
@@ -116,16 +123,29 @@ describe("reloadForUpdate", () => {
     }
   })
 
-  it("escalates to recovery when no service worker registration exists", async () => {
-    setServiceWorker(null)
+  it("recovers (cache wipe) only when nothing controls the page and there's no registration", async () => {
+    setServiceWorker(null, { controller: null })
     await reloadForUpdate()
     expect(recoverySpy).toHaveBeenCalledWith({ force: true })
     expect(reloadSpy).not.toHaveBeenCalled()
   })
 
-  it("escalates to recovery when no parked worker is available after update", async () => {
+  it("plain-reloads (offline-safe) when a controller exists but no worker is parked", async () => {
+    // Another tab already activated the new build: the controller is the new
+    // worker, so a reload lands it — wiping the cache would be worse than offline.
     const registration = makeRegistration()
-    setServiceWorker(registration)
+    setServiceWorker(registration, { controller: {} })
+
+    await reloadForUpdate()
+
+    expect(registration.update).toHaveBeenCalledOnce()
+    expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).not.toHaveBeenCalled()
+  })
+
+  it("recovers when no worker is parked and nothing controls the page", async () => {
+    const registration = makeRegistration()
+    setServiceWorker(registration, { controller: null })
 
     await reloadForUpdate()
 
@@ -166,17 +186,20 @@ describe("reloadForUpdate", () => {
     expect(recoverySpy).not.toHaveBeenCalled()
   })
 
-  it("escalates to recovery when the parked worker never claims", async () => {
+  it("plain-reloads (never wipes) when controllerchange never fires", async () => {
+    // iOS standalone drops controllerchange after skipWaiting — the fallback
+    // must be an offline-safe reload, not a cache wipe that could strand a
+    // flaky connection on a worker that already activated.
     vi.useFakeTimers()
     const waiting = makeWorker()
-    setServiceWorker(makeRegistration({ waiting }))
+    setServiceWorker(makeRegistration({ waiting }), { controller: {} })
 
     await reloadForUpdate()
     expect(reloadSpy).not.toHaveBeenCalled()
     expect(recoverySpy).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(RELOAD_FALLBACK_TIMEOUT_MS)
-    expect(recoverySpy).toHaveBeenCalledWith({ force: true })
-    expect(reloadSpy).not.toHaveBeenCalled()
+    expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).not.toHaveBeenCalled()
   })
 })
