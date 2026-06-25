@@ -276,12 +276,13 @@ function stripUnbalancedTrailingParens(url: string): string {
 }
 
 /**
- * Strip trailing markdown emphasis/code markers (`*`, `_`, `~`, `` ` ``) that the bare-URL
+ * Strip trailing doubled emphasis markers (`**` bold, `~~` strikethrough) that the bare-URL
  * match greedily swallowed when the URL sits inside emphasis, e.g. `**PR: https://…/1070**`.
- * The link mark href in the message is clean; only the serialized-markdown scan leaks these.
+ * Restricted to doubled runs: single `*`/`_`/`~`/backtick are valid URL characters (paths and
+ * anchors routinely end in `_`), so trimming them unconditionally would corrupt real links.
  */
 function stripTrailingMarkdownMarkers(url: string): string {
-  return url.replace(/[*_~`]+$/, "")
+  return url.replace(/(?:\*{2,}|~{2,})+$/, "")
 }
 
 const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "svg", "ico", "bmp", "avif"])

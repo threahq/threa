@@ -124,10 +124,14 @@ describe("extractUrls", () => {
     expect(extractUrls(md)).toEqual(["https://github.com/threahq/threa/pull/1070"])
   })
 
-  test("strips trailing italic/strikethrough/code markers from a bare URL", () => {
-    expect(extractUrls("_see https://example.com/page_ now")).toEqual(["https://example.com/page"])
+  test("strips trailing strikethrough markers from a bare URL", () => {
     expect(extractUrls("~~see https://example.com/page~~ now")).toEqual(["https://example.com/page"])
-    expect(extractUrls("`see https://example.com/page` now")).toEqual(["https://example.com/page"])
+  })
+
+  test("preserves single trailing markers that are valid URL characters", () => {
+    expect(extractUrls("ref https://example.com/page_ here")).toEqual(["https://example.com/page_"])
+    expect(extractUrls("ref https://example.com/page~ here")).toEqual(["https://example.com/page~"])
+    expect(extractUrls("ref https://example.com/page* here")).toEqual(["https://example.com/page*"])
   })
 
   test("strips trailing emphasis markers around a parenthesized URL", () => {
