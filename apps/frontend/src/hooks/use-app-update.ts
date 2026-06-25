@@ -1,8 +1,8 @@
-import { useEffect, useRef, useCallback } from "react"
+import { useEffect, useCallback } from "react"
 import { toast } from "sonner"
 import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
-import { getNotifiedVersion, setNotifiedVersion } from "@/lib/app-update-version"
+import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
 
 const POLL_INTERVAL = 300_000 // 5 minutes
@@ -12,11 +12,16 @@ const IS_DEV = import.meta.env.DEV
 export const WAITING_WORKER_TIMEOUT_MS = 1500
 export const RELOAD_FALLBACK_TIMEOUT_MS = 3000
 
-async function triggerSwUpdate(): Promise<void> {
-  const registration = await navigator.serviceWorker?.getRegistration()
-  if (!registration) return
-  await registration.update()
-}
+// The waiting worker we've already announced. Module-level (not a ref, not
+// persisted): it survives the AppUpdateChecker remounts that fire on every
+// workspace switch — so one ready build is announced once, not on every
+// remount — yet resets on a real page load, so a build that was downloaded but
+// never applied re-surfaces next launch instead of being silenced forever (the
+// persisted-version dedup used to silence it permanently). Keyed on worker
+// identity, not a version string: each background install produces a fresh
+// `waiting` object, so a genuinely newer build re-announces while the same
+// object across remounts does not.
+let announcedWaiting: ServiceWorker | null = null
 
 function waitForInstallingWorker(
   registration: ServiceWorkerRegistration,
@@ -61,87 +66,119 @@ async function findWaitingWorker(registration: ServiceWorkerRegistration): Promi
 /**
  * Reload onto the new build.
  *
- * New service workers install but stay parked in `waiting`, so an open tab keeps
- * the worker and precache that match its running bundle. On the user's click we
- * activate the parked worker, reload on `controllerchange`, and fall back to a
- * plain reload if the worker never claims.
+ * The background-fetch lifecycle (see `useAppUpdate`) means the toast only
+ * appears once a new worker is fully downloaded and parked in `waiting`, so the
+ * common path is instant and offline: message the parked worker to `skipWaiting`,
+ * reload on `controllerchange`.
+ *
+ * Both fallbacks escalate to `runSwRecovery` rather than a plain reload, because
+ * the SW serves `index.html` cache-first from precache with no network
+ * revalidation — a bare `window.location.reload()` while the old worker still
+ * controls the page just re-serves the same stale shell. Recovery unregisters
+ * the worker and wipes CacheStorage (what `/recover` does), so the reload after
+ * it lands the new build. Reached only when no worker is parked (still
+ * installing, or a byte-identical bundle) or `controllerchange` never fires.
  */
 export async function reloadForUpdate(): Promise<void> {
   const registration = await navigator.serviceWorker?.getRegistration()
   if (!registration) {
-    window.location.reload()
+    await swRecovery.runSwRecovery({ force: true })
     return
   }
 
   const waiting = await findWaitingWorker(registration)
   if (!waiting) {
-    window.location.reload()
+    await swRecovery.runSwRecovery({ force: true })
     return
   }
 
-  let reloaded = false
+  let settled = false
   let fallbackTimer: ReturnType<typeof setTimeout> | null = null
   const reloadOnce = (): void => {
-    if (reloaded) return
-    reloaded = true
+    if (settled) return
+    settled = true
     if (fallbackTimer) clearTimeout(fallbackTimer)
     window.location.reload()
   }
+  const escalate = (): void => {
+    if (settled) return
+    settled = true
+    void swRecovery.runSwRecovery({ force: true })
+  }
 
   navigator.serviceWorker.addEventListener("controllerchange", reloadOnce, { once: true })
-  fallbackTimer = setTimeout(reloadOnce, RELOAD_FALLBACK_TIMEOUT_MS)
+  fallbackTimer = setTimeout(escalate, RELOAD_FALLBACK_TIMEOUT_MS)
   waiting.postMessage({ type: SW_MSG_SKIP_WAITING })
 }
 
 /**
- * Whether to surface the update toast. True only for a build that is both newer
- * than what's running and not one we've already notified the user about — so a
- * remount or a refocus/reconnect/poll on an already-announced deploy stays
- * silent, while a genuinely newer build (whose version matches neither the
- * running bundle nor the persisted marker) still notifies.
+ * Surface the update toast for a build that has finished downloading and is
+ * parked in `registration.waiting`. No-op when nothing is parked (no update, or
+ * a first-ever install which activates without waiting) or when this exact
+ * worker was already announced — so Reload is always a one-click, already-local
+ * activation, never a race against an in-flight precache.
  */
-export function shouldNotifyUpdate(
-  serverVersion: string,
-  runningVersion: string,
-  notifiedVersion: string | null
-): boolean {
-  return Boolean(serverVersion) && serverVersion !== runningVersion && serverVersion !== notifiedVersion
+function announceIfWaiting(registration: ServiceWorkerRegistration): void {
+  const waiting = registration.waiting
+  if (!waiting || waiting === announcedWaiting) return
+  announcedWaiting = waiting
+  toast("A new version of Threa is available", {
+    id: TOAST_ID,
+    duration: Infinity,
+    action: {
+      label: "Reload",
+      onClick: () => void reloadForUpdate(),
+    },
+  })
 }
 
 export function useAppUpdate(): void {
   const { isVisible } = usePageActivity()
   const reconnectCount = useSocketReconnectCount()
-  // In-memory fallback so dedup still holds for this mount when localStorage is
-  // unavailable (private mode / disabled) — the persisted marker is the
-  // cross-mount/session guard; this keeps the no-storage path no worse than
-  // the previous per-mount ref.
-  const toastedVersionRef = useRef<string | null>(null)
 
   const checkForUpdate = useCallback(async () => {
     if (IS_DEV) return
-
+    const registration = await navigator.serviceWorker?.getRegistration()
+    if (!registration) return
+    // Drive the background fetch: this downloads + installs + precaches the new
+    // build while the current worker keeps serving. The `updatefound` listener
+    // below announces once it lands in `waiting`; announce here too for a build
+    // that parked before this check (e.g. installed during a prior poll).
     try {
-      // Trigger SW update check in parallel with version check
-      triggerSwUpdate().catch(() => {})
-
-      const res = await fetch("/version.json", { cache: "no-cache" })
-      if (!res.ok) return
-
-      const { version } = (await res.json()) as { version: string }
-      if (toastedVersionRef.current !== version && shouldNotifyUpdate(version, __APP_VERSION__, getNotifiedVersion())) {
-        toastedVersionRef.current = version
-        setNotifiedVersion(version)
-        toast("A new version of Threa is available", {
-          id: TOAST_ID,
-          duration: Infinity,
-          action: {
-            label: "Reload",
-            onClick: () => void reloadForUpdate(),
-          },
-        })
-      }
+      await registration.update()
     } catch {
-      // Network error — silently skip this check
+      // Network error — retry on the next trigger.
+    }
+    announceIfWaiting(registration)
+  }, [])
+
+  // Announce a build that finishes installing between checks: the browser may
+  // park a new worker at any time (another tab's update(), a slow precache
+  // completing), so listen for the install rather than only polling.
+  useEffect(() => {
+    if (IS_DEV) return
+    let disposed = false
+    let cleanup: (() => void) | null = null
+    void navigator.serviceWorker?.getRegistration().then((registration) => {
+      if (!registration || disposed) return
+      announceIfWaiting(registration)
+      const onUpdateFound = () => {
+        const installing = registration.installing
+        if (!installing) return
+        const onStateChange = () => {
+          if (installing.state === "installed") {
+            installing.removeEventListener("statechange", onStateChange)
+            announceIfWaiting(registration)
+          }
+        }
+        installing.addEventListener("statechange", onStateChange)
+      }
+      registration.addEventListener("updatefound", onUpdateFound)
+      cleanup = () => registration.removeEventListener("updatefound", onUpdateFound)
+    })
+    return () => {
+      disposed = true
+      cleanup?.()
     }
   }, [])
 
