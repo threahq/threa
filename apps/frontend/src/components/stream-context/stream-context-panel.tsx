@@ -45,6 +45,7 @@ interface StreamContextPanelProps {
   onJumpToMessage: (messageId: string) => void
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
+  onOpenGallery: (key: string) => void
 }
 
 export function StreamContextPanel({
@@ -54,6 +55,7 @@ export function StreamContextPanel({
   onJumpToMessage,
   onOpenThread,
   onOpenMemo,
+  onOpenGallery,
 }: StreamContextPanelProps) {
   const events = useStreamEvents(streamId)
   const isLoading = events === undefined
@@ -141,6 +143,7 @@ export function StreamContextPanel({
                 onJumpToMessage={onJumpToMessage}
                 onOpenThread={onOpenThread}
                 onOpenMemo={onOpenMemo}
+                onOpenGallery={onOpenGallery}
               />
             ))}
           </div>

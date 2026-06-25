@@ -52,6 +52,10 @@ export interface FileContextItem extends ContextItemBase {
   category: "file"
   attachmentId: string
   fileCategory: AttachmentCategory
+  /** Raw mime type, kept so the gallery can decide previewability (pdf /
+   *  markdown / html / text) via the canonical `is*Attachment` helpers — the
+   *  coarse `fileCategory` collapses those distinctions. */
+  mimeType: string
   filename: string
   sizeBytes: number
 }

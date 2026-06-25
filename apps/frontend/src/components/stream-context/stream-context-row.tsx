@@ -18,6 +18,8 @@ import { formatFileSize } from "@/lib/file-size"
 import { getKnowledgeConfig, memoLabel } from "@/lib/memo-display"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
+import { giphyGalleryId } from "@/components/gallery/giphy-gallery-id"
+import { galleryDocType } from "./stream-gallery-items"
 import type { ContextItem, LinkContextItem, MediaContextItem } from "@/lib/stream-context/types"
 
 interface StreamContextRowProps {
@@ -26,6 +28,7 @@ interface StreamContextRowProps {
   onJumpToMessage: (messageId: string) => void
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
+  onOpenGallery: (key: string) => void
 }
 
 function prettyHost(url: string): string {
@@ -119,6 +122,7 @@ export function StreamContextRow({
   onJumpToMessage,
   onOpenThread,
   onOpenMemo,
+  onOpenGallery,
 }: StreamContextRowProps) {
   const navigate = useNavigate()
   const { formatRelative } = useFormattedDate()
@@ -130,6 +134,9 @@ export function StreamContextRow({
   let badge: React.ReactNode = null
   let primaryAction: React.ReactNode
   let jumpTarget: string | null = item.sourceMessageId
+  // Set when the row's primary action opens the in-stream gallery; the value is
+  // the gallery key (`?smedia=`) — an attachment id or a `giphy:` sentinel.
+  let galleryKey: string | null = null
 
   switch (item.category) {
     case "link": {
@@ -173,7 +180,17 @@ export function StreamContextRow({
       primaryText = item.filename
       const mediaLabel = { image: "Image", gif: "GIF", video: "Video" }[item.mediaKind]
       secondaryText = item.snippet || mediaLabel
-      primaryAction = (
+      galleryKey = item.attachmentId ?? (item.giphyUrl ? giphyGalleryId(item.giphyUrl) : null)
+      const mediaKey = galleryKey
+      primaryAction = mediaKey ? (
+        <button
+          type="button"
+          onClick={() => onOpenGallery(mediaKey)}
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Open {primaryText}</span>
+        </button>
+      ) : (
         <button
           type="button"
           onClick={() => item.sourceMessageId && onJumpToMessage(item.sourceMessageId)}
@@ -194,7 +211,20 @@ export function StreamContextRow({
       )
       primaryText = item.filename
       secondaryText = formatFileSize(item.sizeBytes)
-      primaryAction = (
+      // Gallery-previewable documents (pdf/markdown/html/text) open in place;
+      // everything else jumps to the message that posted it.
+      const previewable = galleryDocType({ mimeType: item.mimeType, filename: item.filename }) != null
+      galleryKey = previewable ? item.attachmentId : null
+      const fileKey = galleryKey
+      primaryAction = fileKey ? (
+        <button
+          type="button"
+          onClick={() => onOpenGallery(fileKey)}
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Open {primaryText}</span>
+        </button>
+      ) : (
         <button
           type="button"
           onClick={() => item.sourceMessageId && onJumpToMessage(item.sourceMessageId)}
@@ -250,9 +280,11 @@ export function StreamContextRow({
     }
   }
 
-  // Links open the URL on primary click, so they keep a secondary "go to
-  // message" affordance. Media/file primary already jumps to the message.
-  const showJump = item.category === "link" && jumpTarget != null
+  // Rows whose primary click goes somewhere other than the source message
+  // (a link opens the URL; a media/previewable-file row opens the gallery) keep
+  // a secondary "go to message" affordance. Rows that already jump on primary
+  // (non-previewable files) don't need it.
+  const showJump = (item.category === "link" || galleryKey != null) && jumpTarget != null
 
   return (
     <div className="group relative flex gap-3">

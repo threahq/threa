@@ -12,6 +12,7 @@ interface StreamContextSurfaceProps {
   onJumpToMessage: (messageId: string) => void
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
+  onOpenGallery: (key: string) => void
 }
 
 /**
@@ -33,6 +34,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
       onJumpToMessage={props.onJumpToMessage}
       onOpenThread={props.onOpenThread}
       onOpenMemo={props.onOpenMemo}
+      onOpenGallery={props.onOpenGallery}
     />
   )
 

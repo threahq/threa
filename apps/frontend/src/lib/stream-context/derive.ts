@@ -238,6 +238,7 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
           snippet,
           attachmentId: attachment.id,
           fileCategory: category,
+          mimeType: attachment.mimeType,
           filename: attachment.filename,
           sizeBytes: attachment.sizeBytes,
         })

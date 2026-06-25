@@ -3,6 +3,7 @@ import { Download, FileText, File, Loader2, Copy, Play, Globe, Check } from "luc
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
+import { useGalleryAttachmentUrls, type GalleryUrlKind } from "@/components/gallery/use-gallery-attachment-urls"
 import { Skeleton } from "@/components/ui/skeleton"
 import { attachmentsApi, attachmentContentUrl } from "@/api"
 import { cn } from "@/lib/utils"
@@ -469,12 +470,6 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
 }
 
 export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
-  const [loadedVideoUrls, setLoadedVideoUrls] = useState<Map<string, string>>(new Map())
-  // Markdown, HTML, and PDF attachments share a single URL cache: each viewer
-  // just needs a presigned URL (the markdown viewer fetches text from it, the
-  // HTML viewer hands it straight to a sandboxed iframe, the PDF viewer hands
-  // it straight to the browser's built-in PDF renderer).
-  const [loadedTextUrls, setLoadedTextUrls] = useState<Map<string, string>>(new Map())
   const attachmentContext = useAttachmentContext()
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
@@ -537,6 +532,19 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   // sidebar reuses the inline thumbnail variant straight from browser cache.
   // Video playback keeps the lazy presigned URL (bytes stream straight from
   // S3 with native Range support).
+  const selectedUrlKind: GalleryUrlKind = useMemo(() => {
+    if (!selectedAttachmentId) return null
+    if (videoAttachments.some((a) => a.id === selectedAttachmentId)) return "video"
+    const isDocument =
+      markdownAttachments.some((a) => a.id === selectedAttachmentId) ||
+      htmlAttachments.some((a) => a.id === selectedAttachmentId) ||
+      pdfAttachments.some((a) => a.id === selectedAttachmentId) ||
+      textAttachments.some((a) => a.id === selectedAttachmentId)
+    return isDocument ? "document" : null
+  }, [selectedAttachmentId, videoAttachments, markdownAttachments, htmlAttachments, pdfAttachments, textAttachments])
+
+  const galleryUrls = useGalleryAttachmentUrls(workspaceId, selectedAttachmentId, selectedUrlKind)
+
   const galleryItems: GalleryItem[] = useMemo(() => {
     const imageItems: GalleryItem[] = imageAttachments.map((a) => ({
       type: "image" as const,
@@ -549,7 +557,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     const videoItems: GalleryItem[] = videoAttachments
       .filter((a) => a.processingStatus === "completed" || a.processingStatus === "skipped")
       .map((a) => {
-        const videoUrl = loadedVideoUrls.get(a.id) ?? ""
+        const videoUrl = galleryUrls.get(a.id) ?? ""
         // Skipped transcodes have no thumbnail object; the variant URL would
         // fall through to raw video bytes, which an <img> can't render.
         const thumbnailUrl =
@@ -565,28 +573,28 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
 
     const markdownItems: GalleryItem[] = markdownAttachments.map((a) => ({
       type: "markdown" as const,
-      url: loadedTextUrls.get(a.id) ?? "",
+      url: galleryUrls.get(a.id) ?? "",
       filename: a.filename,
       attachmentId: a.id,
     }))
 
     const htmlItems: GalleryItem[] = htmlAttachments.map((a) => ({
       type: "html" as const,
-      url: loadedTextUrls.get(a.id) ?? "",
+      url: galleryUrls.get(a.id) ?? "",
       filename: a.filename,
       attachmentId: a.id,
     }))
 
     const pdfItems: GalleryItem[] = pdfAttachments.map((a) => ({
       type: "pdf" as const,
-      url: loadedTextUrls.get(a.id) ?? "",
+      url: galleryUrls.get(a.id) ?? "",
       filename: a.filename,
       attachmentId: a.id,
     }))
 
     const textItems: GalleryItem[] = textAttachments.map((a) => ({
       type: "text" as const,
-      url: loadedTextUrls.get(a.id) ?? "",
+      url: galleryUrls.get(a.id) ?? "",
       filename: a.filename,
       attachmentId: a.id,
     }))
@@ -600,8 +608,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     htmlAttachments,
     pdfAttachments,
     textAttachments,
-    loadedVideoUrls,
-    loadedTextUrls,
+    galleryUrls,
   ])
 
   // Track selected item by ID — derived index stays correct even as galleryItems grows
@@ -629,85 +636,6 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     },
     [openMedia]
   )
-
-  // Eagerly fetch video URL when a video is selected (via click or URL param)
-  useEffect(() => {
-    if (!selectedAttachmentId) return
-    const isVideo = videoAttachments.some((a) => a.id === selectedAttachmentId)
-    if (!isVideo || loadedVideoUrls.has(selectedAttachmentId)) return
-
-    let mounted = true
-    async function fetchVideoUrl() {
-      try {
-        const url = await attachmentsApi.getDownloadUrl(workspaceId, selectedAttachmentId!, {
-          variant: "processed",
-        })
-        if (mounted) {
-          setLoadedVideoUrls((prev) => {
-            const next = new Map(prev)
-            next.set(selectedAttachmentId!, url)
-            return next
-          })
-        }
-      } catch {
-        try {
-          const url = await attachmentsApi.getDownloadUrl(workspaceId, selectedAttachmentId!)
-          if (mounted) {
-            setLoadedVideoUrls((prev) => {
-              const next = new Map(prev)
-              next.set(selectedAttachmentId!, url)
-              return next
-            })
-          }
-        } catch {
-          console.error("Failed to get video URL")
-        }
-      }
-    }
-    fetchVideoUrl()
-    return () => {
-      mounted = false
-    }
-  }, [selectedAttachmentId, videoAttachments, loadedVideoUrls, workspaceId])
-
-  // Lazy-fetch presigned URLs for markdown/html/pdf attachments when opened.
-  useEffect(() => {
-    if (!selectedAttachmentId) return
-    const needsUrl =
-      markdownAttachments.some((a) => a.id === selectedAttachmentId) ||
-      htmlAttachments.some((a) => a.id === selectedAttachmentId) ||
-      pdfAttachments.some((a) => a.id === selectedAttachmentId) ||
-      textAttachments.some((a) => a.id === selectedAttachmentId)
-    if (!needsUrl || loadedTextUrls.has(selectedAttachmentId)) return
-
-    let mounted = true
-    async function fetchTextUrl() {
-      try {
-        const url = await attachmentsApi.getDownloadUrl(workspaceId, selectedAttachmentId!)
-        if (mounted) {
-          setLoadedTextUrls((prev) => {
-            const next = new Map(prev)
-            next.set(selectedAttachmentId!, url)
-            return next
-          })
-        }
-      } catch {
-        console.error("Failed to get attachment URL")
-      }
-    }
-    fetchTextUrl()
-    return () => {
-      mounted = false
-    }
-  }, [
-    selectedAttachmentId,
-    markdownAttachments,
-    htmlAttachments,
-    pdfAttachments,
-    textAttachments,
-    loadedTextUrls,
-    workspaceId,
-  ])
 
   if (!attachments || attachments.length === 0) {
     return null

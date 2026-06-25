@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils"
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
+import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
@@ -585,6 +586,9 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
   }, [current])
 
+  // Giphy items are cross-origin CDN urls, not attachments — the attachment
+  // download API can't serve them, so the download affordance is hidden.
+  const isGiphy = current ? isGiphyGalleryId(current.attachmentId) : false
   const canCopy =
     current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text"
   const copyLabel = copyLabelForType(current?.type)
@@ -828,15 +832,17 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
               <span className="sr-only">{rawMode ? "Show rendered preview" : "Show raw source"}</span>
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
-            onClick={handleDownload}
-          >
-            {downloadDone ? <Check className="h-5 w-5" /> : <Download className="h-5 w-5" />}
-            <span className="sr-only">{downloadDone ? "Download started" : "Download"}</span>
-          </Button>
+          {!isGiphy && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
+              onClick={handleDownload}
+            >
+              {downloadDone ? <Check className="h-5 w-5" /> : <Download className="h-5 w-5" />}
+              <span className="sr-only">{downloadDone ? "Download started" : "Download"}</span>
+            </Button>
+          )}
           {canCopy && (
             <Button
               variant="ghost"
