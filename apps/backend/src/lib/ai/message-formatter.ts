@@ -25,7 +25,7 @@ export class MessageFormatter {
    *   real ids to return. Off by default — callers that don't cite stay unchanged.
    *
    * @example
-   * const formatted = await messageFormatter.formatMessages(client, messages)
+   * const formatted = await messageFormatter.formatMessages(client, workspaceId, messages)
    * // <messages>
    * // <message authorType="user" authorId="user_123" authorName="Alice" createdAt="2021-01-01T00:00:00Z">Hello!</message>
    * // <message authorType="persona" authorId="persona_456" authorName="Ariadne" createdAt="2021-01-01T00:00:01Z">Hi there!</message>
