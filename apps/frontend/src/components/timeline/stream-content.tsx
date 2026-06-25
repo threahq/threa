@@ -469,7 +469,6 @@ export function StreamContent({
     events,
     holes,
     isLoading,
-    bootstrapFetching,
     isConfirmedEmpty,
     error,
     pagedSharedMessages,
@@ -1003,17 +1002,6 @@ export function StreamContent({
   // (new message, link preview, virtua measuring) must not disarm follow.
   const userInteractedAtRef = useRef(0)
 
-  // Hold the cold-load reveal while the stream's tail is still converging: the
-  // bootstrap that establishes the true newest page is still fetching. (A
-  // concurrent sync catch-up replaying into this stream is detected inside the
-  // scroll hook via the apply window — this ref covers the bootstrap fetch the
-  // apply window does not wrap.) Without it the settle reveals the stale cached
-  // tail and then visibly jumps forward as bootstrap/catch-up land newer
-  // messages. A ref so the settle's rAF loop reads it live without re-running
-  // the layout effect.
-  const shouldHoldRevealRef = useRef(false)
-  shouldHoldRevealRef.current = bootstrapFetching
-
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
@@ -1035,7 +1023,6 @@ export function StreamContent({
     skipInitialScroll,
     isJumpMode,
     userInteractedAtRef,
-    shouldHoldRevealRef,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the

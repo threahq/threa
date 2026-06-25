@@ -1,6 +1,5 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { isApplyWindowOpen } from "@/stores/apply-window"
 
 /** Distance (px) from the bottom within which we treat the list as "at bottom". */
 const AT_BOTTOM_PX = 32
@@ -12,16 +11,6 @@ const USER_SCROLL_GRACE_MS = 300
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
-/**
- * Absolute backstop (ms) on the cold-load settle. The settle normally reveals
- * the instant the height converges (a few frames), so this only bites when the
- * tail is still being fetched/replayed past it (see the reveal-hold below) —
- * long enough to cover a bootstrap + sync catch-up landing the true newest page,
- * short enough that a stuck convergence signal self-heals rather than stranding
- * the skeleton. Aligned with the apply-window watchdog so the two release
- * together in the worst case.
- */
-const SETTLE_BACKSTOP_MS = 5000
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
@@ -65,18 +54,6 @@ interface UseTimelineScrollOptions {
    * is the secondary signal for touch/wheel that hasn't yet moved scrollTop.
    */
   userInteractedAtRef?: React.MutableRefObject<number>
-  /**
-   * While true during the cold-load settle, the reveal is held: the skeleton
-   * mask stays up and the tail keeps re-pinning, but the height-convergence
-   * reveal is suppressed. Set it while the stream's tail is still converging
-   * from the network — the bootstrap that establishes the true newest page is
-   * in flight — so the reveal can't fire on the stale cached tail and then
-   * visibly jump as newer messages land. A concurrent sync catch-up is detected
-   * internally via the apply window; this ref covers the bootstrap fetch the
-   * apply window does not wrap. Read live each settle frame, so a ref (no effect
-   * re-run, no extra render). Bounded by `SETTLE_BACKSTOP_MS`.
-   */
-  shouldHoldRevealRef?: React.MutableRefObject<boolean>
 }
 
 interface UseTimelineScrollReturn {
@@ -155,7 +132,6 @@ export function useTimelineScroll({
   skipInitialScroll = false,
   isJumpMode = false,
   userInteractedAtRef,
-  shouldHoldRevealRef,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -184,12 +160,9 @@ export function useTimelineScroll({
   // Mask the content during the cold-load settle. On the first load of a stream
   // virtua measures item heights frame-by-frame, so scrollHeight oscillates and
   // our re-pin chases it. Keep the content hidden (the component renders a
-  // skeleton overlay) until the height stabilises AND the tail has stopped
-  // converging (bootstrap landed, catch-up done — see settleToBottom's hold), so
-  // both the measurement bounce and any forward jump as newer messages arrive
-  // happen off-screen and the reveal lands on the true newest message. Revisits
-  // are already measured and up to date, so this reveals immediately. Deep-link
-  // mounts drive their own jump, so they are never masked.
+  // skeleton overlay) until the height stabilises, so convergence happens
+  // off-screen. Revisits are already measured, so this reveals immediately.
+  // Deep-link mounts drive their own jump, so they are never masked.
   const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
   const isInitialSettlingRef = useRef(isInitialSettling)
   isInitialSettlingRef.current = isInitialSettling
@@ -308,17 +281,6 @@ export function useTimelineScroll({
   // A real user gesture aborts immediately (reveal + stop) so we never trap a
   // user who wants to scroll during a slow settle. Pinning here is the same
   // idempotent pinToBottom the ResizeObserver uses, so the two never disagree.
-  //
-  // The reveal is additionally HELD while the tail is still converging from the
-  // network — a sync catch-up is replaying missed messages (apply window open)
-  // or the bootstrap that establishes the true newest page is still fetching
-  // (`shouldHoldRevealRef`). Without this the height stabilises for a few frames
-  // on the stale cached tail and the mask drops, then the bootstrap/catch-up
-  // lands newer messages and the view visibly jumps forward (and lands a couple
-  // pages above the newest). Holding keeps the skeleton up, pinned to the true
-  // bottom, until convergence quiets — then a single reveal at the newest
-  // message. Offline (nothing in flight, no catch-up) the hold is never engaged,
-  // so cached content reveals immediately. The backstop cap bounds a stuck hold.
   const settleToBottom = useCallback(
     (maxMs: number) => {
       initialSettleCleanupRef.current?.()
@@ -359,23 +321,14 @@ export function useTimelineScroll({
         if (aborted) return
         pinToBottom()
         const height = el.scrollHeight
-        // The tail is still converging when a sync catch-up is replaying into
-        // IDB (apply window open) or the bootstrap fetch is in flight. While
-        // held, never count toward convergence — reset the stable-frame run from
-        // the current geometry so the count only begins once the tail is final.
-        const held = isApplyWindowOpen() || (shouldHoldRevealRef?.current ?? false)
-        if (held) {
-          stableFrames = 0
-          lastHeight = height
-        } else if (height === lastHeight) {
-          stableFrames += 1
-        } else {
+        if (height === lastHeight) stableFrames += 1
+        else {
           stableFrames = 0
           lastHeight = height
         }
-        // Converged (not held AND height steady) or capped → reveal and hand off
-        // to the ResizeObserver, which keeps the tail pinned for any later growth.
-        if ((!held && stableFrames >= SETTLE_STABLE_FRAMES) || performance.now() - start >= maxMs) {
+        // Converged (height steady) or capped → reveal and hand off to the
+        // ResizeObserver, which keeps the tail pinned for any later growth.
+        if (stableFrames >= SETTLE_STABLE_FRAMES || performance.now() - start >= maxMs) {
           cleanup()
           return
         }
@@ -472,7 +425,7 @@ export function useTimelineScroll({
       // Not-yet-measured list can throw; the pin + settle still converge.
     }
     pinToBottom()
-    settleToBottom(SETTLE_BACKSTOP_MS)
+    settleToBottom(2000)
   }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom])
 
   // The one observer that keeps the tail glued. Two observed targets:
