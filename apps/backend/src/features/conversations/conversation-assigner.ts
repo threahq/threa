@@ -1,58 +1,9 @@
-import type { PoolClient } from "pg"
 import { ConversationRepository } from "./repository"
-import { StreamRepository } from "../streams"
-import { MessageRepository, type ConversationAssigner } from "../messaging"
-import type { Message } from "../messaging"
-import { OutboxRepository } from "../../lib/outbox"
-import { addStalenessFields } from "./staleness"
+import type { ConversationAssigner } from "../messaging"
+import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
 import { ConversationIntents, ConversationStatuses } from "@threa/types"
 import { HttpError } from "../../lib/errors"
-import { StreamTypes } from "@threa/types"
-
-/**
- * Emit the conversation aggregate + per-message membership events for a declared
- * assignment, mirroring the boundary extractor's persist phase (INV-4/7). Thread
- * conversations carry `parentStreamId` so the parent channel's subscribers see
- * the update too.
- */
-async function emitAssignment(
-  client: PoolClient,
-  workspaceId: string,
-  message: Message,
-  conversationIdValue: string,
-  created: boolean
-): Promise<void> {
-  let parentStreamId: string | undefined
-  const stream = await StreamRepository.findById(client, message.streamId)
-  if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
-    const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
-    parentStreamId = parentMessage?.streamId
-  }
-
-  const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationIdValue])
-  if (!refreshed) {
-    // The row we just wrote is gone under our own transaction — fail loud (INV-11).
-    throw new Error(`Declared conversation ${conversationIdValue} vanished during assignment`)
-  }
-
-  await OutboxRepository.insert(client, created ? "conversation:created" : "conversation:updated", {
-    workspaceId,
-    streamId: message.streamId,
-    conversationId: refreshed.id,
-    conversation: addStalenessFields(refreshed),
-    parentStreamId,
-  })
-  await OutboxRepository.insert(client, "conversation:message_assigned", {
-    workspaceId,
-    streamId: message.streamId,
-    parentStreamId,
-    messageId: message.id,
-    conversationId: refreshed.id,
-    isPrimary: true,
-    reason: "declared",
-  })
-}
 
 /**
  * Assigns a message that DECLARED its conversation at send time, synchronously,
@@ -81,12 +32,21 @@ export const conversationAssigner: ConversationAssigner = {
       })
       await ConversationRepository.addPrimaryMessage(client, workspaceId, newId, message.id, message.authorId)
       await ConversationRepository.bumpActivityForIds(client, workspaceId, [newId])
-      await emitAssignment(client, workspaceId, message, newId, true)
+      await emitAssignmentEvents(client, {
+        workspaceId,
+        message,
+        conversationId: newId,
+        created: true,
+        reason: "declared",
+      })
       return
     }
 
-    const target = await ConversationRepository.findById(client, directive.conversationId)
-    if (!target || target.workspaceId !== workspaceId || target.streamId !== message.streamId) {
+    // Workspace-scoped + row-locked (INV-8, INV-20): a stale/foreign id resolves
+    // to null (rejected below) and a concurrent resolve/delete serializes behind
+    // this attach instead of racing it.
+    const target = await ConversationRepository.findByIdForUpdate(client, workspaceId, directive.conversationId)
+    if (!target || target.streamId !== message.streamId) {
       throw new HttpError("Conversation not found in this stream", {
         status: 400,
         code: "CONVERSATION_NOT_IN_STREAM",
@@ -96,6 +56,12 @@ export const conversationAssigner: ConversationAssigner = {
     // Attaching a message to a resolved conversation revives it — it has activity again.
     await ConversationRepository.reactivateIfResolved(client, workspaceId, target.id)
     await ConversationRepository.bumpActivityForIds(client, workspaceId, [target.id])
-    await emitAssignment(client, workspaceId, message, target.id, false)
+    await emitAssignmentEvents(client, {
+      workspaceId,
+      message,
+      conversationId: target.id,
+      created: false,
+      reason: "declared",
+    })
   },
 }

@@ -2,7 +2,10 @@ import { useEffect } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useConversationService, useMessageService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { useCreateStream } from "./use-streams"
+import { useDraftScratchpads } from "./use-draft-scratchpads"
+import { useQueueDraftMessage } from "./use-queue-draft-message"
+import { generateClientId } from "./use-stream-or-draft"
+import { StreamTypes } from "@threa/types"
 import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
 
 /**
@@ -106,35 +109,54 @@ export function useWorkspaceConversations(
 
 /**
  * Author a board post through the STANDARD message send — a post is just a
- * message that declares a new conversation (`conversation: { intent: "new" }`),
- * which the backend creates synchronously in the send's transaction. No
- * board-specific endpoint: an existing channel/DM target sends straight to it;
- * a "new scratchpad" target reuses the normal stream-create flow first (so the
- * scratchpad lands in the sidebar + sync like any other), then sends. On
- * success the board feed is invalidated so the just-created conversation appears.
+ * message; there is no board-specific endpoint.
+ *
+ *  - Existing channel/DM: declare a fresh conversation
+ *    (`conversation: { intent: "new" }`), which the backend creates synchronously
+ *    in the send's transaction so the board reflects it immediately. The send
+ *    carries a `clientMessageId` so a retried request can't double-post.
+ *  - New scratchpad / quick note: reuse the same draft-scratchpad +
+ *    promote-on-send components the sidebar uses (`createScratchpad` +
+ *    `queueDraftMessage`). The server scratchpad row is born WITH its first
+ *    message via `promoteDraft` — never created empty — and the durable queue
+ *    keys the send by clientId (idempotent on retry). A fresh scratchpad's first
+ *    message is trivially a new conversation, which the boundary extractor mints,
+ *    so no directive is needed on this path.
+ *
+ * On success the board feed is invalidated so the just-created conversation
+ * appears (the board has no socket subscription yet).
  */
 export function useCreateBoardPost(workspaceId: string) {
   const messageService = useMessageService()
-  const createStream = useCreateStream(workspaceId)
+  const { createScratchpad } = useDraftScratchpads(workspaceId)
+  const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async ({ target, contentJson, attachmentIds }: CreateBoardPostInput) => {
-      const streamId =
-        target.type === "newScratchpad"
-          ? (await createStream.mutateAsync({ type: "scratchpad", companionMode: target.companionMode })).id
-          : target.streamId
+      if (target.type === "newScratchpad") {
+        const draftId = await createScratchpad(target.companionMode)
+        await queueDraftMessage(
+          { contentJson, attachmentIds },
+          {
+            workspaceId,
+            streamId: draftId,
+            streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: target.companionMode },
+            draftId,
+          }
+        )
+        return
+      }
 
-      await messageService.create(workspaceId, streamId, {
-        streamId,
+      await messageService.create(workspaceId, target.streamId, {
+        streamId: target.streamId,
         contentJson,
         attachmentIds,
+        clientMessageId: generateClientId(),
         conversation: { intent: "new" },
       })
     },
     onSuccess: () => {
-      // The conversation was created synchronously server-side; refetch the
-      // board (no socket subscription yet) so the new post appears.
       queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
     },
   })

@@ -8,7 +8,11 @@ import type { Message } from "./repository"
 import { StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
-import { type CommandDispatchedPayload, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
+import {
+  type CommandDispatchedPayload,
+  type ConversationDirective,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+} from "@threa/types"
 import { serializeBigInt, HttpError } from "@threa/backend-common"
 import { MessageNotFoundError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -31,6 +35,16 @@ const conversationDirectiveSchema = z.discriminatedUnion("intent", [
   z.object({ intent: z.literal("new") }),
   z.object({ intent: z.literal("existing"), conversationId: z.string().min(1) }),
 ])
+
+// INV-31: this runtime schema is the wire guard; `ConversationDirective` in
+// @threa/types is the published contract. These two assignments fail the
+// typecheck if either side gains/loses a member, so the shape can't drift
+// between validation and the shared type. (@threa/types carries no zod, so the
+// type can't be inferred from the schema directly — this is the lock instead.)
+const _directiveSchemaToType = (d: z.infer<typeof conversationDirectiveSchema>): ConversationDirective => d
+const _directiveTypeToSchema = (d: ConversationDirective): z.infer<typeof conversationDirectiveSchema> => d
+void _directiveSchemaToType
+void _directiveTypeToSchema
 
 const commonMessageOptionsSchema = {
   attachmentIds: z.array(z.string()).optional(),

@@ -3,10 +3,11 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import type { Socket } from "socket.io-client"
-import type { ConversationWithStaleness } from "@threa/types"
+import { StreamTypes, type ConversationWithStaleness } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
-import * as useStreamsModule from "./use-streams"
+import * as draftScratchpadsModule from "./use-draft-scratchpads"
+import * as queueDraftModule from "./use-queue-draft-message"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import { useConversations, useCreateBoardPost, conversationKeys } from "./use-conversations"
 
@@ -164,15 +165,25 @@ describe("useCreateBoardPost", () => {
     vi.restoreAllMocks()
   })
 
-  it("posts to an existing stream as a new-conversation message (no scratchpad created)", async () => {
+  function mockBoardDeps() {
     const create = vi.fn().mockResolvedValue({})
     vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
       create,
     } as unknown as contextsModule.MessageService)
-    const streamCreate = vi.fn()
-    vi.spyOn(useStreamsModule, "useCreateStream").mockReturnValue({
-      mutateAsync: streamCreate,
-    } as unknown as ReturnType<typeof useStreamsModule.useCreateStream>)
+    const createScratchpad = vi.fn().mockResolvedValue("draft_1")
+    vi.spyOn(draftScratchpadsModule, "useDraftScratchpads").mockReturnValue({
+      createScratchpad,
+    } as unknown as ReturnType<typeof draftScratchpadsModule.useDraftScratchpads>)
+    const queueDraftMessage = vi.fn().mockResolvedValue(undefined)
+    vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+      queueDraftMessage,
+      currentUserId: "user_1",
+    } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
+    return { create, createScratchpad, queueDraftMessage }
+  }
+
+  it("posts to an existing stream as a new-conversation message with an idempotency key (no scratchpad created)", async () => {
+    const { create, createScratchpad, queueDraftMessage } = mockBoardDeps()
 
     const { queryClient, wrapper } = createWrapper()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
@@ -185,27 +196,25 @@ describe("useCreateBoardPost", () => {
       })
     })
 
-    expect(streamCreate).not.toHaveBeenCalled()
-    expect(create).toHaveBeenCalledWith(WORKSPACE_ID, STREAM_ID, {
-      streamId: STREAM_ID,
-      contentJson: { type: "doc", content: [] },
-      attachmentIds: undefined,
-      conversation: { intent: "new" },
-    })
+    expect(createScratchpad).not.toHaveBeenCalled()
+    expect(queueDraftMessage).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      STREAM_ID,
+      expect.objectContaining({
+        streamId: STREAM_ID,
+        contentJson: { type: "doc", content: [] },
+        conversation: { intent: "new" },
+        clientMessageId: expect.any(String),
+      })
+    )
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [...conversationKeys.all, "workspaceList", WORKSPACE_ID],
     })
   })
 
-  it("creates a scratchpad first for a new-scratchpad target, then posts into it", async () => {
-    const create = vi.fn().mockResolvedValue({})
-    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
-      create,
-    } as unknown as contextsModule.MessageService)
-    const streamCreate = vi.fn().mockResolvedValue({ id: "stream_scratch" })
-    vi.spyOn(useStreamsModule, "useCreateStream").mockReturnValue({
-      mutateAsync: streamCreate,
-    } as unknown as ReturnType<typeof useStreamsModule.useCreateStream>)
+  it("creates a draft scratchpad and queues the first message via the promote-on-send queue (no eager server stream)", async () => {
+    const { create, createScratchpad, queueDraftMessage } = mockBoardDeps()
 
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
@@ -217,11 +226,16 @@ describe("useCreateBoardPost", () => {
       })
     })
 
-    expect(streamCreate).toHaveBeenCalledWith({ type: "scratchpad", companionMode: "on" })
-    expect(create).toHaveBeenCalledWith(
-      WORKSPACE_ID,
-      "stream_scratch",
-      expect.objectContaining({ streamId: "stream_scratch", conversation: { intent: "new" } })
+    expect(create).not.toHaveBeenCalled()
+    expect(createScratchpad).toHaveBeenCalledWith("on")
+    expect(queueDraftMessage).toHaveBeenCalledWith(
+      { contentJson: { type: "doc", content: [] }, attachmentIds: undefined },
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        streamId: "draft_1",
+        draftId: "draft_1",
+        streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: "on" },
+      })
     )
   })
 })

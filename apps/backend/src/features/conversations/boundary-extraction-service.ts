@@ -17,6 +17,7 @@ import type {
 } from "./boundary-extraction/types"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
+import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
 import { AuthorTypes, ConversationStatuses, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
@@ -603,31 +604,13 @@ export class BoundaryExtractionService {
       await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)
       await ConversationRepository.bumpActivityForIds(client, workspaceId, [conversation.id])
 
-      // Thread conversations also fan out to the parent channel's subscribers,
-      // matching the boundary extractor's event routing.
-      let parentStreamId: string | undefined
-      if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
-        const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
-        parentStreamId = parentMessage?.streamId
-      }
-
-      const refreshed =
-        (await ConversationRepository.findByIds(client, workspaceId, [conversation.id]))[0] ?? conversation
-
-      await OutboxRepository.insert(client, isNew ? "conversation:created" : "conversation:updated", {
+      // Same per-message membership emit the declared-send path uses (INV-35/37);
+      // it re-reads the conversation and routes a thread's parent-channel fan-out.
+      const refreshed = await emitAssignmentEvents(client, {
         workspaceId,
-        streamId: stream.id,
-        conversationId: refreshed.id,
-        conversation: addStalenessFields(refreshed),
-        parentStreamId,
-      })
-      await OutboxRepository.insert(client, "conversation:message_assigned", {
-        workspaceId,
-        streamId: stream.id,
-        parentStreamId,
-        messageId: message.id,
-        conversationId: refreshed.id,
-        isPrimary: true,
+        message,
+        conversationId: conversation.id,
+        created: isNew,
         reason: "agent_reply",
       })
 

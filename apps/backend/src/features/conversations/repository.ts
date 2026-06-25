@@ -104,6 +104,23 @@ export const ConversationRepository = {
   },
 
   /**
+   * Workspace-scoped read that locks the row (INV-8 + INV-20). The declared
+   * `existing` assignment path uses this so a concurrent resolve/delete of the
+   * target conversation serializes behind the attach instead of racing it.
+   * Returns null for a missing or cross-workspace id rather than leaking another
+   * tenant's row.
+   */
+  async findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<Conversation | null> {
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+      FOR UPDATE
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToConversation(result.rows[0])
+  },
+
+  /**
    * Batch lookup; returns conversations in arbitrary order. Workspace-scoped
    * (INV-8) — rows from other workspaces are filtered out at the query level
    * even if the caller passes IDs from the wrong workspace.

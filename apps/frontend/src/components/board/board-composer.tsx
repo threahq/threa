@@ -55,8 +55,8 @@ function targetForValue(value: string): BoardPostTarget | null {
 /**
  * The board's "New post" affordance. Collapsed to a single button until the user
  * opens it, so the feed stays the focus; expanding reveals the target picker +
- * composer. An authored post appears on the board the instant it's created (the
- * mutation prepends it), so there's no success toast (INV-63).
+ * composer. The composer closes on a successful post and the feed refreshes to
+ * show it, so the result is visible without a success toast (INV-63).
  */
 export function BoardComposer({ workspaceId }: { workspaceId: string }) {
   const [open, setOpen] = useState(false)
