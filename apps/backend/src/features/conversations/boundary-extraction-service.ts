@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg"
 import { sql, withTransaction, withClient } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
-import { StreamRepository } from "../streams"
+import { StreamRepository, type Stream } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
 import type {
@@ -18,7 +18,7 @@ import type {
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
 import { conversationId } from "../../lib/id"
-import { ConversationStatuses, StreamTypes } from "@threa/types"
+import { AuthorTypes, ConversationStatuses, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -77,6 +77,21 @@ export class BoundaryExtractionService {
           extractionContextBase: null,
           authoredSkip: true,
           authoredPrimary,
+          validUpdateTargets: new Set<string>(),
+        }
+      }
+
+      // Agent replies (persona/bot) belong to a conversation too — invoking or
+      // DMing an agent is conversing with it. They're assigned deterministically
+      // (the stream's active conversation, created if none), NOT LLM-clustered:
+      // a reply continues the conversation it's posted within. Handled after the
+      // connection is released so the assignment runs in its own transaction.
+      if (message.authorType !== AuthorTypes.USER) {
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          agentReply: true,
           validUpdateTargets: new Set<string>(),
         }
       }
@@ -188,6 +203,10 @@ export class BoundaryExtractionService {
     if (fetchedData.authoredSkip) {
       logger.debug({ messageId, streamId }, "Skipping boundary extraction for authored board post")
       return fetchedData.authoredPrimary ?? null
+    }
+
+    if (fetchedData.agentReply) {
+      return this.assignAgentReply(fetchedData.message, fetchedData.stream, workspaceId)
     }
 
     const {
@@ -544,6 +563,79 @@ export class BoundaryExtractionService {
 
       if (!primaryConvId) return null
       return touchedConversations.find((c) => c.id === primaryConvId) ?? null
+    })
+  }
+
+  /**
+   * Assign a non-user (agent) reply to a conversation deterministically — no LLM.
+   * An agent reply continues the conversation it's posted within, so it joins the
+   * stream's most-recently-active conversation; if the stream has none yet (a
+   * fresh thread the agent created for a channel @mention), it mints one, which
+   * the board renders under the triggering message. Mirrors the extractor's
+   * persist phase: the message row is locked before assignment (INV-20) and the
+   * membership write, activity bump, and outbox events commit together (INV-4/7).
+   */
+  private async assignAgentReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
+    return withTransaction(this.pool, async (client) => {
+      // Lock the message row so a concurrent re-delivery can't double-assign.
+      await client.query(sql`SELECT id FROM messages WHERE id = ${message.id} FOR UPDATE`)
+
+      // Idempotent on re-delivery: if already a primary somewhere, leave it.
+      const existingPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
+      if (existingPrimary) return existingPrimary
+
+      // Lock the stream so two replies racing in a fresh thread don't both mint a
+      // conversation (mirrors the scratchpad create path's stream lock, INV-20).
+      await client.query(sql`SELECT id FROM streams WHERE id = ${stream.id} FOR UPDATE`)
+
+      const active = (await ConversationRepository.findActiveByStream(client, stream.id))[0]
+      const isNew = !active
+      const conversation =
+        active ??
+        (await ConversationRepository.insert(client, {
+          id: conversationId(),
+          streamId: stream.id,
+          workspaceId,
+          confidence: 1,
+          status: ConversationStatuses.ACTIVE,
+        }))
+
+      await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)
+      await ConversationRepository.bumpActivityForIds(client, workspaceId, [conversation.id])
+
+      // Thread conversations also fan out to the parent channel's subscribers,
+      // matching the boundary extractor's event routing.
+      let parentStreamId: string | undefined
+      if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
+        const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
+        parentStreamId = parentMessage?.streamId
+      }
+
+      const refreshed =
+        (await ConversationRepository.findByIds(client, workspaceId, [conversation.id]))[0] ?? conversation
+
+      await OutboxRepository.insert(client, isNew ? "conversation:created" : "conversation:updated", {
+        workspaceId,
+        streamId: stream.id,
+        conversationId: refreshed.id,
+        conversation: addStalenessFields(refreshed),
+        parentStreamId,
+      })
+      await OutboxRepository.insert(client, "conversation:message_assigned", {
+        workspaceId,
+        streamId: stream.id,
+        parentStreamId,
+        messageId: message.id,
+        conversationId: refreshed.id,
+        isPrimary: true,
+        reason: "agent_reply",
+      })
+
+      logger.info(
+        { messageId: message.id, streamId: stream.id, conversationId: refreshed.id, created: isNew },
+        "Agent reply assigned to conversation"
+      )
+      return refreshed
     })
   }
 

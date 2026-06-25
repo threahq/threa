@@ -1,6 +1,5 @@
 import type { Pool } from "pg"
 import { parseMessagePayload } from "../../lib/outbox"
-import { AuthorTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
@@ -10,7 +9,10 @@ import { E2eStreamsRepository } from "../e2e-streams"
 export type BoundaryExtractionHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
- * Dispatches boundary-extraction jobs for user messages arriving via the outbox.
+ * Dispatches boundary-extraction jobs for messages arriving via the outbox.
+ * User messages are LLM-clustered; agent (persona/bot) replies are assigned
+ * deterministically to the conversation they reply within (handled in
+ * `BoundaryExtractionService.processMessage`) — both flow through this dispatch.
  */
 export class BoundaryExtractionHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager
@@ -39,7 +41,10 @@ export class BoundaryExtractionHandler extends DebouncedOutboxHandler {
       return
     }
 
-    if (messageEvent.actorType !== AuthorTypes.USER) {
+    // Every message — user or agent (persona/bot) — belongs to a conversation.
+    // User messages are LLM-clustered; agent replies are assigned
+    // deterministically in processMessage. Skip only malformed actorless events.
+    if (!messageEvent.actorId) {
       return
     }
 
