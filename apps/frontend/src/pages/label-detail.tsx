@@ -177,6 +177,7 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
 }
 
 function countLabel(count: number, noun: string): string {
+  if (count === 0) return `No ${noun}s yet`
   return `${count} ${count === 1 ? noun : `${noun}s`}`
 }
 
