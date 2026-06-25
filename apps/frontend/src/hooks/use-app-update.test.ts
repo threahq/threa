@@ -1,7 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadForUpdate, RELOAD_FALLBACK_TIMEOUT_MS } from "./use-app-update"
+import { reloadForUpdate, shouldAnnounceWaiting, RELOAD_FALLBACK_TIMEOUT_MS } from "./use-app-update"
 import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
+
+describe("shouldAnnounceWaiting", () => {
+  // Distinct objects stand in for distinct parked workers — the gate keys on
+  // worker identity, not a version string.
+  const workerA = {} as ServiceWorker
+  const workerB = {} as ServiceWorker
+
+  it("stays silent when nothing is parked (no update, or a first-ever install)", () => {
+    expect(shouldAnnounceWaiting(null, null)).toBe(false)
+    expect(shouldAnnounceWaiting(undefined, null)).toBe(false)
+  })
+
+  it("announces a freshly parked build", () => {
+    expect(shouldAnnounceWaiting(workerA, null)).toBe(true)
+  })
+
+  it("stays silent on the remount/refocus re-check of an already-announced build", () => {
+    expect(shouldAnnounceWaiting(workerA, workerA)).toBe(false)
+  })
+
+  it("announces again only for a genuinely newer build (a new waiting worker)", () => {
+    expect(shouldAnnounceWaiting(workerB, workerA)).toBe(true)
+  })
+})
 
 describe("reloadForUpdate", () => {
   const originalLocation = window.location

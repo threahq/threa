@@ -112,15 +112,31 @@ export async function reloadForUpdate(): Promise<void> {
 }
 
 /**
+ * Whether to announce the given waiting worker. True only for a build that is
+ * both fully parked (`waiting` set) and not the exact worker we already
+ * announced — so a first-ever install (no waiting worker, activates straight
+ * away) and the remount/refocus re-checks against an already-announced build
+ * stay silent, while a genuinely newer build (a fresh `waiting` object) still
+ * announces. Identity, not a version string: that is what makes the toast fire
+ * only when Reload would be a one-click local activation, never a race against
+ * an in-flight precache, and never the premature version.json-delta toast this
+ * replaced.
+ */
+export function shouldAnnounceWaiting(
+  waiting: ServiceWorker | null | undefined,
+  announced: ServiceWorker | null
+): boolean {
+  return Boolean(waiting) && waiting !== announced
+}
+
+/**
  * Surface the update toast for a build that has finished downloading and is
- * parked in `registration.waiting`. No-op when nothing is parked (no update, or
- * a first-ever install which activates without waiting) or when this exact
- * worker was already announced — so Reload is always a one-click, already-local
- * activation, never a race against an in-flight precache.
+ * parked in `registration.waiting`. Gated by `shouldAnnounceWaiting`, so Reload
+ * is always a one-click, already-local activation.
  */
 function announceIfWaiting(registration: ServiceWorkerRegistration): void {
   const waiting = registration.waiting
-  if (!waiting || waiting === announcedWaiting) return
+  if (!shouldAnnounceWaiting(waiting, announcedWaiting)) return
   announcedWaiting = waiting
   toast("A new version of Threa is available", {
     id: TOAST_ID,
