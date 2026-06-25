@@ -1235,13 +1235,16 @@ function SentMessageEvent({
             currentUserId={currentUserId}
           />
         )}
-        {/* Labels the viewer filed this message under — renders nothing until
-            there's at least one, so unlabeled rows keep their footprint. */}
-        <LabelStack
-          workspaceId={workspaceId}
-          resourceType={LabelableResourceTypes.MESSAGE}
-          resourceId={payload.messageId}
-        />
+        {/* Grouped continuations have no header row, so their labels trail the
+            footer; standalone rows render them in the header beside the time
+            (see statusIndicator). Renders nothing until the message is labeled. */}
+        {groupContinuation && (
+          <LabelStack
+            workspaceId={workspaceId}
+            resourceType={LabelableResourceTypes.MESSAGE}
+            resourceId={payload.messageId}
+          />
+        )}
         {threadSlot}
       </>
     )
@@ -1272,6 +1275,13 @@ function SentMessageEvent({
               />
             )}
             <SavedIndicator saved={savedForMessage ?? null} />
+            {/* Labels beside the time — standalone rows only; this header isn't
+                rendered for continuations, which keep them in the footer. */}
+            <LabelStack
+              workspaceId={workspaceId}
+              resourceType={LabelableResourceTypes.MESSAGE}
+              resourceId={payload.messageId}
+            />
           </>
         }
         isEditing={isEditing && !editingSurfaceTouch}

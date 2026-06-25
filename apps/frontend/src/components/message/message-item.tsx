@@ -196,8 +196,14 @@ export function MessageItem({
           currentUserId={currentUserId}
         />
       )}
-      <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.MESSAGE} resourceId={message.id} />
     </>
+  )
+
+  // The message's own labels. On a standalone row they ride in the header next
+  // to the timestamp; a continuation has no header, so they trail the body
+  // there (renders nothing until the message is actually labeled).
+  const labelStack = (
+    <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.MESSAGE} resourceId={message.id} />
   )
 
   const touchHandlers = touchCapable ? longPress.handlers : undefined
@@ -217,7 +223,10 @@ export function MessageItem({
         >
           {formatTime(sentAt)}
         </div>
-        <div className="min-w-0 flex-1 pr-7">{body}</div>
+        <div className="min-w-0 flex-1 pr-7">
+          {body}
+          {labelStack}
+        </div>
         {overflowMenu}
         {overlays}
       </div>
@@ -261,6 +270,7 @@ export function MessageItem({
           >
             <RelativeTime date={message.createdAt} />
           </Link>
+          {labelStack}
           {streamLabel && (
             <MessageStreamByline
               workspaceId={workspaceId}
