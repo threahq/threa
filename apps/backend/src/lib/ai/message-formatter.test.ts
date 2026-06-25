@@ -231,6 +231,24 @@ describe("MessageFormatter", () => {
     expect(result).not.toContain('authorName="Bob "The Builder" Smith"')
   })
 
+  test("omits message ids by default", async () => {
+    const messages = [createMessage({ id: "msg_1", authorId: "usr_123", authorType: "user", contentMarkdown: "Hi" })]
+    mockFindUsersByIds.mockResolvedValue([{ id: "usr_123", name: "Alice" }])
+
+    const result = await formatter.formatMessages(mockClient, "ws_test", messages)
+
+    expect(result).not.toContain("id=")
+  })
+
+  test("includes message ids when includeIds is set (so the model can cite sources)", async () => {
+    const messages = [createMessage({ id: "msg_1", authorId: "usr_123", authorType: "user", contentMarkdown: "Hi" })]
+    mockFindUsersByIds.mockResolvedValue([{ id: "usr_123", name: "Alice" }])
+
+    const result = await formatter.formatMessages(mockClient, "ws_test", messages, { includeIds: true })
+
+    expect(result).toContain('<message id="msg_1" authorType="user"')
+  })
+
   describe("formatMessagesInline", () => {
     test("should return empty string for empty message list", async () => {
       const result = await formatter.formatMessagesInline(mockClient, "ws_test", [])
