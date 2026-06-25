@@ -363,53 +363,22 @@ function MessagesSection({
   if (messages.length === 0) return <EmptyMessages />
   return (
     <div className="divide-y overflow-hidden rounded-xl border bg-card">
-      {messages.map((message) => {
-        const stream = resolveMessageStream(message.streamId)
-        return (
-          <div key={message.id} className="px-4 py-3">
-            <StreamByline workspaceId={workspaceId} streamId={message.streamId} name={stream.name} type={stream.type} />
-            {/* Each labeled message is standalone, so zero the item's leading
-                margin (which exists to space stacked messages in a board card)
-                and let the cell padding + byline gap own the rhythm. */}
-            <div className="[&>*]:mt-0">
-              <MessageItem
-                workspaceId={workspaceId}
-                streamId={message.streamId}
-                message={message}
-                authorName={getActorName(message.authorId, message.authorType)}
-                currentUserId={currentUserId}
-              />
-            </div>
-          </div>
-        )
-      })}
+      {messages.map((message) => (
+        // Each labeled message is standalone, so zero the item's leading margin
+        // (which spaces stacked messages in a board card) and let the cell
+        // padding own the rhythm. The origin stream rides in the item's header.
+        <div key={message.id} className="px-4 py-3 [&>*]:mt-0">
+          <MessageItem
+            workspaceId={workspaceId}
+            streamId={message.streamId}
+            message={message}
+            authorName={getActorName(message.authorId, message.authorType)}
+            currentUserId={currentUserId}
+            streamLabel={resolveMessageStream(message.streamId)}
+          />
+        </div>
+      ))}
     </div>
-  )
-}
-
-/** Names the stream a labeled message came from, linking back into it (INV-40).
- * Labeled messages span streams, so the origin is per-row here — the board shows
- * the analogous context at the card level. */
-function StreamByline({
-  workspaceId,
-  streamId,
-  name,
-  type,
-}: {
-  workspaceId: string
-  streamId: string
-  name: string
-  type: StreamType
-}) {
-  const Icon = STREAM_ICONS[type] ?? Tag
-  return (
-    <Link
-      to={`/w/${workspaceId}/s/${streamId}`}
-      className="mb-1.5 flex w-fit max-w-full items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      <span className="truncate font-medium">{name}</span>
-    </Link>
   )
 }
 

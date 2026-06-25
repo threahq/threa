@@ -1,6 +1,12 @@
 import { useCallback, useState } from "react"
 import { Link } from "react-router-dom"
-import { LabelableResourceTypes, type AttachmentSummary, type AuthorType, type LinkPreviewSummary } from "@threa/types"
+import {
+  LabelableResourceTypes,
+  type AttachmentSummary,
+  type AuthorType,
+  type LinkPreviewSummary,
+  type StreamType,
+} from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
@@ -19,6 +25,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
+import { STREAM_ICONS } from "@/lib/streams"
 import { cn } from "@/lib/utils"
 
 /** Same-author messages within this window collapse into a continuation (no
@@ -59,6 +66,10 @@ interface MessageItemProps {
   /** A same-author follow-up: drop the avatar/header and align the body under
    * the head row's content (matches the timeline's grouped continuations). */
   continuation?: boolean
+  /** Opt-in origin-stream chip in the header, right of the timestamp. Set on the
+   * label page (messages span streams, so each row names its origin); the board
+   * leaves it off because it shows the stream at the card level. */
+  streamLabel?: { name: string; type: StreamType }
 }
 
 /**
@@ -78,6 +89,7 @@ export function MessageItem({
   authorName,
   currentUserId,
   continuation,
+  streamLabel,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const { openUserProfile } = useUserProfile()
@@ -234,12 +246,12 @@ export function MessageItem({
             <button
               type="button"
               onClick={() => openUserProfile(message.authorId)}
-              className="truncate text-left text-sm font-semibold hover:underline"
+              className="min-w-0 truncate text-left text-sm font-semibold hover:underline"
             >
               {authorName}
             </button>
           ) : (
-            <span className="truncate text-sm font-semibold">{authorName}</span>
+            <span className="min-w-0 truncate text-sm font-semibold">{authorName}</span>
           )}
           {/* Permalink to the message in its stream timeline — the body is
               interactive, so navigation lives on the timestamp instead. */}
@@ -249,11 +261,49 @@ export function MessageItem({
           >
             <RelativeTime date={message.createdAt} />
           </Link>
+          {streamLabel && (
+            <MessageStreamByline
+              workspaceId={workspaceId}
+              streamId={streamId}
+              name={streamLabel.name}
+              type={streamLabel.type}
+            />
+          )}
         </div>
         {body}
       </div>
       {overflowMenu}
       {overlays}
     </div>
+  )
+}
+
+/**
+ * Origin-stream chip for the header metadata line — the stream glyph + name,
+ * linking into the stream (INV-40). Sits right of the timestamp and shares its
+ * muted `text-xs` treatment so it reads as metadata, not a heading; the name
+ * truncates so a long stream can't push the row.
+ */
+function MessageStreamByline({
+  workspaceId,
+  streamId,
+  name,
+  type,
+}: {
+  workspaceId: string
+  streamId: string
+  name: string
+  type: StreamType
+}) {
+  const Icon = STREAM_ICONS[type]
+  return (
+    <Link
+      to={`/w/${workspaceId}/s/${streamId}`}
+      title={name}
+      className="flex min-w-0 shrink items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <Icon className="h-3 w-3 shrink-0" aria-hidden />
+      <span className="truncate">{name}</span>
+    </Link>
   )
 }
