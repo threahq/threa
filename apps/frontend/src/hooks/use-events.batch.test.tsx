@@ -42,8 +42,19 @@ function makeEvent(sequence: string): CachedEvent {
 // keeps exactly the pre-window tail and the later entries are withheld until
 // close, not merely that some number of rows changed (INV-23).
 function TimelineSeqs(): React.ReactElement {
-  const events = useBatchedValue(useStreamEvents(STREAM_ID) ?? [])
-  return createElement("span", { "data-testid": "seqs" }, events.map((e) => e.sequence).join(","))
+  const liveEvents = useStreamEvents(STREAM_ID) ?? []
+  const events = useBatchedValue(liveEvents)
+  const sequences = (items: typeof liveEvents) => items.map((e) => e.sequence).join(",")
+  // Render the raw liveQuery sequences alongside the batched ones so the test
+  // can wait until the liveQuery has actually observed every write before
+  // asserting the batched window is still holding — instead of a fixed sleep
+  // that could pass before the writes even propagate.
+  return createElement(
+    "div",
+    null,
+    createElement("span", { "data-testid": "raw-seqs" }, sequences(liveEvents)),
+    createElement("span", { "data-testid": "seqs" }, sequences(events))
+  )
 }
 
 describe("timeline events coalesce through the apply window", () => {
@@ -80,10 +91,11 @@ describe("timeline events coalesce through the apply window", () => {
       await db.events.put(makeEvent("3"))
       await db.events.put(makeEvent("4"))
     })
-    // The liveQuery observes the writes (this wait gives it time to fire), but
-    // the rendered window must stay frozen on exactly the pre-window tail —
-    // events 2/3/4 are withheld, no per-entry forward walk.
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    // Wait until the raw liveQuery has actually observed every write, so the
+    // freeze assertion proves the batched window withheld 2/3/4 rather than
+    // racing them. The batched window must stay frozen on exactly the pre-window
+    // tail — no per-entry forward walk.
+    await waitFor(() => expect(screen.getByTestId("raw-seqs").textContent).toBe("1,2,3,4"))
     expect(screen.getByTestId("seqs").textContent).toBe("1")
 
     // Closing releases the settled tail in one update — straight to 1,2,3,4,
