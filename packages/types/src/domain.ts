@@ -18,6 +18,7 @@ import type {
   CompanionMode,
   MemoryMode,
   AuthorType,
+  ConversationIntent,
   EventType,
   WorkspaceRoleSlug,
   InvitationStatus,
@@ -452,6 +453,12 @@ export interface Message {
    */
   threadSummary?: ThreadSummary
   sentVia: string | null
+  /**
+   * How this message's conversation was decided (see {@link ConversationIntent}).
+   * `null`/absent → the boundary-extractor inferred it; a value → the sender
+   * declared it at send time and the extractor leaves it locked.
+   */
+  conversationIntent?: ConversationIntent | null
   reactions: Record<string, string[]>
   /**
    * Arbitrary key/value references attached by the sender (e.g. external system IDs).

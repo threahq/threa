@@ -68,6 +68,7 @@ import {
 } from "./features/memos"
 import {
   ConversationService,
+  conversationAssigner,
   BoundaryExtractionService,
   BoundaryExtractionHandler,
   createBoundaryExtractionWorker,
@@ -239,7 +240,7 @@ export async function startServer(): Promise<ServerInstance> {
   const storage = createS3Storage(config.s3)
   const avatarService = new AvatarService(storage)
   const streamService = new StreamService(pool)
-  const eventService = new EventService(pool)
+  const eventService = new EventService(pool, conversationAssigner)
   const authService = config.useStubAuth ? new StubAuthService() : new WorkosAuthService(config.workos)
 
   const malwareScanner = createMalwareScanner(storage, config.attachments)
@@ -260,7 +261,7 @@ export async function startServer(): Promise<ServerInstance> {
   const streamNamingService = config.useStubAI
     ? new StubStreamNamingService()
     : new StreamNamingService(pool, ai, configResolver, messageFormatter)
-  const conversationService = new ConversationService(pool, eventService, streamService)
+  const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
   const workspaceSettingsService = new WorkspaceSettingsService(pool)
   const featureFlagService = new FeatureFlagService(pool)

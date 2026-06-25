@@ -36,7 +36,6 @@ describe("Conversation Handlers", () => {
   )
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
-  const mockCreateAuthoredPost = mock(() => Promise.resolve({} as Record<string, unknown>))
   const mockGetFlag = mock(() => Promise.resolve("on" as string))
 
   const handlers = createConversationHandlers({
@@ -45,7 +44,6 @@ describe("Conversation Handlers", () => {
       listByWorkspace: mockListByWorkspace,
       getById: mockGetById,
       getMessages: mockGetMessages,
-      createAuthoredPost: mockCreateAuthoredPost,
     } as never,
     streamService: {
       validateStreamAccess: mockValidateStreamAccess,
@@ -61,7 +59,6 @@ describe("Conversation Handlers", () => {
     mockListByWorkspace.mockReset()
     mockGetById.mockReset()
     mockGetMessages.mockReset()
-    mockCreateAuthoredPost.mockReset()
     mockGetFlag.mockReset()
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
@@ -74,75 +71,6 @@ describe("Conversation Handlers", () => {
       workspaceId: "ws_1",
     })
     mockGetMessages.mockResolvedValue([])
-    mockCreateAuthoredPost.mockResolvedValue({ conversation: { id: "conv_new" } })
-  })
-
-  describe("createAuthoredPost", () => {
-    const streamTarget = { type: "stream", streamId: "stream_2" }
-    const validBody = { target: streamTarget, contentJson: { type: "doc", content: [] } }
-
-    test("404s when the board-view feature flag is not 'on'", async () => {
-      mockGetFlag.mockResolvedValue("off")
-      await expect(handlers.createAuthoredPost(mockReq({ body: validBody }), mockRes())).rejects.toMatchObject({
-        status: 404,
-      })
-      expect(mockCreateAuthoredPost).not.toHaveBeenCalled()
-    })
-
-    test("validates access for an existing-stream target", async () => {
-      await handlers.createAuthoredPost(mockReq({ body: validBody }), mockRes())
-      expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_2", "ws_1", "usr_1")
-    })
-
-    test("does NOT validate stream access for a new-scratchpad target", async () => {
-      await handlers.createAuthoredPost(
-        mockReq({
-          body: { target: { type: "newScratchpad", companionMode: "on" }, contentJson: { type: "doc", content: [] } },
-        }),
-        mockRes()
-      )
-      expect(mockValidateStreamAccess).not.toHaveBeenCalled()
-      expect(mockCreateAuthoredPost).toHaveBeenCalledWith(
-        expect.objectContaining({ target: { type: "newScratchpad", companionMode: "on" } })
-      )
-    })
-
-    test("propagates StreamNotFoundError without creating a post", async () => {
-      mockValidateStreamAccess.mockRejectedValue(new StreamNotFoundError())
-      await expect(handlers.createAuthoredPost(mockReq({ body: validBody }), mockRes())).rejects.toThrow(
-        "Stream not found"
-      )
-      expect(mockCreateAuthoredPost).not.toHaveBeenCalled()
-    })
-
-    test("delegates to the service and returns 201 with the created post", async () => {
-      const post = { conversation: { id: "conv_new" }, openingMessage: { id: "msg_1" } }
-      mockCreateAuthoredPost.mockResolvedValue(post)
-      const res = mockRes()
-
-      await handlers.createAuthoredPost(
-        mockReq({ body: { ...validBody, title: "  Roadmap  ", attachmentIds: ["att_1"] } }),
-        res
-      )
-
-      expect(mockCreateAuthoredPost).toHaveBeenCalledWith({
-        workspaceId: "ws_1",
-        userId: "usr_1",
-        target: streamTarget,
-        contentJson: { type: "doc", content: [] },
-        title: "Roadmap",
-        attachmentIds: ["att_1"],
-      })
-      expect((res as unknown as { statusCode: number; body: unknown }).statusCode).toBe(201)
-      expect((res as unknown as { body: unknown }).body).toEqual({ post })
-    })
-
-    test("rejects a body with no target with a 400", async () => {
-      await expect(
-        handlers.createAuthoredPost(mockReq({ body: { contentJson: { type: "doc", content: [] } } }), mockRes())
-      ).rejects.toMatchObject({ status: 400 })
-      expect(mockCreateAuthoredPost).not.toHaveBeenCalled()
-    })
   })
 
   describe("listByStream", () => {

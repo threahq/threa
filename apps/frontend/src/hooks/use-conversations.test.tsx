@@ -3,9 +3,10 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import type { Socket } from "socket.io-client"
-import type { BoardPost, ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
+import * as useStreamsModule from "./use-streams"
 import { SocketEventGate } from "@/sync/socket-event-gate"
 import { useConversations, useCreateBoardPost, conversationKeys } from "./use-conversations"
 
@@ -159,36 +160,24 @@ describe("useConversations event registration", () => {
 })
 
 describe("useCreateBoardPost", () => {
-  function makePost(conversationId: string): BoardPost {
-    return {
-      conversation: makeConversation(conversationId),
-      openingMessage: null,
-      recentMessages: [],
-      totalReplies: 0,
-    }
-  }
-
-  function workspaceListKey() {
-    return conversationKeys.workspaceList(WORKSPACE_ID, { limit: 50 })
-  }
-
   beforeEach(() => {
     vi.restoreAllMocks()
   })
 
-  it("prepends the created post to the cached board page", async () => {
-    const post = makePost("conv_new")
-    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
-      createBoardPost: vi.fn().mockResolvedValue(post),
-    } as unknown as contextsModule.ConversationService)
+  it("posts to an existing stream as a new-conversation message (no scratchpad created)", async () => {
+    const create = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      create,
+    } as unknown as contextsModule.MessageService)
+    const streamCreate = vi.fn()
+    vi.spyOn(useStreamsModule, "useCreateStream").mockReturnValue({
+      mutateAsync: streamCreate,
+    } as unknown as ReturnType<typeof useStreamsModule.useCreateStream>)
 
     const { queryClient, wrapper } = createWrapper()
-    queryClient.setQueryData(workspaceListKey(), {
-      pages: [{ posts: [makePost("conv_old")], nextCursor: null }],
-      pageParams: [undefined],
-    })
-
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
+
     await act(async () => {
       await result.current.mutateAsync({
         target: { type: "stream", streamId: STREAM_ID },
@@ -196,31 +185,43 @@ describe("useCreateBoardPost", () => {
       })
     })
 
-    const data = queryClient.getQueryData(workspaceListKey()) as { pages: { posts: BoardPost[] }[] }
-    expect(data.pages[0].posts.map((p) => p.conversation.id)).toEqual(["conv_new", "conv_old"])
+    expect(streamCreate).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith(WORKSPACE_ID, STREAM_ID, {
+      streamId: STREAM_ID,
+      contentJson: { type: "doc", content: [] },
+      attachmentIds: undefined,
+      conversation: { intent: "new" },
+    })
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [...conversationKeys.all, "workspaceList", WORKSPACE_ID],
+    })
   })
 
-  it("does not duplicate a post already present in the cache (idempotent)", async () => {
-    const post = makePost("conv_dupe")
-    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
-      createBoardPost: vi.fn().mockResolvedValue(post),
-    } as unknown as contextsModule.ConversationService)
+  it("creates a scratchpad first for a new-scratchpad target, then posts into it", async () => {
+    const create = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      create,
+    } as unknown as contextsModule.MessageService)
+    const streamCreate = vi.fn().mockResolvedValue({ id: "stream_scratch" })
+    vi.spyOn(useStreamsModule, "useCreateStream").mockReturnValue({
+      mutateAsync: streamCreate,
+    } as unknown as ReturnType<typeof useStreamsModule.useCreateStream>)
 
-    const { queryClient, wrapper } = createWrapper()
-    queryClient.setQueryData(workspaceListKey(), {
-      pages: [{ posts: [makePost("conv_dupe")], nextCursor: null }],
-      pageParams: [undefined],
-    })
-
+    const { wrapper } = createWrapper()
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
+
     await act(async () => {
       await result.current.mutateAsync({
-        target: { type: "stream", streamId: STREAM_ID },
+        target: { type: "newScratchpad", companionMode: "on" },
         contentJson: { type: "doc", content: [] },
       })
     })
 
-    const data = queryClient.getQueryData(workspaceListKey()) as { pages: { posts: BoardPost[] }[] }
-    expect(data.pages[0].posts.map((p) => p.conversation.id)).toEqual(["conv_dupe"])
+    expect(streamCreate).toHaveBeenCalledWith({ type: "scratchpad", companionMode: "on" })
+    expect(create).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "stream_scratch",
+      expect.objectContaining({ streamId: "stream_scratch", conversation: { intent: "new" } })
+    )
   })
 })

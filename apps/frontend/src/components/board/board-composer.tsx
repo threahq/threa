@@ -6,14 +6,13 @@ import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, Sele
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
-import { useCreateBoardPost } from "@/hooks/use-conversations"
+import { useCreateBoardPost, type BoardPostTarget } from "@/hooks/use-conversations"
 import {
   useWorkspaceStreams,
   useWorkspaceUsers,
   useWorkspaceDmPeers,
   type CachedStream,
 } from "@/stores/workspace-store"
-import type { CreateBoardPostTarget } from "@/api/conversations"
 import { resolveStreamName } from "@/lib/streams"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
@@ -46,7 +45,7 @@ export function isPostableStream(stream: Pick<CachedStream, "type" | "archivedAt
 }
 
 /** Map a Select value to the API target. Stream ids fall through to a stream target. */
-function targetForValue(value: string): CreateBoardPostTarget | null {
+function targetForValue(value: string): BoardPostTarget | null {
   if (!value) return null
   if (value === NEW_SCRATCHPAD) return { type: "newScratchpad", companionMode: "on" }
   if (value === NEW_QUICK_NOTE) return { type: "newScratchpad", companionMode: "off" }

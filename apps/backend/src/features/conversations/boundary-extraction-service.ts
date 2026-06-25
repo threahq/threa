@@ -65,18 +65,18 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContextBase: null }
       }
 
-      // Authored board posts declare their conversation synchronously at
-      // creation. The message:created outbox still fires for them, but the async
-      // pass must never re-cluster or move a human-declared boundary (INV-20) —
-      // short-circuit with the conversation it already owns.
-      if (message.isAuthoredBoundary) {
-        const authoredPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
+      // A message that DECLARED its conversation was assigned synchronously in
+      // the send transaction. The message:created outbox still fires, but the
+      // async pass must never re-cluster or move a human-declared assignment
+      // (INV-20) — short-circuit with the conversation it already owns.
+      if (message.conversationIntent !== null) {
+        const declaredPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
         return {
           message,
           stream,
           extractionContextBase: null,
-          authoredSkip: true,
-          authoredPrimary,
+          declaredSkip: true,
+          declaredPrimary,
           validUpdateTargets: new Set<string>(),
         }
       }
@@ -200,9 +200,9 @@ export class BoundaryExtractionService {
       return null
     }
 
-    if (fetchedData.authoredSkip) {
-      logger.debug({ messageId, streamId }, "Skipping boundary extraction for authored board post")
-      return fetchedData.authoredPrimary ?? null
+    if (fetchedData.declaredSkip) {
+      logger.debug({ messageId, streamId }, "Skipping boundary extraction for a message with a declared conversation")
+      return fetchedData.declaredPrimary ?? null
     }
 
     if (fetchedData.agentReply) {
@@ -431,10 +431,10 @@ export class BoundaryExtractionService {
           }
         }
 
-        // An authored board post is a human-declared boundary: the async pass
-        // never moves it out of the conversation it seeded (INV-20).
-        if (reassignedMessage?.isAuthoredBoundary) {
-          logger.warn({ messageId: r.messageId }, "Skipping reassignment of an authored board post")
+        // A message with a declared conversation is human-assigned: the async
+        // pass never moves it out of the conversation it was placed in (INV-20).
+        if (reassignedMessage?.conversationIntent != null) {
+          logger.warn({ messageId: r.messageId }, "Skipping reassignment of a message with a declared conversation")
           continue
         }
 

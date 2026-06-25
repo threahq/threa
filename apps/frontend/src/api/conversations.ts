@@ -1,30 +1,5 @@
 import { api } from "./client"
-import type {
-  ConversationWithStaleness,
-  ConversationStatus,
-  JSONContent,
-  Message,
-  BoardPost,
-  BoardPostMessage,
-} from "@threa/types"
-
-/**
- * Where an authored post lands: an existing stream the user picked (channel or
- * DM), or a brand-new scratchpad created for the post (`companionMode: "on"` =
- * companion AI scratchpad, `"off"` = plain quick note).
- */
-export type CreateBoardPostTarget =
-  | { type: "stream"; streamId: string }
-  | { type: "newScratchpad"; companionMode: "on" | "off" }
-
-export interface CreateBoardPostParams {
-  target: CreateBoardPostTarget
-  /** Canonical ProseMirror content (INV-58); the backend derives markdown. */
-  contentJson: JSONContent
-  /** Optional human title for the conversation. */
-  title?: string
-  attachmentIds?: string[]
-}
+import type { ConversationWithStaleness, ConversationStatus, Message, BoardPost, BoardPostMessage } from "@threa/types"
 
 export interface ListConversationsParams {
   status?: ConversationStatus
@@ -59,16 +34,6 @@ export const conversationsApi = {
     return api.get<WorkspaceConversationsPage>(
       `/api/workspaces/${workspaceId}/conversations${query ? `?${query}` : ""}`
     )
-  },
-
-  /**
-   * Author a board post: create a message in the picked stream + a conversation
-   * seeded with it. The conversation is materialized synchronously server-side,
-   * so the returned {@link BoardPost} can be shown immediately.
-   */
-  async createBoardPost(workspaceId: string, params: CreateBoardPostParams): Promise<BoardPost> {
-    const res = await api.post<{ post: BoardPost }>(`/api/workspaces/${workspaceId}/board/posts`, params)
-    return res.post
   },
 
   async listByStream(

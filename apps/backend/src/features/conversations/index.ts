@@ -1,5 +1,7 @@
 export { createConversationHandlers } from "./handlers"
 
+export { conversationAssigner } from "./conversation-assigner"
+
 export { ConversationService } from "./service"
 export type { ConversationWithStaleness, ListConversationsOptions } from "./service"
 

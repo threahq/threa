@@ -2,24 +2,15 @@ import { Pool } from "pg"
 import { withClient, withTransaction } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
-import { MessageRepository, EventService, deriveContentMarkdown, type Message } from "../messaging"
-import { StreamRepository, StreamService } from "../streams"
+import { MessageRepository, type Message } from "../messaging"
+import { StreamRepository } from "../streams"
 import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
-import { conversationFeedbackId, conversationId } from "../../lib/id"
+import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
-import {
-  AuthorTypes,
-  ConversationStatuses,
-  StreamTypes,
-  type AttachmentSummary,
-  type CompanionMode,
-  type ConversationStatus,
-  type JSONContent,
-  type LinkPreviewSummary,
-} from "@threa/types"
+import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
 
 export { ConversationWithStaleness }
 
@@ -61,29 +52,6 @@ export interface BoardPost {
   totalReplies: number
 }
 
-/**
- * Where an authored post lands: an existing stream the user picked (channel or
- * DM), or a brand-new scratchpad created for the post. Posting to an existing
- * scratchpad is deliberately not offered — scratchpads are only born from a
- * post, not appended to (user ruling). `companionMode` distinguishes a companion
- * scratchpad ("on", an AI chat) from a plain quick note ("off").
- */
-export type CreateAuthoredPostTarget =
-  | { type: "stream"; streamId: string }
-  | { type: "newScratchpad"; companionMode: CompanionMode }
-
-export interface CreateAuthoredPostParams {
-  workspaceId: string
-  /** The authoring user — an authored post is always user-authored. */
-  userId: string
-  target: CreateAuthoredPostTarget
-  /** Canonical ProseMirror content (INV-58); markdown is derived server-side. */
-  contentJson: JSONContent
-  /** Optional human title for the conversation; blank/omitted leaves it untitled. */
-  title?: string
-  attachmentIds?: string[]
-}
-
 export interface ReassignMessageParams {
   workspaceId: string
   /** Target conversation that should become the message's primary home. */
@@ -104,102 +72,7 @@ export interface ReassignMessageResult {
  * Computes temporal staleness on read.
  */
 export class ConversationService {
-  constructor(
-    private pool: Pool,
-    private eventService: EventService,
-    private streamService: StreamService
-  ) {}
-
-  /**
-   * Author a board post: create a user message + a conversation seeded with it,
-   * synchronously, in one transaction. The post is the human-declared topic
-   * boundary, so the message is flagged `isAuthoredBoundary` and the async
-   * boundary-extraction worker skips it (never re-clusters or reassigns it —
-   * the human assignment wins, INV-20). Because the board orders on
-   * `last_activity_at`, the bump is in-transaction too, so the post sorts
-   * correctly the instant the response returns rather than after the LLM pass.
-   * Event-source + projection commit together (INV-7); delivery via outbox
-   * (INV-4). Access is the handler's responsibility (validateStreamAccess).
-   */
-  async createAuthoredPost(params: CreateAuthoredPostParams): Promise<BoardPost> {
-    const { workspaceId, target, userId, contentJson, title, attachmentIds } = params
-    const contentMarkdown = deriveContentMarkdown(contentJson)
-    const trimmedTitle = title?.trim()
-
-    const { conversation, message } = await withTransaction(this.pool, async (client) => {
-      // A "new scratchpad" target is born here, in the same transaction as its
-      // first message — the post is the scratchpad's reason to exist (user
-      // ruling: scratchpads are created via posts, never appended to from the
-      // board). The owner is the author, so no access check is needed.
-      const streamId =
-        target.type === "newScratchpad"
-          ? (
-              await this.streamService.createScratchpadInTransaction(client, {
-                workspaceId,
-                createdBy: userId,
-                companionMode: target.companionMode,
-              })
-            ).id
-          : target.streamId
-
-      const created = await this.eventService.createMessageInTransaction(client, {
-        workspaceId,
-        streamId,
-        authorId: userId,
-        authorType: AuthorTypes.USER,
-        contentJson,
-        contentMarkdown,
-        attachmentIds,
-        isAuthoredBoundary: true,
-      })
-
-      const convId = conversationId()
-      await ConversationRepository.insert(client, {
-        id: convId,
-        streamId,
-        workspaceId,
-        topicSummary: trimmedTitle || undefined,
-        confidence: 1,
-        status: ConversationStatuses.ACTIVE,
-      })
-      await ConversationRepository.addPrimaryMessage(client, workspaceId, convId, created.id, userId)
-      await ConversationRepository.bumpActivityForIds(client, workspaceId, [convId])
-
-      const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [convId])
-      if (!refreshed) {
-        // The row we just inserted is gone under our own transaction — fail
-        // loudly (INV-11) rather than returning a half-built post.
-        throw new Error(`Authored conversation ${convId} vanished during creation`)
-      }
-
-      await OutboxRepository.insert(client, "conversation:created", {
-        workspaceId,
-        streamId,
-        conversationId: convId,
-        conversation: addStalenessFields(refreshed),
-      })
-      await OutboxRepository.insert(client, "conversation:message_assigned", {
-        workspaceId,
-        streamId,
-        messageId: created.id,
-        conversationId: convId,
-        isPrimary: true,
-        reason: "authored",
-      })
-
-      return { conversation: refreshed, message: created }
-    })
-
-    // Hydrate after commit (INV-41): attachments are committed; link previews
-    // are async and absent on a just-created post.
-    const hydratedById = await this.hydrateBoardMessages(workspaceId, [message])
-    return {
-      conversation: addStalenessFields(conversation),
-      openingMessage: hydratedById.get(message.id) ?? null,
-      recentMessages: [],
-      totalReplies: 0,
-    }
-  }
+  constructor(private pool: Pool) {}
 
   async getById(conversationId: string): Promise<ConversationWithStaleness | null> {
     // Single query, INV-30

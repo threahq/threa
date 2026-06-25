@@ -24,10 +24,19 @@ import { messageMetadataSchema } from "./metadata-schema"
 // `confirmedPrivacyWarning` is required when a share node crosses a privacy
 // boundary; the service returns 409 + `SHARE_PRIVACY_CONFIRMATION_REQUIRED`
 // otherwise.
+// Optional conversation directive: declare the message's conversation instead
+// of leaving the extractor to infer it. The id is a sibling of the discriminant,
+// so `existing` without a non-empty id is a validation error, distinct from `new`.
+const conversationDirectiveSchema = z.discriminatedUnion("intent", [
+  z.object({ intent: z.literal("new") }),
+  z.object({ intent: z.literal("existing"), conversationId: z.string().min(1) }),
+])
+
 const commonMessageOptionsSchema = {
   attachmentIds: z.array(z.string()).optional(),
   clientMessageId: z.string().min(1).optional(),
   metadata: messageMetadataSchema.optional(),
+  conversation: conversationDirectiveSchema.optional(),
   confirmedPrivacyWarning: z.boolean().optional(),
 }
 
@@ -381,6 +390,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         clientMessageId: data.clientMessageId,
         metadata: data.metadata,
+        conversation: data.conversation,
         confirmedPrivacyWarning: data.confirmedPrivacyWarning,
       })
 

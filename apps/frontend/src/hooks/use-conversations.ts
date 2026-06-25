@@ -1,9 +1,24 @@
 import { useEffect } from "react"
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query"
-import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useConversationService, useMessageService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import type { CreateBoardPostParams, WorkspaceConversationsPage } from "@/api/conversations"
-import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
+import { useCreateStream } from "./use-streams"
+import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
+
+/**
+ * Where a board post lands: an existing channel/DM the user picked, or a
+ * brand-new scratchpad created for the post (`companionMode` distinguishes a
+ * companion AI scratchpad from a plain quick note).
+ */
+export type BoardPostTarget =
+  | { type: "stream"; streamId: string }
+  | { type: "newScratchpad"; companionMode: CompanionMode }
+
+export interface CreateBoardPostInput {
+  target: BoardPostTarget
+  contentJson: JSONContent
+  attachmentIds?: string[]
+}
 
 export const conversationKeys = {
   all: ["conversations"] as const,
@@ -90,32 +105,37 @@ export function useWorkspaceConversations(
 }
 
 /**
- * Author a board post (create message + seeded conversation in one request).
- * The backend materializes the conversation synchronously, so on success the
- * returned post is prepended to every cached board page for this workspace —
- * the author sees it instantly, newest-activity-first, without a refetch. The
- * board has no socket subscription yet (conversation events are per-stream
- * only), so this optimistic insert is the author's live update path; other
- * viewers see it on their next board open / reconnect.
+ * Author a board post through the STANDARD message send — a post is just a
+ * message that declares a new conversation (`conversation: { intent: "new" }`),
+ * which the backend creates synchronously in the send's transaction. No
+ * board-specific endpoint: an existing channel/DM target sends straight to it;
+ * a "new scratchpad" target reuses the normal stream-create flow first (so the
+ * scratchpad lands in the sidebar + sync like any other), then sends. On
+ * success the board feed is invalidated so the just-created conversation appears.
  */
 export function useCreateBoardPost(workspaceId: string) {
-  const conversationService = useConversationService()
+  const messageService = useMessageService()
+  const createStream = useCreateStream(workspaceId)
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (params: CreateBoardPostParams) => conversationService.createBoardPost(workspaceId, params),
-    onSuccess: (post) => {
-      queryClient.setQueriesData<InfiniteData<WorkspaceConversationsPage>>(
-        { queryKey: [...conversationKeys.all, "workspaceList", workspaceId] },
-        (old) => {
-          if (!old || old.pages.length === 0) return old
-          // Idempotent: a reconnect refetch may already carry the post.
-          const exists = old.pages.some((page) => page.posts.some((p) => p.conversation.id === post.conversation.id))
-          if (exists) return old
-          const [first, ...rest] = old.pages
-          return { ...old, pages: [{ ...first, posts: [post, ...first.posts] }, ...rest] }
-        }
-      )
+    mutationFn: async ({ target, contentJson, attachmentIds }: CreateBoardPostInput) => {
+      const streamId =
+        target.type === "newScratchpad"
+          ? (await createStream.mutateAsync({ type: "scratchpad", companionMode: target.companionMode })).id
+          : target.streamId
+
+      await messageService.create(workspaceId, streamId, {
+        streamId,
+        contentJson,
+        attachmentIds,
+        conversation: { intent: "new" },
+      })
+    },
+    onSuccess: () => {
+      // The conversation was created synchronously server-side; refetch the
+      // board (no socket subscription yet) so the new post appears.
+      queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
     },
   })
 }

@@ -70,3 +70,46 @@ describe("message schemas do not accept client markdown on the JSON path", () =>
     expect(parsed).not.toHaveProperty("contentMarkdown")
   })
 })
+
+describe("createMessageSchema conversation directive", () => {
+  it("accepts a 'new' directive with no id", () => {
+    const parsed = createMessageSchema.parse({
+      streamId: "stream_1",
+      contentJson: benignDoc,
+      conversation: { intent: "new" },
+    })
+    expect(parsed).toMatchObject({ conversation: { intent: "new" } })
+  })
+
+  it("accepts an 'existing' directive with a conversationId", () => {
+    const parsed = createMessageSchema.parse({
+      streamId: "stream_1",
+      contentJson: benignDoc,
+      conversation: { intent: "existing", conversationId: "conv_1" },
+    })
+    expect(parsed).toMatchObject({ conversation: { intent: "existing", conversationId: "conv_1" } })
+  })
+
+  it("rejects an 'existing' directive without a conversationId (distinct from 'new')", () => {
+    const result = createMessageSchema.safeParse({
+      streamId: "stream_1",
+      contentJson: benignDoc,
+      conversation: { intent: "existing" },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects an unknown intent", () => {
+    const result = createMessageSchema.safeParse({
+      streamId: "stream_1",
+      contentJson: benignDoc,
+      conversation: { intent: "merge" },
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("omits the directive when not provided (inferred path)", () => {
+    const parsed = createMessageSchema.parse({ streamId: "stream_1", contentJson: benignDoc })
+    expect(parsed).not.toHaveProperty("conversation")
+  })
+})

@@ -17,7 +17,7 @@ function makeMessage(sequence: bigint, content: string): Message {
     replyCount: 0,
     reactions: {},
     metadata: {},
-    isAuthoredBoundary: false,
+    conversationIntent: null,
     clientMessageId: null,
     sentVia: null,
     editedAt: null,
