@@ -119,6 +119,26 @@ describe("extractUrls", () => {
     expect(extractUrls(md)).toEqual(["https://en.wikipedia.org/wiki/Foo_(bar_(baz))"])
   })
 
+  test("strips trailing bold markers from a bare URL inside emphasis", () => {
+    const md = "**PR: https://github.com/threahq/threa/pull/1070** — branch docs"
+    expect(extractUrls(md)).toEqual(["https://github.com/threahq/threa/pull/1070"])
+  })
+
+  test("strips trailing strikethrough markers from a bare URL", () => {
+    expect(extractUrls("~~see https://example.com/page~~ now")).toEqual(["https://example.com/page"])
+  })
+
+  test("preserves single trailing markers that are valid URL characters", () => {
+    expect(extractUrls("ref https://example.com/page_ here")).toEqual(["https://example.com/page_"])
+    expect(extractUrls("ref https://example.com/page~ here")).toEqual(["https://example.com/page~"])
+    expect(extractUrls("ref https://example.com/page* here")).toEqual(["https://example.com/page*"])
+  })
+
+  test("strips trailing emphasis markers around a parenthesized URL", () => {
+    const md = "**ref https://en.wikipedia.org/wiki/Foo_(bar)** here"
+    expect(extractUrls(md)).toEqual(["https://en.wikipedia.org/wiki/Foo_(bar)"])
+  })
+
   test("deduplicates by normalized URL", () => {
     const md = "Check [link](https://example.com/page?utm_source=twitter) and https://example.com/page"
     expect(extractUrls(md)).toEqual(["https://example.com/page?utm_source=twitter"])
