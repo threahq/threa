@@ -1026,11 +1026,16 @@ export function MessageComposer({
             data-composer-card
             className={cn(
               "rounded-[16px] border border-input flex flex-col flex-1 min-h-0",
-              // Glass effect for the floating inline composer so messages show
-              // through the bottom panel; keep the expanded fullscreen sheet opaque.
-              !mobileExpanded
-                ? "bg-card/75 backdrop-blur-md shadow-[inset_0_1px_0_hsl(33_28%_97%),0_8px_24px_-14px_hsl(28_30%_22%/0.18),0_2px_6px_-2px_hsl(28_30%_22%/0.06)] dark:shadow-[0_8px_24px_-14px_rgb(0_0_0/0.35),0_2px_6px_-2px_rgb(0_0_0/0.12)]"
-                : "bg-card",
+              // Floating-composer shadow on the inline (non-expanded) card; the
+              // expanded fullscreen sheet stays flat.
+              !mobileExpanded &&
+                "shadow-[inset_0_1px_0_hsl(33_28%_97%),0_8px_24px_-14px_hsl(28_30%_22%/0.18),0_2px_6px_-2px_hsl(28_30%_22%/0.06)] dark:shadow-[0_8px_24px_-14px_rgb(0_0_0/0.35),0_2px_6px_-2px_rgb(0_0_0/0.12)]",
+              // Glass (translucent + backdrop-blur) lets the timeline show through
+              // the floating composer, but backdrop-filter re-rasterizes the blurred
+              // backdrop on every repaint — cheap on desktop, a frame-killer on
+              // mobile over a long, image-heavy timeline while typing. Opaque on
+              // mobile; keep the glass on desktop where the GPU absorbs it.
+              !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
               // Compact padding when mobile-unfocused (single line), normal otherwise
               isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
               // When mobile-expanded, let the editor grow and override its internal max-height
