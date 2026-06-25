@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useCallback, useState } from "react"
 import { Link } from "react-router-dom"
 import { LabelableResourceTypes, type AttachmentSummary, type AuthorType, type LinkPreviewSummary } from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
@@ -11,12 +11,14 @@ import { MemoPreviewList } from "@/components/timeline/memo-preview-list"
 import { GiphyPreviewList } from "@/components/timeline/giphy-preview-list"
 import { MessageReactions } from "@/components/timeline/message-reactions"
 import { MessageContextMenu } from "@/components/timeline/message-context-menu"
+import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { LabelStack } from "@/components/labels/label-stack"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
-import { useInputMode } from "@/hooks/use-input-mode"
+import { useTouchCapable } from "@/hooks/use-touch-capable"
+import { useLongPress } from "@/hooks/use-long-press"
 import { cn } from "@/lib/utils"
 
 /** Same-author messages within this window collapse into a continuation (no
@@ -65,8 +67,9 @@ interface MessageItemProps {
  * timeline (`ActorAvatar`, `MarkdownContent`, `MessageReactions`, same
  * same-author grouping) so a board/label message is indistinguishable from a
  * real one. Carries its own labels (`LabelStack`, renders nothing until there's
- * one) and a hover overflow menu to file it under a label or copy a link; the
- * timestamp permalinks back into the message's own stream context.
+ * one) and the timeline's action surface: a hover overflow menu on desktop and
+ * a long-press action drawer on touch. The timestamp permalinks back into the
+ * message's own stream context.
  */
 export function MessageItem({
   workspaceId,
@@ -79,7 +82,13 @@ export function MessageItem({
   const { formatTime, formatFull } = useFormattedDate()
   const { openUserProfile } = useUserProfile()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
-  const isTouch = useInputMode() === "touch"
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  // Touch reaches the actions via long-press → the same `MessageActionDrawer`
+  // the timeline uses; the hover overflow button is desktop/keyboard only. This
+  // mirrors `SentMessageEvent` rather than exposing a tap-sized dropdown.
+  const touchCapable = useTouchCapable()
+  const openDrawer = useCallback(() => setDrawerOpen(true), [])
+  const longPress = useLongPress({ onLongPress: openDrawer, enabled: touchCapable, deferToNativeLinks: true })
   const hasReactions = Object.keys(message.reactions).length > 0
   // Users open their profile on click (same as the timeline); other actor types
   // (persona/bot/system) are non-interactive.
@@ -87,13 +96,15 @@ export function MessageItem({
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
 
-  // A deliberately small menu for surfaces with no thread context: file under a
-  // label, copy the content, copy a link. `isThreadParent: true` suppresses
-  // "Reply in thread" (its only gate) rather than point it at a thread we don't
-  // have here; the timestamp is the way back into the stream.
+  // A deliberately small action set for surfaces with no thread context: file
+  // under a label, copy the content, copy a link. `isThreadParent: true`
+  // suppresses "Reply in thread" (its only gate) rather than point it at a
+  // thread we don't have here; the timestamp is the way back into the stream.
+  // No `currentUserId`, so the owner-only edit/delete actions stay hidden.
   const menuContext: MessageActionContext = {
     contentMarkdown: message.contentMarkdown,
     actorType: message.authorType,
+    authorId: message.authorId,
     isThreadParent: true,
     replyUrl: "",
     messageId: message.id,
@@ -102,25 +113,35 @@ export function MessageItem({
     onLabelMessage: () => setLabelPickerOpen(true),
   }
 
+  // Desktop/keyboard only (hover or focus reveals it); touch uses the drawer
+  // below. The body columns carry `pr-7` so this absolute button never overlays
+  // the row's top-right content (INV-21).
   const overflowMenu = (
-    <div
-      className={cn(
-        "absolute right-0 top-0 transition-opacity",
-        isTouch ? "opacity-70" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"
-      )}
-    >
+    <div className="absolute right-0 top-0 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
       <MessageContextMenu context={menuContext} />
     </div>
   )
 
-  const labelPicker = labelPickerOpen && (
-    <LabelPicker
-      workspaceId={workspaceId}
-      resourceType={LabelableResourceTypes.MESSAGE}
-      resourceId={message.id}
-      open={labelPickerOpen}
-      onOpenChange={setLabelPickerOpen}
-    />
+  const overlays = (
+    <>
+      {labelPickerOpen && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.MESSAGE}
+          resourceId={message.id}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
+        />
+      )}
+      {touchCapable && (
+        <MessageActionDrawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          context={menuContext}
+          authorName={authorName}
+        />
+      )}
+    </>
   )
 
   const richBody = (
@@ -167,10 +188,15 @@ export function MessageItem({
     </>
   )
 
+  const touchHandlers = touchCapable ? longPress.handlers : undefined
+
   if (continuation) {
     const sentAt = new Date(message.createdAt)
     return (
-      <div className="group relative mt-0.5 flex gap-3">
+      <div
+        className={cn("group relative mt-0.5 flex gap-3", longPress.isPressed && "opacity-70 transition-opacity")}
+        {...touchHandlers}
+      >
         {/* Gutter reveals the message time on hover (desktop), mirroring the
             timeline's grouped-continuation micro-time. */}
         <div
@@ -179,15 +205,21 @@ export function MessageItem({
         >
           {formatTime(sentAt)}
         </div>
-        <div className="min-w-0 flex-1">{body}</div>
+        <div className="min-w-0 flex-1 pr-7">{body}</div>
         {overflowMenu}
-        {labelPicker}
+        {overlays}
       </div>
     )
   }
 
   return (
-    <div className="group relative mt-3 flex items-start gap-3">
+    <div
+      className={cn(
+        "group relative mt-3 flex items-start gap-3",
+        longPress.isPressed && "opacity-70 transition-opacity"
+      )}
+      {...touchHandlers}
+    >
       <ActorAvatar
         actorId={message.authorId}
         actorType={message.authorType}
@@ -196,7 +228,7 @@ export function MessageItem({
         alt={authorName}
         showStatus={false}
       />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 pr-7">
         <div className="mb-0.5 flex items-baseline gap-2">
           {interactiveName ? (
             <button
@@ -221,7 +253,7 @@ export function MessageItem({
         {body}
       </div>
       {overflowMenu}
-      {labelPicker}
+      {overlays}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ArrowLeft, ChevronRight, Pencil, Tag } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -29,8 +29,14 @@ import {
   useWorkspaceUserId,
   type CachedLabel,
 } from "@/hooks"
-import { useWorkspaceDmPeers, useWorkspaceLabels, useWorkspaceUsers, type CachedStream } from "@/stores/workspace-store"
-import type { LabeledMessage } from "@threa/types"
+import {
+  useWorkspaceDmPeers,
+  useWorkspaceLabels,
+  useWorkspaceStreams,
+  useWorkspaceUsers,
+  type CachedStream,
+} from "@/stores/workspace-store"
+import type { LabeledMessage, StreamType } from "@threa/types"
 
 /**
  * Route is `/w/:workspaceId/labels/:labelId` — a label's landing page. Opens
@@ -56,6 +62,7 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   const messages = messagesQuery.data ?? []
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const workspaceStreams = useWorkspaceStreams(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { getActorName } = useActors(workspaceId)
   const [editOpen, setEditOpen] = useState(false)
@@ -66,6 +73,21 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   const namedStreams = useMemo(
     () => streams.map((stream) => ({ stream, name: resolveStreamName(stream.id, { streams, users, dmPeers }) })),
     [streams, users, dmPeers]
+  )
+
+  // Labeled messages span streams, so each row names its origin. Resolve against
+  // the full workspace streams (not the label's own), since a labeled message
+  // can live in a stream the label doesn't otherwise gather.
+  const resolveMessageStream = useCallback(
+    (messageStreamId: string): { name: string; type: StreamType } => {
+      const stream = workspaceStreams.find((s) => s.id === messageStreamId)
+      const type: StreamType = stream?.type ?? "channel"
+      const name =
+        resolveStreamName(messageStreamId, { streams: workspaceStreams, users, dmPeers }, "breadcrumb") ??
+        streamFallbackLabel(type, "breadcrumb")
+      return { name, type }
+    },
+    [workspaceStreams, users, dmPeers]
   )
 
   // A cold deep-link to this URL lands before bootstrap fills the cache, so an
@@ -137,6 +159,7 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
               isLoading={messagesQuery.isLoading}
               getActorName={getActorName}
               currentUserId={currentUserId}
+              resolveMessageStream={resolveMessageStream}
             />
           </section>
         </div>
@@ -327,32 +350,66 @@ function MessagesSection({
   isLoading,
   getActorName,
   currentUserId,
+  resolveMessageStream,
 }: {
   workspaceId: string
   messages: LabeledMessage[]
   isLoading: boolean
   getActorName: ReturnType<typeof useActors>["getActorName"]
   currentUserId: string | null
+  resolveMessageStream: (streamId: string) => { name: string; type: StreamType }
 }) {
   if (isLoading && messages.length === 0) return <MessagesLoading />
   if (messages.length === 0) return <EmptyMessages />
   return (
     <div className="divide-y overflow-hidden rounded-xl border bg-card">
-      {messages.map((message) => (
-        // Each labeled message is standalone, so zero the item's leading margin
-        // (which exists to space stacked messages in a board card) and let the
-        // cell padding own the rhythm.
-        <div key={message.id} className="px-4 py-3 [&>*]:mt-0">
-          <MessageItem
-            workspaceId={workspaceId}
-            streamId={message.streamId}
-            message={message}
-            authorName={getActorName(message.authorId, message.authorType)}
-            currentUserId={currentUserId}
-          />
-        </div>
-      ))}
+      {messages.map((message) => {
+        const stream = resolveMessageStream(message.streamId)
+        return (
+          <div key={message.id} className="px-4 py-3">
+            <StreamByline workspaceId={workspaceId} streamId={message.streamId} name={stream.name} type={stream.type} />
+            {/* Each labeled message is standalone, so zero the item's leading
+                margin (which exists to space stacked messages in a board card)
+                and let the cell padding + byline gap own the rhythm. */}
+            <div className="[&>*]:mt-0">
+              <MessageItem
+                workspaceId={workspaceId}
+                streamId={message.streamId}
+                message={message}
+                authorName={getActorName(message.authorId, message.authorType)}
+                currentUserId={currentUserId}
+              />
+            </div>
+          </div>
+        )
+      })}
     </div>
+  )
+}
+
+/** Names the stream a labeled message came from, linking back into it (INV-40).
+ * Labeled messages span streams, so the origin is per-row here — the board shows
+ * the analogous context at the card level. */
+function StreamByline({
+  workspaceId,
+  streamId,
+  name,
+  type,
+}: {
+  workspaceId: string
+  streamId: string
+  name: string
+  type: StreamType
+}) {
+  const Icon = STREAM_ICONS[type] ?? Tag
+  return (
+    <Link
+      to={`/w/${workspaceId}/s/${streamId}`}
+      className="mb-1.5 flex w-fit max-w-full items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="truncate font-medium">{name}</span>
+    </Link>
   )
 }
 
