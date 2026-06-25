@@ -48,7 +48,7 @@ import { useStreamSettings } from "@/components/stream-settings/use-stream-setti
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { TimelineView } from "@/components/timeline"
 import { LabelPicker } from "@/components/labels/label-picker"
-import { StreamLabelStack } from "@/components/labels/stream-label-stack"
+import { LabelStack } from "@/components/labels/label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
@@ -605,7 +605,9 @@ export function StreamPage() {
           <SidebarToggle location="page" />
           {headerTitle}
           {companionModeIndicator}
-          {stream && !isDraft && <StreamLabelStack workspaceId={workspaceId} streamId={streamId} />}
+          {stream && !isDraft && (
+            <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={streamId} />
+          )}
           {isEncryptedScratchpad && !isDraft && (
             <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
           )}

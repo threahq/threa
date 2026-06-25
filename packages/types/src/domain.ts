@@ -656,6 +656,18 @@ export interface BoardPostMessage {
 }
 
 /**
+ * A message gathered under a label, for the label landing page's Messages
+ * section. Same lean rendering projection as {@link BoardPostMessage}, plus the
+ * `streamId` it lives in: labeled messages span streams, so each row carries its
+ * own origin to render the author/context and to open in its own stream
+ * (`/w/:workspaceId/s/:streamId?m=:id`) — the board derives `streamId` from the
+ * post instead.
+ */
+export interface LabeledMessage extends BoardPostMessage {
+  streamId: string
+}
+
+/**
  * One board post: a conversation (the grouping) surfaced as a feed post (the
  * unit). The card renders `openingMessage` as the post body and `recentMessages`
  * as the latest replies beneath it, with a collapsed "N more" gap between — so

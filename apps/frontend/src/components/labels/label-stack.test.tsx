@@ -8,7 +8,7 @@ import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as drawerModule from "@/components/ui/drawer"
-import { StreamLabelStack } from "./stream-label-stack"
+import { LabelStack } from "./label-stack"
 import type { CachedLabel, CachedLabelAssignment } from "@/hooks"
 
 const WORKSPACE_ID = "ws_1"
@@ -60,13 +60,13 @@ function mount() {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <StreamLabelStack workspaceId={WORKSPACE_ID} streamId={STREAM_ID} />
+        <LabelStack workspaceId={WORKSPACE_ID} resourceType={LabelableResourceTypes.STREAM} resourceId={STREAM_ID} />
       </MemoryRouter>
     </QueryClientProvider>
   )
 }
 
-describe("StreamLabelStack", () => {
+describe("LabelStack", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     vi.spyOn(inputModeModule, "useInputMode").mockReturnValue("mouse")

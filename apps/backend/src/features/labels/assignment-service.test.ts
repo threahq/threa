@@ -5,6 +5,7 @@ import { LabelAssignmentService } from "./assignment-service"
 import { LabelService } from "./service"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { MessageRepository } from "../messaging"
 import * as streamsBarrel from "../streams"
 import * as dbModule from "../../db"
 
@@ -143,6 +144,62 @@ describe("LabelAssignmentService.assign", () => {
     expect(getAccessibleStreamIdsForBot).not.toHaveBeenCalled()
     expect(assignSpy).not.toHaveBeenCalled()
     expect(outboxSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe("LabelAssignmentService.assign — message resource", () => {
+  afterEach(() => mock.restore())
+
+  const messageAssignParams = {
+    workspaceId: WORKSPACE_ID,
+    actor: USER_ACTOR,
+    labelId: LABEL_ID,
+    resourceType: LabelableResourceTypes.MESSAGE,
+    resourceId: "msg_1",
+  }
+
+  it("labels a message gated by the message's owning stream", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
+    spyOn(MessageRepository, "findStreamIdsByIds").mockResolvedValue(new Map([["msg_1", "stream_9"]]))
+    const access = spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_9"]))
+    spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(
+      fakeAssignment({ resourceType: LabelableResourceTypes.MESSAGE, resourceId: "msg_1" })
+    )
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.assign(messageAssignParams)
+
+    expect(result).toMatchObject({ resourceType: LabelableResourceTypes.MESSAGE, resourceId: "msg_1" })
+    // The message inherits its stream's access — the gate resolves the stream id
+    // and reuses the stream-access predicate, not a message-specific one.
+    expect(access).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, USER_ID, ["stream_9"])
+    expect(outboxSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:assigned",
+      expect.objectContaining({ targetUserId: USER_ID })
+    )
+  })
+
+  it("throws 404 when the message does not exist", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
+    spyOn(MessageRepository, "findStreamIdsByIds").mockResolvedValue(new Map())
+    const assignSpy = spyOn(LabelAssignmentRepository, "assign")
+
+    await expect(service.assign(messageAssignParams)).rejects.toMatchObject({ status: 404 })
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it("throws 404 when the message's stream is unreachable", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
+    spyOn(MessageRepository, "findStreamIdsByIds").mockResolvedValue(new Map([["msg_1", "stream_9"]]))
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set())
+    const assignSpy = spyOn(LabelAssignmentRepository, "assign")
+
+    await expect(service.assign(messageAssignParams)).rejects.toMatchObject({ status: 404 })
+    expect(assignSpy).not.toHaveBeenCalled()
   })
 })
 

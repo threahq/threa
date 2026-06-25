@@ -322,6 +322,34 @@ export const LabelAssignmentRepository = {
   },
 
   /**
+   * The actor's assignments of one label to one resource type, newest-stowed
+   * first. Backs the label landing page's per-type sections (e.g. its Messages
+   * list); ordering by `assigned_at DESC` surfaces the most recently filed item
+   * on top. Owner-scoped + archived-label filtered, like {@link listForActor}.
+   */
+  async listForLabelAndResourceType(
+    db: Querier,
+    params: { workspaceId: string; actorId: string; labelId: string; resourceType: LabelableResourceType }
+  ): Promise<LabelAssignment[]> {
+    const result = await db.query<LabelAssignmentRow>(sql`
+      SELECT ${sql.raw(
+        ASSIGNMENT_COLUMNS.split(", ")
+          .map((c) => `a.${c}`)
+          .join(", ")
+      )}
+      FROM label_assignments a
+      JOIN labels l ON l.id = a.label_id AND l.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${params.workspaceId}
+        AND a.user_id = ${params.actorId}
+        AND a.label_id = ${params.labelId}
+        AND a.resource_type = ${params.resourceType}
+        AND l.archived_at IS NULL
+      ORDER BY a.assigned_at DESC
+    `)
+    return result.rows.map(mapAssignmentRow)
+  },
+
+  /**
    * Drop every assignment of a label across all resources. Callers run this
    * inside the label-archive transaction so no chip outlives its label.
    */

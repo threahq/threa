@@ -65,7 +65,7 @@ import { streamLabel } from "@/lib/streams"
 import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
-import { StreamLabelStack } from "@/components/labels/stream-label-stack"
+import { LabelStack } from "@/components/labels/label-stack"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -507,7 +507,12 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
         )}
         {headerContent}
         {!isDraft && stream && panelId && (
-          <StreamLabelStack workspaceId={workspaceId} streamId={panelId} className="flex-shrink-0" />
+          <LabelStack
+            workspaceId={workspaceId}
+            resourceType={LabelableResourceTypes.STREAM}
+            resourceId={panelId}
+            className="flex-shrink-0"
+          />
         )}
         {!isDraft &&
           stream &&

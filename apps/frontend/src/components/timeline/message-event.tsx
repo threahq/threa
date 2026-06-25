@@ -1,6 +1,7 @@
 import { type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
 import {
   isSentViaApi,
+  LabelableResourceTypes,
   type StreamEvent,
   type AttachmentSummary,
   type JSONContent,
@@ -64,6 +65,8 @@ import { EditedIndicator } from "./edited-indicator"
 import { MovedFromIndicator } from "./moved-from-indicator"
 import { MovedMessagesDrawer } from "./moved-messages-drawer"
 import { SavedIndicator } from "@/components/saved/saved-indicator"
+import { LabelStack } from "@/components/labels/label-stack"
+import { LabelPicker } from "@/components/labels/label-picker"
 import { MessageHistoryDialog } from "./message-history-dialog"
 import { MessageReactions } from "./message-reactions"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
@@ -873,6 +876,7 @@ function SentMessageEvent({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [moveDetailsOpen, setMoveDetailsOpen] = useState(false)
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   // Hydrate the destination tombstone on demand for the per-message
   // "Show move details" action. Reactive — populates as soon as the row
   // lands in IDB (live socket apply or bootstrap).
@@ -1094,6 +1098,7 @@ function SentMessageEvent({
       reactions: payload.reactions,
       isSaved,
       onToggleSave: handleToggleSave,
+      onLabelMessage: () => setLabelPickerOpen(true),
       onRequestReminder: handleRequestReminder,
       onDiscussWithAriadne: handleDiscussWithAriadne,
       onQuoteReply: quoteReplyCtx
@@ -1230,6 +1235,13 @@ function SentMessageEvent({
             currentUserId={currentUserId}
           />
         )}
+        {/* Labels the viewer filed this message under — renders nothing until
+            there's at least one, so unlabeled rows keep their footprint. */}
+        <LabelStack
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.MESSAGE}
+          resourceId={payload.messageId}
+        />
         {threadSlot}
       </>
     )
@@ -1428,6 +1440,15 @@ function SentMessageEvent({
           onOpenChange={setMoveDetailsOpen}
           event={movedTombstoneEvent}
           workspaceId={workspaceId}
+        />
+      )}
+      {labelPickerOpen && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.MESSAGE}
+          resourceId={payload.messageId}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
         />
       )}
       {touchCapable && (

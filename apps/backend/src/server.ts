@@ -122,7 +122,7 @@ import { SavedMessagesService, createSavedReminderWorker } from "./features/save
 import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-suggestions"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
-import { LabelService, LabelAssignmentService } from "./features/labels"
+import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AIBudgetService } from "./features/ai-usage"
@@ -540,6 +540,7 @@ export async function startServer(): Promise<ServerInstance> {
   // actor's own access model, so the assignment service resolves bot reachability
   // through channel grants (users resolve through stream membership).
   const labelAssignmentService = new LabelAssignmentService({ pool, labelService, botChannelService })
+  const labelMessageService = new LabelMessageService({ pool, botChannelService })
 
   // User-scoped API keys are managed by Threa, not WorkOS.
   const userApiKeyService = new UserApiKeyServiceImpl(pool)
@@ -637,6 +638,7 @@ export async function startServer(): Promise<ServerInstance> {
     draftsService,
     labelService,
     labelAssignmentService,
+    labelMessageService,
     pushService,
     s3Config: config.s3,
     commandRegistry,

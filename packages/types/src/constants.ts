@@ -29,13 +29,15 @@ export const Visibilities = {
 // Labelable resource types — the polymorphic target of a label assignment.
 // Labeling is resource-agnostic: the table, service, events, sync, and UI
 // primitives are identical for every type. This set only gates which targets
-// the API accepts today; adding "message" | "user" | "attachment" later is a
-// one-line change here plus a presentation adapter — no new mechanism.
-export const LABELABLE_RESOURCE_TYPES = ["stream"] as const
+// the API accepts; each type still needs a backend access rule
+// (assertResourceAccess) and a presentation adapter — adding "user" |
+// "attachment" later is a one-line change here plus those two seams.
+export const LABELABLE_RESOURCE_TYPES = ["stream", "message"] as const
 export type LabelableResourceType = (typeof LABELABLE_RESOURCE_TYPES)[number]
 
 export const LabelableResourceTypes = {
   STREAM: "stream",
+  MESSAGE: "message",
 } as const satisfies Record<string, LabelableResourceType>
 
 // The actor that owns/applies a label — a workspace user or a bot. A shared bot

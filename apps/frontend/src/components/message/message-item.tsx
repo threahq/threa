@@ -1,0 +1,227 @@
+import { useState } from "react"
+import { Link } from "react-router-dom"
+import { LabelableResourceTypes, type AttachmentSummary, type AuthorType, type LinkPreviewSummary } from "@threa/types"
+import { ActorAvatar } from "@/components/actor-avatar"
+import { RelativeTime } from "@/components/relative-time"
+import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
+import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
+import { AttachmentList } from "@/components/timeline/attachment-list"
+import { LinkPreviewList } from "@/components/timeline/link-preview-list"
+import { MemoPreviewList } from "@/components/timeline/memo-preview-list"
+import { GiphyPreviewList } from "@/components/timeline/giphy-preview-list"
+import { MessageReactions } from "@/components/timeline/message-reactions"
+import { MessageContextMenu } from "@/components/timeline/message-context-menu"
+import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { LabelStack } from "@/components/labels/label-stack"
+import { LabelPicker } from "@/components/labels/label-picker"
+import { useUserProfile } from "@/components/user-profile"
+import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useInputMode } from "@/hooks/use-input-mode"
+import { cn } from "@/lib/utils"
+
+/** Same-author messages within this window collapse into a continuation (no
+ * repeated header) — matches the timeline's grouping. */
+export const GROUP_WINDOW_MS = 5 * 60_000
+
+/**
+ * The fields {@link MessageItem} reads. A lean rendering shape satisfied by the
+ * board feed payload (`BoardPostMessage`), a labeled message (`LabeledMessage`),
+ * and a full `Message` alike — anything that can show a message outside the
+ * stream timeline.
+ */
+export interface RenderableMessage {
+  id: string
+  authorId: string
+  authorType: AuthorType
+  contentMarkdown: string
+  reactions: Record<string, string[]>
+  createdAt: string | Date
+  attachments?: AttachmentSummary[]
+  linkPreviews?: LinkPreviewSummary[]
+}
+
+export function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolean {
+  return (
+    prev.authorId === cur.authorId &&
+    prev.authorType === cur.authorType &&
+    Math.abs(new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime()) < GROUP_WINDOW_MS
+  )
+}
+
+interface MessageItemProps {
+  workspaceId: string
+  streamId: string
+  message: RenderableMessage
+  authorName: string
+  currentUserId: string | null
+  /** A same-author follow-up: drop the avatar/header and align the body under
+   * the head row's content (matches the timeline's grouped continuations). */
+  continuation?: boolean
+}
+
+/**
+ * One message rendered outside the stream timeline — the unit shared by the
+ * board feed and the label landing page. Uses the same primitives as the
+ * timeline (`ActorAvatar`, `MarkdownContent`, `MessageReactions`, same
+ * same-author grouping) so a board/label message is indistinguishable from a
+ * real one. Carries its own labels (`LabelStack`, renders nothing until there's
+ * one) and a hover overflow menu to file it under a label or copy a link; the
+ * timestamp permalinks back into the message's own stream context.
+ */
+export function MessageItem({
+  workspaceId,
+  streamId,
+  message,
+  authorName,
+  currentUserId,
+  continuation,
+}: MessageItemProps) {
+  const { formatTime, formatFull } = useFormattedDate()
+  const { openUserProfile } = useUserProfile()
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
+  const isTouch = useInputMode() === "touch"
+  const hasReactions = Object.keys(message.reactions).length > 0
+  // Users open their profile on click (same as the timeline); other actor types
+  // (persona/bot/system) are non-interactive.
+  const interactiveName = message.authorType === "user" && Boolean(message.authorId)
+  const attachments = message.attachments ?? []
+  const linkPreviews = message.linkPreviews ?? []
+
+  // A deliberately small menu for surfaces with no thread context: file under a
+  // label, copy the content, copy a link. `isThreadParent: true` suppresses
+  // "Reply in thread" (its only gate) rather than point it at a thread we don't
+  // have here; the timestamp is the way back into the stream.
+  const menuContext: MessageActionContext = {
+    contentMarkdown: message.contentMarkdown,
+    actorType: message.authorType,
+    isThreadParent: true,
+    replyUrl: "",
+    messageId: message.id,
+    workspaceId,
+    streamId,
+    onLabelMessage: () => setLabelPickerOpen(true),
+  }
+
+  const overflowMenu = (
+    <div
+      className={cn(
+        "absolute right-0 top-0 transition-opacity",
+        isTouch ? "opacity-70" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"
+      )}
+    >
+      <MessageContextMenu context={menuContext} />
+    </div>
+  )
+
+  const labelPicker = labelPickerOpen && (
+    <LabelPicker
+      workspaceId={workspaceId}
+      resourceType={LabelableResourceTypes.MESSAGE}
+      resourceId={message.id}
+      open={labelPickerOpen}
+      onOpenChange={setLabelPickerOpen}
+    />
+  )
+
+  const richBody = (
+    <>
+      <MarkdownContent content={message.contentMarkdown} messageId={message.id} className="text-sm leading-relaxed" />
+      {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
+      {linkPreviews.length > 0 && (
+        <LinkPreviewList
+          messageId={message.id}
+          workspaceId={workspaceId}
+          previews={linkPreviews}
+          hydrateFromApi={false}
+        />
+      )}
+      {/* Memo + giphy embeds are parsed from the markdown, so they render here
+          just like the timeline — no extra payload needed. */}
+      <MemoPreviewList contentMarkdown={message.contentMarkdown} />
+      <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
+    </>
+  )
+  // The body renders real message content (mentions, attachments, link previews),
+  // so it gets the same markdown context wrappers the timeline uses. Attachments
+  // open the media gallery / download via AttachmentList.
+  const body = (
+    <>
+      <LinkPreviewProvider>
+        {attachments.length > 0 ? (
+          <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
+            {richBody}
+          </AttachmentProvider>
+        ) : (
+          richBody
+        )}
+      </LinkPreviewProvider>
+      {hasReactions && (
+        <MessageReactions
+          reactions={message.reactions}
+          workspaceId={workspaceId}
+          messageId={message.id}
+          currentUserId={currentUserId}
+        />
+      )}
+      <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.MESSAGE} resourceId={message.id} />
+    </>
+  )
+
+  if (continuation) {
+    const sentAt = new Date(message.createdAt)
+    return (
+      <div className="group relative mt-0.5 flex gap-3">
+        {/* Gutter reveals the message time on hover (desktop), mirroring the
+            timeline's grouped-continuation micro-time. */}
+        <div
+          className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] tabular-nums leading-5 text-transparent transition-colors group-hover:text-muted-foreground/60"
+          title={formatFull(sentAt)}
+        >
+          {formatTime(sentAt)}
+        </div>
+        <div className="min-w-0 flex-1">{body}</div>
+        {overflowMenu}
+        {labelPicker}
+      </div>
+    )
+  }
+
+  return (
+    <div className="group relative mt-3 flex items-start gap-3">
+      <ActorAvatar
+        actorId={message.authorId}
+        actorType={message.authorType}
+        workspaceId={workspaceId}
+        size="md"
+        alt={authorName}
+        showStatus={false}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="mb-0.5 flex items-baseline gap-2">
+          {interactiveName ? (
+            <button
+              type="button"
+              onClick={() => openUserProfile(message.authorId)}
+              className="truncate text-left text-sm font-semibold hover:underline"
+            >
+              {authorName}
+            </button>
+          ) : (
+            <span className="truncate text-sm font-semibold">{authorName}</span>
+          )}
+          {/* Permalink to the message in its stream timeline — the body is
+              interactive, so navigation lives on the timestamp instead. */}
+          <Link
+            to={`/w/${workspaceId}/s/${streamId}?m=${message.id}`}
+            className="shrink-0 text-xs text-muted-foreground hover:underline"
+          >
+            <RelativeTime date={message.createdAt} />
+          </Link>
+        </div>
+        {body}
+      </div>
+      {overflowMenu}
+      {labelPicker}
+    </div>
+  )
+}

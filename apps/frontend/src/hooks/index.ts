@@ -217,6 +217,7 @@ export {
   useDeleteLabel,
   useResourceLabelAssignments,
   useLabelStreams,
+  useLabelMessages,
   selectLabelStreams,
   useAssignLabel,
   useUnassignLabel,

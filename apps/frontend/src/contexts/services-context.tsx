@@ -103,6 +103,7 @@ export interface ScheduledService {
 
 export interface LabelService {
   list: typeof labelsApi.list
+  listMessages: typeof labelsApi.listMessages
   create: typeof labelsApi.create
   update: typeof labelsApi.update
   delete: typeof labelsApi.delete

@@ -1,5 +1,12 @@
 import { api } from "./client"
-import type { CreateLabelInput, Label, LabelAssignment, LabelableResourceType, UpdateLabelInput } from "@threa/types"
+import type {
+  CreateLabelInput,
+  Label,
+  LabelAssignment,
+  LabelableResourceType,
+  LabeledMessage,
+  UpdateLabelInput,
+} from "@threa/types"
 
 export type { CreateLabelInput, UpdateLabelInput }
 
@@ -11,6 +18,13 @@ export interface ResourceRef {
 export const labelsApi = {
   async list(workspaceId: string): Promise<{ labels: Label[]; assignments: LabelAssignment[] }> {
     return api.get<{ labels: Label[]; assignments: LabelAssignment[] }>(`/api/workspaces/${workspaceId}/labels`)
+  },
+
+  async listMessages(workspaceId: string, labelId: string): Promise<LabeledMessage[]> {
+    const res = await api.get<{ messages: LabeledMessage[] }>(
+      `/api/workspaces/${workspaceId}/labels/${labelId}/messages`
+    )
+    return res.messages
   },
 
   async create(workspaceId: string, data: CreateLabelInput): Promise<Label> {

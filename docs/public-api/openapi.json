@@ -3692,7 +3692,7 @@
                             "type": "object",
                             "properties": {
                               "labelId": { "type": "string" },
-                              "resourceType": { "type": "string", "enum": ["stream"] },
+                              "resourceType": { "type": "string", "enum": ["stream", "message"] },
                               "resourceId": { "type": "string" },
                               "actorType": { "type": "string", "enum": ["user", "bot"] },
                               "actorId": { "type": "string" },
@@ -3883,7 +3883,7 @@
                   "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
                   "emoji": { "anyOf": [{ "type": "string", "maxLength": 32 }, { "type": "null" }] },
                   "description": { "anyOf": [{ "type": "string", "maxLength": 500 }, { "type": "null" }] },
-                  "resourceType": { "type": "string", "enum": ["stream"] },
+                  "resourceType": { "type": "string", "enum": ["stream", "message"] },
                   "resourceId": { "type": "string", "minLength": 1, "maxLength": 64 }
                 },
                 "required": ["name", "resourceType", "resourceId"],
@@ -3940,7 +3940,7 @@
                           "type": "object",
                           "properties": {
                             "labelId": { "type": "string" },
-                            "resourceType": { "type": "string", "enum": ["stream"] },
+                            "resourceType": { "type": "string", "enum": ["stream", "message"] },
                             "resourceId": { "type": "string" },
                             "actorType": { "type": "string", "enum": ["user", "bot"] },
                             "actorId": { "type": "string" },
@@ -4019,7 +4019,7 @@
             "name": "resourceType",
             "in": "query",
             "required": true,
-            "schema": { "type": "string", "enum": ["stream"] }
+            "schema": { "type": "string", "enum": ["stream", "message"] }
           },
           {
             "name": "resourceId",

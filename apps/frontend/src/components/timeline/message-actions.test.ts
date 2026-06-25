@@ -363,6 +363,33 @@ describe("share action (modal)", () => {
   })
 })
 
+describe("label-message action", () => {
+  it("is hidden when onLabelMessage is not supplied", () => {
+    const actions = getVisibleActions(createContext())
+    expect(actions.find((a) => a.id === "label-message")).toBeUndefined()
+  })
+
+  it("is visible when onLabelMessage is supplied", () => {
+    const actions = getVisibleActions(createContext({ onLabelMessage: () => {} }))
+    expect(actions.find((a) => a.id === "label-message")).toBeDefined()
+  })
+
+  it("invokes the onLabelMessage callback when run", () => {
+    const onLabelMessage = vi.fn()
+    const ctx = createContext({ onLabelMessage })
+    const action = getVisibleActions(ctx).find((a) => a.id === "label-message")!
+    action.action!(ctx)
+    expect(onLabelMessage).toHaveBeenCalledOnce()
+  })
+
+  it("renders as a standalone row, not part of the save group", () => {
+    const ctx = createContext({ onToggleSave: () => {}, onRequestReminder: () => {}, onLabelMessage: () => {} })
+    const items = groupVisibleActions(getVisibleActions(ctx))
+    const labelRow = items.find((i) => i.kind === "single" && i.action.id === "label-message")
+    expect(labelRow).toBeDefined()
+  })
+})
+
 describe("mark-read-up-to-here action", () => {
   it("is hidden when onMarkReadUpToHere is not supplied", () => {
     const actions = getVisibleActions(createContext())
