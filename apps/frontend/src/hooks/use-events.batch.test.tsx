@@ -37,10 +37,13 @@ function makeEvent(sequence: string): CachedEvent {
 }
 
 // Mirror of the production composition in `useEvents`: the liveQuery read held
-// through the apply-window batcher.
-function TimelineCount(): React.ReactElement {
+// through the apply-window batcher. Renders the rendered sequences (not a bare
+// count) so assertions prove WHICH events are visible — that the held window
+// keeps exactly the pre-window tail and the later entries are withheld until
+// close, not merely that some number of rows changed (INV-23).
+function TimelineSeqs(): React.ReactElement {
   const events = useBatchedValue(useStreamEvents(STREAM_ID) ?? [])
-  return createElement("span", { "data-testid": "count" }, String(events.length))
+  return createElement("span", { "data-testid": "seqs" }, events.map((e) => e.sequence).join(","))
 }
 
 describe("timeline events coalesce through the apply window", () => {
@@ -55,19 +58,19 @@ describe("timeline events coalesce through the apply window", () => {
 
   it("updates per write when no window is open (control)", async () => {
     await db.events.put(makeEvent("1"))
-    render(createElement(TimelineCount))
-    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("1"))
+    render(createElement(TimelineSeqs))
+    await waitFor(() => expect(screen.getByTestId("seqs").textContent).toBe("1"))
 
     await act(async () => {
       await db.events.put(makeEvent("2"))
     })
-    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("2"))
+    await waitFor(() => expect(screen.getByTestId("seqs").textContent).toBe("1,2"))
   })
 
   it("holds the cached window steady during a catch-up replay, then settles once on close", async () => {
     await db.events.put(makeEvent("1"))
-    render(createElement(TimelineCount))
-    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("1"))
+    render(createElement(TimelineSeqs))
+    await waitFor(() => expect(screen.getByTestId("seqs").textContent).toBe("1"))
 
     // A sync catch-up opens the apply window and replays missed messages,
     // writing them to db.events one entry at a time.
@@ -78,13 +81,14 @@ describe("timeline events coalesce through the apply window", () => {
       await db.events.put(makeEvent("4"))
     })
     // The liveQuery observes the writes (this wait gives it time to fire), but
-    // the rendered window must stay frozen on the pre-window cached tail — no
-    // per-entry forward walk.
+    // the rendered window must stay frozen on exactly the pre-window tail —
+    // events 2/3/4 are withheld, no per-entry forward walk.
     await new Promise((resolve) => setTimeout(resolve, 40))
-    expect(screen.getByTestId("count").textContent).toBe("1")
+    expect(screen.getByTestId("seqs").textContent).toBe("1")
 
-    // Closing releases to the settled tail in one update — not 1→2→3→4.
+    // Closing releases the settled tail in one update — straight to 1,2,3,4,
+    // never through an intermediate 1,2 / 1,2,3.
     act(() => endApplyWindow())
-    await waitFor(() => expect(screen.getByTestId("count").textContent).toBe("4"))
+    await waitFor(() => expect(screen.getByTestId("seqs").textContent).toBe("1,2,3,4"))
   })
 })
