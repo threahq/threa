@@ -1,30 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadForUpdate, shouldNotifyUpdate, RELOAD_FALLBACK_TIMEOUT_MS } from "./use-app-update"
+import { reloadForUpdate, shouldAnnounceWaiting, RELOAD_FALLBACK_TIMEOUT_MS } from "./use-app-update"
+import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
 
-const RUNNING = "abc1234"
+describe("shouldAnnounceWaiting", () => {
+  // Distinct objects stand in for distinct parked workers — the gate keys on
+  // worker identity, not a version string.
+  const workerA = {} as ServiceWorker
+  const workerB = {} as ServiceWorker
 
-describe("shouldNotifyUpdate", () => {
-  it("notifies when the server build is newer and not yet announced", () => {
-    expect(shouldNotifyUpdate("def5678", RUNNING, null)).toBe(true)
+  it("stays silent when nothing is parked (no update, or a first-ever install)", () => {
+    expect(shouldAnnounceWaiting(null, null)).toBe(false)
+    expect(shouldAnnounceWaiting(undefined, null)).toBe(false)
   })
 
-  it("stays silent when the server build matches what's running", () => {
-    expect(shouldNotifyUpdate(RUNNING, RUNNING, null)).toBe(false)
+  it("announces a freshly parked build", () => {
+    expect(shouldAnnounceWaiting(workerA, null)).toBe(true)
   })
 
-  it("stays silent for a deploy already announced (the remount/refocus re-toast bug)", () => {
-    // User saw the toast for def5678, dismissed it, kept working on the old
-    // build. A remount + refocus re-runs the check with the same delta.
-    expect(shouldNotifyUpdate("def5678", RUNNING, "def5678")).toBe(false)
+  it("stays silent on the remount/refocus re-check of an already-announced build", () => {
+    expect(shouldAnnounceWaiting(workerA, workerA)).toBe(false)
   })
 
-  it("notifies again only for a genuinely newer build", () => {
-    expect(shouldNotifyUpdate("ghi9012", RUNNING, "def5678")).toBe(true)
-  })
-
-  it("stays silent on an empty/missing server version", () => {
-    expect(shouldNotifyUpdate("", RUNNING, null)).toBe(false)
+  it("announces again only for a genuinely newer build (a new waiting worker)", () => {
+    expect(shouldAnnounceWaiting(workerB, workerA)).toBe(true)
   })
 })
 
@@ -32,6 +31,7 @@ describe("reloadForUpdate", () => {
   const originalLocation = window.location
   const swDescriptor = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
   let reloadSpy: ReturnType<typeof vi.fn>
+  let recoverySpy: ReturnType<typeof vi.spyOn>
 
   type FakeWorker = ServiceWorker & { setState(state: ServiceWorkerState): void }
   type FakeRegistration = ServiceWorkerRegistration & {
@@ -79,10 +79,17 @@ describe("reloadForUpdate", () => {
     return registration as unknown as FakeRegistration
   }
 
-  const setServiceWorker = (registration: FakeRegistration | null): { fire(type: string): void } => {
+  const setServiceWorker = (
+    registration: FakeRegistration | null,
+    opts?: { controller?: unknown }
+  ): { fire(type: string): void } => {
     const listeners: Record<string, Array<() => void>> = {}
     const sw = {
       getRegistration: vi.fn(async () => registration),
+      // `controller` is the page's active worker. Present = something already
+      // controls the page, so reloadForUpdate prefers a plain (offline-safe)
+      // reload over the cache-wiping recovery.
+      controller: opts?.controller ?? null,
       addEventListener: vi.fn((type: string, cb: () => void) => {
         ;(listeners[type] ??= []).push(cb)
       }),
@@ -99,10 +106,14 @@ describe("reloadForUpdate", () => {
       configurable: true,
       value: { ...originalLocation, reload: reloadSpy },
     })
+    // runSwRecovery would touch caches / fetch / getRegistrations that jsdom
+    // lacks; stub it and assert it's the escalation taken.
+    recoverySpy = vi.spyOn(swRecovery, "runSwRecovery").mockResolvedValue(true)
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    recoverySpy.mockRestore()
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
     if (swDescriptor) {
       Object.defineProperty(navigator, "serviceWorker", swDescriptor)
@@ -112,20 +123,35 @@ describe("reloadForUpdate", () => {
     }
   })
 
-  it("reloads immediately when no service worker registration exists", async () => {
-    setServiceWorker(null)
+  it("recovers (cache wipe) only when nothing controls the page and there's no registration", async () => {
+    setServiceWorker(null, { controller: null })
     await reloadForUpdate()
-    expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).toHaveBeenCalledWith({ force: true })
+    expect(reloadSpy).not.toHaveBeenCalled()
   })
 
-  it("reloads immediately when no parked worker is available after update", async () => {
+  it("plain-reloads (offline-safe) when a controller exists but no worker is parked", async () => {
+    // Another tab already activated the new build: the controller is the new
+    // worker, so a reload lands it — wiping the cache would be worse than offline.
     const registration = makeRegistration()
-    setServiceWorker(registration)
+    setServiceWorker(registration, { controller: {} })
 
     await reloadForUpdate()
 
     expect(registration.update).toHaveBeenCalledOnce()
     expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).not.toHaveBeenCalled()
+  })
+
+  it("recovers when no worker is parked and nothing controls the page", async () => {
+    const registration = makeRegistration()
+    setServiceWorker(registration, { controller: null })
+
+    await reloadForUpdate()
+
+    expect(registration.update).toHaveBeenCalledOnce()
+    expect(recoverySpy).toHaveBeenCalledWith({ force: true })
+    expect(reloadSpy).not.toHaveBeenCalled()
   })
 
   it("activates the parked worker and reloads once it takes control", async () => {
@@ -140,9 +166,10 @@ describe("reloadForUpdate", () => {
 
     sw.fire("controllerchange")
     expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).not.toHaveBeenCalled()
   })
 
-  it("waits briefly for an installing worker before falling back", async () => {
+  it("waits briefly for an installing worker before activating it", async () => {
     const installing = makeWorker("installing")
     const registration = makeRegistration({ installing })
     setServiceWorker(registration)
@@ -156,17 +183,23 @@ describe("reloadForUpdate", () => {
 
     expect(installing.postMessage).toHaveBeenCalledWith({ type: SW_MSG_SKIP_WAITING })
     expect(reloadSpy).not.toHaveBeenCalled()
+    expect(recoverySpy).not.toHaveBeenCalled()
   })
 
-  it("reloads anyway when the worker never claims", async () => {
+  it("plain-reloads (never wipes) when controllerchange never fires", async () => {
+    // iOS standalone drops controllerchange after skipWaiting — the fallback
+    // must be an offline-safe reload, not a cache wipe that could strand a
+    // flaky connection on a worker that already activated.
     vi.useFakeTimers()
     const waiting = makeWorker()
-    setServiceWorker(makeRegistration({ waiting }))
+    setServiceWorker(makeRegistration({ waiting }), { controller: {} })
 
     await reloadForUpdate()
     expect(reloadSpy).not.toHaveBeenCalled()
+    expect(recoverySpy).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(RELOAD_FALLBACK_TIMEOUT_MS)
     expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).not.toHaveBeenCalled()
   })
 })

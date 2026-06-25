@@ -82,8 +82,9 @@ cleanupOutdatedCaches()
 // HTML against build-B's now-missing assets — the post-deploy "unstyled page"
 // failure where an asset URL is answered with HTML instead of JS/CSS, so React
 // never mounts. Zero network on the boot critical path; post-deploy freshness
-// comes from the parked-SW lifecycle surfaced by the in-app version.json update
-// toast.
+// comes from the parked-SW lifecycle (useAppUpdate drives registration.update()
+// in the background and surfaces the in-app update toast once a new worker is
+// downloaded and parked in `waiting`).
 self.addEventListener("fetch", (event) => {
   // Only app-shell GET navigations belong here. Web Share Target launches use
   // a POST navigation to /share, which must fall through to the handler below.
