@@ -39,6 +39,19 @@ cd extensions/claude-code-remote
 bun install
 ```
 
+This runs the channel **in place** from your monorepo checkout — fine if you always start it
+from there. To run it from **anywhere** (a box or directory with no threa clone), build a
+self-contained copy instead:
+
+```bash
+bun run extensions/claude-code-remote/install-local.ts [destDir]   # default: ~/.threa/claude-code-remote
+```
+
+`@threa/bot-runtime-client` is a private sibling package referenced via `file:../bot-runtime-client`,
+which only resolves inside the monorepo. The script vendors its source into the copy, repoints the
+imports, drops the dependency, and runs `bun install` for the rest. It prints the exact
+`claude mcp add …` command (with the installed absolute path) to use in step 4.
+
 ### 3. Configure credentials
 
 Put the bot key **outside the repo**. Write `~/.claude/threa-channel/config.json` (recommended — it lives in your home dir, so no `git add` can ever reach it), or set environment variables. Environment variables win over the file. Never paste the key into a tracked `.mcp.json` (see the warning in step 4).
@@ -170,5 +183,5 @@ Each `send` (and each tool-approval prompt) also counts as a sign of life that r
 - **The channel doesn't show in `/mcp` and never prompts.** If you ever answered "No" to the _"Use this MCP server?"_ prompt for `threa` in a project, Claude Code records it in `disabledMcpjsonServers` in that project's `.claude/settings.local.json` and then silently skips it — no prompt, no `/mcp` entry, no hint. Remove `"threa"` from `disabledMcpjsonServers` (or add it to `enabledMcpjsonServers`) there, or re-enable it from the `/mcp` menu, then restart.
 - **`--channels server:threa` warns it's "not on the approved list."** That flag only loads allowlisted plugins; a custom channel is loaded with `--dangerously-load-development-channels server:threa` instead — drop `--channels`.
 - **The channel vanished mid-session (scratchpad stuck "busy", no replies).** A stdio MCP server is **not** respawned by Claude Code if it exits — it stays dead until you reconnect it from the `/mcp` menu or relaunch (e.g. `claude --resume … --dangerously-load-development-channels server:threa`). When the channel does go down it now exits gracefully — it marks presence offline and fails the in-flight turn, so the scratchpad flips to offline instead of hanging on "busy", and it logs why: grep `~/.claude/debug/<session-id>.txt` for `[threa-channel] shutting down (…)`. The reason in parentheses tells you the death path: `SIGTERM`/`SIGINT`/`SIGHUP` (Claude Code or your shell stopped it), `stdin closed by parent` (Claude Code crashed or was replaced by an auto-update), or `uncaughtException`/`unhandledRejection` (a bug — file the stack that precedes it).
-- **A restart linked the wrong scratchpad / a stale "Claude Code - <project>" lingers.** The scratchpad is keyed by `hostname + cwd` (and the channel runs the `src/index.ts` you registered with `claude mcp add`). Launch Claude Code from a **different git worktree** of the same repo and you get a *different* cwd, hence a *different* scratchpad — and if the worktree you registered against is later moved or deleted, `bun /abs/path/.../src/index.ts` fails to start at all. Register the channel against a **stable checkout path** (your main clone, not a throwaway worktree), or pin `THREA_INSTANCE_ID` / `THREA_RUNTIME_SESSION_ID` so the same scratchpad follows you across directories.
+- **A restart linked the wrong scratchpad / a stale "Claude Code - <project>" lingers.** The scratchpad is keyed by `hostname + cwd` (and the channel runs the `src/index.ts` you registered with `claude mcp add`). Launch Claude Code from a **different git worktree** of the same repo and you get a _different_ cwd, hence a _different_ scratchpad — and if the worktree you registered against is later moved or deleted, `bun /abs/path/.../src/index.ts` fails to start at all. Register the channel against a **stable checkout path** (your main clone, not a throwaway worktree), or pin `THREA_INSTANCE_ID` / `THREA_RUNTIME_SESSION_ID` so the same scratchpad follows you across directories.
 - **Logs.** Diagnostics go to stderr, captured by Claude Code in `~/.claude/debug/<session-id>.txt`: `[threa-channel] linked to scratchpad …` means it connected; `could not link …` means the backend is unreachable (check `THREA_BASE_URL`).
