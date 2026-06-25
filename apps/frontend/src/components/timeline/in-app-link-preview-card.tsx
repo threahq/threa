@@ -107,15 +107,23 @@ function MessageLinkCard({
 }) {
   if (data.accessTier === "cross_workspace") {
     return (
-      <MinimalCard icon={<MessageSquare />} label="A message in Threa" previewId={preview.id} onDismiss={onDismiss} />
+      <MinimalCard
+        kindIcon={<MessageSquare />}
+        kindLabel="Message"
+        label="In another workspace"
+        previewId={preview.id}
+        onDismiss={onDismiss}
+      />
     )
   }
 
   if (data.accessTier === "private") {
     return (
       <MinimalCard
-        icon={<Lock />}
-        label="Message in a private conversation"
+        kindIcon={<MessageSquare />}
+        kindLabel="Message"
+        bodyIcon={<Lock />}
+        label="In a private conversation"
         previewId={preview.id}
         onDismiss={onDismiss}
       />
@@ -125,7 +133,8 @@ function MessageLinkCard({
   if (data.deleted) {
     return (
       <MinimalCard
-        icon={<MessageSquare />}
+        kindIcon={<MessageSquare />}
+        kindLabel="Message"
         label="This message was deleted"
         italic
         previewId={preview.id}
@@ -193,11 +202,28 @@ function StreamLinkCard({
   onDismiss?: (previewId: string) => void
 }) {
   if (data.accessTier === "cross_workspace") {
-    return <MinimalCard icon={<Hash />} label="A conversation in Threa" previewId={preview.id} onDismiss={onDismiss} />
+    return (
+      <MinimalCard
+        kindIcon={<Hash />}
+        kindLabel="Conversation"
+        label="In another workspace"
+        previewId={preview.id}
+        onDismiss={onDismiss}
+      />
+    )
   }
 
   if (data.accessTier === "private") {
-    return <MinimalCard icon={<Lock />} label="A private conversation" previewId={preview.id} onDismiss={onDismiss} />
+    return (
+      <MinimalCard
+        kindIcon={<Hash />}
+        kindLabel="Conversation"
+        bodyIcon={<Lock />}
+        label="Private conversation"
+        previewId={preview.id}
+        onDismiss={onDismiss}
+      />
+    )
   }
 
   const internalPath = getInternalPath(preview.url)
@@ -248,14 +274,24 @@ function MemoLinkCard({
   onDismiss?: (previewId: string) => void
 }) {
   if (data.accessTier === "cross_workspace") {
-    return <MinimalCard icon={<Brain />} label="A memory in Threa" previewId={preview.id} onDismiss={onDismiss} />
+    return (
+      <MinimalCard
+        kindIcon={<Brain />}
+        kindLabel="Memory"
+        label="In another workspace"
+        previewId={preview.id}
+        onDismiss={onDismiss}
+      />
+    )
   }
 
   if (data.accessTier === "private") {
     return (
       <MinimalCard
-        icon={<Lock />}
-        label="A memory in a private conversation"
+        kindIcon={<Brain />}
+        kindLabel="Memory"
+        bodyIcon={<Lock />}
+        label="In a private conversation"
         previewId={preview.id}
         onDismiss={onDismiss}
       />
@@ -310,15 +346,24 @@ function CardShell({ header, children }: { header: ReactNode; children: ReactNod
   )
 }
 
-/** Compact single-line card for cross-workspace, private, and deleted tiers. */
+/**
+ * Restricted-tier card (cross-workspace / private / deleted). Mirrors the full
+ * card's header-bar + body two-zone shape so resolving to a minimal tier doesn't
+ * collapse the row height vs. the skeleton (INV-21). The header names the kind;
+ * the body carries the restricted-state message.
+ */
 function MinimalCard({
-  icon,
+  kindIcon,
+  kindLabel,
+  bodyIcon,
   label,
   italic,
   previewId,
   onDismiss,
 }: {
-  icon: ReactNode
+  kindIcon: ReactNode
+  kindLabel: string
+  bodyIcon?: ReactNode
   label: string
   italic?: boolean
   previewId: string
@@ -326,10 +371,14 @@ function MinimalCard({
 }) {
   return (
     <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card max-w-md">
-      <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
-        <span className="[&>svg]:h-4 [&>svg]:w-4 shrink-0">{icon}</span>
-        <span className={italic ? "text-xs italic" : "text-xs"}>{label}</span>
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/30 text-muted-foreground">
+        <span className="[&>svg]:h-4 [&>svg]:w-4 shrink-0">{kindIcon}</span>
+        <span className="text-xs">{kindLabel}</span>
         <DismissButton previewId={previewId} onDismiss={onDismiss} />
+      </div>
+      <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
+        {bodyIcon && <span className="[&>svg]:h-3.5 [&>svg]:w-3.5 shrink-0">{bodyIcon}</span>}
+        <span className={italic ? "text-xs italic" : "text-xs"}>{label}</span>
       </div>
     </div>
   )

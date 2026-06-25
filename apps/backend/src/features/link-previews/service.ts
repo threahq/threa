@@ -387,6 +387,12 @@ export class LinkPreviewService {
     const accessibleStreamIds = await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
       archiveStatus: ["active", "archived"],
     })
+    // No accessible streams means no memo is reachable — return the private tier
+    // without reading the memo row, matching how the message/stream paths collapse
+    // "not found" and "no access" into one response (no existence side-channel).
+    if (accessibleStreamIds.length === 0) {
+      return { kind: "memo", accessTier: "private" }
+    }
     const memo = await this.deps.memoExplorerService.getById(workspaceId, targetMemoId, { accessibleStreamIds })
     if (!memo) {
       return { kind: "memo", accessTier: "private" }

@@ -144,11 +144,26 @@ describe("LinkPreviewService.resolveInAppLink", () => {
     })
   })
 
-  test("returns private when the memo is not in an accessible stream", async () => {
+  test("returns private without reading the memo when the viewer has no accessible streams", async () => {
     spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
       makePreview({ contentType: "memo_link", targetStreamId: null, targetMemoId: "memo_1" })
     )
     spyOn(SearchRepository, "getAccessibleStreamsWithMembers").mockResolvedValue([])
+    const getById = spyOn({ getById: async () => null }, "getById")
+    const service = makeService({}, { getById: getById as never })
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toEqual({ kind: "memo", accessTier: "private" })
+    // No memo-row read when there's nothing the viewer could access — no existence side-channel.
+    expect(getById).not.toHaveBeenCalled()
+  })
+
+  test("returns private when the memo's source stream is not accessible", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({ contentType: "memo_link", targetStreamId: null, targetMemoId: "memo_1" })
+    )
+    spyOn(SearchRepository, "getAccessibleStreamsWithMembers").mockResolvedValue(["stream_other"])
     const service = makeService({}, { getById: async () => null })
 
     const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")

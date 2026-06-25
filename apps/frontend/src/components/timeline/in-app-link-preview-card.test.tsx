@@ -99,7 +99,10 @@ describe("InAppLinkPreviewCard", () => {
   it("shows a minimal card for a private stream without leaking content", async () => {
     renderWith({ kind: "stream", accessTier: "private" }, makePreview())
 
-    await waitFor(() => expect(screen.getByText("A private conversation")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Private conversation")).toBeInTheDocument())
+    // Kind is named; no stream name, description, or visibility leaks.
+    expect(screen.getByText("Conversation")).toBeInTheDocument()
+    expect(screen.queryByText("design")).not.toBeInTheDocument()
   })
 
   it("shows a minimal card for a cross-workspace memo", async () => {
@@ -108,6 +111,7 @@ describe("InAppLinkPreviewCard", () => {
       makePreview({ contentType: "memo_link", url: "https://app.threa.io/w/other_ws/memos/memo_1" })
     )
 
-    await waitFor(() => expect(screen.getByText("A memory in Threa")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("In another workspace")).toBeInTheDocument())
+    expect(screen.getByText("Memory")).toBeInTheDocument()
   })
 })
