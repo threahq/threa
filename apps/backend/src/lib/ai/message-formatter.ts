@@ -20,19 +20,33 @@ export class MessageFormatter {
    * Format messages with author names resolved from the database.
    * Batch-fetches all unique author IDs to minimize queries (2 max: users + personas).
    *
+   * @param options.includeIds - Prefix each message with its `id` attribute, so
+   *   a model asked to cite source messages (memorizer, suggestion collector) has
+   *   real ids to return. Off by default — callers that don't cite stay unchanged.
+   *
    * @example
    * const formatted = await messageFormatter.formatMessages(client, messages)
    * // <messages>
    * // <message authorType="user" authorId="user_123" authorName="Alice" createdAt="2021-01-01T00:00:00Z">Hello!</message>
    * // <message authorType="persona" authorId="persona_456" authorName="Ariadne" createdAt="2021-01-01T00:00:01Z">Hi there!</message>
    * // </messages>
+   *
+   * @example
+   * // With ids (memorizer / suggestion collector)
+   * const formatted = await messageFormatter.formatMessages(client, ws, messages, { includeIds: true })
+   * // <message id="msg_123" authorType="user" authorId="user_123" authorName="Alice" createdAt="...">Hello!</message>
    */
-  async formatMessages(client: Querier, workspaceId: string, messages: Message[]): Promise<string> {
+  async formatMessages(
+    client: Querier,
+    workspaceId: string,
+    messages: Message[],
+    options?: { includeIds?: boolean }
+  ): Promise<string> {
     if (messages.length === 0) return "<messages></messages>"
 
     const nameById = await this.resolveAuthorNames(client, workspaceId, messages)
 
-    const formatted = messages.map((m) => this.formatSingleMessage(m, nameById))
+    const formatted = messages.map((m) => this.formatSingleMessage(m, nameById, options?.includeIds ?? false))
 
     return `<messages>\n${formatted.join("\n")}\n</messages>`
   }
@@ -66,9 +80,10 @@ export class MessageFormatter {
     return nameById
   }
 
-  private formatSingleMessage(m: Message, nameById: Map<string, string>): string {
+  private formatSingleMessage(m: Message, nameById: Map<string, string>, includeIds: boolean): string {
     const authorName = nameById.get(m.authorId) ?? "Unknown"
-    return `<message authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(authorName)}" createdAt="${m.createdAt.toISOString()}">${escapeXml(m.contentMarkdown)}</message>`
+    const idAttr = includeIds ? `id="${m.id}" ` : ""
+    return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(authorName)}" createdAt="${m.createdAt.toISOString()}">${escapeXml(m.contentMarkdown)}</message>`
   }
 
   /**

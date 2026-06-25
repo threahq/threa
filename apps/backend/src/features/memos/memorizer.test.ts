@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { getMemorizerSystemPrompt, memoSetSchema, MEMO_MAX_PER_CONVERSATION } from "./config"
+import { resolveSourceMessageIds } from "./memorizer"
 
 describe("getMemorizerSystemPrompt", () => {
   it("should inject current date in YYYY-MM-DD format for UTC", () => {
@@ -84,5 +85,31 @@ describe("memoSetSchema", () => {
   it("rejects an unknown knowledge type", () => {
     const result = memoSetSchema.safeParse({ memos: [{ ...validMemo, knowledgeType: "gossip" }] })
     expect(result.success).toBe(false)
+  })
+})
+
+describe("resolveSourceMessageIds", () => {
+  const messages = [
+    { id: "msg_1", createdAt: new Date("2024-01-01T10:00:00Z") },
+    { id: "msg_2", createdAt: new Date("2024-01-01T10:05:00Z") },
+    { id: "msg_3", createdAt: new Date("2024-01-01T10:02:00Z") },
+  ]
+
+  it("keeps only the cited ids that were actually shown to the model", () => {
+    expect(resolveSourceMessageIds(["msg_1", "msg_3"], messages)).toEqual(["msg_1", "msg_3"])
+  })
+
+  it("drops invented ids the model never saw", () => {
+    expect(resolveSourceMessageIds(["msg_2", "msg_hallucinated"], messages)).toEqual(["msg_2"])
+  })
+
+  it("anchors to the single most-recent message (not the whole conversation) when nothing valid is cited", () => {
+    // msg_2 is newest by createdAt even though it isn't last in array order.
+    expect(resolveSourceMessageIds(["msg_nope"], messages)).toEqual(["msg_2"])
+    expect(resolveSourceMessageIds([], messages)).toEqual(["msg_2"])
+  })
+
+  it("returns no anchor when there are no messages", () => {
+    expect(resolveSourceMessageIds(["whatever"], [])).toEqual([])
   })
 })

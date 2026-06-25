@@ -161,12 +161,17 @@ export class MemoService implements MemoServiceLike {
       }
 
       // Pre-format all messages while we have database access (INV-41)
-      // Formatting requires resolving author names from the database
+      // Formatting requires resolving author names from the database.
+      // includeIds: the memorizer and suggestion collector must cite source
+      // message ids; without ids in the prompt the model can't reference them and
+      // every memo falls back to the whole conversation (mis-attribution).
       const formattedConversations = new Map<string, string>()
       for (const [convId, msgs] of conversationMessages) {
         const messagesArray = Array.from(msgs.values()).filter((m): m is Message => m !== null)
         if (messagesArray.length > 0) {
-          const formatted = await this.messageFormatter.formatMessages(client, workspaceId, messagesArray)
+          const formatted = await this.messageFormatter.formatMessages(client, workspaceId, messagesArray, {
+            includeIds: true,
+          })
           formattedConversations.set(convId, formatted)
         }
       }

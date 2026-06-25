@@ -13,6 +13,23 @@ import {
   MEMORIZER_EXISTING_TAGS_TEMPLATE,
 } from "./config"
 
+/**
+ * Resolve the model's cited source messages against the messages it was actually
+ * shown. Invented ids are dropped. If nothing valid remains, anchor to the single
+ * most-recent message (by createdAt) rather than the whole conversation: a memo
+ * smeared across every message mis-attributes one topic to an entire multi-topic
+ * exchange, which is the wrong-attribution footgun this guards. `messages` order
+ * is not guaranteed chronological (findByIds returns a Map), so pick by timestamp.
+ */
+export function resolveSourceMessageIds(citedIds: string[], messages: Pick<Message, "id" | "createdAt">[]): string[] {
+  const present = new Set(messages.map((m) => m.id))
+  const valid = citedIds.filter((id) => present.has(id))
+  if (valid.length > 0) return valid
+  if (messages.length === 0) return []
+  const mostRecent = messages.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
+  return [mostRecent.id]
+}
+
 /** A single single-topic memo whose abstract is self-contained and can stand alone (GAM paper). */
 export interface MemoContent {
   title: string
@@ -107,17 +124,14 @@ export class Memorizer {
       context: { workspaceId: context.workspaceId, origin: "system" },
     })
 
-    return value.memos.map((memo) => {
-      const validSourceIds = memo.sourceMessageIds.filter((id) => messages.some((m) => m.id === id))
-      return {
-        title: memo.title,
-        abstract: memo.abstract,
-        knowledgeType: memo.knowledgeType,
-        keyPoints: memo.keyPoints,
-        tags: memo.tags,
-        sourceMessageIds: validSourceIds.length > 0 ? validSourceIds : messages.map((m) => m.id),
-      }
-    })
+    return value.memos.map((memo) => ({
+      title: memo.title,
+      abstract: memo.abstract,
+      knowledgeType: memo.knowledgeType,
+      keyPoints: memo.keyPoints,
+      tags: memo.tags,
+      sourceMessageIds: resolveSourceMessageIds(memo.sourceMessageIds, messages),
+    }))
   }
 
   private formatMemoryContext(context: MemorizerContext): string {
