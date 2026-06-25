@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { act, render } from "@testing-library/react"
 import { useTimelineScroll } from "./use-timeline-scroll"
+import { beginApplyWindow, endApplyWindow, resetApplyWindow } from "@/stores/apply-window"
 
 type Options = Parameters<typeof useTimelineScroll>[0]
 type HookApi = ReturnType<typeof useTimelineScroll>
@@ -311,6 +312,106 @@ describe("useTimelineScroll — scroll position", () => {
     harness.current.scrollerRef.current = el
     act(() => harness.current.handleScroll())
     expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+})
+
+describe("useTimelineScroll — cold-load reveal hold", () => {
+  afterEach(() => {
+    resetApplyWindow()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  // Drive the settle's rAF loop deterministically: capture each scheduled frame
+  // and a controllable clock, so the reveal decision can be stepped frame by
+  // frame without real time.
+  function installFakeFrames() {
+    const frames: FrameRequestCallback[] = []
+    let clock = 0
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      frames.push(cb)
+      return frames.length
+    })
+    vi.stubGlobal("cancelAnimationFrame", () => {})
+    vi.spyOn(performance, "now").mockImplementation(() => clock)
+    return {
+      // Run one frame, advancing the clock by ~16ms.
+      step(times = 1) {
+        for (let i = 0; i < times; i++) {
+          clock += 16
+          const cb = frames.shift()
+          if (cb) act(() => cb(clock))
+        }
+      },
+      advance(ms: number) {
+        clock += ms
+      },
+    }
+  }
+
+  // Mount with items so the layout effect fires the initial scroll + settle.
+  function mountSettling(el: HTMLElement, extra?: Partial<Options>) {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, ...extra }))
+    harness.current.scrollerRef.current = el as HTMLDivElement
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", ...extra }))
+    return harness
+  }
+
+  it("holds the reveal while a sync catch-up replays (apply window open), then reveals when it ends", () => {
+    const frames = installFakeFrames()
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    // A catch-up is replaying into IDB when the stream opens.
+    beginApplyWindow()
+    const harness = mountSettling(el)
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    // Height is already steady, but the reveal must stay held: revealing now would
+    // show the mid-replay window and then jump as later pages land.
+    frames.step(10)
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    // Catch-up finishes → convergence may now complete on the final tail.
+    act(() => endApplyWindow())
+    frames.step(5)
+    expect(harness.current.isInitialSettling).toBe(false)
+  })
+
+  it("holds the reveal while the bootstrap fetch is in flight, then reveals once it settles", () => {
+    const frames = installFakeFrames()
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    const shouldHoldRevealRef = { current: true }
+    const harness = mountSettling(el, { shouldHoldRevealRef })
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    frames.step(10)
+    expect(harness.current.isInitialSettling).toBe(true)
+
+    // Bootstrap lands the true newest page → release the hold.
+    shouldHoldRevealRef.current = false
+    frames.step(5)
+    expect(harness.current.isInitialSettling).toBe(false)
+  })
+
+  it("reveals on height convergence when nothing is converging (offline / up-to-date)", () => {
+    const frames = installFakeFrames()
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    const harness = mountSettling(el)
+    // No apply window, no hold ref → reveal as soon as the height holds steady.
+    frames.step(5)
+    expect(harness.current.isInitialSettling).toBe(false)
+  })
+
+  it("backstop reveals even if the hold never releases, so the skeleton can't strand", () => {
+    const frames = installFakeFrames()
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    // A stuck catch-up window that never closes.
+    beginApplyWindow()
+    const harness = mountSettling(el)
+    expect(harness.current.isInitialSettling).toBe(true)
+    // Jump the clock past the backstop; the next frame reveals despite the hold.
+    frames.advance(6000)
+    frames.step(1)
+    expect(harness.current.isInitialSettling).toBe(false)
   })
 })
 

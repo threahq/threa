@@ -286,11 +286,20 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // and triggers IDB writes via applyStreamBootstrap in its queryFn.
   const {
     status: bootstrapStatus,
+    fetchStatus: bootstrapFetchStatus,
     error,
     data: bootstrap,
   } = useStreamBootstrap(workspaceId, streamId, {
     enabled: shouldFetch,
   })
+
+  // True while the initial bootstrap request that establishes the stream's true
+  // newest page is in flight. The cold-load reveal holds on this so it can't
+  // drop the mask on the stale cached tail and then jump forward when the
+  // bootstrap lands (see useTimelineScroll's shouldHoldRevealRef). `fetchStatus`
+  // is "idle" — not "fetching" — when the query is disabled (offline / no
+  // socket), so offline reveals the cached tail immediately rather than holding.
+  const bootstrapFetching = bootstrapFetchStatus === "fetching"
 
   // The bootstrap has a *definitive* answer only when it succeeded, hit a
   // terminal 403/404, or the caller never asked for it (drafts). While it is
@@ -719,6 +728,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     events,
     holes,
     isLoading,
+    bootstrapFetching,
     isConfirmedEmpty,
     error: suppressBootstrapError ? null : error,
     pagedSharedMessages,
