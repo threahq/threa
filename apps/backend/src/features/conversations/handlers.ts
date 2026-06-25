@@ -38,9 +38,14 @@ const reassignMessageParamsSchema = z.object({
 
 // Authored board post. `contentMarkdown` is intentionally not accepted — the
 // backend derives it from `contentJson` (INV-58), same as message creation, so
-// the stored markdown can't diverge from the canonical JSON.
+// the stored markdown can't diverge from the canonical JSON. The target is
+// either an existing stream (channel/DM) or a brand-new scratchpad — posting to
+// an existing scratchpad is not offered (user ruling).
 const createAuthoredPostSchema = z.object({
-  streamId: z.string().min(1, "streamId is required"),
+  target: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("stream"), streamId: z.string().min(1) }),
+    z.object({ type: z.literal("newScratchpad"), companionMode: z.enum(["on", "off"]) }),
+  ]),
   contentJson: z.object({
     type: z.literal("doc"),
     content: z.array(z.any()),
@@ -83,10 +88,11 @@ export function createConversationHandlers({ conversationService, streamService,
     },
 
     /**
-     * Author a board post: create a message in the picked stream + a conversation
-     * seeded with it. Board-gated (404 without the flag), and the author must be
-     * able to post into the target stream — validated the same way as reads
-     * (public visibility + thread root membership).
+     * Author a board post: create a message in the target + a conversation
+     * seeded with it. Board-gated (404 without the flag). Posting into an
+     * existing stream requires access (validated the same way as reads — public
+     * visibility + thread root membership); a "new scratchpad" target needs no
+     * check because the author owns the scratchpad it creates.
      */
     async createAuthoredPost(req: Request, res: Response) {
       const userId = req.user!.id
@@ -99,12 +105,14 @@ export function createConversationHandlers({ conversationService, streamService,
 
       const body = validateRequest(createAuthoredPostSchema, req.body)
 
-      await streamService.validateStreamAccess(body.streamId, workspaceId, userId)
+      if (body.target.type === "stream") {
+        await streamService.validateStreamAccess(body.target.streamId, workspaceId, userId)
+      }
 
       const post = await conversationService.createAuthoredPost({
         workspaceId,
-        streamId: body.streamId,
         userId,
+        target: body.target,
         contentJson: body.contentJson,
         title: body.title,
         attachmentIds: body.attachmentIds,

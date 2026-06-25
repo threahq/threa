@@ -8,9 +8,17 @@ import type {
   BoardPostMessage,
 } from "@threa/types"
 
+/**
+ * Where an authored post lands: an existing stream the user picked (channel or
+ * DM), or a brand-new scratchpad created for the post (`companionMode: "on"` =
+ * companion AI scratchpad, `"off"` = plain quick note).
+ */
+export type CreateBoardPostTarget =
+  | { type: "stream"; streamId: string }
+  | { type: "newScratchpad"; companionMode: "on" | "off" }
+
 export interface CreateBoardPostParams {
-  /** The stream the post is authored into (the user picks it). */
-  streamId: string
+  target: CreateBoardPostTarget
   /** Canonical ProseMirror content (INV-58); the backend derives markdown. */
   contentJson: JSONContent
   /** Optional human title for the conversation. */

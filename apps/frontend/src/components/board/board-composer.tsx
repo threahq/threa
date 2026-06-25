@@ -2,7 +2,7 @@ import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { PenSquare, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
@@ -13,33 +13,49 @@ import {
   useWorkspaceDmPeers,
   type CachedStream,
 } from "@/stores/workspace-store"
+import type { CreateBoardPostTarget } from "@/api/conversations"
 import { resolveStreamName } from "@/lib/streams"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { StreamTypes, type JSONContent } from "@threa/types"
 
-// Authored posts land in a stream the user picks. Threads are derived (not
-// authored into directly) and system streams aren't user-postable; E2E streams
-// need client-side sealing the board composer doesn't do yet, so they're out.
-const POSTABLE_TYPES = new Set<string>([StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD, StreamTypes.DM])
+// Existing streams a board post can target: live channels and DMs. Scratchpads
+// are deliberately excluded — you don't post into an existing one, you create a
+// new one (the two "New …" options below). Threads are derived (not authored
+// into), system streams aren't user-postable, archived streams are closed, and
+// E2E streams need client-side sealing the board composer doesn't do yet.
+const POSTABLE_TYPES = new Set<string>([StreamTypes.CHANNEL, StreamTypes.DM])
+
+// Sentinel target values for the two "create a new scratchpad" options, kept
+// distinct from any stream id (which is what the rest of the Select holds).
+const NEW_SCRATCHPAD = "new:scratchpad"
+const NEW_QUICK_NOTE = "new:quick-note"
 
 // One durable draft for the board's "New post" composer, independent of any
-// stream scope (the target stream is separate UI state, chosen per post).
+// target (the target is separate UI state, chosen per post).
 const BOARD_DRAFT_KEY = "board:new-post"
 
 /**
- * Streams a user can author a board post into: live channels, scratchpads, and
- * DMs. Threads are derived (not authored into), system streams aren't
- * user-postable, archived streams are closed, and E2E streams need client-side
- * sealing the board composer doesn't do yet.
+ * Existing streams a board post can target: live channels and DMs. Scratchpads
+ * are created via a post (the "New scratchpad" / "New quick note" options), not
+ * appended to from the board (user ruling). Threads/system are not user-authored
+ * surfaces; archived and E2E streams are excluded.
  */
 export function isPostableStream(stream: Pick<CachedStream, "type" | "archivedAt" | "e2eEnabled">): boolean {
   return POSTABLE_TYPES.has(stream.type) && !stream.archivedAt && stream.e2eEnabled !== true
 }
 
+/** Map a Select value to the API target. Stream ids fall through to a stream target. */
+function targetForValue(value: string): CreateBoardPostTarget | null {
+  if (!value) return null
+  if (value === NEW_SCRATCHPAD) return { type: "newScratchpad", companionMode: "on" }
+  if (value === NEW_QUICK_NOTE) return { type: "newScratchpad", companionMode: "off" }
+  return { type: "stream", streamId: value }
+}
+
 /**
  * The board's "New post" affordance. Collapsed to a single button until the user
- * opens it, so the feed stays the focus; expanding reveals the stream picker +
+ * opens it, so the feed stays the focus; expanding reveals the target picker +
  * composer. An authored post appears on the board the instant it's created (the
  * mutation prepends it), so there's no success toast (INV-63).
  */
@@ -70,19 +86,23 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
 
   const postableStreams = useMemo(() => streams.filter(isPostableStream), [streams])
 
-  const [streamId, setStreamId] = useState("")
+  // The selected Select value: a sentinel ("new:…") or a stream id.
+  const [targetValue, setTargetValue] = useState("")
+  // Only an existing-stream target has a stream object for mention context; a
+  // "new scratchpad" target has no stream yet.
   const selectedStream = useMemo<CachedStream | undefined>(
-    () => postableStreams.find((s) => s.id === streamId),
-    [postableStreams, streamId]
+    () => postableStreams.find((s) => s.id === targetValue),
+    [postableStreams, targetValue]
   )
   const streamContext = useMentionStreamContext(workspaceId, selectedStream)
 
   const composer = useDraftComposer({ workspaceId, draftKey: BOARD_DRAFT_KEY, scopeId: BOARD_DRAFT_KEY })
 
-  const canPost = composer.canSend && !!streamId && !createPost.isPending
+  const canPost = composer.canSend && !!targetValue && !createPost.isPending
 
   const handleSubmit = async (editorContent?: JSONContent) => {
-    if (!streamId || !composer.canSend) return
+    const target = targetForValue(targetValue)
+    if (!target || !composer.canSend) return
 
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
@@ -92,7 +112,7 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
     composer.setIsSending(true)
     try {
       await createPost.mutateAsync({
-        streamId,
+        target,
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       })
@@ -110,11 +130,14 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
   return (
     <div className="mb-3 rounded-xl border bg-card p-3 sm:p-4">
       <div className="mb-2 flex items-center gap-2">
-        <Select value={streamId} onValueChange={setStreamId} disabled={postableStreams.length === 0}>
+        <Select value={targetValue} onValueChange={setTargetValue}>
           <SelectTrigger className="h-8 w-auto min-w-[180px] text-sm">
             <SelectValue placeholder="Post to…" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={NEW_SCRATCHPAD}>New scratchpad</SelectItem>
+            <SelectItem value={NEW_QUICK_NOTE}>New quick note</SelectItem>
+            {postableStreams.length > 0 && <SelectSeparator />}
             {postableStreams.map((s) => (
               <SelectItem key={s.id} value={s.id}>
                 {resolveStreamName(s.id, { streams, users, dmPeers }, "generic") ?? "Untitled stream"}
@@ -133,7 +156,7 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
         pendingAttachments={composer.pendingAttachments}
         onRemoveAttachment={composer.handleRemoveAttachment}
         workspaceId={workspaceId}
-        streamId={streamId || undefined}
+        streamId={selectedStream?.id}
         fileInputRef={composer.fileInputRef}
         onFileSelect={composer.handleFileSelect}
         onFileUpload={composer.uploadFile}
@@ -142,16 +165,12 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
         canSubmit={canPost}
         isSubmitting={composer.isSending}
         hasFailed={composer.hasFailed}
-        placeholder={streamId ? "Write a post…" : "Pick a stream, then write a post…"}
+        placeholder={targetValue ? "Write a post…" : "Pick where to post, then write…"}
         messageSendMode="cmdEnter"
         autoFocus
         scopeId={BOARD_DRAFT_KEY}
         streamContext={streamContext}
       />
-
-      {postableStreams.length === 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">No streams you can post to yet.</p>
-      )}
     </div>
   )
 }

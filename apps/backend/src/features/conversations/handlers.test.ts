@@ -78,7 +78,8 @@ describe("Conversation Handlers", () => {
   })
 
   describe("createAuthoredPost", () => {
-    const validBody = { streamId: "stream_2", contentJson: { type: "doc", content: [] } }
+    const streamTarget = { type: "stream", streamId: "stream_2" }
+    const validBody = { target: streamTarget, contentJson: { type: "doc", content: [] } }
 
     test("404s when the board-view feature flag is not 'on'", async () => {
       mockGetFlag.mockResolvedValue("off")
@@ -88,9 +89,22 @@ describe("Conversation Handlers", () => {
       expect(mockCreateAuthoredPost).not.toHaveBeenCalled()
     })
 
-    test("validates the author can post into the target stream", async () => {
+    test("validates access for an existing-stream target", async () => {
       await handlers.createAuthoredPost(mockReq({ body: validBody }), mockRes())
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_2", "ws_1", "usr_1")
+    })
+
+    test("does NOT validate stream access for a new-scratchpad target", async () => {
+      await handlers.createAuthoredPost(
+        mockReq({
+          body: { target: { type: "newScratchpad", companionMode: "on" }, contentJson: { type: "doc", content: [] } },
+        }),
+        mockRes()
+      )
+      expect(mockValidateStreamAccess).not.toHaveBeenCalled()
+      expect(mockCreateAuthoredPost).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { type: "newScratchpad", companionMode: "on" } })
+      )
     })
 
     test("propagates StreamNotFoundError without creating a post", async () => {
@@ -113,8 +127,8 @@ describe("Conversation Handlers", () => {
 
       expect(mockCreateAuthoredPost).toHaveBeenCalledWith({
         workspaceId: "ws_1",
-        streamId: "stream_2",
         userId: "usr_1",
+        target: streamTarget,
         contentJson: { type: "doc", content: [] },
         title: "Roadmap",
         attachmentIds: ["att_1"],
@@ -123,9 +137,9 @@ describe("Conversation Handlers", () => {
       expect((res as unknown as { body: unknown }).body).toEqual({ post })
     })
 
-    test("rejects a body missing contentJson with a 400", async () => {
+    test("rejects a body with no target with a 400", async () => {
       await expect(
-        handlers.createAuthoredPost(mockReq({ body: { streamId: "stream_2" } }), mockRes())
+        handlers.createAuthoredPost(mockReq({ body: { contentJson: { type: "doc", content: [] } } }), mockRes())
       ).rejects.toMatchObject({ status: 400 })
       expect(mockCreateAuthoredPost).not.toHaveBeenCalled()
     })

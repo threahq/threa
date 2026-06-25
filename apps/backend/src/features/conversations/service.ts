@@ -3,7 +3,7 @@ import { withClient, withTransaction } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, EventService, deriveContentMarkdown, type Message } from "../messaging"
-import { StreamRepository } from "../streams"
+import { StreamRepository, StreamService } from "../streams"
 import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
@@ -15,6 +15,7 @@ import {
   ConversationStatuses,
   StreamTypes,
   type AttachmentSummary,
+  type CompanionMode,
   type ConversationStatus,
   type JSONContent,
   type LinkPreviewSummary,
@@ -60,11 +61,22 @@ export interface BoardPost {
   totalReplies: number
 }
 
+/**
+ * Where an authored post lands: an existing stream the user picked (channel or
+ * DM), or a brand-new scratchpad created for the post. Posting to an existing
+ * scratchpad is deliberately not offered — scratchpads are only born from a
+ * post, not appended to (user ruling). `companionMode` distinguishes a companion
+ * scratchpad ("on", an AI chat) from a plain quick note ("off").
+ */
+export type CreateAuthoredPostTarget =
+  | { type: "stream"; streamId: string }
+  | { type: "newScratchpad"; companionMode: CompanionMode }
+
 export interface CreateAuthoredPostParams {
   workspaceId: string
-  streamId: string
   /** The authoring user — an authored post is always user-authored. */
   userId: string
+  target: CreateAuthoredPostTarget
   /** Canonical ProseMirror content (INV-58); markdown is derived server-side. */
   contentJson: JSONContent
   /** Optional human title for the conversation; blank/omitted leaves it untitled. */
@@ -94,7 +106,8 @@ export interface ReassignMessageResult {
 export class ConversationService {
   constructor(
     private pool: Pool,
-    private eventService: EventService
+    private eventService: EventService,
+    private streamService: StreamService
   ) {}
 
   /**
@@ -109,11 +122,26 @@ export class ConversationService {
    * (INV-4). Access is the handler's responsibility (validateStreamAccess).
    */
   async createAuthoredPost(params: CreateAuthoredPostParams): Promise<BoardPost> {
-    const { workspaceId, streamId, userId, contentJson, title, attachmentIds } = params
+    const { workspaceId, target, userId, contentJson, title, attachmentIds } = params
     const contentMarkdown = deriveContentMarkdown(contentJson)
     const trimmedTitle = title?.trim()
 
     const { conversation, message } = await withTransaction(this.pool, async (client) => {
+      // A "new scratchpad" target is born here, in the same transaction as its
+      // first message — the post is the scratchpad's reason to exist (user
+      // ruling: scratchpads are created via posts, never appended to from the
+      // board). The owner is the author, so no access check is needed.
+      const streamId =
+        target.type === "newScratchpad"
+          ? (
+              await this.streamService.createScratchpadInTransaction(client, {
+                workspaceId,
+                createdBy: userId,
+                companionMode: target.companionMode,
+              })
+            ).id
+          : target.streamId
+
       const created = await this.eventService.createMessageInTransaction(client, {
         workspaceId,
         streamId,

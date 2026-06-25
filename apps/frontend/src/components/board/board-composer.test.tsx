@@ -12,10 +12,13 @@ function stream(overrides: Partial<CachedStream>): CachedStream {
 }
 
 describe("isPostableStream", () => {
-  it("accepts live channels, scratchpads, and DMs", () => {
+  it("accepts live channels and DMs", () => {
     expect(isPostableStream(stream({ type: "channel" }))).toBe(true)
-    expect(isPostableStream(stream({ type: "scratchpad" }))).toBe(true)
     expect(isPostableStream(stream({ type: "dm" }))).toBe(true)
+  })
+
+  it("rejects existing scratchpads (created via a post, never appended to)", () => {
+    expect(isPostableStream(stream({ type: "scratchpad" }))).toBe(false)
   })
 
   it("rejects threads and system streams (not user-authored surfaces)", () => {

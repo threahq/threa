@@ -190,7 +190,10 @@ describe("useCreateBoardPost", () => {
 
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
     await act(async () => {
-      await result.current.mutateAsync({ streamId: STREAM_ID, contentJson: { type: "doc", content: [] } })
+      await result.current.mutateAsync({
+        target: { type: "stream", streamId: STREAM_ID },
+        contentJson: { type: "doc", content: [] },
+      })
     })
 
     const data = queryClient.getQueryData(workspaceListKey()) as { pages: { posts: BoardPost[] }[] }
@@ -211,7 +214,10 @@ describe("useCreateBoardPost", () => {
 
     const { result } = renderHook(() => useCreateBoardPost(WORKSPACE_ID), { wrapper })
     await act(async () => {
-      await result.current.mutateAsync({ streamId: STREAM_ID, contentJson: { type: "doc", content: [] } })
+      await result.current.mutateAsync({
+        target: { type: "stream", streamId: STREAM_ID },
+        contentJson: { type: "doc", content: [] },
+      })
     })
 
     const data = queryClient.getQueryData(workspaceListKey()) as { pages: { posts: BoardPost[] }[] }
