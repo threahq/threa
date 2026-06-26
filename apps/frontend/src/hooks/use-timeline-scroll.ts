@@ -224,8 +224,20 @@ export function useTimelineScroll({
       shift = true
     }
   }
-  prevFirstKeyRef.current = firstKey
-  prevCountRef.current = itemCount
+  // Record the first-key/count baseline in a layout effect (once per commit),
+  // never during render. React can render this component twice before it
+  // commits — StrictMode in dev, a concurrent re-render in prod — and a
+  // during-render write let the second pass read the first pass's value, so
+  // `firstKey === prevFirstKeyRef.current` and `shift` collapsed to false on
+  // the pass that actually committed. virtua then got `shift=false` and skipped
+  // the scroll compensation, so an older-page prepend jumped the viewport. One
+  // commit → one baseline write keeps both passes comparing against the same
+  // prior-commit value. The stream-switch reset above stays in render (it must
+  // zero the baseline before this render's shift check) and is idempotent.
+  useLayoutEffect(() => {
+    prevFirstKeyRef.current = firstKey
+    prevCountRef.current = itemCount
+  })
 
   // The single pin. Go to the absolute bottom: scrollTop = scrollHeight is
   // browser-clamped to the true maximum, which includes the composer footer
