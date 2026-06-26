@@ -361,7 +361,18 @@ export function useTimelineScroll({
     // scroll-up, follow disarmed, and the close parked the list a
     // keyboard-height above the tail. Our own programmatic pins update prevTop
     // in the same statement as the write, so they read as no movement here.
-    const scrolledUp = el.scrollTop < prevTop - 1 && el.scrollHeight >= prevHeight - 1 && distanceFromBottom > 1
+    // A device-independent user scroll-up is a scrollTop drop while the content
+    // height is UNCHANGED — the user moved the viewport over stable content
+    // (scrollbar drag fires no gesture event, so this is its only signal). When
+    // scrollHeight ALSO moved, the drop was content reflow, not the user: a
+    // prepend, a display-floor change, or virtua re-anchoring as the cold-load
+    // tail lands all lower scrollTop with no gesture. Treating that as a
+    // scroll-up wrongly disarmed follow mid-cold-load — handleScroll ran before
+    // the ResizeObserver could re-pin — stranding the view pages above the tail
+    // ("settles 2 pages up"). Both browser clamps stay excluded: a shrink
+    // (composer collapse) and a growth (content reflow) are both `!heightStable`.
+    const heightStable = Math.abs(el.scrollHeight - prevHeight) <= 1
+    const scrolledUp = el.scrollTop < prevTop - 1 && heightStable && distanceFromBottom > 1
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
@@ -392,8 +403,9 @@ export function useTimelineScroll({
     } else if (scrolledUp || userGestured) {
       // The user scrolled away from the bottom (past the band, or a deliberate
       // nudge inside it). Content growth (new message, link preview, virtua
-      // measuring real heights) does NOT lower scrollTop, so it doesn't land
-      // here — the tail keeps following and the ResizeObserver re-pins it.
+      // measuring real heights) does NOT register as a scroll-up — it changes
+      // scrollHeight, so `scrolledUp` (height-stable only) stays false and the
+      // tail keeps following while the ResizeObserver re-pins it.
       isFollowingTailRef.current = false
     }
     // While following we're effectively at the tail (the observer re-pins), so
