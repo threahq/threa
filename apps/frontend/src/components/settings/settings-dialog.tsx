@@ -12,6 +12,7 @@ import { useSettings } from "@/contexts"
 import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
 import { SETTINGS_TAB_CONFIG } from "./tab-config"
 import { AISettings } from "./ai-settings"
+import { DictationSettings } from "./dictation-settings"
 import { ProfileSettings } from "./profile-settings"
 import { AppearanceSettings } from "./appearance-settings"
 import { DateTimeSettings } from "./datetime-settings"
@@ -71,6 +72,9 @@ export function SettingsDialog() {
               </TabsContent>
               <TabsContent value="ai" className="mt-0">
                 <AISettings />
+              </TabsContent>
+              <TabsContent value="dictation" className="mt-0">
+                <DictationSettings />
               </TabsContent>
               <TabsContent value="appearance" className="mt-0">
                 <AppearanceSettings />
