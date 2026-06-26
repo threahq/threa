@@ -628,7 +628,38 @@ describe("CoordinatedLoadingProvider", () => {
     warnSpy.mockRestore()
   })
 
-  it("holds the reveal until an unlocked session's sealed name decrypts, then reveals", async () => {
+  it("reveals an open plaintext stream immediately even when OTHER workspace streams have undecrypted sealed names", async () => {
+    // Multi-second-blank regression: the reveal must scope the sealed-name wait to
+    // the stream being shown, not the whole workspace. Opening a plaintext DM on a
+    // workspace full of E2E scratchpads blanked the cached DM behind decrypting all
+    // those unrelated names (each a network key-wrap fetch, re-run every refresh).
+    // The open stream is plaintext (already has its name) → reveal now; the other
+    // sealed streams resolve in the sidebar via their own per-row loader.
+    makeReadyWorkspaceState()
+    mockSeedCacheFromIdbResult = true
+    mockE2eSessionStatus = "unlocked"
+    mockStreams = [
+      { id: "stream_1" }, // the OPEN stream — plaintext, no sealed name
+      // an unrelated E2E scratchpad whose name has NOT decrypted
+      { id: "stream_sealed", e2eEnabled: true, sealedNameCiphertext: "ct_other", sealedNameEnvelope: { v: 1 } },
+    ]
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    // The open plaintext stream does not wait on the other workspace stream's name.
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("holds the reveal until an OPEN sealed stream's own name decrypts, then reveals", async () => {
+    // The scoped wait is kept where it's legitimate: when the stream being opened
+    // is itself sealed, hold briefly so its header paints the real name rather than
+    // flashing the placeholder. Only its ONE name is awaited, never the workspace's.
     makeReadyWorkspaceState()
     mockSeedCacheFromIdbResult = true
     mockE2eSessionStatus = "unlocked"
@@ -642,11 +673,10 @@ describe("CoordinatedLoadingProvider", () => {
 
     await flushEffects()
 
-    // Everything else is ready, but the sealed name hasn't decrypted yet, so the
-    // gate holds rather than flashing the placeholder.
+    // The open stream is sealed and its name hasn't decrypted → hold.
     expect(screen.getByTestId("phase").textContent).not.toBe("ready")
 
-    // The decrypt lands (seeded into the shared cache) → the gate opens.
+    // Its name lands (seeded into the shared cache) → reveal.
     act(() => {
       primeStreamName(streamNameCacheKey("workspace_1", "stream_1", "ct_1"), "Quarterly Plan")
     })
@@ -660,7 +690,7 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("phase").textContent).toBe("ready")
   })
 
-  it("does not wait on sealed names while the session is locked (reveals with the placeholder)", async () => {
+  it("does not wait on an open sealed stream while the session is locked (reveals with the placeholder)", async () => {
     makeReadyWorkspaceState()
     mockSeedCacheFromIdbResult = true
     mockE2eSessionStatus = "locked"

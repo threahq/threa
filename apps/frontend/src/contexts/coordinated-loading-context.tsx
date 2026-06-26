@@ -192,16 +192,23 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   // user's real layout. A row always exists after the first bootstrap (the server
   // seeds the default), so this only ever waits on a genuinely-unloaded config.
   const idbSidebarConfig = useWorkspaceSidebarConfig(workspaceId)
-  // Hold the initial reveal until every sealed E2E stream name has decrypted, so
-  // the first painted render shows real names instead of flashing the placeholder
-  // and popping to the decrypted name a tick later. The resolver (the single
-  // session + name-cache authority) only reports pending while the session is
-  // settling or unlocked-and-decrypting; it returns false for a locked/no-key
-  // session (the placeholder is then the right answer) and once a decrypt settles,
-  // so this can't deadlock the reveal. It re-binds when a decrypt lands.
+  // Wait on a sealed E2E name ONLY when the stream being revealed is itself
+  // sealed — never the whole workspace. The content area shows the OPEN stream(s):
+  // a plaintext stream (the common case, every DM included) already has its name
+  // and must reveal immediately; other streams' sealed names are a sidebar concern
+  // with their own per-row loader. The old `idbStreams.some(...)` here was the
+  // multi-second blank — it held an already-cached plaintext DM behind decrypting
+  // EVERY E2E scratchpad name in the workspace, each a network key-wrap fetch that
+  // re-runs every refresh (the name cache is memory-only). Scoping to the open
+  // streams keeps the legitimate wait — an open sealed scratchpad still resolves
+  // its single name before paint so its header shows the real name, not a
+  // placeholder — without gating unrelated content on unrelated names.
   const isSealedNamePending = useSealedNamePendingResolver(workspaceId)
-  const sealedNamesPending = useMemo(() => idbStreams.some(isSealedNamePending), [idbStreams, isSealedNamePending])
   const streamById = useMemo(() => new Map(idbStreams.map((stream) => [stream.id, stream])), [idbStreams])
+  const sealedNamesPending = useMemo(
+    () => serverStreamIds.some((id) => isSealedNamePending(streamById.get(id))),
+    [serverStreamIds, isSealedNamePending, streamById]
+  )
   const workspaceDataReady =
     hasSeededWorkspaceCache(workspaceId) &&
     !!idbWorkspace &&
