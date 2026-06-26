@@ -5,9 +5,9 @@ import { SteeringWordsEditor } from "./steering-words-editor"
 const BAKED_IN_LABEL = VOICE_STEERING_BASE_TERMS.join(", ")
 
 /**
- * The user's personal dictation steering words, edited in the AI settings tab.
- * Unioned at session start with the baked-in product terms and the
- * workspace-shared list.
+ * The user's personal dictation steering words, edited in the Dictation
+ * settings tab. Unioned at session start with the baked-in product terms and
+ * the workspace-shared list.
  */
 export function VoiceSteeringWords() {
   const { preferences, updatePreference, isLoading } = usePreferences()
