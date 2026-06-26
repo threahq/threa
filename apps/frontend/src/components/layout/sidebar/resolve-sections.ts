@@ -124,18 +124,18 @@ function resolveItems(
   labeledClaimed: ReadonlySet<string>
 ): StreamItemData[] {
   const unread = input.unreadStreamIds
-  // The Unread tray draws its members regardless of the running claims (nothing
-  // above can have taken them, since every other section excludes the tray).
+  // The Unread section draws its members regardless of the running claims (nothing
+  // above can have taken them, since every other section excludes the unread set).
   if (spec.kind === "unread") return resolveUnreadSection(input)
   // A custom section draws its own membership minus anything an earlier custom
-  // section took (single-membership; topmost custom wins) and minus the tray.
+  // section took (single-membership; topmost custom wins) and minus the unread set.
   if (spec.kind === "custom") return resolveCustomSection(spec.streamIds, input, union(claimed, unread))
   // A label lens shows its streams out of the buckets, but a stream filed into a
-  // custom section trumps the label, and a tray member shows only in Unread —
+  // custom section trumps the label, and an unread stream shows only in Unread —
   // fold both into the exclusion. Topmost label wins via the running `claimed`.
   if (spec.kind === "label") return resolveLabelSection(spec.labelId, input, union(claimed, customClaimed, unread))
   // Smart/type buckets never show a stream filed into a custom section, carrying a
-  // pinned label, or held in the Unread tray — fold all three into the exclusion.
+  // pinned label, or currently unread — fold all three into the exclusion.
   const exclude = union(claimed, customClaimed, labeledClaimed, unread)
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)

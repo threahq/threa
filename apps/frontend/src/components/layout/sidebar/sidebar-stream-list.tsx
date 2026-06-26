@@ -46,7 +46,7 @@ interface AddWiring {
 
 /** Unread section header: a gold thread dot + the label, matching the section
  *  header's uppercase styling. Gold (not a colored emoji) keeps the palette
- *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (the tray is empty) both
+ *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (no unread streams) both
  *  the dot and label drop to a muted tone so the caught-up header recedes
  *  instead of advertising itself — the gold dot is reserved for "there's unread
  *  here". */
@@ -246,7 +246,7 @@ export function SidebarStreamList({
           const isEmptyUnread = isUnread && items.length === 0
           // Unread's header is a gold dot + label (a colored emoji would break the
           // gold-on-paper palette); label sections use their tinted chip. An empty
-          // tray mutes the dot + label so the caught-up header recedes.
+          // Unread section mutes the dot + label so the caught-up header recedes.
           let titleContent: ReactNode = undefined
           if (label) titleContent = <LabelChip label={label} />
           else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
