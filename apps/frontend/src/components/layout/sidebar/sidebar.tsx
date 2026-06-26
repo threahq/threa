@@ -46,6 +46,7 @@ import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import { useStickyUnread } from "./use-sticky-unread"
+import { useAutoClearStickyUnread } from "./use-auto-clear-sticky-unread"
 import { setStreamCustomSection } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
@@ -65,6 +66,7 @@ interface SidebarProps {
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { phase } = useCoordinatedLoading()
   const {
+    state: sidebarState,
     getSectionState,
     toggleSectionState,
     setSidebarHeight,
@@ -279,6 +281,15 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // doesn't reflow the sidebar on every read. Only accumulates when the layout
   // actually has an Unread section.
   const stickyUnread = useStickyUnread(workspaceId, processedStreams, getUnreadCount, hasUnreadSection)
+
+  // Auto-flush already-read streams from the tray once attention moves on
+  // (sidebar hidden, app refocused, or a long idle) so it doesn't need manual
+  // clearing — the tray only existed to avoid mid-read reflow, not to persist.
+  useAutoClearStickyUnread({
+    hasReadResidue: stickyUnread.hasReadResidue,
+    clearRead: stickyUnread.clearRead,
+    sidebarHidden: sidebarState === "collapsed",
+  })
 
   // For Unread rows (drawn out of their home), a "· home" hint naming the custom
   // section or pinned label the stream lives in. Custom filing trumps a label,
