@@ -40,16 +40,37 @@ export function interrupt(): boolean {
 }
 
 /**
- * Type literal text, then submit with Enter. `-l` sends the text verbatim so `/`,
- * spaces, and punctuation aren't parsed as tmux key names. A short settle between
- * the text and Enter lets Claude Code's slash-command autocomplete resolve, so
- * `/model sonnet` submits instead of the menu swallowing the Enter.
+ * Type literal text, then submit with Enter.
+ *
+ * Clears the input line first (Ctrl-U): an Esc-interrupt restores the interrupted
+ * message back into Claude Code's input box, so a stale line would concatenate
+ * with the command and get submitted as a plain prompt (the command silently
+ * doesn't run). Verified live against Claude Code v2.1.193.
+ *
+ * `-l` sends the text verbatim so `/`, spaces, and punctuation aren't parsed as
+ * tmux key names. A short settle between the text and Enter lets the slash-command
+ * autocomplete resolve, so `/model sonnet` submits instead of the menu eating the
+ * Enter.
+ *
+ * With `confirm`, a second Enter is sent after a longer settle to accept a modal
+ * Claude Code may raise — `/model <x>` mid-session pops a "Switch model?" dialog
+ * whose default option is "Yes"; without the confirm the session wedges at the
+ * dialog. The trailing Enter is a harmless empty submit when no modal appears.
  */
-export async function submitLine(text: string, settleMs = 150): Promise<boolean> {
+export async function submitLine(text: string, opts: { settleMs?: number; confirm?: boolean } = {}): Promise<boolean> {
+  const settleMs = opts.settleMs ?? 150
+  if (!sendKeys(["C-u"])) return false
   if (!sendKeys(["-l", text])) return false
   if (settleMs > 0) await Bun.sleep(settleMs)
-  return sendKeys(["Enter"])
+  if (!sendKeys(["Enter"])) return false
+  if (opts.confirm) {
+    await Bun.sleep(CONFIRM_SETTLE_MS)
+    sendKeys(["Enter"])
+  }
+  return true
 }
 
 /** Milliseconds to wait after an interrupt before delivering the steer turn, so Claude has returned to idle. */
 export const STEER_SETTLE_MS = 250
+/** Wait for a modal (e.g. "Switch model?") to render before sending the confirming Enter. */
+const CONFIRM_SETTLE_MS = 350

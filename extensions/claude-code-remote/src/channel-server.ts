@@ -581,7 +581,9 @@ export class ChannelServer {
       await this.completeAck(invocation, "Usage: `/model <name>` (e.g. sonnet, opus, default).")
       return
     }
-    const ok = await submitLine(`/model ${alias}`)
+    // `confirm`: a mid-session model switch pops a "Switch model?" dialog (default
+    // "Yes") — the second Enter accepts it; harmless no-op when no dialog appears.
+    const ok = await submitLine(`/model ${alias}`, { confirm: true })
     await this.completeAck(
       invocation,
       ok ? `Set Claude Code model to \`${alias}\`.` : "Could not send /model (no tmux control)."
