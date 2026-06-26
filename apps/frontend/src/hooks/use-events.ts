@@ -5,7 +5,6 @@ import { useQueryClient, useInfiniteQuery } from "@tanstack/react-query"
 import { db, sequenceToNum } from "@/db"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
-import { useBatchedValue } from "@/stores/apply-window"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
 import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/contiguity"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
@@ -451,7 +450,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // Combine all event sources.
   // In jump mode: use jump window + paginated older/newer events.
   // In normal mode: filter IDB/bootstrap events to display window.
-  const renderableEvents = useMemo(() => {
+  const events = useMemo(() => {
     if (jumpState) {
       const olderEvents = olderData?.pages.flatMap((page) => page.events).filter(Boolean) ?? []
       const newerEvents = newerData?.pages.flatMap((page) => page.events).filter(Boolean) ?? []
@@ -466,19 +465,6 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     // something (see getRenderableEvents).
     return getRenderableEvents(effectiveEvents, displayFloor) as unknown as StreamEvent[]
   }, [effectiveEvents, olderData, newerData, jumpState, displayFloor])
-
-  // Coalesce the rendered window through the apply window so a sync catch-up
-  // replaying missed messages lands as ONE append when it completes, not a
-  // per-entry forward walk of the tail. The catch-up dispatches each replayed
-  // message through the live handler, which writes to `db.events` per entry; the
-  // timeline's `useLiveQuery` re-runs on every write, so without this the cold
-  // open visibly pages the tail forward (week-old → today) one chunk at a time
-  // instead of showing the cached tail immediately and then a single jump to the
-  // settled tail. Every other IDB-backed reactive surface (sidebar, badges,
-  // memberships, drafts) is already held this way; the timeline was the omission.
-  // Outside a catch-up window this is a pass-through, so live delivery and
-  // optimistic sends are unaffected.
-  const events = useBatchedValue(renderableEvents)
 
   // Contiguity gate (INV-61): detect holes in the broadcast chain of the
   // rendered window. Each hole renders as an in-place loading placeholder
