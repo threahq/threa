@@ -80,7 +80,7 @@ import type { SavedMessagesService } from "./features/saved-messages"
 import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { DraftsService } from "./features/drafts"
-import type { LabelService, LabelAssignmentService } from "./features/labels"
+import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import type { PushService } from "./features/push"
 import type { S3Config } from "./lib/env"
 import type { StorageProvider } from "./lib/storage/s3-client"
@@ -126,6 +126,7 @@ interface Dependencies {
   draftsService: DraftsService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
+  labelMessageService: LabelMessageService
   pushService: PushService
   s3Config: S3Config
   commandRegistry: CommandRegistry
@@ -184,6 +185,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     draftsService,
     labelService,
     labelAssignmentService,
+    labelMessageService,
     pushService,
     s3Config,
     commandRegistry,
@@ -283,7 +285,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const savedSuggestions = createSavedSuggestionsHandlers({ savedSuggestionsService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const drafts = createDraftsHandlers({ draftsService })
-  const label = createLabelHandlers({ labelService, labelAssignmentService })
+  const label = createLabelHandlers({ labelService, labelAssignmentService, labelMessageService })
   const agentSession = createAgentSessionHandlers({ pool })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
@@ -578,6 +580,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/dismiss", ...authed, savedSuggestions.dismiss)
 
   app.get("/api/workspaces/:workspaceId/labels", ...authed, label.list)
+  app.get("/api/workspaces/:workspaceId/labels/:labelId/messages", ...authed, label.listMessages)
   app.post("/api/workspaces/:workspaceId/labels", ...authed, label.create)
   app.patch("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.update)
   app.delete("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.delete)

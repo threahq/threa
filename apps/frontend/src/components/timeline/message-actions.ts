@@ -17,6 +17,7 @@ import {
   Layers,
   CheckCheck,
   CircleDot,
+  Tag,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -101,6 +102,12 @@ export interface MessageActionContext {
   onRequestReminder?: () => void
   /** Whether the message is currently saved by the viewer */
   isSaved?: boolean
+  /**
+   * Open the label picker for this message — file it under one of the viewer's
+   * labels (or a new one). Distinct from Save: labeling is the organizational
+   * axis (stow into a named bucket), Save is the single "for later" inbox.
+   */
+  onLabelMessage?: () => void
   /** Callback to start a private "Discuss with Ariadne" scratchpad seeded with this thread */
   onDiscussWithAriadne?: () => void | Promise<void>
   /**
@@ -328,6 +335,13 @@ export const messageActions: MessageAction[] = [
     icon: BookmarkX,
     when: (ctx) => !!ctx.onToggleSave && !!ctx.isSaved,
     action: (ctx) => ctx.onToggleSave?.(),
+  },
+  {
+    id: "label-message",
+    label: "Label message",
+    icon: Tag,
+    when: (ctx) => !!ctx.onLabelMessage,
+    action: (ctx) => ctx.onLabelMessage?.(),
   },
   {
     // Seed a private scratchpad that has this message's thread pre-loaded as

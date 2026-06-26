@@ -209,6 +209,19 @@ export const MessageRepository = {
     return map
   },
 
+  /**
+   * Map message ids to their owning stream id — the minimal lookup an access
+   * check needs (resolve the stream, then gate on it) without paying for the
+   * full message + reactions hydration. Unknown ids are simply absent.
+   */
+  async findStreamIdsByIds(db: Querier, ids: string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<{ id: string; stream_id: string }>(sql`
+      SELECT id, stream_id FROM messages WHERE id = ANY(${ids})
+    `)
+    return new Map(result.rows.map((row) => [row.id, row.stream_id]))
+  },
+
   async findByIdsForUpdate(db: Querier, ids: string[]): Promise<Message[]> {
     if (ids.length === 0) return []
 

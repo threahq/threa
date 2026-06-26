@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { LabelableResourceTypes } from "@threa/types"
+import type { LabelableResourceType } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { useResourceLabelAssignments } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -10,24 +10,27 @@ import { LabelChip, LabelGlyph } from "./label-chip"
 /** Collapsed marks shown before the "+N" overflow indicator. */
 const VISIBLE_CAP = 3
 
-interface StreamLabelStackProps {
+interface LabelStackProps {
   workspaceId: string
-  streamId: string
+  /** What carries the labels — a stream (top bar) or a message (message rows). */
+  resourceType: LabelableResourceType
+  resourceId: string
   className?: string
 }
 
 /**
- * Display-only stack of the labels on a stream, for the stream top bar. Shows up
- * to {@link VISIBLE_CAP} overlapping glyphs + a `+N` overflow count; the full set
- * fans out as tinted name-pills on mouse hover (an overlay — no layout
- * shift, INV-21) or in a bottom drawer on touch tap. Editing lives in `LabelPicker`.
+ * Display-only stack of the labels on a resource (a stream's top bar, a message
+ * row). Shows up to {@link VISIBLE_CAP} overlapping glyphs + a `+N` overflow
+ * count; the full set fans out as tinted name-pills on mouse hover (an overlay —
+ * no layout shift, INV-21) or in a bottom drawer on touch tap. Editing lives in
+ * `LabelPicker`.
  *
- * Reads the shared assignment pool (public labels on the stream + the viewer's
- * private ones), already deduped + active-only, and stays live via the
- * `label:assigned`/`label:unassigned` socket handlers.
+ * Resource-generic: `resourceType` + `resourceId` are the only per-resource
+ * inputs. Reads the viewer's active assignments (already deduped + active-only)
+ * and stays live via the `label:assigned`/`label:unassigned` socket handlers.
  */
-export function StreamLabelStack({ workspaceId, streamId, className }: StreamLabelStackProps) {
-  const { labels } = useResourceLabelAssignments(workspaceId, LabelableResourceTypes.STREAM, streamId)
+export function LabelStack({ workspaceId, resourceType, resourceId, className }: LabelStackProps) {
+  const { labels } = useResourceLabelAssignments(workspaceId, resourceType, resourceId)
   // Drawer-vs-hovercard keys off the active input mode: a finger taps for the
   // drawer, a mouse (even on a touchscreen laptop) hovers for the hovercard.
   const isTouch = useInputMode() === "touch"
@@ -44,7 +47,7 @@ export function StreamLabelStack({ workspaceId, streamId, className }: StreamLab
       type="button"
       aria-label={ariaLabel}
       // Negative margin keeps the glyphs visually aligned with neighbouring
-      // header controls while the padding gives a comfortable tap target.
+      // controls while the padding gives a comfortable tap target.
       className={cn(
         "-m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",

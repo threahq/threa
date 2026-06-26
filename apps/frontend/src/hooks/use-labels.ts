@@ -6,13 +6,21 @@ import { db, type CachedLabel, type CachedLabelAssignment, type CachedStream } f
 import { useWorkspaceLabels, useWorkspaceLabelAssignments, useWorkspaceStreams } from "@/stores/workspace-store"
 import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 import { LabelableResourceTypes } from "@threa/types"
-import type { CreateLabelInput, Label, LabelAssignment, LabelableResourceType, UpdateLabelInput } from "@threa/types"
+import type {
+  CreateLabelInput,
+  Label,
+  LabelAssignment,
+  LabelableResourceType,
+  LabeledMessage,
+  UpdateLabelInput,
+} from "@threa/types"
 
 export type { CachedLabel, CachedLabelAssignment }
 
 export const labelKeys = {
   all: ["labels"] as const,
   list: (workspaceId: string) => ["labels", workspaceId] as const,
+  messages: (workspaceId: string, labelId: string) => ["labels", workspaceId, labelId, "messages"] as const,
 }
 
 /**
@@ -343,4 +351,23 @@ export function useLabelStreams(workspaceId: string, labelId: string): CachedStr
   const assignments = useWorkspaceLabelAssignments(workspaceId)
   const streams = useWorkspaceStreams(workspaceId)
   return useMemo(() => selectLabelStreams(assignments, streams, labelId), [assignments, streams, labelId])
+}
+
+/**
+ * The messages filed under a label, hydrated server-side (content, reactions,
+ * attachments, link previews) for the label landing page's Messages section.
+ *
+ * Unlike streams, messages aren't fully cached client-side, so this is a real
+ * fetch rather than a cache projection. The assign/unassign mutations invalidate
+ * `["labels", workspaceId]`, which prefix-covers this key — so labeling a message
+ * from anywhere refreshes the list without extra wiring.
+ */
+export function useLabelMessages(workspaceId: string, labelId: string) {
+  const labelService = useLabelService()
+  return useQuery<LabeledMessage[]>({
+    queryKey: labelKeys.messages(workspaceId, labelId),
+    queryFn: () => labelService.listMessages(workspaceId, labelId),
+    enabled: !!workspaceId && !!labelId,
+    staleTime: 30_000,
+  })
 }

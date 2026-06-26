@@ -2,22 +2,13 @@ import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, type LucideIcon } from "lucide-react"
-import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
-import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
-import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
-import { AttachmentList } from "@/components/timeline/attachment-list"
-import { LinkPreviewList } from "@/components/timeline/link-preview-list"
-import { MemoPreviewList } from "@/components/timeline/memo-preview-list"
-import { GiphyPreviewList } from "@/components/timeline/giphy-preview-list"
-import { MessageReactions } from "@/components/timeline/message-reactions"
+import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useUserProfile } from "@/components/user-profile"
-import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useConversationService } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
-import type { AttachmentSummary, AuthorType, BoardPost, LinkPreviewSummary } from "@threa/types"
+import type { BoardPost } from "@threa/types"
 
 interface BoardCardProps {
   workspaceId: string
@@ -32,33 +23,6 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
   channel: Hash,
   scratchpad: FileEdit,
   dm: User,
-}
-
-/** Same-author messages within this window collapse into a continuation (no
- * repeated header) — matches the timeline's grouping. */
-const GROUP_WINDOW_MS = 5 * 60_000
-
-/** The fields the post renderer reads — satisfied by both `BoardPostMessage`
- * (feed payload) and a full `Message` (fetched on expand). */
-interface RenderableMessage {
-  id: string
-  authorId: string
-  authorType: AuthorType
-  contentMarkdown: string
-  reactions: Record<string, string[]>
-  createdAt: string | Date
-  // Present on feed messages (BoardPostMessage); absent on messages fetched via
-  // getMessages on expand, which carry no enrichment.
-  attachments?: AttachmentSummary[]
-  linkPreviews?: LinkPreviewSummary[]
-}
-
-function isContinuation(prev: RenderableMessage, cur: RenderableMessage): boolean {
-  return (
-    prev.authorId === cur.authorId &&
-    prev.authorType === cur.authorType &&
-    Math.abs(new Date(cur.createdAt).getTime() - new Date(prev.createdAt).getTime()) < GROUP_WINDOW_MS
-  )
 }
 
 /**
@@ -101,7 +65,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const contiguous = (expanded && !!allMessages) || (!expanded && hiddenCount === 0)
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => (
-    <PostMessage
+    <MessageItem
       key={message.id}
       workspaceId={workspaceId}
       streamId={streamId}
@@ -157,125 +121,6 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
             {replies.map((message, i) => renderMessage(message, i > 0 && isContinuation(replies[i - 1], message)))}
           </>
         )}
-      </div>
-    </div>
-  )
-}
-
-interface PostMessageProps {
-  workspaceId: string
-  streamId: string
-  message: RenderableMessage
-  authorName: string
-  currentUserId: string | null
-  /** A same-author follow-up: drop the avatar/header and align the body under
-   * the head row's content (matches the timeline's grouped continuations). */
-  continuation?: boolean
-}
-
-function PostMessage({ workspaceId, streamId, message, authorName, currentUserId, continuation }: PostMessageProps) {
-  const { formatTime, formatFull } = useFormattedDate()
-  const { openUserProfile } = useUserProfile()
-  const hasReactions = Object.keys(message.reactions).length > 0
-  // Users open their profile on click (same as the timeline); other actor types
-  // (persona/bot/system) are non-interactive.
-  const interactiveName = message.authorType === "user" && Boolean(message.authorId)
-  const attachments = message.attachments ?? []
-  const linkPreviews = message.linkPreviews ?? []
-
-  const richBody = (
-    <>
-      <MarkdownContent content={message.contentMarkdown} messageId={message.id} className="text-sm leading-relaxed" />
-      {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
-      {linkPreviews.length > 0 && (
-        <LinkPreviewList
-          messageId={message.id}
-          workspaceId={workspaceId}
-          previews={linkPreviews}
-          hydrateFromApi={false}
-        />
-      )}
-      {/* Memo + giphy embeds are parsed from the markdown, so they render here
-          just like the timeline — no extra payload needed. */}
-      <MemoPreviewList contentMarkdown={message.contentMarkdown} />
-      <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
-    </>
-  )
-  // The body renders real message content (mentions, attachments, link previews),
-  // so it gets the same markdown context wrappers the timeline uses. Attachments
-  // open the media gallery / download via AttachmentList.
-  const body = (
-    <>
-      <LinkPreviewProvider>
-        {attachments.length > 0 ? (
-          <AttachmentProvider workspaceId={workspaceId} attachments={attachments}>
-            {richBody}
-          </AttachmentProvider>
-        ) : (
-          richBody
-        )}
-      </LinkPreviewProvider>
-      {hasReactions && (
-        <MessageReactions
-          reactions={message.reactions}
-          workspaceId={workspaceId}
-          messageId={message.id}
-          currentUserId={currentUserId}
-        />
-      )}
-    </>
-  )
-
-  if (continuation) {
-    const sentAt = new Date(message.createdAt)
-    return (
-      <div className="group mt-0.5 flex gap-3">
-        {/* Gutter reveals the message time on hover (desktop), mirroring the
-            timeline's grouped-continuation micro-time. */}
-        <div
-          className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] tabular-nums leading-5 text-transparent transition-colors group-hover:text-muted-foreground/60"
-          title={formatFull(sentAt)}
-        >
-          {formatTime(sentAt)}
-        </div>
-        <div className="min-w-0 flex-1">{body}</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="mt-3 flex items-start gap-3">
-      <ActorAvatar
-        actorId={message.authorId}
-        actorType={message.authorType}
-        workspaceId={workspaceId}
-        size="md"
-        alt={authorName}
-        showStatus={false}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="mb-0.5 flex items-baseline gap-2">
-          {interactiveName ? (
-            <button
-              type="button"
-              onClick={() => openUserProfile(message.authorId)}
-              className="truncate text-left text-sm font-semibold hover:underline"
-            >
-              {authorName}
-            </button>
-          ) : (
-            <span className="truncate text-sm font-semibold">{authorName}</span>
-          )}
-          {/* Permalink to the message in its stream timeline — the body is
-              interactive, so navigation lives on the timestamp instead. */}
-          <Link
-            to={`/w/${workspaceId}/s/${streamId}?m=${message.id}`}
-            className="shrink-0 text-xs text-muted-foreground hover:underline"
-          >
-            <RelativeTime date={message.createdAt} />
-          </Link>
-        </div>
-        {body}
       </div>
     </div>
   )

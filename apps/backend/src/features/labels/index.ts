@@ -7,4 +7,6 @@ export type { CreateLabelParams, UpsertLabelByNameParams } from "./service"
 export { LabelAssignmentService } from "./assignment-service"
 export type { AssignLabelParams, AssignLabelByNameParams } from "./assignment-service"
 
+export { LabelMessageService } from "./label-message-service"
+
 export { createLabelHandlers } from "./handlers"

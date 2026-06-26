@@ -1,6 +1,7 @@
 import { type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
 import {
   isSentViaApi,
+  LabelableResourceTypes,
   type StreamEvent,
   type AttachmentSummary,
   type JSONContent,
@@ -64,6 +65,8 @@ import { EditedIndicator } from "./edited-indicator"
 import { MovedFromIndicator } from "./moved-from-indicator"
 import { MovedMessagesDrawer } from "./moved-messages-drawer"
 import { SavedIndicator } from "@/components/saved/saved-indicator"
+import { LabelStack } from "@/components/labels/label-stack"
+import { LabelPicker } from "@/components/labels/label-picker"
 import { MessageHistoryDialog } from "./message-history-dialog"
 import { MessageReactions } from "./message-reactions"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
@@ -873,6 +876,7 @@ function SentMessageEvent({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [moveDetailsOpen, setMoveDetailsOpen] = useState(false)
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   // Hydrate the destination tombstone on demand for the per-message
   // "Show move details" action. Reactive — populates as soon as the row
   // lands in IDB (live socket apply or bootstrap).
@@ -1094,6 +1098,7 @@ function SentMessageEvent({
       reactions: payload.reactions,
       isSaved,
       onToggleSave: handleToggleSave,
+      onLabelMessage: () => setLabelPickerOpen(true),
       onRequestReminder: handleRequestReminder,
       onDiscussWithAriadne: handleDiscussWithAriadne,
       onQuoteReply: quoteReplyCtx
@@ -1230,6 +1235,16 @@ function SentMessageEvent({
             currentUserId={currentUserId}
           />
         )}
+        {/* Grouped continuations have no header row, so their labels trail the
+            footer; standalone rows render them in the header beside the time
+            (see statusIndicator). Renders nothing until the message is labeled. */}
+        {groupContinuation && (
+          <LabelStack
+            workspaceId={workspaceId}
+            resourceType={LabelableResourceTypes.MESSAGE}
+            resourceId={payload.messageId}
+          />
+        )}
         {threadSlot}
       </>
     )
@@ -1260,6 +1275,13 @@ function SentMessageEvent({
               />
             )}
             <SavedIndicator saved={savedForMessage ?? null} />
+            {/* Labels beside the time — standalone rows only; this header isn't
+                rendered for continuations, which keep them in the footer. */}
+            <LabelStack
+              workspaceId={workspaceId}
+              resourceType={LabelableResourceTypes.MESSAGE}
+              resourceId={payload.messageId}
+            />
           </>
         }
         isEditing={isEditing && !editingSurfaceTouch}
@@ -1428,6 +1450,15 @@ function SentMessageEvent({
           onOpenChange={setMoveDetailsOpen}
           event={movedTombstoneEvent}
           workspaceId={workspaceId}
+        />
+      )}
+      {labelPickerOpen && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.MESSAGE}
+          resourceId={payload.messageId}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
         />
       )}
       {touchCapable && (

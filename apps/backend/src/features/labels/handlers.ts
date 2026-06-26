@@ -4,6 +4,7 @@ import { LABELABLE_RESOURCE_TYPES, LabelActorTypes } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import type { LabelService } from "./service"
 import type { LabelAssignmentService } from "./assignment-service"
+import type { LabelMessageService } from "./label-message-service"
 
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
 
@@ -34,9 +35,10 @@ const updateSchema = z
 interface Dependencies {
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
+  labelMessageService: LabelMessageService
 }
 
-export function createLabelHandlers({ labelService, labelAssignmentService }: Dependencies) {
+export function createLabelHandlers({ labelService, labelAssignmentService, labelMessageService }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
       const userId = req.user!.id
@@ -46,6 +48,19 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
         labelAssignmentService.listForViewer(workspaceId, { type: LabelActorTypes.USER, id: userId }),
       ])
       res.json({ labels, assignments })
+    },
+
+    /** Messages the viewer has filed under a label, hydrated for the label page. */
+    async listMessages(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const labelId = req.params.labelId!
+      const messages = await labelMessageService.listLabeledMessages(
+        workspaceId,
+        { type: LabelActorTypes.USER, id: userId },
+        labelId
+      )
+      res.json({ messages })
     },
 
     async create(req: Request, res: Response) {

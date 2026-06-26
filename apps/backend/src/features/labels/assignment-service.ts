@@ -12,6 +12,7 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { listAccessibleStreamIds } from "../streams"
+import { MessageRepository } from "../messaging"
 import type { BotChannelService } from "../api-keys"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 import type { LabelService, UpsertLabelByNameParams } from "./service"
@@ -192,10 +193,12 @@ export class LabelAssignmentService {
 
   /**
    * A member may only label a resource they can reach. Mirrors listForViewer's
-   * access model on the write path. Stream is the only labelable resource type
-   * today; an unreachable stream — or any resource type without an access rule
-   * yet — is reported as not-found rather than leaking whether it exists.
-   * Unassign is intentionally not gated: it only removes the caller's own row.
+   * access model on the write path. Each labelable resource type resolves to a
+   * stream and gates on the actor's reachability of it (a message inherits its
+   * stream's access, threads inherit their root — INV-62); a resource type
+   * without an access rule yet, or an unreachable one, is reported as not-found
+   * rather than leaking whether it exists. Unassign is intentionally not gated:
+   * it only removes the caller's own row.
    */
   private async assertResourceAccess(
     client: PoolClient,
@@ -206,8 +209,26 @@ export class LabelAssignmentService {
   ): Promise<void> {
     if (resourceType === LabelableResourceTypes.STREAM) {
       if (await this.canReachStream(client, actor, workspaceId, resourceId)) return
+    } else if (resourceType === LabelableResourceTypes.MESSAGE) {
+      if (await this.canReachMessage(client, actor, workspaceId, resourceId)) return
     }
     throw new HttpError("Resource not found", { status: 404, code: "RESOURCE_NOT_FOUND" })
+  }
+
+  /**
+   * A message is reachable when its owning stream is — labeling a message is
+   * gated by stream access (thread→root inheritance and public-channel reads
+   * resolve inside {@link canReachStream}).
+   */
+  private async canReachMessage(
+    client: PoolClient,
+    actor: LabelActor,
+    workspaceId: string,
+    messageId: string
+  ): Promise<boolean> {
+    const streamId = (await MessageRepository.findStreamIdsByIds(client, [messageId])).get(messageId)
+    if (!streamId) return false
+    return this.canReachStream(client, actor, workspaceId, streamId)
   }
 
   private async canReachStream(

@@ -280,6 +280,7 @@ export type {
   ConversationWithStaleness,
   BoardPost,
   BoardPostMessage,
+  LabeledMessage,
   Memo,
   PendingMemoItem,
   MemoStreamState,

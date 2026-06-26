@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ArrowLeft, ChevronRight, Pencil, Tag } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -14,14 +14,29 @@ import {
 import { SidebarToggle } from "@/components/layout"
 import { LabelGlyph } from "@/components/labels/label-chip"
 import { LabelEditForm } from "@/components/labels/label-edit-form"
+import { MessageItem } from "@/components/message/message-item"
 import { cn } from "@/lib/utils"
 import { hexToRgba } from "@/lib/labels"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { truncateContent } from "@/components/layout/sidebar/utils"
 import { resolveStreamName, streamFallbackLabel, STREAM_ICONS } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
-import { useLabelStreams, useLabelsSync, useWorkspaceUserId, type CachedLabel } from "@/hooks"
-import { useWorkspaceDmPeers, useWorkspaceLabels, useWorkspaceUsers, type CachedStream } from "@/stores/workspace-store"
+import {
+  useActors,
+  useLabelMessages,
+  useLabelStreams,
+  useLabelsSync,
+  useWorkspaceUserId,
+  type CachedLabel,
+} from "@/hooks"
+import {
+  useWorkspaceDmPeers,
+  useWorkspaceLabels,
+  useWorkspaceStreams,
+  useWorkspaceUsers,
+  type CachedStream,
+} from "@/stores/workspace-store"
+import type { LabeledMessage, StreamType } from "@threa/types"
 
 /**
  * Route is `/w/:workspaceId/labels/:labelId` — a label's landing page. Opens
@@ -43,9 +58,13 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   const labels = useWorkspaceLabels(workspaceId)
   const label = useMemo(() => labels.find((l) => l.id === labelId && !l.archivedAt) ?? null, [labels, labelId])
   const streams = useLabelStreams(workspaceId, labelId)
+  const messagesQuery = useLabelMessages(workspaceId, labelId)
+  const messages = messagesQuery.data ?? []
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const workspaceStreams = useWorkspaceStreams(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
+  const { getActorName } = useActors(workspaceId)
   const [editOpen, setEditOpen] = useState(false)
   const canEdit = !!label && label.creatorUserId === currentUserId
 
@@ -54,6 +73,21 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   const namedStreams = useMemo(
     () => streams.map((stream) => ({ stream, name: resolveStreamName(stream.id, { streams, users, dmPeers }) })),
     [streams, users, dmPeers]
+  )
+
+  // Labeled messages span streams, so each row names its origin. Resolve against
+  // the full workspace streams (not the label's own), since a labeled message
+  // can live in a stream the label doesn't otherwise gather.
+  const resolveMessageStream = useCallback(
+    (messageStreamId: string): { name: string; type: StreamType } => {
+      const stream = workspaceStreams.find((s) => s.id === messageStreamId)
+      const type: StreamType = stream?.type ?? "channel"
+      const name =
+        resolveStreamName(messageStreamId, { streams: workspaceStreams, users, dmPeers }, "breadcrumb") ??
+        streamFallbackLabel(type, "breadcrumb")
+      return { name, type }
+    },
+    [workspaceStreams, users, dmPeers]
   )
 
   // A cold deep-link to this URL lands before bootstrap fills the cache, so an
@@ -68,7 +102,13 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   } else {
     body = (
       <>
-        <LabelHero label={label} streamCount={namedStreams.length} canEdit={canEdit} onEdit={() => setEditOpen(true)} />
+        <LabelHero
+          label={label}
+          streamCount={namedStreams.length}
+          messageCount={messagesQuery.isFetched ? messages.length : null}
+          canEdit={canEdit}
+          onEdit={() => setEditOpen(true)}
+        />
         {canEdit && (
           <ResponsiveDialog open={editOpen} onOpenChange={setEditOpen} disableSnapPoints>
             <ResponsiveDialogContent
@@ -92,22 +132,37 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
             </ResponsiveDialogContent>
           </ResponsiveDialog>
         )}
-        <section className="mt-8">
-          <h2 className="mb-2.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Streams</h2>
-          {namedStreams.length === 0 ? (
-            <EmptyStreams />
-          ) : (
-            <div className="overflow-hidden rounded-xl border bg-card">
-              <ul className="divide-y">
-                {namedStreams.map(({ stream, name }, i) => (
-                  <li key={stream.id}>
-                    <StreamRow workspaceId={workspaceId} stream={stream} name={name} index={i} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </section>
+        {/* Streams and messages sit side by side on wide screens and stack on
+            narrow ones — two resource sections of the same label. */}
+        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <section>
+            <SectionHeading>Streams</SectionHeading>
+            {namedStreams.length === 0 ? (
+              <EmptyStreams />
+            ) : (
+              <div className="overflow-hidden rounded-xl border bg-card">
+                <ul className="divide-y">
+                  {namedStreams.map(({ stream, name }, i) => (
+                    <li key={stream.id}>
+                      <StreamRow workspaceId={workspaceId} stream={stream} name={name} index={i} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+          <section>
+            <SectionHeading>Messages</SectionHeading>
+            <MessagesSection
+              workspaceId={workspaceId}
+              messages={messages}
+              isLoading={messagesQuery.isLoading}
+              getActorName={getActorName}
+              currentUserId={currentUserId}
+              resolveMessageStream={resolveMessageStream}
+            />
+          </section>
+        </div>
       </>
     )
   }
@@ -138,28 +193,37 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
           preview line push the page wider than the screen on mobile. Matches the
           saved/activity pages. */}
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">{body}</main>
+        <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">{body}</main>
       </ScrollArea>
     </div>
   )
 }
 
-function streamCountLabel(count: number): string {
-  if (count === 0) return "No streams yet"
-  return `${count} ${count === 1 ? "stream" : "streams"}`
+function countLabel(count: number, noun: string): string {
+  if (count === 0) return `No ${noun}s yet`
+  return `${count} ${count === 1 ? noun : `${noun}s`}`
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return <h2 className="mb-2.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{children}</h2>
 }
 
 function LabelHero({
   label,
   streamCount,
+  messageCount,
   canEdit,
   onEdit,
 }: {
   label: CachedLabel
   streamCount: number
+  /** `null` until the messages query settles, so the hero doesn't flash "0 messages". */
+  messageCount: number | null
   canEdit: boolean
   onEdit: () => void
 }) {
+  const counts = [countLabel(streamCount, "stream")]
+  if (messageCount !== null) counts.push(countLabel(messageCount, "message"))
   return (
     <div
       className="relative overflow-hidden rounded-xl border p-5 sm:p-6"
@@ -178,7 +242,7 @@ function LabelHero({
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-semibold leading-tight">{label.name}</h2>
           <div className="mt-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span>{streamCountLabel(streamCount)}</span>
+            <span>{counts.join(" · ")}</span>
           </div>
           {label.description && (
             <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/80">
@@ -275,6 +339,74 @@ function EmptyStreams() {
       <h3 className="text-sm font-semibold">Nothing here yet</h3>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">
         Apply this label to a scratchpad, channel, or thread from its “Labels…” menu and it will show up here.
+      </p>
+    </div>
+  )
+}
+
+function MessagesSection({
+  workspaceId,
+  messages,
+  isLoading,
+  getActorName,
+  currentUserId,
+  resolveMessageStream,
+}: {
+  workspaceId: string
+  messages: LabeledMessage[]
+  isLoading: boolean
+  getActorName: ReturnType<typeof useActors>["getActorName"]
+  currentUserId: string | null
+  resolveMessageStream: (streamId: string) => { name: string; type: StreamType }
+}) {
+  if (isLoading && messages.length === 0) return <MessagesLoading />
+  if (messages.length === 0) return <EmptyMessages />
+  return (
+    <div className="divide-y overflow-hidden rounded-xl border bg-card">
+      {messages.map((message) => (
+        // Each labeled message is standalone, so zero the item's leading margin
+        // (which spaces stacked messages in a board card) and let the cell
+        // padding own the rhythm. The origin stream rides in the item's header.
+        <div key={message.id} className="px-4 py-3 [&>*]:mt-0">
+          <MessageItem
+            workspaceId={workspaceId}
+            streamId={message.streamId}
+            message={message}
+            authorName={getActorName(message.authorId, message.authorType)}
+            currentUserId={currentUserId}
+            streamLabel={resolveMessageStream(message.streamId)}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function MessagesLoading() {
+  return (
+    <div className="divide-y overflow-hidden rounded-xl border bg-card">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex animate-pulse gap-3 px-4 py-3">
+          <div className="h-8 w-8 shrink-0 rounded-full bg-muted" />
+          <div className="flex-1 space-y-2 pt-0.5">
+            <div className="h-3.5 w-1/3 rounded bg-muted" />
+            <div className="h-3 w-2/3 rounded bg-muted" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EmptyMessages() {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card/40 px-6 py-12 text-center">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <Tag className="h-5 w-5" />
+      </div>
+      <h3 className="text-sm font-semibold">No messages yet</h3>
+      <p className="mt-1 max-w-md text-sm text-muted-foreground">
+        Pick “Label message” from any message's menu to file it under this label.
       </p>
     </div>
   )
