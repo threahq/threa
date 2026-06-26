@@ -7,6 +7,7 @@ import {
   DISCUSS_WITH_ARIADNE_COMMAND,
   StreamTypes,
   botHasCapability,
+  type BotRuntimeKind,
   type CommandArgumentSuggestion,
   type CommandInfo,
 } from "@threa/types"
@@ -23,19 +24,21 @@ import {
 import type { CommandRegistry } from "./registry"
 import {
   listClientActionCommandInfos,
-  listPiSessionControlCommandInfos,
+  listSessionControlCommandInfos,
   listServerCommandInfos,
   listWorkspaceCommandInfos,
-  PI_SESSION_CONTROL_COMMAND_NAMES,
+  SESSION_CONTROL_COMMAND_NAMES,
 } from "./catalog"
 
 export type ResolvedCommand =
   | { info: CommandInfo; executionKind: "server" }
   | { info: CommandInfo; executionKind: "client-action" }
-  | { info: CommandInfo; executionKind: "bot-runtime"; runtime: PiRuntimeCommandTarget }
+  | { info: CommandInfo; executionKind: "bot-runtime"; runtime: RuntimeCommandTarget }
 
-export interface PiRuntimeCommandTarget {
+export interface RuntimeCommandTarget {
   botId: string
+  /** The live runtime's kind — drives kind-specific invocation routing (e.g. steer/stop capability). */
+  runtimeKind: BotRuntimeKind
   rootStreamId: string
   activeStreamId: string
   responseStreamId: string
@@ -49,7 +52,7 @@ export interface PiRuntimeCommandTarget {
   advertisedModelSuggestions: readonly CommandArgumentSuggestion[]
 }
 
-interface PiRuntimeTargetInternal extends PiRuntimeCommandTarget {
+interface RuntimeTargetInternal extends RuntimeCommandTarget {
   link: BotRuntimeSessionLink
   presence: BotRuntimeInstance
 }
@@ -100,13 +103,13 @@ export class CommandAvailabilityService {
         }
       }
 
-      const runtimeTarget = await resolvePiRuntimeCommandTarget(client, {
+      const runtimeTarget = await resolveRuntimeCommandTarget(client, {
         workspaceId: params.workspaceId,
         userId: params.userId,
         stream,
       })
       if (runtimeTarget) {
-        for (const info of listPiSessionControlCommandInfos()) {
+        for (const info of listSessionControlCommandInfos()) {
           if (!runtimeTarget.advertisedCommandNames.has(info.name.toLowerCase())) continue
           commands.push({
             info: applyAdvertisedSuggestions(info, runtimeTarget),
@@ -134,10 +137,10 @@ function isClientActionAvailableInStream(info: CommandInfo, stream: Stream): boo
   return true
 }
 
-async function resolvePiRuntimeCommandTarget(
+async function resolveRuntimeCommandTarget(
   db: Querier,
   params: { workspaceId: string; userId: string; stream: Stream }
-): Promise<PiRuntimeTargetInternal | null> {
+): Promise<RuntimeTargetInternal | null> {
   const { workspaceId, stream } = params
   const rootStreamId = stream.rootStreamId ?? stream.id
   const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(db, rootStreamId)
@@ -175,7 +178,16 @@ async function resolvePiRuntimeCommandTarget(
     instanceId: link.instanceId,
   })
   if (!presence) return null
-  if (presence.runtimeKind !== BotRuntimeKinds.PI_LOCAL) return null
+  // Session-control is for runtimes that drive a long-lived linked session. Pi
+  // controls its session natively; the Claude Code channel drives the host via
+  // tmux key injection (see docs/claude-channel-session-control.md). Both gate
+  // the surfaced command set on what they advertise in `sessionControlCommands`.
+  if (
+    presence.runtimeKind !== BotRuntimeKinds.PI_LOCAL &&
+    presence.runtimeKind !== BotRuntimeKinds.CLAUDE_CODE_CHANNEL
+  ) {
+    return null
+  }
   if (presence.status !== BotRuntimeStatuses.AVAILABLE && presence.status !== BotRuntimeStatuses.BUSY) return null
 
   const runtimeSessionId =
@@ -187,6 +199,7 @@ async function resolvePiRuntimeCommandTarget(
 
   return {
     botId: bot.id,
+    runtimeKind: presence.runtimeKind,
     rootStreamId: rootStream.id,
     activeStreamId: stream.id,
     responseStreamId: stream.id,
@@ -222,7 +235,7 @@ function resolveAdvertisedModelSuggestions(presence: BotRuntimeInstance): readon
   return result
 }
 
-function applyAdvertisedSuggestions(info: CommandInfo, target: PiRuntimeCommandTarget): CommandInfo {
+function applyAdvertisedSuggestions(info: CommandInfo, target: RuntimeCommandTarget): CommandInfo {
   if (info.name === "thinking" && target.advertisedThinkingLevels.length > 0) {
     return withArgSuggestions(
       info,
@@ -261,7 +274,7 @@ function resolveAdvertisedSessionControlCommandNames(presence: BotRuntimeInstanc
   const advertisedLower = new Set(
     advertised.filter((value): value is string => typeof value === "string").map((value) => value.toLowerCase())
   )
-  return new Set(PI_SESSION_CONTROL_COMMAND_NAMES.filter((name) => advertisedLower.has(name.toLowerCase())))
+  return new Set(SESSION_CONTROL_COMMAND_NAMES.filter((name) => advertisedLower.has(name.toLowerCase())))
 }
 
 function dedupeCommands(commands: ResolvedCommand[]): ResolvedCommand[] {

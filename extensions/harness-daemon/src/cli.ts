@@ -10,6 +10,9 @@ Usage:
   threa-harnessd do <natural language command>
   threa-harnessd list
   threa-harnessd stop <agent-id-or-name>
+  threa-harnessd interrupt <agent-id-or-name>
+  threa-harnessd steer <agent-id-or-name> [follow-up text]
+  threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
   threa-harnessd attach <agent-id-or-name>
   threa-harnessd doctor
 
@@ -17,6 +20,9 @@ Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
   threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar
   threa-harnessd do spawn a pi agent for long chat performance
+  threa-harnessd interrupt fix-sidebar
+  threa-harnessd steer fix-sidebar "also update the tests"
+  threa-harnessd keys fix-sidebar /compact Enter
 `)
   process.exit(0)
 }
