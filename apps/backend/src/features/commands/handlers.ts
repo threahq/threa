@@ -2,7 +2,8 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { serializeBigInt } from "@threa/backend-common"
-import { BotInvocationCapabilities, BotInvocationTriggers, CommandKinds } from "@threa/types"
+import { BotInvocationCapabilities, BotInvocationTriggers, BotRuntimeKinds, CommandKinds } from "@threa/types"
+import type { BotRuntimeKind } from "@threa/types"
 import { withTransaction } from "../../db"
 import { commandId as generateCommandId } from "../../lib/id"
 import { parseCommand } from "./registry"
@@ -21,20 +22,25 @@ interface Dependencies {
   botRuntimeService: BotRuntimeService
 }
 
-function resolveRuntimeInvocationRouting(commandName: string): {
+export function resolveRuntimeInvocationRouting(
+  commandName: string,
+  runtimeKind: BotRuntimeKind
+): {
   trigger: (typeof BotInvocationTriggers)[keyof typeof BotInvocationTriggers]
   requiredCapability: (typeof BotInvocationCapabilities)[keyof typeof BotInvocationCapabilities]
 } {
-  if (commandName === "steer") {
+  if (commandName === "steer" || commandName === "stop") {
+    // steer/stop must reach the runtime mid-turn. Pi advertises `active-scratchpad`
+    // while busy, so it claims them there. The Claude Code channel instead advertises
+    // ONLY `session-control` while busy (so a normal `active-scratchpad` follow-up
+    // stays queued behind the running turn) — route its interrupts there so a busy
+    // channel can still claim them. See docs/claude-channel-session-control.md.
     return {
       trigger: BotInvocationTriggers.SESSION_CONTROL,
-      requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
-    }
-  }
-  if (commandName === "stop") {
-    return {
-      trigger: BotInvocationTriggers.SESSION_CONTROL,
-      requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
+      requiredCapability:
+        runtimeKind === BotRuntimeKinds.CLAUDE_CODE_CHANNEL
+          ? BotInvocationCapabilities.SESSION_CONTROL
+          : BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
     }
   }
   return {
@@ -137,7 +143,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           name: parsed.name,
           args: parsed.args,
         })
-        const routing = resolveRuntimeInvocationRouting(parsed.name)
+        const routing = resolveRuntimeInvocationRouting(parsed.name, resolved.runtime.runtimeKind)
         await botRuntimeService.createInvocationInTransaction(client, {
           workspaceId,
           rootStreamId: resolved.runtime.rootStreamId,

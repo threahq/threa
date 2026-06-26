@@ -1,6 +1,11 @@
 import { CommandKinds, CommandScopes, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandRegistry } from "./registry"
 
+// Canonical session-control command names. Shared across runtimes that drive a
+// long-lived linked session (Pi, the Claude Code channel). A runtime only sees
+// the subset it advertises in `capabilities.sessionControlCommands`, so commands
+// one runtime can't actuate (e.g. `run`/`compact` for Claude, `skill`/`reload`
+// for Pi) never surface for the other.
 export const PI_SESSION_CONTROL_COMMAND_NAMES = [
   "compact",
   "model",
@@ -10,6 +15,7 @@ export const PI_SESSION_CONTROL_COMMAND_NAMES = [
   "shell",
   "steer",
   "stop",
+  "run",
 ] as const
 export type PiSessionControlCommandName = (typeof PI_SESSION_CONTROL_COMMAND_NAMES)[number]
 
@@ -45,21 +51,21 @@ export function listPiSessionControlCommandInfos(): CommandInfo[] {
   return [
     {
       name: "compact",
-      description: "Compact the linked Pi session",
+      description: "Compact the linked session",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "instructions", required: false, description: "Optional compaction focus" }],
     },
     {
       name: "model",
-      description: "Set the linked Pi session model",
+      description: "Set the linked session's model",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "model", required: true, description: "Model id or fuzzy model name" }],
     },
     {
       name: "thinking",
-      description: "Set Pi thinking effort",
+      description: "Set the linked session's thinking effort",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       // Level suggestions are model-specific; the resolver fills them in from the
@@ -68,36 +74,43 @@ export function listPiSessionControlCommandInfos(): CommandInfo[] {
     },
     {
       name: "skill",
-      description: "Find and run a Pi skill by fuzzy search",
+      description: "Find and run a skill by fuzzy search",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "query", required: true, description: "Skill name or search terms" }],
     },
     {
       name: "reload",
-      description: "Reload Pi extensions, skills, prompts, and themes",
+      description: "Reload the linked session's extensions, skills, prompts, and themes",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
     },
     {
       name: "shell",
-      description: "Run a shell command in the linked Pi session's working directory",
+      description: "Run a shell command in the linked session's working directory",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "command", required: true, description: "Shell command to run (passed to `$SHELL -c`)" }],
     },
     {
       name: "steer",
-      description: "Steer the linked Pi session with an immediate follow-up",
+      description: "Steer the linked session with an immediate follow-up",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "message", required: false, description: "Optional instruction to inject immediately" }],
     },
     {
       name: "stop",
-      description: "Stop the current linked Pi turn",
+      description: "Stop the current turn in the linked session",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
+    },
+    {
+      name: "run",
+      description: "Run a slash command in the linked session",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "command", required: true, description: "Slash command to run, e.g. /compact" }],
     },
   ]
 }

@@ -6,9 +6,22 @@ import { z } from "zod"
 import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
 import type { ThreaChannelConfig } from "./config"
 import { ThreaClient, type ClaimedInvocation, type RuntimeSessionLink } from "./threa-client"
+import { interrupt, STEER_SETTLE_MS, submitLine, tmuxAvailable } from "./tmux-control"
 
 const RUNTIME_KIND = "claude-code-channel"
 const SUPPORTED_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
+const SESSION_CONTROL_CAPABILITY = "session-control"
+// The session-control slash commands this channel can actuate via tmux. Only
+// advertised when running inside tmux. `run` types an arbitrary slash command
+// (e.g. /remote-control); `compact` is sugar for `run /compact`.
+const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "compact", "run"] as const
+// Claude Code `/model` aliases offered as autocomplete in the composer's arg picker.
+const MODEL_SUGGESTIONS = [{ value: "default" }, { value: "sonnet" }, { value: "opus" }, { value: "opusplan" }]
+// Mirror Pi's STEER_DRAIN_LIMIT: how many queued messages a single /steer folds
+// into one combined turn before stopping (a backstop, not an expected count).
+const STEER_DRAIN_LIMIT = 10
+
+type SessionControlCommand = { name: string; args: string }
 export const CHANNEL_SOURCE = "threa"
 const CLAIM_TTL_SECONDS = 120
 // Renew at a third of the lease so a single transient renew failure can't let
@@ -92,6 +105,69 @@ export function buildInstructions(permissionRelay: boolean): string {
   return lines.join("\n")
 }
 
+/**
+ * Extract the session-control command (name + args) from a claimed invocation.
+ * Prefers the structured `metadata.command` the dispatch endpoint stamps; falls
+ * back to parsing the `/name args` prompt for a session-control invocation.
+ */
+export function parseSessionControlCommand(invocation: ClaimedInvocation): SessionControlCommand | null {
+  const meta = invocation.metadata?.command
+  if (meta && typeof meta === "object") {
+    const value = meta as Record<string, unknown>
+    if (value.executionKind === "bot-runtime" && typeof value.name === "string") {
+      return { name: value.name.toLowerCase(), args: typeof value.args === "string" ? value.args.trim() : "" }
+    }
+  }
+  if (invocation.trigger !== SESSION_CONTROL_CAPABILITY) return null
+  const match = invocation.promptMarkdown.trim().match(/^\/([\w-]+)(?:\s+([\s\S]*))?$/)
+  if (!match) return null
+  return { name: match[1]!.toLowerCase(), args: (match[2] ?? "").trim() }
+}
+
+export function isSessionControlInvocation(invocation: ClaimedInvocation): boolean {
+  return invocation.trigger === SESSION_CONTROL_CAPABILITY && parseSessionControlCommand(invocation) !== null
+}
+
+/** Fold the steer text + any swept queued messages into one prompt (most recent last). */
+export function buildSteerContent(parts: string[]): string {
+  if (parts.length === 1) return parts[0]!
+  return ["Handle all of the following together (most recent last):", "", parts.join("\n\n---\n\n")].join("\n")
+}
+
+/** Capabilities advertised in hello + presence. Session control only when we can drive the TUI. */
+export function supportedCapabilitiesFor(sessionControlEnabled: boolean): string[] {
+  return sessionControlEnabled ? [...SUPPORTED_CAPABILITIES, SESSION_CONTROL_CAPABILITY] : [...SUPPORTED_CAPABILITIES]
+}
+
+/**
+ * Capabilities to claim with. Idle: everything we support. Busy (a turn in
+ * flight): session-control ONLY, so /stop and /steer jump the queue while a
+ * normal active-scratchpad follow-up waits. Empty when busy without TUI control
+ * (callers must not claim in that state).
+ */
+export function claimCapabilitiesFor(busy: boolean, sessionControlEnabled: boolean): string[] {
+  if (!busy) return supportedCapabilitiesFor(sessionControlEnabled)
+  return sessionControlEnabled ? [SESSION_CONTROL_CAPABILITY] : []
+}
+
+export function runtimeCapabilitiesFor(
+  runtimeSessionId: string,
+  sessionControlEnabled: boolean
+): Record<string, unknown> {
+  return {
+    runtimeSessionId,
+    supportsActiveScratchpad: true,
+    supportsPersistentSessions: true,
+    ...(sessionControlEnabled
+      ? {
+          supportsSessionControlCommands: true,
+          sessionControlCommands: [...SESSION_CONTROL_COMMANDS],
+          modelSuggestions: MODEL_SUGGESTIONS,
+        }
+      : {}),
+  }
+}
+
 interface Inflight {
   invocation: ClaimedInvocation
   // Idle-timeout timer; reset on every sign of life (a `send`, a permission
@@ -121,6 +197,9 @@ export class ChannelServer {
   private renewTimer: ReturnType<typeof setInterval> | undefined
   private readonly inflight = new Map<string, Inflight>()
   private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
+  // Whether this channel can drive the Claude Code TUI (running inside tmux with a
+  // known pane). Fixed at startup. Gates advertising + claiming session control.
+  private readonly sessionControlEnabled = tmuxAvailable()
   // The invocation whose turn is executing — the stream a relayed permission
   // prompt belongs in. Set when a non-verdict invocation is pushed to Claude;
   // it's the turn that can trigger a tool-approval prompt. Tracking it beats
@@ -157,8 +236,8 @@ export class ChannelServer {
           runtimeKind: RUNTIME_KIND,
           runtimeSessionId: config.runtimeSessionId,
           displayName: config.displayName,
-          supportedCapabilities: [...SUPPORTED_CAPABILITIES],
-          capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
+          supportedCapabilities: supportedCapabilitiesFor(this.sessionControlEnabled),
+          capabilities: runtimeCapabilitiesFor(config.runtimeSessionId, this.sessionControlEnabled),
           manifest: { output: { reply: true, trace: true, sources: false } },
         },
         callbacks: {
@@ -317,15 +396,25 @@ export class ChannelServer {
     this.claiming = true
     try {
       for (let i = 0; i < MAX_CLAIMS_PER_DRAIN; i++) {
-        // One turn at a time: once something is in flight, stop pulling new work
-        // and let the queue wait — unless a permission request is open. Its
-        // verdict arrives as an ordinary message (a claimable invocation) and the
-        // in-flight turn is blocked until we route it, so we keep draining. (A
-        // non-verdict message sent in that window is forwarded too and simply
-        // queues behind the blocked turn in Claude's session.)
-        if (this.inflight.size > 0 && this.openPermissions.size === 0) break
-        const invocation = await this.client.claim(this.claimBody())
+        // One normal turn at a time: once a turn is in flight we claim with
+        // session-control caps ONLY (claimBody(busy)), so /stop and /steer still
+        // reach us mid-turn while a normal active-scratchpad follow-up stays
+        // queued. A permission request is the exception — its verdict arrives as
+        // an ordinary message and the in-flight turn is blocked until we route it,
+        // so we keep draining with full caps. Without tmux control there's nothing
+        // to claim while busy, so preserve strict one-at-a-time.
+        const busy = this.inflight.size > 0 && this.openPermissions.size === 0
+        if (busy && !this.sessionControlEnabled) break
+        const invocation = await this.client.claim(this.claimBody(busy))
         if (!invocation) break
+        if (isSessionControlInvocation(invocation)) {
+          const isStop = parseSessionControlCommand(invocation)?.name === "stop"
+          await this.handleSessionControl(invocation)
+          // After a stop, don't immediately pull the next queued turn — the user
+          // asked for quiet (mirrors Pi's runStopCommand).
+          if (isStop) break
+          continue
+        }
         await this.handleClaimed(invocation)
       }
     } catch (error) {
@@ -362,6 +451,12 @@ export class ChannelServer {
       }
     }
 
+    const content = await this.buildChannelContent(invocation)
+    await this.deliverTurn(invocation, content)
+  }
+
+  /** Register an invocation as the in-flight turn and push its content to Claude Code. */
+  private async deliverTurn(invocation: ClaimedInvocation, content: string): Promise<void> {
     this.inflight.set(invocation.id, {
       invocation,
       deadline: this.scheduleIdleTimeout(invocation.id),
@@ -379,7 +474,6 @@ export class ChannelServer {
         "Working in Claude Code…"
       )
       .catch(() => undefined)
-    const content = await this.buildChannelContent(invocation)
     await this.notify("notifications/claude/channel", {
       content,
       meta: {
@@ -388,6 +482,167 @@ export class ChannelServer {
         source_message_id: invocation.sourceMessageId,
       },
     })
+  }
+
+  // --- Session control (steer / stop / model / run) -------------------------
+
+  private async handleSessionControl(invocation: ClaimedInvocation): Promise<void> {
+    const command = parseSessionControlCommand(invocation)
+    if (!command) {
+      await this.failInvocation(invocation, "Missing session-control command metadata")
+      return
+    }
+    try {
+      switch (command.name) {
+        case "stop":
+          return await this.runStop(invocation)
+        case "steer":
+          return await this.runSteer(invocation, command.args)
+        case "model":
+          return await this.runModelCommand(invocation, command.args)
+        case "compact":
+          return await this.runSlashCommand(invocation, command.args ? `/compact ${command.args}` : "/compact")
+        case "run":
+          return await this.runRunCommand(invocation, command.args)
+        default:
+          await this.failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
+      }
+    } catch (error) {
+      await this.failInvocation(invocation, this.summarize(error))
+    }
+  }
+
+  private async runStop(invocation: ClaimedInvocation): Promise<void> {
+    const hadTurn = this.inflight.size > 0
+    const sent = interrupt()
+    await this.completeInterruptedTurns("Stopped by /stop.")
+    const ack = !sent
+      ? "Could not send the interrupt (no tmux control)."
+      : hadTurn
+        ? "Stopped the current Claude Code turn."
+        : "Sent an interrupt to Claude Code."
+    await this.completeAck(invocation, ack)
+    await this.syncPresence()
+  }
+
+  /**
+   * Interrupt the running turn, then fold the steer text + any messages queued
+   * while Claude was busy into ONE combined turn (mirrors Pi: N messages → 1
+   * response). tmux is used only for the interrupt; the combined content
+   * round-trips through the normal notification path so Claude replies to it.
+   */
+  private async runSteer(invocation: ClaimedInvocation, text: string): Promise<void> {
+    interrupt()
+    await Bun.sleep(STEER_SETTLE_MS)
+    await this.completeInterruptedTurns("Superseded by /steer.")
+
+    const parts: string[] = []
+    const swept: ClaimedInvocation[] = []
+    for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
+      const extra = await this.client.claim(this.claimBody(false)).catch(() => null)
+      if (!extra) break
+      swept.push(extra)
+      if (isSessionControlInvocation(extra)) {
+        // Fold a queued /steer's text in; other control commands in the sweep are
+        // closed without execution (rare double-command race).
+        const queued = parseSessionControlCommand(extra)
+        if (queued?.name === "steer" && queued.args) parts.push(queued.args)
+      } else {
+        parts.push(extra.promptMarkdown.trim() || "(empty message)")
+      }
+    }
+    if (text) parts.push(text)
+
+    // Close every swept message with no response — its content is folded into the
+    // single combined turn the primary (this steer invocation) will answer.
+    await Promise.all(swept.map((item) => this.completeNoResponse(item)))
+
+    if (parts.length === 0) {
+      await this.completeAck(invocation, "Interrupted Claude Code; nothing pending to steer with.")
+      await this.syncPresence()
+      return
+    }
+
+    await this.deliverTurn(invocation, buildSteerContent(parts))
+  }
+
+  private async runModelCommand(invocation: ClaimedInvocation, args: string): Promise<void> {
+    const alias = args.trim()
+    if (!alias) {
+      await this.completeAck(invocation, "Usage: `/model <name>` (e.g. sonnet, opus, default).")
+      return
+    }
+    const ok = await submitLine(`/model ${alias}`)
+    await this.completeAck(
+      invocation,
+      ok ? `Set Claude Code model to \`${alias}\`.` : "Could not send /model (no tmux control)."
+    )
+  }
+
+  private async runRunCommand(invocation: ClaimedInvocation, args: string): Promise<void> {
+    const raw = args.trim()
+    if (!raw) {
+      await this.completeAck(invocation, "Usage: `/run <slash-command>` (e.g. /run /remote-control).")
+      return
+    }
+    await this.runSlashCommand(invocation, raw.startsWith("/") ? raw : `/${raw}`)
+  }
+
+  private async runSlashCommand(invocation: ClaimedInvocation, slash: string): Promise<void> {
+    const ok = await submitLine(slash)
+    await this.completeAck(
+      invocation,
+      ok ? `Ran \`${slash}\` in Claude Code.` : `Could not send \`${slash}\` (no tmux control).`
+    )
+  }
+
+  private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<void> {
+    await this.client
+      .complete(invocation.id, {
+        instanceId: this.config.instanceId,
+        claimToken: invocation.claimToken,
+        finalMessageMarkdown: markdown,
+        metadata: { "cc.channel.invocationId": invocation.id, "cc.channel.sessionControl": "true" },
+      })
+      .catch((error) => log(`session-control ack failed: ${this.summarize(error)}`))
+  }
+
+  private async completeNoResponse(invocation: ClaimedInvocation): Promise<void> {
+    await this.client
+      .complete(invocation.id, {
+        instanceId: this.config.instanceId,
+        claimToken: invocation.claimToken,
+        noResponse: true,
+        metadata: { "cc.channel.invocationId": invocation.id, "cc.channel.steered": "true" },
+      })
+      .catch((error) => log(`steered close failed: ${this.summarize(error)}`))
+  }
+
+  private async failInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
+    await this.client
+      .fail(invocation.id, {
+        instanceId: this.config.instanceId,
+        claimToken: invocation.claimToken,
+        errorMessage: errorMessage.slice(0, 1000),
+      })
+      .catch((error) => log(`session-control fail failed: ${this.summarize(error)}`))
+  }
+
+  /** Close every in-flight turn that an interrupt just aborted, so none idle-hangs for an hour. */
+  private async completeInterruptedTurns(note: string): Promise<void> {
+    for (const [id, entry] of [...this.inflight]) {
+      this.clearInflight(id)
+      if (this.activeTurnStreamId === entry.invocation.responseStreamId) this.activeTurnStreamId = undefined
+      const body = entry.sentCount > 0 ? { noResponse: true } : { finalMessageMarkdown: `_${note}_` }
+      await this.client
+        .complete(id, {
+          instanceId: this.config.instanceId,
+          claimToken: entry.invocation.claimToken,
+          ...body,
+          metadata: { "cc.channel.invocationId": id, "cc.channel.interrupted": "true" },
+        })
+        .catch((error) => log(`interrupted-turn close failed: ${this.summarize(error)}`))
+    }
   }
 
   /** The prompt + history Claude reads, with any downloaded attachments appended as a manifest. */
@@ -673,17 +928,20 @@ export class ChannelServer {
       displayName: this.config.displayName,
       status,
       acceptingInvocations: status === "available",
-      capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
+      // Full capabilities on EVERY presence update: the server replaces stored
+      // capabilities on a presence:update (it doesn't merge), so omitting the
+      // session-control keys here would wipe what bot:hello advertised.
+      capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.sessionControlEnabled),
       ...(statusText ? { statusText } : {}),
     }
   }
 
-  private claimBody(): Record<string, unknown> {
+  private claimBody(busy: boolean): Record<string, unknown> {
     return {
       runtimeKind: RUNTIME_KIND,
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
-      supportedCapabilities: [...SUPPORTED_CAPABILITIES],
+      supportedCapabilities: claimCapabilitiesFor(busy, this.sessionControlEnabled),
       claimTtlSeconds: CLAIM_TTL_SECONDS,
     }
   }

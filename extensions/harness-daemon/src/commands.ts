@@ -4,6 +4,7 @@ import { die } from "./errors"
 import { findAgent, inventoryPath, readInventory, upsertAgent } from "./inventory"
 import { commandExists, commandPath, output } from "./shell"
 import { ClaudeRuntimeSpawner, PiRuntimeSpawner } from "./spawners"
+import { sendKeys } from "./tmux"
 import type { SpawnOptions } from "./types"
 
 function spawnCommand(options: SpawnOptions): string[] {
@@ -79,6 +80,38 @@ export function stopAgent(ref: string): void {
   if (result.exitCode !== 0) die(result.stderr.trim() || `tmux kill-window failed for ${target}`)
   upsertAgent({ ...agent, status: "stopped", updatedAt: now() })
   console.log(`harnessd: stopped ${agent.name} (${target})`)
+}
+
+function tmuxTarget(ref: string): { session: string; window: string } {
+  const agent = findAgent(ref)
+  if (!agent.tmuxSession || !agent.tmuxWindow) die(`${agent.name} has no tmux target recorded`)
+  return { session: agent.tmuxSession, window: agent.tmuxWindow }
+}
+
+/** Send Esc to interrupt the agent's current turn (Claude Code / Pi) without killing the window. */
+export function interruptAgent(ref: string): void {
+  const { session, window } = tmuxTarget(ref)
+  sendKeys(session, window, ["Escape"])
+  console.log(`harnessd: interrupted ${session}:${window}`)
+}
+
+/** Interrupt the current turn, then (if given) type a follow-up and submit it. */
+export function steerAgent(ref: string, text: string): void {
+  const { session, window } = tmuxTarget(ref)
+  sendKeys(session, window, ["Escape"])
+  if (text) {
+    sendKeys(session, window, ["-l", text])
+    sendKeys(session, window, ["Enter"])
+  }
+  console.log(`harnessd: steered ${session}:${window}`)
+}
+
+/** Raw `tmux send-keys` passthrough to the agent's window (tokens follow tmux rules). */
+export function sendKeysToAgent(ref: string, keys: string[]): void {
+  if (keys.length === 0) die("keys requires at least one key or token")
+  const { session, window } = tmuxTarget(ref)
+  sendKeys(session, window, keys)
+  console.log(`harnessd: sent keys to ${session}:${window}`)
 }
 
 export function attachAgent(ref: string): void {

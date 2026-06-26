@@ -1,5 +1,5 @@
 import { die } from "./errors"
-import { output } from "./shell"
+import { output, run } from "./shell"
 import type { SpawnOptions } from "./types"
 
 export function tmuxSession(options: SpawnOptions): string {
@@ -23,4 +23,9 @@ export function capturePane(session: string, window: string, lines = 30): string
   return output(["tmux", "capture-pane", "-t", `${session}:${window}`, "-p", "-S", `-${lines}`], {
     allowFailure: true,
   }).stdout
+}
+
+/** Send keys/tokens to a window's active program. `tmux send-keys` token rules apply (`Escape`, `Enter`, `-l` for literal text). */
+export function sendKeys(session: string, window: string, keys: string[]): void {
+  run(["tmux", "send-keys", "-t", `${session}:${window}`, ...keys])
 }

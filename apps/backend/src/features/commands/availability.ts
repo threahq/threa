@@ -7,6 +7,7 @@ import {
   DISCUSS_WITH_ARIADNE_COMMAND,
   StreamTypes,
   botHasCapability,
+  type BotRuntimeKind,
   type CommandArgumentSuggestion,
   type CommandInfo,
 } from "@threa/types"
@@ -36,6 +37,8 @@ export type ResolvedCommand =
 
 export interface PiRuntimeCommandTarget {
   botId: string
+  /** The live runtime's kind — drives kind-specific invocation routing (e.g. steer/stop capability). */
+  runtimeKind: BotRuntimeKind
   rootStreamId: string
   activeStreamId: string
   responseStreamId: string
@@ -175,7 +178,16 @@ async function resolvePiRuntimeCommandTarget(
     instanceId: link.instanceId,
   })
   if (!presence) return null
-  if (presence.runtimeKind !== BotRuntimeKinds.PI_LOCAL) return null
+  // Session-control is for runtimes that drive a long-lived linked session. Pi
+  // controls its session natively; the Claude Code channel drives the host via
+  // tmux key injection (see docs/claude-channel-session-control.md). Both gate
+  // the surfaced command set on what they advertise in `sessionControlCommands`.
+  if (
+    presence.runtimeKind !== BotRuntimeKinds.PI_LOCAL &&
+    presence.runtimeKind !== BotRuntimeKinds.CLAUDE_CODE_CHANNEL
+  ) {
+    return null
+  }
   if (presence.status !== BotRuntimeStatuses.AVAILABLE && presence.status !== BotRuntimeStatuses.BUSY) return null
 
   const runtimeSessionId =
@@ -187,6 +199,7 @@ async function resolvePiRuntimeCommandTarget(
 
   return {
     botId: bot.id,
+    runtimeKind: presence.runtimeKind,
     rootStreamId: rootStream.id,
     activeStreamId: stream.id,
     responseStreamId: stream.id,
