@@ -35,14 +35,11 @@ export interface ResolveSectionsInput {
    */
   streamIdsByLabel: Map<string, Set<string>>
   /**
-   * The Unread tray: stream ids held by the dedicated Unread section for this
-   * viewing session (see `useStickyUnread`). A stream stays here once it goes
-   * unread until the session ends or the viewer clears it — so the set holds
-   * read-but-not-yet-cleared streams too, not just currently-unread ones. Empty
-   * unless the layout has an `{ kind: "unread" }` section. Members render only in
-   * Unread; every other section excludes them, so the sidebar doesn't reflow each
-   * time one is read. Drives both the Unread section's contents and the
-   * exclusion the other sections apply.
+   * The viewer's currently-unread stream ids (muted excluded). Empty unless the
+   * layout has an `{ kind: "unread" }` section. Members render only in Unread;
+   * every other section excludes them, so an unread stream shows once — in
+   * Unread — and drops back to its home section the moment it's read. Drives both
+   * the Unread section's contents and the exclusion the other sections apply.
    */
   unreadStreamIds: ReadonlySet<string>
 }
@@ -87,13 +84,11 @@ export function findSourceLabelId(streamId: string, resolved: ResolvedSection[])
  * out-rank label sections (a stream filed into a custom section is withheld
  * from the label lens too); among label sections, the topmost one wins.
  *
- * The Unread tray ({@link ResolveSectionsInput.unreadStreamIds}) trumps every
- * other section: a stream in the tray shows **only** in the Unread section, drawn
- * out of its smart/type bucket and its custom/label home alike, so there is one
- * copy (no dimmed ghost) and the rest of the sidebar doesn't reflow as the tray
- * fills and drains. The tray is sticky — a member stays after it's read until the
- * session ends or the viewer clears it — so the membership is supplied as a set
- * rather than recomputed from live unread counts here.
+ * The Unread section ({@link ResolveSectionsInput.unreadStreamIds}) trumps every
+ * other section: an unread stream shows **only** in the Unread section, drawn out
+ * of its smart/type bucket and its custom/label home alike, so there is one copy.
+ * Membership is the live unread set, so reading a stream drops it from here and it
+ * reappears in its home section.
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
   const claimed = new Set<string>()
@@ -114,8 +109,8 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
   return config.sections.map((section) => {
     const items = resolveItems(section.spec, input, claimed, customClaimed, labeledClaimed)
     // The Unread section never claims its streams: every other section already
-    // excludes the tray via `unreadStreamIds`, and claiming would also block a
-    // tray member from returning to its home section once the tray is cleared.
+    // excludes its members via `unreadStreamIds`, and claiming would also block a
+    // stream from returning to its home section once it's read.
     if (section.spec.kind !== "unread") for (const item of items) claimed.add(item.id)
     return { section, items }
   })
@@ -150,11 +145,10 @@ function resolveItems(
 }
 
 /**
- * The Unread tray's members (see {@link ResolveSectionsInput.unreadStreamIds}),
- * by activity. Draws from real streams only — synthetic DM drafts are never in
- * the tray. Read-but-not-yet-cleared members are kept (the set holds them); they
- * sort by the same activity key as everything else, so a stream keeps its slot
- * when it's read instead of jumping, and the row de-emphasizes in place.
+ * The Unread section's members (see {@link ResolveSectionsInput.unreadStreamIds}),
+ * by activity. Draws from real streams only — synthetic DM drafts are never
+ * unread. Reading a stream removes it from the set, so it leaves here in the same
+ * render and returns to its home section.
  */
 function resolveUnreadSection({
   processedStreams,

@@ -45,12 +45,10 @@ import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
-import { useStickyUnread } from "./use-sticky-unread"
-import { useAutoClearStickyUnread } from "./use-auto-clear-sticky-unread"
 import { setStreamCustomSection } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
-import { calculateUrgency, categorizeStream, isSidebarStreamVisible } from "./utils"
+import { calculateUrgency, categorizeStream, isSidebarStreamVisible, isUnreadStream } from "./utils"
 import type { StreamItemData } from "./types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
@@ -59,6 +57,9 @@ import { StreamTypes, Visibilities, LabelableResourceTypes, type SidebarQuickLin
 /** The flag-gated Board quick-link key — one constant for the filter + the editor. */
 const BOARD_QUICK_LINK_KEY: SidebarQuickLinkKey = "board"
 
+/** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
+const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
+
 interface SidebarProps {
   workspaceId: string
 }
@@ -66,7 +67,6 @@ interface SidebarProps {
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { phase } = useCoordinatedLoading()
   const {
-    state: sidebarState,
     getSectionState,
     toggleSectionState,
     setSidebarHeight,
@@ -277,20 +277,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sidebarConfig.sections]
   )
 
-  // The Unread tray's membership: sticky for the session so working through it
-  // doesn't reflow the sidebar on every read. Only accumulates when the layout
-  // actually has an Unread section.
-  const stickyUnread = useStickyUnread(workspaceId, processedStreams, getUnreadCount, hasUnreadSection)
-
-  // Auto-flush already-read streams from the tray once attention moves on
-  // (sidebar hidden, app refocused, or a long idle) so it doesn't need manual
-  // clearing — the tray only existed to avoid mid-read reflow, not to persist.
-  useAutoClearStickyUnread({
-    hasReadResidue: stickyUnread.hasReadResidue,
-    clearRead: stickyUnread.clearRead,
-    sidebarHidden: sidebarState === "collapsed",
-    isMobile,
-  })
+  // The Unread section's membership: the viewer's live unread streams (muted
+  // excluded). A stream shows only here while unread and returns to its home
+  // section the moment it's read — `resolveSections` reuses this set as the
+  // exclusion for every other section, so an unread stream never renders twice.
+  // Empty unless the layout actually has an Unread section.
+  const unreadStreamIds = useMemo(() => {
+    if (!hasUnreadSection) return EMPTY_UNREAD_IDS
+    const ids = new Set<string>()
+    for (const stream of processedStreams) if (isUnreadStream(stream, getUnreadCount(stream.id))) ids.add(stream.id)
+    return ids
+  }, [hasUnreadSection, processedStreams, getUnreadCount])
 
   // For Unread rows (drawn out of their home), a "· home" hint naming the custom
   // section or pinned label the stream lives in. Custom filing trumps a label,
@@ -317,9 +314,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         virtualDmStreams,
         getUnreadCount,
         streamIdsByLabel,
-        unreadStreamIds: stickyUnread.streamIds,
+        unreadStreamIds,
       }),
-    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel, stickyUnread.streamIds]
+    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel, unreadStreamIds]
   )
 
   // The Quick Links block renders only when the user keeps it in their layout —
@@ -599,8 +596,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
-            hasReadResidue={stickyUnread.hasReadResidue}
-            onClearReadUnread={stickyUnread.clearRead}
             quickLinksSlot={
               hasQuickLinksSection ? (
                 <SidebarQuickLinks
