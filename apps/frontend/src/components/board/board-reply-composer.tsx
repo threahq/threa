@@ -1,16 +1,22 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Reply } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
-import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { BoardPost, JSONContent, Message } from "@threa/types"
+
+// Focus moving into one of these means a composer popover is open (the inline
+// suggestion lists render as `[role="listbox"]`; emoji/format/link popovers are
+// Radix poppers; the mobile drawer is a dialog) — all portal outside the
+// composer subtree, so blur-to-collapse must treat them as "still editing"
+// rather than a dismissal. Mirrors the guard in document-editor-modal.tsx.
+const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-wrapper],[role="dialog"]'
 
 interface BoardReplyComposerProps {
   workspaceId: string
@@ -73,6 +79,32 @@ function BoardReplyComposerForm({
 
   const canSubmit = composer.canSend && !reply.isPending
 
+  // Collapse back to the one-line affordance when focus leaves an empty reply —
+  // the native composer feel. A draft with content (text or a pending upload)
+  // stays open and persists; abandoning means clearing it. The latest emptiness
+  // is read through a ref so the deferred check sees current state without
+  // re-binding the handler each keystroke.
+  const containerRef = useRef<HTMLDivElement>(null)
+  const isEmptyRef = useRef(true)
+  isEmptyRef.current = isEmptyContent(composer.content) && composer.pendingAttachments.length === 0
+
+  const handleBlur = useCallback(() => {
+    // Defer past the focusout: focus may be landing on a sibling control, or on
+    // a popover that portals out of this subtree (guarded above). Collapse only
+    // once focus has truly left and the draft is empty.
+    requestAnimationFrame(() => {
+      const container = containerRef.current
+      if (!container) return
+      // The page itself lost focus — a native file picker opened or the user
+      // switched tab/app. Keep the draft open; they're mid-action.
+      if (!document.hasFocus()) return
+      const active = document.activeElement
+      if (active && (container.contains(active) || active.closest(COMPOSER_POPOVER_SELECTOR))) return
+      if (!isEmptyRef.current) return
+      onClose()
+    })
+  }, [onClose])
+
   const handleSubmit = async (editorContent?: JSONContent) => {
     if (!composer.canSend) return
 
@@ -105,10 +137,10 @@ function BoardReplyComposerForm({
 
   // The composer carries its own bordered, collapse-on-focus chrome and toolbar,
   // so it sits directly on the card — no wrapper frame, which would double the
-  // border and leave an empty header strip. Cancel is a low-emphasis control
-  // below it rather than a lone button in a header row.
+  // border and leave an empty header strip. An empty reply collapses on blur
+  // (handleBlur) rather than needing an explicit cancel control.
   return (
-    <div className="mt-3">
+    <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
       <MessageComposer
         content={composer.content}
         onContentChange={composer.handleContentChange}
@@ -131,16 +163,6 @@ function BoardReplyComposerForm({
         scopeId={draftKey}
         streamContext={streamContext}
       />
-      <div className="mt-1.5 flex justify-start">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-          onClick={onClose}
-        >
-          Cancel
-        </Button>
-      </div>
     </div>
   )
 }
