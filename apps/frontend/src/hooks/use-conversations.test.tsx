@@ -9,7 +9,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as draftScratchpadsModule from "./use-draft-scratchpads"
 import * as queueDraftModule from "./use-queue-draft-message"
 import { SocketEventGate } from "@/sync/socket-event-gate"
-import { useConversations, useCreateBoardPost, conversationKeys } from "./use-conversations"
+import { useConversations, useCreateBoardPost, useReplyToBoardPost, conversationKeys } from "./use-conversations"
 
 const WORKSPACE_ID = "ws_1"
 const STREAM_ID = "stream_1"
@@ -236,6 +236,123 @@ describe("useCreateBoardPost", () => {
         draftId: "draft_1",
         streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: "on" },
       })
+    )
+  })
+})
+
+describe("useReplyToBoardPost", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function mockReplyDeps() {
+    const create = vi.fn().mockResolvedValue({ id: "msg_new" })
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      create,
+    } as unknown as contextsModule.MessageService)
+    const createStream = vi.fn().mockResolvedValue({ id: "thread_1" })
+    vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
+      create: createStream,
+    } as unknown as contextsModule.StreamService)
+    return { create, createStream }
+  }
+
+  const DOC = { type: "doc", content: [] }
+
+  it("threads a channel reply off the opening message, then sends into the thread (no directive)", async () => {
+    const { create, createStream } = mockReplyDeps()
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        conversation: { id: "conv_1", streamId: "chan_1" },
+        openingMessageId: "msg_open",
+        hostStreamType: StreamTypes.CHANNEL,
+        contentJson: DOC,
+      })
+    })
+
+    expect(createStream).toHaveBeenCalledWith(WORKSPACE_ID, {
+      type: StreamTypes.THREAD,
+      parentStreamId: "chan_1",
+      parentMessageId: "msg_open",
+    })
+    expect(create).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "thread_1",
+      expect.objectContaining({ streamId: "thread_1", contentJson: DOC, clientMessageId: expect.any(String) })
+    )
+    // The thread is its own context — no existing-conversation directive.
+    expect(create.mock.calls[0][2]).not.toHaveProperty("conversation")
+  })
+
+  it("attaches a DM reply to the conversation via the existing directive (no thread)", async () => {
+    const { create, createStream } = mockReplyDeps()
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        conversation: { id: "conv_dm", streamId: "dm_1" },
+        openingMessageId: "msg_open",
+        hostStreamType: StreamTypes.DM,
+        contentJson: DOC,
+      })
+    })
+
+    expect(createStream).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "dm_1",
+      expect.objectContaining({
+        streamId: "dm_1",
+        conversation: { intent: "existing", conversationId: "conv_dm" },
+      })
+    )
+  })
+
+  it("replies straight into a thread card's own stream via the existing directive", async () => {
+    const { create, createStream } = mockReplyDeps()
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        conversation: { id: "conv_thread", streamId: "thread_x" },
+        openingMessageId: "msg_open",
+        hostStreamType: StreamTypes.THREAD,
+        contentJson: DOC,
+      })
+    })
+
+    expect(createStream).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "thread_x",
+      expect.objectContaining({ conversation: { intent: "existing", conversationId: "conv_thread" } })
+    )
+  })
+
+  it("falls back to a conversation-attached message when a channel post has no opening message", async () => {
+    const { create, createStream } = mockReplyDeps()
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        conversation: { id: "conv_1", streamId: "chan_1" },
+        openingMessageId: null,
+        hostStreamType: StreamTypes.CHANNEL,
+        contentJson: DOC,
+      })
+    })
+
+    expect(createStream).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith(
+      WORKSPACE_ID,
+      "chan_1",
+      expect.objectContaining({ conversation: { intent: "existing", conversationId: "conv_1" } })
     )
   })
 })

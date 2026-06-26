@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, type LucideIcon } from "lucide-react"
 import { RelativeTime } from "@/components/relative-time"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
+import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService } from "@/contexts"
@@ -39,6 +40,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const [expanded, setExpanded] = useState(false)
+  // Replies sent from this card, shown in place without a board refetch. They
+  // live only on this card for now — board-wide liveness is a follow-up. A
+  // channel reply lands in a thread off the post, so on the next board refresh
+  // it surfaces as its own post rather than under this card; that's expected.
+  const [localReplies, setLocalReplies] = useState<RenderableMessage[]>([])
 
   const streamId = conversation.streamId
   const hiddenCount = Math.max(0, totalReplies - recentMessages.length)
@@ -59,6 +65,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   // Collapsed: just the trailing replies the feed already carried.
   const replies: RenderableMessage[] =
     expanded && allMessages ? allMessages.filter((m) => m.id !== openingMessage?.id) : recentMessages
+  // Append this card's own just-sent replies, skipping any a refetch already
+  // carries (the expanded fetch can include them once the server catches up).
+  const seenReplyIds = new Set(replies.map((m) => m.id))
+  const displayedReplies = [...replies, ...localReplies.filter((m) => !seenReplyIds.has(m.id))]
   const loadingMore = expanded && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
@@ -92,7 +102,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
 
       <div className="mt-3 [&>*:first-child]:mt-0">
         {contiguous ? (
-          (openingMessage ? [openingMessage, ...replies] : replies).map((message, i, all) =>
+          (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).map((message, i, all) =>
             renderMessage(message, i > 0 && isContinuation(all[i - 1], message))
           )
         ) : (
@@ -118,10 +128,19 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                 Couldn't load messages. Retry.
               </button>
             )}
-            {replies.map((message, i) => renderMessage(message, i > 0 && isContinuation(replies[i - 1], message)))}
+            {displayedReplies.map((message, i) =>
+              renderMessage(message, i > 0 && isContinuation(displayedReplies[i - 1], message))
+            )}
           </>
         )}
       </div>
+
+      <BoardReplyComposer
+        workspaceId={workspaceId}
+        post={post}
+        hostStreamType={streamType}
+        onReplied={(message) => setLocalReplies((prev) => [...prev, message])}
+      />
     </div>
   )
 }

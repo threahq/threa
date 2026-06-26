@@ -1,12 +1,18 @@
 import { useEffect } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useConversationService, useMessageService, useSocket, useSocketReconnectCount } from "@/contexts"
+import {
+  useConversationService,
+  useMessageService,
+  useStreamService,
+  useSocket,
+  useSocketReconnectCount,
+} from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { StreamTypes } from "@threa/types"
-import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
+import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent, Message } from "@threa/types"
 
 /**
  * Where a board post lands: an existing channel/DM the user picked, or a
@@ -158,6 +164,73 @@ export function useCreateBoardPost(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
+    },
+  })
+}
+
+export interface ReplyToBoardPostInput {
+  /** The post's conversation — supplies the host stream and the attach target. */
+  conversation: Pick<ConversationWithStaleness, "id" | "streamId">
+  /** The post's opening message id — the thread parent for a channel reply. */
+  openingMessageId: string | null
+  /** Host stream type (`channel` | `dm` | `scratchpad` | `thread` | undefined). */
+  hostStreamType: string | undefined
+  contentJson: JSONContent
+  attachmentIds?: string[]
+}
+
+/**
+ * Reply to a board post from the feed. Where the reply lands depends on the
+ * conversation's host stream (user ruling):
+ *
+ *  - **channel** → a thread reply off the post's opening message, so it stays
+ *    scoped to the topic instead of interleaving into the channel's live
+ *    timeline. Thread creation is idempotent server-side on
+ *    `(parentStreamId, parentMessageId)`, so we create-or-find the thread, then
+ *    send into it — its own conversation forms there.
+ *  - **dm / scratchpad / thread card** → a message into the conversation's stream
+ *    attached to it via the `existing` directive ("the conversation as a whole"),
+ *    so the assignment + activity bump happen synchronously in the send txn.
+ *
+ * A channel post whose opening message was deleted falls through to the second
+ * path (a top-level message attached to the conversation) — there's no anchor to
+ * thread off.
+ *
+ * Returns the created message so the card can show it in place; board-wide
+ * liveness/optimism across cards is a follow-up (no cache writes here).
+ */
+export function useReplyToBoardPost(workspaceId: string) {
+  const messageService = useMessageService()
+  const streamService = useStreamService()
+
+  return useMutation({
+    mutationFn: async ({
+      conversation,
+      openingMessageId,
+      hostStreamType,
+      contentJson,
+      attachmentIds,
+    }: ReplyToBoardPostInput): Promise<Message> => {
+      const base = {
+        contentJson,
+        attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
+        clientMessageId: generateClientId(),
+      }
+
+      if (hostStreamType === StreamTypes.CHANNEL && openingMessageId) {
+        const thread = await streamService.create(workspaceId, {
+          type: StreamTypes.THREAD,
+          parentStreamId: conversation.streamId,
+          parentMessageId: openingMessageId,
+        })
+        return messageService.create(workspaceId, thread.id, { streamId: thread.id, ...base })
+      }
+
+      return messageService.create(workspaceId, conversation.streamId, {
+        streamId: conversation.streamId,
+        ...base,
+        conversation: { intent: "existing", conversationId: conversation.id },
+      })
     },
   })
 }
