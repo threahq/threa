@@ -224,22 +224,34 @@ descriptions made runtime-neutral ("the linked session", not "the linked Pi sess
 
 ## Risks & live-verify checklist
 
-1. **`$TMUX_PANE` reaches the MCP child.** Confirm Claude Code doesn't scrub env for MCP servers.
-   Fallback: harness passes `THREA_TMUX_TARGET` via `claude mcp add --env`.
-2. **Single `Escape` interrupts Claude Code** (vs needing double-Esc, which opens history). Tune.
-3. **`/model <alias> + Enter` against the slash autocomplete.** Most fragile path. Try literal
-   string then short delay then `Enter`; possibly a second `Enter`; confirm `/model sonnet` sets
-   directly rather than opening a picker that swallows Enter.
-4. **Steer timing** — Claude accepts a new `notifications/claude/channel` immediately after an
-   `Escape` interrupt; confirm the ~250 ms delay is enough and the interrupted turn completes
-   cleanly.
-5. **Busy-claim** — with routing-aware caps, confirm a busy channel claims `/stop` within a frame
-   (WS push to the session room) and that a normal follow-up still waits.
+Live-tested 2026-06-26 against **Claude Code v2.1.193** in tmux (a throwaway session, no Threa
+stack). Results:
 
-Verify with the harness-spawned Claude in tmux + a real scratchpad, watching the pane and the
-scratchpad timeline. Unit tests: `tmux-control` (mock `Bun.spawnSync`), `claimDrain` busy-state
-capability selection, `handleSessionControl` dispatch + interrupted-turn completion. Backend:
-routing-by-kind, target resolver accepts `claude-code-channel`, command list for a channel stream.
+1. **`$TMUX_PANE` reaches the MCP child** — ✅ confirmed. A child shell of the Claude Code host
+   inherits `TMUX_PANE`. (Fallback `THREA_TMUX_TARGET` remains for non-self-discovering launches.)
+2. **Single `Escape` interrupts Claude Code** — ✅ confirmed via a filesystem marker: a
+   `sleep 30 && touch DONE_MARKER` tool call was killed by one `Escape` (marker never appeared).
+3. **`/model <alias>` against the slash autocomplete** — ✅ works (150 ms settle beats the menu),
+   but live testing surfaced **two real bugs, both now fixed**:
+   - **Input-box residue.** An `Escape` interrupt restores the interrupted message into the input
+     box; a typed command then concatenates with it and submits as a plain prompt (silent no-op).
+     Fix: `submitLine` sends `Ctrl-U` to clear the line first.
+   - **Model-switch confirmation modal.** A mid-session switch pops a "Switch model?" dialog
+     (default "Yes") that wedges the session if unanswered. Fix: `/model` sends a confirming
+     `Enter` after a settle (harmless empty submit when no modal appears).
+     `/model sonnet` then `/model opus` both verified end-to-end with residue present.
+4. **Steer timing** — ⏳ not live-tested end-to-end (needs the Threa stack). The `Escape` half is
+   verified; the combined-turn delivery rides the existing notification path. The residue the steer
+   leaves in the box is harmless (steer content goes via MCP, not the keyboard) and the next typed
+   command clears it.
+5. **Busy-claim + full dispatch round-trip** — ⏳ not live-tested (unit-tested only; needs a
+   `bun run dev:test` stack + a linked scratchpad). This is the already-tested claim/dispatch
+   plumbing rather than novel tmux behavior.
+
+Unit tests: `tmux-control` (`tmuxAvailable` env detection), `session-control` (command parse,
+steer-combine, busy-state capability selection), backend `routing` (kind-aware). Backend
+DB-backed paths (resolver accepts `claude-code-channel`, command list for a channel stream) remain
+covered by their feature-folder suites.
 
 ## Bonus: harness CLI ergonomics (optional)
 
