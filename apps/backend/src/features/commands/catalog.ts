@@ -1,11 +1,11 @@
 import { CommandKinds, CommandScopes, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandRegistry } from "./registry"
 
-// Canonical session-control command names. Shared across runtimes that drive a
-// long-lived linked session (Pi, the Claude Code channel). A runtime only sees
-// the subset it advertises in `capabilities.sessionControlCommands`, so commands
-// one runtime can't actuate (e.g. `run`/`compact` for Claude, `skill`/`reload`
-// for Pi) never surface for the other.
+// Canonical session-control command names, shared across runtimes that drive a
+// long-lived linked session (Pi, the Claude Code channel). Each runtime sees only
+// the subset it advertises in `capabilities.sessionControlCommands`, so a command
+// it doesn't advertise never surfaces for it (e.g. `skill` is Pi-only; `run` is
+// Claude-channel-only; `compact`/`reload` are advertised by both).
 export const SESSION_CONTROL_COMMAND_NAMES = [
   "compact",
   "model",

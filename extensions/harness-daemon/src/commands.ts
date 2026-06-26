@@ -100,6 +100,10 @@ export function steerAgent(ref: string, text: string): void {
   const { session, window } = tmuxTarget(ref)
   sendKeys(session, window, ["Escape"])
   if (text) {
+    // Esc restores the interrupted message into the input box; clear it (Ctrl-U)
+    // before typing so the follow-up doesn't concatenate with that residue and
+    // submit as a plain prompt.
+    sendKeys(session, window, ["C-u"])
     sendKeys(session, window, ["-l", text])
     sendKeys(session, window, ["Enter"])
   }

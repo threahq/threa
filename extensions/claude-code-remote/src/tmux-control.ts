@@ -64,8 +64,15 @@ export async function submitLine(text: string, opts: { settleMs?: number; confir
   if (settleMs > 0) await Bun.sleep(settleMs)
   if (!sendKeys(["Enter"])) return false
   if (opts.confirm) {
+    // A modal Claude Code raises (e.g. "/model" mid-session pops "Switch model?")
+    // may render slightly after the first Enter. Send two guarded, spaced Enters
+    // so a late-rendering modal is still confirmed; an Enter on an empty prompt is
+    // a harmless no-op. Guarded (unlike a fire-and-forget Enter) so a pane that
+    // vanished mid-confirm reports failure instead of acking a false success.
     await Bun.sleep(CONFIRM_SETTLE_MS)
-    sendKeys(["Enter"])
+    if (!sendKeys(["Enter"])) return false
+    await Bun.sleep(CONFIRM_SETTLE_MS)
+    if (!sendKeys(["Enter"])) return false
   }
   return true
 }
