@@ -1,7 +1,10 @@
 # Session control for the Claude Code channel (steer / stop / model / run-command)
 
-Status: **implemented** on `feat/harness-steer`, 2026-06-26 (pending live tmux verification — see
-checklist). Author: agent session. Command set shipped: `stop`, `steer`, `model`, `compact`, `run`.
+Status: **implemented + tmux mechanics live-verified** on `feat/harness-steer`, 2026-06-26.
+Author: agent session. Command set shipped: `stop`, `steer`, `model`, `compact`, `run`. The
+genuinely-novel tmux paths ($TMUX_PANE inheritance, Esc interrupt, `/model`) are verified against
+Claude Code v2.1.193 (and live testing found + fixed two bugs — see the checklist); the full
+dispatch round-trip through a real scratchpad is still only unit-tested.
 
 Implemented across: backend (`commands/availability.ts`, `commands/handlers.ts`, `commands/catalog.ts`,
 `bot-runtimes/service.ts` comment), channel (`claude-code-remote/src/tmux-control.ts` +
