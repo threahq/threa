@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { reloadForUpdate, shouldAnnounceWaiting, RELOAD_FALLBACK_TIMEOUT_MS } from "./use-app-update"
+import {
+  currentAppVersion,
+  reconcilePostReload,
+  reloadForUpdate,
+  shouldAnnounceWaiting,
+  shouldRecoverForVersion,
+  RELOAD_FALLBACK_TIMEOUT_MS,
+} from "./use-app-update"
 import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
 
@@ -100,6 +107,7 @@ describe("reloadForUpdate", () => {
   }
 
   beforeEach(() => {
+    sessionStorage.clear()
     reloadSpy = vi.fn()
     // jsdom's location.reload() throws "Not implemented" — replace it with a spy.
     Object.defineProperty(window, "location", {
@@ -201,5 +209,84 @@ describe("reloadForUpdate", () => {
     await vi.advanceTimersByTimeAsync(RELOAD_FALLBACK_TIMEOUT_MS)
     expect(reloadSpy).toHaveBeenCalledOnce()
     expect(recoverySpy).not.toHaveBeenCalled()
+  })
+
+  it("marks a reload attempt so the next load can reconcile it", async () => {
+    setServiceWorker(makeRegistration({ waiting: makeWorker() }))
+    await reloadForUpdate()
+    expect(sessionStorage.getItem("app-update-reload-attempt")).not.toBeNull()
+  })
+
+  describe("reconcilePostReload", () => {
+    const RELOAD_KEY = "app-update-reload-attempt"
+    let fetchSpy: ReturnType<typeof vi.spyOn>
+
+    const mockVersion = (version: string | null, ok = true) => {
+      fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok,
+        json: async () => (version === null ? {} : { version }),
+      } as Response)
+    }
+    const markReload = () => sessionStorage.setItem(RELOAD_KEY, String(Date.now()))
+
+    afterEach(() => {
+      fetchSpy?.mockRestore()
+    })
+
+    it("does nothing without a recent Reload click", async () => {
+      mockVersion("anything-newer")
+      expect(await reconcilePostReload()).toBe(false)
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(recoverySpy).not.toHaveBeenCalled()
+    })
+
+    it("recovers when the running build differs from the server's latest (swap didn't take)", async () => {
+      // The decisive signal: a successful version fetch proves we're online, and a
+      // mismatch proves the Reload didn't boot us onto new code. Re-announcing
+      // would loop forever, so force a clean boot.
+      markReload()
+      mockVersion(`${currentAppVersion() ?? "x"}-stale`)
+
+      expect(await reconcilePostReload()).toBe(true)
+      expect(recoverySpy).toHaveBeenCalledOnce()
+      // Capped, not forced: a genuine recovery loop must still hit the attempt cap.
+      expect(recoverySpy).toHaveBeenCalledWith()
+    })
+
+    it("wipes nothing when the running build already matches the latest", async () => {
+      markReload()
+      mockVersion(currentAppVersion())
+
+      expect(await reconcilePostReload()).toBe(false)
+      expect(recoverySpy).not.toHaveBeenCalled()
+    })
+
+    it("wipes nothing when the version can't be verified (offline)", async () => {
+      // Offline-first: a failed fetch must never trigger a cache wipe, or we'd
+      // brick a launch that has no network to refetch from.
+      markReload()
+      fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"))
+
+      expect(await reconcilePostReload()).toBe(false)
+      expect(recoverySpy).not.toHaveBeenCalled()
+    })
+
+    it("consumes the flag so a later check doesn't recover again", async () => {
+      markReload()
+      mockVersion(`${currentAppVersion() ?? "x"}-stale`)
+
+      expect(await reconcilePostReload()).toBe(true)
+      expect(await reconcilePostReload()).toBe(false)
+    })
+  })
+
+  describe("shouldRecoverForVersion", () => {
+    it("recovers only on two known, differing versions", () => {
+      expect(shouldRecoverForVersion("a", "b")).toBe(true)
+      expect(shouldRecoverForVersion("a", "a")).toBe(false)
+      expect(shouldRecoverForVersion("a", null)).toBe(false)
+      expect(shouldRecoverForVersion(null, "b")).toBe(false)
+      expect(shouldRecoverForVersion(null, null)).toBe(false)
+    })
   })
 })

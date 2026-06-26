@@ -120,6 +120,12 @@ export default defineConfig({
       },
     }),
   ],
+  // Bake the build version into the bundle so the running app can tell whether a
+  // reload actually swapped in new code (see use-app-update reconcilePostReload).
+  // Same value as the emitted version.json, so a post-reload mismatch is decisive.
+  define: {
+    __APP_VERSION__: JSON.stringify(buildVersion),
+  },
   resolve: {
     dedupe: ["react", "react-dom"],
     alias: {
