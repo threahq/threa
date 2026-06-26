@@ -15,10 +15,12 @@ let mockPreferences: {
   scratchpadCustomPrompt: string | null
   voiceTranscriptionModel: string | null
   voicePolishLevel: VoicePolishLevel
+  voiceSteeringWords: string[]
 } = {
   scratchpadCustomPrompt: "Current instructions",
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
+  voiceSteeringWords: [],
 }
 
 function extractText(node: JSONContent | undefined): string {
@@ -41,6 +43,7 @@ describe("AISettings", () => {
       scratchpadCustomPrompt: "Current instructions",
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
+      voiceSteeringWords: [],
     }
     updatePreferenceMock.mockClear()
 
@@ -216,9 +219,48 @@ describe("AISettings", () => {
       scratchpadCustomPrompt: null,
       voiceTranscriptionModel: null,
       voicePolishLevel: undefined as unknown as VoicePolishLevel,
+      voiceSteeringWords: [],
     }
     render(<AISettings />)
     const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
     expect(radio).toBeChecked()
+  })
+
+  it("shows the baked-in product terms as always-on, non-removable chips", () => {
+    render(<AISettings />)
+    // The product's own names are biased for everyone; they get no remove button.
+    expect(screen.getByText("Threa")).toBeInTheDocument()
+    expect(screen.getByText("Ariadne")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Remove Threa/i })).not.toBeInTheDocument()
+  })
+
+  it("adds a typed steering word on Enter", async () => {
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    const input = screen.getByLabelText("Add a dictation steering word")
+    await user.type(input, "Langfuse{Enter}")
+
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceSteeringWords", ["Langfuse"])
+  })
+
+  it("ignores a re-add of a baked-in term (no duplicate write)", async () => {
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    const input = screen.getByLabelText("Add a dictation steering word")
+    await user.type(input, "threa{Enter}")
+
+    expect(updatePreferenceMock).not.toHaveBeenCalled()
+  })
+
+  it("removes a saved steering word", async () => {
+    mockPreferences.voiceSteeringWords = ["Langfuse", "pgvector"]
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    await user.click(screen.getByRole("button", { name: "Remove Langfuse" }))
+
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceSteeringWords", ["pgvector"])
   })
 })

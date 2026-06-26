@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
 import { usePreferences } from "@/contexts"
+import { VoiceSteeringWords } from "./voice-steering-words"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { VOICE_TRANSCRIPTION_MODELS, type JSONContent, type VoicePolishLevel } from "@threa/types"
 
@@ -247,6 +248,10 @@ export function AISettings() {
           ))}
         </RadioGroup>
       </section>
+
+      <Separator />
+
+      <VoiceSteeringWords />
 
       <Separator />
 

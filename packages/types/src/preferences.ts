@@ -134,6 +134,24 @@ export const VoicePolishLevels = {
   OPINIONATED: "opinionated",
 } as const satisfies Record<string, VoicePolishLevel>
 
+// Voice steering words: custom spellings (product names, people, domain jargon)
+// the dictation pipeline is biased toward so they aren't mis-transcribed — e.g.
+// the speaker's "Threa" coming back as "Freya". These are the user's own
+// additions; the backend always prepends a small baked-in set (the product's own
+// names) on top, so an empty list still corrects the product vocabulary.
+// Bounds are shared by the settings UI and the backend validator. The per-term
+// cap is loose enough for short phrases; the tighter realtime provider limits
+// (ElevenLabs caps each keyterm at 20 chars) are enforced per-provider, not here.
+export const VOICE_STEERING_WORDS_MAX = 50
+export const VOICE_STEERING_WORD_MAX_LENGTH = 48
+
+// Product proper nouns the dictation pipeline always biases toward, prepended to
+// every user's own steering words server-side. These are names STT reliably
+// botches ("Threa" → "Freya"); baking them in makes the correction work for
+// everyone with zero setup. Shared so the settings UI can show them as
+// always-on without duplicating the list (INV-33).
+export const VOICE_STEERING_BASE_TERMS = ["Threa", "Ariadne"] as const
+
 // Voice transcription model picker options. The id is the registry id the
 // backend validates at session-open time. `null` means "use the server default"
 // (currently ElevenLabs Scribe v2 Realtime); the option list itself stays in
@@ -236,6 +254,12 @@ export interface UserPreferences {
    * per take.
    */
   voicePolishLevel: VoicePolishLevel
+  /**
+   * Custom spellings the dictation pipeline biases toward (product names, people,
+   * domain jargon). Merged with a baked-in set server-side, so `[]` still
+   * corrects the product's own vocabulary.
+   */
+  voiceSteeringWords: string[]
   keyboardShortcuts: KeyboardShortcuts
   accessibility: AccessibilityPreferences
   /**
@@ -281,6 +305,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
+  voiceSteeringWords: [],
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
   workSchedule: null,
@@ -308,6 +333,7 @@ export interface UpdateUserPreferencesInput {
   blockquoteCollapseThreshold?: number
   voiceTranscriptionModel?: string | null
   voicePolishLevel?: VoicePolishLevel
+  voiceSteeringWords?: string[]
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
   workSchedule?: WorkSchedule | null

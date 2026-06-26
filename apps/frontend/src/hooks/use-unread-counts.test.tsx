@@ -89,6 +89,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       blockquoteCollapseThreshold: 6,
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
+      voiceSteeringWords: [],
       statusPresets: [],
       workSchedule: null,
       gettingStartedDismissed: false,

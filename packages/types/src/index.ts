@@ -656,6 +656,10 @@ export {
   VOICE_POLISH_LEVEL_OPTIONS,
   type VoicePolishLevel,
   VoicePolishLevels,
+  // Voice steering words
+  VOICE_STEERING_WORDS_MAX,
+  VOICE_STEERING_WORD_MAX_LENGTH,
+  VOICE_STEERING_BASE_TERMS,
   // Settings tabs
   SETTINGS_TAB_OPTIONS,
   SETTINGS_TABS,

@@ -13,6 +13,8 @@ import {
   LINK_PREVIEW_DEFAULT_OPTIONS,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   VOICE_POLISH_LEVEL_OPTIONS,
+  VOICE_STEERING_WORDS_MAX,
+  VOICE_STEERING_WORD_MAX_LENGTH,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
@@ -50,6 +52,13 @@ const updatePreferencesSchema = z.object({
   // registry server-side when a session opens; this layer only bounds length.
   voiceTranscriptionModel: z.string().max(100).nullable().optional(),
   voicePolishLevel: z.enum(VOICE_POLISH_LEVEL_OPTIONS).optional(),
+  // Custom dictation steering words. Trimmed per entry (drops blank/whitespace);
+  // count and length bounded. Provider keyterm caps and the baked-in product
+  // terms are applied at session-open time, not here.
+  voiceSteeringWords: z
+    .array(z.string().trim().min(1).max(VOICE_STEERING_WORD_MAX_LENGTH))
+    .max(VOICE_STEERING_WORDS_MAX)
+    .optional(),
   // null clears the personal override (revert to the workspace default).
   workSchedule: workScheduleSchema.nullable().optional(),
   // Per-user custom status presets, additive to the workspace/system defaults.

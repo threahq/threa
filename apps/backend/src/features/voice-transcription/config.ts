@@ -4,8 +4,31 @@
  */
 
 import { parseModelId } from "@threa/agent-runtime"
+import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threa/types"
 
 export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
+
+/**
+ * Merge the baked-in product terms with the user's own steering words into the
+ * final biasing list: trimmed, blank-dropped, deduped case-insensitively (base
+ * terms win and stay first), and capped. Per-provider character/count limits are
+ * applied in each strategy, not here. Used both for STT keyterm biasing and as
+ * the polish model's spelling reference, so a take is corrected at both layers.
+ */
+export function resolveSteeringTerms(userTerms: readonly string[] | null | undefined): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of [...VOICE_STEERING_BASE_TERMS, ...(userTerms ?? [])]) {
+    const term = raw.trim()
+    if (!term) continue
+    const key = term.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(term)
+    if (out.length >= VOICE_STEERING_WORDS_MAX) break
+  }
+  return out
+}
 
 /** Status values for voice_sessions.status (validated in code, no DB enum — INV-3). */
 export const VOICE_SESSION_STATUSES = ["active", "finished", "aborted", "expired"] as const
@@ -53,6 +76,7 @@ export const POLISH_SHARED_HARD_RULES = `Hard rules:
 - Inline backticks only for words the speaker explicitly said as code (variable names, function names, file paths).
 - Do not invent headings, code blocks, links, or block quotes.
 - The user message may include "Existing draft text" sections: text already sitting in the user's composer around where the dictation will be inserted. Treat it as READ-ONLY context. Use it to spell names and terms the way the draft spells them, to resolve ambiguous words the speaker references, and to make the polished text flow with its surroundings (e.g. start lowercase with no leading period when the dictation continues a sentence from the before-text). NEVER include, repeat, continue, or rewrite the draft text in your output — output only the polished transcript.
+- The user message may include a "Spelling reference" list of names/terms. When a word in the transcript clearly matches one of them by sound but is spelled differently (a likely mis-transcription), replace it with the exact spelling from the list — e.g. with "Threa" in the reference, a transcribed "Freya" or "Theia" becomes "Threa". Match by sound, not language. Never insert a reference term the speaker did not say, and leave genuinely different words alone.
 - Output ONLY the polished transcript text. No commentary, no quotes around the result, no prefixes like "Here:" or "Polished:". Do not greet, do not add a leading newline.
 - If the raw text is already clean, return it unchanged.`
 

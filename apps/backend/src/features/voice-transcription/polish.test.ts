@@ -82,6 +82,29 @@ describe("createPolishTranscript", () => {
     })
   })
 
+  it("includes steering words as a spelling reference and tells the model to normalize mis-transcriptions", async () => {
+    const generateText = mock(async (_args: GenerateTextArgs) => textResult("Threa is great.") as never)
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+
+    await polish({
+      rawTranscript: "freya is great",
+      level: "opinionated",
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+      steeringTerms: ["Threa", "Ariadne"],
+    })
+
+    const call = generateText.mock.calls[0][0]
+    const userMessage = call.messages.find((m: { role: string }) => m.role === "user")?.content as string
+    expect(userMessage).toContain("Spelling reference")
+    expect(userMessage).toContain("Threa, Ariadne")
+
+    const sys = call.messages.find((m: { role: string }) => m.role === "system")?.content as string
+    expect(sys).toContain("Spelling reference")
+    expect(call.telemetry?.metadata).toMatchObject({ steeringTermCount: 2 })
+  })
+
   it("uses the minor-cleanup system prompt for level=minor", async () => {
     const generateText = mock(async (_args: GenerateTextArgs) => textResult("clean") as never)
     const polish = createPolishTranscript({ ai: fakeAI(generateText) })
@@ -249,6 +272,14 @@ describe("buildPolishUserMessage", () => {
     expect(message).toContain("Existing draft text before the insertion point")
     expect(message).toContain("draft start")
     expect(message).not.toContain("after the insertion point")
+  })
+
+  it("adds a Spelling reference section when steering terms are present, omits it otherwise", () => {
+    expect(buildPolishUserMessage({ rawTranscript: "hello", steeringTerms: ["Threa", "Langfuse"] })).toContain(
+      "Spelling reference (normalize mis-transcriptions to these exact spellings):\nThrea, Langfuse"
+    )
+    expect(buildPolishUserMessage({ rawTranscript: "hello", steeringTerms: [] })).not.toContain("Spelling reference")
+    expect(buildPolishUserMessage({ rawTranscript: "hello" })).not.toContain("Spelling reference")
   })
 })
 

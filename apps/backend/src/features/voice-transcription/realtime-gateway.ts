@@ -6,7 +6,7 @@ import { VOICE_DRAFT_CONTEXT_MAX_CHARS, type VoicePolishLevel } from "@threa/typ
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
-import { voiceConfig } from "./config"
+import { voiceConfig, resolveSteeringTerms } from "./config"
 import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
 import type { PolishTranscript } from "./polish"
@@ -50,6 +50,12 @@ interface RelayState {
    * "none" ships finals as plain deltas with no chunkId and no tracking.
    */
   polishLevel: VoicePolishLevel
+  /**
+   * Resolved once at start (baked-in product terms ∪ the user's steering words).
+   * Reused for every polish pass as the spelling reference; the STT-layer
+   * biasing already consumed it when the upstream session opened.
+   */
+  steeringTerms: string[]
   /**
    * Stable chunkId for the whole session: every final and polished event
    * carries it, so the editor extends/replaces a single tracked range.
@@ -198,14 +204,22 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         // Resolve once per session so a mid-session pref change can't shift
         // behavior for an in-flight take and break the editor's chunk tracker.
         let polishLevel: VoicePolishLevel = "none"
+        // Default to the baked-in product terms so "Threa" is still biased even
+        // if the prefs lookup fails — the steering correction must never be lost.
+        let steeringTerms: string[] = resolveSteeringTerms(null)
         try {
           const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
           polishLevel = prefs.voicePolishLevel
+          steeringTerms = resolveSteeringTerms(prefs.voiceSteeringWords)
         } catch (err) {
           logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs lookup failed; defaulting polish off")
         }
 
-        const upstream = await transcription.open({ model: row.model, language: row.language ?? undefined })
+        const upstream = await transcription.open({
+          model: row.model,
+          language: row.language ?? undefined,
+          vocabulary: steeringTerms,
+        })
 
         // The socket disconnected while we were opening upstream — there is no
         // longer anyone to relay to, so tear down what we just built.
@@ -250,6 +264,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
                 sessionId: polishingState.voiceSessionId,
                 draftBefore: polishingState.draftBefore,
                 draftAfter: polishingState.draftAfter,
+                steeringTerms: polishingState.steeringTerms,
               })
               if (state !== polishingState || polishingState.finalized) return
               socket.emit("voice:transcript:polished", {
@@ -353,6 +368,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           maxDurationTimer,
           finalized: false,
           polishLevel,
+          steeringTerms,
           sessionChunkId,
           rawFinals: [],
           lastInterim: "",
