@@ -256,6 +256,19 @@ describe("AISettings", () => {
     expect(screen.getByText(/already included/i)).toBeInTheDocument()
   })
 
+  it("disables the steering-word input until preferences have loaded (no clobber from an empty baseline)", () => {
+    // Before IDB hydrates, usePreferences returns null; writing then would
+    // replace the user's saved words with a list built from an empty snapshot.
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: null,
+      updatePreference: updatePreferenceMock,
+      isLoading: false,
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    render(<AISettings />)
+
+    expect(screen.getByLabelText("Add a dictation steering word")).toBeDisabled()
+  })
+
   it("removes a saved steering word", async () => {
     mockPreferences.voiceSteeringWords = ["Langfuse", "pgvector"]
     const user = userEvent.setup()

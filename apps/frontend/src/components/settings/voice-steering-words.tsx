@@ -24,11 +24,15 @@ export function VoiceSteeringWords() {
   const [notice, setNotice] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Until IDB hydrates, `preferences` is null and `words` collapses to []. Block
+  // writes during that window so a stray add/remove can't replace the user's
+  // saved list with an empty-baseline snapshot.
+  const preferencesReady = preferences != null
   const atLimit = words.length >= VOICE_STEERING_WORDS_MAX
 
   const addWord = () => {
     const term = draft.trim()
-    if (!term || isLoading || atLimit) return
+    if (!term || !preferencesReady || isLoading || atLimit) return
     // Dedupe case-insensitively against both the user's list and the baked-in
     // terms — re-adding "Threa" is a no-op, not a duplicate chip.
     const existing = new Set([...words, ...VOICE_STEERING_BASE_TERMS].map((w) => w.toLowerCase()))
@@ -47,7 +51,7 @@ export function VoiceSteeringWords() {
   }
 
   const removeWord = (term: string) => {
-    if (isLoading) return
+    if (!preferencesReady || isLoading) return
     void updatePreference(
       "voiceSteeringWords",
       words.filter((w) => w !== term)
@@ -82,11 +86,16 @@ export function VoiceSteeringWords() {
           }}
           onKeyDown={handleKeyDown}
           maxLength={VOICE_STEERING_WORD_MAX_LENGTH}
-          disabled={isLoading || atLimit}
+          disabled={!preferencesReady || isLoading || atLimit}
           placeholder={atLimit ? "Word limit reached" : "Add a word or name, then press Enter"}
           aria-label="Add a dictation steering word"
         />
-        <Button type="button" variant="outline" onClick={addWord} disabled={isLoading || atLimit || !draft.trim()}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={addWord}
+          disabled={!preferencesReady || isLoading || atLimit || !draft.trim()}
+        >
           <Plus className="h-4 w-4" />
           Add
         </Button>
