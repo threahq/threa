@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useImperativeHandle } from "react"
 import { AISettings } from "./ai-settings"
-import type { JSONContent, VoicePolishLevel } from "@threa/types"
+import type { JSONContent } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 import * as encryptionModule from "@/components/encryption"
@@ -13,14 +13,8 @@ const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)
 
 let mockPreferences: {
   scratchpadCustomPrompt: string | null
-  voiceTranscriptionModel: string | null
-  voicePolishLevel: VoicePolishLevel
-  voiceSteeringWords: string[]
 } = {
   scratchpadCustomPrompt: "Current instructions",
-  voiceTranscriptionModel: null,
-  voicePolishLevel: "opinionated",
-  voiceSteeringWords: [],
 }
 
 function extractText(node: JSONContent | undefined): string {
@@ -41,9 +35,6 @@ describe("AISettings", () => {
     vi.restoreAllMocks()
     mockPreferences = {
       scratchpadCustomPrompt: "Current instructions",
-      voiceTranscriptionModel: null,
-      voicePolishLevel: "opinionated",
-      voiceSteeringWords: [],
     }
     updatePreferenceMock.mockClear()
 
@@ -149,133 +140,5 @@ describe("AISettings", () => {
     await user.click(screen.getByRole("button", { name: "Reset" }))
 
     expect(editor.value).toBe("Current instructions")
-  })
-
-  it("selects 'Use server default' when no voice model preference is set", () => {
-    render(<AISettings />)
-
-    const defaultRadio = screen.getByRole("radio", { name: /Use server default/i }) as HTMLInputElement
-    expect(defaultRadio).toBeChecked()
-  })
-
-  it("saves the chosen voice transcription model", async () => {
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    await user.click(screen.getByRole("radio", { name: /Deepgram Nova-3/i }))
-
-    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceTranscriptionModel", "deepgram:nova-3")
-  })
-
-  it("clears the voice transcription override when 'Use server default' is picked", async () => {
-    mockPreferences.voiceTranscriptionModel = "deepgram:nova-3"
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    await user.click(screen.getByRole("radio", { name: /Use server default/i }))
-
-    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceTranscriptionModel", null)
-  })
-
-  it("shows the currently saved voice transcription model as selected", () => {
-    mockPreferences.voiceTranscriptionModel = "elevenlabs:scribe-v2-realtime"
-    render(<AISettings />)
-
-    const elevenLabsRadio = screen.getByRole("radio", { name: /ElevenLabs Scribe v2/i }) as HTMLInputElement
-    expect(elevenLabsRadio).toBeChecked()
-  })
-
-  it("shows Opinionated as the selected polish level by default", () => {
-    render(<AISettings />)
-    const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
-    expect(radio).toBeChecked()
-  })
-
-  it("saves the chosen polish level", async () => {
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    await user.click(screen.getByRole("radio", { name: /^Minor$/i }))
-    expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishLevel", "minor")
-  })
-
-  it("turns polish off when the Off level is selected", async () => {
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    await user.click(screen.getByRole("radio", { name: /^Off$/i }))
-    expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishLevel", "none")
-  })
-
-  it("reflects a saved 'minor' preference", () => {
-    mockPreferences.voicePolishLevel = "minor"
-    render(<AISettings />)
-    const minorRadio = screen.getByRole("radio", { name: /^Minor$/i }) as HTMLInputElement
-    expect(minorRadio).toBeChecked()
-  })
-
-  it("defaults to Opinionated when the preference is missing", () => {
-    mockPreferences = {
-      scratchpadCustomPrompt: null,
-      voiceTranscriptionModel: null,
-      voicePolishLevel: undefined as unknown as VoicePolishLevel,
-      voiceSteeringWords: [],
-    }
-    render(<AISettings />)
-    const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
-    expect(radio).toBeChecked()
-  })
-
-  it("shows the baked-in product terms as always-on, non-removable chips", () => {
-    render(<AISettings />)
-    // The product's own names are biased for everyone; they get no remove button.
-    expect(screen.getByText("Threa")).toBeInTheDocument()
-    expect(screen.getByText("Ariadne")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Remove Threa/i })).not.toBeInTheDocument()
-  })
-
-  it("adds a typed steering word on Enter", async () => {
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    const input = screen.getByLabelText("Add a dictation steering word")
-    await user.type(input, "Langfuse{Enter}")
-
-    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceSteeringWords", ["Langfuse"])
-  })
-
-  it("ignores a re-add of a baked-in term and explains why instead of silently clearing", async () => {
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    const input = screen.getByLabelText("Add a dictation steering word")
-    await user.type(input, "threa{Enter}")
-
-    expect(updatePreferenceMock).not.toHaveBeenCalled()
-    // The rejected add surfaces a reason rather than a confusing silent clear.
-    expect(screen.getByText(/already included/i)).toBeInTheDocument()
-  })
-
-  it("disables the steering-word input until preferences have loaded (no clobber from an empty baseline)", () => {
-    // Before IDB hydrates, usePreferences returns null; writing then would
-    // replace the user's saved words with a list built from an empty snapshot.
-    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
-      preferences: null,
-      updatePreference: updatePreferenceMock,
-      isLoading: false,
-    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
-    render(<AISettings />)
-
-    expect(screen.getByLabelText("Add a dictation steering word")).toBeDisabled()
-  })
-
-  it("removes a saved steering word", async () => {
-    mockPreferences.voiceSteeringWords = ["Langfuse", "pgvector"]
-    const user = userEvent.setup()
-    render(<AISettings />)
-
-    await user.click(screen.getByRole("button", { name: "Remove Langfuse" }))
-
-    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceSteeringWords", ["pgvector"])
   })
 })

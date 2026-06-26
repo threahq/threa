@@ -20,8 +20,13 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   },
   ai: {
     label: "AI",
-    description: "Scratchpad behavior, guidance, and voice dictation",
-    keywords: ["voice", "dictation", "transcription", "polish", "prompt", "companion"],
+    description: "Scratchpad guidance and behavior",
+    keywords: ["scratchpad", "prompt", "guidance", "companion", "ariadne", "instructions"],
+  },
+  dictation: {
+    label: "Dictation",
+    description: "Voice model, polish, and steering words",
+    keywords: ["voice", "dictation", "transcription", "polish", "steering", "speech", "mic"],
   },
   appearance: {
     label: "Appearance",

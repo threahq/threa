@@ -178,6 +178,7 @@ export const VOICE_TRANSCRIPTION_MODELS: readonly VoiceTranscriptionModelOption[
 export const SETTINGS_TAB_OPTIONS = [
   "profile",
   "ai",
+  "dictation",
   "appearance",
   "datetime",
   "schedule",
