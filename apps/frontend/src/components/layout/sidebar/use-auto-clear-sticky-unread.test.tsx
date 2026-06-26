@@ -3,12 +3,9 @@ import { renderHook, act } from "@testing-library/react"
 import { useAutoClearStickyUnread } from "./use-auto-clear-sticky-unread"
 
 let hasFocus = true
-let visibilityState: DocumentVisibilityState = "visible"
 
-const originalVisibilityState = Object.getOwnPropertyDescriptor(document, "visibilityState")
-
-/** Drive the focus/visibility the hook reads via `usePageActivity`, then fire
- *  the listeners that hook subscribes to so its state re-reads. */
+/** Drive the focus the hook reads via `usePageActivity`, then fire the window
+ *  listeners that hook subscribes to so its state re-reads. */
 function setFocus(focused: boolean) {
   hasFocus = focused
   act(() => {
@@ -20,18 +17,12 @@ describe("useAutoClearStickyUnread", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     hasFocus = true
-    visibilityState = "visible"
     vi.spyOn(document, "hasFocus").mockImplementation(() => hasFocus)
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      get: () => visibilityState,
-    })
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     vi.useRealTimers()
-    if (originalVisibilityState) Object.defineProperty(document, "visibilityState", originalVisibilityState)
   })
 
   it("flushes read residue when the sidebar becomes hidden", () => {
