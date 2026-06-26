@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { PenSquare, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -30,9 +30,33 @@ const POSTABLE_TYPES = new Set<string>([StreamTypes.CHANNEL, StreamTypes.DM])
 const NEW_SCRATCHPAD = "new:scratchpad"
 const NEW_QUICK_NOTE = "new:quick-note"
 
-// One durable draft for the board's "New post" composer, independent of any
-// target (the target is separate UI state, chosen per post).
+// One durable draft for the board's "New post" composer body.
 const BOARD_DRAFT_KEY = "board:new-post"
+
+// The chosen target is persisted alongside the body draft so reopening the
+// composer (or reloading the page) restores the whole in-progress post, not just
+// the text — a restored body with a silently-cleared target would leave the send
+// disabled with no explanation. Cleared once the post is sent.
+const boardTargetStorageKey = (workspaceId: string) => `board:new-post:target:${workspaceId}`
+
+function readStoredTarget(workspaceId: string): string {
+  try {
+    return localStorage.getItem(boardTargetStorageKey(workspaceId)) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+function writeStoredTarget(workspaceId: string, value: string): void {
+  // Best-effort: localStorage can throw (private mode / quota). The target falls
+  // back to in-memory state, so a failure just means it won't survive a reload.
+  try {
+    if (value) localStorage.setItem(boardTargetStorageKey(workspaceId), value)
+    else localStorage.removeItem(boardTargetStorageKey(workspaceId))
+  } catch {
+    /* ignore */
+  }
+}
 
 /**
  * Existing streams a board post can target: live channels and DMs. Scratchpads
@@ -85,8 +109,29 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
 
   const postableStreams = useMemo(() => streams.filter(isPostableStream), [streams])
 
-  // The selected Select value: a sentinel ("new:…") or a stream id.
-  const [targetValue, setTargetValue] = useState("")
+  // The selected Select value: a sentinel ("new:…") or a stream id. Seeded from
+  // (and written back to) localStorage so it stays in sync with the durable body
+  // draft across reopen/reload.
+  const [targetValue, setTargetValue] = useState(() => readStoredTarget(workspaceId))
+  const handleTargetChange = useCallback(
+    (value: string) => {
+      setTargetValue(value)
+      writeStoredTarget(workspaceId, value)
+    },
+    [workspaceId]
+  )
+
+  // A persisted stream-id target can go stale (archived, left, deleted). Once the
+  // postable list has loaded, drop a target that's no longer selectable so the
+  // composer can't post to a stream the user can't see. Sentinels are always valid.
+  useEffect(() => {
+    if (!targetValue || targetValue === NEW_SCRATCHPAD || targetValue === NEW_QUICK_NOTE) return
+    if (streams.length > 0 && !postableStreams.some((s) => s.id === targetValue)) {
+      setTargetValue("")
+      writeStoredTarget(workspaceId, "")
+    }
+  }, [targetValue, postableStreams, streams.length, workspaceId])
+
   // Only an existing-stream target has a stream object for mention context; a
   // "new scratchpad" target has no stream yet.
   const selectedStream = useMemo<CachedStream | undefined>(
@@ -118,6 +163,7 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
+      writeStoredTarget(workspaceId, "")
       onClose()
     } catch {
       toast.error("Couldn't post to the board. Please try again.")
@@ -129,8 +175,8 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
   return (
     <div className="mb-3 rounded-xl border bg-card p-3 sm:p-4">
       <div className="mb-2 flex items-center gap-2">
-        <Select value={targetValue} onValueChange={setTargetValue}>
-          <SelectTrigger className="h-8 w-auto min-w-[180px] text-sm">
+        <Select value={targetValue} onValueChange={handleTargetChange}>
+          <SelectTrigger className="h-8 min-w-0 flex-1 text-sm">
             <SelectValue placeholder="Post to…" />
           </SelectTrigger>
           <SelectContent>
