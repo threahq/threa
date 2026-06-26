@@ -87,6 +87,7 @@ function BoardReplyComposerForm({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
         hostStreamType,
+        messageCount: post.conversation.messageIds.length,
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       })

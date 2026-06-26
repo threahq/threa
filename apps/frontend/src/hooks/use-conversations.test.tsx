@@ -9,7 +9,13 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as draftScratchpadsModule from "./use-draft-scratchpads"
 import * as queueDraftModule from "./use-queue-draft-message"
 import { SocketEventGate } from "@/sync/socket-event-gate"
-import { useConversations, useCreateBoardPost, useReplyToBoardPost, conversationKeys } from "./use-conversations"
+import {
+  useConversations,
+  useCreateBoardPost,
+  useReplyToBoardPost,
+  planBoardReply,
+  conversationKeys,
+} from "./use-conversations"
 
 const WORKSPACE_ID = "ws_1"
 const STREAM_ID = "stream_1"
@@ -240,6 +246,48 @@ describe("useCreateBoardPost", () => {
   })
 })
 
+describe("planBoardReply", () => {
+  it("threads a lone root message in a channel or DM off the opening message", () => {
+    expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 1, openingMessageId: "m1" })).toEqual({
+      kind: "newThread",
+      parentMessageId: "m1",
+    })
+    expect(planBoardReply({ hostStreamType: StreamTypes.DM, messageCount: 1, openingMessageId: "m1" })).toEqual({
+      kind: "newThread",
+      parentMessageId: "m1",
+    })
+  })
+
+  it("keeps a flat conversation with replies flat — no stray thread", () => {
+    expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 3, openingMessageId: "m1" })).toEqual({
+      kind: "intoConversation",
+    })
+    expect(planBoardReply({ hostStreamType: StreamTypes.DM, messageCount: 2, openingMessageId: "m1" })).toEqual({
+      kind: "intoConversation",
+    })
+  })
+
+  it("replies into a thread conversation's own stream, even when it holds a single message", () => {
+    expect(planBoardReply({ hostStreamType: StreamTypes.THREAD, messageCount: 1, openingMessageId: "m1" })).toEqual({
+      kind: "intoConversation",
+    })
+  })
+
+  it("never threads a scratchpad, even a lone one", () => {
+    expect(planBoardReply({ hostStreamType: StreamTypes.SCRATCHPAD, messageCount: 1, openingMessageId: "m1" })).toEqual(
+      {
+        kind: "intoConversation",
+      }
+    )
+  })
+
+  it("stays flat when a lone root has been deleted (no anchor to thread off)", () => {
+    expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 1, openingMessageId: null })).toEqual({
+      kind: "intoConversation",
+    })
+  })
+})
+
 describe("useReplyToBoardPost", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -259,7 +307,7 @@ describe("useReplyToBoardPost", () => {
 
   const DOC = { type: "doc", content: [] }
 
-  it("threads a channel reply off the opening message, then sends into the thread (no directive)", async () => {
+  it("threads a lone channel root off the opening message, then sends into the thread (no directive)", async () => {
     const { create, createStream } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
@@ -269,6 +317,7 @@ describe("useReplyToBoardPost", () => {
         conversation: { id: "conv_1", streamId: "chan_1" },
         openingMessageId: "msg_open",
         hostStreamType: StreamTypes.CHANNEL,
+        messageCount: 1,
         contentJson: DOC,
       })
     })
@@ -287,16 +336,17 @@ describe("useReplyToBoardPost", () => {
     expect(create.mock.calls[0][2]).not.toHaveProperty("conversation")
   })
 
-  it("attaches a DM reply to the conversation via the existing directive (no thread)", async () => {
+  it("keeps a multi-message channel reply flat, attached to the conversation (no thread)", async () => {
     const { create, createStream } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
     await act(async () => {
       await result.current.mutateAsync({
-        conversation: { id: "conv_dm", streamId: "dm_1" },
+        conversation: { id: "conv_1", streamId: "chan_1" },
         openingMessageId: "msg_open",
-        hostStreamType: StreamTypes.DM,
+        hostStreamType: StreamTypes.CHANNEL,
+        messageCount: 3,
         contentJson: DOC,
       })
     })
@@ -304,10 +354,10 @@ describe("useReplyToBoardPost", () => {
     expect(createStream).not.toHaveBeenCalled()
     expect(create).toHaveBeenCalledWith(
       WORKSPACE_ID,
-      "dm_1",
+      "chan_1",
       expect.objectContaining({
-        streamId: "dm_1",
-        conversation: { intent: "existing", conversationId: "conv_dm" },
+        streamId: "chan_1",
+        conversation: { intent: "existing", conversationId: "conv_1" },
       })
     )
   })
@@ -322,6 +372,7 @@ describe("useReplyToBoardPost", () => {
         conversation: { id: "conv_thread", streamId: "thread_x" },
         openingMessageId: "msg_open",
         hostStreamType: StreamTypes.THREAD,
+        messageCount: 2,
         contentJson: DOC,
       })
     })
@@ -331,28 +382,6 @@ describe("useReplyToBoardPost", () => {
       WORKSPACE_ID,
       "thread_x",
       expect.objectContaining({ conversation: { intent: "existing", conversationId: "conv_thread" } })
-    )
-  })
-
-  it("falls back to a conversation-attached message when a channel post has no opening message", async () => {
-    const { create, createStream } = mockReplyDeps()
-    const { wrapper } = createWrapper()
-    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
-
-    await act(async () => {
-      await result.current.mutateAsync({
-        conversation: { id: "conv_1", streamId: "chan_1" },
-        openingMessageId: null,
-        hostStreamType: StreamTypes.CHANNEL,
-        contentJson: DOC,
-      })
-    })
-
-    expect(createStream).not.toHaveBeenCalled()
-    expect(create).toHaveBeenCalledWith(
-      WORKSPACE_ID,
-      "chan_1",
-      expect.objectContaining({ conversation: { intent: "existing", conversationId: "conv_1" } })
     )
   })
 })
