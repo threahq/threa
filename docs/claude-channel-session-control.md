@@ -189,20 +189,20 @@ Commands chosen for v1: **stop, steer, model, compact, run**. Dropped from Pi's 
 have — fold into generic `run`). `shell` could be added later as a direct exec in the channel
 (like Pi's `runShellCommand`), independent of tmux.
 
-`run` is a **new generic command** (arg = slash command to type, e.g. `run /remote-control`). It
-must be added to the canonical name list + catalog. Open UX question for Kris: `run` vs surfacing
-named passthroughs. The canonical list/identifiers should be renamed
-`PI_SESSION_CONTROL_*` → `SESSION_CONTROL_*` (now shared; INV-49 — no deprecated alias) and the
-catalog descriptions made runtime-neutral ("the linked session", not "the linked Pi session", per
-INV-46).
+`run` is a **new generic command** (arg = slash command to type, e.g. `run /remote-control`),
+added to the canonical name list + catalog. Open UX question for Kris: `run` vs surfacing named
+passthroughs. The canonical list/identifiers were renamed `PI_SESSION_CONTROL_*` →
+`SESSION_CONTROL_*` / `resolvePiRuntimeCommandTarget` → `resolveRuntimeCommandTarget` /
+`PiRuntimeCommandTarget` → `RuntimeCommandTarget` (now shared across runtimes), and the catalog
+descriptions made runtime-neutral ("the linked session", not "the linked Pi session").
 
 ## Precise change list
 
 **Backend** (`apps/backend/src`)
 
-- `features/commands/availability.ts:178` — widen the gate to allow `claude-code-channel`
-  (and rename `resolvePiRuntimeCommandTarget` → `resolveRuntimeCommandTarget`,
-  `PiRuntimeCommandTarget` → `RuntimeCommandTarget`).
+- `features/commands/availability.ts` — widened the gate to allow `claude-code-channel`; renamed
+  `resolvePiRuntimeCommandTarget` → `resolveRuntimeCommandTarget`,
+  `PiRuntimeCommandTarget` → `RuntimeCommandTarget`.
 - `features/commands/handlers.ts:24-44` — `resolveRuntimeInvocationRouting(name, runtimeKind)`;
   claude steer/stop → `session-control`.
 - `features/commands/catalog.ts` — rename `PI_SESSION_CONTROL_COMMAND_NAMES` →

@@ -6,7 +6,7 @@ import type { CommandRegistry } from "./registry"
 // the subset it advertises in `capabilities.sessionControlCommands`, so commands
 // one runtime can't actuate (e.g. `run`/`compact` for Claude, `skill`/`reload`
 // for Pi) never surface for the other.
-export const PI_SESSION_CONTROL_COMMAND_NAMES = [
+export const SESSION_CONTROL_COMMAND_NAMES = [
   "compact",
   "model",
   "thinking",
@@ -17,7 +17,7 @@ export const PI_SESSION_CONTROL_COMMAND_NAMES = [
   "stop",
   "run",
 ] as const
-export type PiSessionControlCommandName = (typeof PI_SESSION_CONTROL_COMMAND_NAMES)[number]
+export type SessionControlCommandName = (typeof SESSION_CONTROL_COMMAND_NAMES)[number]
 
 export function listServerCommandInfos(commandRegistry: CommandRegistry): CommandInfo[] {
   return commandRegistry.getCommandNames().map((name) => {
@@ -47,7 +47,7 @@ export function listWorkspaceCommandInfos(commandRegistry: CommandRegistry): Com
   return [...listServerCommandInfos(commandRegistry), ...listClientActionCommandInfos()]
 }
 
-export function listPiSessionControlCommandInfos(): CommandInfo[] {
+export function listSessionControlCommandInfos(): CommandInfo[] {
   return [
     {
       name: "compact",

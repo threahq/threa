@@ -3,12 +3,8 @@ export { createCommandHandlers } from "./handlers"
 export { CommandRegistry, parseCommand, isCommand } from "./registry"
 export type { Command, CommandContext, CommandResult } from "./registry"
 export { CommandAvailabilityService } from "./availability"
-export type { ResolvedCommand, PiRuntimeCommandTarget } from "./availability"
-export {
-  PI_SESSION_CONTROL_COMMAND_NAMES,
-  listWorkspaceCommandInfos,
-  listPiSessionControlCommandInfos,
-} from "./catalog"
+export type { ResolvedCommand, RuntimeCommandTarget } from "./availability"
+export { SESSION_CONTROL_COMMAND_NAMES, listWorkspaceCommandInfos, listSessionControlCommandInfos } from "./catalog"
 export {
   buildRuntimeCommandInvocationMetadata,
   parseRuntimeCommandInvocationMetadata,

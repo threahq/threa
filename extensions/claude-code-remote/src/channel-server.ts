@@ -630,19 +630,28 @@ export class ChannelServer {
 
   /** Close every in-flight turn that an interrupt just aborted, so none idle-hangs for an hour. */
   private async completeInterruptedTurns(note: string): Promise<void> {
-    for (const [id, entry] of [...this.inflight]) {
+    // Clear every entry's timer and drop it from the map BEFORE the first await.
+    // If we cleared-and-completed one at a time, a sibling's idle-timeout could
+    // fire at a `complete()` yield point, find itself still in the map, and
+    // complete itself — then this loop double-completes it.
+    const entries = [...this.inflight]
+    for (const [id, entry] of entries) {
       this.clearInflight(id)
       if (this.activeTurnStreamId === entry.invocation.responseStreamId) this.activeTurnStreamId = undefined
-      const body = entry.sentCount > 0 ? { noResponse: true } : { finalMessageMarkdown: `_${note}_` }
-      await this.client
-        .complete(id, {
-          instanceId: this.config.instanceId,
-          claimToken: entry.invocation.claimToken,
-          ...body,
-          metadata: { "cc.channel.invocationId": id, "cc.channel.interrupted": "true" },
-        })
-        .catch((error) => log(`interrupted-turn close failed: ${this.summarize(error)}`))
     }
+    await Promise.all(
+      entries.map(([id, entry]) => {
+        const body = entry.sentCount > 0 ? { noResponse: true } : { finalMessageMarkdown: `_${note}_` }
+        return this.client
+          .complete(id, {
+            instanceId: this.config.instanceId,
+            claimToken: entry.invocation.claimToken,
+            ...body,
+            metadata: { "cc.channel.invocationId": id, "cc.channel.interrupted": "true" },
+          })
+          .catch((error) => log(`interrupted-turn close failed: ${this.summarize(error)}`))
+      })
+    )
   }
 
   /** The prompt + history Claude reads, with any downloaded attachments appended as a manifest. */
