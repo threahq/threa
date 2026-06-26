@@ -244,7 +244,7 @@ describe("AISettings", () => {
     expect(updatePreferenceMock).toHaveBeenCalledWith("voiceSteeringWords", ["Langfuse"])
   })
 
-  it("ignores a re-add of a baked-in term (no duplicate write)", async () => {
+  it("ignores a re-add of a baked-in term and explains why instead of silently clearing", async () => {
     const user = userEvent.setup()
     render(<AISettings />)
 
@@ -252,6 +252,8 @@ describe("AISettings", () => {
     await user.type(input, "threa{Enter}")
 
     expect(updatePreferenceMock).not.toHaveBeenCalled()
+    // The rejected add surfaces a reason rather than a confusing silent clear.
+    expect(screen.getByText(/already included/i)).toBeInTheDocument()
   })
 
   it("removes a saved steering word", async () => {

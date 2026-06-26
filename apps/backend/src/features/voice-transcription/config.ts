@@ -25,7 +25,11 @@ export function resolveSteeringTerms(userTerms: readonly string[] | null | undef
     if (seen.has(key)) continue
     seen.add(key)
     out.push(term)
-    if (out.length >= VOICE_STEERING_WORDS_MAX) break
+    // Cap at the user max PLUS the baked-in terms, so a full 50-word user list
+    // is never silently truncated by the product terms taking the first slots.
+    // Still far inside Deepgram's 500-token budget; ElevenLabs clamps to its own
+    // 50-term limit in that strategy.
+    if (out.length >= VOICE_STEERING_WORDS_MAX + VOICE_STEERING_BASE_TERMS.length) break
   }
   return out
 }

@@ -22,11 +22,17 @@ describe("resolveSteeringTerms", () => {
     expect(resolveSteeringTerms(["threa", "ARIADNE", "Langfuse", "langfuse"])).toEqual(["Threa", "Ariadne", "Langfuse"])
   })
 
-  it("caps the merged list at the shared maximum", () => {
-    const many = Array.from({ length: VOICE_STEERING_WORDS_MAX + 20 }, (_, i) => `term${i}`)
-    const result = resolveSteeringTerms(many)
-    expect(result).toHaveLength(VOICE_STEERING_WORDS_MAX)
-    // Baked-in terms are never dropped by the cap.
+  it("keeps every word of a full user list, with the baked-in terms on top (not displacing them)", () => {
+    const userWords = Array.from({ length: VOICE_STEERING_WORDS_MAX }, (_, i) => `term${i}`)
+    const result = resolveSteeringTerms(userWords)
+    // The cap accounts for the baked-in terms, so all 50 user words survive.
+    expect(result).toHaveLength(VOICE_STEERING_WORDS_MAX + VOICE_STEERING_BASE_TERMS.length)
+    for (const w of userWords) expect(result).toContain(w)
     expect(result[0]).toBe("Threa")
+  })
+
+  it("caps an over-long user list at the user max plus the baked-in terms", () => {
+    const many = Array.from({ length: VOICE_STEERING_WORDS_MAX + 20 }, (_, i) => `term${i}`)
+    expect(resolveSteeringTerms(many)).toHaveLength(VOICE_STEERING_WORDS_MAX + VOICE_STEERING_BASE_TERMS.length)
   })
 })

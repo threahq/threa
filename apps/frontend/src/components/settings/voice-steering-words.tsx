@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from "react"
+import { useRef, useState, type KeyboardEvent } from "react"
 import { Plus, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,10 @@ export function VoiceSteeringWords() {
   const { preferences, updatePreference, isLoading } = usePreferences()
   const words = preferences?.voiceSteeringWords ?? []
   const [draft, setDraft] = useState("")
+  // A rejected add (duplicate / already baked-in) otherwise just clears the
+  // field, which reads as a silent failure — surface the reason instead.
+  const [notice, setNotice] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const atLimit = words.length >= VOICE_STEERING_WORDS_MAX
 
@@ -29,11 +33,17 @@ export function VoiceSteeringWords() {
     // terms — re-adding "Threa" is a no-op, not a duplicate chip.
     const existing = new Set([...words, ...VOICE_STEERING_BASE_TERMS].map((w) => w.toLowerCase()))
     if (existing.has(term.toLowerCase())) {
+      setNotice(`"${term}" is already included.`)
       setDraft("")
+      inputRef.current?.focus()
       return
     }
+    setNotice(null)
     void updatePreference("voiceSteeringWords", [...words, term.slice(0, VOICE_STEERING_WORD_MAX_LENGTH)])
     setDraft("")
+    // Tag entry is a rapid-fire gesture; keep the caret in the field so a
+    // mouse user clicking "Add" can keep typing without re-clicking.
+    inputRef.current?.focus()
   }
 
   const removeWord = (term: string) => {
@@ -64,8 +74,12 @@ export function VoiceSteeringWords() {
 
       <div className="flex gap-2">
         <Input
+          ref={inputRef}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            if (notice) setNotice(null)
+          }}
           onKeyDown={handleKeyDown}
           maxLength={VOICE_STEERING_WORD_MAX_LENGTH}
           disabled={isLoading || atLimit}
@@ -78,6 +92,11 @@ export function VoiceSteeringWords() {
         </Button>
       </div>
 
+      {/* Reserved line so showing/clearing the notice doesn't shift the chips (INV-21). */}
+      <p className="min-h-[1rem] text-xs text-muted-foreground" aria-live="polite">
+        {notice}
+      </p>
+
       <div className="flex flex-wrap gap-2">
         {VOICE_STEERING_BASE_TERMS.map((term) => (
           <Badge key={`base-${term}`} variant="secondary" className="gap-1 font-normal">
@@ -86,13 +105,13 @@ export function VoiceSteeringWords() {
           </Badge>
         ))}
         {words.map((term) => (
-          <Badge key={term} variant="outline" className="gap-1 font-normal">
+          <Badge key={term} variant="outline" className="gap-1 pr-1 font-normal">
             {term}
             <button
               type="button"
               onClick={() => removeWord(term)}
               disabled={isLoading}
-              className="-mr-1 rounded-full p-0.5 hover:bg-muted disabled:opacity-50"
+              className="rounded-full p-1.5 hover:bg-muted disabled:opacity-50"
               aria-label={`Remove ${term}`}
             >
               <X className="h-3 w-3" />
