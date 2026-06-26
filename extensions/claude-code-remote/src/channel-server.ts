@@ -513,15 +513,18 @@ export class ChannelServer {
   }
 
   private async runStop(invocation: ClaimedInvocation): Promise<void> {
+    // If the interrupt can't be sent (pane gone), Claude is still running — don't
+    // close its in-flight turns as if we stopped them; just report the failure.
+    if (!interrupt()) {
+      await this.completeAck(invocation, "Could not send the interrupt (no tmux control).")
+      return
+    }
     const hadTurn = this.inflight.size > 0
-    const sent = interrupt()
     await this.completeInterruptedTurns("Stopped by /stop.")
-    const ack = !sent
-      ? "Could not send the interrupt (no tmux control)."
-      : hadTurn
-        ? "Stopped the current Claude Code turn."
-        : "Sent an interrupt to Claude Code."
-    await this.completeAck(invocation, ack)
+    await this.completeAck(
+      invocation,
+      hadTurn ? "Stopped the current Claude Code turn." : "Sent an interrupt to Claude Code."
+    )
     await this.syncPresence()
   }
 
@@ -532,7 +535,13 @@ export class ChannelServer {
    * round-trips through the normal notification path so Claude replies to it.
    */
   private async runSteer(invocation: ClaimedInvocation, text: string): Promise<void> {
-    interrupt()
+    // If the interrupt can't be sent (pane gone), bail before any destructive
+    // side-effect — don't close the running turn or deliver the steer as a
+    // second concurrent turn against a Claude we couldn't actually interrupt.
+    if (!interrupt()) {
+      await this.completeAck(invocation, "Could not interrupt Claude Code (no tmux control); steer not delivered.")
+      return
+    }
     await Bun.sleep(STEER_SETTLE_MS)
     await this.completeInterruptedTurns("Superseded by /steer.")
 
