@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
-import { Reply, X } from "lucide-react"
+import { Reply } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
@@ -103,13 +103,12 @@ function BoardReplyComposerForm({
     }
   }
 
+  // The composer carries its own bordered, collapse-on-focus chrome and toolbar,
+  // so it sits directly on the card — no wrapper frame, which would double the
+  // border and leave an empty header strip. Cancel is a low-emphasis control
+  // below it rather than a lone button in a header row.
   return (
-    <div className="mt-3 rounded-lg border bg-background p-2">
-      <div className="mb-1 flex items-center justify-end">
-        <Button variant="ghost" size="icon" aria-label="Cancel reply" className="h-7 w-7" onClick={onClose}>
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+    <div className="mt-3">
       <MessageComposer
         content={composer.content}
         onContentChange={composer.handleContentChange}
@@ -117,6 +116,7 @@ function BoardReplyComposerForm({
         onRemoveAttachment={composer.handleRemoveAttachment}
         workspaceId={workspaceId}
         streamId={hostStream?.id}
+        memoAnchorStreamId={streamId}
         fileInputRef={composer.fileInputRef}
         onFileSelect={composer.handleFileSelect}
         onFileUpload={composer.uploadFile}
@@ -131,6 +131,16 @@ function BoardReplyComposerForm({
         scopeId={draftKey}
         streamContext={streamContext}
       />
+      <div className="mt-1.5 flex justify-start">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+          onClick={onClose}
+        >
+          Cancel
+        </Button>
+      </div>
     </div>
   )
 }
