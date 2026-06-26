@@ -37,6 +37,7 @@ function fakeMessage(overrides: Partial<Message> = {}): Message {
     replyCount: 0,
     clientMessageId: null,
     sentVia: null,
+    conversationIntent: null,
     reactions: {},
     metadata: {},
     editedAt: null,
