@@ -9,27 +9,32 @@ import { VOICE_STEERING_BASE_TERMS, VOICE_STEERING_WORDS_MAX } from "@threa/type
 export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
 
 /**
- * Merge the baked-in product terms with the user's own steering words into the
- * final biasing list: trimmed, blank-dropped, deduped case-insensitively (base
- * terms win and stay first), and capped. Per-provider character/count limits are
- * applied in each strategy, not here. Used both for STT keyterm biasing and as
- * the polish model's spelling reference, so a take is corrected at both layers.
+ * Hard cap on the resolved biasing list: the baked-in terms plus a full
+ * workspace list and a full user list (each bounded to VOICE_STEERING_WORDS_MAX
+ * by validation). Sized so neither a full workspace nor a full user list is
+ * silently truncated here; per-provider character/count limits are applied in
+ * each strategy. Still far inside Deepgram's 500-token budget.
  */
-export function resolveSteeringTerms(userTerms: readonly string[] | null | undefined): string[] {
+const VOICE_STEERING_RESOLVED_MAX = VOICE_STEERING_BASE_TERMS.length + 2 * VOICE_STEERING_WORDS_MAX
+
+/**
+ * Merge the baked-in product terms with the workspace-shared and per-user
+ * steering words into the final biasing list: trimmed, blank-dropped, deduped
+ * case-insensitively (earlier sources win the spelling — base, then workspace,
+ * then user — and stay first), and capped. Used both for STT keyterm biasing and
+ * as the polish model's spelling reference, so a take is corrected at both layers.
+ */
+export function resolveSteeringTerms(...termSources: ReadonlyArray<readonly string[] | null | undefined>): string[] {
   const seen = new Set<string>()
   const out: string[] = []
-  for (const raw of [...VOICE_STEERING_BASE_TERMS, ...(userTerms ?? [])]) {
+  for (const raw of [...VOICE_STEERING_BASE_TERMS, ...termSources.flatMap((source) => source ?? [])]) {
     const term = raw.trim()
     if (!term) continue
     const key = term.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
     out.push(term)
-    // Cap at the user max PLUS the baked-in terms, so a full 50-word user list
-    // is never silently truncated by the product terms taking the first slots.
-    // Still far inside Deepgram's 500-token budget; ElevenLabs clamps to its own
-    // 50-term limit in that strategy.
-    if (out.length >= VOICE_STEERING_WORDS_MAX + VOICE_STEERING_BASE_TERMS.length) break
+    if (out.length >= VOICE_STEERING_RESOLVED_MAX) break
   }
   return out
 }

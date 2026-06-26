@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
+import { VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threa/types"
 import type { WorkspaceSettingsService } from "./service"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
@@ -9,6 +10,12 @@ const updateWorkspaceSettingsSchema = z.object({
   userStatusPresets: statusPresetsSchema.optional(),
   // Language name or BCP-47 tag; null clears the override back to per-conversation.
   memoLanguage: z.string().trim().min(1).max(40).nullable().optional(),
+  // Shared dictation steering words; same bounds as the per-user list. Provider
+  // keyterm caps and the baked-in product terms are applied at session-open time.
+  voiceSteeringWords: z
+    .array(z.string().trim().min(1).max(VOICE_STEERING_WORD_MAX_LENGTH))
+    .max(VOICE_STEERING_WORDS_MAX)
+    .optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

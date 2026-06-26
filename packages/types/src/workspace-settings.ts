@@ -29,6 +29,13 @@ export interface WorkspaceSettings {
    * primary language.
    */
   memoLanguage: string | null
+  /**
+   * Shared dictation steering words (product names, people, domain jargon) the
+   * voice pipeline biases toward for every member. Unioned at session start with
+   * the baked-in product terms and each member's personal `voiceSteeringWords`.
+   * Admin-managed. Empty by default.
+   */
+  voiceSteeringWords: string[]
   createdAt: string
   updatedAt: string
 }
@@ -38,6 +45,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   defaultWorkSchedule: DEFAULT_WORK_SCHEDULE,
   userStatusPresets: SYSTEM_DEFAULT_STATUSES,
   memoLanguage: null,
+  voiceSteeringWords: [],
 }
 
 /** Partial update — only provided fields are changed. */
@@ -45,6 +53,7 @@ export interface UpdateWorkspaceSettingsInput {
   defaultWorkSchedule?: WorkSchedule
   userStatusPresets?: StatusPreset[]
   memoLanguage?: string | null
+  voiceSteeringWords?: string[]
 }
 
 /** Valid top-level settings keys that can be overridden. */

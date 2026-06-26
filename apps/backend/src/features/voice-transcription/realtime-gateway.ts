@@ -11,6 +11,7 @@ import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
 import type { PolishTranscript } from "./polish"
 import type { UserPreferencesService } from "../user-preferences"
+import type { WorkspaceSettingsService } from "../workspace-settings"
 
 const startPayloadSchema = z.object({
   workspaceId: z.string().min(1),
@@ -27,6 +28,7 @@ interface Dependencies {
   voiceTranscriptionService: VoiceTranscriptionService
   transcription: Transcription
   userPreferencesService: UserPreferencesService
+  workspaceSettingsService: WorkspaceSettingsService
   polishTranscript: PolishTranscript
 }
 
@@ -106,7 +108,14 @@ function toBuffer(frame: unknown): Buffer | null {
  * with no durable read model to reconstruct.
  */
 export function registerVoiceGateway(io: Server, deps: Dependencies) {
-  const { authService, voiceTranscriptionService, transcription, userPreferencesService, polishTranscript } = deps
+  const {
+    authService,
+    voiceTranscriptionService,
+    transcription,
+    userPreferencesService,
+    workspaceSettingsService,
+    polishTranscript,
+  } = deps
   const namespace = io.of("/voice")
 
   // Same session-cookie auth as the main namespace (INV-35: reuse, don't fork).
@@ -205,14 +214,18 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         // behavior for an in-flight take and break the editor's chunk tracker.
         let polishLevel: VoicePolishLevel = "none"
         // Default to the baked-in product terms so "Threa" is still biased even
-        // if the prefs lookup fails — the steering correction must never be lost.
-        let steeringTerms: string[] = resolveSteeringTerms(null)
+        // if the lookups fail — the steering correction must never be lost.
+        let steeringTerms: string[] = resolveSteeringTerms()
         try {
-          const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
+          const [prefs, workspaceSettings] = await Promise.all([
+            userPreferencesService.getPreferences(workspaceId, row.userId),
+            workspaceSettingsService.getSettings(workspaceId),
+          ])
           polishLevel = prefs.voicePolishLevel
-          steeringTerms = resolveSteeringTerms(prefs.voiceSteeringWords)
+          // base ∪ workspace-shared ∪ per-user (deduped, base/workspace win the spelling).
+          steeringTerms = resolveSteeringTerms(workspaceSettings.voiceSteeringWords, prefs.voiceSteeringWords)
         } catch (err) {
-          logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs lookup failed; defaulting polish off")
+          logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs/settings lookup failed; defaulting polish off")
         }
 
         const upstream = await transcription.open({

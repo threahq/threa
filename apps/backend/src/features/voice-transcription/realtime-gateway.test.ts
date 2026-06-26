@@ -64,6 +64,7 @@ function setup(overrides?: {
   getRelaySession?: (...args: unknown[]) => Promise<unknown>
   voicePolishLevel?: "none" | "minor" | "opinionated"
   voiceSteeringWords?: string[]
+  workspaceSteeringWords?: string[]
   polishTranscript?: (args: {
     rawTranscript: string
     level: string
@@ -88,6 +89,9 @@ function setup(overrides?: {
       voiceSteeringWords: overrides?.voiceSteeringWords,
     })),
   }
+  const workspaceSettingsService = {
+    getSettings: mock(async () => ({ voiceSteeringWords: overrides?.workspaceSteeringWords })),
+  }
   const polishTranscript = mock(
     overrides?.polishTranscript ?? (async ({ rawTranscript }: { rawTranscript: string }) => `P(${rawTranscript})`)
   )
@@ -106,13 +110,22 @@ function setup(overrides?: {
     voiceTranscriptionService: voiceTranscriptionService as never,
     transcription: transcription as never,
     userPreferencesService: userPreferencesService as never,
+    workspaceSettingsService: workspaceSettingsService as never,
     polishTranscript: polishTranscript as never,
   })
 
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, upstream, transcription, voiceTranscriptionService, userPreferencesService, polishTranscript }
+  return {
+    socket,
+    upstream,
+    transcription,
+    voiceTranscriptionService,
+    userPreferencesService,
+    workspaceSettingsService,
+    polishTranscript,
+  }
 }
 
 const START_PAYLOAD = { workspaceId: "ws_1", voiceSessionId: "voicesess_1" }
@@ -174,6 +187,24 @@ describe("registerVoiceGateway voice:start", () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(seenSteering).toEqual([["Threa", "Ariadne", "Langfuse"]])
+  })
+
+  it("unions the workspace-shared list with the per-user list (and the baked-in terms)", async () => {
+    const { socket, transcription } = setup({
+      // "Threa" collides with a baked-in term; the user term is additive.
+      workspaceSteeringWords: ["Acme", "Threa"],
+      voiceSteeringWords: ["MyTool"],
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme", "MyTool"] })
+    )
   })
 
   it("refuses a start that is missing identifiers", async () => {
