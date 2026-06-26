@@ -29,7 +29,7 @@ describe("useAutoClearStickyUnread", () => {
     const clearRead = vi.fn()
     const { rerender } = renderHook(
       ({ hidden }: { hidden: boolean }) =>
-        useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: hidden }),
+        useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: hidden, isMobile: false }),
       { initialProps: { hidden: false } }
     )
     expect(clearRead).not.toHaveBeenCalled()
@@ -40,7 +40,9 @@ describe("useAutoClearStickyUnread", () => {
 
   it("flushes read residue when the app regains focus", () => {
     const clearRead = vi.fn()
-    renderHook(() => useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: false }))
+    renderHook(() =>
+      useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: false, isMobile: false })
+    )
 
     setFocus(false)
     expect(clearRead).not.toHaveBeenCalled()
@@ -49,20 +51,48 @@ describe("useAutoClearStickyUnread", () => {
     expect(clearRead).toHaveBeenCalledTimes(1)
   })
 
-  it("flushes read residue after the idle timeout while left open", () => {
+  it("flushes read residue after the idle timeout while left open on desktop", () => {
     const clearRead = vi.fn()
-    renderHook(() => useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: false }))
+    renderHook(() =>
+      useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: false, isMobile: false })
+    )
 
     expect(clearRead).not.toHaveBeenCalled()
     act(() => vi.advanceTimersByTime(15_000))
     expect(clearRead).toHaveBeenCalledTimes(1)
   })
 
+  it("does not run the idle timer on mobile, where the open sidebar is an on-screen overlay", () => {
+    const clearRead = vi.fn()
+    renderHook(() =>
+      useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: false, isMobile: true })
+    )
+
+    act(() => vi.advanceTimersByTime(15_000))
+    expect(clearRead).not.toHaveBeenCalled()
+  })
+
+  it("still flushes on mobile via the hidden and refocus triggers", () => {
+    const clearRead = vi.fn()
+    const { rerender } = renderHook(
+      ({ hidden }: { hidden: boolean }) =>
+        useAutoClearStickyUnread({ hasReadResidue: true, clearRead, sidebarHidden: hidden, isMobile: true }),
+      { initialProps: { hidden: false } }
+    )
+
+    setFocus(false)
+    setFocus(true)
+    expect(clearRead).toHaveBeenCalledTimes(1)
+
+    rerender({ hidden: true })
+    expect(clearRead).toHaveBeenCalledTimes(2)
+  })
+
   it("does nothing when there is no read residue", () => {
     const clearRead = vi.fn()
     const { rerender } = renderHook(
       ({ hidden }: { hidden: boolean }) =>
-        useAutoClearStickyUnread({ hasReadResidue: false, clearRead, sidebarHidden: hidden }),
+        useAutoClearStickyUnread({ hasReadResidue: false, clearRead, sidebarHidden: hidden, isMobile: false }),
       { initialProps: { hidden: false } }
     )
 
@@ -77,7 +107,7 @@ describe("useAutoClearStickyUnread", () => {
     let clearRead = vi.fn()
     const { rerender } = renderHook(
       ({ fn }: { fn: () => void }) =>
-        useAutoClearStickyUnread({ hasReadResidue: true, clearRead: fn, sidebarHidden: false }),
+        useAutoClearStickyUnread({ hasReadResidue: true, clearRead: fn, sidebarHidden: false, isMobile: false }),
       { initialProps: { fn: clearRead } }
     )
 

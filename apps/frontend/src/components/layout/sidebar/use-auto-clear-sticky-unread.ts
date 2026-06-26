@@ -12,6 +12,8 @@ interface AutoClearArgs {
   clearRead: () => void
   /** Whether the sidebar is hidden (collapsed) rather than on screen. */
   sidebarHidden: boolean
+  /** Overlay-treatment device (narrow viewport or touch-primary). */
+  isMobile: boolean
 }
 
 /**
@@ -22,13 +24,16 @@ interface AutoClearArgs {
  *  - the sidebar is hidden (collapsed) — on mobile this lands the moment they
  *    navigate, with the list off screen so nothing visibly shifts;
  *  - the app regains focus after being backgrounded (tab/window switch);
- *  - a fairly long idle while the sidebar stays open (the desktop case).
+ *  - a fairly long idle while the sidebar stays open — desktop only: on mobile
+ *    the open sidebar is an on-screen overlay the user is actively reading, so a
+ *    timed flush would reflow it under them; there the hidden trigger (it leaves
+ *    on navigation) does the clearing instead.
  *
  * `clearRead` is read through a ref so its per-render identity churn (it closes
  * over the stream list) can't keep resetting the idle timer — the timer is
  * armed by the residue flag flipping, not by every stream-list update.
  */
-export function useAutoClearStickyUnread({ hasReadResidue, clearRead, sidebarHidden }: AutoClearArgs): void {
+export function useAutoClearStickyUnread({ hasReadResidue, clearRead, sidebarHidden, isMobile }: AutoClearArgs): void {
   const { isFocused } = usePageActivity()
 
   const clearReadRef = useRef(clearRead)
@@ -49,10 +54,11 @@ export function useAutoClearStickyUnread({ hasReadResidue, clearRead, sidebarHid
     if (regainedFocus && hasReadResidue) clearReadRef.current()
   }, [isFocused, hasReadResidue])
 
-  // Left open on screen — flush after an idle beat so the tray can't linger.
+  // Left open on a desktop layout — flush after an idle beat so the tray can't
+  // linger. Skipped on mobile, where "open" is an overlay being actively read.
   useEffect(() => {
-    if (!hasReadResidue || sidebarHidden) return
+    if (!hasReadResidue || sidebarHidden || isMobile) return
     const timer = setTimeout(() => clearReadRef.current(), IDLE_AUTOCLEAR_MS)
     return () => clearTimeout(timer)
-  }, [hasReadResidue, sidebarHidden])
+  }, [hasReadResidue, sidebarHidden, isMobile])
 }

@@ -289,6 +289,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     hasReadResidue: stickyUnread.hasReadResidue,
     clearRead: stickyUnread.clearRead,
     sidebarHidden: sidebarState === "collapsed",
+    isMobile,
   })
 
   // For Unread rows (drawn out of their home), a "· home" hint naming the custom
