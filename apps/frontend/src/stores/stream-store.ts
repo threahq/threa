@@ -32,20 +32,20 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
     : [streamId, Dexie.minKey]
   const range = db.events.where("[streamId+_sequenceNum]").between(lowerBound, [streamId, Dexie.maxKey], true, true)
 
-  // The compound index already yields rows in `_sequenceNum` order, so the base
-  // window needs no comparison sort:
-  //   - With a floor: scan ASC directly — already in render order.
-  //   - Without a floor: scan DESC + cap to the newest N (memory bound on the
-  //     pre-bootstrap load), then flip to ASC with an O(n) reverse.
-  // This matters because `useLiveQuery` re-runs this on every write to
-  // `db.events`; a deep scrolled-back window must not pay an O(n log n) sort
-  // per incoming message.
+  // With a floor we scan the compound index ASC directly — already in render
+  // order. Without a floor we scan DESC + cap to the newest N as a memory bound
+  // on the pre-bootstrap load, then sort ASC by `_sequenceNum`: the render
+  // contract is ascending (INV-61), and the DESC cursor's materialised direction
+  // can't be assumed, so an explicit comparison sort — not the cursor order — is
+  // what guarantees it. Bounded by `DEFAULT_IDB_EVENT_LIMIT`, and `useLiveQuery`
+  // re-runs the floored (sort-free) branch for every steady-state write, so the
+  // cost lands only on the one pre-bootstrap read.
   let base: CachedEvent[]
   if (hasFloor) {
     base = await range.toArray()
   } else {
     base = await range.reverse().limit(DEFAULT_IDB_EVENT_LIMIT).toArray()
-    base.reverse()
+    base.sort((a, b) => a._sequenceNum - b._sequenceNum)
   }
 
   // Pending/failed optimistic events may have placeholder sequences outside the
