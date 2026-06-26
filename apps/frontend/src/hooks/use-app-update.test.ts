@@ -249,8 +249,11 @@ describe("reloadForUpdate", () => {
 
       expect(await reconcilePostReload()).toBe(true)
       expect(recoverySpy).toHaveBeenCalledOnce()
-      // Capped, not forced: a genuine recovery loop must still hit the attempt cap.
-      expect(recoverySpy).toHaveBeenCalledWith()
+      // Forced: this recovery only fires from a user Reload click (single-shot
+      // flag), so it can't auto-loop; forcing keeps unrelated chunk-load
+      // recoveries from exhausting the shared attempt cap and silently no-opping
+      // the user's Reload.
+      expect(recoverySpy).toHaveBeenCalledWith({ force: true })
     })
 
     it("wipes nothing when the running build already matches the latest", async () => {

@@ -257,8 +257,13 @@ export function shouldRecoverForVersion(current: string | null, latest: string |
  * we can't verify (offline), wipe nothing.
  *
  * Returns true when recovery was kicked off (a reload will follow, so the caller
- * should not announce). Recovery is capped: if it's itself broken it falls
- * through and the toast still surfaces as a manual path.
+ * should not announce). Recovery is forced, not capped: it only ever fires as the
+ * direct result of a user Reload click (the flag is set solely by reloadForUpdate
+ * and is single-shot), so it can't auto-loop and the attempt cap buys nothing
+ * here. Leaving it capped would let unrelated chunk-load recoveries exhaust the
+ * shared counter and silently turn the user's Reload into a no-op — the exact bug
+ * this fixes — so this follows runSwRecovery's "user-initiated clicks force"
+ * convention.
  */
 export async function reconcilePostReload(): Promise<boolean> {
   if (!reloadRecentlyAttempted()) return false
@@ -268,7 +273,7 @@ export async function reconcilePostReload(): Promise<boolean> {
   const current = currentAppVersion()
   const latest = await fetchLatestVersion()
   if (!shouldRecoverForVersion(current, latest)) return false
-  return swRecovery.runSwRecovery()
+  return swRecovery.runSwRecovery({ force: true })
 }
 
 export function useAppUpdate(): void {
