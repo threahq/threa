@@ -11,6 +11,7 @@ import { localStartOfDayMs } from "@/lib/dates"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
+import { BoardComposer } from "@/components/board/board-composer"
 import type { BoardPost, ConversationWithStaleness } from "@threa/types"
 
 /**
@@ -191,7 +192,10 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         tabs={[{ value: "all", label: "All", href: `/w/${workspaceId}/board` }]}
       />
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">{content}</main>
+        <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">
+          <BoardComposer workspaceId={workspaceId} />
+          {content}
+        </main>
       </ScrollArea>
     </div>
   )

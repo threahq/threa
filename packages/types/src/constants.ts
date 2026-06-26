@@ -329,6 +329,19 @@ export const ConversationStatuses = {
   RESOLVED: "resolved",
 } as const satisfies Record<string, ConversationStatus>
 
+// How a message's conversation was decided. Absent/null on a message means the
+// async boundary-extractor inferred (clustered) it — the default. A set value
+// records that the sender DECLARED the conversation at send time, so the
+// extractor must not re-cluster it: 'new' minted a fresh conversation seeded
+// with the message; 'existing' attached it to a caller-named conversation.
+export const CONVERSATION_INTENTS = ["new", "existing"] as const
+export type ConversationIntent = (typeof CONVERSATION_INTENTS)[number]
+
+export const ConversationIntents = {
+  NEW: "new",
+  EXISTING: "existing",
+} as const satisfies Record<string, ConversationIntent>
+
 // Memo types (GAM)
 export const MEMO_TYPES = ["message", "conversation"] as const
 export type MemoType = (typeof MEMO_TYPES)[number]

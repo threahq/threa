@@ -24,6 +24,7 @@ export { MessageVersionRepository } from "./version-repository"
 export type { MessageVersion } from "./version-repository"
 
 export { EventService } from "./event-service"
+export type { ConversationAssigner } from "./event-service"
 export type {
   MessageCreatedPayload,
   MessageEditedPayload,

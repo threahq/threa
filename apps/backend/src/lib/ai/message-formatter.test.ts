@@ -24,6 +24,7 @@ function createMessage(overrides: Partial<Message> = {}): Message {
     replyCount: 0,
     reactions: {},
     metadata: {},
+    conversationIntent: null,
     clientMessageId: null,
     sentVia: null,
     editedAt: null,

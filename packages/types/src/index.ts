@@ -71,6 +71,9 @@ export {
   CONVERSATION_STATUSES,
   type ConversationStatus,
   ConversationStatuses,
+  CONVERSATION_INTENTS,
+  type ConversationIntent,
+  ConversationIntents,
   // Memos (GAM)
   MEMO_TYPES,
   type MemoType,
@@ -424,6 +427,7 @@ export type {
   SyncCatchUpResponse,
   SyncHeartbeatPayload,
   // Messages
+  ConversationDirective,
   CreateMessageInput,
   CreateMessageInputJson,
   CreateMessageInputMarkdown,

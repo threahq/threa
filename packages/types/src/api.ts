@@ -333,6 +333,17 @@ export interface SyncHeartbeatPayload {
 }
 
 /**
+ * Optional conversation directive on a message send. Omitted → the async
+ * boundary-extractor infers the conversation (default). Present → the sender
+ * declares it, and the send assigns it synchronously in the message's
+ * transaction: `new` mints a fresh conversation seeded with the message;
+ * `existing` attaches to `conversationId`. The id is a sibling of the
+ * discriminant (not folded into one field) so a missing/garbage id on
+ * `existing` is a validation error, distinct from `new`.
+ */
+export type ConversationDirective = { intent: "new" } | { intent: "existing"; conversationId: string }
+
+/**
  * JSON input format - used by rich clients sending ProseMirror JSON directly.
  */
 export interface CreateMessageInputJson {
@@ -344,6 +355,8 @@ export interface CreateMessageInputJson {
   clientMessageId?: string
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
+  /** Declare the message's conversation (see {@link ConversationDirective}); omit to let the extractor infer. */
+  conversation?: ConversationDirective
   /**
    * Set to `true` after the user has acknowledged that a share node in
    * `contentJson` would expose its source to people outside the source
@@ -363,6 +376,8 @@ export interface CreateDmMessageInputJson {
   clientMessageId?: string
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
+  /** Declare the message's conversation (see {@link ConversationDirective}); omit to let the extractor infer. */
+  conversation?: ConversationDirective
   /** Same semantics as `CreateMessageInputJson.confirmedPrivacyWarning`. */
   confirmedPrivacyWarning?: boolean
 }

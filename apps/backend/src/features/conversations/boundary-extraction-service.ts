@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg"
 import { sql, withTransaction, withClient } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
-import { StreamRepository } from "../streams"
+import { StreamRepository, type Stream } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
 import type {
@@ -17,8 +17,9 @@ import type {
 } from "./boundary-extraction/types"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
+import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
-import { ConversationStatuses, StreamTypes } from "@threa/types"
+import { AuthorTypes, ConversationStatuses, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
@@ -63,6 +64,37 @@ export class BoundaryExtractionService {
       const stream = await StreamRepository.findById(client, streamId)
       if (!stream) {
         return { message: null, stream: null, extractionContextBase: null }
+      }
+
+      // A message that DECLARED its conversation was assigned synchronously in
+      // the send transaction. The message:created outbox still fires, but the
+      // async pass must never re-cluster or move a human-declared assignment
+      // (INV-20) — short-circuit with the conversation it already owns.
+      if (message.conversationIntent !== null) {
+        const declaredPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          declaredSkip: true,
+          declaredPrimary,
+          validUpdateTargets: new Set<string>(),
+        }
+      }
+
+      // Agent replies (persona/bot) belong to a conversation too — invoking or
+      // DMing an agent is conversing with it. They're assigned deterministically
+      // (the stream's active conversation, created if none), NOT LLM-clustered:
+      // a reply continues the conversation it's posted within. Handled after the
+      // connection is released so the assignment runs in its own transaction.
+      if (message.authorType !== AuthorTypes.USER) {
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          agentReply: true,
+          validUpdateTargets: new Set<string>(),
+        }
       }
 
       if (stream.type === StreamTypes.SCRATCHPAD) {
@@ -167,6 +199,15 @@ export class BoundaryExtractionService {
     if (!fetchedData.message || !fetchedData.stream) {
       logger.warn({ messageId, streamId }, "Message or stream not found for boundary extraction")
       return null
+    }
+
+    if (fetchedData.declaredSkip) {
+      logger.debug({ messageId, streamId }, "Skipping boundary extraction for a message with a declared conversation")
+      return fetchedData.declaredPrimary ?? null
+    }
+
+    if (fetchedData.agentReply) {
+      return this.assignAgentReply(fetchedData.message, fetchedData.stream, workspaceId)
     }
 
     const {
@@ -391,6 +432,13 @@ export class BoundaryExtractionService {
           }
         }
 
+        // A message with a declared conversation is human-assigned: the async
+        // pass never moves it out of the conversation it was placed in (INV-20).
+        if (reassignedMessage?.conversationIntent != null) {
+          logger.warn({ messageId: r.messageId }, "Skipping reassignment of a message with a declared conversation")
+          continue
+        }
+
         await ConversationRepository.removePrimaryMessage(client, workspaceId, fromConvId, r.messageId)
         await ConversationRepository.addPrimaryMessage(
           client,
@@ -516,6 +564,61 @@ export class BoundaryExtractionService {
 
       if (!primaryConvId) return null
       return touchedConversations.find((c) => c.id === primaryConvId) ?? null
+    })
+  }
+
+  /**
+   * Assign a non-user (agent) reply to a conversation deterministically — no LLM.
+   * An agent reply continues the conversation it's posted within, so it joins the
+   * stream's most-recently-active conversation; if the stream has none yet (a
+   * fresh thread the agent created for a channel @mention), it mints one, which
+   * the board renders under the triggering message. Mirrors the extractor's
+   * persist phase: the message row is locked before assignment (INV-20) and the
+   * membership write, activity bump, and outbox events commit together (INV-4/7).
+   */
+  private async assignAgentReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
+    return withTransaction(this.pool, async (client) => {
+      // Lock the message row so a concurrent re-delivery can't double-assign.
+      await client.query(sql`SELECT id FROM messages WHERE id = ${message.id} FOR UPDATE`)
+
+      // Idempotent on re-delivery: if already a primary somewhere, leave it.
+      const existingPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
+      if (existingPrimary) return existingPrimary
+
+      // Lock the stream so two replies racing in a fresh thread don't both mint a
+      // conversation (mirrors the scratchpad create path's stream lock, INV-20).
+      await client.query(sql`SELECT id FROM streams WHERE id = ${stream.id} FOR UPDATE`)
+
+      const active = (await ConversationRepository.findActiveByStream(client, stream.id))[0]
+      const isNew = !active
+      const conversation =
+        active ??
+        (await ConversationRepository.insert(client, {
+          id: conversationId(),
+          streamId: stream.id,
+          workspaceId,
+          confidence: 1,
+          status: ConversationStatuses.ACTIVE,
+        }))
+
+      await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)
+      await ConversationRepository.bumpActivityForIds(client, workspaceId, [conversation.id])
+
+      // Same per-message membership emit the declared-send path uses (INV-35/37);
+      // it re-reads the conversation and routes a thread's parent-channel fan-out.
+      const refreshed = await emitAssignmentEvents(client, {
+        workspaceId,
+        message,
+        conversationId: conversation.id,
+        created: isNew,
+        reason: "agent_reply",
+      })
+
+      logger.info(
+        { messageId: message.id, streamId: stream.id, conversationId: refreshed.id, created: isNew },
+        "Agent reply assigned to conversation"
+      )
+      return refreshed
     })
   }
 

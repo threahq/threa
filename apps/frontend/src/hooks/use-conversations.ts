@@ -1,8 +1,27 @@
 import { useEffect } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
+import { useConversationService, useMessageService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
+import { useDraftScratchpads } from "./use-draft-scratchpads"
+import { useQueueDraftMessage } from "./use-queue-draft-message"
+import { generateClientId } from "./use-stream-or-draft"
+import { StreamTypes } from "@threa/types"
+import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
+
+/**
+ * Where a board post lands: an existing channel/DM the user picked, or a
+ * brand-new scratchpad created for the post (`companionMode` distinguishes a
+ * companion AI scratchpad from a plain quick note).
+ */
+export type BoardPostTarget =
+  | { type: "stream"; streamId: string }
+  | { type: "newScratchpad"; companionMode: CompanionMode }
+
+export interface CreateBoardPostInput {
+  target: BoardPostTarget
+  contentJson: JSONContent
+  attachmentIds?: string[]
+}
 
 export const conversationKeys = {
   all: ["conversations"] as const,
@@ -85,6 +104,61 @@ export function useWorkspaceConversations(
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     enabled: !!workspaceId,
+  })
+}
+
+/**
+ * Author a board post through the STANDARD message send — a post is just a
+ * message; there is no board-specific endpoint.
+ *
+ *  - Existing channel/DM: declare a fresh conversation
+ *    (`conversation: { intent: "new" }`), which the backend creates synchronously
+ *    in the send's transaction so the board reflects it immediately. The send
+ *    carries a `clientMessageId` so a retried request can't double-post.
+ *  - New scratchpad / quick note: reuse the same draft-scratchpad +
+ *    promote-on-send components the sidebar uses (`createScratchpad` +
+ *    `queueDraftMessage`). The server scratchpad row is born WITH its first
+ *    message via `promoteDraft` — never created empty — and the durable queue
+ *    keys the send by clientId (idempotent on retry). A fresh scratchpad's first
+ *    message is trivially a new conversation, which the boundary extractor mints,
+ *    so no directive is needed on this path.
+ *
+ * On success the board feed is invalidated so the just-created conversation
+ * appears (the board has no socket subscription yet).
+ */
+export function useCreateBoardPost(workspaceId: string) {
+  const messageService = useMessageService()
+  const { createScratchpad } = useDraftScratchpads(workspaceId)
+  const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ target, contentJson, attachmentIds }: CreateBoardPostInput) => {
+      if (target.type === "newScratchpad") {
+        const draftId = await createScratchpad(target.companionMode)
+        await queueDraftMessage(
+          { contentJson, attachmentIds },
+          {
+            workspaceId,
+            streamId: draftId,
+            streamCreation: { type: StreamTypes.SCRATCHPAD, companionMode: target.companionMode },
+            draftId,
+          }
+        )
+        return
+      }
+
+      await messageService.create(workspaceId, target.streamId, {
+        streamId: target.streamId,
+        contentJson,
+        attachmentIds,
+        clientMessageId: generateClientId(),
+        conversation: { intent: "new" },
+      })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
+    },
   })
 }
 

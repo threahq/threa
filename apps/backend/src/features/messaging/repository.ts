@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { AuthorType, JSONContent } from "@threa/types"
+import type { AuthorType, ConversationIntent, JSONContent } from "@threa/types"
 import type { MoveEventSequenceUpdate } from "../streams"
 
 interface MessageRow {
@@ -15,6 +15,7 @@ interface MessageRow {
   client_message_id: string | null
   sent_via: string | null
   metadata: Record<string, string>
+  conversation_intent: string | null
   edited_at: Date | null
   deleted_at: Date | null
   created_at: Date
@@ -43,6 +44,13 @@ export interface Message {
   reactions: Record<string, string[]>
   /** External references (e.g. GitHub PR id). Always present; `{}` when unset. */
   metadata: Record<string, string>
+  /**
+   * How this message's conversation was decided (see {@link ConversationIntent}).
+   * `null` → the boundary-extractor inferred it; a value → the sender declared
+   * it at send time, so the extractor leaves it locked (never re-clusters or
+   * reassigns it).
+   */
+  conversationIntent: ConversationIntent | null
   editedAt: Date | null
   deletedAt: Date | null
   createdAt: Date
@@ -68,6 +76,8 @@ export interface InsertMessageParams {
   clientMessageId?: string
   sentVia?: string
   metadata?: Record<string, string>
+  /** Declared conversation intent for this message (see {@link Message.conversationIntent}). Omit to leave it inferred. */
+  conversationIntent?: ConversationIntent
   /** When set, this row is an E2E ciphertext payload; `contentJson` / `contentMarkdown` should be the empty-doc placeholder. */
   ciphertext?: Buffer
   envelope?: unknown
@@ -93,6 +103,7 @@ function mapRowToMessage(row: MessageRow, reactions: Record<string, string[]> = 
     reactions,
     // JSONB comes back parsed; the column has NOT NULL DEFAULT '{}' so it's always an object.
     metadata: row.metadata ?? {},
+    conversationIntent: row.conversation_intent as ConversationIntent | null,
     editedAt: row.edited_at,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
@@ -137,7 +148,7 @@ function aggregateReactionsByMessage(rows: ReactionRow[]): Map<string, Record<st
 const SELECT_FIELDS = `
   id, stream_id, sequence, author_id, author_type,
   content_json, content_markdown, reply_count, client_message_id, sent_via,
-  metadata,
+  metadata, conversation_intent,
   edited_at, deleted_at, created_at,
   ciphertext, envelope, e2e_version
 `
@@ -145,7 +156,7 @@ const SELECT_FIELDS = `
 const QUALIFIED_SELECT_FIELDS = `
   m.id, m.stream_id, m.sequence, m.author_id, m.author_type,
   m.content_json, m.content_markdown, m.reply_count, m.client_message_id, m.sent_via,
-  m.metadata,
+  m.metadata, m.conversation_intent,
   m.edited_at, m.deleted_at, m.created_at,
   m.ciphertext, m.envelope, m.e2e_version
 `
@@ -406,12 +417,13 @@ export const MessageRepository = {
     const ciphertext = params.ciphertext ?? null
     const envelope = params.envelope !== undefined ? JSON.stringify(params.envelope) : null
     const e2eVersion = params.e2eVersion ?? null
+    const conversationIntent = params.conversationIntent ?? null
 
     const result = await db.query<MessageRow>(sql`
       INSERT INTO messages (
         id, stream_id, sequence, author_id, author_type,
         content_json, content_markdown, client_message_id, sent_via, metadata,
-        ciphertext, envelope, e2e_version
+        conversation_intent, ciphertext, envelope, e2e_version
       )
       VALUES (
         ${params.id},
@@ -424,6 +436,7 @@ export const MessageRepository = {
         ${clientMessageId},
         ${sentVia},
         ${JSON.stringify(metadata)},
+        ${conversationIntent},
         ${ciphertext},
         ${envelope},
         ${e2eVersion}

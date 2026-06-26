@@ -32,6 +32,7 @@ import {
   draftThreadScope,
   type AttachmentSummary,
   type AuthorType,
+  type ConversationDirective,
   type EventType,
   type SourceItem,
   type JSONContent,
@@ -134,6 +135,12 @@ export interface CreateMessageParams {
   sentVia?: string
   /** External references (string->string) attached to the message. Reserved prefix: `threa.*`. */
   metadata?: Record<string, string>
+  /**
+   * Declares the message's conversation, assigned synchronously in this send's
+   * transaction by the injected {@link ConversationAssigner} (the extractor then
+   * leaves it locked). Omit to let the async extractor infer the conversation.
+   */
+  conversation?: ConversationDirective
   /**
    * Present when the sharer has acknowledged a privacy warning in the
    * share modal. Backend still independently verifies whether the share
@@ -349,8 +356,25 @@ function assertE2eContentMatch(params: {
   )
 }
 
+/**
+ * Synchronous conversation assignment for a declared message, run inside the
+ * send transaction. Implemented by the conversations feature and injected here
+ * so messaging stays decoupled from conversation internals (the message just
+ * carries a {@link ConversationDirective}; the assigner owns the conversation
+ * row + its outbox events). Invoked only when a send declares a directive.
+ */
+export interface ConversationAssigner {
+  assignInTransaction(
+    client: PoolClient,
+    params: { workspaceId: string; message: Message; directive: ConversationDirective }
+  ): Promise<void>
+}
+
 export class EventService {
-  constructor(private pool: Pool) {}
+  constructor(
+    private pool: Pool,
+    private conversationAssigner?: ConversationAssigner
+  ) {}
 
   private async publishParentThreadUpdate(
     client: PoolClient,
@@ -542,6 +566,7 @@ export class EventService {
       clientMessageId: params.clientMessageId,
       sentVia: params.sentVia,
       metadata,
+      conversationIntent: params.conversation?.intent,
       ciphertext: params.ciphertext,
       envelope: params.envelope,
       e2eVersion: params.e2eVersion,
@@ -654,6 +679,22 @@ export class EventService {
         workspaceId: params.workspaceId,
         parentStreamId: stream.parentStreamId,
         parentMessageId: stream.parentMessageId,
+      })
+    }
+
+    // A declared message assigns its conversation synchronously, in this same
+    // transaction (so the board sees it the instant the send returns and the
+    // async extractor leaves it locked). The assigner is injected to keep
+    // messaging decoupled from conversation internals; fail loud (INV-11) if a
+    // directive arrives without one wired rather than silently dropping it.
+    if (params.conversation) {
+      if (!this.conversationAssigner) {
+        throw new Error("Message declares a conversation but no ConversationAssigner is configured")
+      }
+      await this.conversationAssigner.assignInTransaction(client, {
+        workspaceId: params.workspaceId,
+        message,
+        directive: params.conversation,
       })
     }
 
