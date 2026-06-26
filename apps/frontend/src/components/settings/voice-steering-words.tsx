@@ -17,7 +17,8 @@ export function VoiceSteeringWords() {
       description={
         <>
           Custom spellings the dictation model is nudged toward, so product names, people, and jargon come out right
-          instead of a similar-sounding word. {BAKED_IN_LABEL} are always included.
+          instead of a similar-sounding word. {BAKED_IN_LABEL} are always included, and your workspace admins can add
+          shared terms on top.
         </>
       }
       words={preferences?.voiceSteeringWords ?? []}

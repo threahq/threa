@@ -213,20 +213,36 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         // Resolve once per session so a mid-session pref change can't shift
         // behavior for an in-flight take and break the editor's chunk tracker.
         let polishLevel: VoicePolishLevel = "none"
-        // Default to the baked-in product terms so "Threa" is still biased even
-        // if the lookups fail — the steering correction must never be lost.
-        let steeringTerms: string[] = resolveSteeringTerms()
-        try {
-          const [prefs, workspaceSettings] = await Promise.all([
-            userPreferencesService.getPreferences(workspaceId, row.userId),
-            workspaceSettingsService.getSettings(workspaceId),
-          ])
-          polishLevel = prefs.voicePolishLevel
-          // base ∪ workspace-shared ∪ per-user (deduped, base/workspace win the spelling).
-          steeringTerms = resolveSteeringTerms(workspaceSettings.voiceSteeringWords, prefs.voiceSteeringWords)
-        } catch (err) {
-          logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs/settings lookup failed; defaulting polish off")
+        let userTerms: string[] | undefined
+        let workspaceTerms: string[] | undefined
+        // Resolve the two sources independently so one service's failure degrades
+        // only its own output: a workspace-settings outage must not disable a
+        // user's polish or drop their personal steering words, and vice versa.
+        // The baked-in product terms always survive (resolveSteeringTerms prepends
+        // them even when both lists are empty/missing).
+        const [prefsResult, settingsResult] = await Promise.allSettled([
+          userPreferencesService.getPreferences(workspaceId, row.userId),
+          workspaceSettingsService.getSettings(workspaceId),
+        ])
+        if (prefsResult.status === "fulfilled") {
+          polishLevel = prefsResult.value.voicePolishLevel
+          userTerms = prefsResult.value.voiceSteeringWords
+        } else {
+          logger.warn(
+            { err: prefsResult.reason, voiceSessionId, workspaceId },
+            "Voice user-prefs lookup failed; defaulting polish off"
+          )
         }
+        if (settingsResult.status === "fulfilled") {
+          workspaceTerms = settingsResult.value.voiceSteeringWords
+        } else {
+          logger.warn(
+            { err: settingsResult.reason, voiceSessionId, workspaceId },
+            "Voice workspace-settings lookup failed; skipping shared steering words"
+          )
+        }
+        // base ∪ workspace-shared ∪ per-user (deduped, base/workspace win the spelling).
+        const steeringTerms = resolveSteeringTerms(workspaceTerms, userTerms)
 
         const upstream = await transcription.open({
           model: row.model,

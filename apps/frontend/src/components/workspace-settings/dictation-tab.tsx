@@ -1,6 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { WORKSPACE_PERMISSION_SCOPES, VOICE_STEERING_BASE_TERMS, type WorkspaceBootstrap } from "@threa/types"
+import {
+  WORKSPACE_PERMISSION_SCOPES,
+  VOICE_STEERING_BASE_TERMS,
+  type WorkspaceBootstrap,
+  type WorkspaceSettings,
+} from "@threa/types"
 import { workspaceSettingsApi } from "@/api"
 import { workspaceKeys, useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
@@ -28,12 +33,17 @@ export function DictationTab({ workspaceId }: DictationTabProps) {
     onMutate: async (voiceSteeringWords) => {
       // Optimistic: reflect the chip immediately, like the per-user editor.
       await queryClient.cancelQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
-      // Snapshot for rollback from the reactive bootstrap we already observe
-      // (reading the cache directly in a component is disallowed).
-      const previousSettings = settings
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
-        old?.workspaceSettings ? { ...old, workspaceSettings: { ...old.workspaceSettings, voiceSteeringWords } } : old
-      )
+      // Capture the rollback snapshot from the LIVE cache inside the updater —
+      // the reactive `settings` closure can lag a rapid second edit, which would
+      // roll back to a stale list. (setQueryData's `old` is the current cache;
+      // the lint rule only bans reading via getQueryData.)
+      let previousSettings: WorkspaceSettings | null = null
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        previousSettings = old?.workspaceSettings ?? null
+        return old?.workspaceSettings
+          ? { ...old, workspaceSettings: { ...old.workspaceSettings, voiceSteeringWords } }
+          : old
+      })
       return { previousSettings }
     },
     onError: (_err, _next, context) => {

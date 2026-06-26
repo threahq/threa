@@ -65,6 +65,8 @@ function setup(overrides?: {
   voicePolishLevel?: "none" | "minor" | "opinionated"
   voiceSteeringWords?: string[]
   workspaceSteeringWords?: string[]
+  userPrefsThrows?: boolean
+  workspaceSettingsThrows?: boolean
   polishTranscript?: (args: {
     rawTranscript: string
     level: string
@@ -84,13 +86,19 @@ function setup(overrides?: {
     abortSession: mock(async () => {}),
   }
   const userPreferencesService = {
-    getPreferences: mock(async () => ({
-      voicePolishLevel: overrides?.voicePolishLevel ?? "none",
-      voiceSteeringWords: overrides?.voiceSteeringWords,
-    })),
+    getPreferences: mock(async () => {
+      if (overrides?.userPrefsThrows) throw new Error("user prefs unavailable")
+      return {
+        voicePolishLevel: overrides?.voicePolishLevel ?? "none",
+        voiceSteeringWords: overrides?.voiceSteeringWords,
+      }
+    }),
   }
   const workspaceSettingsService = {
-    getSettings: mock(async () => ({ voiceSteeringWords: overrides?.workspaceSteeringWords })),
+    getSettings: mock(async () => {
+      if (overrides?.workspaceSettingsThrows) throw new Error("workspace settings unavailable")
+      return { voiceSteeringWords: overrides?.workspaceSteeringWords }
+    }),
   }
   const polishTranscript = mock(
     overrides?.polishTranscript ?? (async ({ rawTranscript }: { rawTranscript: string }) => `P(${rawTranscript})`)
@@ -204,6 +212,51 @@ describe("registerVoiceGateway voice:start", () => {
 
     expect(transcription.open).toHaveBeenCalledWith(
       expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme", "MyTool"] })
+    )
+  })
+
+  it("keeps polish and per-user steering when the workspace-settings lookup fails", async () => {
+    const seenLevels: string[] = []
+    const { socket, upstream, transcription } = setup({
+      voicePolishLevel: "opinionated",
+      voiceSteeringWords: ["MyTool"],
+      workspaceSettingsThrows: true,
+      polishTranscript: async ({ rawTranscript, level }) => {
+        seenLevels.push(level)
+        return `P(${rawTranscript})`
+      },
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    // Workspace lookup failed, but user prefs are intact: base ∪ user, polish on.
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "MyTool"] })
+    )
+    upstream.fireDelta({ text: "hi", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(seenLevels).toEqual(["opinionated"])
+  })
+
+  it("keeps workspace steering when the user-prefs lookup fails (polish defaults off)", async () => {
+    const { socket, transcription } = setup({
+      workspaceSteeringWords: ["Acme"],
+      userPrefsThrows: true,
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    // User prefs failed → polish off + no user terms, but workspace terms still apply.
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme"] })
     )
   })
 
