@@ -173,6 +173,26 @@ export function shouldStartHighlightClear(args: {
   return args.deepLinkTargetLoaded || args.deepLinkGaveUp
 }
 
+/**
+ * Whether the deep-link / search highlight effect may claim a navigation and
+ * act on it this render. The event window must have hydrated first: on a cold
+ * open `isLoading` can read false while `events` is still empty (the IDB
+ * live-query hasn't resolved). Claiming the navigation then — stamping the
+ * once-per-`location.key` guard — with nothing to act on (no window to scroll
+ * within, none to jump from) would block the retry once events arrive, leaving
+ * an out-of-window target stranded behind `holdForDeepLink`. Gating on
+ * `hasEvents` keeps the effect re-armed until there is a window to act on.
+ */
+export function canActOnDeepLinkNavigation<T extends string>(args: {
+  highlightMessageId: T | null | undefined
+  isLoading: boolean
+  isDraft: boolean
+  hasEvents: boolean
+}): args is { highlightMessageId: T; isLoading: boolean; isDraft: boolean; hasEvents: boolean } {
+  if (!args.highlightMessageId || args.isLoading || args.isDraft) return false
+  return args.hasEvents
+}
+
 /** Lead distance (px) from either edge of the scroll range at which the next
  *  page is prefetched, so it lands before a fast scroll reaches the boundary. */
 export const EDGE_PREFETCH_PX = 1500
@@ -1440,8 +1460,13 @@ export function StreamContent({
   // (which produce identical URLs and would otherwise not change any state)
   // still re-trigger — react-router stamps each navigation with a fresh key.
   useEffect(() => {
-    if (!highlightMessageId || isLoading || isDraft) return
+    // Gate on a hydrated window (see canActOnDeepLinkNavigation) BEFORE the
+    // once-per-key claim below, so a cold open with `events` still empty doesn't
+    // claim the navigation and then block its own retry once events arrive.
+    const nav = { highlightMessageId, isLoading, isDraft, hasEvents: events.length > 0 }
+    if (!canActOnDeepLinkNavigation(nav)) return
     if (jumpTriggeredKeyRef.current === location.key) return
+    const targetMessageId = nav.highlightMessageId
     const navigationKey = location.key
     jumpTriggeredKeyRef.current = navigationKey
     // Fresh navigation: re-arm the mount hold for this target and clear any
@@ -1455,37 +1480,36 @@ export function StreamContent({
     // Check if the message is already visible in current events
     const isVisible = events.some((e) => {
       const payload = e.payload as { messageId?: string }
-      return payload?.messageId === highlightMessageId
+      return payload?.messageId === targetMessageId
     })
 
     if (isVisible) {
-      deepLinkDebug("highlight: target already in window, scrolling directly", highlightMessageId)
-      scrollToMessage(highlightMessageId)
+      deepLinkDebug("highlight: target already in window, scrolling directly", targetMessageId)
+      scrollToMessage(targetMessageId)
       return
     }
 
-    if (events.length > 0) {
-      deepLinkDebug("highlight: target out of window, jumping", highlightMessageId)
-      pendingScrollTarget.current = highlightMessageId
-      jumpToEvent(highlightMessageId)
-        .then((success) => {
-          // A newer navigation may have superseded this request while it was
-          // in flight; its stale completion must not clear the new target or
-          // release the new mount hold.
-          if (jumpTriggeredKeyRef.current !== navigationKey) return
-          deepLinkDebug("highlight: jumpToEvent resolved", highlightMessageId, "success=", success)
-          if (!success) {
-            pendingScrollTarget.current = null
-            setDeepLinkGaveUp(true)
-          }
-        })
-        .catch(() => {
-          if (jumpTriggeredKeyRef.current !== navigationKey) return
-          deepLinkDebug("highlight: jumpToEvent rejected", highlightMessageId)
+    // Target is outside the loaded window — fetch a window around it, then scroll.
+    deepLinkDebug("highlight: target out of window, jumping", targetMessageId)
+    pendingScrollTarget.current = targetMessageId
+    jumpToEvent(targetMessageId)
+      .then((success) => {
+        // A newer navigation may have superseded this request while it was
+        // in flight; its stale completion must not clear the new target or
+        // release the new mount hold.
+        if (jumpTriggeredKeyRef.current !== navigationKey) return
+        deepLinkDebug("highlight: jumpToEvent resolved", highlightMessageId, "success=", success)
+        if (!success) {
           pendingScrollTarget.current = null
           setDeepLinkGaveUp(true)
-        })
-    }
+        }
+      })
+      .catch(() => {
+        if (jumpTriggeredKeyRef.current !== navigationKey) return
+        deepLinkDebug("highlight: jumpToEvent rejected", highlightMessageId)
+        pendingScrollTarget.current = null
+        setDeepLinkGaveUp(true)
+      })
   }, [highlightMessageId, location.key, isLoading, isDraft, events, jumpToEvent, disableAutoScroll, scrollToMessage])
 
   // Reset jump and search state when switching streams (component stays mounted).

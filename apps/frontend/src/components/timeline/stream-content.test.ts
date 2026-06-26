@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   classifyDeepLinkScrollTick,
   shouldStartHighlightClear,
+  canActOnDeepLinkNavigation,
   computeScrollEdges,
   shouldPrefetchOlderHistory,
   shouldShowOlderSkeletons,
@@ -156,6 +157,34 @@ describe("shouldStartHighlightClear", () => {
         deepLinkGaveUp: true,
       })
     ).toBe(true)
+  })
+})
+
+describe("canActOnDeepLinkNavigation", () => {
+  const base = { highlightMessageId: "msg_1", isLoading: false, isDraft: false, hasEvents: true }
+
+  it("acts once the event window has hydrated", () => {
+    expect(canActOnDeepLinkNavigation(base)).toBe(true)
+  })
+
+  it("does not act without a highlight target", () => {
+    for (const highlightMessageId of [null, undefined, ""] as const) {
+      expect(canActOnDeepLinkNavigation({ ...base, highlightMessageId })).toBe(false)
+    }
+  })
+
+  it("does not act while loading or on a draft stream", () => {
+    expect(canActOnDeepLinkNavigation({ ...base, isLoading: true })).toBe(false)
+    expect(canActOnDeepLinkNavigation({ ...base, isDraft: true })).toBe(false)
+  })
+
+  it("defers while the window is still empty (regression: out-of-window target stuck behind holdForDeepLink)", () => {
+    // On a cold deep-link `isLoading` can read false before the IDB live-query
+    // resolves. Claiming the navigation then — with no window to scroll within
+    // or jump from — stamped the once-per-key guard and blocked the retry once
+    // events arrived, leaving an out-of-window target blank forever. The effect
+    // must stay re-armed until there is a window to act on.
+    expect(canActOnDeepLinkNavigation({ ...base, hasEvents: false })).toBe(false)
   })
 })
 
