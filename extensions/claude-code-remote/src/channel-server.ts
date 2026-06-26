@@ -13,8 +13,10 @@ const SUPPORTED_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
 const SESSION_CONTROL_CAPABILITY = "session-control"
 // The session-control slash commands this channel can actuate via tmux. Only
 // advertised when running inside tmux. `run` types an arbitrary slash command
-// (e.g. /remote-control); `compact` is sugar for `run /compact`.
-const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "compact", "run"] as const
+// (e.g. /remote-control); `compact` is sugar for `run /compact`; `reload` maps
+// to Claude Code's `/reload-skills` (pick up skills + custom commands added on
+// disk this session — `/reload-plugins` is reachable via `run` for the plugin case).
+const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "compact", "run", "reload"] as const
 // Claude Code `/model` aliases offered as autocomplete in the composer's arg picker.
 const MODEL_SUGGESTIONS = [{ value: "default" }, { value: "sonnet" }, { value: "opus" }, { value: "opusplan" }]
 // Mirror Pi's STEER_DRAIN_LIMIT: how many queued messages a single /steer folds
@@ -502,6 +504,11 @@ export class ChannelServer {
           return await this.runModelCommand(invocation, command.args)
         case "compact":
           return await this.runSlashCommand(invocation, command.args ? `/compact ${command.args}` : "/compact")
+        case "reload":
+          // Claude Code has no single "reload everything"; /reload-skills picks up
+          // skills + custom commands added on disk mid-session (newly `claude mcp
+          // add`'d MCP servers still need a restart). /reload-plugins via `run`.
+          return await this.runSlashCommand(invocation, "/reload-skills")
         case "run":
           return await this.runRunCommand(invocation, command.args)
         default:

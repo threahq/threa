@@ -102,7 +102,7 @@ describe("capability selection", () => {
   it("only publishes session-control command capabilities when control is available", () => {
     const enabled = runtimeCapabilitiesFor("ccs_1", true)
     expect(enabled.supportsSessionControlCommands).toBe(true)
-    expect(enabled.sessionControlCommands).toEqual(["stop", "steer", "model", "compact", "run"])
+    expect(enabled.sessionControlCommands).toEqual(["stop", "steer", "model", "compact", "run", "reload"])
     expect(enabled.runtimeSessionId).toBe("ccs_1")
 
     const disabled = runtimeCapabilitiesFor("ccs_1", false)

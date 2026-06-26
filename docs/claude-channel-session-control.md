@@ -1,7 +1,7 @@
 # Session control for the Claude Code channel (steer / stop / model / run-command)
 
 Status: **implemented + tmux mechanics live-verified** on `feat/harness-steer`, 2026-06-26.
-Author: agent session. Command set shipped: `stop`, `steer`, `model`, `compact`, `run`. The
+Author: agent session. Command set shipped: `stop`, `steer`, `model`, `compact`, `run`, `reload`. The
 genuinely-novel tmux paths ($TMUX_PANE inheritance, Esc interrupt, `/model`) are verified against
 Claude Code v2.1.193 (and live testing found + fixed two bugs — see the checklist); the full
 dispatch round-trip through a real scratchpad is still only unit-tested.
@@ -187,10 +187,13 @@ inside tmux (no pane), it advertises none of this, so the UI never shows a comma
 actuated — fail-safe. `resolveAdvertisedSessionControlCommandNames` (`availability.ts:257`)
 already intersects with the canonical name list, so only what the channel advertises shows up.
 
-Commands chosen for v1: **stop, steer, model, compact, run**. Dropped from Pi's set: `thinking`
-(no Claude Code slash equivalent), `reload`, `skill` (needs the skill list the channel doesn't
-have — fold into generic `run`). `shell` could be added later as a direct exec in the channel
-(like Pi's `runShellCommand`), independent of tmux.
+Commands chosen for v1: **stop, steer, model, compact, run, reload**. `reload` maps to Claude
+Code's `/reload-skills` (v2.1.152+) — picks up skills + custom commands added on disk mid-session;
+verified live ("16 skills available"). Newly `claude mcp add`'d MCP servers still can't hot-reload
+(Claude Code limitation — restart only); `/reload-plugins` is reachable via the generic `run`.
+Dropped from Pi's set: `thinking` (no Claude Code slash equivalent), `skill` (needs the skill list
+the channel doesn't have — fold into generic `run`). `shell` could be added later as a direct exec
+in the channel (like Pi's `runShellCommand`), independent of tmux.
 
 `run` is a **new generic command** (arg = slash command to type, e.g. `run /remote-control`),
 added to the canonical name list + catalog. Open UX question for Kris: `run` vs surfacing named
