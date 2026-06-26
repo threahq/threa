@@ -711,6 +711,7 @@ export async function startServer(): Promise<ServerInstance> {
     voiceTranscriptionService,
     transcription,
     userPreferencesService,
+    workspaceSettingsService,
     polishTranscript,
   })
 

@@ -63,7 +63,17 @@ function setup(overrides?: {
   open?: () => Promise<TranscriptionSession>
   getRelaySession?: (...args: unknown[]) => Promise<unknown>
   voicePolishLevel?: "none" | "minor" | "opinionated"
-  polishTranscript?: (args: { rawTranscript: string; level: string }) => Promise<string>
+  voiceSteeringWords?: string[]
+  workspaceSteeringWords?: string[]
+  userPrefsThrows?: boolean
+  workspaceSettingsThrows?: boolean
+  polishTranscript?: (args: {
+    rawTranscript: string
+    level: string
+    steeringTerms?: string[]
+    draftBefore?: string
+    draftAfter?: string
+  }) => Promise<string>
 }) {
   const upstream = fakeUpstream()
   const transcription = { open: mock(overrides?.open ?? (async () => upstream)) }
@@ -76,7 +86,19 @@ function setup(overrides?: {
     abortSession: mock(async () => {}),
   }
   const userPreferencesService = {
-    getPreferences: mock(async () => ({ voicePolishLevel: overrides?.voicePolishLevel ?? "none" })),
+    getPreferences: mock(async () => {
+      if (overrides?.userPrefsThrows) throw new Error("user prefs unavailable")
+      return {
+        voicePolishLevel: overrides?.voicePolishLevel ?? "none",
+        voiceSteeringWords: overrides?.voiceSteeringWords,
+      }
+    }),
+  }
+  const workspaceSettingsService = {
+    getSettings: mock(async () => {
+      if (overrides?.workspaceSettingsThrows) throw new Error("workspace settings unavailable")
+      return { voiceSteeringWords: overrides?.workspaceSteeringWords }
+    }),
   }
   const polishTranscript = mock(
     overrides?.polishTranscript ?? (async ({ rawTranscript }: { rawTranscript: string }) => `P(${rawTranscript})`)
@@ -96,13 +118,22 @@ function setup(overrides?: {
     voiceTranscriptionService: voiceTranscriptionService as never,
     transcription: transcription as never,
     userPreferencesService: userPreferencesService as never,
+    workspaceSettingsService: workspaceSettingsService as never,
     polishTranscript: polishTranscript as never,
   })
 
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, upstream, transcription, voiceTranscriptionService, userPreferencesService, polishTranscript }
+  return {
+    socket,
+    upstream,
+    transcription,
+    voiceTranscriptionService,
+    userPreferencesService,
+    workspaceSettingsService,
+    polishTranscript,
+  }
 }
 
 const START_PAYLOAD = { workspaceId: "ws_1", voiceSessionId: "voicesess_1" }
@@ -115,7 +146,12 @@ describe("registerVoiceGateway voice:start", () => {
     await socket.trigger("voice:start", START_PAYLOAD, cb)
 
     expect(cb).toHaveBeenCalledWith({ ok: true })
-    expect(transcription.open).toHaveBeenCalledWith({ model: "elevenlabs:scribe-v2-realtime", language: undefined })
+    expect(transcription.open).toHaveBeenCalledWith({
+      model: "elevenlabs:scribe-v2-realtime",
+      language: undefined,
+      // No user steering words → the baked-in product terms still bias the model.
+      vocabulary: ["Threa", "Ariadne"],
+    })
 
     upstream.fireDelta({ text: "hi", isFinal: true })
     upstream.fireError({ code: "INPUT_ERROR", message: "bad audio" })
@@ -131,6 +167,97 @@ describe("registerVoiceGateway voice:start", () => {
       event: "voice:transcription:error",
       payload: { voiceSessionId: "voicesess_1", code: "INPUT_ERROR", message: "bad audio" },
     })
+  })
+
+  it("biases the upstream and every polish pass toward baked-in plus user steering words (deduped)", async () => {
+    const seenSteering: Array<string[] | undefined> = []
+    const { socket, upstream, transcription } = setup({
+      voicePolishLevel: "opinionated",
+      // "Ariadne" duplicates a baked-in term (case-insensitively) and must collapse.
+      voiceSteeringWords: ["ariadne", "Langfuse"],
+      polishTranscript: async (args) => {
+        seenSteering.push(args.steeringTerms)
+        return `P(${args.rawTranscript})`
+      },
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Langfuse"] })
+    )
+
+    upstream.fireDelta({ text: "ship it", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(seenSteering).toEqual([["Threa", "Ariadne", "Langfuse"]])
+  })
+
+  it("unions the workspace-shared list with the per-user list (and the baked-in terms)", async () => {
+    const { socket, transcription } = setup({
+      // "Threa" collides with a baked-in term; the user term is additive.
+      workspaceSteeringWords: ["Acme", "Threa"],
+      voiceSteeringWords: ["MyTool"],
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme", "MyTool"] })
+    )
+  })
+
+  it("keeps polish and per-user steering when the workspace-settings lookup fails", async () => {
+    const seenLevels: string[] = []
+    const { socket, upstream, transcription } = setup({
+      voicePolishLevel: "opinionated",
+      voiceSteeringWords: ["MyTool"],
+      workspaceSettingsThrows: true,
+      polishTranscript: async ({ rawTranscript, level }) => {
+        seenLevels.push(level)
+        return `P(${rawTranscript})`
+      },
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    // Workspace lookup failed, but user prefs are intact: base ∪ user, polish on.
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "MyTool"] })
+    )
+    upstream.fireDelta({ text: "hi", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(seenLevels).toEqual(["opinionated"])
+  })
+
+  it("keeps workspace steering when the user-prefs lookup fails (polish defaults off)", async () => {
+    const { socket, transcription } = setup({
+      workspaceSteeringWords: ["Acme"],
+      userPrefsThrows: true,
+    })
+
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    // User prefs failed → polish off + no user terms, but workspace terms still apply.
+    expect(transcription.open).toHaveBeenCalledWith(
+      expect.objectContaining({ vocabulary: ["Threa", "Ariadne", "Acme"] })
+    )
   })
 
   it("refuses a start that is missing identifiers", async () => {

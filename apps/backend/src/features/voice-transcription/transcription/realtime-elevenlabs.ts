@@ -15,6 +15,15 @@ export interface ElevenLabsStrategyConfig {
 
 const REALTIME_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
 const SAMPLE_RATE_HZ = voiceConfig.sampleRateHz
+/**
+ * Scribe v2 Realtime keyterm limits: at most 50 terms, each ≤ 20 chars. Terms
+ * over the length cap are dropped rather than truncated — a truncated word would
+ * bias toward a wrong spelling (the Deepgram path and the polish pass still cover
+ * them). Using keyterms also adds a ~20% cost premium per ElevenLabs, which is
+ * why we only send the resolved steering list, never speculative vocabulary.
+ */
+const MAX_KEYTERMS = 50
+const MAX_KEYTERM_LENGTH = 20
 /** PCM16 mono: 2 bytes/sample, so ms = bytes / (2 * 16000 / 1000) = bytes / 32. */
 const BYTES_PER_MS = (SAMPLE_RATE_HZ * 2) / 1000
 
@@ -73,6 +82,15 @@ class ElevenLabsSession implements TranscriptionSession {
     // segment when we send commit:true (which we only do on stop), so without
     // this the user sees no committed text until they stop dictating.
     params.set("commit_strategy", "vad")
+    // Bias toward custom spellings via keyterms (array query param). Clamped to
+    // the realtime limits above; longer terms are skipped, not truncated.
+    let keytermCount = 0
+    for (const term of this.opts.vocabulary ?? []) {
+      const keyterm = term.trim()
+      if (!keyterm || keyterm.length > MAX_KEYTERM_LENGTH) continue
+      params.append("keyterms", keyterm)
+      if (++keytermCount >= MAX_KEYTERMS) break
+    }
     const url = `${REALTIME_URL}?${params.toString()}`
 
     // Bun's WebSocket accepts a non-standard options arg for request headers.

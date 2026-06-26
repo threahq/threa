@@ -22,6 +22,12 @@ export interface PolishTranscriptInput {
    */
   draftBefore?: string
   draftAfter?: string
+  /**
+   * Spelling reference (product names, custom steering words) the model should
+   * normalize mis-transcriptions to. Reinforces the STT-layer keyterm biasing so
+   * a mis-heard product name is corrected even when the provider couldn't bias it.
+   */
+  steeringTerms?: string[]
 }
 
 export type PolishTranscript = (input: PolishTranscriptInput) => Promise<string>
@@ -33,7 +39,7 @@ export type PolishTranscript = (input: PolishTranscriptInput) => Promise<string>
  * and returns the raw text so dictation always commits something.
  */
 export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
-  return async ({ rawTranscript, level, workspaceId, userId, sessionId, draftBefore, draftAfter }) => {
+  return async ({ rawTranscript, level, workspaceId, userId, sessionId, draftBefore, draftAfter, steeringTerms }) => {
     const trimmed = rawTranscript.trim()
     if (!trimmed) return rawTranscript
     // Defense-in-depth: the gateway short-circuits before reaching here, but an
@@ -42,7 +48,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
     if (level === "none") return rawTranscript
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
-    const userMessage = buildPolishUserMessage({ rawTranscript: trimmed, draftBefore, draftAfter })
+    const userMessage = buildPolishUserMessage({ rawTranscript: trimmed, draftBefore, draftAfter, steeringTerms })
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), POLISH_TIMEOUT_MS)
@@ -62,6 +68,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
             sessionId,
             rawLen: trimmed.length,
             draftContextLen: (draftBefore?.length ?? 0) + (draftAfter?.length ?? 0),
+            steeringTermCount: steeringTerms?.length ?? 0,
             level,
           },
         },
@@ -93,10 +100,17 @@ export function buildPolishUserMessage(args: {
   rawTranscript: string
   draftBefore?: string
   draftAfter?: string
+  steeringTerms?: string[]
 }): string {
   const sections: string[] = []
   const before = args.draftBefore?.trim()
   const after = args.draftAfter?.trim()
+  const steeringTerms = args.steeringTerms?.filter((t) => t.trim())
+  if (steeringTerms && steeringTerms.length > 0) {
+    sections.push(
+      `Spelling reference (normalize mis-transcriptions to these exact spellings):\n${steeringTerms.join(", ")}`
+    )
+  }
   if (before) {
     sections.push(`Existing draft text before the insertion point (context only, never output it):\n${before}`)
   }

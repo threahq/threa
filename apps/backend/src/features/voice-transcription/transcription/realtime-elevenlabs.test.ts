@@ -90,6 +90,39 @@ describe("RealtimeElevenLabsStrategy connect", () => {
     expect(lastSocket!.url).toContain("language_code=sv")
   })
 
+  test("appends a keyterms param per steering word", async () => {
+    const strategy = new RealtimeElevenLabsStrategy({ apiKey: "k" })
+    const p = strategy.open({ model: "elevenlabs:scribe-v2-realtime", vocabulary: ["Threa", " ", "Ariadne"] })
+    await Promise.resolve()
+    lastSocket!.simulateOpen()
+    await p
+    const params = new URLSearchParams(lastSocket!.url.split("?")[1])
+    expect(params.getAll("keyterms")).toEqual(["Threa", "Ariadne"])
+  })
+
+  test("drops keyterms over the 20-char realtime limit instead of truncating them", async () => {
+    const strategy = new RealtimeElevenLabsStrategy({ apiKey: "k" })
+    const tooLong = "x".repeat(21)
+    const p = strategy.open({ model: "elevenlabs:scribe-v2-realtime", vocabulary: ["Threa", tooLong] })
+    await Promise.resolve()
+    lastSocket!.simulateOpen()
+    await p
+    const params = new URLSearchParams(lastSocket!.url.split("?")[1])
+    // A truncated word would bias toward a wrong spelling, so it is skipped entirely.
+    expect(params.getAll("keyterms")).toEqual(["Threa"])
+  })
+
+  test("caps keyterms at the 50-term realtime limit", async () => {
+    const strategy = new RealtimeElevenLabsStrategy({ apiKey: "k" })
+    const many = Array.from({ length: 60 }, (_, i) => `term${i}`)
+    const p = strategy.open({ model: "elevenlabs:scribe-v2-realtime", vocabulary: many })
+    await Promise.resolve()
+    lastSocket!.simulateOpen()
+    await p
+    const params = new URLSearchParams(lastSocket!.url.split("?")[1])
+    expect(params.getAll("keyterms")).toHaveLength(50)
+  })
+
   test("rejects if the socket closes before opening", async () => {
     const strategy = new RealtimeElevenLabsStrategy({ apiKey: "k" })
     const p = strategy.open({ model: "elevenlabs:scribe-v2-realtime" })

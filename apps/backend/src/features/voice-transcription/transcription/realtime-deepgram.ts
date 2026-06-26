@@ -96,6 +96,14 @@ class DeepgramSession implements TranscriptionSession {
       // multilingual auto-detect across Nova-3's supported set instead.
       params.set("language", "multi")
     }
+    // Keyterm prompting biases the model toward custom spellings (product names,
+    // jargon). Nova-3 takes one `keyterm` per occurrence and supports it under
+    // multilingual `language=multi`. Capped well within Deepgram's 500-token
+    // budget by the upstream resolveSteeringTerms cap, so no per-term clamp here.
+    for (const term of this.opts.vocabulary ?? []) {
+      const keyterm = term.trim()
+      if (keyterm) params.append("keyterm", keyterm)
+    }
     const url = `${REALTIME_URL}?${params.toString()}`
 
     // Bun's WebSocket accepts a non-standard options arg for request headers.

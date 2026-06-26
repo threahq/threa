@@ -75,6 +75,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "blockquoteCollapseThreshold",
     "voiceTranscriptionModel",
     "voicePolishLevel",
+    "voiceSteeringWords",
     "workSchedule",
     "statusPresets",
     "gettingStartedDismissed",

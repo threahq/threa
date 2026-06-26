@@ -6,11 +6,12 @@ import { VOICE_DRAFT_CONTEXT_MAX_CHARS, type VoicePolishLevel } from "@threa/typ
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
-import { voiceConfig } from "./config"
+import { voiceConfig, resolveSteeringTerms } from "./config"
 import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
 import type { PolishTranscript } from "./polish"
 import type { UserPreferencesService } from "../user-preferences"
+import type { WorkspaceSettingsService } from "../workspace-settings"
 
 const startPayloadSchema = z.object({
   workspaceId: z.string().min(1),
@@ -27,6 +28,7 @@ interface Dependencies {
   voiceTranscriptionService: VoiceTranscriptionService
   transcription: Transcription
   userPreferencesService: UserPreferencesService
+  workspaceSettingsService: WorkspaceSettingsService
   polishTranscript: PolishTranscript
 }
 
@@ -50,6 +52,12 @@ interface RelayState {
    * "none" ships finals as plain deltas with no chunkId and no tracking.
    */
   polishLevel: VoicePolishLevel
+  /**
+   * Resolved once at start (baked-in product terms ∪ the user's steering words).
+   * Reused for every polish pass as the spelling reference; the STT-layer
+   * biasing already consumed it when the upstream session opened.
+   */
+  steeringTerms: string[]
   /**
    * Stable chunkId for the whole session: every final and polished event
    * carries it, so the editor extends/replaces a single tracked range.
@@ -100,7 +108,14 @@ function toBuffer(frame: unknown): Buffer | null {
  * with no durable read model to reconstruct.
  */
 export function registerVoiceGateway(io: Server, deps: Dependencies) {
-  const { authService, voiceTranscriptionService, transcription, userPreferencesService, polishTranscript } = deps
+  const {
+    authService,
+    voiceTranscriptionService,
+    transcription,
+    userPreferencesService,
+    workspaceSettingsService,
+    polishTranscript,
+  } = deps
   const namespace = io.of("/voice")
 
   // Same session-cookie auth as the main namespace (INV-35: reuse, don't fork).
@@ -198,14 +213,42 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         // Resolve once per session so a mid-session pref change can't shift
         // behavior for an in-flight take and break the editor's chunk tracker.
         let polishLevel: VoicePolishLevel = "none"
-        try {
-          const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
-          polishLevel = prefs.voicePolishLevel
-        } catch (err) {
-          logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs lookup failed; defaulting polish off")
+        let userTerms: string[] | undefined
+        let workspaceTerms: string[] | undefined
+        // Resolve the two sources independently so one service's failure degrades
+        // only its own output: a workspace-settings outage must not disable a
+        // user's polish or drop their personal steering words, and vice versa.
+        // The baked-in product terms always survive (resolveSteeringTerms prepends
+        // them even when both lists are empty/missing).
+        const [prefsResult, settingsResult] = await Promise.allSettled([
+          userPreferencesService.getPreferences(workspaceId, row.userId),
+          workspaceSettingsService.getSettings(workspaceId),
+        ])
+        if (prefsResult.status === "fulfilled") {
+          polishLevel = prefsResult.value.voicePolishLevel
+          userTerms = prefsResult.value.voiceSteeringWords
+        } else {
+          logger.warn(
+            { err: prefsResult.reason, voiceSessionId, workspaceId },
+            "Voice user-prefs lookup failed; defaulting polish off"
+          )
         }
+        if (settingsResult.status === "fulfilled") {
+          workspaceTerms = settingsResult.value.voiceSteeringWords
+        } else {
+          logger.warn(
+            { err: settingsResult.reason, voiceSessionId, workspaceId },
+            "Voice workspace-settings lookup failed; skipping shared steering words"
+          )
+        }
+        // base ∪ workspace-shared ∪ per-user (deduped, base/workspace win the spelling).
+        const steeringTerms = resolveSteeringTerms(workspaceTerms, userTerms)
 
-        const upstream = await transcription.open({ model: row.model, language: row.language ?? undefined })
+        const upstream = await transcription.open({
+          model: row.model,
+          language: row.language ?? undefined,
+          vocabulary: steeringTerms,
+        })
 
         // The socket disconnected while we were opening upstream — there is no
         // longer anyone to relay to, so tear down what we just built.
@@ -250,6 +293,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
                 sessionId: polishingState.voiceSessionId,
                 draftBefore: polishingState.draftBefore,
                 draftAfter: polishingState.draftAfter,
+                steeringTerms: polishingState.steeringTerms,
               })
               if (state !== polishingState || polishingState.finalized) return
               socket.emit("voice:transcript:polished", {
@@ -353,6 +397,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           maxDurationTimer,
           finalized: false,
           polishLevel,
+          steeringTerms,
           sessionChunkId,
           rawFinals: [],
           lastInterim: "",

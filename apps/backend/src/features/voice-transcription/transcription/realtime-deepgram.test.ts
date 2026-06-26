@@ -99,6 +99,17 @@ describe("RealtimeDeepgramStrategy connect", () => {
     expect(lastSocket!.url).not.toContain("language=multi")
   })
 
+  test("appends a keyterm param per steering word (Nova-3 keyterm prompting)", async () => {
+    const strategy = new RealtimeDeepgramStrategy({ apiKey: "k" })
+    const p = strategy.open({ model: "deepgram:nova-3", vocabulary: ["Threa", "Ariadne", "  ", "Langfuse"] })
+    await Promise.resolve()
+    lastSocket!.simulateOpen()
+    await p
+    const params = new URLSearchParams(lastSocket!.url.split("?")[1])
+    // Blank entries are dropped; each real term becomes its own keyterm param.
+    expect(params.getAll("keyterm")).toEqual(["Threa", "Ariadne", "Langfuse"])
+  })
+
   test("rejects if the socket closes before opening", async () => {
     const strategy = new RealtimeDeepgramStrategy({ apiKey: "k" })
     const p = strategy.open({ model: "deepgram:nova-3" })
