@@ -224,7 +224,6 @@ interface RenderRowOptions {
   showPreviewOnHover: boolean
   scrollContainerRef?: RefObject<HTMLDivElement | null>
   streamDragEnabled: boolean
-  dimReadRows: boolean
   homeHintFor?: (streamId: string) => string | null
 }
 
@@ -233,8 +232,7 @@ interface RenderRowOptions {
  * source only when dragging is on (desktop) and the row is a persisted stream —
  * drafts (incl. virtual DMs) carry transient ids that must never be filed into
  * config, and wrapping a disabled row would register a dead draggable for
- * nothing. In the Unread section an already-read (sticky) row gets an opacity
- * wrapper so it reads as handled — opacity only, so nothing shifts (INV-21).
+ * nothing.
  */
 function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): ReactNode {
   const item = (
@@ -253,18 +251,6 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
   const row = dragEnabled ? <DraggableStreamRow streamId={stream.id}>{item}</DraggableStreamRow> : item
-  // The Unread section dims already-read rows in place. Keep a stable <div>
-  // wrapper there (toggling opacity via class) so reading a row animates instead
-  // of remounting it — a <div>/<Fragment> swap would change the element type and
-  // tear down the row. Other sections stay wrapper-free.
-  if (opts.dimReadRows) {
-    const dimmed = opts.getUnreadCount(stream.id) === 0
-    return (
-      <div key={stream.id} className={cn("transition-opacity", dimmed && "opacity-50")}>
-        {row}
-      </div>
-    )
-  }
   return <Fragment key={stream.id}>{row}</Fragment>
 }
 
@@ -327,12 +313,6 @@ interface StreamSectionProps {
   /** When true, each stream row is a drag source for filing into a custom section (desktop). */
   streamDragEnabled?: boolean
   /**
-   * Dim already-read rows. Set on the Unread section: a member that's been read
-   * lingers (sticky) but de-emphasizes in place, so the row reads as "handled"
-   * without leaving its slot. Un-dims nothing else — other sections never set it.
-   */
-  dimReadRows?: boolean
-  /**
    * Resolve a row's trailing "· home" hint (its custom section / pinned label).
    * Set only on the Unread section, where rows are drawn out of their home.
    */
@@ -362,7 +342,6 @@ export function StreamSection({
   addTooltip,
   addMenuActions,
   streamDragEnabled = false,
-  dimReadRows = false,
   homeHintFor,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
@@ -380,7 +359,6 @@ export function StreamSection({
       showPreviewOnHover,
       scrollContainerRef,
       streamDragEnabled,
-      dimReadRows,
       homeHintFor,
     })
 
@@ -460,7 +438,6 @@ export function TieredStreamSection({
   addTooltip,
   addMenuActions,
   streamDragEnabled = false,
-  dimReadRows = false,
   homeHintFor,
 }: TieredStreamSectionProps) {
   const isCollapsed = state === "collapsed"
@@ -491,7 +468,6 @@ export function TieredStreamSection({
       showPreviewOnHover,
       scrollContainerRef,
       streamDragEnabled,
-      dimReadRows,
       homeHintFor,
     })
 

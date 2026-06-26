@@ -46,7 +46,7 @@ interface AddWiring {
 
 /** Unread section header: a gold thread dot + the label, matching the section
  *  header's uppercase styling. Gold (not a colored emoji) keeps the palette
- *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (the tray is empty) both
+ *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (no unread streams) both
  *  the dot and label drop to a muted tone so the caught-up header recedes
  *  instead of advertising itself — the gold dot is reserved for "there's unread
  *  here". */
@@ -115,10 +115,6 @@ interface SidebarStreamListProps {
   onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
   /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
   homeHintFor: (streamId: string) => string | null
-  /** True when the Unread tray holds already-read members — shows the "Clear read" affordance. */
-  hasReadResidue: boolean
-  /** Flush the read members from the Unread tray (they return to their home sections). */
-  onClearReadUnread: () => void
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -142,8 +138,6 @@ export function SidebarStreamList({
   onAssignStreamLabel,
   onStreamMovedFromLabel,
   homeHintFor,
-  hasReadResidue,
-  onClearReadUnread,
   scrollContainerRef,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
@@ -252,7 +246,7 @@ export function SidebarStreamList({
           const isEmptyUnread = isUnread && items.length === 0
           // Unread's header is a gold dot + label (a colored emoji would break the
           // gold-on-paper palette); label sections use their tinted chip. An empty
-          // tray mutes the dot + label so the caught-up header recedes.
+          // Unread section mutes the dot + label so the caught-up header recedes.
           let titleContent: ReactNode = undefined
           if (label) titleContent = <LabelChip label={label} />
           else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
@@ -264,29 +258,15 @@ export function SidebarStreamList({
           const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
           const add = addWiringFor(section.spec)
           // The Unread section's status rides in its header (right side), not a
-          // footer row — so an empty tray costs only the header, never a band of
-          // dead space. An empty tray shows a quiet "All caught up" and drops its
-          // chevron (state/onToggle below): with no rows there's nothing to
-          // collapse, so the header reads as pure status, not a toggle. A tray
-          // holding already-read members shows the "Clear read" control; a tray
-          // of only fresh unreads shows nothing (no disabled control to read as
-          // noise). Read residue is hidden while collapsed — rows out of view,
-          // the aggregate badge is the signal there. Swapping the accessory never
-          // reflows the list; the header is always present (INV-21).
-          let unreadAccessory: ReactNode = undefined
-          if (isEmptyUnread) {
-            unreadAccessory = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
-          } else if (isUnread && hasReadResidue && state !== "collapsed") {
-            unreadAccessory = (
-              <button
-                type="button"
-                onClick={onClearReadUnread}
-                className="rounded px-1 text-[11px] uppercase tracking-wide text-muted-foreground/60 transition-colors hover:text-foreground"
-              >
-                Clear read
-              </button>
-            )
-          }
+          // footer row — so an empty section costs only the header, never a band
+          // of dead space. An empty section shows a quiet "All caught up" and
+          // drops its chevron (state/onToggle below): with no rows there's
+          // nothing to collapse, so the header reads as pure status, not a
+          // toggle. The header is always present, so showing/hiding the accessory
+          // never reflows the list (INV-21).
+          const unreadAccessory: ReactNode = isEmptyUnread ? (
+            <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+          ) : undefined
 
           const sectionEl = presentation.tiered ? (
             <TieredStreamSection
@@ -334,7 +314,6 @@ export function SidebarStreamList({
               showPreviewOnHover={presentation.showPreviewOnHover}
               scrollContainerRef={scrollContainerRef}
               streamDragEnabled={streamDragEnabled}
-              dimReadRows={isUnread}
               homeHintFor={isUnread ? homeHintFor : undefined}
             />
           )
