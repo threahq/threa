@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useRef } from "react"
 import { toast } from "sonner"
 import { usePageActivity } from "./use-page-activity"
 import { useSocketReconnectCount } from "@/contexts"
@@ -275,6 +275,15 @@ export function useAppUpdate(): void {
   const { isVisible } = usePageActivity()
   const reconnectCount = useSocketReconnectCount()
 
+  // Share one in-flight reconciliation across the mount effect and checkForUpdate
+  // (both fire on a visible load). reconcilePostReload clears its single-shot flag
+  // before awaiting the version fetch, so without a shared promise the second
+  // caller sees no flag, skips recovery, and re-announces the waiting worker while
+  // the first is still recovering. A ref (not module state) keeps it per hook
+  // instance, per INV-9; the sessionStorage flag is the across-remount guard.
+  const reconcileRef = useRef<Promise<boolean> | null>(null)
+  const reconcileOnce = useCallback(() => (reconcileRef.current ??= reconcilePostReload()), [])
+
   const checkForUpdate = useCallback(async () => {
     if (IS_DEV) return
     const registration = await navigator.serviceWorker?.getRegistration()
@@ -289,11 +298,10 @@ export function useAppUpdate(): void {
       // Network error — retry on the next trigger.
     }
     // Reconcile before announcing so a Reload that didn't swap in new code
-    // escalates to recovery instead of re-announcing (idempotent with the
-    // mount-effect call; whichever runs first consumes the flag).
-    if (await reconcilePostReload()) return
+    // escalates to recovery instead of re-announcing the same build.
+    if (await reconcileOnce()) return
     announceIfWaiting(registration)
-  }, [])
+  }, [reconcileOnce])
 
   // Announce a build that finishes installing between checks: the browser may
   // park a new worker at any time (another tab's update(), a slow precache
@@ -306,7 +314,7 @@ export function useAppUpdate(): void {
       if (!registration || disposed) return
       // A prior Reload click that didn't swap in new code escalates to recovery
       // here; a reload follows, so don't announce on top of it.
-      if (await reconcilePostReload()) return
+      if (await reconcileOnce()) return
       if (disposed) return
       announceIfWaiting(registration)
       // Track per-install statechange listeners so unmount (workspace switch
@@ -341,7 +349,7 @@ export function useAppUpdate(): void {
       disposed = true
       cleanup?.()
     }
-  }, [])
+  }, [reconcileOnce])
 
   useEffect(() => {
     if (IS_DEV) return
