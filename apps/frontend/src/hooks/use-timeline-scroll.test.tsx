@@ -189,6 +189,26 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(false)
   })
 
+  it("keeps following when content reflow lowers scrollTop AND grows scrollHeight (cold-load tail landing)", () => {
+    // The cold-load "settles 2 pages up" bug: as the catch-up tail lands, virtua
+    // re-anchors and LOWERS scrollTop while scrollHeight GROWS. A scrollTop drop
+    // alone read as a scrollbar scroll-up and disarmed follow, so the
+    // ResizeObserver stopped re-pinning and the view stranded above the tail.
+    // A drop that coincides with a height change is content reflow, not the
+    // user — follow must stay armed so the tail re-pins to the true bottom.
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 4961, clientHeight: 852, scrollTop: 4109 })
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // Catch-up content lands: scrollHeight 4961 → 6420 AND virtua drops scrollTop
+    // 4109 → 3040, with no user gesture.
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 6420 })
+    el.scrollTop = 3040
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+  })
+
   it("disarms follow when the user scrolls away right after a programmatic pin", () => {
     // A real scroll-away immediately after our own re-pin MUST still disarm —
     // otherwise follow stays wrongly armed and the next composer resize yanks the
