@@ -1,11 +1,12 @@
 import { sql, type Querier } from "@threa/backend-common"
-import type {
-  GitHubPreview,
-  GitHubPreviewType,
-  LinearPreview,
-  LinearPreviewType,
-  LinkPreviewContentType,
-  LinkPreviewStatus,
+import {
+  type GitHubPreview,
+  type GitHubPreviewType,
+  type LinearPreview,
+  type LinearPreviewType,
+  type LinkPreviewContentType,
+  type LinkPreviewStatus,
+  isInAppLinkContentType,
 } from "@threa/types"
 
 /** Union of all rich provider preview types persisted in `link_previews.preview_type`. */
@@ -30,6 +31,7 @@ export interface LinkPreview {
   targetWorkspaceId: string | null
   targetStreamId: string | null
   targetMessageId: string | null
+  targetMemoId: string | null
   fetchedAt: Date | null
   expiresAt: Date | null
   createdAt: Date
@@ -44,6 +46,7 @@ export interface InsertLinkPreviewParams {
   targetWorkspaceId?: string
   targetStreamId?: string
   targetMessageId?: string
+  targetMemoId?: string
 }
 
 export interface UpdateLinkPreviewParams {
@@ -83,6 +86,7 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
     targetWorkspaceId: (row.target_workspace_id as string | null) ?? null,
     targetStreamId: (row.target_stream_id as string | null) ?? null,
     targetMessageId: (row.target_message_id as string | null) ?? null,
+    targetMemoId: (row.target_memo_id as string | null) ?? null,
     fetchedAt: row.fetched_at ? new Date(row.fetched_at as string) : null,
     expiresAt: row.expires_at ? new Date(row.expires_at as string) : null,
     createdAt: new Date(row.created_at as string),
@@ -91,17 +95,20 @@ function mapRow(row: Record<string, unknown>): LinkPreview {
 
 export const LinkPreviewRepository = {
   async insert(querier: Querier, params: InsertLinkPreviewParams): Promise<LinkPreview> {
-    const status = params.contentType === "message_link" ? "completed" : "pending"
+    // In-app links resolve through the permission-checked endpoint, never a
+    // network fetch — they are complete the moment the row exists.
+    const status = isInAppLinkContentType(params.contentType) ? "completed" : "pending"
     const result = await querier.query(
       sql`INSERT INTO link_previews (id, workspace_id, url, normalized_url, content_type, status,
-              target_workspace_id, target_stream_id, target_message_id)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              target_workspace_id, target_stream_id, target_message_id, target_memo_id)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           ON CONFLICT (workspace_id, normalized_url) DO UPDATE SET
               content_type = EXCLUDED.content_type,
               status = EXCLUDED.status,
               target_workspace_id = EXCLUDED.target_workspace_id,
               target_stream_id = EXCLUDED.target_stream_id,
-              target_message_id = EXCLUDED.target_message_id
+              target_message_id = EXCLUDED.target_message_id,
+              target_memo_id = EXCLUDED.target_memo_id
           WHERE link_previews.content_type != EXCLUDED.content_type
           RETURNING *`,
       [
@@ -114,6 +121,7 @@ export const LinkPreviewRepository = {
         params.targetWorkspaceId ?? null,
         params.targetStreamId ?? null,
         params.targetMessageId ?? null,
+        params.targetMemoId ?? null,
       ]
     )
     if (result.rows.length > 0) {

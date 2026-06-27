@@ -14,7 +14,7 @@ import {
   MAX_TITLE_LENGTH,
   OEMBED_PROVIDERS,
 } from "./config"
-import { isRedditUrl, resolveFetchUserAgent } from "@threa/types"
+import { isInAppLinkContentType, isRedditUrl, resolveFetchUserAgent } from "@threa/types"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const log = logger.child({ module: "link-preview-worker" })
@@ -527,14 +527,14 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
     }
 
     // Network work runs outside any DB transaction (INV-41).
-    // Message link previews are already completed at insert time — skip fetch entirely.
+    // In-app link previews are already completed at insert time — skip fetch entirely.
     const fetchResults = await Promise.allSettled(
       pendingPreviews.map(async (p) => {
         const existing = await deps.linkPreviewService.getPreviewById(workspaceId, p.id)
         if (!existing) {
           return { id: p.id, skipped: true }
         }
-        if (existing.contentType === "message_link") {
+        if (isInAppLinkContentType(existing.contentType)) {
           return { id: p.id, skipped: true }
         }
         const isGitHubUrl = parseGitHubUrl(p.url) !== null

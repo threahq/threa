@@ -167,6 +167,9 @@ export {
   LINK_PREVIEW_CONTENT_TYPES,
   type LinkPreviewContentType,
   LinkPreviewContentTypes,
+  IN_APP_LINK_CONTENT_TYPES,
+  type InAppLinkContentType,
+  isInAppLinkContentType,
   LINK_PREVIEW_STATUSES,
   type LinkPreviewStatus,
   LinkPreviewStatuses,
@@ -342,9 +345,12 @@ export type {
   LinearProjectPreviewData,
   LinearDocumentPreviewData,
   LinearPreview,
-  // Message link previews (internal permalinks)
-  MessageLinkAccessTier,
+  // In-app link previews (internal permalinks)
+  InAppLinkAccessTier,
   MessageLinkPreviewData,
+  StreamLinkPreviewData,
+  MemoLinkPreviewData,
+  InAppLinkPreviewData,
 } from "./domain"
 
 // Slug validation

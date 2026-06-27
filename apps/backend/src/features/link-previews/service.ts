@@ -1,14 +1,21 @@
 import type { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { linkPreviewId } from "../../lib/id"
-import type { LinkPreviewSummary, MessageLinkPreviewData } from "@threa/types"
+import type {
+  InAppLinkPreviewData,
+  LinkPreviewContentType,
+  LinkPreviewSummary,
+  MessageLinkPreviewData,
+} from "@threa/types"
 import { getAvatarUrl } from "@threa/types"
 import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams } from "./repository"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { StreamService } from "../streams"
+import type { MemoExplorerService } from "../memos"
+import { resolveUserAccessibleStreamIds } from "../search"
 import { OutboxRepository } from "../../lib/outbox"
-import { extractUrls, normalizeUrl, detectContentType, parseMessagePermalink } from "./url-utils"
+import { extractUrls, normalizeUrl, detectContentType, parseInAppLink, type InAppLinkRef } from "./url-utils"
 import { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
 const CONTENT_PREVIEW_MAX_LENGTH = 200
@@ -16,6 +23,45 @@ const CONTENT_PREVIEW_MAX_LENGTH = 200
 export interface LinkPreviewServiceDeps {
   pool: Pool
   streamService: StreamService
+  memoExplorerService: MemoExplorerService
+}
+
+/**
+ * Map a parsed in-app link (or a plain web URL when `ref` is null) to the
+ * persisted content type and target columns. Keeps the two insert paths in sync.
+ */
+function inAppLinkInsertFields(
+  ref: InAppLinkRef | null,
+  url: string
+): {
+  contentType: LinkPreviewContentType
+  targetWorkspaceId?: string
+  targetStreamId?: string
+  targetMessageId?: string
+  targetMemoId?: string
+} {
+  if (!ref) return { contentType: detectContentType(url) }
+  switch (ref.kind) {
+    case "message":
+      return {
+        contentType: "message_link",
+        targetWorkspaceId: ref.workspaceId,
+        targetStreamId: ref.streamId,
+        targetMessageId: ref.messageId,
+      }
+    case "stream":
+      return {
+        contentType: "stream_link",
+        targetWorkspaceId: ref.workspaceId,
+        targetStreamId: ref.streamId,
+      }
+    case "memo":
+      return {
+        contentType: "memo_link",
+        targetWorkspaceId: ref.workspaceId,
+        targetMemoId: ref.memoId,
+      }
+  }
 }
 
 export class LinkPreviewService {
@@ -24,7 +70,7 @@ export class LinkPreviewService {
   /**
    * Extract URLs from message content and create pending link preview records.
    * Returns the preview IDs and URLs that need to be fetched.
-   * Internal message permalinks are detected and marked as completed immediately.
+   * In-app links (message, stream, memo) are detected and marked as completed immediately.
    */
   async extractAndCreatePending(
     workspaceId: string,
@@ -41,17 +87,14 @@ export class LinkPreviewService {
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i]
         const normalized = normalizeUrl(url)
-        const permalink = parseMessagePermalink(url, appOrigins)
+        const ref = parseInAppLink(url, appOrigins)
 
         const preview = await LinkPreviewRepository.insert(client, {
           id: linkPreviewId(),
           workspaceId,
           url,
           normalizedUrl: normalized,
-          contentType: permalink ? "message_link" : detectContentType(url),
-          targetWorkspaceId: permalink?.workspaceId,
-          targetStreamId: permalink?.streamId,
-          targetMessageId: permalink?.messageId,
+          ...inAppLinkInsertFields(ref, url),
         })
 
         await LinkPreviewRepository.linkToMessage(client, workspaceId, messageId, preview.id, i)
@@ -83,17 +126,14 @@ export class LinkPreviewService {
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i]
         const normalized = normalizeUrl(url)
-        const permalink = parseMessagePermalink(url, appOrigins)
+        const ref = parseInAppLink(url, appOrigins)
 
         const preview = await LinkPreviewRepository.insert(client, {
           id: linkPreviewId(),
           workspaceId,
           url,
           normalizedUrl: normalized,
-          contentType: permalink ? "message_link" : detectContentType(url),
-          targetWorkspaceId: permalink?.workspaceId,
-          targetStreamId: permalink?.streamId,
-          targetMessageId: permalink?.messageId,
+          ...inAppLinkInsertFields(ref, url),
         })
 
         await LinkPreviewRepository.linkToMessage(client, workspaceId, messageId, preview.id, i)
@@ -223,40 +263,55 @@ export class LinkPreviewService {
   }
 
   /**
-   * Resolve a message link preview for a specific viewer.
-   * Returns access-tiered data: full content for accessible messages,
-   * limited info for private/cross-workspace messages.
+   * Resolve an in-app link preview (message, stream, or memo) for a specific viewer.
+   * Returns access-tiered data: full content for accessible targets, limited info
+   * for private targets, and a minimal card for cross-workspace links. A
+   * cross-workspace target is never inspected — same-workspace check happens first
+   * so we never leak the existence of another workspace's content.
    */
-  async resolveMessageLink(
+  async resolveInAppLink(
     workspaceId: string,
     userId: string,
     linkPreviewId: string
-  ): Promise<MessageLinkPreviewData | null> {
+  ): Promise<InAppLinkPreviewData | null> {
     const preview = await LinkPreviewRepository.findById(this.deps.pool, workspaceId, linkPreviewId)
-    if (!preview || preview.contentType !== "message_link") return null
+    if (!preview) return null
 
+    switch (preview.contentType) {
+      case "message_link":
+        return this.resolveMessageTarget(workspaceId, userId, preview)
+      case "stream_link":
+        return this.resolveStreamTarget(workspaceId, userId, preview)
+      case "memo_link":
+        return this.resolveMemoTarget(workspaceId, userId, preview)
+      default:
+        return null
+    }
+  }
+
+  private async resolveMessageTarget(
+    workspaceId: string,
+    userId: string,
+    preview: LinkPreview
+  ): Promise<MessageLinkPreviewData | null> {
     const { targetWorkspaceId, targetStreamId, targetMessageId } = preview
     if (!targetWorkspaceId || !targetStreamId || !targetMessageId) return null
 
-    // Cross-workspace: minimal info — intentionally does NOT check if target workspace exists
-    // to avoid leaking workspace existence.
     if (targetWorkspaceId !== workspaceId) {
-      return { accessTier: "cross_workspace" }
+      return { kind: "message", accessTier: "cross_workspace" }
     }
 
-    // Same workspace — check stream access. tryAccess returns null for both
-    // non-existent and inaccessible streams, so no existence leak.
+    // tryAccess returns null for both non-existent and inaccessible streams, so no existence leak.
     const stream = await this.deps.streamService.tryAccess(targetStreamId, workspaceId, userId)
     if (!stream) {
-      return { accessTier: "private" }
+      return { kind: "message", accessTier: "private" }
     }
 
-    // Full access — look up message and verify it belongs to this stream.
-    // Collapse all failure modes (not found, deleted, wrong stream) into the same
+    // Collapse all failure modes (not found, deleted, wrong stream) into one
     // response to avoid leaking message existence across streams.
     const message = await MessageRepository.findById(this.deps.pool, targetMessageId)
     if (!message || message.deletedAt || message.streamId !== targetStreamId) {
-      return { accessTier: "full", deleted: true }
+      return { kind: "message", accessTier: "full", deleted: true }
     }
 
     let authorName: string | undefined
@@ -275,11 +330,86 @@ export class LinkPreviewService {
         : message.contentMarkdown
 
     return {
+      kind: "message",
       accessTier: "full",
       authorName,
       authorAvatarUrl,
       contentPreview,
       streamName: stream.displayName ?? stream.slug ?? undefined,
+    }
+  }
+
+  private async resolveStreamTarget(
+    workspaceId: string,
+    userId: string,
+    preview: LinkPreview
+  ): Promise<InAppLinkPreviewData | null> {
+    const { targetWorkspaceId, targetStreamId } = preview
+    if (!targetWorkspaceId || !targetStreamId) return null
+
+    if (targetWorkspaceId !== workspaceId) {
+      return { kind: "stream", accessTier: "cross_workspace" }
+    }
+
+    const stream = await this.deps.streamService.tryAccess(targetStreamId, workspaceId, userId)
+    if (!stream) {
+      return { kind: "stream", accessTier: "private" }
+    }
+
+    const description =
+      stream.description && stream.description.length > CONTENT_PREVIEW_MAX_LENGTH
+        ? stream.description.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…"
+        : (stream.description ?? undefined)
+
+    return {
+      kind: "stream",
+      accessTier: "full",
+      streamName: stream.displayName ?? stream.slug ?? undefined,
+      streamType: stream.type,
+      visibility: stream.visibility,
+      description,
+    }
+  }
+
+  private async resolveMemoTarget(
+    workspaceId: string,
+    userId: string,
+    preview: LinkPreview
+  ): Promise<InAppLinkPreviewData | null> {
+    const { targetWorkspaceId, targetMemoId } = preview
+    if (!targetWorkspaceId || !targetMemoId) return null
+
+    if (targetWorkspaceId !== workspaceId) {
+      return { kind: "memo", accessTier: "cross_workspace" }
+    }
+
+    // A memo's visibility is inherited from the streams its source messages live in.
+    const accessibleStreamIds = await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
+      archiveStatus: ["active", "archived"],
+    })
+    // No accessible streams means no memo is reachable — return the private tier
+    // without reading the memo row, matching how the message/stream paths collapse
+    // "not found" and "no access" into one response (no existence side-channel).
+    if (accessibleStreamIds.length === 0) {
+      return { kind: "memo", accessTier: "private" }
+    }
+    const memo = await this.deps.memoExplorerService.getById(workspaceId, targetMemoId, { accessibleStreamIds })
+    if (!memo) {
+      return { kind: "memo", accessTier: "private" }
+    }
+
+    const abstract =
+      memo.memo.abstract.length > CONTENT_PREVIEW_MAX_LENGTH
+        ? memo.memo.abstract.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…"
+        : memo.memo.abstract
+
+    return {
+      kind: "memo",
+      accessTier: "full",
+      title: memo.memo.title,
+      abstract,
+      knowledgeType: memo.memo.knowledgeType,
+      sourceStreamName: memo.sourceStream?.name ?? undefined,
     }
   }
 

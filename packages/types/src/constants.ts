@@ -616,7 +616,14 @@ export const WorkspaceIntegrationStatuses = {
   ERROR: "error",
 } as const satisfies Record<string, WorkspaceIntegrationStatus>
 
-export const LINK_PREVIEW_CONTENT_TYPES = ["website", "pdf", "image", "message_link"] as const
+export const LINK_PREVIEW_CONTENT_TYPES = [
+  "website",
+  "pdf",
+  "image",
+  "message_link",
+  "stream_link",
+  "memo_link",
+] as const
 export type LinkPreviewContentType = (typeof LINK_PREVIEW_CONTENT_TYPES)[number]
 
 export const LinkPreviewContentTypes = {
@@ -624,7 +631,22 @@ export const LinkPreviewContentTypes = {
   PDF: "pdf",
   IMAGE: "image",
   MESSAGE_LINK: "message_link",
+  STREAM_LINK: "stream_link",
+  MEMO_LINK: "memo_link",
 } as const satisfies Record<string, LinkPreviewContentType>
+
+/**
+ * Content types that point at another in-app resource rather than the public web.
+ * These are resolved per-viewer through the permission-checked resolve endpoint
+ * and never fetched over the network, so the worker skips them and the frontend
+ * routes them to the in-app preview card instead of the generic web card.
+ */
+export const IN_APP_LINK_CONTENT_TYPES = ["message_link", "stream_link", "memo_link"] as const
+export type InAppLinkContentType = (typeof IN_APP_LINK_CONTENT_TYPES)[number]
+
+export function isInAppLinkContentType(contentType: LinkPreviewContentType): contentType is InAppLinkContentType {
+  return (IN_APP_LINK_CONTENT_TYPES as readonly string[]).includes(contentType)
+}
 
 export const LINK_PREVIEW_STATUSES = ["pending", "completed", "failed"] as const
 export type LinkPreviewStatus = (typeof LINK_PREVIEW_STATUSES)[number]

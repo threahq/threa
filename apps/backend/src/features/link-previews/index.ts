@@ -10,7 +10,7 @@ export { createLinkPreviewWorker } from "./worker"
 
 export { LinkPreviewOutboxHandler } from "./outbox-handler"
 
-export { extractUrls, normalizeUrl, detectContentType, isBlockedUrl, parseMessagePermalink } from "./url-utils"
-export type { MessagePermalink } from "./url-utils"
+export { extractUrls, normalizeUrl, detectContentType, isBlockedUrl, parseInAppLink } from "./url-utils"
+export type { InAppLinkRef } from "./url-utils"
 
 export { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"

@@ -1,12 +1,12 @@
 import { api } from "./client"
-import type { LinkPreviewSummary, MessageLinkPreviewData } from "@threa/types"
+import type { LinkPreviewSummary, InAppLinkPreviewData } from "@threa/types"
 
 export interface LinkPreviewWithDismissed extends LinkPreviewSummary {
   dismissed: boolean
 }
 
 const inFlightMessagePreviewRequests = new Map<string, Promise<LinkPreviewWithDismissed[]>>()
-const inFlightResolvedMessageLinkRequests = new Map<string, Promise<MessageLinkPreviewData>>()
+const inFlightResolvedInAppLinkRequests = new Map<string, Promise<InAppLinkPreviewData>>()
 
 export const linkPreviewsApi = {
   async getForMessage(workspaceId: string, messageId: string): Promise<LinkPreviewWithDismissed[]> {
@@ -30,21 +30,21 @@ export const linkPreviewsApi = {
   async dismiss(workspaceId: string, messageId: string, linkPreviewId: string): Promise<void> {
     await api.post(`/api/workspaces/${workspaceId}/messages/${messageId}/link-previews/${linkPreviewId}/dismiss`)
     inFlightMessagePreviewRequests.delete(`${workspaceId}:${messageId}`)
-    inFlightResolvedMessageLinkRequests.delete(`${workspaceId}:${linkPreviewId}`)
+    inFlightResolvedInAppLinkRequests.delete(`${workspaceId}:${linkPreviewId}`)
   },
 
-  async resolveMessageLink(workspaceId: string, linkPreviewId: string): Promise<MessageLinkPreviewData> {
+  async resolveInAppLink(workspaceId: string, linkPreviewId: string): Promise<InAppLinkPreviewData> {
     const key = `${workspaceId}:${linkPreviewId}`
-    const existing = inFlightResolvedMessageLinkRequests.get(key)
+    const existing = inFlightResolvedInAppLinkRequests.get(key)
     if (existing) return existing
 
     const request = api
-      .get<MessageLinkPreviewData>(`/api/workspaces/${workspaceId}/link-previews/${linkPreviewId}/resolve`)
+      .get<InAppLinkPreviewData>(`/api/workspaces/${workspaceId}/link-previews/${linkPreviewId}/resolve`)
       .finally(() => {
-        inFlightResolvedMessageLinkRequests.delete(key)
+        inFlightResolvedInAppLinkRequests.delete(key)
       })
 
-    inFlightResolvedMessageLinkRequests.set(key, request)
+    inFlightResolvedInAppLinkRequests.set(key, request)
     return request
   },
 }
