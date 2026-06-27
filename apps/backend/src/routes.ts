@@ -622,6 +622,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     linkPreview.dismiss
   )
+  app.get("/api/workspaces/:workspaceId/link-previews/resolve", ...authed, linkPreview.resolveInAppLinkByUrl)
   app.get("/api/workspaces/:workspaceId/link-previews/:linkPreviewId/resolve", ...authed, linkPreview.resolveInAppLink)
 
   // Giphy picker — backend proxy keeps the API key server-side. `config` reports
