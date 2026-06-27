@@ -33,5 +33,6 @@ export type {
   CachedLabel,
   CachedLabelAssignment,
   CachedE2eDeviceKey,
+  CachedBoardPost,
 } from "./database"
 export type { EventType } from "@threa/types"

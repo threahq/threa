@@ -9,6 +9,7 @@ import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
+import { useBoardPosts } from "@/stores/board-store"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
@@ -74,9 +75,12 @@ function BoardPageGate({ workspaceId }: { workspaceId: string }) {
 }
 
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
-  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
+  // The query is the fetch/seed engine; the board reads reactively from IDB so
+  // live events and optimistic writes re-sort it without a refetch.
+  const { isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
     useWorkspaceConversations(workspaceId, { limit: 50 })
-  const posts = useMemo(() => data?.pages.flatMap((page) => page.posts) ?? [], [data])
+  const boardPosts = useBoardPosts(workspaceId)
+  const posts = boardPosts ?? []
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -101,47 +105,11 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   if (isFetchingNextPage) loadMoreLabel = "Loading…"
   else if (isFetchNextPageError) loadMoreLabel = "Retry"
 
+  // Prefer cached/live content: a transient refetch error never hides a feed we
+  // already have. Skeleton only before the first IDB read resolves AND nothing
+  // is cached; empty state only once IDB has resolved to genuinely nothing.
   let content
-  if (isLoading) {
-    content = (
-      <div className="flex flex-col gap-3">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="rounded-xl border bg-card p-4">
-            <Skeleton className="h-3 w-1/3" />
-            <div className="mt-3 flex items-start gap-2">
-              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-              <div className="min-w-0 flex-1 space-y-2">
-                <Skeleton className="h-3.5 w-1/4" />
-                <Skeleton className="h-3 w-4/5" />
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    )
-  } else if (isError) {
-    // A failed fetch must read as a failure, not as the empty state's upbeat copy.
-    content = (
-      <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-        <AlertCircle className="h-8 w-8 text-destructive" />
-        <p className="text-sm font-medium">Couldn't load the board</p>
-        <p className="max-w-sm text-sm text-muted-foreground">Something went wrong fetching your conversations.</p>
-        <Button variant="outline" onClick={() => refetch()} className="min-h-11">
-          Try again
-        </Button>
-      </div>
-    )
-  } else if (posts.length === 0) {
-    content = (
-      <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-        <LayoutGrid className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm font-medium">Nothing on the board yet</p>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          As your conversations build up, the topics worth returning to surface here, newest activity first.
-        </p>
-      </div>
-    )
-  } else {
+  if (posts.length > 0) {
     content = (
       <div className="flex flex-col">
         {sections.map((section) => (
@@ -178,6 +146,45 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
             </Button>
           </div>
         )}
+      </div>
+    )
+  } else if (isError) {
+    // A failed fetch must read as a failure, not as the empty state's upbeat copy.
+    content = (
+      <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+        <AlertCircle className="h-8 w-8 text-destructive" />
+        <p className="text-sm font-medium">Couldn't load the board</p>
+        <p className="max-w-sm text-sm text-muted-foreground">Something went wrong fetching your conversations.</p>
+        <Button variant="outline" onClick={() => refetch()} className="min-h-11">
+          Try again
+        </Button>
+      </div>
+    )
+  } else if (isLoading || boardPosts === undefined) {
+    content = (
+      <div className="flex flex-col gap-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="rounded-xl border bg-card p-4">
+            <Skeleton className="h-3 w-1/3" />
+            <div className="mt-3 flex items-start gap-2">
+              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-3.5 w-1/4" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  } else {
+    content = (
+      <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+        <LayoutGrid className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm font-medium">Nothing on the board yet</p>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          As your conversations build up, the topics worth returning to surface here, newest activity first.
+        </p>
       </div>
     )
   }

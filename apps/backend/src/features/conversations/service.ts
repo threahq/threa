@@ -288,13 +288,17 @@ export class ConversationService {
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
       // Thread conversations also fan out to the parent channel's subscribers,
-      // matching the boundary extractor's event routing.
+      // matching the boundary extractor's event routing; the access-root stream's
+      // visibility (INV-62) gates workspace-wide board delivery of the aggregate.
       let parentStreamId: string | undefined
       const stream = await StreamRepository.findById(client, target.streamId)
+      let rootStream = stream
       if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
         const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
         parentStreamId = parentMessage?.streamId
+        rootStream = parentMessage ? await StreamRepository.findById(client, parentMessage.streamId) : stream
       }
+      const streamVisibility = rootStream?.visibility
 
       const touched = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
       for (const conv of touched) {
@@ -304,6 +308,7 @@ export class ConversationService {
           conversationId: conv.id,
           conversation: addStalenessFields(conv),
           parentStreamId,
+          streamVisibility,
         })
       }
 

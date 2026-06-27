@@ -22,6 +22,7 @@ import type {
   Draft as WireDraft,
   WorkspaceInvitableRole,
   AuthorType,
+  Visibility,
   NotificationLevel,
 } from "@threa/types"
 
@@ -382,6 +383,11 @@ export interface ConversationCreatedOutboxPayload extends StreamScopedPayload {
   conversation: ConversationWithStaleness
   /** For thread conversations, the parent channel's stream ID (for discoverability) */
   parentStreamId?: string
+  /** Visibility of the conversation's access-root stream (the parent channel for
+   *  a thread). Drives workspace-wide board delivery: `public` → the whole
+   *  workspace receives it (the board can show it); otherwise only the stream's
+   *  own members do, via the stream room (INV-62). */
+  streamVisibility?: Visibility
 }
 
 export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
@@ -389,6 +395,8 @@ export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
   conversation: ConversationWithStaleness
   /** For thread conversations, the parent channel's stream ID (for discoverability) */
   parentStreamId?: string
+  /** See {@link ConversationCreatedOutboxPayload.streamVisibility}. */
+  streamVisibility?: Visibility
 }
 
 /**

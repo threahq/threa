@@ -8,6 +8,7 @@ import {
   useSocketReconnectCount,
 } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
+import { seedBoardPosts, optimisticBoardReply } from "@/stores/board-store"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
@@ -86,12 +87,15 @@ interface UseConversationsOptions {
 
 /**
  * Cross-stream conversation feed for the workspace board, keyset-paginated.
- * Read-only bootstrap (the activity-feed pattern): `staleTime: Infinity` +
- * `refetchOnMount` so the list is fresh on open. Unlike the activity feed (which
- * gets live updates via workspace-room socket handlers) the board has no socket
- * subscription yet — conversation events are delivered only to per-stream rooms
- * today (see board-view design doc) — so `refetchOnReconnect` is left ON: a
- * reconnect is the board's only refresh path until cross-stream events land.
+ *
+ * This is the board's FETCH/SEED engine, not its read authority: every fetched
+ * page is written into the `conversations` IDB store (subscribe-then-fetch,
+ * INV-53), and the board renders reactively from IDB via `useBoardPosts` — the
+ * same rails the timeline rides. Live `conversation:*` events (gate-applied in
+ * `registerWorkspaceSocketHandlers`) and optimistic writes re-sort the IDB feed
+ * in place without a refetch; this query just keeps the head fresh on open and
+ * pages older cards in. `refetchOnReconnect` is left ON as the catch-up backstop
+ * for the unsynced board surface.
  */
 export function useWorkspaceConversations(
   workspaceId: string,
@@ -100,7 +104,7 @@ export function useWorkspaceConversations(
   const conversationService = useConversationService()
   const { status, limit } = options ?? {}
 
-  return useInfiniteQuery({
+  const query = useInfiniteQuery({
     queryKey: conversationKeys.workspaceList(workspaceId, { status, limit }),
     queryFn: ({ pageParam }) => conversationService.listByWorkspace(workspaceId, { status, limit, cursor: pageParam }),
     initialPageParam: undefined as string | undefined,
@@ -111,6 +115,20 @@ export function useWorkspaceConversations(
     refetchOnReconnect: true,
     enabled: !!workspaceId,
   })
+
+  // Seed IDB from whatever pages are loaded so the reactive board reflects the
+  // server snapshot. `bulkPut` reconciles cards in place — it never clears rows
+  // a page omits, so live/optimistic rows outside the fetched window survive.
+  const { data } = query
+  useEffect(() => {
+    if (!data) return
+    void seedBoardPosts(
+      workspaceId,
+      data.pages.flatMap((page) => page.posts)
+    )
+  }, [data, workspaceId])
+
+  return query
 }
 
 /**
@@ -259,6 +277,24 @@ export function useReplyToBoardPost(workspaceId: string) {
         ...base,
         conversation: { intent: "existing", conversationId: conversation.id },
       })
+      // Optimistically reflect the reply on the board's IDB feed: the card jumps
+      // to the top and shows the reply before the round-trip's `conversation:updated`
+      // echo merges over it (clearing pending). Link previews/attachments fill in
+      // on that reconciliation; an empty preview here is correct for a text reply.
+      void optimisticBoardReply(
+        conversation.id,
+        {
+          id: message.id,
+          authorId: message.authorId,
+          authorType: message.authorType,
+          contentMarkdown: message.contentMarkdown,
+          reactions: message.reactions,
+          attachments: [],
+          linkPreviews: [],
+          createdAt: message.createdAt,
+        },
+        Date.parse(message.createdAt) || Date.now()
+      )
       return { message, plan }
     },
   })

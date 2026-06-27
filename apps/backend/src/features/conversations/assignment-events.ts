@@ -24,12 +24,19 @@ export async function emitAssignmentEvents(
 ): Promise<Conversation> {
   const { workspaceId, message, conversationId, created, reason } = params
 
+  // Resolve the access-root stream's visibility (INV-62): for a thread that's the
+  // parent channel, otherwise the stream itself. It gates workspace-wide board
+  // delivery — public conversations reach the whole workspace, others stay
+  // scoped to the stream's members.
   let parentStreamId: string | undefined
   const stream = await StreamRepository.findById(client, message.streamId)
+  let rootStream = stream
   if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
     const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
     parentStreamId = parentMessage?.streamId
+    rootStream = parentMessage ? await StreamRepository.findById(client, parentMessage.streamId) : stream
   }
+  const streamVisibility = rootStream?.visibility
 
   const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationId])
   if (!refreshed) {
@@ -43,6 +50,7 @@ export async function emitAssignmentEvents(
     conversationId: refreshed.id,
     conversation: addStalenessFields(refreshed),
     parentStreamId,
+    streamVisibility,
   })
   await OutboxRepository.insert(client, "conversation:message_assigned", {
     workspaceId,

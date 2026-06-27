@@ -12,6 +12,7 @@ import { SocketEventGate } from "./socket-event-gate"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
+import { conversationKeys } from "@/hooks/use-conversations"
 import { invitationKeys } from "@/api/invitations"
 import {
   DEFAULT_SIDEBAR_CONFIG,
@@ -954,6 +955,78 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_other") })
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
+    cleanup()
+  })
+
+  it("merges a conversation:updated for a cached card into the board IDB store (re-sorts live)", async () => {
+    await db.conversations.clear()
+    await db.conversations.put({
+      id: "conv_1",
+      workspaceId: "ws_1",
+      conversation: { id: "conv_1", lastActivityAt: "2026-06-20T12:00:00.000Z" },
+      openingMessage: null,
+      recentMessages: [],
+      totalReplies: 0,
+      _lastActivityMs: Date.parse("2026-06-20T12:00:00.000Z"),
+      _cachedAt: Date.now(),
+    } as never)
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("conversation:updated", {
+      workspaceId: "ws_1",
+      conversation: { id: "conv_1", lastActivityAt: "2026-06-22T12:00:00.000Z" },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const row = await db.conversations.get("conv_1")
+    expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
+    // A cached card merges in place — no refetch of the board head.
+    expect(invalidate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: [...conversationKeys.all, "workspaceList", "ws_1"] })
+    )
+    cleanup()
+  })
+
+  it("refreshes the board head when a conversation:created arrives for an uncached card", async () => {
+    await db.conversations.clear()
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("conversation:created", {
+      workspaceId: "ws_1",
+      conversation: { id: "conv_new", lastActivityAt: "2026-06-22T12:00:00.000Z" },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The event carries the aggregate but not the message bodies, so a card we
+    // don't have cached is hydrated by refetching the (active) board head.
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: [...conversationKeys.all, "workspaceList", "ws_1"],
+      type: "active",
+    })
+    cleanup()
+  })
+
+  it("ignores conversation events from other workspaces", async () => {
+    await db.conversations.clear()
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("conversation:created", {
+      workspaceId: "ws_other",
+      conversation: { id: "conv_x", lastActivityAt: "2026-06-22T12:00:00.000Z" },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(await db.conversations.get("conv_x")).toBeUndefined()
+    expect(invalidate).not.toHaveBeenCalled()
     cleanup()
   })
 
