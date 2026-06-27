@@ -224,8 +224,19 @@ export function useTimelineScroll({
       shift = true
     }
   }
-  prevFirstKeyRef.current = firstKey
-  prevCountRef.current = itemCount
+  // Record the baseline once per commit, in a layout effect — not during
+  // render. React may render this component twice before committing (StrictMode
+  // in dev, a concurrent re-render in prod); a during-render write would let a
+  // later pass read an earlier pass's value, so `shift` would compare against a
+  // baseline from the same uncommitted render instead of the prior committed
+  // one. A layout effect writes exactly once per commit, so every render's
+  // `shift` is measured against the last COMMITTED first key. The stream-switch
+  // reset above stays in render — it must zero the baseline before this render's
+  // shift check — and is idempotent across the double render.
+  useLayoutEffect(() => {
+    prevFirstKeyRef.current = firstKey
+    prevCountRef.current = itemCount
+  })
 
   // The single pin. Go to the absolute bottom: scrollTop = scrollHeight is
   // browser-clamped to the true maximum, which includes the composer footer

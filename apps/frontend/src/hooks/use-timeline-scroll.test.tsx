@@ -1,28 +1,40 @@
 import { describe, it, expect, vi } from "vitest"
+import { StrictMode, type ReactNode } from "react"
 import { act, render } from "@testing-library/react"
 import { useTimelineScroll } from "./use-timeline-scroll"
 
 type Options = Parameters<typeof useTimelineScroll>[0]
 type HookApi = ReturnType<typeof useTimelineScroll>
 
-function renderScrollHook(initialOptions: Options): {
-  current: HookApi
-  rerender: (options: Options) => void
-} {
+function renderScrollHookWith(
+  initialOptions: Options,
+  wrap: (node: ReactNode) => ReactNode = (node) => node
+): { current: HookApi; rerender: (options: Options) => void } {
   const ref: { current: HookApi | undefined } = { current: undefined }
   function Probe({ options }: { options: Options }) {
     ref.current = useTimelineScroll(options)
     return null
   }
-  const utils = render(<Probe options={initialOptions} />)
+  const utils = render(wrap(<Probe options={initialOptions} />))
   return {
     get current(): HookApi {
       if (!ref.current) throw new Error("Probe did not capture the hook return value")
       return ref.current
     },
-    rerender: (options: Options) => act(() => utils.rerender(<Probe options={options} />)),
+    rerender: (options: Options) => act(() => utils.rerender(wrap(<Probe options={options} />))),
   }
 }
+
+const renderScrollHook = (initialOptions: Options) => renderScrollHookWith(initialOptions)
+
+/**
+ * Mounts the hook under StrictMode so every render is double-invoked — the
+ * condition that exposed the `shift` regression where the prepend baseline was
+ * tracked with a during-render ref write (the second pass read the first pass's
+ * value and collapsed shift to false).
+ */
+const renderScrollHookStrict = (initialOptions: Options) =>
+  renderScrollHookWith(initialOptions, (node) => <StrictMode>{node}</StrictMode>)
 
 /** A div whose scroll metrics are mockable (jsdom has no layout). */
 function makeScrollerDiv(metrics: { scrollHeight: number; clientHeight: number; scrollTop?: number }) {
@@ -58,6 +70,20 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
     // Leave the live tail (reading history).
     act(() => harness.current.disableAutoScroll())
     // Older page lands: the first row's identity changes from e10 to e0.
+    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
+    expect(harness.current.shift).toBe(true)
+  })
+
+  it("still shifts on a prepend under StrictMode double-render", () => {
+    // Regression guard: tracking the prepend baseline with a during-render ref
+    // write made the StrictMode second pass see firstKey === prevFirstKey, so
+    // the committed render carried shift=false and virtua skipped the scroll
+    // compensation — the viewport jumped on every older-page prepend. The
+    // baseline now updates in a layout effect (once per commit), so both passes
+    // compare against the same prior-commit value.
+    const harness = renderScrollHookStrict(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    act(() => harness.current.disableAutoScroll())
     harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
     expect(harness.current.shift).toBe(true)
   })
