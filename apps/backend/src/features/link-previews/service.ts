@@ -27,6 +27,18 @@ export interface LinkPreviewServiceDeps {
 }
 
 /**
+ * The target columns shared by both resolve entry points: a stored `LinkPreview`
+ * row (fields are `string | null`) and a freshly parsed URL (fields optional /
+ * `undefined`). The resolvers gate on truthiness, so either shape is safe.
+ */
+interface InAppLinkTarget {
+  targetWorkspaceId?: string | null
+  targetStreamId?: string | null
+  targetMessageId?: string | null
+  targetMemoId?: string | null
+}
+
+/**
  * Map a parsed in-app link (or a plain web URL when `ref` is null) to the
  * persisted content type and target columns. Keeps the two insert paths in sync.
  */
@@ -276,25 +288,47 @@ export class LinkPreviewService {
   ): Promise<InAppLinkPreviewData | null> {
     const preview = await LinkPreviewRepository.findById(this.deps.pool, workspaceId, linkPreviewId)
     if (!preview) return null
+    return this.resolveInAppTarget(workspaceId, userId, preview.contentType, preview)
+  }
 
-    switch (preview.contentType) {
+  /**
+   * Resolve an in-app link straight from its URL, for surfaces that have no
+   * persisted preview row yet (e.g. the composer rendering a draft as you type).
+   * Parses the URL exactly like the post-time extractor, then shares the same
+   * per-viewer, access-tiered resolvers as the by-id path. Returns null for any
+   * URL that isn't a recognized in-app link.
+   */
+  async resolveInAppLinkByUrl(workspaceId: string, userId: string, url: string): Promise<InAppLinkPreviewData | null> {
+    const ref = parseInAppLink(url, getAppOrigins())
+    if (!ref) return null
+    const { contentType, ...target } = inAppLinkInsertFields(ref, url)
+    return this.resolveInAppTarget(workspaceId, userId, contentType, target)
+  }
+
+  private resolveInAppTarget(
+    workspaceId: string,
+    userId: string,
+    contentType: LinkPreviewContentType,
+    target: InAppLinkTarget
+  ): Promise<InAppLinkPreviewData | null> {
+    switch (contentType) {
       case "message_link":
-        return this.resolveMessageTarget(workspaceId, userId, preview)
+        return this.resolveMessageTarget(workspaceId, userId, target)
       case "stream_link":
-        return this.resolveStreamTarget(workspaceId, userId, preview)
+        return this.resolveStreamTarget(workspaceId, userId, target)
       case "memo_link":
-        return this.resolveMemoTarget(workspaceId, userId, preview)
+        return this.resolveMemoTarget(workspaceId, userId, target)
       default:
-        return null
+        return Promise.resolve(null)
     }
   }
 
   private async resolveMessageTarget(
     workspaceId: string,
     userId: string,
-    preview: LinkPreview
+    target: InAppLinkTarget
   ): Promise<MessageLinkPreviewData | null> {
-    const { targetWorkspaceId, targetStreamId, targetMessageId } = preview
+    const { targetWorkspaceId, targetStreamId, targetMessageId } = target
     if (!targetWorkspaceId || !targetStreamId || !targetMessageId) return null
 
     if (targetWorkspaceId !== workspaceId) {
@@ -342,9 +376,9 @@ export class LinkPreviewService {
   private async resolveStreamTarget(
     workspaceId: string,
     userId: string,
-    preview: LinkPreview
+    target: InAppLinkTarget
   ): Promise<InAppLinkPreviewData | null> {
-    const { targetWorkspaceId, targetStreamId } = preview
+    const { targetWorkspaceId, targetStreamId } = target
     if (!targetWorkspaceId || !targetStreamId) return null
 
     if (targetWorkspaceId !== workspaceId) {
@@ -374,9 +408,9 @@ export class LinkPreviewService {
   private async resolveMemoTarget(
     workspaceId: string,
     userId: string,
-    preview: LinkPreview
+    target: InAppLinkTarget
   ): Promise<InAppLinkPreviewData | null> {
-    const { targetWorkspaceId, targetMemoId } = preview
+    const { targetWorkspaceId, targetMemoId } = target
     if (!targetWorkspaceId || !targetMemoId) return null
 
     if (targetWorkspaceId !== workspaceId) {

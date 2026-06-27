@@ -24,6 +24,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { ComposerActionBar } from "./composer-action-bar"
+import { ComposerLinkPreviews } from "./composer-link-previews"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
@@ -1039,6 +1040,14 @@ export function MessageComposer({
             ) : null
           }
         />
+
+        {/* Live in-app link previews for the draft. Above the card (like
+            attachments) so they read as attached to this message and stay clear
+            of the keyboard on mobile. Hidden in the mobile resting state to keep
+            the single-line bar minimal. */}
+        {workspaceId && (!isMobile || mobileChromeOpen) && (
+          <ComposerLinkPreviews content={content} workspaceId={workspaceId} className="mb-2" />
+        )}
 
         <input
           ref={fileInputRef}

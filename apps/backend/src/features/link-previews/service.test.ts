@@ -1,4 +1,4 @@
-import { describe, test, expect, spyOn, afterEach, mock } from "bun:test"
+import { describe, test, expect, spyOn, afterEach, beforeAll, afterAll, mock } from "bun:test"
 import type { Pool } from "pg"
 import { LinkPreviewService } from "./service"
 import { LinkPreviewRepository, type LinkPreview } from "./repository"
@@ -206,5 +206,87 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       contentPreview: "Hello there",
       streamName: "general",
     })
+  })
+})
+
+describe("LinkPreviewService.resolveInAppLinkByUrl", () => {
+  const previousOrigins = process.env.CORS_ALLOWED_ORIGINS
+  beforeAll(() => {
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.threa.io"
+  })
+  afterAll(() => {
+    if (previousOrigins === undefined) delete process.env.CORS_ALLOWED_ORIGINS
+    else process.env.CORS_ALLOWED_ORIGINS = previousOrigins
+  })
+
+  test("resolves full stream data straight from a stream URL, no preview row read", async () => {
+    const findById = spyOn(LinkPreviewRepository, "findById")
+    const service = makeService(
+      { tryAccess: async () => makeStream({ slug: "design", description: "Where design happens" }) },
+      {}
+    )
+
+    const result = await service.resolveInAppLinkByUrl(
+      WORKSPACE_ID,
+      VIEWER_ID,
+      "https://app.threa.io/w/ws_self/s/stream_1"
+    )
+
+    expect(result).toEqual({
+      kind: "stream",
+      accessTier: "full",
+      streamName: "design",
+      streamType: "channel",
+      visibility: "public",
+      description: "Where design happens",
+    })
+    expect(findById).not.toHaveBeenCalled()
+  })
+
+  test("returns cross_workspace for a URL in another workspace without inspecting it", async () => {
+    const tryAccess = spyOn({ tryAccess: async () => null }, "tryAccess")
+    const service = makeService({ tryAccess: tryAccess as never }, {})
+
+    const result = await service.resolveInAppLinkByUrl(
+      WORKSPACE_ID,
+      VIEWER_ID,
+      "https://app.threa.io/w/ws_other/s/stream_1"
+    )
+
+    expect(result).toEqual({ kind: "stream", accessTier: "cross_workspace" })
+    expect(tryAccess).not.toHaveBeenCalled()
+  })
+
+  test("resolves a message URL with ?m= to the message target", async () => {
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_1",
+      authorType: "user",
+      authorId: "user_author",
+      contentMarkdown: "Hello there",
+      deletedAt: null,
+    } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Author", avatarUrl: null } as never)
+    const service = makeService({ tryAccess: async () => makeStream({ slug: "general" }) }, {})
+
+    const result = await service.resolveInAppLinkByUrl(
+      WORKSPACE_ID,
+      VIEWER_ID,
+      "https://app.threa.io/w/ws_self/s/stream_1?m=msg_1"
+    )
+
+    expect(result).toMatchObject({
+      kind: "message",
+      accessTier: "full",
+      authorName: "Author",
+      streamName: "general",
+    })
+  })
+
+  test("returns null for a URL that isn't a recognized in-app link", async () => {
+    const service = makeService({}, {})
+    expect(await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, "https://example.com/blog")).toBeNull()
+    // A valid app origin but an unrecognized path is also null.
+    expect(await service.resolveInAppLinkByUrl(WORKSPACE_ID, VIEWER_ID, "https://app.threa.io/settings")).toBeNull()
   })
 })

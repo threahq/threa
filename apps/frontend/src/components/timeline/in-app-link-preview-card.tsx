@@ -1,10 +1,12 @@
-import { useState, useEffect, type ReactNode } from "react"
+import { useState, useEffect, useMemo, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { classifyDraftLink } from "@/lib/in-app-links"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { linkPreviewsApi } from "@/api"
 import { LinkPreviewBody } from "./link-preview-body"
 import type {
@@ -15,6 +17,66 @@ import type {
   MemoLinkPreviewData,
   StreamType,
 } from "@threa/types"
+
+/**
+ * Resolves in-app link data from one of two mutually-exclusive sources: a
+ * persisted preview row (`previewId`, the posted-message timeline) or a raw
+ * `url` (a draft chip with no persisted row). Both hit the same access-tiered
+ * resolver; only the lookup key differs. Pass both undefined to no-op (a chip
+ * that resolved its name locally and needs no fetch). Deps are primitives so a
+ * settled resolve doesn't re-fire on unrelated re-renders.
+ */
+export function useResolvedInAppLink(
+  workspaceId: string,
+  previewId: string | undefined,
+  url: string | undefined,
+  hydrate: boolean
+): { data: InAppLinkPreviewData | null; loading: boolean } {
+  const [data, setData] = useState<InAppLinkPreviewData | null>(null)
+  const [loading, setLoading] = useState(hydrate)
+
+  useEffect(() => {
+    if (!hydrate) {
+      // Hydration deferred (e.g. board feed): don't fetch and don't sit on a
+      // perpetual skeleton — collapse until a caller flips hydrate on.
+      setData(null)
+      setLoading(false)
+      return
+    }
+
+    let request: Promise<InAppLinkPreviewData> | null = null
+    if (previewId) request = linkPreviewsApi.resolveInAppLink(workspaceId, previewId)
+    else if (url) request = linkPreviewsApi.resolveInAppLinkByUrl(workspaceId, url)
+    if (!request) {
+      // Neither key (e.g. a chip that resolved its name locally) — collapse to
+      // no data rather than leaving a prior resolve's result on screen.
+      setData(null)
+      setLoading(false)
+      return
+    }
+
+    let mounted = true
+    // Clear any prior target's data so a failed re-resolve (silently caught
+    // below) can't leave the previous link's card showing for the new one.
+    setData(null)
+    setLoading(true)
+    request
+      .then((result) => {
+        if (mounted) setData(result)
+      })
+      .catch(() => {
+        // Silently fail — previews are non-critical
+      })
+      .finally(() => {
+        if (mounted) setLoading(false)
+      })
+    return () => {
+      mounted = false
+    }
+  }, [workspaceId, previewId, url, hydrate])
+
+  return { data, loading }
+}
 
 interface InAppLinkPreviewCardProps {
   preview: LinkPreviewSummary
@@ -35,70 +97,86 @@ export function InAppLinkPreviewCard({
   onDismiss,
   hydrate = true,
 }: InAppLinkPreviewCardProps) {
-  const [data, setData] = useState<InAppLinkPreviewData | null>(null)
-  const [loading, setLoading] = useState(hydrate)
+  const { data, loading } = useResolvedInAppLink(workspaceId, preview.id, undefined, hydrate)
 
-  useEffect(() => {
-    if (!hydrate) {
-      // Hydration deferred (e.g. board feed): don't fetch and don't sit on a
-      // perpetual skeleton — collapse until a caller flips hydrate on.
-      setLoading(false)
-      return
-    }
-
-    let mounted = true
-    setLoading(true)
-    linkPreviewsApi
-      .resolveInAppLink(workspaceId, preview.id)
-      .then((result) => {
-        if (mounted) setData(result)
-      })
-      .catch(() => {
-        // Silently fail — previews are non-critical
-      })
-      .finally(() => {
-        if (mounted) setLoading(false)
-      })
-    return () => {
-      mounted = false
-    }
-  }, [workspaceId, preview.id, hydrate])
-
-  if (loading) {
-    return <CardSkeleton />
-  }
-
+  if (loading) return <CardSkeleton />
   if (!data) return null
 
-  if (data.kind === "stream") {
-    return <StreamLinkCard data={data} preview={preview} onDismiss={onDismiss} />
-  }
+  return (
+    <ResolvedInAppLink
+      data={data}
+      url={preview.url}
+      workspaceId={workspaceId}
+      previewKey={preview.id}
+      messageId={messageId}
+      onDismiss={onDismiss ? () => onDismiss(preview.id) : undefined}
+    />
+  )
+}
 
-  if (data.kind === "memo") {
-    return <MemoLinkCard data={data} preview={preview} onDismiss={onDismiss} />
-  }
+/** Stream id of an in-app stream/message link, for client-side name resolution. */
+function streamIdFromUrl(url: string): string | null {
+  const ref = classifyDraftLink(url)
+  return ref && (ref.kind === "stream" || ref.kind === "message") ? ref.streamId : null
+}
 
-  return <MessageLinkCard data={data} preview={preview} messageId={messageId} onDismiss={onDismiss} />
+/** Dispatches resolved data to the matching card. `onDismiss` is already bound. */
+function ResolvedInAppLink({
+  data,
+  url,
+  workspaceId,
+  previewKey,
+  messageId,
+  onDismiss,
+}: {
+  data: InAppLinkPreviewData
+  url: string
+  workspaceId: string
+  previewKey: string
+  messageId?: string
+  onDismiss?: () => void
+}) {
+  if (data.kind === "stream")
+    return <StreamLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
+  if (data.kind === "memo") return <MemoLinkCard data={data} url={url} onDismiss={onDismiss} />
+  return (
+    <MessageLinkCard
+      data={data}
+      url={url}
+      workspaceId={workspaceId}
+      previewKey={previewKey}
+      messageId={messageId}
+      onDismiss={onDismiss}
+    />
+  )
 }
 
 function MessageLinkCard({
   data,
-  preview,
+  url,
+  workspaceId,
+  previewKey,
   messageId,
   onDismiss,
 }: {
   data: MessageLinkPreviewData
-  preview: LinkPreviewSummary
+  url: string
+  workspaceId: string
+  previewKey: string
   messageId?: string
-  onDismiss?: (previewId: string) => void
+  onDismiss?: () => void
 }) {
+  // A DM/stream name is per-viewer and absent from the backend resolve, so
+  // prefer the locally-resolved name (same source the composer chip uses).
+  const streamId = useMemo(() => streamIdFromUrl(url), [url])
+  const localStreamName = useStreamName(workspaceId, streamId ?? "")
+
   if (data.accessTier === "cross_workspace") {
     return (
       <MinimalCard
         kindIcon={<MessageSquare />}
         kindLabel="Message"
         label="In another workspace"
-        previewId={preview.id}
         onDismiss={onDismiss}
       />
     )
@@ -111,7 +189,6 @@ function MessageLinkCard({
         kindLabel="Message"
         bodyIcon={<Lock />}
         label="In a private conversation"
-        previewId={preview.id}
         onDismiss={onDismiss}
       />
     )
@@ -124,13 +201,12 @@ function MessageLinkCard({
         kindLabel="Message"
         label="This message was deleted"
         italic
-        previewId={preview.id}
         onDismiss={onDismiss}
       />
     )
   }
 
-  const internalPath = getInternalPath(preview.url)
+  const internalPath = getInternalPath(url)
   const body = (
     <CardBody>
       <div className="flex gap-3">
@@ -150,17 +226,15 @@ function MessageLinkCard({
     </CardBody>
   )
 
+  // `localStreamName` is already display-formatted (`#slug` for channels, a plain
+  // per-viewer name for DMs/scratchpads). The backend `streamName` is a bare slug,
+  // so it keeps the `#` channel prefix.
+  let headerLabel = "Message"
+  if (localStreamName) headerLabel = localStreamName
+  else if (data.streamName) headerLabel = `#${data.streamName}`
   return (
-    <CardShell
-      header={
-        <CardHeader
-          label={data.streamName ? `#${data.streamName}` : "Message"}
-          preview={preview}
-          onDismiss={onDismiss}
-        />
-      }
-    >
-      <LinkPreviewBody messageId={messageId} previewId={preview.id}>
+    <CardShell header={<CardHeader label={headerLabel} onDismiss={onDismiss} />}>
+      <LinkPreviewBody messageId={messageId} previewId={previewKey}>
         <InternalLink path={internalPath}>{body}</InternalLink>
       </LinkPreviewBody>
     </CardShell>
@@ -191,22 +265,23 @@ function streamKindIcon(streamType?: StreamType): ReactNode {
 
 function StreamLinkCard({
   data,
-  preview,
+  url,
+  workspaceId,
   onDismiss,
 }: {
   data: StreamLinkPreviewData
-  preview: LinkPreviewSummary
-  onDismiss?: (previewId: string) => void
+  url: string
+  workspaceId: string
+  onDismiss?: () => void
 }) {
+  // A DM/stream name is per-viewer and absent from the backend resolve, so
+  // prefer the locally-resolved name (same source the composer chip uses).
+  const streamId = useMemo(() => streamIdFromUrl(url), [url])
+  const localStreamName = useStreamName(workspaceId, streamId ?? "")
+
   if (data.accessTier === "cross_workspace") {
     return (
-      <MinimalCard
-        kindIcon={<Hash />}
-        kindLabel="Conversation"
-        label="In another workspace"
-        previewId={preview.id}
-        onDismiss={onDismiss}
-      />
+      <MinimalCard kindIcon={<Hash />} kindLabel="Conversation" label="In another workspace" onDismiss={onDismiss} />
     )
   }
 
@@ -217,13 +292,12 @@ function StreamLinkCard({
         kindLabel="Conversation"
         bodyIcon={<Lock />}
         label="Private conversation"
-        previewId={preview.id}
         onDismiss={onDismiss}
       />
     )
   }
 
-  const internalPath = getInternalPath(preview.url)
+  const internalPath = getInternalPath(url)
   const isPrivate = data.visibility === "private"
   const body = (
     <CardBody>
@@ -232,7 +306,7 @@ function StreamLinkCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <h4 className="truncate text-sm font-semibold leading-snug text-foreground">
-              {data.streamName ?? "Conversation"}
+              {localStreamName ?? data.streamName ?? "Conversation"}
             </h4>
             <MetaBadge icon={isPrivate ? <Lock /> : <Globe />}>{isPrivate ? "Private" : "Public"}</MetaBadge>
           </div>
@@ -247,31 +321,15 @@ function StreamLinkCard({
   )
 
   return (
-    <CardShell header={<CardHeader label={streamKindLabel(data.streamType)} preview={preview} onDismiss={onDismiss} />}>
+    <CardShell header={<CardHeader label={streamKindLabel(data.streamType)} onDismiss={onDismiss} />}>
       <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )
 }
 
-function MemoLinkCard({
-  data,
-  preview,
-  onDismiss,
-}: {
-  data: MemoLinkPreviewData
-  preview: LinkPreviewSummary
-  onDismiss?: (previewId: string) => void
-}) {
+function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url: string; onDismiss?: () => void }) {
   if (data.accessTier === "cross_workspace") {
-    return (
-      <MinimalCard
-        kindIcon={<Brain />}
-        kindLabel="Memory"
-        label="In another workspace"
-        previewId={preview.id}
-        onDismiss={onDismiss}
-      />
-    )
+    return <MinimalCard kindIcon={<Brain />} kindLabel="Memory" label="In another workspace" onDismiss={onDismiss} />
   }
 
   if (data.accessTier === "private") {
@@ -281,13 +339,12 @@ function MemoLinkCard({
         kindLabel="Memory"
         bodyIcon={<Lock />}
         label="From a private conversation"
-        previewId={preview.id}
         onDismiss={onDismiss}
       />
     )
   }
 
-  const internalPath = getInternalPath(preview.url)
+  const internalPath = getInternalPath(url)
   const body = (
     <CardBody>
       <div className="flex items-start gap-3">
@@ -316,7 +373,7 @@ function MemoLinkCard({
   )
 
   return (
-    <CardShell header={<CardHeader label="Memory" preview={preview} onDismiss={onDismiss} />}>
+    <CardShell header={<CardHeader label="Memory" onDismiss={onDismiss} />}>
       <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )
@@ -358,20 +415,12 @@ function formatKnowledgeType(knowledgeType: string): string {
     .join(" ")
 }
 
-function CardHeader({
-  label,
-  preview,
-  onDismiss,
-}: {
-  label: string
-  preview: LinkPreviewSummary
-  onDismiss?: (previewId: string) => void
-}) {
+function CardHeader({ label, onDismiss }: { label: string; onDismiss?: () => void }) {
   return (
     <>
       <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
       <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
-      <DismissButton previewId={preview.id} onDismiss={onDismiss} />
+      <DismissButton onDismiss={onDismiss} />
     </>
   )
 }
@@ -436,7 +485,6 @@ function MinimalCard({
   bodyIcon,
   label,
   italic,
-  previewId,
   onDismiss,
 }: {
   kindIcon: ReactNode
@@ -444,15 +492,14 @@ function MinimalCard({
   bodyIcon?: ReactNode
   label: string
   italic?: boolean
-  previewId: string
-  onDismiss?: (previewId: string) => void
+  onDismiss?: () => void
 }) {
   return (
     <div className="group/preview reveal-host relative max-w-md overflow-hidden rounded-lg border bg-card">
       <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5 text-muted-foreground">
         <span className="shrink-0 [&>svg]:h-3.5 [&>svg]:w-3.5">{kindIcon}</span>
         <span className="text-xs font-medium">{kindLabel}</span>
-        <DismissButton previewId={previewId} onDismiss={onDismiss} />
+        <DismissButton onDismiss={onDismiss} />
       </div>
       <div className="flex items-center gap-3 px-3.5 py-3 text-muted-foreground">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 [&>svg]:h-[18px] [&>svg]:w-[18px]">
@@ -494,7 +541,7 @@ function AuthorAvatar({ avatarUrl, authorName }: { avatarUrl?: string; authorNam
   return null
 }
 
-function DismissButton({ previewId, onDismiss }: { previewId: string; onDismiss?: (previewId: string) => void }) {
+function DismissButton({ onDismiss }: { onDismiss?: () => void }) {
   if (!onDismiss) return null
 
   return (
@@ -505,7 +552,7 @@ function DismissButton({ previewId, onDismiss }: { previewId: string; onDismiss?
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        onDismiss(previewId)
+        onDismiss()
       }}
       aria-label="Dismiss preview"
     >

@@ -7,6 +7,7 @@ export interface LinkPreviewWithDismissed extends LinkPreviewSummary {
 
 const inFlightMessagePreviewRequests = new Map<string, Promise<LinkPreviewWithDismissed[]>>()
 const inFlightResolvedInAppLinkRequests = new Map<string, Promise<InAppLinkPreviewData>>()
+const inFlightResolvedInAppUrlRequests = new Map<string, Promise<InAppLinkPreviewData>>()
 
 export const linkPreviewsApi = {
   async getForMessage(workspaceId: string, messageId: string): Promise<LinkPreviewWithDismissed[]> {
@@ -45,6 +46,26 @@ export const linkPreviewsApi = {
       })
 
     inFlightResolvedInAppLinkRequests.set(key, request)
+    return request
+  },
+
+  /**
+   * Resolve an in-app link straight from its URL (no persisted preview row),
+   * for the composer rendering a draft as you type. Returns the same
+   * per-viewer, access-tiered data as {@link resolveInAppLink}.
+   */
+  async resolveInAppLinkByUrl(workspaceId: string, url: string): Promise<InAppLinkPreviewData> {
+    const key = `${workspaceId}:${url}`
+    const existing = inFlightResolvedInAppUrlRequests.get(key)
+    if (existing) return existing
+
+    const request = api
+      .get<InAppLinkPreviewData>(`/api/workspaces/${workspaceId}/link-previews/resolve?url=${encodeURIComponent(url)}`)
+      .finally(() => {
+        inFlightResolvedInAppUrlRequests.delete(key)
+      })
+
+    inFlightResolvedInAppUrlRequests.set(key, request)
     return request
   },
 }

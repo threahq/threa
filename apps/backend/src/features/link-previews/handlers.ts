@@ -1,9 +1,13 @@
 import type { Request, Response, NextFunction } from "express"
+import { z } from "zod"
+import { HttpError } from "../../lib/errors"
 import type { LinkPreviewService } from "./service"
 
 interface HandlerDeps {
   linkPreviewService: LinkPreviewService
 }
+
+const resolveByUrlQuerySchema = z.object({ url: z.string().url() })
 
 export function createLinkPreviewHandlers(deps: HandlerDeps) {
   const { linkPreviewService } = deps
@@ -53,6 +57,34 @@ export function createLinkPreviewHandlers(deps: HandlerDeps) {
         const userId = req.user!.id
 
         const data = await linkPreviewService.resolveInAppLink(workspaceId, userId, linkPreviewId)
+        if (!data) {
+          res.status(404).json({ error: "Not found" })
+          return
+        }
+
+        res.json(data)
+      } catch (err) {
+        next(err)
+      }
+    },
+
+    /**
+     * GET /api/workspaces/:workspaceId/link-previews/resolve?url=...
+     * Resolves an in-app link straight from its URL (no persisted preview row),
+     * for the composer rendering a draft. Same per-viewer, access-tiered data as
+     * the by-id resolve. A URL that isn't a recognized in-app link is a 404.
+     */
+    async resolveInAppLinkByUrl(req: Request, res: Response, next: NextFunction) {
+      try {
+        const { workspaceId } = req.params
+        const userId = req.user!.id
+
+        const parsed = resolveByUrlQuerySchema.safeParse(req.query)
+        if (!parsed.success) {
+          throw new HttpError("Invalid url", { status: 400, code: "VALIDATION_ERROR" })
+        }
+
+        const data = await linkPreviewService.resolveInAppLinkByUrl(workspaceId, userId, parsed.data.url)
         if (!data) {
           res.status(404).json({ error: "Not found" })
           return
