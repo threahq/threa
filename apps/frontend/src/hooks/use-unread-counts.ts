@@ -6,6 +6,7 @@ import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db } from "@/db"
 import { deriveActivityCounts } from "@/sync/unread-counters"
+import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import type { WorkspaceBootstrap } from "@threa/types"
 
 export function useUnreadCounts(workspaceId: string) {
@@ -216,6 +217,12 @@ export function useUnreadCounts(workspaceId: string) {
       // swaps it in.
       if (lastEventId.startsWith("temp_")) return
       markAsReadMutation.mutate({ streamId, lastEventId, partial: opts?.partial })
+      // Dismiss any push notification for this stream — advancing the read pointer
+      // (auto-read, manual "Mark as read", or Escape) means the user is here, so
+      // the banner is noise. Centralized on this single read-advance funnel so
+      // every caller clears locally, not just auto-read; the backend stream:read
+      // round-trip also fans a clear out to the user's other devices.
+      navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
     },
     [markAsReadMutation]
   )
