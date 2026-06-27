@@ -261,6 +261,54 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.atLastRow).toBe(true)
   })
 
+  it("advances to the trailing unread row when armed after the cold-load settle parks the tail", () => {
+    // The opened-fresh-at-bottom bug: the virtualized list parks at the live
+    // bottom over several settle frames. If read-tracking arms mid-settle the
+    // scan reads a not-yet-parked viewport and, with no guaranteed re-scan once
+    // the settle converges, the trailing unread row stays out of the frontier and
+    // never auto-reads. The component now holds `enabled` false until the settle
+    // completes; this pins the contract that scope relies on — arming with the
+    // tail already on screen advances the frontier to the last row so auto-read
+    // fires (and the push/divider clear). e0 is the viewer's read pointer, e1 the
+    // single trailing unread (mirrors "oh, nice").
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: 35, bottom: 65 }, // read pointer, visible above the tail
+      e1: { top: 65, bottom: 95 }, // the trailing unread row, parked above the composer
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const events = [
+      { id: "e0", sequence: "0" },
+      { id: "e1", sequence: "1" },
+    ] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId: "e0", enabled }),
+      { initialProps: { enabled: false } }
+    )
+
+    // Still settling → not armed, frontier can't advance.
+    expect(result.current.lastSeenEventId).toBeUndefined()
+    expect(result.current.atLastRow).toBe(false)
+
+    // Settle complete: the tail is parked on screen and tracking arms.
+    act(() => rerender({ enabled: true }))
+
+    // The frontier advances to the trailing row, so auto-read fires for it.
+    expect(result.current.lastSeenEventId).toBe("e1")
+    expect(result.current.atLastRow).toBe(true)
+  })
+
   it("does not re-read a still-visible row when the read pointer moves backward (mark-as-unread), until a scroll", () => {
     // A short, fully-read stream: every row is on screen and the pointer is at
     // the tail (e3). Marking e2 unread moves the pointer back to e1 while e2 is

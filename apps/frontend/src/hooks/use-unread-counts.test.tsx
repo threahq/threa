@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderHook, waitFor, act } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
 import {
@@ -11,10 +11,13 @@ import {
   type StreamMember,
   type WorkspaceBootstrap,
 } from "@threa/types"
+import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
 
 const mockMarkAsRead = vi.fn<(workspaceId: string, streamId: string, lastEventId: string) => Promise<StreamMember>>()
+const mockPostMessage = vi.fn()
+const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
 
 function createWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -116,7 +119,20 @@ function makeBootstrap(): WorkspaceBootstrap {
 describe("useUnreadCounts", () => {
   beforeEach(async () => {
     mockMarkAsRead.mockReset()
+    mockPostMessage.mockReset()
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { controller: { postMessage: mockPostMessage } },
+    })
     await clearAllCachedData()
+  })
+
+  afterEach(() => {
+    if (originalServiceWorker) {
+      Object.defineProperty(navigator, "serviceWorker", originalServiceWorker)
+    } else {
+      Reflect.deleteProperty(navigator, "serviceWorker")
+    }
   })
 
   it("updates the membership read pointer in IndexedDB when marking a stream as read", async () => {
@@ -268,11 +284,40 @@ describe("useUnreadCounts", () => {
       result.current.markAsRead("stream_1", "temp_optimistic")
     })
     expect(mockMarkAsRead).not.toHaveBeenCalled()
+    // No read advanced, so no notification is dismissed for the optimistic id.
+    expect(mockPostMessage).not.toHaveBeenCalled()
 
     // The real event id (after the server echo swaps it in) is sent normally.
     act(() => {
       result.current.markAsRead("stream_1", "event_new")
     })
     await waitFor(() => expect(mockMarkAsRead).toHaveBeenCalledWith("ws_1", "stream_1", "event_new"))
+  })
+
+  it("dismisses the stream's push notification when advancing the read pointer", async () => {
+    // Centralized clear: every read-advance funnels through markAsRead (auto-read,
+    // manual "Mark as read", Escape), so reading a stream dismisses its push banner
+    // locally on this device — not just on the auto-read path.
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+    mockMarkAsRead.mockResolvedValue({
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: "everything",
+      lastReadEventId: "event_new",
+      lastReadAt: new Date().toISOString(),
+      joinedAt: new Date().toISOString(),
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), {
+      wrapper: createWrapper(queryClient),
+    })
+
+    act(() => {
+      result.current.markAsRead("stream_1", "event_new")
+    })
+
+    expect(mockPostMessage).toHaveBeenCalledWith({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId: "stream_1" })
   })
 })
