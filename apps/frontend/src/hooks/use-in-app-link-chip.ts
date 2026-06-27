@@ -62,14 +62,16 @@ export function useInAppLinkChip({
   )
   const cachedType = useMemo(() => streams.find((s) => s.id === streamId)?.type, [streams, streamId])
 
-  // Only hit the backend when the stream isn't locally named.
-  const { data, loading } = useResolvedInAppLink(workspaceId, undefined, localName ? undefined : url, true)
+  // A local name covers a stream link outright, but a message link still needs
+  // the backend resolve to learn the message is deleted/restricted — the local
+  // cache only names the parent stream. So message links always resolve; stream
+  // links resolve only when uncached.
+  const needsResolve = isMessage || !localName
+  const { data, loading } = useResolvedInAppLink(workspaceId, undefined, needsResolve ? url : undefined, true)
 
   return useMemo<InAppLinkChipState>(() => {
-    if (localName) {
-      return { status: "resolved", icon: isMessage ? MessageSquare : streamTypeIcon(cachedType), label: localName }
-    }
-    if (loading) return { status: "pending" }
+    // Restricted/deleted tiers (backend) win over the cached name so a deleted
+    // or out-of-reach target never renders as a normal, navigable chip.
     if (data?.accessTier === "cross_workspace") {
       return { status: "restricted", icon: Globe, label: "Another workspace" }
     }
@@ -79,6 +81,10 @@ export function useInAppLinkChip({
     if (data?.kind === "message" && data.deleted) {
       return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
     }
+    if (localName) {
+      return { status: "resolved", icon: isMessage ? MessageSquare : streamTypeIcon(cachedType), label: localName }
+    }
+    if (loading) return { status: "pending" }
     const name = (data?.kind === "stream" && data.streamName) || (isMessage ? "Message" : "Conversation")
     return { status: "resolved", icon: isMessage ? MessageSquare : Hash, label: name }
   }, [localName, loading, data, cachedType, isMessage])

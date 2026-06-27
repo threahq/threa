@@ -283,8 +283,7 @@ function getNodeText(node: JSONContent): string {
     // alone. The cached name is the label; fall back to the URL when absent.
     const name = node.attrs?.name as string | undefined
     const rawLabel = name && name.length > 0 ? name : url
-    const escapedLabel = rawLabel.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
-    return `[${escapedLabel}](${url})`
+    return `[${escapeMarkdownLinkText(rawLabel)}](${url})`
   }
   if (node.type === "giphyEmbed") {
     const giphyUrl = node.attrs?.giphyUrl as string

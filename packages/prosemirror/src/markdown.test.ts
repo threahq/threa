@@ -597,7 +597,7 @@ describe("@threa/prosemirror in-app link node serialization", () => {
       ],
     }
 
-    expect(serializeToMarkdown(doc)).toBe("[a [b\\]\\\\c](https://app.threa.io/w/ws_1/s/stream_1)")
+    expect(serializeToMarkdown(doc)).toBe("[a \\[b\\]\\\\c](https://app.threa.io/w/ws_1/s/stream_1)")
   })
 
   it("inherits adjacent marks like other inline atoms", () => {

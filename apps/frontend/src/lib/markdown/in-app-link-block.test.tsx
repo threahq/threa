@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MarkdownContent } from "@/components/ui/markdown-content"
+import { linkPreviewsApi } from "@/api"
 import * as workspaceStore from "@/stores/workspace-store"
 
 const origin = window.location.origin
@@ -33,23 +34,38 @@ describe("MarkdownContent — inline in-app link chip", () => {
     vi.restoreAllMocks()
   })
 
-  it("renders an in-app stream link as an inline chip with the locally-resolved name", () => {
+  it("renders an in-app stream link as an inline chip named by the local cache, not the link text", () => {
     seedStreams([{ id: "stream_1", type: "channel", slug: "design", displayName: null }])
     const url = `${origin}/w/ws_1/s/stream_1`
     renderMarkdown(`see [whatever](${url}) here`)
 
-    const chip = document.querySelector('[data-type="in-app-link-chip"]')
-    expect(chip).not.toBeNull()
-    // Local cache wins over the link text — the chip names the channel.
-    expect(screen.getByText("#design")).toBeInTheDocument()
-    expect(chip?.closest("a")?.getAttribute("href")).toBe(`${origin}/w/ws_1/s/stream_1`)
+    // Local cache wins over the markdown link text: the link is named "#design".
+    const link = screen.getByRole("link", { name: "#design" })
+    expect(link).toHaveAttribute("href", url)
+    expect(screen.queryByText("whatever")).not.toBeInTheDocument()
   })
 
-  it("leaves a plain web link as an underlined anchor (no chip)", () => {
+  it("shows a deleted message link as restricted even when its parent stream is cached", async () => {
+    // The local cache names the parent stream, but only the backend knows the
+    // message itself was deleted — so a message link must still resolve.
+    seedStreams([{ id: "stream_1", type: "channel", slug: "design", displayName: null }])
+    const resolve = vi
+      .spyOn(linkPreviewsApi, "resolveInAppLinkByUrl")
+      .mockResolvedValue({ kind: "message", accessTier: "full", deleted: true })
+
+    const url = `${origin}/w/ws_1/s/stream_1?m=msg_9`
+    renderMarkdown(`see [whatever](${url})`)
+
+    await waitFor(() => expect(screen.getByText("Deleted message")).toBeInTheDocument())
+    expect(resolve).toHaveBeenCalledWith("ws_1", url)
+    expect(screen.queryByText("#design")).not.toBeInTheDocument()
+  })
+
+  it("leaves a plain web link as an anchor showing its own link text", () => {
     seedStreams([])
     renderMarkdown("read [the blog](https://example.com/post)")
 
-    expect(document.querySelector('[data-type="in-app-link-chip"]')).toBeNull()
-    expect(screen.getByText("the blog").closest("a")?.getAttribute("href")).toBe("https://example.com/post")
+    // Web links aren't resolved/chipped — the visible text stays the link text.
+    expect(screen.getByRole("link", { name: "the blog" })).toHaveAttribute("href", "https://example.com/post")
   })
 })

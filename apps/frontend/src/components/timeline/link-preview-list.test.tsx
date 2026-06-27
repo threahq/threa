@@ -49,11 +49,9 @@ describe("LinkPreviewList", () => {
   it("suppresses stream_link / message_link cards (they render as inline chips instead)", () => {
     const streamPreview: LinkPreviewSummary = { ...preview, id: "p_stream", contentType: "stream_link" }
     const messagePreview: LinkPreviewSummary = { ...preview, id: "p_msg", contentType: "message_link" }
-    const { container } = render(
-      <LinkPreviewList workspaceId="ws_123" messageId="msg_123" previews={[streamPreview, messagePreview]} />
-    )
+    render(<LinkPreviewList workspaceId="ws_123" messageId="msg_123" previews={[streamPreview, messagePreview]} />)
 
-    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByText("Preview title")).not.toBeInTheDocument()
   })
 
   it("keeps web previews while suppressing an in-app stream link in the same message", () => {

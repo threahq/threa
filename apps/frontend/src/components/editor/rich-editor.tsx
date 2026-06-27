@@ -192,6 +192,23 @@ function emojiAtomToEditableText(node: JSONContent, toEmoji?: (shortcode: string
   }
 }
 
+/**
+ * Convert a bare in-app stream/message URL into an inline chip, replacing the
+ * link text. Shared by the clipboard `paste` path and the Gboard/SwiftKey
+ * `beforeinput` path so mobile clipboard-bar pastes chip the same as desktop.
+ * Returns whether a chip was inserted.
+ */
+function tryInsertInAppLinkChip(editor: import("@tiptap/react").Editor, text: string): boolean {
+  const ref = classifyDraftLink(text.trim())
+  if (!ref || (ref.kind !== "stream" && ref.kind !== "message")) return false
+  editor.commands.insertInAppLink({
+    url: ref.url,
+    streamId: ref.streamId,
+    messageId: ref.kind === "message" ? ref.messageId : null,
+  })
+  return true
+}
+
 export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function RichEditor(
   {
     value,
@@ -641,13 +658,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
         // A bare in-app stream/message link pastes as an inline chip rather than
         // a raw URL, replacing the link text in the composer.
-        const inAppRef = classifyDraftLink(text.trim())
-        if (inAppRef && (inAppRef.kind === "stream" || inAppRef.kind === "message")) {
-          editorRef.current.commands.insertInAppLink({
-            url: inAppRef.url,
-            streamId: inAppRef.streamId,
-            messageId: inAppRef.kind === "message" ? inAppRef.messageId : null,
-          })
+        if (tryInsertInAppLinkChip(editorRef.current, text)) {
           event.preventDefault()
           return true
         }
@@ -692,6 +703,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           // Firefox Android can delete emoji text by code unit, leaving a
           // broken half-grapheme. Delete the whole grapheme before native input.
           if (handleBeforeInputGraphemeDelete(editor, event as InputEvent)) {
+            return true
+          }
+
+          // Gboard / SwiftKey clipboard-bar paste of a bare in-app link arrives
+          // as insertText (not a paste event), so chip it here too — otherwise
+          // mobile pastes would keep the raw URL the desktop path replaces.
+          const inputEvent = event as InputEvent
+          if (
+            inputEvent.inputType === "insertText" &&
+            !editor.view.composing &&
+            typeof inputEvent.data === "string" &&
+            tryInsertInAppLinkChip(editor, inputEvent.data)
+          ) {
+            event.preventDefault()
             return true
           }
 

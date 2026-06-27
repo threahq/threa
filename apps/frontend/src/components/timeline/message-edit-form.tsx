@@ -143,7 +143,7 @@ export function MessageEditForm({
   )
 
   const handleDocEditorDismiss = useCallback((markdown: string) => {
-    const json = parseMarkdown(markdown)
+    const json = inAppLinkMarksToNodes(parseMarkdown(markdown))
     setContentJson(json)
   }, [])
 
