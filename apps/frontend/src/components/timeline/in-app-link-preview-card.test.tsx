@@ -61,6 +61,24 @@ describe("InAppLinkPreviewCard", () => {
     expect(screen.getByText("Hello from preview")).toBeInTheDocument()
   })
 
+  it("renders a DM message link with the peer name and no channel #", async () => {
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+      { id: "usr_peer", name: "Ada Lovelace" },
+    ] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([
+      { streamId: "stream_dm", userId: "usr_peer" },
+    ] as never)
+
+    renderWith(
+      { kind: "message", accessTier: "full", deleted: false, authorName: "Bob", contentPreview: "hi" },
+      makePreview({ contentType: "message_link", url: `${window.location.origin}/w/ws_123/s/stream_dm?m=msg_1` })
+    )
+
+    await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument())
+    expect(screen.queryByText("#Ada Lovelace")).not.toBeInTheDocument()
+  })
+
   it("renders a full-access stream link with name and description", async () => {
     renderWith(
       {

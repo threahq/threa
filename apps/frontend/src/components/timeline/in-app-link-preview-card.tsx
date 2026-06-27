@@ -226,9 +226,14 @@ function MessageLinkCard({
     </CardBody>
   )
 
-  const streamLabel = localStreamName ?? data.streamName
+  // `localStreamName` is already display-formatted (`#slug` for channels, a plain
+  // per-viewer name for DMs/scratchpads). The backend `streamName` is a bare slug,
+  // so it keeps the `#` channel prefix.
+  let headerLabel = "Message"
+  if (localStreamName) headerLabel = localStreamName
+  else if (data.streamName) headerLabel = `#${data.streamName}`
   return (
-    <CardShell header={<CardHeader label={streamLabel ? `#${streamLabel}` : "Message"} onDismiss={onDismiss} />}>
+    <CardShell header={<CardHeader label={headerLabel} onDismiss={onDismiss} />}>
       <LinkPreviewBody messageId={messageId} previewId={previewKey}>
         <InternalLink path={internalPath}>{body}</InternalLink>
       </LinkPreviewBody>

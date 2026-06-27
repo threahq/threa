@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { linkPreviewsApi } from "@/api"
 import { ComposerLinkPreviews } from "./composer-link-previews"
@@ -19,6 +18,10 @@ function link(text: string, href: string): JSONContent {
 describe("ComposerLinkPreviews", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it("chips a web link by its host without any resolve call", async () => {
@@ -67,6 +70,7 @@ describe("ComposerLinkPreviews", () => {
   })
 
   it("forgets a dismissal once the link leaves and re-enters the draft", async () => {
+    vi.useFakeTimers()
     vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl")
     const url = "https://example.com/post"
     const withLink = (
@@ -74,25 +78,29 @@ describe("ComposerLinkPreviews", () => {
         <ComposerLinkPreviews content={draft(link("blog", url))} workspaceId="ws_1" />
       </MemoryRouter>
     )
-    const { rerender } = render(withLink)
-
-    await userEvent.click(await screen.findByLabelText("Hide link"))
-    await waitFor(() => expect(screen.queryByText("example.com")).not.toBeInTheDocument())
-
-    // Link leaves the draft → wait past the debounce so the empty draft settles
-    // and the dismissal is pruned (the chip is already hidden, so there's no
-    // visible signal to wait on otherwise).
-    rerender(
+    const noLink = (
       <MemoryRouter>
         <ComposerLinkPreviews content={draft({ type: "text", text: "no link now" })} workspaceId="ws_1" />
       </MemoryRouter>
     )
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Drain the debounce timer and the pruning effect it cascades into, without
+    // burning real wall-clock time. `act` flushes the chained state updates.
+    const settle = () => act(async () => void (await vi.runAllTimersAsync()))
+
+    const { rerender } = render(withLink)
+    await settle()
+    fireEvent.click(screen.getByLabelText("Hide link"))
+    expect(screen.queryByText("example.com")).not.toBeInTheDocument()
+
+    // Link leaves the draft → the empty draft settles and the dismissal is pruned.
+    rerender(noLink)
+    await settle()
     expect(screen.queryByText("example.com")).not.toBeInTheDocument()
 
     // Re-adding the same link chips it again rather than staying dismissed.
     rerender(withLink)
-    await waitFor(() => expect(screen.getByText("example.com")).toBeInTheDocument())
+    await settle()
+    expect(screen.getByText("example.com")).toBeInTheDocument()
   })
 
   it("renders nothing when the draft has no links", () => {
