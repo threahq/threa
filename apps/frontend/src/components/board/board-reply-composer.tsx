@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Check } from "lucide-react"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
@@ -100,9 +99,11 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
           setResting("idle")
           setOpen(true)
         }}
-        className="mt-3 flex w-full min-w-0 items-center gap-1.5 rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="mt-3 flex w-full min-w-0 items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        {resting === "posted" && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+        {/* Label-only confirmation: the text IS the in-place signal. No leading
+            icon — adding one only in the "posted" state would shift the label
+            (INV-21) and misalign the resting text against the open composer's. */}
         <span className="truncate">{RESTING_LABEL[resting]}</span>
       </button>
     )
@@ -232,9 +233,16 @@ function BoardReplyComposerForm({
         streamContext={streamContext}
         // Escape (when no @/emoji/slash popup is open) collapses the reply and
         // returns focus to the trigger — a keyboard cancel even with a draft,
-        // which the empty-only blur-collapse doesn't cover. A non-empty draft
-        // persists, so the resting affordance flags it ("Continue reply…").
-        onEscapeBlur={() => onClose({ refocus: true, hadContent: !isEmptyRef.current })}
+        // which the empty-only blur-collapse doesn't cover. Flush the draft to
+        // IDB FIRST: collapsing unmounts the form, which cancels the in-flight
+        // debounced save, so without this the just-typed draft would live only
+        // in localStorage (reconciled at startup) and a mid-session reopen would
+        // read an empty editor — a false "Continue reply…".
+        onEscapeBlur={() => {
+          const hadContent = !isEmptyRef.current
+          void composer.flushDraft()
+          onClose({ refocus: true, hadContent })
+        }}
       />
     </div>
   )
