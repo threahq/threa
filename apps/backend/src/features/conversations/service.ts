@@ -288,9 +288,12 @@ export class ConversationService {
       const touchedIds = previous ? [previous.id, target.id] : [target.id]
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
-      // Thread conversations also fan out to the parent channel's subscribers,
-      // matching the boundary extractor's event routing; the access-root stream's
-      // visibility (INV-62) gates workspace-wide board delivery of the aggregate.
+      // One delivery resolution for every touched conversation is correct here
+      // (unlike the boundary extractor, which spans streams): both `previous` and
+      // `target` live in the message's stream — the guard above pins `target` to
+      // it, and a primary membership is always in the message's own stream — so
+      // they share one access-root visibility (INV-62). Routing `previous` by
+      // `target`'s stream can't leak because they're the same stream.
       const stream = await StreamRepository.findById(client, target.streamId)
       const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
