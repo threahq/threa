@@ -2,8 +2,8 @@ import { useMemo, type ComponentType } from "react"
 import { Hash, NotebookPen, MessageSquare, Lock, Globe } from "lucide-react"
 import type { StreamType } from "@threa/types"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
-import { useStreamName } from "@/hooks/use-stream-name"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { resolveStreamName } from "@/lib/streams"
+import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 
 type ChipIcon = ComponentType<{ className?: string }>
 
@@ -50,8 +50,16 @@ export function useInAppLinkChip({
   isMessage: boolean
   url: string
 }): InAppLinkChipState {
-  const localName = useStreamName(workspaceId, streamId)
+  // Resolve name and type from one set of store reads: `useStreamName` would
+  // subscribe to the streams cache internally and the type lookup would scan it
+  // again, so go through the pure `resolveStreamName` over the shared array.
   const streams = useWorkspaceStreams(workspaceId)
+  const users = useWorkspaceUsers(workspaceId)
+  const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const localName = useMemo(
+    () => resolveStreamName(streamId, { streams, users, dmPeers }),
+    [streamId, streams, users, dmPeers]
+  )
   const cachedType = useMemo(() => streams.find((s) => s.id === streamId)?.type, [streams, streamId])
 
   // Only hit the backend when the stream isn't locally named.

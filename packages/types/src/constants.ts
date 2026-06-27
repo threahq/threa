@@ -654,8 +654,10 @@ export function isInAppLinkContentType(contentType: LinkPreviewContentType): con
  * preview card is suppressed — the inline chip is the single surface. Memo
  * links keep their card (`MemoPreviewList`), so they are excluded.
  */
-export const INLINE_CHIP_CONTENT_TYPES = ["message_link", "stream_link"] as const
-export type InlineChipContentType = (typeof INLINE_CHIP_CONTENT_TYPES)[number]
+export type InlineChipContentType = Exclude<InAppLinkContentType, "memo_link">
+export const INLINE_CHIP_CONTENT_TYPES = IN_APP_LINK_CONTENT_TYPES.filter(
+  (t): t is InlineChipContentType => t !== "memo_link"
+)
 
 export function isInlineChipContentType(contentType: LinkPreviewContentType): contentType is InlineChipContentType {
   return (INLINE_CHIP_CONTENT_TYPES as readonly string[]).includes(contentType)

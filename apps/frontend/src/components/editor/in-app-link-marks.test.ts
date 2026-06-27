@@ -50,6 +50,14 @@ describe("inAppLinkMarksToNodes", () => {
     expect(inAppLinkMarksToNodes(input, ORIGIN)).toEqual(input)
   })
 
+  it("leaves a styled (bold) in-app link untouched so the formatting round-trips", () => {
+    const url = `${ORIGIN}/w/ws_1/s/stream_1`
+    const input = doc(link("#design", url, [{ type: "bold" }]))
+    // Converting would strip the bold (atoms don't carry their own marks through
+    // serialization), so a bold link stays a bold link rather than becoming a chip.
+    expect(inAppLinkMarksToNodes(input, ORIGIN)).toEqual(input)
+  })
+
   it("is idempotent — an existing inAppLink atom passes through unchanged", () => {
     const url = `${ORIGIN}/w/ws_1/s/stream_1`
     const already = doc({ type: "inAppLink", attrs: { url, streamId: "stream_1", messageId: null, name: "#design" } })

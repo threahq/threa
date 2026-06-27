@@ -6,9 +6,14 @@ function inAppLinkRef(
   node: JSONContent,
   origin: string | null
 ): Extract<DraftLinkRef, { kind: "stream" | "message" }> | null {
-  const link = node.marks?.find((m) => m.type === "link")
+  const marks = node.marks ?? []
+  const link = marks.find((m) => m.type === "link")
   const href = link?.attrs?.href
   if (typeof href !== "string") return null
+  // Leave a styled link (bold/italic/…) as-is: the chip is an atom and the
+  // serializer ignores an atom's own marks, so converting would drop the extra
+  // formatting and change the message on the next save. Only a plain link chips.
+  if (marks.some((m) => m.type !== "link")) return null
   const ref = classifyDraftLink(href, origin)
   return ref && (ref.kind === "stream" || ref.kind === "message") ? ref : null
 }
