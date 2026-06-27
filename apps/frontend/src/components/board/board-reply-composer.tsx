@@ -31,11 +31,11 @@ interface BoardReplyComposerProps {
  * so the feed stays scannable; tapping it mounts the real composer in place (the
  * heavy editor mounts only once a card is activated, so a feed of cards costs one
  * lightweight button each, not one composer each). The button deliberately
- * mirrors the composer's own resting container — same radius, border, surface,
- * padding, and placeholder — so the swap is seamless and the only visible change
- * is the toolbar appearing on focus, exactly like the timeline composer. Routing
- * — channel → thread, everything else → the conversation — lives in
- * {@link useReplyToBoardPost}.
+ * mirrors the composer's own container — same radius, border, surface, padding,
+ * and placeholder — and the composer mounts already open (`initialMobileChromeOpen`)
+ * so the tap lands straight in the toolbar view instead of stepping through the
+ * mobile compacted phase. Routing — channel → thread, everything else → the
+ * conversation — lives in {@link useReplyToBoardPost}.
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
@@ -45,7 +45,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-3 flex w-full items-center rounded-[16px] border border-input bg-card px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="mt-3 flex w-full items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         Write a reply…
       </button>
@@ -162,6 +162,7 @@ function BoardReplyComposerForm({
         placeholder="Write a reply…"
         messageSendMode={preferences?.messageSendMode ?? "enter"}
         autoFocus
+        initialMobileChromeOpen
         scopeId={draftKey}
         streamContext={streamContext}
       />

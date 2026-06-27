@@ -182,6 +182,16 @@ export interface MessageComposerProps {
   /** Auto-focus the editor when mounted */
   autoFocus?: boolean
 
+  /**
+   * Mount with the mobile chrome (action bar + full editor) already open rather
+   * than the compacted single-line resting state. For tap-to-open inline
+   * composers (e.g. the board reply) the user has explicitly revealed the
+   * composer, so it shouldn't step through the compacted phase before the
+   * toolbar appears. Desktop always shows the chrome, so this is a no-op there.
+   * Default false (the timeline/thread composers rest compacted on mobile).
+   */
+  initialMobileChromeOpen?: boolean
+
   /** Scope identifier — when it changes, re-focus the editor (if autoFocus) */
   scopeId?: string
 
@@ -266,6 +276,7 @@ export function MessageComposer({
   className,
   messageSendMode = "enter",
   autoFocus = false,
+  initialMobileChromeOpen = false,
   scopeId,
   onEditLastMessage,
   onExpandClick,
@@ -291,7 +302,7 @@ export function MessageComposer({
   const [formatOpen, setFormatOpen] = useState(false)
   const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
-  const [mobileFocused, setMobileFocused] = useState(false)
+  const [mobileFocused, setMobileFocused] = useState(initialMobileChromeOpen)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
   // True while a dictation take is in flight. Keeps the mobile chrome (and the
   // mic button it lives in) mounted across a tap-outside blur so the session
@@ -388,7 +399,15 @@ export function MessageComposer({
   // Close inline format toolbar and collapse expansion when navigating to a different stream/scope.
   // Clearing voiceActive collapses the mobile chrome; combined with the scopeId-keyed mic below,
   // an in-flight dictation take ends on navigation rather than carrying over into the next stream.
+  // The first run (mount) is skipped so an opt-in initialMobileChromeOpen isn't cleared before it
+  // shows; the reset only matters on a later scope CHANGE. For every existing caller the mount-time
+  // state is already all-closed, so skipping that run is a no-op for them.
+  const didMountScopeResetRef = useRef(false)
   useEffect(() => {
+    if (!didMountScopeResetRef.current) {
+      didMountScopeResetRef.current = true
+      return
+    }
     if (blurTimeoutRef.current) {
       clearTimeout(blurTimeoutRef.current)
       blurTimeoutRef.current = null
