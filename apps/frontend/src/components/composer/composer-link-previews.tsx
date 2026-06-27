@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import type { JSONContent } from "@threa/types"
-import { extractInAppLinkUrls } from "@/lib/in-app-links"
-import { ComposerInAppLinkPreviewCard } from "@/components/timeline/in-app-link-preview-card"
+import { classifyDraftLink, extractDraftLinkUrls } from "@/lib/in-app-links"
+import { ComposerLinkChip } from "./composer-link-chip"
 import { cn } from "@/lib/utils"
 
 /**
- * Wait for typing to settle before resolving — a link mid-type (host/path not
- * yet complete) shouldn't thrash the resolver. The extractor already filters to
- * complete in-app URL shapes, so this only smooths the keystroke cadence.
+ * Wait for typing to settle before resolving — a link mid-type shouldn't thrash
+ * the resolver. The extractor only matches complete link-mark URLs, so this just
+ * smooths the keystroke cadence.
  */
 const DEBOUNCE_MS = 400
 
@@ -18,10 +18,11 @@ interface ComposerLinkPreviewsProps {
 }
 
 /**
- * Live in-app link previews for the message composer: the same access-tiered
- * cards a posted message renders, shown while the draft is still being written.
- * Resolves each in-app link straight from its URL (no persisted preview row),
- * deduped and capped to match the server's per-message preview limit.
+ * Compact chip row for the links in a draft — the same attachment-pill surface
+ * file uploads use, so several links don't bury the composer on mobile the way a
+ * full preview card each would. In-app links chip to their stream/memo name;
+ * web links chip their host. Dismiss hides a chip (the link text stays); a
+ * dismissal is forgotten once its link leaves the draft.
  */
 export function ComposerLinkPreviews({ content, workspaceId, className }: ComposerLinkPreviewsProps) {
   const [debounced, setDebounced] = useState(content)
@@ -30,11 +31,11 @@ export function ComposerLinkPreviews({ content, workspaceId, className }: Compos
     return () => clearTimeout(id)
   }, [content])
 
-  const urls = useMemo(() => extractInAppLinkUrls(debounced), [debounced])
+  const urls = useMemo(() => extractDraftLinkUrls(debounced), [debounced])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
 
   // Forget a dismissal once its link leaves the draft, so removing then
-  // re-adding a link previews it again and the set can't grow unbounded.
+  // re-adding a link chips it again and the set can't grow unbounded.
   useEffect(() => {
     setDismissed((prev) => {
       const next = new Set([...prev].filter((u) => urls.includes(u)))
@@ -42,18 +43,16 @@ export function ComposerLinkPreviews({ content, workspaceId, className }: Compos
     })
   }, [urls])
 
-  const visibleUrls = urls.filter((u) => !dismissed.has(u))
-  if (visibleUrls.length === 0) return null
+  const links = useMemo(() => urls.filter((u) => !dismissed.has(u)).map((u) => classifyDraftLink(u)), [urls, dismissed])
+  const visible = links.filter((l) => l !== null)
+  if (visible.length === 0) return null
+
+  const dismiss = (url: string) => setDismissed((prev) => new Set(prev).add(url))
 
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
-      {visibleUrls.map((url) => (
-        <ComposerInAppLinkPreviewCard
-          key={url}
-          url={url}
-          workspaceId={workspaceId}
-          onDismiss={(u) => setDismissed((prev) => new Set(prev).add(u))}
-        />
+    <div className={cn("flex flex-wrap gap-2 max-h-[120px] overflow-y-auto", className)}>
+      {visible.map((link) => (
+        <ComposerLinkChip key={link.url} link={link} workspaceId={workspaceId} onDismiss={dismiss} />
       ))}
     </div>
   )
