@@ -37,6 +37,7 @@ export function useResolvedInAppLink(
     if (!hydrate) {
       // Hydration deferred (e.g. board feed): don't fetch and don't sit on a
       // perpetual skeleton — collapse until a caller flips hydrate on.
+      setData(null)
       setLoading(false)
       return
     }
@@ -45,6 +46,9 @@ export function useResolvedInAppLink(
     if (previewId) request = linkPreviewsApi.resolveInAppLink(workspaceId, previewId)
     else if (url) request = linkPreviewsApi.resolveInAppLinkByUrl(workspaceId, url)
     if (!request) {
+      // Neither key (e.g. a chip that resolved its name locally) — collapse to
+      // no data rather than leaving a prior resolve's result on screen.
+      setData(null)
       setLoading(false)
       return
     }
