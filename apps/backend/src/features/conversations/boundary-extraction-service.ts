@@ -498,9 +498,25 @@ export class BoundaryExtractionService {
       const touchedIds = Array.from(touchedConversationIds)
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
-      // Parent channel (thread discoverability) + access-root visibility (INV-62),
-      // which gates workspace-wide board delivery of the aggregate events below.
-      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+      // Parent channel (thread discoverability) + access-root visibility (INV-62)
+      // for the new message's stream — used by its per-message events below.
+      const { parentStreamId } = await resolveConversationDelivery(client, stream)
+
+      // A touched conversation can live in a DIFFERENT stream than the triggering
+      // one (a reassigned context-window message from another channel), so each
+      // aggregate event must route by its OWN access root — using the triggering
+      // stream's visibility would broadcast a private conversation to the whole
+      // workspace (INV-62). Resolve per stream, memoized for the common case.
+      const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
+      const deliveryFor = async (conversationStreamId: string) => {
+        const cached = deliveryByStreamId.get(conversationStreamId)
+        if (cached) return cached
+        const conversationStream =
+          conversationStreamId === stream.id ? stream : await StreamRepository.findById(client, conversationStreamId)
+        const resolved = await resolveConversationDelivery(client, conversationStream)
+        deliveryByStreamId.set(conversationStreamId, resolved)
+        return resolved
+      }
 
       const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
       const primaryConvId = primaryAssignment?.conversationId ?? null
@@ -509,12 +525,13 @@ export class BoundaryExtractionService {
       for (const conv of touchedConversations) {
         const isNewThisCall = newConversation?.id === conv.id
         const eventType = isNewThisCall ? "conversation:created" : "conversation:updated"
+        const { parentStreamId: convParentStreamId, streamVisibility } = await deliveryFor(conv.streamId)
         await OutboxRepository.insert(client, eventType, {
           workspaceId,
           streamId: conv.streamId,
           conversationId: conv.id,
           conversation: addStalenessFields(conv),
-          parentStreamId,
+          parentStreamId: convParentStreamId,
           streamVisibility,
         })
       }

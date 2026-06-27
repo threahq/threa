@@ -68,16 +68,20 @@ export async function mergeBoardConversation(
   conversationId: string,
   conversation: ConversationWithStaleness
 ): Promise<boolean> {
-  const existing = await db.conversations.get(conversationId)
-  if (!existing) return false
-  await db.conversations.put({
-    ...existing,
-    conversation,
-    _lastActivityMs: lastActivityMs(conversation),
-    _cachedAt: Date.now(),
-    _status: undefined,
+  // Read-modify-write in one rw transaction so a concurrent optimistic write or
+  // a second echo can't merge over a stale read of this row.
+  return db.transaction("rw", db.conversations, async () => {
+    const existing = await db.conversations.get(conversationId)
+    if (!existing) return false
+    await db.conversations.put({
+      ...existing,
+      conversation,
+      _lastActivityMs: lastActivityMs(conversation),
+      _cachedAt: Date.now(),
+      _status: undefined,
+    })
+    return true
   })
-  return true
 }
 
 /**
@@ -92,16 +96,21 @@ export async function optimisticBoardReply(
   message: BoardPostMessage,
   atMs: number
 ): Promise<void> {
-  const existing = await db.conversations.get(conversationId)
-  if (!existing) return
-  const recentMessages = [...existing.recentMessages, message].slice(-RECENT_PREVIEW_CAP)
-  await db.conversations.put({
-    ...existing,
-    conversation: { ...existing.conversation, lastActivityAt: new Date(atMs).toISOString() },
-    recentMessages,
-    totalReplies: existing.totalReplies + 1,
-    _lastActivityMs: atMs,
-    _cachedAt: Date.now(),
-    _status: "pending",
+  // Read-modify-write in one rw transaction so it can't race the authoritative
+  // echo's merge through a stale read. Dedup by id so a retry can't double-append.
+  await db.transaction("rw", db.conversations, async () => {
+    const existing = await db.conversations.get(conversationId)
+    if (!existing) return
+    if (existing.recentMessages.some((m) => m.id === message.id)) return
+    const recentMessages = [...existing.recentMessages, message].slice(-RECENT_PREVIEW_CAP)
+    await db.conversations.put({
+      ...existing,
+      conversation: { ...existing.conversation, lastActivityAt: new Date(atMs).toISOString() },
+      recentMessages,
+      totalReplies: existing.totalReplies + 1,
+      _lastActivityMs: atMs,
+      _cachedAt: Date.now(),
+      _status: "pending",
+    })
   })
 }

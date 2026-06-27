@@ -77,10 +77,15 @@ function BoardPageGate({ workspaceId }: { workspaceId: string }) {
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   // The query is the fetch/seed engine; the board reads reactively from IDB so
   // live events and optimistic writes re-sort it without a refetch.
-  const { isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
+  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
     useWorkspaceConversations(workspaceId, { limit: 50 })
   const boardPosts = useBoardPosts(workspaceId)
   const posts = boardPosts ?? []
+  // After a refetch settles, `isLoading` is already false but the seed effect
+  // writes IDB on the next tick, so `useBoardPosts` can be momentarily empty
+  // while the query already holds posts. Treat that window as loading so the
+  // feed doesn't flash the empty state before the seed lands.
+  const seedPending = (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -160,7 +165,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         </Button>
       </div>
     )
-  } else if (isLoading || boardPosts === undefined) {
+  } else if (isLoading || boardPosts === undefined || seedPending) {
     content = (
       <div className="flex flex-col gap-3">
         {Array.from({ length: 5 }).map((_, i) => (

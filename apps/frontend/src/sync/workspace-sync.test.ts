@@ -1004,10 +1004,11 @@ describe("registerWorkspaceSocketHandlers", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     // The event carries the aggregate but not the message bodies, so a card we
-    // don't have cached is hydrated by refetching the (active) board head.
+    // don't have cached is hydrated by refetching the board head (stale-mark all,
+    // refetch only active observers).
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: [...conversationKeys.all, "workspaceList", "ws_1"],
-      type: "active",
+      refetchType: "active",
     })
     cleanup()
   })

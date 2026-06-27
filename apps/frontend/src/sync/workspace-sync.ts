@@ -1664,16 +1664,18 @@ export function registerWorkspaceSocketHandlers(
   // conversation, so merging them re-sorts the board in place on
   // `lastActivityAt` without a refetch — the live half of the board's rails.
   // A card we don't have cached can't be rendered from the aggregate alone (the
-  // message bodies aren't in the event), so refresh the board head to hydrate it
-  // (active-only: nobody's watching a closed board). The viewer's own sends are
-  // already reflected optimistically, and reconcile when their echo merges here.
+  // message bodies aren't in the event), so refresh the board head to hydrate it.
+  // Mark every matching board-list query stale (so a closed board refetches on
+  // reopen) but only refetch the ones with active observers now. The viewer's own
+  // sends are already reflected optimistically, and reconcile when their echo
+  // merges here.
   const handleConversationUpserted = (payload: { workspaceId: string; conversation: ConversationWithStaleness }) => {
     if (payload.workspaceId !== workspaceId) return
     void mergeBoardConversation(payload.conversation.id, payload.conversation).then((merged) => {
       if (!merged) {
         queryClient.invalidateQueries({
           queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
-          type: "active",
+          refetchType: "active",
         })
       }
     })

@@ -242,6 +242,7 @@ export function planBoardReply(input: {
 export function useReplyToBoardPost(workspaceId: string) {
   const messageService = useMessageService()
   const streamService = useStreamService()
+  const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: async ({
@@ -279,8 +280,9 @@ export function useReplyToBoardPost(workspaceId: string) {
       })
       // Optimistically reflect the reply on the board's IDB feed: the card jumps
       // to the top and shows the reply before the round-trip's `conversation:updated`
-      // echo merges over it (clearing pending). Link previews/attachments fill in
-      // on that reconciliation; an empty preview here is correct for a text reply.
+      // echo merges over it (clearing pending). The echo carries only the
+      // aggregate, so this preview is the lasting one until the next seed —
+      // correct for a text reply, but it can't show attachments/previews.
       void optimisticBoardReply(
         conversation.id,
         {
@@ -295,6 +297,15 @@ export function useReplyToBoardPost(workspaceId: string) {
         },
         Date.parse(message.createdAt) || Date.now()
       )
+      // A reply with attachments can't be previewed fully from the optimistic
+      // row (the message wire shape carries no attachment summaries), so refetch
+      // the board head to backfill them; the text/bump still showed instantly.
+      if (base.attachmentIds) {
+        void queryClient.invalidateQueries({
+          queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
+          refetchType: "active",
+        })
+      }
       return { message, plan }
     },
   })
