@@ -7,7 +7,9 @@ import { UserRepository } from "../workspaces"
 import { SearchRepository } from "../search"
 import type { StreamService } from "../streams"
 import type { MemoExplorerService } from "../memos"
-import type { Stream } from "@threa/types"
+
+/** The exact shape `tryAccess` resolves to, so a drift in the contract breaks here. */
+type AccessibleStream = NonNullable<Awaited<ReturnType<StreamService["tryAccess"]>>>
 
 const WORKSPACE_ID = "ws_self"
 const VIEWER_ID = "user_viewer"
@@ -38,9 +40,7 @@ function makePreview(overrides: Partial<LinkPreview>): LinkPreview {
   }
 }
 
-// The service reads only the shared fields; cast to satisfy the backend
-// repository Stream type (a superset of the wire Stream) at the dep boundary.
-function makeStream(overrides: Partial<Stream>): never {
+function makeStream(overrides: Partial<AccessibleStream> = {}): AccessibleStream {
   return {
     id: "stream_1",
     workspaceId: WORKSPACE_ID,
@@ -59,7 +59,7 @@ function makeStream(overrides: Partial<Stream>): never {
     updatedAt: new Date().toISOString(),
     archivedAt: null,
     ...overrides,
-  } as unknown as never
+  } as AccessibleStream
 }
 
 function makeService(streamService: Partial<StreamService>, memoExplorerService: Partial<MemoExplorerService>) {
