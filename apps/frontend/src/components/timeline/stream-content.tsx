@@ -1498,7 +1498,7 @@ export function StreamContent({
         // in flight; its stale completion must not clear the new target or
         // release the new mount hold.
         if (jumpTriggeredKeyRef.current !== navigationKey) return
-        deepLinkDebug("highlight: jumpToEvent resolved", highlightMessageId, "success=", success)
+        deepLinkDebug("highlight: jumpToEvent resolved", targetMessageId, "success=", success)
         if (!success) {
           pendingScrollTarget.current = null
           setDeepLinkGaveUp(true)
@@ -1506,7 +1506,7 @@ export function StreamContent({
       })
       .catch(() => {
         if (jumpTriggeredKeyRef.current !== navigationKey) return
-        deepLinkDebug("highlight: jumpToEvent rejected", highlightMessageId)
+        deepLinkDebug("highlight: jumpToEvent rejected", targetMessageId)
         pendingScrollTarget.current = null
         setDeepLinkGaveUp(true)
       })
