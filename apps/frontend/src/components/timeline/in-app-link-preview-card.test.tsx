@@ -143,6 +143,8 @@ describe("InAppLinkPreviewCard", () => {
       await waitFor(() => expect(screen.getByText("design")).toBeInTheDocument())
       expect(mockResolveInAppLinkByUrl).toHaveBeenCalledWith(workspaceId, url)
       expect(mockResolveInAppLink).not.toHaveBeenCalled()
+      // Non-navigable in the composer — clicking must not abandon the draft.
+      expect(screen.queryByRole("link")).not.toBeInTheDocument()
     })
 
     it("dismisses with the link URL", async () => {

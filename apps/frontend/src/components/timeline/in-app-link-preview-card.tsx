@@ -49,6 +49,9 @@ function useResolvedInAppLink(
     }
 
     let mounted = true
+    // Clear any prior target's data so a failed re-resolve (silently caught
+    // below) can't leave the previous link's card showing for the new one.
+    setData(null)
     setLoading(true)
     request
       .then((result) => {
@@ -127,27 +130,45 @@ export function ComposerInAppLinkPreviewCard({ url, workspaceId, onDismiss }: Co
       url={url}
       previewKey={url}
       onDismiss={onDismiss ? () => onDismiss(url) : undefined}
+      inComposer
     />
   )
 }
 
-/** Dispatches resolved data to the matching card. `onDismiss` is already bound. */
+/**
+ * Dispatches resolved data to the matching card. `onDismiss` is already bound.
+ * `inComposer` renders the draft variant: non-navigable (clicking a preview must
+ * not abandon the draft mid-compose) and an always-visible, larger dismiss
+ * (the card's only affordance there — it can't rely on hover/touch reveal).
+ */
 function ResolvedInAppLink({
   data,
   url,
   previewKey,
   messageId,
   onDismiss,
+  inComposer = false,
 }: {
   data: InAppLinkPreviewData
   url: string
   previewKey: string
   messageId?: string
   onDismiss?: () => void
+  inComposer?: boolean
 }) {
-  if (data.kind === "stream") return <StreamLinkCard data={data} url={url} onDismiss={onDismiss} />
-  if (data.kind === "memo") return <MemoLinkCard data={data} url={url} onDismiss={onDismiss} />
-  return <MessageLinkCard data={data} url={url} previewKey={previewKey} messageId={messageId} onDismiss={onDismiss} />
+  if (data.kind === "stream")
+    return <StreamLinkCard data={data} url={url} onDismiss={onDismiss} inComposer={inComposer} />
+  if (data.kind === "memo") return <MemoLinkCard data={data} url={url} onDismiss={onDismiss} inComposer={inComposer} />
+  return (
+    <MessageLinkCard
+      data={data}
+      url={url}
+      previewKey={previewKey}
+      messageId={messageId}
+      onDismiss={onDismiss}
+      inComposer={inComposer}
+    />
+  )
 }
 
 function MessageLinkCard({
@@ -156,12 +177,14 @@ function MessageLinkCard({
   previewKey,
   messageId,
   onDismiss,
+  inComposer,
 }: {
   data: MessageLinkPreviewData
   url: string
   previewKey: string
   messageId?: string
   onDismiss?: () => void
+  inComposer?: boolean
 }) {
   if (data.accessTier === "cross_workspace") {
     return (
@@ -170,6 +193,7 @@ function MessageLinkCard({
         kindLabel="Message"
         label="In another workspace"
         onDismiss={onDismiss}
+        inComposer={inComposer}
       />
     )
   }
@@ -182,6 +206,7 @@ function MessageLinkCard({
         bodyIcon={<Lock />}
         label="In a private conversation"
         onDismiss={onDismiss}
+        inComposer={inComposer}
       />
     )
   }
@@ -194,11 +219,12 @@ function MessageLinkCard({
         label="This message was deleted"
         italic
         onDismiss={onDismiss}
+        inComposer={inComposer}
       />
     )
   }
 
-  const internalPath = getInternalPath(url)
+  const internalPath = inComposer ? null : getInternalPath(url)
   const body = (
     <CardBody>
       <div className="flex gap-3">
@@ -220,7 +246,13 @@ function MessageLinkCard({
 
   return (
     <CardShell
-      header={<CardHeader label={data.streamName ? `#${data.streamName}` : "Message"} onDismiss={onDismiss} />}
+      header={
+        <CardHeader
+          label={data.streamName ? `#${data.streamName}` : "Message"}
+          onDismiss={onDismiss}
+          inComposer={inComposer}
+        />
+      }
     >
       <LinkPreviewBody messageId={messageId} previewId={previewKey}>
         <InternalLink path={internalPath}>{body}</InternalLink>
@@ -255,14 +287,22 @@ function StreamLinkCard({
   data,
   url,
   onDismiss,
+  inComposer,
 }: {
   data: StreamLinkPreviewData
   url: string
   onDismiss?: () => void
+  inComposer?: boolean
 }) {
   if (data.accessTier === "cross_workspace") {
     return (
-      <MinimalCard kindIcon={<Hash />} kindLabel="Conversation" label="In another workspace" onDismiss={onDismiss} />
+      <MinimalCard
+        kindIcon={<Hash />}
+        kindLabel="Conversation"
+        label="In another workspace"
+        onDismiss={onDismiss}
+        inComposer={inComposer}
+      />
     )
   }
 
@@ -274,11 +314,12 @@ function StreamLinkCard({
         bodyIcon={<Lock />}
         label="Private conversation"
         onDismiss={onDismiss}
+        inComposer={inComposer}
       />
     )
   }
 
-  const internalPath = getInternalPath(url)
+  const internalPath = inComposer ? null : getInternalPath(url)
   const isPrivate = data.visibility === "private"
   const body = (
     <CardBody>
@@ -302,15 +343,35 @@ function StreamLinkCard({
   )
 
   return (
-    <CardShell header={<CardHeader label={streamKindLabel(data.streamType)} onDismiss={onDismiss} />}>
+    <CardShell
+      header={<CardHeader label={streamKindLabel(data.streamType)} onDismiss={onDismiss} inComposer={inComposer} />}
+    >
       <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )
 }
 
-function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url: string; onDismiss?: () => void }) {
+function MemoLinkCard({
+  data,
+  url,
+  onDismiss,
+  inComposer,
+}: {
+  data: MemoLinkPreviewData
+  url: string
+  onDismiss?: () => void
+  inComposer?: boolean
+}) {
   if (data.accessTier === "cross_workspace") {
-    return <MinimalCard kindIcon={<Brain />} kindLabel="Memory" label="In another workspace" onDismiss={onDismiss} />
+    return (
+      <MinimalCard
+        kindIcon={<Brain />}
+        kindLabel="Memory"
+        label="In another workspace"
+        onDismiss={onDismiss}
+        inComposer={inComposer}
+      />
+    )
   }
 
   if (data.accessTier === "private") {
@@ -321,11 +382,12 @@ function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url
         bodyIcon={<Lock />}
         label="From a private conversation"
         onDismiss={onDismiss}
+        inComposer={inComposer}
       />
     )
   }
 
-  const internalPath = getInternalPath(url)
+  const internalPath = inComposer ? null : getInternalPath(url)
   const body = (
     <CardBody>
       <div className="flex items-start gap-3">
@@ -354,7 +416,7 @@ function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url
   )
 
   return (
-    <CardShell header={<CardHeader label="Memory" onDismiss={onDismiss} />}>
+    <CardShell header={<CardHeader label="Memory" onDismiss={onDismiss} inComposer={inComposer} />}>
       <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )
@@ -396,12 +458,14 @@ function formatKnowledgeType(knowledgeType: string): string {
     .join(" ")
 }
 
-function CardHeader({ label, onDismiss }: { label: string; onDismiss?: () => void }) {
+function CardHeader({ label, onDismiss, inComposer }: { label: string; onDismiss?: () => void; inComposer?: boolean }) {
   return (
     <>
       <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
-      <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
-      <DismissButton onDismiss={onDismiss} />
+      {/* The arrow signals "opens in-app". A draft preview doesn't navigate, so
+          omit it there and let the dismiss (its own ml-auto) take the slot. */}
+      {!inComposer && <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />}
+      <DismissButton onDismiss={onDismiss} prominent={inComposer} />
     </>
   )
 }
@@ -467,6 +531,7 @@ function MinimalCard({
   label,
   italic,
   onDismiss,
+  inComposer,
 }: {
   kindIcon: ReactNode
   kindLabel: string
@@ -474,13 +539,14 @@ function MinimalCard({
   label: string
   italic?: boolean
   onDismiss?: () => void
+  inComposer?: boolean
 }) {
   return (
     <div className="group/preview reveal-host relative max-w-md overflow-hidden rounded-lg border bg-card">
       <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5 text-muted-foreground">
         <span className="shrink-0 [&>svg]:h-3.5 [&>svg]:w-3.5">{kindIcon}</span>
         <span className="text-xs font-medium">{kindLabel}</span>
-        <DismissButton onDismiss={onDismiss} />
+        <DismissButton onDismiss={onDismiss} prominent={inComposer} />
       </div>
       <div className="flex items-center gap-3 px-3.5 py-3 text-muted-foreground">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 [&>svg]:h-[18px] [&>svg]:w-[18px]">
@@ -522,14 +588,17 @@ function AuthorAvatar({ avatarUrl, authorName }: { avatarUrl?: string; authorNam
   return null
 }
 
-function DismissButton({ onDismiss }: { onDismiss?: () => void }) {
+function DismissButton({ onDismiss, prominent }: { onDismiss?: () => void; prominent?: boolean }) {
   if (!onDismiss) return null
 
+  // Timeline: hover/touch-reveal, compact (the card is the primary affordance).
+  // Composer (prominent): always visible and a 28px touch target — it's the
+  // card's only action there, and a typing user can't hover to reveal it.
   return (
     <Button
       variant="ghost"
       size="icon"
-      className="reveal-actions ml-auto h-5 w-5"
+      className={prominent ? "ml-auto h-7 w-7" : "reveal-actions ml-auto h-5 w-5"}
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
