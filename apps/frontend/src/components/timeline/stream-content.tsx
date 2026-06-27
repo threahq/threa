@@ -25,7 +25,7 @@ import {
   streamKeys,
   workspaceKeys,
 } from "@/hooks"
-import { useSocket } from "@/contexts"
+import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
@@ -2228,6 +2228,7 @@ function TimelineMessageList({
   /** Jump to the first message on or after a date (floating date header). */
   onJumpToDate: (date: Date) => void
 }) {
+  const { phase } = useCoordinatedLoading()
   const socket = useSocket()
   const abortResearch = useAbortResearch(socket)
 
@@ -2312,6 +2313,34 @@ function TimelineMessageList({
       conversationOverlay,
     ]
   )
+
+  // Stagger the post-reveal hydration burst (INV-21 adjacent): when the
+  // coordinated-loading phase flips to "ready", releasing every row's
+  // deferSecondaryHydration at once fires all presigns/link previews/embeds
+  // in one frame — a long task right at reveal. Instead release rows in
+  // batches from the bottom (the viewport on a chat) upward, one batch per
+  // frame. Once every row present at release time is hydrated, latch open so
+  // later prepends/appends hydrate immediately.
+  const HYDRATION_RELEASE_BATCH = 8
+  const [hydrationWave, setHydrationWave] = useState(0)
+  const fullyHydratedRef = useRef(false)
+  const lastHydrationStreamRef = useRef(streamId)
+  if (lastHydrationStreamRef.current !== streamId) {
+    lastHydrationStreamRef.current = streamId
+    fullyHydratedRef.current = false
+    setHydrationWave(0)
+  }
+  const itemCount = visibleItems.length
+  useEffect(() => {
+    if (phase !== "ready" || fullyHydratedRef.current) return
+    if (hydrationWave * HYDRATION_RELEASE_BATCH >= itemCount) {
+      fullyHydratedRef.current = true
+      return
+    }
+    const id = requestAnimationFrame(() => setHydrationWave((wave) => wave + 1))
+    return () => cancelAnimationFrame(id)
+  }, [phase, hydrationWave, itemCount])
+  const releasedFromBottom = hydrationWave * HYDRATION_RELEASE_BATCH
 
   const olderFetchCooldownRef = useRef(0)
   const newerFetchCooldownRef = useRef(0)
@@ -2538,16 +2567,15 @@ function TimelineMessageList({
             // without profiling on a low-end device.
             bufferSize={2000}
           >
-            {visibleItems.map((item) => (
+            {visibleItems.map((item, index) => (
               <div key={getTimelineItemKey(item)} className="relative mx-auto max-w-[800px]">
-                {/* Hydrate secondary content (link previews, attachment images,
-                    embeds) eagerly for every mounted row — including the
-                    off-screen buffer — so it is laid out at its final height
-                    before it scrolls into view, instead of growing as the user
-                    reaches it. Growable media reserves its box up front
-                    (images via inlineImageBox, preview cards at fixed heights),
-                    so eager hydration adds no in-viewport layout shift. */}
-                <TimelineItemContent item={item} ctx={renderCtx} deferSecondaryHydration={false} />
+                <TimelineItemContent
+                  item={item}
+                  ctx={renderCtx}
+                  deferSecondaryHydration={
+                    !fullyHydratedRef.current && (phase !== "ready" || index < visibleItems.length - releasedFromBottom)
+                  }
+                />
               </div>
             ))}
           </Virtualizer>
