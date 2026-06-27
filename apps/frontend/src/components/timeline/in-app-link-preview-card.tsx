@@ -1,6 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { MessageSquare, Hash, Brain, Lock, X } from "lucide-react"
+import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
@@ -65,20 +65,7 @@ export function InAppLinkPreviewCard({
   }, [workspaceId, preview.id, hydrate])
 
   if (loading) {
-    // Mirror the resolved card's header-bar + body so resolving doesn't shift
-    // following timeline rows (INV-21).
-    return (
-      <div className="overflow-hidden rounded-lg border bg-card max-w-md animate-pulse">
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/30">
-          <div className="h-4 w-4 rounded bg-muted" />
-          <div className="h-3 w-20 rounded bg-muted" />
-        </div>
-        <div className="px-3 py-2 space-y-1.5">
-          <div className="h-3 w-32 rounded bg-muted" />
-          <div className="h-3 w-full rounded bg-muted" />
-        </div>
-      </div>
-    )
+    return <CardSkeleton />
   }
 
   if (!data) return null
@@ -145,37 +132,36 @@ function MessageLinkCard({
 
   const internalPath = getInternalPath(preview.url)
   const body = (
-    <div className="flex gap-2.5 px-3 py-2">
-      <AuthorAvatar avatarUrl={data.authorAvatarUrl} authorName={data.authorName} />
-      <div className="flex-1 min-w-0">
-        {data.authorName && <span className="text-xs font-medium text-foreground">{data.authorName}</span>}
-        {data.contentPreview && (
-          <div className="mt-0.5">
-            <MarkdownContent content={data.contentPreview} className="text-xs text-muted-foreground" />
-          </div>
-        )}
+    <CardBody>
+      <div className="flex gap-3">
+        <AuthorAvatar avatarUrl={data.authorAvatarUrl} authorName={data.authorName} />
+        <div className="min-w-0 flex-1">
+          {data.authorName && <span className="text-xs font-semibold text-foreground">{data.authorName}</span>}
+          {data.contentPreview && (
+            <div className="mt-0.5">
+              <MarkdownContent
+                content={data.contentPreview}
+                className="text-xs leading-relaxed text-muted-foreground"
+              />
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </CardBody>
   )
 
   return (
     <CardShell
       header={
-        <>
-          <MessageSquare className="h-4 w-4 text-primary shrink-0" />
-          {data.streamName && <span className="text-xs text-muted-foreground truncate">#{data.streamName}</span>}
-          <DismissButton previewId={preview.id} onDismiss={onDismiss} />
-        </>
+        <CardHeader
+          label={data.streamName ? `#${data.streamName}` : "Message"}
+          preview={preview}
+          onDismiss={onDismiss}
+        />
       }
     >
       <LinkPreviewBody messageId={messageId} previewId={preview.id}>
-        {internalPath ? (
-          <Link to={internalPath} className="block hover:bg-muted/20 transition-colors">
-            {body}
-          </Link>
-        ) : (
-          body
-        )}
+        <InternalLink path={internalPath}>{body}</InternalLink>
       </LinkPreviewBody>
     </CardShell>
   )
@@ -189,6 +175,17 @@ function streamKindLabel(streamType?: StreamType): string {
       return "Scratchpad"
     default:
       return "Conversation"
+  }
+}
+
+function streamKindIcon(streamType?: StreamType): ReactNode {
+  switch (streamType) {
+    case "scratchpad":
+      return <NotebookPen />
+    case "channel":
+      return <Hash />
+    default:
+      return <MessageSquare />
   }
 }
 
@@ -227,39 +224,31 @@ function StreamLinkCard({
   }
 
   const internalPath = getInternalPath(preview.url)
-  const visibilityLabel = data.visibility === "private" ? "Private" : "Public"
+  const isPrivate = data.visibility === "private"
   const body = (
-    <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5">
-        <Hash className="h-3.5 w-3.5 text-primary shrink-0" />
-        <span className="text-sm font-medium text-foreground truncate">{data.streamName ?? "Conversation"}</span>
+    <CardBody>
+      <div className="flex items-start gap-3">
+        <IconTile>{streamKindIcon(data.streamType)}</IconTile>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h4 className="truncate text-sm font-semibold leading-snug text-foreground">
+              {data.streamName ?? "Conversation"}
+            </h4>
+            <MetaBadge icon={isPrivate ? <Lock /> : <Globe />}>{isPrivate ? "Private" : "Public"}</MetaBadge>
+          </div>
+          {data.description && (
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground line-clamp-2">
+              {stripMarkdownToInline(data.description)}
+            </p>
+          )}
+        </div>
       </div>
-      {data.description && (
-        <p className="mt-1 text-xs text-muted-foreground line-clamp-3">{stripMarkdownToInline(data.description)}</p>
-      )}
-      <span className="mt-1.5 inline-block text-[10px] uppercase tracking-wide text-muted-foreground">
-        {visibilityLabel}
-      </span>
-    </div>
+    </CardBody>
   )
 
   return (
-    <CardShell
-      header={
-        <>
-          <Hash className="h-4 w-4 text-primary shrink-0" />
-          <span className="text-xs text-muted-foreground">{streamKindLabel(data.streamType)}</span>
-          <DismissButton previewId={preview.id} onDismiss={onDismiss} />
-        </>
-      }
-    >
-      {internalPath ? (
-        <Link to={internalPath} className="block hover:bg-muted/20 transition-colors">
-          {body}
-        </Link>
-      ) : (
-        body
-      )}
+    <CardShell header={<CardHeader label={streamKindLabel(data.streamType)} preview={preview} onDismiss={onDismiss} />}>
+      <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )
 }
@@ -300,57 +289,146 @@ function MemoLinkCard({
 
   const internalPath = getInternalPath(preview.url)
   const body = (
-    <div className="px-3 py-2">
-      <div className="flex items-center gap-1.5">
-        <Brain className="h-3.5 w-3.5 text-primary shrink-0" />
-        <span className="text-sm font-medium text-foreground truncate">{data.title ?? "Memory"}</span>
+    <CardBody>
+      <div className="flex items-start gap-3">
+        <IconTile>
+          <Brain />
+        </IconTile>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h4 className="truncate text-sm font-semibold leading-snug text-foreground">{data.title ?? "Memory"}</h4>
+            {data.knowledgeType && <MetaBadge>{formatKnowledgeType(data.knowledgeType)}</MetaBadge>}
+          </div>
+          {data.abstract && (
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground line-clamp-2">
+              {stripMarkdownToInline(data.abstract)}
+            </p>
+          )}
+          {data.sourceStreamName && (
+            <span className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Hash className="h-3 w-3 shrink-0" />
+              From #{data.sourceStreamName}
+            </span>
+          )}
+        </div>
       </div>
-      {data.abstract && (
-        <p className="mt-1 text-xs text-muted-foreground line-clamp-3">{stripMarkdownToInline(data.abstract)}</p>
-      )}
-      {data.sourceStreamName && (
-        <span className="mt-1.5 inline-block text-[10px] text-muted-foreground truncate">
-          From #{data.sourceStreamName}
-        </span>
-      )}
-    </div>
+    </CardBody>
   )
 
   return (
-    <CardShell
-      header={
-        <>
-          <Brain className="h-4 w-4 text-primary shrink-0" />
-          <span className="text-xs text-muted-foreground">Memory</span>
-          <DismissButton previewId={preview.id} onDismiss={onDismiss} />
-        </>
-      }
-    >
-      {internalPath ? (
-        <Link to={internalPath} className="block hover:bg-muted/20 transition-colors">
-          {body}
-        </Link>
-      ) : (
-        body
-      )}
+    <CardShell header={<CardHeader label="Memory" preview={preview} onDismiss={onDismiss} />}>
+      <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
+  )
+}
+
+/** Soft golden corner glow — the "golden thread" depth cue shared by every in-app card body. */
+function CardGlow() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute -right-12 -top-12 h-28 w-28 rounded-full bg-primary/10 blur-2xl"
+    />
+  )
+}
+
+/** Rounded primary-tinted tile that anchors a stream/memo card the way an avatar anchors a message. */
+function IconTile({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/15 bg-primary/10 text-primary [&>svg]:h-[18px] [&>svg]:w-[18px]">
+      {children}
+    </div>
+  )
+}
+
+function MetaBadge({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground [&>svg]:h-2.5 [&>svg]:w-2.5">
+      {icon}
+      {children}
+    </span>
+  )
+}
+
+function formatKnowledgeType(knowledgeType: string): string {
+  return knowledgeType
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+}
+
+function CardHeader({
+  label,
+  preview,
+  onDismiss,
+}: {
+  label: string
+  preview: LinkPreviewSummary
+  onDismiss?: (previewId: string) => void
+}) {
+  return (
+    <>
+      <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
+      <ArrowUpRight className="ml-auto h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+      <DismissButton previewId={preview.id} onDismiss={onDismiss} />
+    </>
+  )
+}
+
+function CardBody({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative overflow-hidden px-3.5 py-3">
+      <CardGlow />
+      <div className="relative">{children}</div>
+    </div>
+  )
+}
+
+function InternalLink({ path, children }: { path: string | null; children: ReactNode }) {
+  if (!path) return <>{children}</>
+  return (
+    <Link to={path} className="block transition-colors hover:bg-muted/20">
+      {children}
+    </Link>
   )
 }
 
 function CardShell({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
-    <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md hover:border-primary/50 hover:shadow-sm">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/30">{header}</div>
+    <div className="group/preview reveal-host relative max-w-md overflow-hidden rounded-lg border bg-card transition-all hover:border-primary/50 hover:shadow-sm">
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">{header}</div>
       {children}
     </div>
   )
 }
 
 /**
+ * Loading placeholder. Mirrors the resolved card's header bar + tile + two text
+ * lines so resolving doesn't shift following timeline rows (INV-21).
+ */
+function CardSkeleton() {
+  return (
+    <div className="max-w-md animate-pulse overflow-hidden rounded-lg border bg-card">
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
+        <div className="h-3 w-20 rounded bg-muted" />
+      </div>
+      <div className="flex items-start gap-3 px-3.5 py-3">
+        <div className="h-9 w-9 shrink-0 rounded-lg bg-muted" />
+        <div className="flex-1 space-y-1.5 pt-0.5">
+          <div className="h-3.5 w-32 rounded bg-muted" />
+          <div className="h-3 w-full rounded bg-muted" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
  * Restricted-tier card (cross-workspace / private / deleted). Mirrors the full
- * card's header-bar + body two-zone shape so resolving to a minimal tier doesn't
- * collapse the row height vs. the skeleton (INV-21). The header names the kind;
- * the body carries the restricted-state message.
+ * card's header-bar + tile-anchored body so resolving to a minimal tier keeps the
+ * same footprint as the skeleton and the full card (INV-21). The header names the
+ * kind; the body carries the restricted-state message behind a muted lock tile.
  */
 function MinimalCard({
   kindIcon,
@@ -370,15 +448,17 @@ function MinimalCard({
   onDismiss?: (previewId: string) => void
 }) {
   return (
-    <div className="group/preview reveal-host relative overflow-hidden rounded-lg border bg-card max-w-md">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b bg-muted/30 text-muted-foreground">
-        <span className="[&>svg]:h-4 [&>svg]:w-4 shrink-0">{kindIcon}</span>
-        <span className="text-xs">{kindLabel}</span>
+    <div className="group/preview reveal-host relative max-w-md overflow-hidden rounded-lg border bg-card">
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5 text-muted-foreground">
+        <span className="shrink-0 [&>svg]:h-3.5 [&>svg]:w-3.5">{kindIcon}</span>
+        <span className="text-xs font-medium">{kindLabel}</span>
         <DismissButton previewId={previewId} onDismiss={onDismiss} />
       </div>
-      <div className="flex items-center gap-2 px-3 py-2 text-muted-foreground">
-        {bodyIcon && <span className="[&>svg]:h-3.5 [&>svg]:w-3.5 shrink-0">{bodyIcon}</span>}
-        <span className={italic ? "text-xs italic" : "text-xs"}>{label}</span>
+      <div className="flex items-center gap-3 px-3.5 py-3 text-muted-foreground">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 [&>svg]:h-[18px] [&>svg]:w-[18px]">
+          {bodyIcon ?? kindIcon}
+        </div>
+        <span className={italic ? "text-sm italic" : "text-sm"}>{label}</span>
       </div>
     </div>
   )
@@ -396,17 +476,17 @@ function getInternalPath(url: string): string | null {
 function AuthorAvatar({ avatarUrl, authorName }: { avatarUrl?: string; authorName?: string }) {
   if (avatarUrl) {
     return (
-      <Avatar className="h-5 w-5 shrink-0 mt-0.5">
+      <Avatar className="h-9 w-9 shrink-0 rounded-lg">
         <AvatarImage src={avatarUrl} alt={authorName ?? ""} />
-        <AvatarFallback className="text-[10px]">{authorName?.charAt(0)?.toUpperCase() ?? "?"}</AvatarFallback>
+        <AvatarFallback className="rounded-lg text-xs">{authorName?.charAt(0)?.toUpperCase() ?? "?"}</AvatarFallback>
       </Avatar>
     )
   }
 
   if (authorName) {
     return (
-      <Avatar className="h-5 w-5 shrink-0 mt-0.5">
-        <AvatarFallback className="text-[10px]">{authorName.charAt(0).toUpperCase()}</AvatarFallback>
+      <Avatar className="h-9 w-9 shrink-0 rounded-lg">
+        <AvatarFallback className="rounded-lg text-xs">{authorName.charAt(0).toUpperCase()}</AvatarFallback>
       </Avatar>
     )
   }
@@ -421,7 +501,7 @@ function DismissButton({ previewId, onDismiss }: { previewId: string; onDismiss?
     <Button
       variant="ghost"
       size="icon"
-      className="reveal-actions h-5 w-5 ml-auto"
+      className="reveal-actions ml-auto h-5 w-5"
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
