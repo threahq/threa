@@ -25,6 +25,8 @@ import {
   type AttachmentTranscodedOutboxPayload,
   type AttachmentThumbnailedOutboxPayload,
   type MessagesMovedOutboxPayload,
+  type ConversationCreatedOutboxPayload,
+  type ConversationUpdatedOutboxPayload,
   type LabelUpsertedOutboxPayload,
   type LabelDeletedOutboxPayload,
   type LabelAssignedOutboxPayload,
@@ -193,12 +195,28 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return [streamGroup(streamId), userGroup(memberId)]
   }
 
-  // Conversation events reach the stream + optionally its parent for
-  // discoverability. `conversation:message_reassigned` has no parent dimension
-  // and falls through to the generic stream-scoped branch below.
-  if (
-    isOneOfOutboxEventType(event, ["conversation:created", "conversation:updated", "conversation:message_assigned"])
-  ) {
+  // Conversation aggregate events reach the stream + optionally its parent for
+  // discoverability, AND the whole workspace when the access-root stream is a
+  // public channel — so the workspace board (which sits in the workspace room,
+  // not in every stream room) sees public-channel activity live. Private/DM/
+  // scratchpad conversations stay scoped to their stream's members (INV-62);
+  // the board picks those up via its bootstrap/reconnect fetch.
+  if (isOneOfOutboxEventType(event, ["conversation:created", "conversation:updated"])) {
+    const payload = event.payload as ConversationCreatedOutboxPayload | ConversationUpdatedOutboxPayload
+    const groups = [streamGroup(payload.streamId)]
+    if (payload.parentStreamId) {
+      groups.push(streamGroup(payload.parentStreamId))
+    }
+    if (payload.streamVisibility === Visibilities.PUBLIC) {
+      groups.push(WORKSPACE_GROUP)
+    }
+    return groups
+  }
+
+  // Per-message membership (no board aggregate) — stays stream-scoped (+ parent);
+  // the board doesn't consume it. `conversation:message_reassigned` has no parent
+  // dimension and falls through to the generic stream-scoped branch below.
+  if (isOutboxEventType(event, "conversation:message_assigned")) {
     const payload = event.payload as { streamId: string; parentStreamId?: string }
     const groups = [streamGroup(payload.streamId)]
     if (payload.parentStreamId) {

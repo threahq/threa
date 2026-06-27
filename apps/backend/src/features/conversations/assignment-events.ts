@@ -1,10 +1,10 @@
 import type { PoolClient } from "pg"
-import { StreamTypes } from "@threa/types"
 import { ConversationRepository, type Conversation } from "./repository"
 import { StreamRepository } from "../streams"
-import { MessageRepository, type Message } from "../messaging"
+import { type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields } from "./staleness"
+import { resolveConversationDelivery } from "./conversation-delivery"
 
 /**
  * Emit the conversation aggregate + per-message membership events for a single
@@ -24,12 +24,8 @@ export async function emitAssignmentEvents(
 ): Promise<Conversation> {
   const { workspaceId, message, conversationId, created, reason } = params
 
-  let parentStreamId: string | undefined
   const stream = await StreamRepository.findById(client, message.streamId)
-  if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
-    const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
-    parentStreamId = parentMessage?.streamId
-  }
+  const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
   const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationId])
   if (!refreshed) {
@@ -43,6 +39,7 @@ export async function emitAssignmentEvents(
     conversationId: refreshed.id,
     conversation: addStalenessFields(refreshed),
     parentStreamId,
+    streamVisibility,
   })
   await OutboxRepository.insert(client, "conversation:message_assigned", {
     workspaceId,

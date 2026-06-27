@@ -310,6 +310,97 @@ Keep the **conversation as the single board card and make its bump synchronous**
 conversation row as pure async enrichment** (more faithful to "the thread is the
 synchronous backbone," but two card-fueling paths). Lean: C.
 
+## Stable view + pending updates — the reactivity model (Kris's "don't move shit on me")
+
+Status: design, 2026-06-27. **Supersedes the live re-sort behavior shipped in the
+realtime slice (PR #1100).** That slice put conversations on the sync engine and
+made the board re-sort live on activity. Dogfooding the consequence: a card you're
+half-way through reading jumps out of view the moment it (or anything above it)
+gets activity. For a surface whose whole job is "get an overview," motion-under-
+the-eye is the wrong default. The fix is the X / Slack / iMessage pattern: **hold
+the view you're looking at perfectly still, accumulate changes out of band, and
+reveal them on demand.** This is the same instinct as INV-61 (off-screen content
+must never shift on-screen content), extended from the timeline's _insertion_ rule
+to the board's _ordering_.
+
+### One truth, two orderings
+
+- **Authoritative order** — the `conversations` IDB store, always live and
+  activity-sorted. Unchanged; the sync engine keeps it true.
+- **Committed view** — a _snapshot_ of order the viewer is currently looking at,
+  deliberately frozen. Render walks the committed order; each card still reads its
+  _content_ reactively from IDB (a reply body can fill in place), but its
+  _position_ never moves while committed.
+
+Live changes accumulate against the committed view as a **buffer**, surfaced as an
+X-style "N new" pill at the top. The pill — or scrolling to the top, or a remount
+(navigate away/back) — is the only thing that commits a fresh snapshot.
+
+This **removes the optimistic bump-to-top** the realtime slice added
+(`optimisticBoardReply` raising `_lastActivityMs` for the rendered order). The IDB
+bump stays as truth; the view layer simply doesn't reorder a committed card. Net,
+optimism gets simpler: the viewer's own reply updates in place, it doesn't chase a
+moving card.
+
+### Behavior per update type
+
+| Update                                      | Treatment                                                                                |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| A **seen card** gets activity (would bump)  | Stay put. Optional in-place "updated" dot so the change is legible without motion.       |
+| A **brand-new conversation**                | Buffer → pill count. On commit it lands at top with a **New** marker.                    |
+| Reorder/insert **fully above** the viewport | Allowed _iff_ scroll-compensated — reordering off-screen rows nets zero on-screen shift. |
+| The **viewer's own reply**                  | Updates in place; **no** bump-to-top (IDB bumps as truth; committed order ignores it).   |
+
+### The scroll-anchor rule
+
+Formalize INV-61 for the board: **the topmost visible card keeps its exact screen
+offset across any mutation.** Measure the above-anchor height delta in a layout
+effect and add it to `scrollTop`.
+
+- The timeline gets its version of this from the **`virtua` virtualizer's `shift`
+  prop on prepend** (`use-timeline-scroll.ts`), in a bottom-pinned chat model. The
+  board is a top-anchored, non-virtualized feed, so it can't reuse that directly:
+  either build a board anchor, or adopt `virtua` for the board and lean on `shift`
+  (likely where it lands at scale anyway).
+- **The hard part is async reflow:** avatars / link previews / images _above_ the
+  viewport loading after the initial compensation and growing the region again. You
+  must re-anchor on those, not only on the data mutation. This is the timeline's
+  recurring cold-load pain (#1085/#1088/#1096); the board will hit the same.
+
+### Edge cases (agreed open items)
+
+1. **Pagination vs. frozen order — the sharp one.** Keyset paging by
+   `(last_activity_at, id)` is incompatible with a frozen view: a bumped card moves
+   its own cursor boundary, so "load older" can re-return or skip rows. A committed
+   view needs a **stable paging key** (snapshot position, or `created_at`) with
+   activity affecting only the buffer.
+2. **Deletions / lost-access / resolved-and-removed.** A _visible_ seen card that
+   disappears is the worst case for a stable list (removal shifts everything below).
+   Tombstone in place until commit, or remove with anchor compensation. Above-
+   viewport removals are absorbed by the anchor.
+3. **Count semantics.** Pill = new conversations. Seen-card activity = in-place dot,
+   not the pill (else "12 new" when nothing is actually new to look at). Decide
+   whether a seen card bumping past the current top counts as "new."
+4. **Reconnect re-seed.** The reconnect bootstrap updates IDB (truth) but must NOT
+   mutate the committed view — it only grows the buffer/pill. Big post-disconnect
+   counts are expected.
+5. **At-the-top behavior.** When already scrolled to top, buffer + pill anyway (match
+   X) and let a click scroll+commit, rather than auto-flowing items in.
+6. **Definition of "seen."** v1 = the whole committed snapshot is frozen (matches X).
+   Intersection-observer "only what scrolled past" is more faithful but much harder;
+   defer.
+7. **Virtualization.** At scale the board virtualizes; the anchor math and stable
+   order must be designed with the virtualizer (`virtua` `shift`), not retrofitted.
+
+### Foundation reuse
+
+None of the realtime slice is wasted: the IDB store + sync-engine delivery +
+visibility routing is exactly the data plane this sits on. What changes is the
+**projection layer** (insert the committed-view/buffer between IDB and render) and
+**dropping the optimistic bump-to-top**. It is a clean follow-up, not a rework, and
+it partly subsumes the "reply bodies on the next seed" gap — a frozen view isn't
+chasing a moving card, so body lag matters less.
+
 ## Phasing
 
 The inversion changes the order. Two candidate entry points:

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
+import * as boardStoreModule from "@/stores/board-store"
 import { ServicesProvider, SidebarProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -83,6 +84,11 @@ function mountBoard(
     if (failMessages) throw new Error("boom")
     return []
   })
+  // The board reads its feed reactively from the conversations IDB store; mock
+  // that store hook to return the test's posts (the IDB read/sort/merge path is
+  // covered directly in board-store.test). The query still seeds IDB and drives
+  // pagination/loading/error, so `listByWorkspace` is exercised as before.
+  vi.spyOn(boardStoreModule, "useBoardPosts").mockReturnValue(posts as never)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   // The board is gated behind the board-view flag, read from the bootstrap cache.
   queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), { featureFlags: { "board-view": boardFlag } })
@@ -225,7 +231,9 @@ describe("BoardPage", () => {
   it("offers Load more when there is another page", async () => {
     mountBoard([makePost()], { nextCursor: "2026-06-22T12:00:00.000Z|conv_1" })
     expect(await screen.findByText("Opening message body.")).toBeTruthy()
-    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy()
+    // Load more is driven by the query's async `hasNextPage` (the feed itself
+    // renders synchronously from the store), so wait for it to resolve.
+    expect(await screen.findByRole("button", { name: "Load more" })).toBeTruthy()
   })
 
   it("does not render the board when the board-view flag is off", async () => {

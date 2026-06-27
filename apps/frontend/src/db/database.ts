@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from "dexie"
 import type {
   Activity,
   AuthorType,
+  BoardPost,
   CompanionMode,
   E2eActor,
   EventType,
@@ -778,6 +779,26 @@ export interface CachedWorkspaceMetadata {
   _cachedAt: number
 }
 
+/**
+ * A board post (a conversation surfaced as a feed card) on the sync-engine
+ * rails. Mirrors how messages live in `events`: seeded by the board bootstrap
+ * fetch, then kept live by the gate-applied `conversation:*` workspace handlers
+ * and optimistic local writes — so the board re-sorts the instant a row's
+ * activity changes instead of refetching on open.
+ *
+ * `id` is the conversation id (one card per conversation). `_lastActivityMs`
+ * mirrors `conversation.lastActivityAt` as the numeric the board orders on.
+ * `_status: "pending"` marks an optimistic local write awaiting its
+ * authoritative `conversation:*` echo, swapped in place on arrival.
+ */
+export interface CachedBoardPost extends BoardPost {
+  id: string
+  workspaceId: string
+  _lastActivityMs: number
+  _cachedAt: number
+  _status?: "pending"
+}
+
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
   workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
@@ -805,6 +826,7 @@ export class ThreaDatabase extends Dexie {
   labelAssignments!: EntityTable<CachedLabelAssignment, "id">
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
   sidebarConfigs!: EntityTable<CachedSidebarConfig, "id">
+  conversations!: EntityTable<CachedBoardPost, "id">
 
   constructor(name: string) {
     super(name)
@@ -1187,6 +1209,14 @@ export class ThreaDatabase extends Dexie {
         return tx.table("labels").clear()
       })
 
+    // v36: conversations get their own store so the board rides the sync engine
+    // (IDB + gate-applied events + optimistic writes) like the timeline, rather
+    // than being a refetch-on-open React-Query list. Seeded from the board
+    // bootstrap; never holds anything the server can't refill.
+    this.version(36).stores({
+      conversations: "id, workspaceId, [workspaceId+_lastActivityMs], _cachedAt",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1254,6 +1284,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.labels.clear(),
       db.labelAssignments.clear(),
       db.sidebarConfigs.clear(),
+      db.conversations.clear(),
       // The persisted device key seals this identity's private key for
       // auto-resume — sign-out must drop it so the next account can't resume
       // this identity's unlocked session.

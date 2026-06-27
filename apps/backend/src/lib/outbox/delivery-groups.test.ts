@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test"
-import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, LabelableResourceTypes, Visibilities } from "@threa/types"
 import {
   resolveDeliveryGroups,
   permissionGroupsForRole,
   permissionGroup,
   streamGroup,
   userGroup,
+  WORKSPACE_GROUP,
 } from "./delivery-groups"
 import type { OutboxEvent, OutboxEventType } from "./repository"
 
@@ -86,6 +87,62 @@ describe("resolveDeliveryGroups — label assignments", () => {
       })
     )
     expect(groups).toEqual([userGroup("usr_1")])
+  })
+})
+
+describe("resolveDeliveryGroups — conversation events (board liveness)", () => {
+  it("delivers a public-channel conversation:created to the whole workspace so the board sees it live", () => {
+    const groups = resolveDeliveryGroups(
+      event("conversation:created", {
+        workspaceId: "ws_1",
+        streamId: "stream_pub",
+        conversationId: "conv_1",
+        streamVisibility: Visibilities.PUBLIC,
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_pub"), WORKSPACE_GROUP])
+  })
+
+  it("keeps a private-channel conversation:updated scoped to the stream's members (INV-62)", () => {
+    const groups = resolveDeliveryGroups(
+      event("conversation:updated", {
+        workspaceId: "ws_1",
+        streamId: "stream_priv",
+        conversationId: "conv_1",
+        streamVisibility: Visibilities.PRIVATE,
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_priv")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
+  })
+
+  it("fans a public thread conversation to the thread, its parent channel, and the workspace", () => {
+    const groups = resolveDeliveryGroups(
+      event("conversation:updated", {
+        workspaceId: "ws_1",
+        streamId: "stream_thread",
+        parentStreamId: "stream_pub",
+        conversationId: "conv_1",
+        streamVisibility: Visibilities.PUBLIC,
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_thread"), streamGroup("stream_pub"), WORKSPACE_GROUP])
+  })
+
+  it("never broadcasts conversation:message_assigned to the workspace — it carries no board aggregate", () => {
+    const groups = resolveDeliveryGroups(
+      event("conversation:message_assigned", {
+        workspaceId: "ws_1",
+        streamId: "stream_thread",
+        parentStreamId: "stream_pub",
+        messageId: "msg_1",
+        conversationId: "conv_1",
+        isPrimary: true,
+        reason: "declared",
+      })
+    )
+    expect(groups).toEqual([streamGroup("stream_thread"), streamGroup("stream_pub")])
+    expect(groups).not.toContain(WORKSPACE_GROUP)
   })
 })
 

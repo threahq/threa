@@ -27,6 +27,7 @@ import type {
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
+  ConversationWithStaleness,
   LabelUpsertedPayload,
   LabelDeletedPayload,
   LabelAssignedPayload,
@@ -35,6 +36,8 @@ import type {
   DraftDeletedPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
+import { conversationKeys } from "@/hooks/use-conversations"
+import { mergeBoardConversation } from "@/stores/board-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
@@ -1655,6 +1658,29 @@ export function registerWorkspaceSocketHandlers(
     void applyDraftDeleted(payload, workspaceId)
   }
 
+  // Conversation events feed the board's IDB store, the board's read authority
+  // (it reads reactively from it, like the timeline reads `events`). The
+  // created/updated events carry the conversation aggregate for every touched
+  // conversation, so merging them re-sorts the board in place on
+  // `lastActivityAt` without a refetch — the live half of the board's rails.
+  // A card we don't have cached can't be rendered from the aggregate alone (the
+  // message bodies aren't in the event), so refresh the board head to hydrate it.
+  // Mark every matching board-list query stale (so a closed board refetches on
+  // reopen) but only refetch the ones with active observers now. The viewer's own
+  // sends are already reflected optimistically, and reconcile when their echo
+  // merges here.
+  const handleConversationUpserted = (payload: { workspaceId: string; conversation: ConversationWithStaleness }) => {
+    if (payload.workspaceId !== workspaceId) return
+    void mergeBoardConversation(payload.conversation.id, payload.conversation).then((merged) => {
+      if (!merged) {
+        queryClient.invalidateQueries({
+          queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
+          refetchType: "active",
+        })
+      }
+    })
+  }
+
   socket.on("stream:created", handleStreamCreated)
   socket.on("stream:updated", handleStreamUpdated)
   socket.on("stream:archived", handleStreamArchived)
@@ -1699,6 +1725,8 @@ export function registerWorkspaceSocketHandlers(
   socket.on("label:unassigned", handleLabelUnassigned)
   socket.on("draft:upserted", handleDraftUpserted)
   socket.on("draft:deleted", handleDraftDeleted)
+  socket.on("conversation:created", handleConversationUpserted)
+  socket.on("conversation:updated", handleConversationUpserted)
 
   return () => {
     abortController.abort()
@@ -1748,6 +1776,8 @@ export function registerWorkspaceSocketHandlers(
     socket.off("label:unassigned", handleLabelUnassigned)
     socket.off("draft:upserted", handleDraftUpserted)
     socket.off("draft:deleted", handleDraftDeleted)
+    socket.off("conversation:created", handleConversationUpserted)
+    socket.off("conversation:updated", handleConversationUpserted)
   }
 }
 
