@@ -219,9 +219,10 @@ export function useUnreadCounts(workspaceId: string) {
       markAsReadMutation.mutate({ streamId, lastEventId, partial: opts?.partial })
       // Dismiss any push notification for this stream — advancing the read pointer
       // (auto-read, manual "Mark as read", or Escape) means the user is here, so
-      // the banner is noise. Centralized on this single read-advance funnel so
-      // every caller clears locally, not just auto-read; the backend stream:read
-      // round-trip also fans a clear out to the user's other devices.
+      // the banner is noise. Centralized on this single-stream read-advance funnel
+      // so each of those paths clears locally, not just auto-read; mark-all-read is
+      // a separate path that clears via its own stream:read_all round-trip. The
+      // backend stream:read round-trip also fans a clear out to the user's other devices.
       navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
     },
     [markAsReadMutation]
