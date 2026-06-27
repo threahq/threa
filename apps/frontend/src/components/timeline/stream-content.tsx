@@ -1536,7 +1536,19 @@ export function StreamContent({
   // through from where they left off (see useLastSeenEvent), so the unread above
   // the fold stays unread until they go up to it (or press Escape). A not-at-tail
   // mark is partial — the badge keeps the remaining unread (markAsRead partial).
-  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode
+  //
+  // Hold off arming the read-frontier scan until the cold-load settle has parked
+  // the virtualized list at the live bottom. The scan reads row geometry; while
+  // the settle is still pinning to the tail across frames, the last row sits
+  // below the composer band and is excluded from the visible range, and once the
+  // settle converges there's no guaranteed scroll/resize to re-scan — so arming
+  // mid-settle can leave the trailing unread row stuck out of the frontier and it
+  // never auto-reads (opened-fresh-at-bottom, intermittent). Gating on
+  // settle-complete makes the attach scan run once the tail is actually on
+  // screen. Only the virtualized timeline settles; the plain thread scroller has
+  // no settle phase (`isInitialSettling` would never clear there), so exempt it.
+  const settledAtBottom = !useVirtualized || !virtualIsInitialSettling
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom
   const { lastSeenEventId, atLastRow, unreadAboveViewport } = useLastSeenEvent({
     scrollContainerRef,
     // The virtualized scroller late-mounts via a ref callback, AFTER
