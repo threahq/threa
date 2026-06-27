@@ -1,12 +1,18 @@
 import { useEffect } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useConversationService, useMessageService, useSocket, useSocketReconnectCount } from "@/contexts"
+import {
+  useConversationService,
+  useMessageService,
+  useStreamService,
+  useSocket,
+  useSocketReconnectCount,
+} from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { StreamTypes } from "@threa/types"
-import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
+import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent, Message } from "@threa/types"
 
 /**
  * Where a board post lands: an existing channel/DM the user picked, or a
@@ -158,6 +164,102 @@ export function useCreateBoardPost(workspaceId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
+    },
+  })
+}
+
+export interface ReplyToBoardPostInput {
+  /** The post's conversation — supplies the host stream and the attach target. */
+  conversation: Pick<ConversationWithStaleness, "id" | "streamId">
+  /** The post's opening message id — the thread parent for a lone-message reply. */
+  openingMessageId: string | null
+  /** Host stream type (`channel` | `dm` | `scratchpad` | `thread` | undefined). */
+  hostStreamType: string | undefined
+  /** Count of messages in the conversation, deciding the lone-root case. */
+  messageCount: number
+  contentJson: JSONContent
+  attachmentIds?: string[]
+}
+
+/**
+ * Where a board reply lands. A conversation owns exactly one stream — its
+ * messages are wholly flat or wholly inside a thread; a thread is always its own
+ * conversation — so "follow where the conversation lives" reduces to the host
+ * stream type plus whether the conversation is still a lone root (user ruling):
+ *
+ *  - **thread conversation** → into the thread (it IS the thread).
+ *  - **flat conversation with replies** (channel/DM) → flat in its stream.
+ *  - **scratchpad** → always flat (scratchpads don't thread).
+ *  - **a lone root message** in a channel/DM → start a thread off it: a single
+ *    message has no established shape, and threading a bare message keeps the
+ *    channel from sprouting a stray top-level reply. Scratchpads stay flat even
+ *    when lone; a deleted root (no opening id) can't be threaded, so it stays flat.
+ *
+ * "Into the thread" and "flat" are the same send — into the conversation's own
+ * stream, attached via the `existing` directive — so only the lone channel/DM
+ * root diverges into a new thread.
+ */
+export type BoardReplyPlan = { kind: "newThread"; parentMessageId: string } | { kind: "intoConversation" }
+
+export function planBoardReply(input: {
+  hostStreamType: string | undefined
+  messageCount: number
+  openingMessageId: string | null
+}): BoardReplyPlan {
+  const threadable = input.hostStreamType === StreamTypes.CHANNEL || input.hostStreamType === StreamTypes.DM
+  if (threadable && input.messageCount <= 1 && input.openingMessageId) {
+    return { kind: "newThread", parentMessageId: input.openingMessageId }
+  }
+  return { kind: "intoConversation" }
+}
+
+/**
+ * Reply to a board post from the feed, routed by {@link planBoardReply}. Returns
+ * the created message AND the resolved plan so the caller knows where it landed:
+ * a `newThread` reply lives in a brand-new thread stream (its own conversation),
+ * NOT this card's conversation, so the card must not show it in place — only an
+ * `intoConversation` reply belongs under the card that produced it. Board-wide
+ * liveness/optimism across cards is a follow-up (no cache writes here).
+ */
+export function useReplyToBoardPost(workspaceId: string) {
+  const messageService = useMessageService()
+  const streamService = useStreamService()
+
+  return useMutation({
+    mutationFn: async ({
+      conversation,
+      openingMessageId,
+      hostStreamType,
+      messageCount,
+      contentJson,
+      attachmentIds,
+    }: ReplyToBoardPostInput): Promise<{ message: Message; plan: BoardReplyPlan }> => {
+      const base = {
+        contentJson,
+        attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
+        clientMessageId: generateClientId(),
+      }
+
+      const plan = planBoardReply({ hostStreamType, messageCount, openingMessageId })
+
+      if (plan.kind === "newThread") {
+        // Create-or-find is idempotent server-side on (parentStreamId,
+        // parentMessageId), so this can't double-create the thread.
+        const thread = await streamService.create(workspaceId, {
+          type: StreamTypes.THREAD,
+          parentStreamId: conversation.streamId,
+          parentMessageId: plan.parentMessageId,
+        })
+        const message = await messageService.create(workspaceId, thread.id, { streamId: thread.id, ...base })
+        return { message, plan }
+      }
+
+      const message = await messageService.create(workspaceId, conversation.streamId, {
+        streamId: conversation.streamId,
+        ...base,
+        conversation: { intent: "existing", conversationId: conversation.id },
+      })
+      return { message, plan }
     },
   })
 }
