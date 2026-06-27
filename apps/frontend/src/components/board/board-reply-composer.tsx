@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
+import { Check } from "lucide-react"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
@@ -18,6 +19,21 @@ import type { BoardPost, JSONContent, Message } from "@threa/types"
 // popover the same way (`[role="listbox"]`); this set is broader to also cover
 // the Radix poppers and dialog.
 const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-wrapper],[role="dialog"]'
+
+// Resting-affordance state. `draft` signals a persisted-but-collapsed reply (so
+// the user knows reopening restores it); `posted` is a transient confirmation
+// that a new-thread reply went through — it stands in for the in-place echo a
+// same-conversation reply gets, since a new-thread reply lands in its own
+// conversation and only surfaces on the next board load.
+type RestingState = "idle" | "draft" | "posted"
+const RESTING_LABEL: Record<RestingState, string> = {
+  idle: "Write a reply…",
+  draft: "Continue reply…",
+  posted: "Posted to a new thread",
+}
+// How long the transient "posted" confirmation stays before the affordance
+// returns to its normal invitation.
+const POSTED_NOTE_MS = 4000
 
 interface BoardReplyComposerProps {
   workspaceId: string
@@ -38,9 +54,15 @@ interface BoardReplyComposerProps {
  * so the tap lands straight in the toolbar view instead of stepping through the
  * mobile compacted phase. Routing — channel → thread, everything else → the
  * conversation — lives in {@link useReplyToBoardPost}.
+ *
+ * The resting affordance carries state (best-effort, in-session): it flags a
+ * persisted draft after an Escape ("Continue reply…") and a transient "Posted to
+ * a new thread" confirmation after a new-thread send, so a collapse never reads
+ * as a no-op or an accidental discard.
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
+  const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
   // Return focus to the resting button after an explicit collapse (Escape /
   // after-send) so keyboard navigation isn't dropped onto <body> when the form
@@ -54,8 +76,18 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     }
   }, [open])
 
-  const close = useCallback((opts?: { refocus?: boolean }) => {
+  // Let the transient "posted" confirmation fade back to the normal invitation.
+  useEffect(() => {
+    if (resting !== "posted") return
+    const timer = window.setTimeout(() => setResting("idle"), POSTED_NOTE_MS)
+    return () => window.clearTimeout(timer)
+  }, [resting])
+
+  const close = useCallback((opts?: { refocus?: boolean; hadContent?: boolean; posted?: boolean }) => {
     refocusOnCollapseRef.current = opts?.refocus ?? false
+    if (opts?.posted) setResting("posted")
+    else if (opts?.hadContent) setResting("draft")
+    else setResting("idle")
     setOpen(false)
   }, [])
 
@@ -64,10 +96,14 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
       <button
         ref={buttonRef}
         type="button"
-        onClick={() => setOpen(true)}
-        className="mt-3 flex w-full items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
+        onClick={() => {
+          setResting("idle")
+          setOpen(true)
+        }}
+        className="mt-3 flex w-full min-w-0 items-center gap-1.5 rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        Write a reply…
+        {resting === "posted" && <Check className="h-3.5 w-3.5 shrink-0 text-primary" />}
+        <span className="truncate">{RESTING_LABEL[resting]}</span>
       </button>
     )
   }
@@ -81,7 +117,9 @@ function BoardReplyComposerForm({
   hostStreamType,
   onReplied,
   onClose,
-}: BoardReplyComposerProps & { onClose: (opts?: { refocus?: boolean }) => void }) {
+}: BoardReplyComposerProps & {
+  onClose: (opts?: { refocus?: boolean; hadContent?: boolean; posted?: boolean }) => void
+}) {
   const { preferences } = usePreferences()
   const streams = useWorkspaceStreams(workspaceId)
   const reply = useReplyToBoardPost(workspaceId)
@@ -151,9 +189,11 @@ function BoardReplyComposerForm({
       // Only an `intoConversation` reply belongs under this card; a `newThread`
       // reply lives in its own thread conversation and surfaces as its own board
       // post on the next load, so showing it here would render it under the wrong
-      // card with stream-mismatched action links.
+      // card with stream-mismatched action links. The visible in-place reply IS
+      // the feedback for the former; the latter gets a transient resting note
+      // instead, since nothing changes on this card.
       if (plan.kind === "intoConversation") onReplied(message)
-      onClose({ refocus: true })
+      onClose({ refocus: true, posted: plan.kind === "newThread" })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")
     } finally {
@@ -192,8 +232,9 @@ function BoardReplyComposerForm({
         streamContext={streamContext}
         // Escape (when no @/emoji/slash popup is open) collapses the reply and
         // returns focus to the trigger — a keyboard cancel even with a draft,
-        // which the empty-only blur-collapse doesn't cover.
-        onEscapeBlur={() => onClose({ refocus: true })}
+        // which the empty-only blur-collapse doesn't cover. A non-empty draft
+        // persists, so the resting affordance flags it ("Continue reply…").
+        onEscapeBlur={() => onClose({ refocus: true, hadContent: !isEmptyRef.current })}
       />
     </div>
   )
