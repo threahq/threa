@@ -1,10 +1,10 @@
 import type { PoolClient } from "pg"
-import { StreamTypes } from "@threa/types"
 import { ConversationRepository, type Conversation } from "./repository"
 import { StreamRepository } from "../streams"
-import { MessageRepository, type Message } from "../messaging"
+import { type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields } from "./staleness"
+import { resolveConversationDelivery } from "./conversation-delivery"
 
 /**
  * Emit the conversation aggregate + per-message membership events for a single
@@ -24,19 +24,8 @@ export async function emitAssignmentEvents(
 ): Promise<Conversation> {
   const { workspaceId, message, conversationId, created, reason } = params
 
-  // Resolve the access-root stream's visibility (INV-62): for a thread that's the
-  // parent channel, otherwise the stream itself. It gates workspace-wide board
-  // delivery — public conversations reach the whole workspace, others stay
-  // scoped to the stream's members.
-  let parentStreamId: string | undefined
   const stream = await StreamRepository.findById(client, message.streamId)
-  let rootStream = stream
-  if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
-    const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
-    parentStreamId = parentMessage?.streamId
-    rootStream = parentMessage ? await StreamRepository.findById(client, parentMessage.streamId) : stream
-  }
-  const streamVisibility = rootStream?.visibility
+  const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
   const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationId])
   if (!refreshed) {

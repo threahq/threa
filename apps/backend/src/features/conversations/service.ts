@@ -8,6 +8,7 @@ import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
+import { resolveConversationDelivery } from "./conversation-delivery"
 import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
@@ -290,15 +291,8 @@ export class ConversationService {
       // Thread conversations also fan out to the parent channel's subscribers,
       // matching the boundary extractor's event routing; the access-root stream's
       // visibility (INV-62) gates workspace-wide board delivery of the aggregate.
-      let parentStreamId: string | undefined
       const stream = await StreamRepository.findById(client, target.streamId)
-      let rootStream = stream
-      if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
-        const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
-        parentStreamId = parentMessage?.streamId
-        rootStream = parentMessage ? await StreamRepository.findById(client, parentMessage.streamId) : stream
-      }
-      const streamVisibility = rootStream?.visibility
+      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
       const touched = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
       for (const conv of touched) {

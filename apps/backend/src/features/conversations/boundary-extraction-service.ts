@@ -17,6 +17,7 @@ import type {
 } from "./boundary-extraction/types"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
+import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
 import { AuthorTypes, ConversationStatuses, StreamTypes } from "@threa/types"
@@ -497,17 +498,9 @@ export class BoundaryExtractionService {
       const touchedIds = Array.from(touchedConversationIds)
       await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
-      // For thread conversations, include parent channel's stream ID for
-      // discoverability, and resolve the access-root stream's visibility (INV-62)
-      // — it gates workspace-wide board delivery of the aggregate events below.
-      let parentStreamId: string | undefined
-      let rootStream: Stream | null = stream
-      if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
-        const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
-        parentStreamId = parentMessage?.streamId
-        rootStream = parentMessage ? await StreamRepository.findById(client, parentMessage.streamId) : stream
-      }
-      const streamVisibility = rootStream?.visibility
+      // Parent channel (thread discoverability) + access-root visibility (INV-62),
+      // which gates workspace-wide board delivery of the aggregate events below.
+      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
       const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
       const primaryConvId = primaryAssignment?.conversationId ?? null
