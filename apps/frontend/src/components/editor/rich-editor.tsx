@@ -21,6 +21,7 @@ import {
 } from "./triggers"
 import type { CommandItem } from "./triggers/types"
 import { parseMemoUrl } from "@/lib/memo-url"
+import { classifyDraftLink } from "@/lib/in-app-links"
 import { MentionPluginKey } from "./triggers/mention-extension"
 import { CommandPluginKey } from "./triggers/command-extension"
 import { EmojiPluginKey } from "./triggers/emoji-extension"
@@ -636,6 +637,19 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
             event.preventDefault()
             return true
           }
+        }
+
+        // A bare in-app stream/message link pastes as an inline chip rather than
+        // a raw URL, replacing the link text in the composer.
+        const inAppRef = classifyDraftLink(text.trim())
+        if (inAppRef && (inAppRef.kind === "stream" || inAppRef.kind === "message")) {
+          editorRef.current.commands.insertInAppLink({
+            url: inAppRef.url,
+            streamId: inAppRef.streamId,
+            messageId: inAppRef.kind === "message" ? inAppRef.messageId : null,
+          })
+          event.preventDefault()
+          return true
         }
 
         // Text too large to read inline becomes a snippet attachment: open the

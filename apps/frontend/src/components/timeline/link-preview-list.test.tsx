@@ -45,4 +45,21 @@ describe("LinkPreviewList", () => {
     expect(screen.getByText("Preview title")).toBeInTheDocument()
     expect(mockGetForMessage).not.toHaveBeenCalled()
   })
+
+  it("suppresses stream_link / message_link cards (they render as inline chips instead)", () => {
+    const streamPreview: LinkPreviewSummary = { ...preview, id: "p_stream", contentType: "stream_link" }
+    const messagePreview: LinkPreviewSummary = { ...preview, id: "p_msg", contentType: "message_link" }
+    const { container } = render(
+      <LinkPreviewList workspaceId="ws_123" messageId="msg_123" previews={[streamPreview, messagePreview]} />
+    )
+
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("keeps web previews while suppressing an in-app stream link in the same message", () => {
+    const streamPreview: LinkPreviewSummary = { ...preview, id: "p_stream", contentType: "stream_link" }
+    render(<LinkPreviewList workspaceId="ws_123" messageId="msg_123" previews={[streamPreview, preview]} />)
+
+    expect(screen.getByText("Preview title")).toBeInTheDocument()
+  })
 })

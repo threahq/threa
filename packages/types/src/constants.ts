@@ -648,6 +648,19 @@ export function isInAppLinkContentType(contentType: LinkPreviewContentType): con
   return (IN_APP_LINK_CONTENT_TYPES as readonly string[]).includes(contentType)
 }
 
+/**
+ * In-app link kinds that render as an inline chip inside the message body
+ * (replacing the URL text) rather than a card below it. Their below-message
+ * preview card is suppressed — the inline chip is the single surface. Memo
+ * links keep their card (`MemoPreviewList`), so they are excluded.
+ */
+export const INLINE_CHIP_CONTENT_TYPES = ["message_link", "stream_link"] as const
+export type InlineChipContentType = (typeof INLINE_CHIP_CONTENT_TYPES)[number]
+
+export function isInlineChipContentType(contentType: LinkPreviewContentType): contentType is InlineChipContentType {
+  return (INLINE_CHIP_CONTENT_TYPES as readonly string[]).includes(contentType)
+}
+
 export const LINK_PREVIEW_STATUSES = ["pending", "completed", "failed"] as const
 export type LinkPreviewStatus = (typeof LINK_PREVIEW_STATUSES)[number]
 

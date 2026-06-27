@@ -1,10 +1,8 @@
-import { useMemo, type ComponentType } from "react"
-import { Hash, NotebookPen, MessageSquare, Brain, Lock, Globe, Link2 } from "lucide-react"
-import type { StreamType } from "@threa/types"
+import { type ComponentType } from "react"
+import { Brain, Lock, Globe, Link2 } from "lucide-react"
 import { AttachmentPill } from "./attachment-pill"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
-import { useStreamName } from "@/hooks/use-stream-name"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
 import type { DraftLinkRef } from "@/lib/in-app-links"
 
 /**
@@ -51,17 +49,6 @@ export function ComposerLinkChip({
   )
 }
 
-function streamTypeIcon(streamType: StreamType | undefined): ComponentType<{ className?: string }> {
-  switch (streamType) {
-    case "scratchpad":
-      return NotebookPen
-    case "channel":
-      return Hash
-    default:
-      return MessageSquare
-  }
-}
-
 function StreamChip({
   workspaceId,
   streamId,
@@ -75,43 +62,13 @@ function StreamChip({
   isMessage: boolean
   onRemove: () => void
 }) {
-  // Name from the local cache first (handles channels, scratchpads, DM peers,
-  // and decrypted E2E names). It resolves for any stream the viewer can see, so
-  // the backend resolve below only runs when the stream isn't cached.
-  const localName = useStreamName(workspaceId, streamId)
-  const streams = useWorkspaceStreams(workspaceId)
-  const cachedType = useMemo(() => streams.find((s) => s.id === streamId)?.type, [streams, streamId])
+  const state = useInAppLinkChip({ workspaceId, streamId, isMessage, url })
 
-  const { data, loading } = useResolvedInAppLink(workspaceId, undefined, localName ? undefined : url, true)
-
-  // Locally-known streams (anything the viewer can see) resolve without a fetch.
-  if (localName) {
-    return (
-      <AttachmentPill
-        icon={isMessage ? MessageSquare : streamTypeIcon(cachedType)}
-        label={localName}
-        onRemove={onRemove}
-        removeLabel="Hide link"
-      />
-    )
+  if (state.status === "pending") return <PendingChip onRemove={onRemove} />
+  if (state.status === "restricted") {
+    return <RestrictedChip icon={state.icon} label={state.label} onRemove={onRemove} />
   }
-
-  const fallbackIcon = isMessage ? MessageSquare : Hash
-  if (loading) return <PendingChip onRemove={onRemove} />
-  if (data?.accessTier === "cross_workspace") {
-    return <RestrictedChip icon={Globe} label="Another workspace" onRemove={onRemove} />
-  }
-  if (data?.accessTier === "private") {
-    return <RestrictedChip icon={Lock} label="Private conversation" onRemove={onRemove} />
-  }
-  if (data?.kind === "message" && data.deleted) {
-    return <RestrictedChip icon={MessageSquare} label="Deleted message" onRemove={onRemove} />
-  }
-
-  // Resolved full (a thread whose root isn't cached) or the resolve came back
-  // empty — name it if we can, else a neutral kind chip (never an endless spinner).
-  const name = (data?.kind === "stream" && data.streamName) || (isMessage ? "Message" : "Conversation")
-  return <AttachmentPill icon={fallbackIcon} label={name} onRemove={onRemove} removeLabel="Hide link" />
+  return <AttachmentPill icon={state.icon} label={state.label} onRemove={onRemove} removeLabel="Hide link" />
 }
 
 function MemoChip({ workspaceId, url, onRemove }: { workspaceId: string; url: string; onRemove: () => void }) {

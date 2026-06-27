@@ -31,6 +31,7 @@ import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import { QuoteReplyExtension } from "./quote-reply-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
 import { MemoEmbedExtension } from "./memo-embed-extension"
+import { InAppLinkExtension } from "./in-app-link-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
@@ -126,6 +127,8 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     SharedMessageExtension,
 
     MemoEmbedExtension,
+
+    InAppLinkExtension,
 
     GiphyEmbedExtension,
 
