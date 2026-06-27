@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Reply } from "lucide-react"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
@@ -28,11 +27,15 @@ interface BoardReplyComposerProps {
 }
 
 /**
- * Inline reply affordance on a board card. Collapsed to a single line so the
- * feed stays scannable; clicking expands the full composer in place (the heavy
- * editor mounts only once a card is activated, so a feed of cards costs one
- * lightweight button each, not one composer each). Routing — channel → thread,
- * everything else → the conversation — lives in {@link useReplyToBoardPost}.
+ * Inline reply affordance on a board card. Collapsed to a single resting line
+ * so the feed stays scannable; tapping it mounts the real composer in place (the
+ * heavy editor mounts only once a card is activated, so a feed of cards costs one
+ * lightweight button each, not one composer each). The button deliberately
+ * mirrors the composer's own resting container — same radius, border, surface,
+ * padding, and placeholder — so the swap is seamless and the only visible change
+ * is the toolbar appearing on focus, exactly like the timeline composer. Routing
+ * — channel → thread, everything else → the conversation — lives in
+ * {@link useReplyToBoardPost}.
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
@@ -42,10 +45,9 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-3 flex w-full items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+        className="mt-3 flex w-full items-center rounded-[16px] border border-input bg-card px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        <Reply className="h-3.5 w-3.5 shrink-0" />
-        Reply…
+        Write a reply…
       </button>
     )
   }

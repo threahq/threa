@@ -147,8 +147,9 @@ describe("BoardPage", () => {
   it("offers an inline reply affordance on each post", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     await screen.findByText("Rotate the tokens before Friday.")
-    // Collapsed to a single line until activated — the heavy composer mounts only on click.
-    expect(screen.getByRole("button", { name: "Reply…" })).toBeTruthy()
+    // Collapsed to a single resting line until activated — the heavy composer
+    // mounts only on click. Mirrors the composer's own placeholder copy.
+    expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
   })
 
   it("collapses the middle as an 'N more messages' expander, pluralizing the count", async () => {
