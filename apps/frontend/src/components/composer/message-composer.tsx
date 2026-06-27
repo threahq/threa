@@ -198,6 +198,13 @@ export interface MessageComposerProps {
   /** Called when ArrowUp is pressed in an empty editor — triggers edit-last-message */
   onEditLastMessage?: () => void
 
+  /**
+   * Called when Escape blurs the editor (only fires when no suggestion popup is
+   * active — the popup consumes Escape first). Lets a host collapse a tap-to-open
+   * inline composer on Escape without fighting the @/emoji/slash popovers.
+   */
+  onEscapeBlur?: () => void
+
   /** Called when the desktop expand button is clicked — opens fullscreen document editor */
   onExpandClick?: () => void
 
@@ -279,6 +286,7 @@ export function MessageComposer({
   initialMobileChromeOpen = false,
   scopeId,
   onEditLastMessage,
+  onEscapeBlur,
   onExpandClick,
   expanded = false,
   onCollapse,
@@ -654,6 +662,7 @@ export function MessageComposer({
       staticToolbarOpen={!isMobile && formatOpen}
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
+      onEscapeBlur={onEscapeBlur}
       ariaLabel="Message input"
       ariaDescribedBy={instructionsId}
       blurOnEscape

@@ -312,8 +312,9 @@ describe("useReplyToBoardPost", () => {
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
+    let res: Awaited<ReturnType<typeof result.current.mutateAsync>> | undefined
     await act(async () => {
-      await result.current.mutateAsync({
+      res = await result.current.mutateAsync({
         conversation: { id: "conv_1", streamId: "chan_1" },
         openingMessageId: "msg_open",
         hostStreamType: StreamTypes.CHANNEL,
@@ -334,6 +335,9 @@ describe("useReplyToBoardPost", () => {
     )
     // The thread is its own context — no existing-conversation directive.
     expect(create.mock.calls[0][2]).not.toHaveProperty("conversation")
+    // The plan rides back so the card can refuse to show a reply that landed in
+    // a different (thread) conversation than the one it renders.
+    expect(res).toEqual({ message: { id: "msg_new" }, plan: { kind: "newThread", parentMessageId: "msg_open" } })
   })
 
   it("keeps a multi-message channel reply flat, attached to the conversation (no thread)", async () => {
@@ -341,8 +345,9 @@ describe("useReplyToBoardPost", () => {
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
+    let res: Awaited<ReturnType<typeof result.current.mutateAsync>> | undefined
     await act(async () => {
-      await result.current.mutateAsync({
+      res = await result.current.mutateAsync({
         conversation: { id: "conv_1", streamId: "chan_1" },
         openingMessageId: "msg_open",
         hostStreamType: StreamTypes.CHANNEL,
@@ -360,6 +365,8 @@ describe("useReplyToBoardPost", () => {
         conversation: { intent: "existing", conversationId: "conv_1" },
       })
     )
+    // intoConversation → the card may show it in place.
+    expect(res?.plan).toEqual({ kind: "intoConversation" })
   })
 
   it("replies straight into a thread card's own stream via the existing directive", async () => {

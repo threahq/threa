@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { MessageComposer } from "@/components/composer"
 import { useDraftComposer } from "@/hooks"
@@ -14,7 +14,9 @@ import type { BoardPost, JSONContent, Message } from "@threa/types"
 // suggestion lists render as `[role="listbox"]`; emoji/format/link popovers are
 // Radix poppers; the mobile drawer is a dialog) — all portal outside the
 // composer subtree, so blur-to-collapse must treat them as "still editing"
-// rather than a dismissal. Mirrors the guard in document-editor-modal.tsx.
+// rather than a dismissal. document-editor-modal.tsx guards its suggestion
+// popover the same way (`[role="listbox"]`); this set is broader to also cover
+// the Radix poppers and dialog.
 const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-wrapper],[role="dialog"]'
 
 interface BoardReplyComposerProps {
@@ -39,10 +41,28 @@ interface BoardReplyComposerProps {
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  // Return focus to the resting button after an explicit collapse (Escape /
+  // after-send) so keyboard navigation isn't dropped onto <body> when the form
+  // unmounts. A blur-driven collapse passes refocus=false — the user already
+  // moved focus elsewhere, so we leave it where they put it.
+  const refocusOnCollapseRef = useRef(false)
+  useEffect(() => {
+    if (!open && refocusOnCollapseRef.current) {
+      refocusOnCollapseRef.current = false
+      buttonRef.current?.focus()
+    }
+  }, [open])
+
+  const close = useCallback((opts?: { refocus?: boolean }) => {
+    refocusOnCollapseRef.current = opts?.refocus ?? false
+    setOpen(false)
+  }, [])
 
   if (!open) {
     return (
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen(true)}
         className="mt-3 flex w-full items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -52,7 +72,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     )
   }
 
-  return <BoardReplyComposerForm {...props} onClose={() => setOpen(false)} />
+  return <BoardReplyComposerForm {...props} onClose={close} />
 }
 
 function BoardReplyComposerForm({
@@ -61,7 +81,7 @@ function BoardReplyComposerForm({
   hostStreamType,
   onReplied,
   onClose,
-}: BoardReplyComposerProps & { onClose: () => void }) {
+}: BoardReplyComposerProps & { onClose: (opts?: { refocus?: boolean }) => void }) {
   const { preferences } = usePreferences()
   const streams = useWorkspaceStreams(workspaceId)
   const reply = useReplyToBoardPost(workspaceId)
@@ -117,7 +137,7 @@ function BoardReplyComposerForm({
 
     composer.setIsSending(true)
     try {
-      const message = await reply.mutateAsync({
+      const { message, plan } = await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
         hostStreamType,
@@ -128,8 +148,12 @@ function BoardReplyComposerForm({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
-      onReplied(message)
-      onClose()
+      // Only an `intoConversation` reply belongs under this card; a `newThread`
+      // reply lives in its own thread conversation and surfaces as its own board
+      // post on the next load, so showing it here would render it under the wrong
+      // card with stream-mismatched action links.
+      if (plan.kind === "intoConversation") onReplied(message)
+      onClose({ refocus: true })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")
     } finally {
@@ -139,8 +163,9 @@ function BoardReplyComposerForm({
 
   // The composer carries its own bordered, collapse-on-focus chrome and toolbar,
   // so it sits directly on the card — no wrapper frame, which would double the
-  // border and leave an empty header strip. An empty reply collapses on blur
-  // (handleBlur) rather than needing an explicit cancel control.
+  // border and leave an empty header strip. Dismissal instead of a cancel
+  // control: an empty reply collapses on blur (handleBlur); Escape collapses
+  // even a non-empty draft and returns focus to the trigger (onEscapeBlur).
   return (
     <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
       <MessageComposer
@@ -165,6 +190,10 @@ function BoardReplyComposerForm({
         initialMobileChromeOpen
         scopeId={draftKey}
         streamContext={streamContext}
+        // Escape (when no @/emoji/slash popup is open) collapses the reply and
+        // returns focus to the trigger — a keyboard cancel even with a draft,
+        // which the empty-only blur-collapse doesn't cover.
+        onEscapeBlur={() => onClose({ refocus: true })}
       />
     </div>
   )

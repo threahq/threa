@@ -215,7 +215,10 @@ export function planBoardReply(input: {
 
 /**
  * Reply to a board post from the feed, routed by {@link planBoardReply}. Returns
- * the created message so the card can show it in place; board-wide
+ * the created message AND the resolved plan so the caller knows where it landed:
+ * a `newThread` reply lives in a brand-new thread stream (its own conversation),
+ * NOT this card's conversation, so the card must not show it in place — only an
+ * `intoConversation` reply belongs under the card that produced it. Board-wide
  * liveness/optimism across cards is a follow-up (no cache writes here).
  */
 export function useReplyToBoardPost(workspaceId: string) {
@@ -230,7 +233,7 @@ export function useReplyToBoardPost(workspaceId: string) {
       messageCount,
       contentJson,
       attachmentIds,
-    }: ReplyToBoardPostInput): Promise<Message> => {
+    }: ReplyToBoardPostInput): Promise<{ message: Message; plan: BoardReplyPlan }> => {
       const base = {
         contentJson,
         attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
@@ -247,14 +250,16 @@ export function useReplyToBoardPost(workspaceId: string) {
           parentStreamId: conversation.streamId,
           parentMessageId: plan.parentMessageId,
         })
-        return messageService.create(workspaceId, thread.id, { streamId: thread.id, ...base })
+        const message = await messageService.create(workspaceId, thread.id, { streamId: thread.id, ...base })
+        return { message, plan }
       }
 
-      return messageService.create(workspaceId, conversation.streamId, {
+      const message = await messageService.create(workspaceId, conversation.streamId, {
         streamId: conversation.streamId,
         ...base,
         conversation: { intent: "existing", conversationId: conversation.id },
       })
+      return { message, plan }
     },
   })
 }
