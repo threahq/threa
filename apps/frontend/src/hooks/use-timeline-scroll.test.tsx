@@ -1,65 +1,40 @@
 import { describe, it, expect, vi } from "vitest"
-import { StrictMode } from "react"
+import { StrictMode, type ReactNode } from "react"
 import { act, render } from "@testing-library/react"
 import { useTimelineScroll } from "./use-timeline-scroll"
 
 type Options = Parameters<typeof useTimelineScroll>[0]
 type HookApi = ReturnType<typeof useTimelineScroll>
 
-function renderScrollHook(initialOptions: Options): {
-  current: HookApi
-  rerender: (options: Options) => void
-} {
+function renderScrollHookWith(
+  initialOptions: Options,
+  wrap: (node: ReactNode) => ReactNode = (node) => node
+): { current: HookApi; rerender: (options: Options) => void } {
   const ref: { current: HookApi | undefined } = { current: undefined }
   function Probe({ options }: { options: Options }) {
     ref.current = useTimelineScroll(options)
     return null
   }
-  const utils = render(<Probe options={initialOptions} />)
+  const utils = render(wrap(<Probe options={initialOptions} />))
   return {
     get current(): HookApi {
       if (!ref.current) throw new Error("Probe did not capture the hook return value")
       return ref.current
     },
-    rerender: (options: Options) => act(() => utils.rerender(<Probe options={options} />)),
+    rerender: (options: Options) => act(() => utils.rerender(wrap(<Probe options={options} />))),
   }
 }
 
+const renderScrollHook = (initialOptions: Options) => renderScrollHookWith(initialOptions)
+
 /**
- * Same as renderScrollHook, but mounted under StrictMode so every render is
- * double-invoked — the condition that exposed the `shift` regression where
- * the prepend baseline was tracked with a during-render ref write (the second
- * pass read the first pass's value and collapsed shift to false).
+ * Mounts the hook under StrictMode so every render is double-invoked — the
+ * condition that exposed the `shift` regression where the prepend baseline was
+ * tracked with a during-render ref write (the second pass read the first pass's
+ * value and collapsed shift to false).
  */
-function renderScrollHookStrict(initialOptions: Options): {
-  current: HookApi
-  rerender: (options: Options) => void
-} {
-  const ref: { current: HookApi | undefined } = { current: undefined }
-  function Probe({ options }: { options: Options }) {
-    ref.current = useTimelineScroll(options)
-    return null
-  }
-  const utils = render(
-    <StrictMode>
-      <Probe options={initialOptions} />
-    </StrictMode>
-  )
-  return {
-    get current(): HookApi {
-      if (!ref.current) throw new Error("Probe did not capture the hook return value")
-      return ref.current
-    },
-    rerender: (options: Options) =>
-      act(() =>
-        utils.rerender(
-          <StrictMode>
-            <Probe options={options} />
-          </StrictMode>
-        )
-      ),
-  }
-}
+const renderScrollHookStrict = (initialOptions: Options) =>
+  renderScrollHookWith(initialOptions, (node) => <StrictMode>{node}</StrictMode>)
 
 /** A div whose scroll metrics are mockable (jsdom has no layout). */
 function makeScrollerDiv(metrics: { scrollHeight: number; clientHeight: number; scrollTop?: number }) {
