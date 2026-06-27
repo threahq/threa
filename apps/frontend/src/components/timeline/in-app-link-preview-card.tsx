@@ -291,7 +291,7 @@ function MemoLinkCard({
         kindIcon={<Brain />}
         kindLabel="Memory"
         bodyIcon={<Lock />}
-        label="In a private conversation"
+        label="From a private conversation"
         previewId={preview.id}
         onDismiss={onDismiss}
       />
