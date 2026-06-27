@@ -125,11 +125,15 @@ export function MessageItem({
     onLabelMessage: () => setLabelPickerOpen(true),
   }
 
-  // Desktop/keyboard only (hover or focus reveals it); touch uses the drawer
-  // below. The body columns carry `pr-7` so this absolute button never overlays
-  // the row's top-right content (INV-21).
+  // Desktop/keyboard only via the shared input-mode reveal model: the row is the
+  // `reveal-host`, and `reveal-actions-hover-only` keeps this cluster
+  // opacity-0 + pointer-events-none for touch (so a tap can't trigger the
+  // invisible button — it passes through), revealing it on mouse hover / focus.
+  // Touch reaches the same actions through the long-press drawer below. The body
+  // columns carry `pr-7` so this absolute button never overlays the row's
+  // top-right content (INV-21).
   const overflowMenu = (
-    <div className="absolute right-0 top-0 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+    <div className="reveal-actions-hover-only absolute right-0 top-0">
       <MessageContextMenu context={menuContext} />
     </div>
   )
@@ -212,7 +216,10 @@ export function MessageItem({
     const sentAt = new Date(message.createdAt)
     return (
       <div
-        className={cn("group relative mt-0.5 flex gap-3", longPress.isPressed && "opacity-70 transition-opacity")}
+        className={cn(
+          "group reveal-host relative mt-0.5 flex gap-3",
+          longPress.isPressed && "opacity-70 transition-opacity"
+        )}
         {...touchHandlers}
       >
         {/* Gutter reveals the message time on hover (desktop), mirroring the
@@ -236,7 +243,7 @@ export function MessageItem({
   return (
     <div
       className={cn(
-        "group relative mt-3 flex items-start gap-3",
+        "group reveal-host relative mt-3 flex items-start gap-3",
         longPress.isPressed && "opacity-70 transition-opacity"
       )}
       {...touchHandlers}
