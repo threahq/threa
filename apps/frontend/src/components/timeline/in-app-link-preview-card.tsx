@@ -1,10 +1,12 @@
-import { useState, useEffect, type ReactNode } from "react"
+import { useState, useEffect, useMemo, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { classifyDraftLink } from "@/lib/in-app-links"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { linkPreviewsApi } from "@/api"
 import { LinkPreviewBody } from "./link-preview-body"
 import type {
@@ -104,6 +106,7 @@ export function InAppLinkPreviewCard({
     <ResolvedInAppLink
       data={data}
       url={preview.url}
+      workspaceId={workspaceId}
       previewKey={preview.id}
       messageId={messageId}
       onDismiss={onDismiss ? () => onDismiss(preview.id) : undefined}
@@ -111,38 +114,63 @@ export function InAppLinkPreviewCard({
   )
 }
 
+/** Stream id of an in-app stream/message link, for client-side name resolution. */
+function streamIdFromUrl(url: string): string | null {
+  const ref = classifyDraftLink(url)
+  return ref && (ref.kind === "stream" || ref.kind === "message") ? ref.streamId : null
+}
+
 /** Dispatches resolved data to the matching card. `onDismiss` is already bound. */
 function ResolvedInAppLink({
   data,
   url,
+  workspaceId,
   previewKey,
   messageId,
   onDismiss,
 }: {
   data: InAppLinkPreviewData
   url: string
+  workspaceId: string
   previewKey: string
   messageId?: string
   onDismiss?: () => void
 }) {
-  if (data.kind === "stream") return <StreamLinkCard data={data} url={url} onDismiss={onDismiss} />
+  if (data.kind === "stream")
+    return <StreamLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
   if (data.kind === "memo") return <MemoLinkCard data={data} url={url} onDismiss={onDismiss} />
-  return <MessageLinkCard data={data} url={url} previewKey={previewKey} messageId={messageId} onDismiss={onDismiss} />
+  return (
+    <MessageLinkCard
+      data={data}
+      url={url}
+      workspaceId={workspaceId}
+      previewKey={previewKey}
+      messageId={messageId}
+      onDismiss={onDismiss}
+    />
+  )
 }
 
 function MessageLinkCard({
   data,
   url,
+  workspaceId,
   previewKey,
   messageId,
   onDismiss,
 }: {
   data: MessageLinkPreviewData
   url: string
+  workspaceId: string
   previewKey: string
   messageId?: string
   onDismiss?: () => void
 }) {
+  // A DM/stream name is per-viewer and absent from the backend resolve, so
+  // prefer the locally-resolved name (same source the composer chip uses).
+  const streamId = useMemo(() => streamIdFromUrl(url), [url])
+  const localStreamName = useStreamName(workspaceId, streamId ?? "")
+
   if (data.accessTier === "cross_workspace") {
     return (
       <MinimalCard
@@ -198,10 +226,9 @@ function MessageLinkCard({
     </CardBody>
   )
 
+  const streamLabel = localStreamName ?? data.streamName
   return (
-    <CardShell
-      header={<CardHeader label={data.streamName ? `#${data.streamName}` : "Message"} onDismiss={onDismiss} />}
-    >
+    <CardShell header={<CardHeader label={streamLabel ? `#${streamLabel}` : "Message"} onDismiss={onDismiss} />}>
       <LinkPreviewBody messageId={messageId} previewId={previewKey}>
         <InternalLink path={internalPath}>{body}</InternalLink>
       </LinkPreviewBody>
@@ -234,12 +261,19 @@ function streamKindIcon(streamType?: StreamType): ReactNode {
 function StreamLinkCard({
   data,
   url,
+  workspaceId,
   onDismiss,
 }: {
   data: StreamLinkPreviewData
   url: string
+  workspaceId: string
   onDismiss?: () => void
 }) {
+  // A DM/stream name is per-viewer and absent from the backend resolve, so
+  // prefer the locally-resolved name (same source the composer chip uses).
+  const streamId = useMemo(() => streamIdFromUrl(url), [url])
+  const localStreamName = useStreamName(workspaceId, streamId ?? "")
+
   if (data.accessTier === "cross_workspace") {
     return (
       <MinimalCard kindIcon={<Hash />} kindLabel="Conversation" label="In another workspace" onDismiss={onDismiss} />
@@ -267,7 +301,7 @@ function StreamLinkCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <h4 className="truncate text-sm font-semibold leading-snug text-foreground">
-              {data.streamName ?? "Conversation"}
+              {localStreamName ?? data.streamName ?? "Conversation"}
             </h4>
             <MetaBadge icon={isPrivate ? <Lock /> : <Globe />}>{isPrivate ? "Private" : "Public"}</MetaBadge>
           </div>

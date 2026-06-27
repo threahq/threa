@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { linkPreviewsApi } from "@/api"
+import * as workspaceStoreModule from "@/stores/workspace-store"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
 import type { InAppLinkPreviewData, LinkPreviewSummary } from "@threa/types"
 
@@ -103,6 +104,27 @@ describe("InAppLinkPreviewCard", () => {
     // Kind is named; no stream name, description, or visibility leaks.
     expect(screen.getByText("Conversation")).toBeInTheDocument()
     expect(screen.queryByText("design")).not.toBeInTheDocument()
+  })
+
+  it("prefers the locally-resolved DM name over the backend 'Conversation' fallback", async () => {
+    // A DM has no streamName on the backend resolve; the card must fall back to
+    // the per-viewer name from the dm-peers cache (same source the composer chip uses).
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+      { id: "usr_peer", name: "Ada Lovelace" },
+    ] as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([
+      { streamId: "stream_dm", userId: "usr_peer" },
+    ] as never)
+
+    renderWith(
+      { kind: "stream", accessTier: "full", streamType: "dm", visibility: "private" },
+      makePreview({ contentType: "stream_link", url: `${window.location.origin}/w/ws_123/s/stream_dm` })
+    )
+
+    // The body shows the resolved peer name; "Conversation" remains only as the
+    // header's kind label, which is correct for a DM.
+    await waitFor(() => expect(screen.getByText("Ada Lovelace")).toBeInTheDocument())
   })
 
   it("shows a minimal card for a cross-workspace memo", async () => {
