@@ -1,21 +1,20 @@
 import type { JSONContent } from "@threa/types"
 import { classifyDraftLink, type DraftLinkRef } from "@/lib/in-app-links"
 
-/** The in-app stream/message ref of a node carrying an in-app link mark, else null. */
+/** The in-app stream/message ref of a node by its link mark's href (run membership). */
 function inAppLinkRef(
   node: JSONContent,
   origin: string | null
 ): Extract<DraftLinkRef, { kind: "stream" | "message" }> | null {
-  const marks = node.marks ?? []
-  const link = marks.find((m) => m.type === "link")
-  const href = link?.attrs?.href
+  const href = node.marks?.find((m) => m.type === "link")?.attrs?.href
   if (typeof href !== "string") return null
-  // Leave a styled link (bold/italic/…) as-is: the chip is an atom and the
-  // serializer ignores an atom's own marks, so converting would drop the extra
-  // formatting and change the message on the next save. Only a plain link chips.
-  if (marks.some((m) => m.type !== "link")) return null
   const ref = classifyDraftLink(href, origin)
   return ref && (ref.kind === "stream" || ref.kind === "message") ? ref : null
+}
+
+/** Any mark other than the link itself (bold/italic/code/…) — a styled segment. */
+function hasNonLinkMarks(node: JSONContent): boolean {
+  return (node.marks ?? []).some((m) => m.type !== "link")
 }
 
 /** Best-effort display text of an inline node, for the chip's pre-resolution label. */
@@ -33,9 +32,12 @@ function inlineText(node: JSONContent): string {
  * `[name](url)` as link-marked inline content — sometimes several nodes (a
  * `#slug`-shaped name parses to a channelLink), all carrying the same link
  * href — so consecutive nodes sharing one in-app href are merged into a single
- * chip. Idempotent: an existing `inAppLink` atom carries no link mark and passes
- * through untouched, and block nodes never carry link marks so the same scan is
- * safe at every depth.
+ * chip. A run where any segment carries a non-link mark (a partly-bold link) is
+ * left whole as styled link nodes: the chip is an atom and the serializer
+ * ignores an atom's own marks, so chipping it would drop the formatting and
+ * change the message on the next save. Idempotent: an existing `inAppLink` atom
+ * carries no link mark and passes through untouched, and block nodes never carry
+ * link marks so the same scan is safe at every depth.
  */
 export function inAppLinkMarksToNodes(node: JSONContent, origin: string | null = currentOrigin()): JSONContent {
   if (!Array.isArray(node.content)) return node
@@ -46,13 +48,21 @@ export function inAppLinkMarksToNodes(node: JSONContent, origin: string | null =
   while (i < children.length) {
     const ref = inAppLinkRef(children[i], origin)
     if (ref) {
-      let name = inlineText(children[i])
+      // Extend over the whole contiguous run sharing this in-app href, tracking
+      // whether any segment is styled.
       let j = i + 1
+      let styled = hasNonLinkMarks(children[i])
+      let name = inlineText(children[i])
       while (j < children.length) {
         const next = inAppLinkRef(children[j], origin)
         if (!next || next.url !== ref.url) break
+        styled ||= hasNonLinkMarks(children[j])
         name += inlineText(children[j])
         j++
+      }
+      if (styled) {
+        for (; i < j; i++) out.push(inAppLinkMarksToNodes(children[i], origin))
+        continue
       }
       out.push({
         type: "inAppLink",

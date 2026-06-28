@@ -58,6 +58,14 @@ describe("inAppLinkMarksToNodes", () => {
     expect(inAppLinkMarksToNodes(input, ORIGIN)).toEqual(input)
   })
 
+  it("leaves a partly-styled link run whole instead of chipping the plain prefix", () => {
+    // `[foo**bar**](url)` parses to two same-href nodes: plain "foo" + bold
+    // "bar". Converting only "foo" would split the link, so the whole run stays.
+    const url = `${ORIGIN}/w/ws_1/s/stream_1`
+    const input = doc(link("foo", url), link("bar", url, [{ type: "bold" }]))
+    expect(inAppLinkMarksToNodes(input, ORIGIN)).toEqual(input)
+  })
+
   it("is idempotent — an existing inAppLink atom passes through unchanged", () => {
     const url = `${ORIGIN}/w/ws_1/s/stream_1`
     const already = doc({ type: "inAppLink", attrs: { url, streamId: "stream_1", messageId: null, name: "#design" } })
