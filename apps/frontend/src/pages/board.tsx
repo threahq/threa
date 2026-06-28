@@ -34,10 +34,6 @@ function recencyBucket(activityMs: number, nowMs: number): string {
   return "Older"
 }
 
-/** Scroll depth (px) past which the "N new" pill may show — clears the composer
- *  at the top of the feed so the pill never overlaps it. */
-const PILL_REVEAL_SCROLL_PX = 80
-
 interface BoardSection {
   label: string
   posts: BoardViewPost[]
@@ -114,20 +110,6 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     setViewport(scrollRootRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]") ?? null)
   }, [])
   useBoardScrollAnchor(viewport)
-
-  // The "N new" pill only shows once scrolled into the feed, past the composer —
-  // the composer sits at the top of the scroll content, and a pill floating over
-  // it would intercept taps on the page's primary action. New arrivals while at
-  // the top stay buffered (the newest committed cards are already in view) and
-  // surface the moment the reader scrolls in.
-  const [scrolledIntoFeed, setScrolledIntoFeed] = useState(false)
-  useEffect(() => {
-    if (!viewport) return
-    const onScroll = () => setScrolledIntoFeed(viewport.scrollTop > PILL_REVEAL_SCROLL_PX)
-    onScroll()
-    viewport.addEventListener("scroll", onScroll, { passive: true })
-    return () => viewport.removeEventListener("scroll", onScroll)
-  }, [viewport])
 
   const revealNew = () => {
     // Jump to the top first so the freshly-committed cards flow in where the
@@ -248,23 +230,31 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         value="all"
         tabs={[{ value: "all", label: "All", href: `/w/${workspaceId}/board` }]}
       />
+      <span className="sr-only" role="status" aria-live="polite">
+        {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
+      </span>
       <div className="relative flex-1 overflow-hidden">
-        {newCount > 0 && scrolledIntoFeed && (
-          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
-            <Button
-              size="sm"
-              onClick={revealNew}
-              aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
-              className="pointer-events-auto min-h-11 gap-1.5 rounded-full px-4 shadow-md"
-            >
-              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-              {newCount} new
-            </Button>
-          </div>
-        )}
         <ScrollArea ref={scrollRootRef} className="h-full [&>div>div]:!block [&>div>div]:!w-full">
           <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">
             <BoardComposer workspaceId={workspaceId} onPosted={revealNext} />
+            {/* Sticky zero-height row: the pill sits just below the composer at the
+                top (never over it) and sticks to the top edge once scrolled in, so
+                it's always reachable without shifting the feed (h-0 = no layout
+                cost). It hangs DOWN over the feed (items-start), clear of the
+                composer above. */}
+            {newCount > 0 && (
+              <div className="pointer-events-none sticky top-2 z-10 flex h-0 items-start justify-center">
+                <Button
+                  size="sm"
+                  onClick={revealNew}
+                  aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
+                  className="pointer-events-auto min-h-11 gap-1.5 rounded-full px-4 shadow-md"
+                >
+                  <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                  {newCount} new
+                </Button>
+              </div>
+            )}
             {content}
           </main>
         </ScrollArea>

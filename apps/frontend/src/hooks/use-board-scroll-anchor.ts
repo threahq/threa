@@ -5,6 +5,11 @@ import { useEffect, useRef } from "react"
 const ANCHOR_DISABLE_PX = 4
 /** Sub-pixel layout jitter shouldn't trigger a scroll correction. */
 const MIN_COMPENSATION_PX = 0.5
+/** While a touch scroll is active — and for this long after the finger lifts,
+ *  covering the kinetic-momentum phase — a `scrollTop` write fights iOS Safari's
+ *  native momentum engine and judders. Defer the correction and re-pin once the
+ *  scroll settles instead. */
+const MOMENTUM_SETTLE_MS = 450
 
 /** Attribute carrying a card's conversation id, read to re-find the anchor card. */
 export const BOARD_CARD_ATTR = "data-board-card"
@@ -48,16 +53,21 @@ export function useBoardScrollAnchor(viewport: HTMLElement | null): void {
   useEffect(() => {
     if (!viewport) return
 
+    // A touch scroll holds off compensation until its momentum settles, so we
+    // never write scrollTop mid-flick. Desktop (no touch events) keeps the
+    // immediate path — a programmatic scrollTop write there is invisible.
+    let touching = false
+    let momentumUntil = 0
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+
     // Re-measure the anchor on every user scroll; our own corrections write
     // scrollTop and re-measure to the same offset, so they don't drift it.
     const onScroll = () => {
       anchorRef.current = measureAnchor(viewport)
     }
     onScroll()
-    viewport.addEventListener("scroll", onScroll, { passive: true })
 
-    const content = viewport.firstElementChild
-    const observer = new ResizeObserver(() => {
+    const compensate = () => {
       if (viewport.scrollTop <= ANCHOR_DISABLE_PX) return
       const anchor = anchorRef.current
       if (!anchor) return
@@ -66,12 +76,52 @@ export function useBoardScrollAnchor(viewport: HTMLElement | null): void {
       const top = card.getBoundingClientRect().top - viewport.getBoundingClientRect().top
       const delta = top - anchor.offset
       if (Math.abs(delta) > MIN_COMPENSATION_PX) viewport.scrollTop += delta
-    })
+    }
+
+    // After the active scroll/momentum window passes, re-pin once so above-fold
+    // reflow that landed mid-scroll is corrected without having fought momentum.
+    const scheduleSettle = () => {
+      if (settleTimer) clearTimeout(settleTimer)
+      const wait = Math.max(0, momentumUntil - performance.now()) || MOMENTUM_SETTLE_MS
+      settleTimer = setTimeout(() => {
+        settleTimer = null
+        if (!touching && performance.now() >= momentumUntil) compensate()
+      }, wait)
+    }
+
+    const onResize = () => {
+      if (touching || performance.now() < momentumUntil) {
+        scheduleSettle()
+        return
+      }
+      compensate()
+    }
+
+    const onTouchStart = () => {
+      touching = true
+    }
+    const onTouchEnd = () => {
+      touching = false
+      momentumUntil = performance.now() + MOMENTUM_SETTLE_MS
+      scheduleSettle()
+    }
+
+    viewport.addEventListener("scroll", onScroll, { passive: true })
+    viewport.addEventListener("touchstart", onTouchStart, { passive: true })
+    viewport.addEventListener("touchend", onTouchEnd, { passive: true })
+    viewport.addEventListener("touchcancel", onTouchEnd, { passive: true })
+
+    const content = viewport.firstElementChild
+    const observer = new ResizeObserver(onResize)
     if (content) observer.observe(content)
 
     return () => {
       viewport.removeEventListener("scroll", onScroll)
+      viewport.removeEventListener("touchstart", onTouchStart)
+      viewport.removeEventListener("touchend", onTouchEnd)
+      viewport.removeEventListener("touchcancel", onTouchEnd)
       observer.disconnect()
+      if (settleTimer) clearTimeout(settleTimer)
     }
   }, [viewport])
 }
