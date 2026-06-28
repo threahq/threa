@@ -19,7 +19,7 @@ interface SidebarHeaderProps {
 export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
   const { openSearch } = useSearchPanel()
-  const { collapseOnMobile } = useSidebar()
+  const { collapseOnMobile, setMenuOpen } = useSidebar()
   const { preferences } = usePreferences()
   const customBindings = preferences?.keyboardShortcuts ?? {}
   const streamBinding = getEffectiveKeyBinding("openQuickSwitcher", customBindings)
@@ -46,7 +46,7 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
           <span className="truncate text-sm font-semibold">{workspaceName}</span>
         </Link>
         <div className="ml-auto flex items-center">
-          <ThemeDropdown />
+          <ThemeDropdown onOpenChange={setMenuOpen} />
         </div>
       </div>
 

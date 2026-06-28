@@ -10,7 +10,18 @@ import {
 import { usePreferences, useSettings } from "@/contexts"
 import type { Theme } from "@threa/types"
 
-export function ThemeDropdown() {
+interface ThemeDropdownProps {
+  /**
+   * Notified when the menu opens/closes. The sidebar host wires this to
+   * `setMenuOpen` so the menu opening (a Radix modal portal that flips
+   * `pointer-events` under the cursor, firing a stray `mouseleave` on the
+   * sidebar) doesn't collapse the hover-preview sidebar out from under the
+   * still-open dropdown — same guard the other sidebar menus use.
+   */
+  onOpenChange?: (open: boolean) => void
+}
+
+export function ThemeDropdown({ onOpenChange }: ThemeDropdownProps) {
   const { preferences, resolvedTheme, updatePreference } = usePreferences()
   const { openSettings } = useSettings()
 
@@ -28,7 +39,7 @@ export function ThemeDropdown() {
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="h-8 w-8" title="Theme & Settings">
           <ThemeIcon className="h-4 w-4" />
