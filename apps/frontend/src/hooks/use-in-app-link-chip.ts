@@ -129,6 +129,11 @@ export function useInAppLinkChip({
           const avatar = data.authorName ? { url: data.authorAvatarUrl, name: data.authorName } : undefined
           return { status: "resolved", icon: MessageSquare, label, avatar }
         }
+        // Fully resolved but the author can't be named (bot/persona) — settle on
+        // the generic word, not the cached parent-stream name. The parent name is
+        // a stream label; stamping it onto a message node (InAppLinkView writes
+        // the resolved label into attrs.name) would mislabel the link.
+        return { status: "resolved", icon: MessageSquare, label: "Message" }
       }
       if (loading) return { status: "pending" }
       return { status: "resolved", icon: MessageSquare, label: localName ?? "Message" }

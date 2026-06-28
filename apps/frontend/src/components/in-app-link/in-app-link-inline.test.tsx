@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { linkPreviewsApi } from "@/api"
+import * as workspaceStore from "@/stores/workspace-store"
 import { InAppLinkInline } from "./in-app-link-inline"
 
 const origin = window.location.origin
@@ -50,6 +51,25 @@ describe("InAppLinkInline (message chip)", () => {
     renderMessageLink("stream_1")
 
     await waitFor(() => expect(screen.getByText("Kristoffer Remback in #tech-big-new-prop")).toBeInTheDocument())
+  })
+
+  it("settles a fully-resolved but unnamed (bot/persona) message to 'Message', not the parent stream name", async () => {
+    // Cached parent stream would resolve to "#general"; the rich label is null
+    // (no author), so the chip must settle on "Message" rather than the stream name.
+    vi.spyOn(workspaceStore, "useWorkspaceStreams").mockReturnValue([
+      { id: "stream_1", type: "channel", slug: "general", displayName: null },
+    ] as never)
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "message",
+      accessTier: "full",
+      streamType: "channel",
+      streamName: "general",
+    })
+
+    renderMessageLink("stream_1")
+
+    await waitFor(() => expect(screen.getByText("Message")).toBeInTheDocument())
+    expect(screen.queryByText("#general")).not.toBeInTheDocument()
   })
 
   it("shows a deleted-message placeholder instead of a live chip", async () => {

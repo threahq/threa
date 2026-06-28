@@ -361,15 +361,16 @@ export class LinkPreviewService {
 
     // A DM message reads "{author} to {recipient}", so resolve the non-author
     // participant. DMs are 1:1 in the display model (display-name.ts collapses to
-    // "the other participant"); falling back to the non-viewer member keeps the
-    // phrasing sensible when the author isn't a member (e.g. a persona).
+    // "the other participant"). Prefer the member who is neither the author nor
+    // the viewer so a non-member author (e.g. a persona) still names the other
+    // person; only then fall back to any non-author member.
     let recipientName: string | undefined
     let recipientIsSelf: boolean | undefined
     if (stream.type === "dm") {
       const members = await StreamMemberRepository.list(this.deps.pool, { streamId: targetStreamId })
       const recipientId =
-        members.find((m) => m.memberId !== message.authorId)?.memberId ??
-        members.find((m) => m.memberId !== userId)?.memberId
+        members.find((m) => m.memberId !== message.authorId && m.memberId !== userId)?.memberId ??
+        members.find((m) => m.memberId !== message.authorId)?.memberId
       if (recipientId) {
         recipientIsSelf = recipientId === userId
         recipientName = (await UserRepository.findById(this.deps.pool, workspaceId, recipientId))?.name

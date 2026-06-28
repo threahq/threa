@@ -277,6 +277,47 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       recipientIsSelf: true,
     })
   })
+
+  test("a persona-authored DM names the other participant, not the viewer", async () => {
+    // The author isn't a DM member, so the recipient must skip the viewer and
+    // name the real other participant rather than resolving to "You".
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({
+        contentType: "message_link",
+        targetStreamId: "stream_dm",
+        targetMessageId: "msg_1",
+        url: "https://app.threa.io/w/ws_self/s/stream_dm?m=msg_1",
+      })
+    )
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_dm",
+      authorType: "persona",
+      authorId: "persona_assistant",
+      contentMarkdown: "drafted for you",
+      deletedAt: null,
+    } as never)
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([
+      { streamId: "stream_dm", memberId: VIEWER_ID },
+      { streamId: "stream_dm", memberId: "user_pierre" },
+    ] as never)
+    spyOn(UserRepository, "findById").mockImplementation((async (_pool: unknown, _ws: unknown, id: string) =>
+      id === "user_pierre" ? { name: "Pierre Boberg", avatarUrl: null } : null) as never)
+    const service = makeService(
+      { tryAccess: async () => makeStream({ id: "stream_dm", type: "dm", slug: null, displayName: null }) },
+      {}
+    )
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toMatchObject({
+      kind: "message",
+      accessTier: "full",
+      streamType: "dm",
+      recipientName: "Pierre Boberg",
+      recipientIsSelf: false,
+    })
+  })
 })
 
 describe("LinkPreviewService.resolveInAppLinkByUrl", () => {
