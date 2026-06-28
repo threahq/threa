@@ -82,7 +82,7 @@ function targetForValue(value: string): BoardPostTarget | null {
  * composer. The composer closes on a successful post and the feed refreshes to
  * show it, so the result is visible without a success toast (INV-63).
  */
-export function BoardComposer({ workspaceId }: { workspaceId: string }) {
+export function BoardComposer({ workspaceId, onPosted }: { workspaceId: string; onPosted?: () => void }) {
   const [open, setOpen] = useState(false)
 
   if (!open) {
@@ -98,10 +98,18 @@ export function BoardComposer({ workspaceId }: { workspaceId: string }) {
     )
   }
 
-  return <BoardComposerForm workspaceId={workspaceId} onClose={() => setOpen(false)} />
+  return <BoardComposerForm workspaceId={workspaceId} onClose={() => setOpen(false)} onPosted={onPosted} />
 }
 
-function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onClose: () => void }) {
+function BoardComposerForm({
+  workspaceId,
+  onClose,
+  onPosted,
+}: {
+  workspaceId: string
+  onClose: () => void
+  onPosted?: () => void
+}) {
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -165,6 +173,9 @@ function BoardComposerForm({ workspaceId, onClose }: { workspaceId: string; onCl
       composer.clearAttachments()
       writeStoredTarget(workspaceId, "")
       onClose()
+      // Reveal the just-posted card rather than letting it wait behind its own
+      // "N new" pill — the viewer's own action should surface immediately.
+      onPosted?.()
     } catch {
       toast.error("Couldn't post to the board. Please try again.")
     } finally {

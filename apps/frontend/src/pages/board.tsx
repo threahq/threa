@@ -1,5 +1,5 @@
-import { useMemo } from "react"
-import { AlertCircle, LayoutGrid } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { AlertCircle, ArrowUp, LayoutGrid } from "lucide-react"
 import { Navigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -9,11 +9,12 @@ import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
-import { useBoardPosts } from "@/stores/board-store"
+import { useStableBoardView, type BoardViewPost } from "@/hooks/use-stable-board-view"
+import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-anchor"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
-import type { BoardPost, ConversationWithStaleness } from "@threa/types"
+import type { ConversationWithStaleness } from "@threa/types"
 
 /**
  * Coarse recency bucket for a post's last activity, in device-local time
@@ -22,8 +23,10 @@ import type { BoardPost, ConversationWithStaleness } from "@threa/types"
  * the recency order. Day boundaries, not 24h windows, so "Yesterday" matches the
  * user's calendar.
  */
-function recencyBucket(date: Date | string, nowMs: number): string {
-  const daysAgo = Math.round((localStartOfDayMs(new Date(nowMs)) - localStartOfDayMs(new Date(date))) / 86_400_000)
+function recencyBucket(activityMs: number, nowMs: number): string {
+  const daysAgo = Math.round(
+    (localStartOfDayMs(new Date(nowMs)) - localStartOfDayMs(new Date(activityMs))) / 86_400_000
+  )
   if (daysAgo <= 0) return "Today"
   if (daysAgo === 1) return "Yesterday"
   if (daysAgo <= 6) return "Earlier this week"
@@ -33,14 +36,20 @@ function recencyBucket(date: Date | string, nowMs: number): string {
 
 interface BoardSection {
   label: string
-  posts: BoardPost[]
+  posts: BoardViewPost[]
 }
 
-/** Fold the recency-sorted feed into consecutive buckets, preserving order. */
-function groupByRecency(posts: BoardPost[], nowMs: number): BoardSection[] {
+/**
+ * Fold the frozen feed into consecutive buckets, preserving order. Grouping reads
+ * the commit-time activity (`activityById`), not the live `lastActivityAt`, so a
+ * card bumped while the view is held keeps its section as well as its position —
+ * the sections stay monotonic with the frozen order.
+ */
+function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number>, nowMs: number): BoardSection[] {
   const sections: BoardSection[] = []
   for (const post of posts) {
-    const label = recencyBucket(post.conversation.lastActivityAt, nowMs)
+    const ms = activityById.get(post.conversation.id) ?? Date.parse(post.conversation.lastActivityAt)
+    const label = recencyBucket(ms, nowMs)
     const last = sections[sections.length - 1]
     if (last?.label === label) last.posts.push(post)
     else sections.push({ label, posts: [post] })
@@ -75,22 +84,39 @@ function BoardPageGate({ workspaceId }: { workspaceId: string }) {
 }
 
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
-  // The query is the fetch/seed engine; the board reads reactively from IDB so
-  // live events and optimistic writes re-sort it without a refetch.
+  // The query is the fetch/seed engine; the board reads reactively from IDB. The
+  // stable-view projection holds the order the viewer is looking at frozen and
+  // accumulates live changes behind the "N new" pill (INV-61, extended from the
+  // timeline's insertion rule to the board's ordering).
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
     useWorkspaceConversations(workspaceId, { limit: 50 })
-  const boardPosts = useBoardPosts(workspaceId)
-  const posts = boardPosts ?? []
+  const { posts, activityById, newCount, commit, revealNext, isLoading: viewLoading } = useStableBoardView(workspaceId)
   // After a refetch settles, `isLoading` is already false but the seed effect
-  // writes IDB on the next tick, so `useBoardPosts` can be momentarily empty
-  // while the query already holds posts. Treat that window as loading so the
-  // feed doesn't flash the empty state before the seed lands.
+  // writes IDB on the next tick, so the IDB feed can be momentarily empty while
+  // the query already holds posts. Treat that window as loading so the feed
+  // doesn't flash the empty state before the seed lands.
   const seedPending = (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
-  const sections = useMemo(() => groupByRecency(posts, Date.now()), [posts])
+  const sections = useMemo(() => groupByRecency(posts, activityById, Date.now()), [posts, activityById])
+
+  // Resolve the Radix scroll viewport (the scroller) once it mounts, for the
+  // scroll anchor and the pill's scroll-to-top reveal.
+  const scrollRootRef = useRef<HTMLDivElement>(null)
+  const [viewport, setViewport] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    setViewport(scrollRootRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]") ?? null)
+  }, [])
+  useBoardScrollAnchor(viewport)
+
+  const revealNew = () => {
+    // Jump to the top first so the freshly-committed cards flow in where the
+    // viewer can see them; the anchor stays out of the way near the top.
+    if (viewport) viewport.scrollTop = 0
+    commit()
+  }
 
   // Where the post lives — the stream's own name (channel #slug, DM peer,
   // scratchpad name), used as the card's locator. The glyph follows the type.
@@ -126,13 +152,14 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
               {section.posts.map((post) => {
                 const { contextLabel, streamType } = labelsFor(post.conversation)
                 return (
-                  <BoardCard
-                    key={post.conversation.id}
-                    workspaceId={workspaceId}
-                    post={post}
-                    contextLabel={contextLabel}
-                    streamType={streamType}
-                  />
+                  <div key={post.conversation.id} {...{ [BOARD_CARD_ATTR]: post.conversation.id }}>
+                    <BoardCard
+                      workspaceId={workspaceId}
+                      post={post}
+                      contextLabel={contextLabel}
+                      streamType={streamType}
+                    />
+                  </div>
                 )
               })}
             </div>
@@ -165,7 +192,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         </Button>
       </div>
     )
-  } else if (isLoading || boardPosts === undefined || seedPending) {
+  } else if (isLoading || viewLoading || seedPending) {
     content = (
       <div className="flex flex-col gap-3">
         {Array.from({ length: 5 }).map((_, i) => (
@@ -203,12 +230,26 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         value="all"
         tabs={[{ value: "all", label: "All", href: `/w/${workspaceId}/board` }]}
       />
-      <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">
-          <BoardComposer workspaceId={workspaceId} />
-          {content}
-        </main>
-      </ScrollArea>
+      <div className="relative flex-1 overflow-hidden">
+        {newCount > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+            <Button
+              size="sm"
+              onClick={revealNew}
+              className="pointer-events-auto h-8 gap-1.5 rounded-full px-3 shadow-md"
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+              {newCount} new
+            </Button>
+          </div>
+        )}
+        <ScrollArea ref={scrollRootRef} className="h-full [&>div>div]:!block [&>div>div]:!w-full">
+          <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">
+            <BoardComposer workspaceId={workspaceId} onPosted={revealNext} />
+            {content}
+          </main>
+        </ScrollArea>
+      </div>
     </div>
   )
 }

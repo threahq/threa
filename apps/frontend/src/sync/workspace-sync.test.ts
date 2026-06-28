@@ -1001,7 +1001,12 @@ describe("registerWorkspaceSocketHandlers", () => {
       workspaceId: "ws_1",
       conversation: { id: "conv_new", lastActivityAt: "2026-06-22T12:00:00.000Z" },
     })
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    // The handler awaits the (async) IDB merge before deciding to invalidate, so
+    // poll for the call rather than a single tick — one macrotask isn't enough
+    // for the Dexie transaction to settle.
+    for (let i = 0; i < 50 && invalidate.mock.calls.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
 
     // The event carries the aggregate but not the message bodies, so a card we
     // don't have cached is hydrated by refetching the board head (stale-mark all,
