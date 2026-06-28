@@ -20,9 +20,19 @@ type ChipIcon = ComponentType<{ className?: string }>
  * name (no sigil) so neither surface doubles the `#`.
  */
 export type InAppLinkChipState =
-  | { status: "resolved"; icon: ChipIcon; label: string; prefix?: string }
+  | { status: "resolved"; icon: ChipIcon; label: string; prefix?: string; avatar?: ChipAvatar }
   | { status: "restricted"; icon: ChipIcon; label: string }
   | { status: "pending" }
+
+/**
+ * Leading author face for a message chip — the avatar image when the author has
+ * one, with `name` driving the alt text and the initial fallback. Absent for
+ * stream chips and unnamed (bot/persona) authors, which keep their type glyph.
+ */
+export interface ChipAvatar {
+  url?: string
+  name: string
+}
 
 function streamTypeIcon(streamType: StreamType | undefined): ChipIcon {
   switch (streamType) {
@@ -115,7 +125,10 @@ export function useInAppLinkChip({
     if (isMessage) {
       if (data?.kind === "message" && data.accessTier === "full") {
         const label = buildMessageChipLabel(data)
-        if (label) return { status: "resolved", icon: MessageSquare, label }
+        if (label) {
+          const avatar = data.authorName ? { url: data.authorAvatarUrl, name: data.authorName } : undefined
+          return { status: "resolved", icon: MessageSquare, label, avatar }
+        }
       }
       if (loading) return { status: "pending" }
       return { status: "resolved", icon: MessageSquare, label: localName ?? "Message" }

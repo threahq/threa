@@ -34,6 +34,8 @@ describe("InAppLinkInline (message chip)", () => {
 
     const chip = await screen.findByText("Pierre Boberg to You")
     expect(chip.closest("a")).toHaveAttribute("href", `${origin}/w/ws_1/s/stream_dm?m=msg_1`)
+    // Author face leads the chip; with no avatar URL it shows the initial fallback.
+    expect(screen.getByText("P")).toBeInTheDocument()
   })
 
   it("renders a channel message as '{author} in #slug'", async () => {
