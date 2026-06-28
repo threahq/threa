@@ -1,6 +1,6 @@
 import { useMemo, type ComponentType } from "react"
 import { Hash, NotebookPen, MessageSquare, Lock, Globe } from "lucide-react"
-import type { StreamType } from "@threa/types"
+import type { StreamType, MessageLinkPreviewData } from "@threa/types"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { resolveStreamName } from "@/lib/streams"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
@@ -33,6 +33,27 @@ function streamTypeIcon(streamType: StreamType | undefined): ChipIcon {
     default:
       return MessageSquare
   }
+}
+
+/**
+ * Phrase a resolved message link the way the surrounding chat reads it:
+ * "{author} to {recipient}" for a DM, "{author} in #channel" or "{author} in
+ * {name}" otherwise. Either side collapses to "You" when it's the viewer. Returns
+ * null when the author couldn't be resolved (e.g. a bot/persona author the
+ * backend doesn't name yet) so the caller falls back to the parent-stream name.
+ */
+export function buildMessageChipLabel(data: MessageLinkPreviewData): string | null {
+  const author = data.authorIsSelf ? "You" : data.authorName
+  if (!author) return null
+  if (data.streamType === "dm") {
+    const recipient = data.recipientIsSelf ? "You" : data.recipientName
+    return recipient ? `${author} to ${recipient}` : author
+  }
+  if (data.streamName) {
+    const name = data.streamType === "channel" ? `#${data.streamName.replace(/^#/, "")}` : data.streamName
+    return `${author} in ${name}`
+  }
+  return author
 }
 
 /**
@@ -86,29 +107,37 @@ export function useInAppLinkChip({
     if (data?.kind === "message" && data.deleted) {
       return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
     }
-    if (localName) {
-      // A channel renders its `#` as a text prefix (mention-style), so strip it
-      // from the bare label; the chip's `prefix` adds it back. Message links keep
-      // a message glyph instead of a sigil.
-      const isChannelChip = !isMessage && cachedType === "channel"
-      const label = isChannelChip && localName.startsWith("#") ? localName.slice(1) : localName
-      return {
-        status: "resolved",
-        icon: isMessage ? MessageSquare : streamTypeIcon(cachedType),
-        label,
-        prefix: isChannelChip ? "#" : undefined,
+
+    // A message reads as "{author} in #channel" / "{author} to {peer}" — that
+    // rich backend label is the whole point, so it wins over the cached
+    // parent-stream name; the parent name (or a generic word) is only a fallback
+    // while the resolve is in flight or the author couldn't be named.
+    if (isMessage) {
+      if (data?.kind === "message" && data.accessTier === "full") {
+        const label = buildMessageChipLabel(data)
+        if (label) return { status: "resolved", icon: MessageSquare, label }
       }
+      if (loading) return { status: "pending" }
+      return { status: "resolved", icon: MessageSquare, label: localName ?? "Message" }
+    }
+
+    // Stream links: a channel renders its `#` as a text prefix (mention-style),
+    // so strip it from the bare label and let the chip's `prefix` add it back.
+    if (localName) {
+      const isChannelChip = cachedType === "channel"
+      const label = isChannelChip && localName.startsWith("#") ? localName.slice(1) : localName
+      return { status: "resolved", icon: streamTypeIcon(cachedType), label, prefix: isChannelChip ? "#" : undefined }
     }
     if (loading) return { status: "pending" }
     if (data?.kind === "stream" && data.streamName) {
       const isChannel = data.streamType === "channel"
       return {
         status: "resolved",
-        icon: isMessage ? MessageSquare : streamTypeIcon(data.streamType),
+        icon: streamTypeIcon(data.streamType),
         label: data.streamName,
-        prefix: !isMessage && isChannel ? "#" : undefined,
+        prefix: isChannel ? "#" : undefined,
       }
     }
-    return { status: "resolved", icon: isMessage ? MessageSquare : Hash, label: isMessage ? "Message" : "Conversation" }
+    return { status: "resolved", icon: Hash, label: "Conversation" }
   }, [localName, loading, data, cachedType, isMessage])
 }

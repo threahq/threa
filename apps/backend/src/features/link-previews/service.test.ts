@@ -6,6 +6,7 @@ import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { SearchRepository } from "../search"
 import type { StreamService } from "../streams"
+import { StreamMemberRepository } from "../streams"
 import type { MemoExplorerService } from "../memos"
 
 /** The exact shape `tryAccess` resolves to, so a drift in the contract breaks here. */
@@ -205,6 +206,75 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       authorName: "Author",
       contentPreview: "Hello there",
       streamName: "general",
+      streamType: "channel",
+      authorIsSelf: false,
+    })
+  })
+
+  test("a message the viewer authored is flagged self so the chip can render 'You'", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({
+        contentType: "message_link",
+        targetMessageId: "msg_1",
+        url: "https://app.threa.io/w/ws_self/s/stream_1?m=msg_1",
+      })
+    )
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_1",
+      authorType: "user",
+      authorId: VIEWER_ID,
+      contentMarkdown: "my own message",
+      deletedAt: null,
+    } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Me", avatarUrl: null } as never)
+    const service = makeService({ tryAccess: async () => makeStream({ slug: "general" }) }, {})
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toMatchObject({ kind: "message", accessTier: "full", authorIsSelf: true, streamType: "channel" })
+  })
+
+  test("a DM message resolves the non-author participant as the recipient", async () => {
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({
+        contentType: "message_link",
+        targetStreamId: "stream_dm",
+        targetMessageId: "msg_1",
+        url: "https://app.threa.io/w/ws_self/s/stream_dm?m=msg_1",
+      })
+    )
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_dm",
+      authorType: "user",
+      authorId: "user_pierre",
+      contentMarkdown: "hey",
+      deletedAt: null,
+    } as never)
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([
+      { streamId: "stream_dm", memberId: "user_pierre" },
+      { streamId: "stream_dm", memberId: VIEWER_ID },
+    ] as never)
+    spyOn(UserRepository, "findById").mockImplementation((async (_pool: unknown, _ws: unknown, id: string) =>
+      id === "user_pierre"
+        ? { name: "Pierre Boberg", avatarUrl: null }
+        : { name: "Kristoffer Remback", avatarUrl: null }) as never)
+    const service = makeService(
+      { tryAccess: async () => makeStream({ id: "stream_dm", type: "dm", slug: null, displayName: null }) },
+      {}
+    )
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    expect(result).toMatchObject({
+      kind: "message",
+      accessTier: "full",
+      authorName: "Pierre Boberg",
+      authorIsSelf: false,
+      streamType: "dm",
+      recipientName: "Kristoffer Remback",
+      recipientIsSelf: true,
     })
   })
 })
