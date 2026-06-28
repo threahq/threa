@@ -17,7 +17,6 @@ import type {
 } from "./boundary-extraction/types"
 import { collectQuoteReplyMessageIds } from "@threa/prosemirror"
 import { addStalenessFields } from "./staleness"
-import { toLiveBoardPostMessage } from "./board-post-message"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { conversationId } from "../../lib/id"
@@ -534,10 +533,6 @@ export class BoundaryExtractionService {
           conversation: addStalenessFields(conv),
           parentStreamId: convParentStreamId,
           streamVisibility,
-          // Only the new message's primary conversation gains it as a reply — the
-          // other touched convs are side effects (a reassignment source, a
-          // completeness bump), so carrying the body there would mis-place it.
-          triggeringMessage: conv.id === primaryConvId ? toLiveBoardPostMessage(message) : undefined,
         })
       }
 

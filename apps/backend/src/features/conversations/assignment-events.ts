@@ -4,7 +4,6 @@ import { StreamRepository } from "../streams"
 import { type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields } from "./staleness"
-import { toLiveBoardPostMessage } from "./board-post-message"
 import { resolveConversationDelivery } from "./conversation-delivery"
 
 /**
@@ -41,8 +40,6 @@ export async function emitAssignmentEvents(
     conversation: addStalenessFields(refreshed),
     parentStreamId,
     streamVisibility,
-    // This path assigns exactly `message`, so it is always the event's trigger.
-    triggeringMessage: toLiveBoardPostMessage(message),
   })
   await OutboxRepository.insert(client, "conversation:message_assigned", {
     workspaceId,

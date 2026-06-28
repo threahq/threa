@@ -59,53 +59,23 @@ export async function seedBoardPosts(workspaceId: string, posts: BoardPost[]): P
 
 /**
  * Apply a conversation aggregate from a `conversation:*` event onto the board's
- * IDB row: merge the new aggregate (re-sorting on `lastActivityAt`) and, when the
- * event carries the message that triggered it, append that body to the preview so
- * a new reply shows in place — not just the activity bump. `totalReplies` is
- * recomputed from the aggregate's authoritative `messageIds`, so the "N more" gap
- * tracks a foreign reply or a reassignment without waiting for a reseed. Returns
- * `false` when no row exists yet, so the caller can hydrate a card it cannot
- * render from the event alone.
+ * IDB row: merge the new aggregate (re-sorting on `lastActivityAt`) while
+ * keeping the cached preview messages — the event carries the aggregate, not the
+ * message bodies. Returns `false` when no row exists yet, so the caller can
+ * hydrate a card it cannot render from the event alone.
  */
 export async function mergeBoardConversation(
   conversationId: string,
-  conversation: ConversationWithStaleness,
-  triggeringMessage?: BoardPostMessage
+  conversation: ConversationWithStaleness
 ): Promise<boolean> {
   // Read-modify-write in one rw transaction so a concurrent optimistic write or
   // a second echo can't merge over a stale read of this row.
   return db.transaction("rw", db.conversations, async () => {
     const existing = await db.conversations.get(conversationId)
     if (!existing) return false
-
-    // `messageIds` is primary, opening-first; the opening renders separately, so
-    // the replies are the rest. A thread's opening is the parent message (not a
-    // member), so nothing is sliced there. Mirrors the server's board projection.
-    const opening = existing.openingMessage
-    const messageIds = conversation.messageIds ?? []
-    const replyIds = opening && opening.id === messageIds[0] ? messageIds.slice(1) : messageIds
-
-    // Append the triggering body only when it's actually a primary reply here;
-    // dedup by id (an optimistic write or a re-echo already has it), order by
-    // time, keep the trailing window.
-    let recentMessages = existing.recentMessages
-    if (triggeringMessage && replyIds.includes(triggeringMessage.id)) {
-      recentMessages = [...existing.recentMessages.filter((m) => m.id !== triggeringMessage.id), triggeringMessage]
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-        .slice(-RECENT_PREVIEW_CAP)
-    }
-
-    // Recompute the count only when the opening relationship is known. With a
-    // deleted opening (`openingMessage` null) the slice is ambiguous — the server
-    // still slices `messageIds[0]` for a flat conversation but not for a thread —
-    // so keep the last server-computed count rather than risk an off-by-one.
-    const totalReplies = opening ? replyIds.length : existing.totalReplies
-
     await db.conversations.put({
       ...existing,
       conversation,
-      recentMessages,
-      totalReplies,
       _lastActivityMs: lastActivityMs(conversation),
       _cachedAt: Date.now(),
       _status: undefined,
