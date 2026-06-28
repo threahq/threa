@@ -436,6 +436,115 @@ full fix); the intersection-observer "only what scrolled past is seen" (v1 freez
 the whole snapshot per edge 6); and the optional per-card "updated" dot for seen-card
 activity (edge 3).
 
+## Conversations as soft threads — panel + provenance + attached context (Kris)
+
+Two recurring worries motivate this: (1) conversation **classification is still not
+right**, and (2) **late replies to a flat conversation read as non-sequiturs** — we
+talked lunch, then a bug, the demo, a feature, and now someone out of a meeting
+replies "Pizza" from the board. In the flat timeline that "Pizza" lands at the tail,
+detached from the lunch thread three hours up. Worse for long-dormant revived topics.
+
+The load-bearing constraint (Kris): **never mutate a stream automatically.** The
+rejected fix was converting a dormant conversation into a thread — that moves
+existing messages and reorders, "fucks with your ordering." So the rule stays: a new
+message is always sequence-appended at the tail (INV-61); nothing relocates.
+
+### The weirdness lives in exactly one projection
+
+A late reply is only jarring in the **flat timeline**. The other two surfaces are
+already fine:
+
+- **Board** → correct by design: the topic's card resurfaces (and the "Stable view"
+  section above keeps it from yanking the eye).
+- **Conversation panel** (below) → coherent by construction: it gathers the topic's
+  scattered messages.
+- **Flat timeline** → the only broken read. The fix is to make it _self-explaining_
+  at the one spot it misleads, not to move anything.
+
+### The reframe: a conversation is a "soft thread"
+
+A **thread** is an _explicit, structural_ grouping (a child stream off a message;
+contiguous by construction). A **conversation** is a _projected_ grouping (a filter
+over the parent stream's flat messages; scattered). Make them peers: both
+**openable in the side panel** and **reply-able**. The difference is only how the
+group is defined — and the panel infra is already generic enough for both.
+
+Three mechanisms, all on existing rails:
+
+**A. On-message provenance indicator (read).** Mirror the thread affordance —
+`ThreadSlot` renders under a message and links to the thread panel
+(`timeline/thread-slot.tsx`, `thread-card.tsx`). The data already exists: the client
+builds `conversationIdByMessageId` from the conversation list
+(`conversation-overlay/model.ts`) and `annotateConversationRows` already stamps each
+row with its conversation **and a `blockStart` flag** (`timeline/event-list.tsx`).
+A late reply is therefore already detectable — a `blockStart` whose conversation's
+previous message is old / non-adjacent. Render a quiet inline chip on it, `↪ Pizza ·
+3h ago`, opening the conversation panel. Show the loud "continues from earlier"
+variant only on a **revival** (old/non-adjacent prior message); an ordinary
+sequential topic switch needs at most a subtle tick. Unlike a thread (one card under
+one root), a conversation has no single root, so the marker is **per context
+boundary**, not one card — mirror the affordance, not the layout.
+
+**B. Conversation as a first-class side panel (interact).** The panel is already
+fully generic: `panel-context.tsx` routes `?panel=streamId`, `ThreadPanelSlot` +
+`usePanelLayout` host arbitrary content, `StreamPanel` just renders `StreamContent`.
+Add a panel kind `?panel=conv:<id>` whose content is a **projection** of the stream's
+events filtered to that conversation — not a stream, no mutation (dead-on with the
+doc's projection thesis). Replying from the panel scopes the message to that
+conversation → the explicit, **determinable** path → synchronous assign + bump (no
+LLM), per "Realtime / sync model" above.
+
+**C. Attached context (author) — the unifying primitive.** In Threa, "attach a thing
+to a message" already means "embed a reference node in the message content":
+attachments are `attachmentReference` ProseMirror nodes
+(`packages/types/src/prosemirror.ts:243,403`; `markdown.ts`, `extractors.ts`) and
+quote-reply is the same pattern (`editor/quote-reply-extension.ts`). A
+`conversationReference` node is the same shape — and it produces all three needs in
+one gesture: from the normal tail composer you "attach context," pick Pizza, a
+removable pill appears, you send. That single act is **the explicit determinable
+declaration** (sync assign+bump, clean hand-labeled data for #1), **the authoritative
+source of the provenance chip** in (A) — rendered from the reference, instant, no
+dependence on the async classifier — and **reply-to-conversation without opening the
+panel** (B minus the friction; from the panel the pill is just pre-filled). It
+**subsumes quote-reply** (quoting a message is the message-level version of the same
+move) and generalizes (the slot could later attach a memo / file / stream link —
+**scope guard: ship the conversation type first**, INV-36).
+
+### Tone down the overlay
+
+Today `convOverlay=on` paints the whole wall — 4.5% row tint + colored rails + a
+floating dot-pill (`timeline/conversation-overlay/conversation-overlay.tsx`) — the
+"over-feature" Kris wants softened. Move its _information_ (membership, jump-to-topic,
+correct-topic) to quieter expressions: **drop the always-on tint** to an opt-in color
+mode (default off); keep the per-message **reassign** swatch but on-demand
+(hover/long-press) — it's the correction that trains #1; **promote** the panel as the
+way to see a topic coherently.
+
+### Why this also relaxes #1 (classification)
+
+Once explicit participation flows through scoped/attached replies (determinable, no
+classifier) and corrections are first-class (visible reassign → labeled examples, the
+forcing-function loop), **the classifier only has to be good for the genuinely
+ambient case** — free-form messages nobody filed. #1 stays "simple but hard," but
+stops being load-bearing for the surfaces people actually drive.
+
+### Open decisions
+
+1. **Indicator trigger** — loud `↪ continues X` only on revivals (old/non-adjacent
+   prior message), subtle tick at most on ordinary switches? _Lean: yes._
+2. **Attached context: content node vs. envelope field.** Attachments/quote-reply are
+   content nodes, and the backend already extracts content references, so consistency
+   says `conversationReference` is a content node — counter-argument: filing-into-a-
+   topic is arguably a message property, not body. _Lean: content node._
+3. **Chip source** — render the provenance chip from the attached reference
+   (authoritative, no flicker) rather than from async membership? _Lean: from the
+   reference._
+4. **Panel routing** — conversations as a peer panel kind `?panel=conv:<id>` rendering
+   a projection, alongside `?panel=streamId` for threads? _Lean: yes._
+5. **Filing tag vs. context anchor** — is an attached conversation a compact pill, or
+   an expandable "re: Pizza, this morning" card that makes a revived reply self-
+   contained for someone (or GAM) who wasn't there? _Same node, more rendering._
+
 ## Phasing
 
 The inversion changes the order. Two candidate entry points:
