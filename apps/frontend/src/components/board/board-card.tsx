@@ -77,7 +77,11 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   // window of the local rail. Flat if-chain, not a nested ternary (INV-47).
   let replies: RenderableMessage[]
   if (!expanded) replies = railReplies.slice(-RECENT_PREVIEW_CAP)
-  else if (allMessages) replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
+  // Prefer the server backfill only while the local rail is still incomplete;
+  // once the rail catches up, fall through to it so live edits keep flowing (the
+  // backfill's `data` lingers after `enabled` goes false).
+  else if (incompleteLocally && allMessages)
+    replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
   else replies = railReplies
   // Append this card's own just-sent replies, skipping any the rail or a backfill
   // already carries.
