@@ -126,6 +126,33 @@ describe("useBoardCardMessages", () => {
     await waitFor(() => expect(result.current.replies[0]?.contentMarkdown).toBe("after"))
   })
 
+  it("does not resurrect stale projection bodies when the conversation's replies are all tombstoned in the rail", async () => {
+    const del = msgEvent("r1", "stale body", 2)
+    ;(del.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()
+    await db.events.bulkPut([msgEvent("m1", "opening", 1), del])
+    // The cached projection still carries the pre-deletion body (a stale snapshot).
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1", recentMessages: [projectionMessage("r1")] })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    // The rail has seen r1 (as a tombstone), so the deleted body is gone, not
+    // resurrected from the projection.
+    expect(result.current.replies).toEqual([])
+    expect(result.current.openingMessage?.contentMarkdown).toBe("opening")
+  })
+
+  it("keeps the cached preview for a conversation whose ids aren't in the synced window", async () => {
+    // The stream is synced (has other messages) but NOT this conversation's — its
+    // ids are genuinely unseen, so the projection preview must survive.
+    await db.events.bulkPut([msgEvent("unrelated", "another conversation", 10)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1", recentMessages: [projectionMessage("r1")] })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.replies.length).toBe(1))
+    expect(result.current.source).toBe("projection")
+    expect(result.current.replies[0]?.contentMarkdown).toBe("projection r1")
+  })
+
   it("excludes soft-deleted messages from the rail", async () => {
     const deleted = msgEvent("r1", "gone", 2)
     ;(deleted.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()

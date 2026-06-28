@@ -76,36 +76,46 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
 
   // Reactive read of this conversation's primary messages from the events rail. A
   // primary membership always lives in the conversation's own stream, so one stream
-  // scan covers every reply (and the opening when the conversation is flat).
-  const liveById = useLiveQuery(async () => {
+  // scan covers every reply (and the opening when the conversation is flat). We
+  // track raw message ids seen separately from the renderable map: a soft-deleted
+  // message is a seen id with no renderable row, and the two must not be conflated.
+  const liveData = useLiveQuery(async () => {
     const events = await db.events.where("[streamId+eventType]").equals([streamId, "message_created"]).toArray()
-    const map = new Map<string, RenderableMessage>()
+    const seenMessageIds = new Set<string>()
+    const messages = new Map<string, RenderableMessage>()
     for (const event of events) {
+      const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
+      if (payload.messageId) seenMessageIds.add(payload.messageId)
       const message = eventToRenderable(event)
-      if (message) map.set(message.id, message)
+      if (message) messages.set(message.id, message)
     }
-    return map
+    return { messages, seenMessageIds }
   }, [streamId])
 
   return useMemo(() => {
     const totalReplies = replyIds.length
-    const liveOpening = openingId ? (liveById?.get(openingId) ?? null) : null
-    const openingMessage = liveOpening ?? (post.openingMessage as RenderableMessage | null) ?? null
+    const seen = liveData?.seenMessageIds
 
-    const liveReplies: RenderableMessage[] = []
-    if (liveById) {
+    // The rail "knows" this conversation once it has synced any of its message ids
+    // — INCLUDING soft-deleted ones, which `eventToRenderable` drops from the
+    // renderable map. Gate on raw presence, not renderable rows: a wholly-deleted
+    // conversation must show its tombstones (nothing), not resurrect stale bodies
+    // from the projection; a conversation whose ids simply aren't in the synced
+    // window is genuinely unseen and keeps the cached preview.
+    const openingSeen = !!(openingId && seen?.has(openingId))
+    const conversationSeen = seen !== undefined && (openingSeen || replyIds.some((id) => seen.has(id)))
+
+    let openingMessage: RenderableMessage | null
+    if (openingSeen && openingId) openingMessage = liveData?.messages.get(openingId) ?? null
+    else openingMessage = (post.openingMessage as RenderableMessage | null) ?? null
+
+    if (conversationSeen) {
+      const liveReplies: RenderableMessage[] = []
       for (const id of replyIds) {
-        const message = liveById.get(id)
+        const message = liveData?.messages.get(id)
         if (message) liveReplies.push(message)
       }
       liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    }
-
-    // Prefer the rail once it carries this conversation's content (any reply, or a
-    // resolved read of a reply-less conversation). Fall back to the cached preview
-    // while the stream is absent from IDB — the offline/cold first open.
-    const railHasContent = liveById !== undefined && (liveReplies.length > 0 || replyIds.length === 0)
-    if (railHasContent) {
       return { openingMessage, replies: liveReplies, totalReplies, source: "events" }
     }
     return {
@@ -114,7 +124,7 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
       totalReplies,
       source: "projection",
     }
-  }, [liveById, replyIds, openingId, post])
+  }, [liveData, replyIds, openingId, post])
 }
 
 export { RECENT_PREVIEW_CAP }
