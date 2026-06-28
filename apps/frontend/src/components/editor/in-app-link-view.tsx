@@ -38,10 +38,18 @@ export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
   const prefix = state.status === "resolved" ? state.prefix : undefined
   const avatar = state.status === "resolved" ? state.avatar : undefined
   const messageParts = state.status === "resolved" ? state.messageParts : undefined
+  const avatarSkeleton = state.status === "pending" && Boolean(attrs.messageId)
 
   return (
     <NodeViewWrapper as="span" data-type="in-app-link">
-      <InAppLinkChip icon={icon} prefix={prefix} label={label} avatar={avatar} messageParts={messageParts} />
+      <InAppLinkChip
+        icon={icon}
+        prefix={prefix}
+        label={label}
+        avatar={avatar}
+        messageParts={messageParts}
+        avatarSkeleton={avatarSkeleton}
+      />
     </NodeViewWrapper>
   )
 }

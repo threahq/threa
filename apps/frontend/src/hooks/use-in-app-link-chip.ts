@@ -1,6 +1,6 @@
 import { useMemo, type ComponentType } from "react"
 import { Hash, NotebookPen, MessageSquare, Lock, Globe } from "lucide-react"
-import type { StreamType, MessageLinkPreviewData } from "@threa/types"
+import { getAvatarUrl, type StreamType, type MessageLinkPreviewData } from "@threa/types"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { resolveStreamName } from "@/lib/streams"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
@@ -69,8 +69,8 @@ function streamTypeIcon(streamType: StreamType | undefined): ChipIcon {
  * or " in {name}" otherwise. Full names on both sides (no viewer-relative "You"),
  * so the label is identical for every reader — it's also what gets serialized
  * back into the link's markdown. Returns null when the author couldn't be
- * resolved (e.g. a bot/persona author the backend doesn't name yet) so the
- * caller falls back to the parent-stream name.
+ * resolved (e.g. a bot/persona author the backend doesn't name yet); the caller
+ * then settles the fully-resolved chip on the generic "Message".
  */
 export function buildMessageChipParts(data: MessageLinkPreviewData): ChipMessageParts | null {
   const lead = data.authorName
@@ -152,7 +152,15 @@ export function useInAppLinkChip({
         const parts = buildMessageChipParts(data)
         if (parts) {
           const label = `${parts.lead}${parts.tail}`
-          const avatar = data.authorName ? { url: data.authorAvatarUrl, name: data.authorName } : undefined
+          // Prefer the author's live avatar from the workspace store (reactive to
+          // avatar changes, like the rest of the app); fall back to the resolve's
+          // point-in-time snapshot for an author not in the local cache.
+          const liveUser =
+            data.authorType === "user" && data.authorId ? users.find((u) => u.id === data.authorId) : undefined
+          const avatarUrl = liveUser
+            ? (getAvatarUrl(workspaceId, liveUser.avatarUrl, 64) ?? undefined)
+            : data.authorAvatarUrl
+          const avatar = data.authorName ? { url: avatarUrl, name: data.authorName } : undefined
           return { status: "resolved", icon: MessageSquare, label, avatar, messageParts: parts }
         }
         // Fully resolved but the author can't be named (bot/persona) — settle on
@@ -183,5 +191,5 @@ export function useInAppLinkChip({
       }
     }
     return { status: "resolved", icon: Hash, label: "Conversation" }
-  }, [localName, loading, data, cachedType, isMessage])
+  }, [localName, loading, data, cachedType, isMessage, users, workspaceId])
 }

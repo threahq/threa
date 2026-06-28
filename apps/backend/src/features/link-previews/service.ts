@@ -389,6 +389,8 @@ export class LinkPreviewService {
       streamName: stream.displayName ?? stream.slug ?? undefined,
       streamType: stream.type,
       recipientName,
+      authorId: message.authorId,
+      authorType: message.authorType,
     }
   }
 

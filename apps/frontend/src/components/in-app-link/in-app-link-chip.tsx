@@ -24,6 +24,7 @@ export function InAppLinkChip({
   label,
   avatar,
   messageParts,
+  avatarSkeleton,
   className,
 }: {
   icon?: ComponentType<{ className?: string }>
@@ -31,6 +32,8 @@ export function InAppLinkChip({
   label: ReactNode
   avatar?: ChipAvatar
   messageParts?: ChipMessageParts
+  /** Pending message chip: reserve the resolved avatar's footprint with a skeleton. */
+  avatarSkeleton?: boolean
   className?: string
 }) {
   if (prefix) {
@@ -38,6 +41,15 @@ export function InAppLinkChip({
       <span className={cn(chipBase, triggerStyles.channel, className)} data-type="in-app-link-chip">
         {prefix}
         {label}
+      </span>
+    )
+  }
+
+  if (avatarSkeleton && !avatar) {
+    return (
+      <span className={cn(chipBase, inlineChip, triggerStyles.channel, className)} data-type="in-app-link-chip">
+        <span className="h-4 w-4 shrink-0 animate-pulse rounded-[4px] bg-foreground/10" aria-hidden="true" />
+        <span className="truncate">{label}</span>
       </span>
     )
   }

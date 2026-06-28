@@ -1324,6 +1324,13 @@ export interface MessageLinkPreviewData {
   streamType?: StreamType
   /** DM recipient (the non-author participant) display name (full tier, DMs only) */
   recipientName?: string
+  /**
+   * Author identity, so the chip can render the author's avatar live from the
+   * workspace store (reactive to avatar changes) rather than the point-in-time
+   * `authorAvatarUrl` snapshot. Full tier only.
+   */
+  authorId?: string
+  authorType?: AuthorType
   /** Whether the target message has been deleted */
   deleted?: boolean
 }
