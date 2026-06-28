@@ -12,6 +12,9 @@ interface MessageCreatedPayloadShape {
   attachments?: RenderableMessage["attachments"]
   linkPreviews?: RenderableMessage["linkPreviews"]
   deletedAt?: string | null
+  /** Set only on an optimistic board reply, naming the conversation it attaches
+   *  to so a card can surface the pending row before the server echo lands. */
+  conversationId?: string
 }
 
 /** Project a `message_created` event row into the shared render shape the timeline
@@ -37,22 +40,44 @@ interface StreamRail {
   /** Every message id the stream has synced — INCLUDING soft-deleted tombstones,
    *  which are absent from `messages`. Lets a card tell "deleted" from "unsynced". */
   seen: Set<string>
+  /** Pending optimistic replies the viewer just sent, grouped by their target
+   *  conversation id, chronological. These aren't yet in the conversation's
+   *  `messageIds`, so a card appends them to whatever it already shows; the
+   *  server echo swaps each for the real row (in `messages`, via `messageIds`). */
+  pendingByConversation: Map<string, RenderableMessage[]>
   /** False until the first IDB read resolves — distinguishes loading from empty. */
   resolved: boolean
 }
 
-const LOADING_RAIL: StreamRail = { messages: new Map(), seen: new Set(), resolved: false }
+const LOADING_RAIL: StreamRail = {
+  messages: new Map(),
+  seen: new Set(),
+  pendingByConversation: new Map(),
+  resolved: false,
+}
 
 function buildRail(events: CachedEvent[]): StreamRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
+  const pendingByConversation = new Map<string, RenderableMessage[]>()
   for (const event of events) {
     const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
     if (payload.messageId) seen.add(payload.messageId)
     const message = eventToRenderable(event)
-    if (message) messages.set(message.id, message)
+    if (!message) continue
+    messages.set(message.id, message)
+    // An optimistic reply (pending, not yet echoed) carries its target
+    // conversation so the card can show it before the id lands in `messageIds`.
+    if (event._status === "pending" && payload.conversationId) {
+      const list = pendingByConversation.get(payload.conversationId)
+      if (list) list.push(message)
+      else pendingByConversation.set(payload.conversationId, [message])
+    }
   }
-  return { messages, seen, resolved: true }
+  for (const list of pendingByConversation.values()) {
+    list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  }
+  return { messages, seen, pendingByConversation, resolved: true }
 }
 
 interface StreamRailEntry {
@@ -134,10 +159,16 @@ export interface BoardCardMessages {
    *  reply can't inflate the gap); otherwise the server count, since older replies
    *  aren't in IDB yet. */
   totalReplies: number
+  /** The viewer's own just-sent replies awaiting their server echo, chronological.
+   *  Not yet in `messageIds` (so absent from `replies`); the card appends them in
+   *  place. Empties as each echo swaps the optimistic row for the real one. */
+  pendingReplies: RenderableMessage[]
   /** Where the bodies came from: the live `db.events` rail, or the cached server
    *  projection (a stream not yet synced into IDB — a cold/offline first open). */
   source: "events" | "projection"
 }
+
+const NO_PENDING: RenderableMessage[] = []
 
 /**
  * A board card's messages, read OFFLINE-FIRST from the same `db.events` store the
@@ -166,8 +197,11 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
   )
 
   const rail = useStreamRail(streamId)
+  const conversationId = post.conversation.id
 
   return useMemo(() => {
+    const pendingReplies = rail.pendingByConversation.get(conversationId) ?? NO_PENDING
+
     // The server's count excludes `messageIds[0]` for a flat conversation even
     // when that opening was deleted, so trust it when the flat relationship is
     // unknown (deleted opening → `openingId` null).
@@ -189,6 +223,7 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
         openingMessage,
         replies: post.recentMessages as RenderableMessage[],
         totalReplies: serverTotal,
+        pendingReplies,
         source: "projection",
       }
     }
@@ -207,6 +242,6 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
     const fullySynced = replyIds.every((id) => rail.seen.has(id))
     const totalReplies = fullySynced ? liveReplies.length : serverTotal
 
-    return { openingMessage, replies: liveReplies, totalReplies, source: "events" }
-  }, [rail, replyIds, openingId, messageIds, post])
+    return { openingMessage, replies: liveReplies, totalReplies, pendingReplies, source: "events" }
+  }, [rail, replyIds, openingId, messageIds, post, conversationId])
 }

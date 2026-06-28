@@ -294,21 +294,18 @@ describe("useReplyToBoardPost", () => {
   })
 
   function mockReplyDeps() {
-    const create = vi.fn().mockResolvedValue({ id: "msg_new" })
-    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
-      create,
-    } as unknown as contextsModule.MessageService)
-    const createStream = vi.fn().mockResolvedValue({ id: "thread_1" })
-    vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
-      create: createStream,
-    } as unknown as contextsModule.StreamService)
-    return { create, createStream }
+    const queueDraftMessage = vi.fn().mockResolvedValue({ clientId: "temp_abc" })
+    vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+      queueDraftMessage,
+      currentUserId: "user_1",
+    } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
+    return { queueDraftMessage }
   }
 
   const DOC = { type: "doc", content: [] }
 
-  it("threads a lone channel root off the opening message, then sends into the thread (no directive)", async () => {
-    const { create, createStream } = mockReplyDeps()
+  it("threads a lone channel root off the opening message, promoting a draft thread (no directive)", async () => {
+    const { queueDraftMessage } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
@@ -323,25 +320,25 @@ describe("useReplyToBoardPost", () => {
       })
     })
 
-    expect(createStream).toHaveBeenCalledWith(WORKSPACE_ID, {
-      type: StreamTypes.THREAD,
-      parentStreamId: "chan_1",
-      parentMessageId: "msg_open",
-    })
-    expect(create).toHaveBeenCalledWith(
-      WORKSPACE_ID,
-      "thread_1",
-      expect.objectContaining({ streamId: "thread_1", contentJson: DOC, clientMessageId: expect.any(String) })
+    // The reply rides the durable queue with THREAD stream-creation, keyed on the
+    // draft panel id; no existing-conversation directive (a fresh thread is its
+    // own conversation).
+    expect(queueDraftMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentJson: DOC }),
+      expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        streamId: "draft:chan_1:msg_open",
+        draftId: "draft:chan_1:msg_open",
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "chan_1", parentMessageId: "msg_open" },
+      })
     )
-    // The thread is its own context — no existing-conversation directive.
-    expect(create.mock.calls[0][2]).not.toHaveProperty("conversation")
-    // The plan rides back so the card can refuse to show a reply that landed in
-    // a different (thread) conversation than the one it renders.
-    expect(res).toEqual({ message: { id: "msg_new" }, plan: { kind: "newThread", parentMessageId: "msg_open" } })
+    expect(queueDraftMessage.mock.calls[0][1]).not.toHaveProperty("conversation")
+    // The plan rides back so the composer shows the "posted to a new thread" note.
+    expect(res).toEqual({ plan: { kind: "newThread", parentMessageId: "msg_open" } })
   })
 
-  it("keeps a multi-message channel reply flat, attached to the conversation (no thread)", async () => {
-    const { create, createStream } = mockReplyDeps()
+  it("keeps a multi-message channel reply flat, attached to the conversation via the existing directive", async () => {
+    const { queueDraftMessage } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
@@ -356,21 +353,21 @@ describe("useReplyToBoardPost", () => {
       })
     })
 
-    expect(createStream).not.toHaveBeenCalled()
-    expect(create).toHaveBeenCalledWith(
-      WORKSPACE_ID,
-      "chan_1",
+    expect(queueDraftMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentJson: DOC }),
       expect.objectContaining({
         streamId: "chan_1",
         conversation: { intent: "existing", conversationId: "conv_1" },
       })
     )
-    // intoConversation → the card may show it in place.
+    // No stream creation — it attaches to the existing conversation in place.
+    expect(queueDraftMessage.mock.calls[0][1]).not.toHaveProperty("streamCreation")
+    // intoConversation → the card shows it in place.
     expect(res?.plan).toEqual({ kind: "intoConversation" })
   })
 
   it("replies straight into a thread card's own stream via the existing directive", async () => {
-    const { create, createStream } = mockReplyDeps()
+    const { queueDraftMessage } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
@@ -384,11 +381,12 @@ describe("useReplyToBoardPost", () => {
       })
     })
 
-    expect(createStream).not.toHaveBeenCalled()
-    expect(create).toHaveBeenCalledWith(
-      WORKSPACE_ID,
-      "thread_x",
-      expect.objectContaining({ conversation: { intent: "existing", conversationId: "conv_thread" } })
+    expect(queueDraftMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentJson: DOC }),
+      expect.objectContaining({
+        streamId: "thread_x",
+        conversation: { intent: "existing", conversationId: "conv_thread" },
+      })
     )
   })
 })

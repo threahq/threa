@@ -84,6 +84,34 @@ describe("useBoardCardMessages", () => {
     expect(result.current.totalReplies).toBe(2)
   })
 
+  it("surfaces a pending optimistic reply tagged with its conversation, before the id lands in messageIds", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
+    // The viewer's just-sent reply: an optimistic pending event tagged with the
+    // target conversation, not yet a member of the conversation's messageIds.
+    await db.events.put({
+      id: "temp_x",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "3",
+      _sequenceNum: 3,
+      eventType: "message_created",
+      payload: { messageId: "temp_x", contentMarkdown: "my pending reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_x"]))
+    expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("my pending reply")
+    // Optimistic, so it doesn't inflate the rail replies (not yet in messageIds).
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+  })
+
   it("falls back to the cached projection when the stream isn't in IDB (cold/offline)", async () => {
     const post = makePost({
       messageIds: ["m1", "r1"],

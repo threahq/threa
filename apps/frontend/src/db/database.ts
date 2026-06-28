@@ -4,6 +4,7 @@ import type {
   AuthorType,
   BoardPost,
   CompanionMode,
+  ConversationDirective,
   E2eActor,
   EventType,
   JSONContent,
@@ -287,6 +288,12 @@ export interface PendingMessage {
   confirmedPrivacyWarning?: boolean
   /** When set, the queue creates this stream before sending the message */
   streamCreation?: PendingStreamCreation
+  /**
+   * Conversation directive forwarded on send so a board reply attaches to the
+   * declared conversation synchronously (see {@link ConversationDirective}).
+   * Omitted on ordinary stream sends, which let the async extractor infer.
+   */
+  conversation?: ConversationDirective
   /** The draft ID to clean up after successful stream creation + message send */
   draftId?: string
   /** Set by the queue after stream creation succeeds — prevents duplicate creation on retry */
