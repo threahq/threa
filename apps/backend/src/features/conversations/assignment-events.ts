@@ -41,9 +41,7 @@ export async function emitAssignmentEvents(
     conversation: addStalenessFields(refreshed),
     parentStreamId,
     streamVisibility,
-    // This deterministic path always fires for exactly the message being
-    // assigned, so it is always this event's triggering message — the board
-    // shows the post/reply body live without waiting for the next seed.
+    // This path assigns exactly `message`, so it is always the event's trigger.
     triggeringMessage: toLiveBoardPostMessage(message),
   })
   await OutboxRepository.insert(client, "conversation:message_assigned", {

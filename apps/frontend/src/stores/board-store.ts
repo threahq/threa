@@ -81,9 +81,9 @@ export async function mergeBoardConversation(
     // `messageIds` is primary, opening-first; the opening renders separately, so
     // the replies are the rest. A thread's opening is the parent message (not a
     // member), so nothing is sliced there. Mirrors the server's board projection.
-    const openingId = existing.openingMessage?.id
+    const opening = existing.openingMessage
     const messageIds = conversation.messageIds ?? []
-    const replyIds = openingId === messageIds[0] ? messageIds.slice(1) : messageIds
+    const replyIds = opening && opening.id === messageIds[0] ? messageIds.slice(1) : messageIds
 
     // Append the triggering body only when it's actually a primary reply here;
     // dedup by id (an optimistic write or a re-echo already has it), order by
@@ -95,11 +95,17 @@ export async function mergeBoardConversation(
         .slice(-RECENT_PREVIEW_CAP)
     }
 
+    // Recompute the count only when the opening relationship is known. With a
+    // deleted opening (`openingMessage` null) the slice is ambiguous — the server
+    // still slices `messageIds[0]` for a flat conversation but not for a thread —
+    // so keep the last server-computed count rather than risk an off-by-one.
+    const totalReplies = opening ? replyIds.length : existing.totalReplies
+
     await db.conversations.put({
       ...existing,
       conversation,
       recentMessages,
-      totalReplies: replyIds.length,
+      totalReplies,
       _lastActivityMs: lastActivityMs(conversation),
       _cachedAt: Date.now(),
       _status: undefined,

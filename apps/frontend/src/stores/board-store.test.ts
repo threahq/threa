@@ -154,6 +154,17 @@ describe("mergeBoardConversation", () => {
     expect(row?.totalReplies).toBe(1)
   })
 
+  it("preserves the seeded reply count when the opening message was deleted (ambiguous slice)", async () => {
+    // openingMessage null → the flat-vs-thread slice can't be determined, so the
+    // last server-computed totalReplies must survive rather than flip off-by-one.
+    await seedBoardPosts(WORKSPACE_ID, [
+      { ...makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")]), openingMessage: null },
+    ])
+    await mergeBoardConversation("conv_1", makeConversation("conv_1", "2026-06-22T12:00:00.000Z", ["m1", "r1"]))
+    const row = await db.conversations.get("conv_1")
+    expect(row?.totalReplies).toBe(1)
+  })
+
   it("ignores a triggering body that isn't a primary reply of this conversation", async () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")])])
     await mergeBoardConversation(
