@@ -10,6 +10,7 @@ import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useStableBoardView, type BoardViewPost } from "@/hooks/use-stable-board-view"
+import { useBoardStreamSubscriptions } from "@/hooks/use-board-stream-subscriptions"
 import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-anchor"
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
@@ -96,6 +97,9 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   // the query already holds posts. Treat that window as loading so the feed
   // doesn't flash the empty state before the seed lands.
   const seedPending = (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
+  // Keep the streams behind on-screen cards live + offline-first (threads and
+  // public channels the viewer never joined aren't subscribed at bootstrap).
+  useBoardStreamSubscriptions(posts)
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)

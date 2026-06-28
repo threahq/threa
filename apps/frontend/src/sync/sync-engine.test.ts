@@ -761,6 +761,101 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
   })
 })
 
+describe("SyncEngine.setBoardStreamIds", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.events.clear(), db.streams.clear(), db.streamMemberships.clear()])
+  })
+
+  it("catches up + bootstraps a board card stream that isn't already subscribed", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    deps.streamService.bootstrap.mockClear()
+
+    engine.setBoardStreamIds(["thread_1"])
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", undefined)
+    })
+  })
+
+  it("skips a stream already subscribed (member / currently open) — no duplicate bootstrap", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    engine.setCurrentStreamId("stream_open")
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_open", undefined)
+    })
+    deps.streamService.bootstrap.mockClear()
+
+    engine.setBoardStreamIds(["stream_open"])
+
+    // Give any errant async sync a chance to fire before asserting it didn't.
+    await Promise.resolve()
+    expect(deps.streamService.bootstrap).not.toHaveBeenCalled()
+  })
+
+  it("only syncs newly-declared streams when the on-screen set grows", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    engine.setBoardStreamIds(["thread_a"])
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_a", undefined)
+    })
+    deps.streamService.bootstrap.mockClear()
+
+    engine.setBoardStreamIds(["thread_a", "thread_b"])
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_b", undefined)
+    })
+    expect(deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "thread_a")).toHaveLength(0)
+  })
+
+  it("syncs board streams declared before the first connect (offline-cold board open that comes online)", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    // Board mounted + declared while still disconnected — no socket yet, so the
+    // immediate sync no-ops.
+    engine.setBoardStreamIds(["thread_cold"])
+    expect(deps.streamService.bootstrap).not.toHaveBeenCalledWith("ws_1", "thread_cold", undefined)
+
+    await primeConnectedEngine(engine, socket) // first connect
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap.mock.calls.some((call) => call[1] === "thread_cold")).toBe(true)
+    })
+  })
+
+  it("re-asserts board streams on reconnect so their cards stay live across a drop", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    engine.setBoardStreamIds(["thread_live"])
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_live", undefined)
+    })
+    deps.streamService.bootstrap.mockClear()
+
+    await engine.onConnect(asSocket(socket)) // reconnect wipes + re-subscribes
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap.mock.calls.some((call) => call[1] === "thread_live")).toBe(true)
+    })
+  })
+})
+
 describe("SyncEngine.backfillStreamGap", () => {
   beforeEach(async () => {
     resetRevealGate()

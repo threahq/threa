@@ -11,6 +11,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as messageReactionsModule from "@/hooks/use-message-reactions"
+import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 
@@ -129,6 +130,11 @@ beforeEach(() => {
     toggleReaction: vi.fn(),
     toggleByEmoji: vi.fn(),
   } as unknown as ReturnType<typeof messageReactionsModule.useMessageReactions>)
+  // The board declares its on-screen card streams to the SyncEngine to keep them
+  // live; the engine isn't wired in this harness, so stub the hook.
+  vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
+    setBoardStreamIds: vi.fn(),
+  } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   // Author names open the profile via UserProfileProvider, not mounted here.
   vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
   // RelativeTime reads timezone/locale from the preferences context.
