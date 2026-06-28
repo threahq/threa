@@ -18,7 +18,12 @@ import type { BoardViewPost } from "./use-stable-board-view"
 export function useBoardStreamSubscriptions(posts: BoardViewPost[]): void {
   const syncEngine = useSyncEngine()
 
-  const streamIds = useMemo(() => {
+  // The frozen board view hands back a fresh array on every commit even when the
+  // same streams are on screen. Derive a stable key for the deduped stream set,
+  // then derive the array FROM that key so its identity only changes when which
+  // streams are visible changes — the declaration effect can then depend on the
+  // array directly instead of a proxy it closes over (no stale-closure shape).
+  const streamSetKey = useMemo(() => {
     const seen = new Set<string>()
     const ids: string[] = []
     for (const post of posts) {
@@ -27,17 +32,15 @@ export function useBoardStreamSubscriptions(posts: BoardViewPost[]): void {
       seen.add(streamId)
       ids.push(streamId)
     }
-    return ids
+    return ids.join(",")
+    // Stream ids are prefixed ULIDs (no commas), so join/split round-trips cleanly.
   }, [posts])
 
-  // The frozen board view hands back a fresh array on every commit even when the
-  // same streams are on screen; key the declaration on the stream set itself so
-  // it only re-fires when which streams are visible actually changes.
-  const streamSetKey = streamIds.join(",")
+  const streamIds = useMemo(() => (streamSetKey ? streamSetKey.split(",") : []), [streamSetKey])
 
   useEffect(() => {
     syncEngine.setBoardStreamIds(streamIds)
-  }, [syncEngine, streamSetKey])
+  }, [syncEngine, streamIds])
 
   useEffect(() => {
     return () => syncEngine.setBoardStreamIds([])
