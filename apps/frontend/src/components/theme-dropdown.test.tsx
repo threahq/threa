@@ -21,14 +21,18 @@ describe("ThemeDropdown", () => {
 
   // The sidebar host wires onOpenChange to setMenuOpen so the menu opening can't
   // collapse the mobile hover-preview sidebar out from under the open dropdown.
-  it("reports open state through onOpenChange", async () => {
+  // Both edges matter: the close report is what lets the sidebar resume
+  // collapsing, so a regression that stopped forwarding `false` would strand it.
+  it("reports both open and close transitions through onOpenChange", async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
 
     render(<ThemeDropdown onOpenChange={onOpenChange} />)
 
     await user.click(screen.getByRole("button", { name: "Theme & Settings" }))
-
     expect(onOpenChange).toHaveBeenCalledWith(true)
+
+    await user.keyboard("{Escape}")
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 })
