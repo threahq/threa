@@ -275,6 +275,16 @@ function getNodeText(node: JSONContent): string {
     const escapedTitle = rawTitle.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
     return `[${escapedTitle}](${buildMemoHref({ memoId })})`
   }
+  if (node.type === "inAppLink") {
+    const url = node.attrs?.url as string
+    if (!url) return ""
+    // Wire-format stays a normal markdown link so external/API consumers get a
+    // real navigable URL and the timeline re-derives the chip from the link
+    // alone. The cached name is the label; fall back to the URL when absent.
+    const name = node.attrs?.name as string | undefined
+    const rawLabel = name && name.length > 0 ? name : url
+    return `[${escapeMarkdownLinkText(rawLabel)}](${url})`
+  }
   if (node.type === "giphyEmbed") {
     const giphyUrl = node.attrs?.giphyUrl as string
     if (!giphyUrl) return ""
@@ -301,6 +311,7 @@ function isAtomNode(node: JSONContent): boolean {
     node.type === "attachmentReference" ||
     node.type === "emoji" ||
     node.type === "memoEmbed" ||
+    node.type === "inAppLink" ||
     node.type === "giphyEmbed"
   )
 }

@@ -523,6 +523,109 @@ describe("@threa/prosemirror memo embed round-trip", () => {
   })
 })
 
+describe("@threa/prosemirror in-app link node serialization", () => {
+  it("serializes an inAppLink node to a normal [name](url) markdown link", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "see " },
+            {
+              type: "inAppLink",
+              attrs: {
+                url: "https://app.threa.io/w/ws_1/s/stream_1",
+                streamId: "stream_1",
+                messageId: null,
+                name: "#design",
+              },
+            },
+            { type: "text", text: " thanks" },
+          ],
+        },
+      ],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe("see [#design](https://app.threa.io/w/ws_1/s/stream_1) thanks")
+  })
+
+  it("falls back to the URL as link text when no name is cached", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "inAppLink",
+              attrs: {
+                url: "https://app.threa.io/w/ws_1/s/stream_1?m=msg_1",
+                streamId: "stream_1",
+                messageId: "msg_1",
+                name: "",
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe(
+      "[https://app.threa.io/w/ws_1/s/stream_1?m=msg_1](https://app.threa.io/w/ws_1/s/stream_1?m=msg_1)"
+    )
+  })
+
+  it("escapes brackets and backslashes in the cached name", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "inAppLink",
+              attrs: {
+                url: "https://app.threa.io/w/ws_1/s/stream_1",
+                streamId: "stream_1",
+                messageId: null,
+                name: "a [b]\\c",
+              },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe("[a \\[b\\]\\\\c](https://app.threa.io/w/ws_1/s/stream_1)")
+  })
+
+  it("inherits adjacent marks like other inline atoms", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "inAppLink",
+              attrs: {
+                url: "https://app.threa.io/w/ws_1/s/stream_1",
+                streamId: "stream_1",
+                messageId: null,
+                name: "#design",
+              },
+            },
+            { type: "text", text: " matters", marks: [{ type: "bold" }] },
+          ],
+        },
+      ],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe("**[#design](https://app.threa.io/w/ws_1/s/stream_1) matters**")
+  })
+})
+
 describe("@threa/prosemirror giphy embed round-trip", () => {
   const GIF_URL = "https://media3.giphy.com/media/abc123/200w.gif?cid=xyz&rid=200w.gif"
 

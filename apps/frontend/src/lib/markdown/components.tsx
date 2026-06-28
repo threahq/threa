@@ -4,6 +4,8 @@ import { useNavigate, useParams } from "react-router-dom"
 import { parseGiphyHref, parseMemoHref, parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
+import { classifyDraftLink } from "@/lib/in-app-links"
+import { InAppLinkInline } from "@/components/in-app-link/in-app-link-inline"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
@@ -183,6 +185,23 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   }
 
   const internalPath = href ? resolveInternalAppPath(href) : null
+
+  // In-app stream/message links render as the same named chip the composer
+  // shows (the below-message preview card is suppressed in `link-preview-list`).
+  // Keyed on URL classification so old and new messages render identically.
+  const inAppRef = href ? classifyDraftLink(href) : null
+  if (inAppRef && (inAppRef.kind === "stream" || inAppRef.kind === "message") && workspaceId) {
+    return (
+      <InAppLinkInline
+        href={inAppRef.url}
+        workspaceId={workspaceId}
+        streamId={inAppRef.streamId}
+        messageId={inAppRef.kind === "message" ? inAppRef.messageId : null}
+        fallbackLabel={extractTextFromChildren(children)}
+      />
+    )
+  }
+
   if (internalPath) {
     // Modifier-clicks and middle-clicks fall through to the native <a> so the
     // user still gets "open in new tab" / right-click menu semantics.

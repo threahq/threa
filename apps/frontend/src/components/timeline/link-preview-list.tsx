@@ -7,7 +7,7 @@ import { usePreferences } from "@/contexts"
 import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
-import { isInAppLinkContentType, type LinkPreviewSummary } from "@threa/types"
+import { isInAppLinkContentType, isInlineChipContentType, type LinkPreviewSummary } from "@threa/types"
 
 const DEFAULT_VISIBLE_COUNT = 3
 
@@ -86,7 +86,13 @@ export function LinkPreviewList({
     [workspaceId, messageId]
   )
 
-  const visiblePreviews = useMemo(() => previews.filter((p) => !dismissedIds.has(p.id)), [previews, dismissedIds])
+  // Stream/message links render as an inline chip inside the message body, so
+  // their card is suppressed here (the chip is the single surface). Memo and
+  // web previews keep their card.
+  const visiblePreviews = useMemo(
+    () => previews.filter((p) => !dismissedIds.has(p.id) && !isInlineChipContentType(p.contentType)),
+    [previews, dismissedIds]
+  )
 
   if (visiblePreviews.length === 0) return null
 
