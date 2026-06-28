@@ -83,6 +83,10 @@ interface SyncEngineDeps {
 const MAX_CATCHUP_PAGES = 20
 const CATCHUP_PAGE_LIMIT = 500
 
+/** Max in-flight board card stream catch-ups. Bounds the bootstrap-fetch burst
+ *  when the board opens onto many unsynced thread/public streams at once. */
+const BOARD_SYNC_CONCURRENCY = 6
+
 /**
  * Above this many missed entries on the first catch-up page, heal the whole
  * workspace with one atomic snapshot instead of replaying the gap entry by
@@ -175,6 +179,11 @@ export class SyncEngine {
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
   private visibleStreamIds: string[] = []
+  /** Streams whose board cards are on screen — declared by the board page, kept
+   *  separate from `visibleStreamIds` (the sidebar's, replaced wholesale). Their
+   *  bodies ride `db.events`, so the board joins + catches them up like any opened
+   *  stream and re-asserts them across reconnects (see setBoardStreamIds). */
+  private boardStreamIds = new Set<string>()
   private currentUser: { id: string } | null = null
   /** Last workspace bootstrap error, if any. Consumers can check this for 404/403 handling. */
   lastWorkspaceError: unknown = null
@@ -201,6 +210,41 @@ export class SyncEngine {
 
   setVisibleStreamIds(ids: string[]): void {
     this.visibleStreamIds = ids
+  }
+
+  /**
+   * Declare the streams whose board cards are currently on screen. The board
+   * renders message bodies OFFLINE-FIRST off the `db.events` rail, so a card is
+   * only fully live + reactive once its stream's history is in IDB and its room
+   * is joined — which is exactly what opening the stream does. This drives that
+   * for every board card, including threads and public channels the viewer never
+   * joined (member streams are already subscribed at bootstrap).
+   *
+   * It is additive and must NEVER route through setVisibleStreamIds — that set is
+   * the sidebar's and is replaced wholesale (clobbering it would drop the
+   * sidebar's reconnect catch-up). Newly-declared streams not already subscribed
+   * are caught up + bootstrapped here, concurrency-capped so opening the board
+   * doesn't fire a fetch burst across dozens of unsynced streams. Board streams
+   * join the reconnect / connectivity-resume re-sync set (getVisibleServerStreamIds)
+   * so they stay live across drops while the board is open.
+   *
+   * Subscriptions are NOT torn down per card: clearing on unmount only shrinks the
+   * reconnect set (so a closed board doesn't re-fetch on reconnect), while the
+   * already-subscribed skip below means reopening the board re-syncs nothing. We
+   * never unsubscribe a board stream — that would race a card click that navigates
+   * into the very stream being torn down.
+   */
+  setBoardStreamIds(ids: string[]): void {
+    const next = new Set(ids)
+    const toSync: string[] = []
+    for (const streamId of next) {
+      if (this.boardStreamIds.has(streamId)) continue
+      if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) continue
+      if (this.subscribedStreams.has(streamId)) continue
+      toSync.push(streamId)
+    }
+    this.boardStreamIds = next
+    if (toSync.length > 0) void this.syncBoardStreams(toSync)
   }
 
   /** Update the current auth user (called from React when auth state settles). */
@@ -258,6 +302,19 @@ export class SyncEngine {
     )
 
     await this.runBootstrap(isReconnect)
+
+    // A reconnect catches up the visible + board streams inside runBootstrap (via
+    // getVisibleServerStreamIds); a first connect deliberately does not. But the
+    // board may already be mounted from cache (a deep-link or warm-but-offline
+    // open that just came online), so sync any declared board streams whose rooms
+    // the fresh bootstrap didn't join — otherwise their cards wouldn't go live
+    // until the next reconnect.
+    if (!isReconnect && this.boardStreamIds.size > 0) {
+      const pending = [...this.boardStreamIds].filter(
+        (id) => !this.subscribedStreams.has(id) && !id.startsWith("draft_") && !id.startsWith("draft:")
+      )
+      if (pending.length > 0) void this.syncBoardStreams(pending)
+    }
 
     // Process pending offline operations (edits, deletes, reactions, drafts)
     this.kickOperationQueue()
@@ -817,7 +874,11 @@ export class SyncEngine {
   }
 
   private getVisibleServerStreamIds(): string[] {
-    const streamIds = this.currentStreamId ? [this.currentStreamId, ...this.visibleStreamIds] : this.visibleStreamIds
+    const streamIds = [
+      ...(this.currentStreamId ? [this.currentStreamId] : []),
+      ...this.visibleStreamIds,
+      ...this.boardStreamIds,
+    ]
     return Array.from(
       new Set(streamIds.filter((streamId) => !streamId.startsWith("draft_") && !streamId.startsWith("draft:")))
     )
@@ -837,6 +898,26 @@ export class SyncEngine {
         await this.ensureStreamSubscription(streamId)
       }
     }
+  }
+
+  /**
+   * Full catch-up + bootstrap for board card streams, in feed order (the viewer
+   * sees the top first) and bounded to BOARD_SYNC_CONCURRENCY in-flight so a
+   * board open across dozens of unsynced streams doesn't saturate the network on
+   * a spotty connection. Reuses refreshStreamAfterNavigation — the same
+   * cursor-before-join → bootstrap → applyStreamBootstrap path opening a stream
+   * runs — which dedupes in-flight refreshes and no-ops while offline.
+   */
+  private async syncBoardStreams(streamIds: string[]): Promise<void> {
+    let cursor = 0
+    const worker = async (): Promise<void> => {
+      while (cursor < streamIds.length && !this.isDestroyed) {
+        const streamId = streamIds[cursor++]
+        await this.refreshStreamAfterNavigation(streamId)
+      }
+    }
+    const lanes = Math.min(BOARD_SYNC_CONCURRENCY, streamIds.length)
+    await Promise.all(Array.from({ length: lanes }, () => worker()))
   }
 
   /** Member stream ids from the offline cache, for the bootstrap-failure path. */

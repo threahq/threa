@@ -148,8 +148,9 @@ export interface BoardCardMessages {
  * When the card's stream hasn't synced into IDB yet (a never-opened public channel
  * on a cold device), it falls back to the cached server projection on the
  * conversation row so the card always shows something immediately. The board
- * subscribing those streams (so their events flow in) is the coverage follow-up;
- * the fallback keeps the card correct until then.
+ * declares its on-screen card streams to the SyncEngine (useBoardStreamSubscriptions),
+ * which catches them up + joins their rooms, so the fallback resolves to the live
+ * rail once that sync lands — the projection just covers the cold-open window.
  */
 export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
   const streamId = post.conversation.streamId
