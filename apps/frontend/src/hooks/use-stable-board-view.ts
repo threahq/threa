@@ -1,6 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useBoardPosts } from "@/stores/board-store"
 import type { CachedBoardPost } from "@/db"
+
+/** How long `revealNext` stays armed after the viewer posts. Bounds the auto-
+ *  reveal to the window right after their own action, so a stale arm can't later
+ *  fire on an unrelated incoming conversation. */
+const REVEAL_ARM_MS = 8000
 
 /** A board post in the stable view — re-exported so UI (which can't import `@/db`
  *  directly, INV-15) shares the exact shape the hook renders from. */
@@ -134,8 +139,19 @@ export function useStableBoardView(workspaceId: string): StableBoardView {
   const liveRef = useRef<CachedBoardPost[]>([])
   // One-shot: when armed, the next live change with fresh arrivals commits
   // instead of buffering — so the viewer's own just-posted card is revealed, not
-  // hidden behind its own pill.
+  // hidden behind its own pill. Auto-disarms after REVEAL_ARM_MS so a post that
+  // never lands a visible conversation can't leave it armed to fire on an
+  // unrelated arrival minutes later.
   const revealNextRef = useRef(false)
+  const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const disarmReveal = useCallback(() => {
+    revealNextRef.current = false
+    if (revealTimerRef.current) {
+      clearTimeout(revealTimerRef.current)
+      revealTimerRef.current = null
+    }
+  }, [])
+  useEffect(() => disarmReveal, [disarmReveal])
 
   // Reset the view when the workspace changes in place (the board route keeps the
   // same component instance across `:workspaceId`). React-blessed render-time
@@ -161,7 +177,7 @@ export function useStableBoardView(workspaceId: string): StableBoardView {
     const next = reconcileStableView(committed, live)
     if (next.committed !== committed) setCommitted(next.committed)
     if (revealNextRef.current && next.buffered.length > 0) {
-      revealNextRef.current = false
+      disarmReveal()
       const snap = snapshot(live)
       if (!sameIds(snap.order, committed.order)) setCommitted(snap)
       if (buffered.length > 0) setBuffered([])
@@ -180,6 +196,11 @@ export function useStableBoardView(workspaceId: string): StableBoardView {
 
   const revealNext = useCallback(() => {
     revealNextRef.current = true
+    if (revealTimerRef.current) clearTimeout(revealTimerRef.current)
+    revealTimerRef.current = setTimeout(() => {
+      revealNextRef.current = false
+      revealTimerRef.current = null
+    }, REVEAL_ARM_MS)
   }, [])
 
   const posts = useMemo(() => {

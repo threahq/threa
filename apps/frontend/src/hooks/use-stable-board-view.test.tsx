@@ -126,6 +126,24 @@ describe("useStableBoardView", () => {
     expect(result.current.newCount).toBe(0)
   })
 
+  it("disarms revealNext after its window, so a later unrelated arrival buffers", () => {
+    vi.useFakeTimers()
+    try {
+      mockLive(feed(post("a", 300)))
+      const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
+      act(() => result.current.revealNext())
+      // Nothing arrived within the window; the arm expires.
+      act(() => vi.advanceTimersByTime(8001))
+      act(() => mockLive(feed(post("late", 600), post("a", 300))))
+      rerender()
+      // The stale arm did not fire — the late arrival waits behind the pill.
+      expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+      expect(result.current.newCount).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("keeps a vanished committed card rendering in place until the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
     const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
