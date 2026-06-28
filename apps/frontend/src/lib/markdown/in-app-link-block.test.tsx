@@ -39,11 +39,11 @@ describe("MarkdownContent — inline in-app link chip", () => {
     const url = `${origin}/w/ws_1/s/stream_1`
     renderMarkdown(`see [whatever](${url}) here`)
 
-    // Local cache wins over the markdown link text. The channel's `#` comes from
-    // the Hash icon, so the label is the bare slug (no doubled "# #design").
-    const link = screen.getByRole("link", { name: "design" })
+    // Local cache wins over the markdown link text. The channel renders
+    // mention-style — `#` prefix + bare slug — so it reads "#design" once (not a
+    // doubled "# #design").
+    const link = screen.getByRole("link", { name: "#design" })
     expect(link).toHaveAttribute("href", url)
-    expect(screen.queryByText("#design")).not.toBeInTheDocument()
     expect(screen.queryByText("whatever")).not.toBeInTheDocument()
   })
 

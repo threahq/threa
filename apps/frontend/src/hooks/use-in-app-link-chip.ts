@@ -13,9 +13,14 @@ type ChipIcon = ComponentType<{ className?: string }>
  * placeholder the viewer can't see past (cross-workspace / private / deleted);
  * `pending` means the backend resolve is in flight and the caller should fall
  * back to its cached label rather than flashing a placeholder (INV-21).
+ *
+ * `prefix` is the channel sigil (`#`): inline (mention-style) surfaces render it
+ * as text in front of the bare name, matching a `#channel` mention; the pill
+ * surface ignores it and shows the `icon` instead. `label` is always the bare
+ * name (no sigil) so neither surface doubles the `#`.
  */
 export type InAppLinkChipState =
-  | { status: "resolved"; icon: ChipIcon; label: string }
+  | { status: "resolved"; icon: ChipIcon; label: string; prefix?: string }
   | { status: "restricted"; icon: ChipIcon; label: string }
   | { status: "pending" }
 
@@ -82,16 +87,28 @@ export function useInAppLinkChip({
       return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
     }
     if (localName) {
-      // A channel's resolved name is already `#slug`, and a channel stream chip
-      // renders the Hash icon too — strip the slug's leading `#` so it doesn't
-      // double up as "# #channel". Message chips keep it (their icon is a
-      // message glyph, so the `#` still reads as "in #channel").
+      // A channel renders its `#` as a text prefix (mention-style), so strip it
+      // from the bare label; the chip's `prefix` adds it back. Message links keep
+      // a message glyph instead of a sigil.
       const isChannelChip = !isMessage && cachedType === "channel"
       const label = isChannelChip && localName.startsWith("#") ? localName.slice(1) : localName
-      return { status: "resolved", icon: isMessage ? MessageSquare : streamTypeIcon(cachedType), label }
+      return {
+        status: "resolved",
+        icon: isMessage ? MessageSquare : streamTypeIcon(cachedType),
+        label,
+        prefix: isChannelChip ? "#" : undefined,
+      }
     }
     if (loading) return { status: "pending" }
-    const name = (data?.kind === "stream" && data.streamName) || (isMessage ? "Message" : "Conversation")
-    return { status: "resolved", icon: isMessage ? MessageSquare : Hash, label: name }
+    if (data?.kind === "stream" && data.streamName) {
+      const isChannel = data.streamType === "channel"
+      return {
+        status: "resolved",
+        icon: isMessage ? MessageSquare : streamTypeIcon(data.streamType),
+        label: data.streamName,
+        prefix: !isMessage && isChannel ? "#" : undefined,
+      }
+    }
+    return { status: "resolved", icon: isMessage ? MessageSquare : Hash, label: isMessage ? "Message" : "Conversation" }
   }, [localName, loading, data, cachedType, isMessage])
 }
