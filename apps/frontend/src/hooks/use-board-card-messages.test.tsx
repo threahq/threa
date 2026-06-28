@@ -40,6 +40,8 @@ function makePost(opts: {
   messageIds: string[]
   openingId: string | null
   recentMessages?: ReturnType<typeof projectionMessage>[]
+  /** Server-projected reply count; defaults to the flat/thread derivation. */
+  totalReplies?: number
 }): BoardViewPost {
   const { messageIds, openingId, recentMessages = [] } = opts
   return {
@@ -55,7 +57,8 @@ function makePost(opts: {
     },
     openingMessage: openingId ? projectionMessage(openingId) : null,
     recentMessages,
-    totalReplies: openingId && messageIds[0] === openingId ? messageIds.length - 1 : messageIds.length,
+    totalReplies:
+      opts.totalReplies ?? (openingId && messageIds[0] === openingId ? messageIds.length - 1 : messageIds.length),
   } as unknown as BoardViewPost
 }
 
@@ -151,6 +154,19 @@ describe("useBoardCardMessages", () => {
     await waitFor(() => expect(result.current.replies.length).toBe(1))
     expect(result.current.source).toBe("projection")
     expect(result.current.replies[0]?.contentMarkdown).toBe("projection r1")
+  })
+
+  it("trusts the server reply count when a flat conversation's opening was deleted", async () => {
+    // The opening (messageIds[0]) was deleted, so post.openingMessage is null and
+    // openingId is unknown. The server already excluded it (totalReplies = 1); the
+    // hook must not recount the missing opening as a reply (which would give 2).
+    await db.events.bulkPut([msgEvent("r1", "a reply", 2)])
+    const post = makePost({ messageIds: ["m1_deleted", "r1"], openingId: null, totalReplies: 1 })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.totalReplies).toBe(1)
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
   })
 
   it("excludes soft-deleted messages from the rail", async () => {

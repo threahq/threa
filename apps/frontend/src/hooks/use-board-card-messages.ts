@@ -93,7 +93,12 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
   }, [streamId])
 
   return useMemo(() => {
-    const totalReplies = replyIds.length
+    // Recompute the count only when the opening relationship is known to be flat
+    // (opening present at `messageIds[0]`). With a deleted opening (`openingId`
+    // null) the slice is ambiguous — the server still excludes `messageIds[0]`
+    // from its count — so trust the server's `post.totalReplies` rather than
+    // miscount the missing opening as a reply.
+    const totalReplies = openingId !== null && openingId === messageIds[0] ? messageIds.length - 1 : post.totalReplies
     const seen = liveData?.seenMessageIds
 
     // The rail "knows" this conversation once it has synced any of its message ids
@@ -124,7 +129,7 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
       totalReplies,
       source: "projection",
     }
-  }, [liveData, replyIds, openingId, post])
+  }, [liveData, replyIds, openingId, messageIds, post])
 }
 
 export { RECENT_PREVIEW_CAP }
