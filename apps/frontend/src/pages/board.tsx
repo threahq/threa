@@ -237,13 +237,13 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         <ScrollArea ref={scrollRootRef} className="h-full [&>div>div]:!block [&>div>div]:!w-full">
           <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">
             <BoardComposer workspaceId={workspaceId} onPosted={revealNext} />
-            {/* Sticky zero-height row: the pill sits just below the composer at the
-                top (never over it) and sticks to the top edge once scrolled in, so
-                it's always reachable without shifting the feed (h-0 = no layout
-                cost). It hangs DOWN over the feed (items-start), clear of the
-                composer above. */}
+            {/* Sticky banner row between the composer and the feed: an in-flow
+                row (its own height, so it never overlaps the first card's tap
+                targets) that sticks to the top edge once scrolled in, keeping the
+                reveal reachable. The transparent row lets the feed scroll behind
+                it; only the centered button takes taps. */}
             {newCount > 0 && (
-              <div className="pointer-events-none sticky top-2 z-10 flex h-0 items-start justify-center">
+              <div className="pointer-events-none sticky top-2 z-10 mb-1 flex min-h-11 items-center justify-center">
                 <Button
                   size="sm"
                   onClick={revealNew}
