@@ -62,11 +62,14 @@ interface StreamRailEntry {
   refCount: number
 }
 
-// One Dexie subscription per stream, shared across every board card in that
-// stream. The board is workspace-wide and renders many cards at once — a busy
-// single stream (an AI-persona DM holds hundreds of conversations) would
-// otherwise mount one full `message_created` scan per card, each re-running on
-// every new message in that stream. Sharing collapses that to a single scan.
+// INV-9 exception: one shared Dexie subscription per stream, ref-counted across
+// every board card in that stream. The board is workspace-wide and renders many
+// cards at once — a busy single stream (an AI-persona DM holds hundreds of
+// conversations) would otherwise mount one full `message_created` scan per card,
+// each re-running on every new message. This module-level registry collapses
+// that to one liveQuery per stream; the last card to unmount drops the refCount
+// to zero and tears the subscription down (and an account switch remounts the
+// whole board subtree, draining it), so no explicit lock/clear wiring is needed.
 const railRegistry = new Map<string, StreamRailEntry>()
 
 function subscribeStreamRail(streamId: string, listener: () => void): () => void {
@@ -78,13 +81,18 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
       refCount: 0,
       subscription: { unsubscribe() {} } as Subscription,
     }
+    // Register BEFORE subscribing so `getSnapshot` (and any synchronous first
+    // emission) observes the entry consistently; the callback re-reads the live
+    // entry so a late emission after teardown is a no-op.
+    railRegistry.set(streamId, created)
     created.subscription = liveQuery(() =>
       db.events.where("[streamId+eventType]").equals([streamId, "message_created"]).toArray()
     ).subscribe((events) => {
-      created.rail = buildRail(events)
-      for (const notify of created.listeners) notify()
+      const live = railRegistry.get(streamId)
+      if (!live) return
+      live.rail = buildRail(events)
+      for (const notify of live.listeners) notify()
     })
-    railRegistry.set(streamId, created)
     entry = created
   }
   entry.listeners.add(listener)
