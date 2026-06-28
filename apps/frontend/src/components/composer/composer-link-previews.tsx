@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react"
 import type { JSONContent } from "@threa/types"
-import { classifyDraftLink, extractDraftLinkUrls } from "@/lib/in-app-links"
+import {
+  classifyDraftLink,
+  extractDraftLinkUrls,
+  isBelowRowDraftLink,
+  type BelowRowDraftLink,
+} from "@/lib/in-app-links"
 import { ComposerLinkChip } from "./composer-link-chip"
 import { cn } from "@/lib/utils"
 
@@ -43,8 +48,17 @@ export function ComposerLinkPreviews({ content, workspaceId, className }: Compos
     })
   }, [urls])
 
-  const links = useMemo(() => urls.filter((u) => !dismissed.has(u)).map((u) => classifyDraftLink(u)), [urls, dismissed])
-  const visible = links.filter((l) => l !== null)
+  // Stream/message in-app links render as an inline chip in the draft body, not
+  // a below-row chip (`isBelowRowDraftLink`) — so this row carries only web and
+  // memo links, matching the timeline's inline-chip card suppression (#1103).
+  const visible = useMemo(
+    () =>
+      urls
+        .filter((u) => !dismissed.has(u))
+        .map((u) => classifyDraftLink(u))
+        .filter((l): l is BelowRowDraftLink => l !== null && isBelowRowDraftLink(l)),
+    [urls, dismissed]
+  )
   if (visible.length === 0) return null
 
   const dismiss = (url: string) => setDismissed((prev) => new Set(prev).add(url))

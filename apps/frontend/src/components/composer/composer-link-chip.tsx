@@ -2,18 +2,15 @@ import { type ComponentType } from "react"
 import { Brain, Lock, Globe, Link2 } from "lucide-react"
 import { AttachmentPill } from "./attachment-pill"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
-import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
-import type { DraftLinkRef } from "@/lib/in-app-links"
+import type { BelowRowDraftLink } from "@/lib/in-app-links"
 
 /**
- * One compact chip for a link in the draft. Stealing the attachment-pill
- * semantics keeps several links from eating the screen (a full preview card per
- * link buries the composer on mobile). In-app stream/message links resolve their
- * name and icon from the local workspace cache — the canonical name source
- * (frontend CLAUDE.md) — which also renders correctly for any stream the viewer
- * can see without a round-trip; the access-tiered backend resolve is the
- * fallback only when the stream isn't cached (no access / cross-workspace /
- * thread). Memo links resolve via the backend; web links chip their host.
+ * One compact chip for a below-row draft link — web or memo only. Stream/message
+ * in-app links never reach here: they render as an inline chip in the draft body
+ * (`ComposerLinkPreviews` filters them via `isBelowRowDraftLink`), matching the
+ * posted message (#1103). Stealing the attachment-pill semantics keeps several
+ * links from eating the screen (a full preview card per link buries the composer
+ * on mobile). Memo links resolve via the backend; web links chip their host.
  *
  * Non-navigable on purpose: clicking must not abandon the draft mid-compose.
  */
@@ -22,53 +19,17 @@ export function ComposerLinkChip({
   workspaceId,
   onDismiss,
 }: {
-  link: DraftLinkRef
+  link: BelowRowDraftLink
   workspaceId: string
   onDismiss: (url: string) => void
 }) {
   const remove = () => onDismiss(link.url)
 
-  if (link.kind === "web") {
-    return (
-      <AttachmentPill icon={Globe} label={link.host} tooltip={link.url} onRemove={remove} removeLabel="Hide link" />
-    )
-  }
-
   if (link.kind === "memo") {
     return <MemoChip workspaceId={workspaceId} url={link.url} onRemove={remove} />
   }
 
-  return (
-    <StreamChip
-      workspaceId={workspaceId}
-      streamId={link.streamId}
-      url={link.url}
-      isMessage={link.kind === "message"}
-      onRemove={remove}
-    />
-  )
-}
-
-function StreamChip({
-  workspaceId,
-  streamId,
-  url,
-  isMessage,
-  onRemove,
-}: {
-  workspaceId: string
-  streamId: string
-  url: string
-  isMessage: boolean
-  onRemove: () => void
-}) {
-  const state = useInAppLinkChip({ workspaceId, streamId, isMessage, url })
-
-  if (state.status === "pending") return <PendingChip onRemove={onRemove} />
-  if (state.status === "restricted") {
-    return <RestrictedChip icon={state.icon} label={state.label} onRemove={onRemove} />
-  }
-  return <AttachmentPill icon={state.icon} label={state.label} onRemove={onRemove} removeLabel="Hide link" />
+  return <AttachmentPill icon={Globe} label={link.host} tooltip={link.url} onRemove={remove} removeLabel="Hide link" />
 }
 
 function MemoChip({ workspaceId, url, onRemove }: { workspaceId: string; url: string; onRemove: () => void }) {
