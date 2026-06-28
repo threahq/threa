@@ -9,11 +9,12 @@ import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
-import type { BoardPost } from "@threa/types"
+import { useBoardCardMessages, RECENT_PREVIEW_CAP } from "@/hooks/use-board-card-messages"
+import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 interface BoardCardProps {
   workspaceId: string
-  post: BoardPost
+  post: BoardViewPost
   /** Where the post lives (channel name, DM peer, scratchpad name), for the header. */
   contextLabel: string
   /** Resolved stream type, selecting the context glyph. */
@@ -35,21 +36,30 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
  * in on click. The stream it lives in is the header locator, not a topic line.
  */
 export function BoardCard({ workspaceId, post, contextLabel, streamType }: BoardCardProps) {
-  const { conversation, openingMessage, recentMessages, totalReplies } = post
+  const { conversation } = post
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const [expanded, setExpanded] = useState(false)
-  // Replies sent from this card, shown in place without a board refetch. They
-  // live only on this card for now — board-wide liveness is a follow-up. A
-  // channel reply lands in a thread off the post, so on the next board refresh
-  // it surfaces as its own post rather than under this card; that's expected.
+  // Replies sent from this card, shown in place immediately. The events rail
+  // carries the authoritative copy once the send round-trips (and any foreign
+  // reply), so these are deduped by id against the rail below. A channel reply
+  // lands in a thread off the post, so it surfaces as its own post on the next
+  // board refresh rather than under this card; that's expected.
   const [localReplies, setLocalReplies] = useState<RenderableMessage[]>([])
 
+  // Bodies ride the same `db.events` rail the timeline does — live and
+  // offline-first — with the cached server projection as the cold-start fallback.
+  const { openingMessage, replies: railReplies, totalReplies, source } = useBoardCardMessages(post)
+
   const streamId = conversation.streamId
-  const hiddenCount = Math.max(0, totalReplies - recentMessages.length)
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
 
+  // The rail carries every locally-synced reply; older ones (or a wholly unsynced
+  // stream — `source === "projection"`) may be missing, so on expand we backfill
+  // the full hydrated set from the server. Never blocks the first render: the
+  // local replies show immediately, this only fills the gap when online.
+  const incompleteLocally = source === "projection" || railReplies.length < totalReplies
   const {
     data: allMessages,
     isError: expandFailed,
@@ -57,22 +67,26 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   } = useQuery({
     queryKey: conversationKeys.boardMessages(conversation.id),
     queryFn: () => conversationService.getBoardMessages(workspaceId, conversation.id),
-    enabled: expanded,
+    enabled: expanded && incompleteLocally,
     staleTime: 60_000,
   })
 
-  // Expanded: the full conversation minus the opening (which renders above).
-  // Collapsed: just the trailing replies the feed already carried.
-  const replies: RenderableMessage[] =
-    expanded && allMessages ? allMessages.filter((m) => m.id !== openingMessage?.id) : recentMessages
-  // Append this card's own just-sent replies, skipping any a refetch already
-  // carries (the expanded fetch can include them once the server catches up).
+  // Expanded: the full conversation minus the opening (server backfill when the
+  // local rail is incomplete, else the rail itself). Collapsed: the trailing
+  // window of the local rail. Flat if-chain, not a nested ternary (INV-47).
+  let replies: RenderableMessage[]
+  if (!expanded) replies = railReplies.slice(-RECENT_PREVIEW_CAP)
+  else if (allMessages) replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
+  else replies = railReplies
+  // Append this card's own just-sent replies, skipping any the rail or a backfill
+  // already carries.
   const seenReplyIds = new Set(replies.map((m) => m.id))
   const displayedReplies = [...replies, ...localReplies.filter((m) => !seenReplyIds.has(m.id))]
-  const loadingMore = expanded && !allMessages && !expandFailed
+  const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.length)
+  const loadingMore = expanded && incompleteLocally && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
-  const contiguous = (expanded && !!allMessages) || (!expanded && hiddenCount === 0)
+  const contiguous = (expanded && (!incompleteLocally || !!allMessages)) || (!expanded && hiddenCount === 0)
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => (
     <MessageItem
