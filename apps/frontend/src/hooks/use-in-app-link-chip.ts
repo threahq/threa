@@ -157,9 +157,8 @@ export function useInAppLinkChip({
           // point-in-time snapshot for an author not in the local cache.
           const liveUser =
             data.authorType === "user" && data.authorId ? users.find((u) => u.id === data.authorId) : undefined
-          const avatarUrl = liveUser
-            ? (getAvatarUrl(workspaceId, liveUser.avatarUrl, 64) ?? undefined)
-            : data.authorAvatarUrl
+          const liveAvatarUrl = liveUser ? getAvatarUrl(workspaceId, liveUser.avatarUrl, 64) : undefined
+          const avatarUrl = liveAvatarUrl ?? data.authorAvatarUrl
           const avatar = data.authorName ? { url: avatarUrl, name: data.authorName } : undefined
           return { status: "resolved", icon: MessageSquare, label, avatar, messageParts: parts }
         }
