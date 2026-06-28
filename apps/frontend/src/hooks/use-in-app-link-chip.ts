@@ -82,7 +82,13 @@ export function useInAppLinkChip({
       return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
     }
     if (localName) {
-      return { status: "resolved", icon: isMessage ? MessageSquare : streamTypeIcon(cachedType), label: localName }
+      // A channel's resolved name is already `#slug`, and a channel stream chip
+      // renders the Hash icon too — strip the slug's leading `#` so it doesn't
+      // double up as "# #channel". Message chips keep it (their icon is a
+      // message glyph, so the `#` still reads as "in #channel").
+      const isChannelChip = !isMessage && cachedType === "channel"
+      const label = isChannelChip && localName.startsWith("#") ? localName.slice(1) : localName
+      return { status: "resolved", icon: isMessage ? MessageSquare : streamTypeIcon(cachedType), label }
     }
     if (loading) return { status: "pending" }
     const name = (data?.kind === "stream" && data.streamName) || (isMessage ? "Message" : "Conversation")
