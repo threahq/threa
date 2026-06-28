@@ -312,7 +312,10 @@ synchronous backbone," but two card-fueling paths). Lean: C.
 
 ## Stable view + pending updates — the reactivity model (Kris's "don't move shit on me")
 
-Status: design, 2026-06-27. **Supersedes the live re-sort behavior shipped in the
+Status: **v1 shipped 2026-06-28** (committed-view projection + "N new" pill +
+commit triggers + top scroll-anchor); `virtua` adoption and the backend
+stable-paging-key are deferred follow-ups (see "What shipped" below).
+**Supersedes the live re-sort behavior shipped in the
 realtime slice (PR #1100).** That slice put conversations on the sync engine and
 made the board re-sort live on activity. Dogfooding the consequence: a card you're
 half-way through reading jumps out of view the moment it (or anything above it)
@@ -400,6 +403,38 @@ visibility routing is exactly the data plane this sits on. What changes is the
 **dropping the optimistic bump-to-top**. It is a clean follow-up, not a rework, and
 it partly subsumes the "reply bodies on the next seed" gap — a frozen view isn't
 chasing a moving card, so body lag matters less.
+
+### What shipped (v1, 2026-06-28)
+
+The projection layer landed as `useStableBoardView`
+(`apps/frontend/src/hooks/use-stable-board-view.ts`), wrapping the live
+`useBoardPosts` IDB feed:
+
+- **Committed snapshot** — a frozen ordered list of conversation ids. Render walks
+  it; each card reads content reactively (a reply fills in place) but never moves
+  while committed. A card that vanishes from the live feed (delete / lost access)
+  keeps rendering from last-known content until the next commit (tombstone-in-
+  place, edge 2), so a removal never shifts the rows below it.
+- **Buffer + "N new" pill** — a live id newer than the committed floor that isn't
+  committed → buffered, counted in the pill; an id below the floor is older content
+  paged in by "Load more" → appended below the frozen window with no pill (the
+  `reconcileStableView` split, edge 1's pragmatic v1 take — the client cursor is
+  captured per page so re-return/skip is rare and self-heals via socket→IDB).
+- **Commit triggers** — pill click (scroll to top, then commit) and remount; the
+  viewer's own authored post arms a one-shot `revealNext` so it surfaces instead of
+  hiding behind its own pill. At-top still buffers (edge 5).
+- **Dropped the rendered bump-to-top** — `optimisticBoardReply` still bumps
+  `_lastActivityMs` as IDB truth, but the committed view ignores it, so the
+  viewer's own reply updates in place.
+- **Top scroll-anchor** — `useBoardScrollAnchor` keeps the topmost visible card's
+  screen offset stable across above-fold async reflow via a `ResizeObserver` on the
+  content (the board's hand-rolled equivalent of the timeline's `virtua` `shift`).
+
+**Deferred (not in v1):** `virtua` adoption for the board (stays non-virtualized —
+the floor measurement is ~430 active cards); the backend stable-paging-key (edge 1's
+full fix); the intersection-observer "only what scrolled past is seen" (v1 freezes
+the whole snapshot per edge 6); and the optional per-card "updated" dot for seen-card
+activity (edge 3).
 
 ## Phasing
 

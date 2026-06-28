@@ -86,10 +86,15 @@ export async function mergeBoardConversation(
 
 /**
  * Optimistically reflect the viewer's own reply into a visible card: append the
- * message to the preview, bump activity to `atMs` (so the card jumps to the top
- * like a real bump would), and mark the row pending until the authoritative
- * `conversation:updated` echo merges over it. No-op when the card isn't cached
- * (a reply into a not-yet-seen conversation surfaces via the event path).
+ * message to the preview, bump activity to `atMs`, and mark the row pending until
+ * the authoritative `conversation:updated` echo merges over it. No-op when the
+ * card isn't cached (a reply into a not-yet-seen conversation surfaces via the
+ * event path).
+ *
+ * The `_lastActivityMs` bump is IDB truth (it re-sorts the live feed and a fresh
+ * snapshot lands the card at the top), but the stable view holds a committed
+ * card's position frozen, so the reply shows in place — it does not yank the card
+ * to the top under the reader (`use-stable-board-view`, INV-61).
  */
 export async function optimisticBoardReply(
   conversationId: string,
