@@ -963,8 +963,8 @@ describe("registerWorkspaceSocketHandlers", () => {
     await db.conversations.put({
       id: "conv_1",
       workspaceId: "ws_1",
-      conversation: { id: "conv_1", lastActivityAt: "2026-06-20T12:00:00.000Z" },
-      openingMessage: null,
+      conversation: { id: "conv_1", messageIds: ["m1"], lastActivityAt: "2026-06-20T12:00:00.000Z" },
+      openingMessage: { id: "m1" },
       recentMessages: [],
       totalReplies: 0,
       _lastActivityMs: Date.parse("2026-06-20T12:00:00.000Z"),
@@ -977,12 +977,15 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     emit("conversation:updated", {
       workspaceId: "ws_1",
-      conversation: { id: "conv_1", lastActivityAt: "2026-06-22T12:00:00.000Z" },
+      conversation: { id: "conv_1", messageIds: ["m1", "r1"], lastActivityAt: "2026-06-22T12:00:00.000Z" },
+      triggeringMessage: { id: "r1", contentMarkdown: "live reply", createdAt: "2026-06-22T12:00:00.000Z" },
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     const row = await db.conversations.get("conv_1")
     expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
+    // The triggering body is threaded through and appended live, not just bumped.
+    expect(row?.recentMessages.map((m) => m.id)).toEqual(["r1"])
     // A cached card merges in place — no refetch of the board head.
     expect(invalidate).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: [...conversationKeys.all, "workspaceList", "ws_1"] })

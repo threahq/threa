@@ -4,6 +4,7 @@ import { StreamRepository } from "../streams"
 import { type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields } from "./staleness"
+import { toLiveBoardPostMessage } from "./board-post-message"
 import { resolveConversationDelivery } from "./conversation-delivery"
 
 /**
@@ -40,6 +41,10 @@ export async function emitAssignmentEvents(
     conversation: addStalenessFields(refreshed),
     parentStreamId,
     streamVisibility,
+    // This deterministic path always fires for exactly the message being
+    // assigned, so it is always this event's triggering message — the board
+    // shows the post/reply body live without waiting for the next seed.
+    triggeringMessage: toLiveBoardPostMessage(message),
   })
   await OutboxRepository.insert(client, "conversation:message_assigned", {
     workspaceId,

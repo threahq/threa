@@ -4,6 +4,8 @@ export { conversationAssigner } from "./conversation-assigner"
 
 export { ConversationService } from "./service"
 export type { ConversationWithStaleness, ListConversationsOptions } from "./service"
+export { toBoardPostMessage, toLiveBoardPostMessage } from "./board-post-message"
+export type { BoardPostMessage } from "./board-post-message"
 
 export { BoundaryExtractionService } from "./boundary-extraction-service"
 

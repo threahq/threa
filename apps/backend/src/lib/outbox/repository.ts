@@ -2,7 +2,7 @@ import { OutboxRepository as BaseOutboxRepository, type Querier } from "@threa/b
 import type { Stream } from "../../features/streams"
 import type { StreamEvent } from "../../features/streams"
 import type { User } from "../../features/workspaces"
-import type { ConversationWithStaleness } from "../../features/conversations"
+import type { ConversationWithStaleness, BoardPostMessage } from "../../features/conversations"
 import type {
   Memo as WireMemo,
   StreamEvent as WireStreamEvent,
@@ -388,6 +388,12 @@ export interface ConversationCreatedOutboxPayload extends StreamScopedPayload {
    *  workspace receives it (the board can show it); otherwise only the stream's
    *  own members do, via the stream room (INV-62). */
   streamVisibility?: Visibility
+  /** The single new message that triggered this event (a declared post, a board
+   *  reply, or an inferred reply the extractor just clustered), projected lean
+   *  (no attachments/link previews). The board appends it to the card preview so
+   *  the body shows live, not just the activity bump; absent when the change is
+   *  not one new message (a completeness-only update, a reassignment). */
+  triggeringMessage?: BoardPostMessage
 }
 
 export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
@@ -397,6 +403,8 @@ export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
   parentStreamId?: string
   /** See {@link ConversationCreatedOutboxPayload.streamVisibility}. */
   streamVisibility?: Visibility
+  /** See {@link ConversationCreatedOutboxPayload.triggeringMessage}. */
+  triggeringMessage?: BoardPostMessage
 }
 
 /**

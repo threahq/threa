@@ -28,6 +28,7 @@ import type {
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
   ConversationWithStaleness,
+  BoardPostMessage,
   LabelUpsertedPayload,
   LabelDeletedPayload,
   LabelAssignedPayload,
@@ -1669,16 +1670,22 @@ export function registerWorkspaceSocketHandlers(
   // reopen) but only refetch the ones with active observers now. The viewer's own
   // sends are already reflected optimistically, and reconcile when their echo
   // merges here.
-  const handleConversationUpserted = (payload: { workspaceId: string; conversation: ConversationWithStaleness }) => {
+  const handleConversationUpserted = (payload: {
+    workspaceId: string
+    conversation: ConversationWithStaleness
+    triggeringMessage?: BoardPostMessage
+  }) => {
     if (payload.workspaceId !== workspaceId) return
-    void mergeBoardConversation(payload.conversation.id, payload.conversation).then((merged) => {
-      if (!merged) {
-        queryClient.invalidateQueries({
-          queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
-          refetchType: "active",
-        })
+    void mergeBoardConversation(payload.conversation.id, payload.conversation, payload.triggeringMessage).then(
+      (merged) => {
+        if (!merged) {
+          queryClient.invalidateQueries({
+            queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
+            refetchType: "active",
+          })
+        }
       }
-    })
+    )
   }
 
   socket.on("stream:created", handleStreamCreated)

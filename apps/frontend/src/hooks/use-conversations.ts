@@ -278,11 +278,12 @@ export function useReplyToBoardPost(workspaceId: string) {
         ...base,
         conversation: { intent: "existing", conversationId: conversation.id },
       })
-      // Optimistically reflect the reply on the board's IDB feed: the card jumps
-      // to the top and shows the reply before the round-trip's `conversation:updated`
-      // echo merges over it (clearing pending). The echo carries only the
-      // aggregate, so this preview is the lasting one until the next seed —
-      // correct for a text reply, but it can't show attachments/previews.
+      // Optimistically reflect the reply on the board's IDB feed: the card shows
+      // the reply before the round-trip's `conversation:updated` echo merges over
+      // it (clearing pending). The echo now carries this same message body
+      // (deduped by id), so it reconciles in place — but neither path has the
+      // attachments/previews, so a reply with attachments still needs the refetch
+      // below.
       void optimisticBoardReply(
         conversation.id,
         {

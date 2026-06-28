@@ -9,9 +9,10 @@ import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
+import { type BoardPostMessage, toBoardPostMessage } from "./board-post-message"
 import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
-import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
+import { StreamTypes, type ConversationStatus } from "@threa/types"
 
 export { ConversationWithStaleness }
 
@@ -23,22 +24,6 @@ export interface ListConversationsOptions {
 export interface ListWorkspaceConversationsOptions extends ListConversationsOptions {
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
-}
-
-/**
- * Opening message of a board post (internal, Date-typed; serialized to the wire
- * `BoardPostMessage` by the handler). A lean projection of the full message —
- * the fields the post card renders.
- */
-export interface BoardPostMessage {
-  id: string
-  authorId: string
-  authorType: Message["authorType"]
-  contentMarkdown: string
-  reactions: Record<string, string[]>
-  attachments: AttachmentSummary[]
-  linkPreviews: LinkPreviewSummary[]
-  createdAt: Date
 }
 
 /** A conversation surfaced as a feed post: the grouping, its origin message, and the latest replies. */
@@ -344,23 +329,5 @@ export class ConversationService {
         previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
       }
     })
-  }
-}
-
-/** Project a full message + its hydrated rich content down to a board post message. */
-function toBoardPostMessage(
-  message: Message,
-  attachments: AttachmentSummary[],
-  linkPreviews: LinkPreviewSummary[]
-): BoardPostMessage {
-  return {
-    id: message.id,
-    authorId: message.authorId,
-    authorType: message.authorType,
-    contentMarkdown: message.contentMarkdown,
-    reactions: message.reactions,
-    attachments,
-    linkPreviews,
-    createdAt: message.createdAt,
   }
 }
