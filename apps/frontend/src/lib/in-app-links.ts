@@ -23,6 +23,20 @@ export type DraftLinkRef =
   | { kind: "message"; url: string; workspaceId: string; streamId: string; messageId: string }
   | { kind: "memo"; url: string; workspaceId: string; memoId: string }
 
+/**
+ * Draft link kinds that earn a below-composer chip. Stream/message in-app links
+ * are excluded: like a posted message (#1103), they render as an inline chip in
+ * the draft body (a pasted one becomes an atom node; a typed one converts on
+ * send), so a below-row chip would double the surface. This mirrors the
+ * timeline's `isInlineChipContentType` card suppression — web and memo links
+ * keep their below-row chip exactly as they keep their card.
+ */
+export type BelowRowDraftLink = Extract<DraftLinkRef, { kind: "web" | "memo" }>
+
+export function isBelowRowDraftLink(link: DraftLinkRef): link is BelowRowDraftLink {
+  return link.kind === "web" || link.kind === "memo"
+}
+
 function currentOrigin(): string | null {
   return typeof window === "undefined" ? null : window.location.origin
 }

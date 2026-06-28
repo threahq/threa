@@ -36,8 +36,9 @@ describe("ComposerLinkPreviews", () => {
     expect(resolve).not.toHaveBeenCalled()
   })
 
-  it("chips an in-app stream link by its resolved name when not cached locally", async () => {
-    // Empty workspace store in tests → local name is null → backend resolve fallback.
+  it("does not chip in-app stream/message links — they render inline in the draft", async () => {
+    // Stream/message links convert to an inline chip in the body (#1103), so the
+    // below-row chip is suppressed and no resolve round-trip fires for them.
     const resolve = vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
       kind: "stream",
       accessTier: "full",
@@ -46,27 +47,34 @@ describe("ComposerLinkPreviews", () => {
       visibility: "public",
     })
 
-    const url = `${origin}/w/ws_1/s/stream_1`
-    render(
+    const streamUrl = `${origin}/w/ws_1/s/stream_1`
+    const messageUrl = `${origin}/w/ws_1/s/stream_1?m=msg_1`
+    const { container } = render(
       <MemoryRouter>
-        <ComposerLinkPreviews content={draft(link("chan", url))} workspaceId="ws_1" />
+        <ComposerLinkPreviews content={draft(link("chan", streamUrl), link("msg", messageUrl))} workspaceId="ws_1" />
       </MemoryRouter>
     )
 
-    await waitFor(() => expect(screen.getByText("design")).toBeInTheDocument())
-    expect(resolve).toHaveBeenCalledWith("ws_1", url)
+    // Nothing renders for an all-in-app draft, and the resolve is never called.
+    await waitFor(() => expect(container).toBeEmptyDOMElement())
+    expect(resolve).not.toHaveBeenCalled()
   })
 
-  it("chips a restricted in-app link as private without leaking a name", async () => {
-    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({ kind: "stream", accessTier: "private" })
+  it("chips a memo link by its resolved title", async () => {
+    const url = `${origin}/w/ws_1/memos/memo_1`
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+      kind: "memo",
+      accessTier: "full",
+      title: "Onboarding notes",
+    })
 
     render(
       <MemoryRouter>
-        <ComposerLinkPreviews content={draft(link("x", `${origin}/w/ws_1/s/secret_1`))} workspaceId="ws_1" />
+        <ComposerLinkPreviews content={draft(link("memo", url))} workspaceId="ws_1" />
       </MemoryRouter>
     )
 
-    await waitFor(() => expect(screen.getByText("Private conversation")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("Onboarding notes")).toBeInTheDocument())
   })
 
   it("forgets a dismissal once the link leaves and re-enters the draft", async () => {
