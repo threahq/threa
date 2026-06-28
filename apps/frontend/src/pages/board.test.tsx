@@ -178,7 +178,7 @@ describe("BoardPage", () => {
     ]
     mountBoard([makePost({ messageIds: ["m1", "m2", "m3", "m4", "m5"] }, { id: "m1" }, recent)], { failMessages: true })
     fireEvent.click(await screen.findByText("1 more message"))
-    expect(await screen.findByText("Couldn't load messages. Retry.")).toBeTruthy()
+    expect(await screen.findByText("Couldn't load older messages. Retry.")).toBeTruthy()
   })
 
   it("shows no expander when the whole conversation already fits", async () => {

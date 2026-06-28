@@ -1,12 +1,9 @@
-import { useMemo } from "react"
-import { useLiveQuery } from "dexie-react-hooks"
+import { useCallback, useMemo, useSyncExternalStore } from "react"
+import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedEvent } from "@/db"
 import type { RenderableMessage } from "@/components/message/message-item"
 import type { AuthorType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
-
-/** Mirrors the server board projection's trailing-reply cap (service.ts). */
-const RECENT_PREVIEW_CAP = 3
 
 interface MessageCreatedPayloadShape {
   messageId?: string
@@ -34,6 +31,89 @@ function eventToRenderable(event: CachedEvent): RenderableMessage | null {
   }
 }
 
+interface StreamRail {
+  /** Renderable (non-deleted) message_created rows for the stream, by message id. */
+  messages: Map<string, RenderableMessage>
+  /** Every message id the stream has synced — INCLUDING soft-deleted tombstones,
+   *  which are absent from `messages`. Lets a card tell "deleted" from "unsynced". */
+  seen: Set<string>
+  /** False until the first IDB read resolves — distinguishes loading from empty. */
+  resolved: boolean
+}
+
+const LOADING_RAIL: StreamRail = { messages: new Map(), seen: new Set(), resolved: false }
+
+function buildRail(events: CachedEvent[]): StreamRail {
+  const messages = new Map<string, RenderableMessage>()
+  const seen = new Set<string>()
+  for (const event of events) {
+    const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
+    if (payload.messageId) seen.add(payload.messageId)
+    const message = eventToRenderable(event)
+    if (message) messages.set(message.id, message)
+  }
+  return { messages, seen, resolved: true }
+}
+
+interface StreamRailEntry {
+  rail: StreamRail
+  listeners: Set<() => void>
+  subscription: Subscription
+  refCount: number
+}
+
+// One Dexie subscription per stream, shared across every board card in that
+// stream. The board is workspace-wide and renders many cards at once — a busy
+// single stream (an AI-persona DM holds hundreds of conversations) would
+// otherwise mount one full `message_created` scan per card, each re-running on
+// every new message in that stream. Sharing collapses that to a single scan.
+const railRegistry = new Map<string, StreamRailEntry>()
+
+function subscribeStreamRail(streamId: string, listener: () => void): () => void {
+  let entry = railRegistry.get(streamId)
+  if (!entry) {
+    const created: StreamRailEntry = {
+      rail: LOADING_RAIL,
+      listeners: new Set(),
+      refCount: 0,
+      subscription: { unsubscribe() {} } as Subscription,
+    }
+    created.subscription = liveQuery(() =>
+      db.events.where("[streamId+eventType]").equals([streamId, "message_created"]).toArray()
+    ).subscribe((events) => {
+      created.rail = buildRail(events)
+      for (const notify of created.listeners) notify()
+    })
+    railRegistry.set(streamId, created)
+    entry = created
+  }
+  entry.listeners.add(listener)
+  entry.refCount += 1
+  return () => {
+    const current = railRegistry.get(streamId)
+    if (!current) return
+    current.listeners.delete(listener)
+    current.refCount -= 1
+    if (current.refCount <= 0) {
+      current.subscription.unsubscribe()
+      railRegistry.delete(streamId)
+    }
+  }
+}
+
+function useStreamRail(streamId: string): StreamRail {
+  const subscribe = useCallback((onChange: () => void) => subscribeStreamRail(streamId, onChange), [streamId])
+  const getSnapshot = useCallback(() => railRegistry.get(streamId)?.rail ?? LOADING_RAIL, [streamId])
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/** Tear down every shared stream subscription — for tests, so a module-level
+ *  registry can't leak a liveQuery (or a snapshot) across cases. */
+export function __clearBoardRailRegistry(): void {
+  for (const entry of railRegistry.values()) entry.subscription.unsubscribe()
+  railRegistry.clear()
+}
+
 export interface BoardCardMessages {
   /** The post's opening message — live from the events rail when synced, else the
    *  cached projection (a thread's parent opening lives in another stream). */
@@ -41,8 +121,10 @@ export interface BoardCardMessages {
   /** Replies present locally, chronological. From the events rail when the card's
    *  stream is synced; otherwise the cached server preview. */
   replies: RenderableMessage[]
-  /** Total replies per the conversation aggregate; drives the "N more" gap and may
-   *  exceed the locally-synced `replies` (older messages not yet in IDB). */
+  /** Total replies the card claims exist (drives the "N more" gap). Equals the
+   *  rail's displayable count once the whole conversation is local (so a deleted
+   *  reply can't inflate the gap); otherwise the server count, since older replies
+   *  aren't in IDB yet. */
   totalReplies: number
   /** Where the bodies came from: the live `db.events` rail, or the cached server
    *  projection (a stream not yet synced into IDB — a cold/offline first open). */
@@ -74,62 +156,48 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
     [openingId, messageIds]
   )
 
-  // Reactive read of this conversation's primary messages from the events rail. A
-  // primary membership always lives in the conversation's own stream, so one stream
-  // scan covers every reply (and the opening when the conversation is flat). We
-  // track raw message ids seen separately from the renderable map: a soft-deleted
-  // message is a seen id with no renderable row, and the two must not be conflated.
-  const liveData = useLiveQuery(async () => {
-    const events = await db.events.where("[streamId+eventType]").equals([streamId, "message_created"]).toArray()
-    const seenMessageIds = new Set<string>()
-    const messages = new Map<string, RenderableMessage>()
-    for (const event of events) {
-      const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
-      if (payload.messageId) seenMessageIds.add(payload.messageId)
-      const message = eventToRenderable(event)
-      if (message) messages.set(message.id, message)
-    }
-    return { messages, seenMessageIds }
-  }, [streamId])
+  const rail = useStreamRail(streamId)
 
   return useMemo(() => {
-    // Recompute the count only when the opening relationship is known to be flat
-    // (opening present at `messageIds[0]`). With a deleted opening (`openingId`
-    // null) the slice is ambiguous — the server still excludes `messageIds[0]`
-    // from its count — so trust the server's `post.totalReplies` rather than
-    // miscount the missing opening as a reply.
-    const totalReplies = openingId !== null && openingId === messageIds[0] ? messageIds.length - 1 : post.totalReplies
-    const seen = liveData?.seenMessageIds
+    // The server's count excludes `messageIds[0]` for a flat conversation even
+    // when that opening was deleted, so trust it when the flat relationship is
+    // unknown (deleted opening → `openingId` null).
+    const serverTotal = openingId !== null && openingId === messageIds[0] ? messageIds.length - 1 : post.totalReplies
 
     // The rail "knows" this conversation once it has synced any of its message ids
-    // — INCLUDING soft-deleted ones, which `eventToRenderable` drops from the
-    // renderable map. Gate on raw presence, not renderable rows: a wholly-deleted
-    // conversation must show its tombstones (nothing), not resurrect stale bodies
-    // from the projection; a conversation whose ids simply aren't in the synced
-    // window is genuinely unseen and keeps the cached preview.
-    const openingSeen = !!(openingId && seen?.has(openingId))
-    const conversationSeen = seen !== undefined && (openingSeen || replyIds.some((id) => seen.has(id)))
+    // — including soft-deleted ones (in `seen`, absent from `messages`). Gate on
+    // raw presence so a wholly-deleted conversation shows its tombstones instead of
+    // resurrecting stale bodies, while a conversation whose ids aren't in the synced
+    // window keeps the cached preview.
+    const openingSeen = openingId !== null && rail.seen.has(openingId)
+    const conversationSeen = rail.resolved && (openingSeen || replyIds.some((id) => rail.seen.has(id)))
 
-    let openingMessage: RenderableMessage | null
-    if (openingSeen && openingId) openingMessage = liveData?.messages.get(openingId) ?? null
-    else openingMessage = (post.openingMessage as RenderableMessage | null) ?? null
+    let openingMessage = (post.openingMessage as RenderableMessage | null) ?? null
+    if (openingId !== null && rail.seen.has(openingId)) openingMessage = rail.messages.get(openingId) ?? null
 
-    if (conversationSeen) {
-      const liveReplies: RenderableMessage[] = []
-      for (const id of replyIds) {
-        const message = liveData?.messages.get(id)
-        if (message) liveReplies.push(message)
+    if (!conversationSeen) {
+      return {
+        openingMessage,
+        replies: post.recentMessages as RenderableMessage[],
+        totalReplies: serverTotal,
+        source: "projection",
       }
-      liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-      return { openingMessage, replies: liveReplies, totalReplies, source: "events" }
     }
-    return {
-      openingMessage,
-      replies: post.recentMessages as RenderableMessage[],
-      totalReplies,
-      source: "projection",
-    }
-  }, [liveData, replyIds, openingId, messageIds, post])
-}
 
-export { RECENT_PREVIEW_CAP }
+    const liveReplies: RenderableMessage[] = []
+    for (const id of replyIds) {
+      const message = rail.messages.get(id)
+      if (message) liveReplies.push(message)
+    }
+    liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+
+    // When the rail holds every one of this conversation's replies, its displayable
+    // (non-deleted) count IS the total — a tombstone is "seen" but not shown, so it
+    // must not inflate the "N more" gap. Otherwise older replies aren't local yet,
+    // so trust the server count and let expand backfill the rest.
+    const fullySynced = replyIds.every((id) => rail.seen.has(id))
+    const totalReplies = fullySynced ? liveReplies.length : serverTotal
+
+    return { openingMessage, replies: liveReplies, totalReplies, source: "events" }
+  }, [rail, replyIds, openingId, messageIds, post])
+}

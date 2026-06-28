@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { db, type CachedEvent } from "@/db"
 import type { BoardViewPost } from "./use-stable-board-view"
-import { useBoardCardMessages } from "./use-board-card-messages"
+import { useBoardCardMessages, __clearBoardRailRegistry } from "./use-board-card-messages"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -63,6 +63,7 @@ function makePost(opts: {
 }
 
 beforeEach(async () => {
+  __clearBoardRailRegistry()
   await db.events.clear()
 })
 
@@ -167,6 +168,21 @@ describe("useBoardCardMessages", () => {
     await waitFor(() => expect(result.current.source).toBe("events"))
     expect(result.current.totalReplies).toBe(1)
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+  })
+
+  it("does not count a tombstoned reply toward the total once the conversation is fully synced", async () => {
+    // r1 deleted, r2 live; the whole conversation is in the rail. The deleted
+    // reply is "seen" but not displayable, so totalReplies must be 1 (not 2) —
+    // otherwise the card shows a phantom "1 more message" gap for nothing hidden.
+    const del = msgEvent("r1", "gone", 2)
+    ;(del.payload as { deletedAt?: string }).deletedAt = new Date().toISOString()
+    await db.events.bulkPut([msgEvent("m1", "opening", 1), del, msgEvent("r2", "here", 3)])
+    const post = makePost({ messageIds: ["m1", "r1", "r2"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r2"])
+    expect(result.current.totalReplies).toBe(1)
   })
 
   it("excludes soft-deleted messages from the rail", async () => {

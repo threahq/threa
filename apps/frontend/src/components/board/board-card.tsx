@@ -9,7 +9,8 @@ import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
-import { useBoardCardMessages, RECENT_PREVIEW_CAP } from "@/hooks/use-board-card-messages"
+import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
+import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 interface BoardCardProps {
@@ -132,14 +133,17 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                 {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
               </button>
             )}
-            {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
+            {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>}
+            {/* The backfill loads the older/full window; the recent replies the
+                rail carried are already shown above, so the error names "older"
+                rather than contradicting visible content. */}
             {expanded && expandFailed && (
               <button
                 type="button"
                 onClick={() => void refetchMessages()}
                 className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
               >
-                Couldn't load messages. Retry.
+                Couldn't load older messages. Retry.
               </button>
             )}
             {displayedReplies.map((message, i) =>
