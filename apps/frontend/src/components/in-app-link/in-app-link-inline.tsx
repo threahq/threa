@@ -33,7 +33,8 @@ export function InAppLinkInline({
   const label = state.status === "pending" ? fallbackLabel || "Link" : state.label
   const prefix = state.status === "resolved" ? state.prefix : undefined
   const avatar = state.status === "resolved" ? state.avatar : undefined
-  const chip = <InAppLinkChip icon={icon} prefix={prefix} label={label} avatar={avatar} />
+  const messageParts = state.status === "resolved" ? state.messageParts : undefined
+  const chip = <InAppLinkChip icon={icon} prefix={prefix} label={label} avatar={avatar} messageParts={messageParts} />
 
   const internalPath = resolveInternalAppPath(href)
   if (!internalPath) return chip

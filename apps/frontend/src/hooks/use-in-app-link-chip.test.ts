@@ -7,21 +7,18 @@ function messageData(overrides: Partial<MessageLinkPreviewData>): MessageLinkPre
 }
 
 describe("buildMessageChipLabel", () => {
-  it("phrases a DM as '{author} to {recipient}', collapsing the viewer to 'You'", () => {
+  it("phrases a DM as '{author} to {recipient}' with full names", () => {
     expect(
       buildMessageChipLabel(
-        messageData({
-          streamType: "dm",
-          authorName: "Pierre Boberg",
-          recipientName: "Kristoffer Remback",
-          recipientIsSelf: true,
-        })
+        messageData({ streamType: "dm", authorName: "Pierre Boberg", recipientName: "Kristoffer Remback" })
       )
-    ).toBe("Pierre Boberg to You")
+    ).toBe("Pierre Boberg to Kristoffer Remback")
 
     expect(
-      buildMessageChipLabel(messageData({ streamType: "dm", authorIsSelf: true, recipientName: "Pierre Boberg" }))
-    ).toBe("You to Pierre Boberg")
+      buildMessageChipLabel(
+        messageData({ streamType: "dm", authorName: "Kristoffer Remback", recipientName: "Pierre Boberg" })
+      )
+    ).toBe("Kristoffer Remback to Pierre Boberg")
   })
 
   it("phrases a channel message as '{author} in #slug'", () => {

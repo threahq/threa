@@ -1324,10 +1324,6 @@ export interface MessageLinkPreviewData {
   streamType?: StreamType
   /** DM recipient (the non-author participant) display name (full tier, DMs only) */
   recipientName?: string
-  /** Viewer authored the message — the chip renders the author as "You" (full tier only) */
-  authorIsSelf?: boolean
-  /** Viewer is the DM recipient — the chip renders the recipient as "You" (full tier, DMs only) */
-  recipientIsSelf?: boolean
   /** Whether the target message has been deleted */
   deleted?: boolean
 }

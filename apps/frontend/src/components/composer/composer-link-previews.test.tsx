@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { type ReactNode } from "react"
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import type { JSONContent } from "@threa/types"
 
 const origin = window.location.origin
+
+/** Memo chips resolve through the shared query-cached `useResolvedInAppLink`. */
+function withQueryClient(ui: ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+}
 
 function draft(...inline: JSONContent[]): JSONContent {
   return { type: "doc", content: [{ type: "paragraph", content: inline }] }
@@ -69,9 +77,11 @@ describe("ComposerLinkPreviews", () => {
     })
 
     render(
-      <MemoryRouter>
-        <ComposerLinkPreviews content={draft(link("memo", url))} workspaceId="ws_1" />
-      </MemoryRouter>
+      withQueryClient(
+        <MemoryRouter>
+          <ComposerLinkPreviews content={draft(link("memo", url))} workspaceId="ws_1" />
+        </MemoryRouter>
+      )
     )
 
     await waitFor(() => expect(screen.getByText("Onboarding notes")).toBeInTheDocument())

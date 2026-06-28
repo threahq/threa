@@ -207,32 +207,7 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       contentPreview: "Hello there",
       streamName: "general",
       streamType: "channel",
-      authorIsSelf: false,
     })
-  })
-
-  test("a message the viewer authored is flagged self so the chip can render 'You'", async () => {
-    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
-      makePreview({
-        contentType: "message_link",
-        targetMessageId: "msg_1",
-        url: "https://app.threa.io/w/ws_self/s/stream_1?m=msg_1",
-      })
-    )
-    spyOn(MessageRepository, "findById").mockResolvedValue({
-      id: "msg_1",
-      streamId: "stream_1",
-      authorType: "user",
-      authorId: VIEWER_ID,
-      contentMarkdown: "my own message",
-      deletedAt: null,
-    } as never)
-    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Me", avatarUrl: null } as never)
-    const service = makeService({ tryAccess: async () => makeStream({ slug: "general" }) }, {})
-
-    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
-
-    expect(result).toMatchObject({ kind: "message", accessTier: "full", authorIsSelf: true, streamType: "channel" })
   })
 
   test("a DM message resolves the non-author participant as the recipient", async () => {
@@ -271,10 +246,8 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       kind: "message",
       accessTier: "full",
       authorName: "Pierre Boberg",
-      authorIsSelf: false,
       streamType: "dm",
       recipientName: "Kristoffer Remback",
-      recipientIsSelf: true,
     })
   })
 
@@ -315,7 +288,6 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       accessTier: "full",
       streamType: "dm",
       recipientName: "Pierre Boberg",
-      recipientIsSelf: false,
     })
   })
 })

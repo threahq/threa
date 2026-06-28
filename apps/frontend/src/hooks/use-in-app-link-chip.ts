@@ -20,7 +20,14 @@ type ChipIcon = ComponentType<{ className?: string }>
  * name (no sigil) so neither surface doubles the `#`.
  */
 export type InAppLinkChipState =
-  | { status: "resolved"; icon: ChipIcon; label: string; prefix?: string; avatar?: ChipAvatar }
+  | {
+      status: "resolved"
+      icon: ChipIcon
+      label: string
+      prefix?: string
+      avatar?: ChipAvatar
+      messageParts?: ChipMessageParts
+    }
   | { status: "restricted"; icon: ChipIcon; label: string }
   | { status: "pending" }
 
@@ -32,6 +39,17 @@ export type InAppLinkChipState =
 export interface ChipAvatar {
   url?: string
   name: string
+}
+
+/**
+ * A message chip split into the author (`lead`) and the location suffix
+ * (`tail`, e.g. " in #channel" / " to Pierre"). The chip truncates `lead` and
+ * pins `tail`, so the destination — the part that disambiguates two messages by
+ * the same author — survives truncation. `label` joins them for serialization.
+ */
+export interface ChipMessageParts {
+  lead: string
+  tail: string
 }
 
 function streamTypeIcon(streamType: StreamType | undefined): ChipIcon {
@@ -46,24 +64,31 @@ function streamTypeIcon(streamType: StreamType | undefined): ChipIcon {
 }
 
 /**
- * Phrase a resolved message link the way the surrounding chat reads it:
- * "{author} to {recipient}" for a DM, "{author} in #channel" or "{author} in
- * {name}" otherwise. Either side collapses to "You" when it's the viewer. Returns
- * null when the author couldn't be resolved (e.g. a bot/persona author the
- * backend doesn't name yet) so the caller falls back to the parent-stream name.
+ * Split a resolved message link into author (`lead`) and location (`tail`) the
+ * way the surrounding chat reads it: " to {recipient}" for a DM, " in #channel"
+ * or " in {name}" otherwise. Full names on both sides (no viewer-relative "You"),
+ * so the label is identical for every reader — it's also what gets serialized
+ * back into the link's markdown. Returns null when the author couldn't be
+ * resolved (e.g. a bot/persona author the backend doesn't name yet) so the
+ * caller falls back to the parent-stream name.
  */
-export function buildMessageChipLabel(data: MessageLinkPreviewData): string | null {
-  const author = data.authorIsSelf ? "You" : data.authorName
-  if (!author) return null
+export function buildMessageChipParts(data: MessageLinkPreviewData): ChipMessageParts | null {
+  const lead = data.authorName
+  if (!lead) return null
   if (data.streamType === "dm") {
-    const recipient = data.recipientIsSelf ? "You" : data.recipientName
-    return recipient ? `${author} to ${recipient}` : author
+    return { lead, tail: data.recipientName ? ` to ${data.recipientName}` : "" }
   }
   if (data.streamName) {
     const name = data.streamType === "channel" ? `#${data.streamName.replace(/^#/, "")}` : data.streamName
-    return `${author} in ${name}`
+    return { lead, tail: ` in ${name}` }
   }
-  return author
+  return { lead, tail: "" }
+}
+
+/** The joined message label, for serialization and the pending fallback. */
+export function buildMessageChipLabel(data: MessageLinkPreviewData): string | null {
+  const parts = buildMessageChipParts(data)
+  return parts ? `${parts.lead}${parts.tail}` : null
 }
 
 /**
@@ -124,10 +149,11 @@ export function useInAppLinkChip({
     // while the resolve is in flight or the author couldn't be named.
     if (isMessage) {
       if (data?.kind === "message" && data.accessTier === "full") {
-        const label = buildMessageChipLabel(data)
-        if (label) {
+        const parts = buildMessageChipParts(data)
+        if (parts) {
+          const label = `${parts.lead}${parts.tail}`
           const avatar = data.authorName ? { url: data.authorAvatarUrl, name: data.authorName } : undefined
-          return { status: "resolved", icon: MessageSquare, label, avatar }
+          return { status: "resolved", icon: MessageSquare, label, avatar, messageParts: parts }
         }
         // Fully resolved but the author can't be named (bot/persona) — settle on
         // the generic word, not the cached parent-stream name. The parent name is

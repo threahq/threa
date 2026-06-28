@@ -365,14 +365,12 @@ export class LinkPreviewService {
     // the viewer so a non-member author (e.g. a persona) still names the other
     // person; only then fall back to any non-author member.
     let recipientName: string | undefined
-    let recipientIsSelf: boolean | undefined
     if (stream.type === "dm") {
       const members = await StreamMemberRepository.list(this.deps.pool, { streamId: targetStreamId })
       const recipientId =
         members.find((m) => m.memberId !== message.authorId && m.memberId !== userId)?.memberId ??
         members.find((m) => m.memberId !== message.authorId)?.memberId
       if (recipientId) {
-        recipientIsSelf = recipientId === userId
         recipientName = (await UserRepository.findById(this.deps.pool, workspaceId, recipientId))?.name
       }
     }
@@ -391,8 +389,6 @@ export class LinkPreviewService {
       streamName: stream.displayName ?? stream.slug ?? undefined,
       streamType: stream.type,
       recipientName,
-      recipientIsSelf,
-      authorIsSelf: message.authorType === "user" && message.authorId === userId,
     }
   }
 

@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, type ReactNode } from "react"
+import { useMemo, type ReactNode } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -23,8 +24,12 @@ import type {
  * persisted preview row (`previewId`, the posted-message timeline) or a raw
  * `url` (a draft chip with no persisted row). Both hit the same access-tiered
  * resolver; only the lookup key differs. Pass both undefined to no-op (a chip
- * that resolved its name locally and needs no fetch). Deps are primitives so a
- * settled resolve doesn't re-fire on unrelated re-renders.
+ * that resolved its name locally and needs no fetch).
+ *
+ * Backed by a shared query cache keyed on the lookup id, so a link the composer
+ * already resolved renders resolved the instant the sent message re-mounts on
+ * the timeline — no second round-trip and no pending-glyph flash between the two
+ * surfaces (offline-first; INV-21). `loading` is only true on a cold miss.
  */
 export function useResolvedInAppLink(
   workspaceId: string,
@@ -32,50 +37,21 @@ export function useResolvedInAppLink(
   url: string | undefined,
   hydrate: boolean
 ): { data: InAppLinkPreviewData | null; loading: boolean } {
-  const [data, setData] = useState<InAppLinkPreviewData | null>(null)
-  const [loading, setLoading] = useState(hydrate)
+  const key = previewId ?? url ?? null
+  const query = useQuery({
+    queryKey: ["inAppLinkResolve", workspaceId, key],
+    queryFn: () =>
+      previewId
+        ? linkPreviewsApi.resolveInAppLink(workspaceId, previewId)
+        : linkPreviewsApi.resolveInAppLinkByUrl(workspaceId, url!),
+    enabled: hydrate && key !== null,
+    staleTime: 5 * 60_000,
+    // Previews are non-critical; a failed resolve collapses to no card/chip
+    // rather than retrying and holding a skeleton.
+    retry: false,
+  })
 
-  useEffect(() => {
-    if (!hydrate) {
-      // Hydration deferred (e.g. board feed): don't fetch and don't sit on a
-      // perpetual skeleton — collapse until a caller flips hydrate on.
-      setData(null)
-      setLoading(false)
-      return
-    }
-
-    let request: Promise<InAppLinkPreviewData> | null = null
-    if (previewId) request = linkPreviewsApi.resolveInAppLink(workspaceId, previewId)
-    else if (url) request = linkPreviewsApi.resolveInAppLinkByUrl(workspaceId, url)
-    if (!request) {
-      // Neither key (e.g. a chip that resolved its name locally) — collapse to
-      // no data rather than leaving a prior resolve's result on screen.
-      setData(null)
-      setLoading(false)
-      return
-    }
-
-    let mounted = true
-    // Clear any prior target's data so a failed re-resolve (silently caught
-    // below) can't leave the previous link's card showing for the new one.
-    setData(null)
-    setLoading(true)
-    request
-      .then((result) => {
-        if (mounted) setData(result)
-      })
-      .catch(() => {
-        // Silently fail — previews are non-critical
-      })
-      .finally(() => {
-        if (mounted) setLoading(false)
-      })
-    return () => {
-      mounted = false
-    }
-  }, [workspaceId, previewId, url, hydrate])
-
-  return { data, loading }
+  return { data: query.data ?? null, loading: query.isLoading }
 }
 
 interface InAppLinkPreviewCardProps {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
@@ -34,10 +35,13 @@ describe("InAppLinkPreviewCard", () => {
 
   function renderWith(data: InAppLinkPreviewData, preview: LinkPreviewSummary) {
     mockResolveInAppLink.mockResolvedValue(data)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
-      <MemoryRouter>
-        <InAppLinkPreviewCard preview={preview} workspaceId={workspaceId} />
-      </MemoryRouter>
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <InAppLinkPreviewCard preview={preview} workspaceId={workspaceId} />
+        </MemoryRouter>
+      </QueryClientProvider>
     )
   }
 
