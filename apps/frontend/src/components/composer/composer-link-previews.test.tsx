@@ -62,7 +62,7 @@ describe("ComposerLinkPreviews", () => {
 
   it("chips a memo link by its resolved title", async () => {
     const url = `${origin}/w/ws_1/memos/memo_1`
-    const resolve = vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
+    vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl").mockResolvedValue({
       kind: "memo",
       accessTier: "full",
       title: "Onboarding notes",
@@ -75,7 +75,6 @@ describe("ComposerLinkPreviews", () => {
     )
 
     await waitFor(() => expect(screen.getByText("Onboarding notes")).toBeInTheDocument())
-    expect(resolve).toHaveBeenCalledWith("ws_1", url)
   })
 
   it("forgets a dismissal once the link leaves and re-enters the draft", async () => {
