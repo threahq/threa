@@ -41,10 +41,9 @@ describe("InAppLinkInline (message chip)", () => {
 
     renderMessageLink("stream_dm")
 
-    // Author leads (truncatable); the recipient is the pinned suffix.
-    const lead = await screen.findByText("Pierre Boberg")
-    expect(screen.getByText("to Kristoffer Remback")).toBeInTheDocument()
-    expect(lead.closest("a")).toHaveAttribute("href", `${origin}/w/ws_1/s/stream_dm?m=msg_1`)
+    // One end-truncated label so pending and resolved truncate identically.
+    const chip = await screen.findByText("Pierre Boberg to Kristoffer Remback")
+    expect(chip.closest("a")).toHaveAttribute("href", `${origin}/w/ws_1/s/stream_dm?m=msg_1`)
   })
 
   it("renders a channel message as '{author} in #slug'", async () => {
@@ -58,8 +57,9 @@ describe("InAppLinkInline (message chip)", () => {
 
     renderMessageLink("stream_1")
 
-    await waitFor(() => expect(screen.getByText("Kristoffer Remback")).toBeInTheDocument())
-    expect(screen.getByText("in #tech-big-new-prop")).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getByText("Kristoffer Remback in #tech-big-new-prop")).toBeInTheDocument()
+    )
   })
 
   it("settles a fully-resolved but unnamed (bot/persona) message to 'Message', not the parent stream name", async () => {

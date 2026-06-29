@@ -24,21 +24,14 @@ type ChipIcon = ComponentType<{ className?: string }>
  * name (no sigil) so neither surface doubles the `#`.
  */
 export type InAppLinkChipState =
-  | {
-      status: "resolved"
-      icon: ChipIcon
-      label: string
-      prefix?: string
-      messageParts?: ChipMessageParts
-    }
+  | { status: "resolved"; icon: ChipIcon; label: string; prefix?: string }
   | { status: "restricted"; icon: ChipIcon; label: string }
   | { status: "pending" }
 
 /**
- * A message chip split into the author (`lead`) and the location suffix
- * (`tail`, e.g. " in #channel" / " to Pierre"). The chip truncates `lead` and
- * pins `tail`, so the destination — the part that disambiguates two messages by
- * the same author — survives truncation. `label` joins them for serialization.
+ * A message chip's author (`lead`) and location suffix (`tail`, e.g. " in
+ * #channel" / " to Pierre"); `buildMessageChipLabel` joins them into the single
+ * label string the inline chip renders and the link node serializes.
  */
 export interface ChipMessageParts {
   lead: string
@@ -221,24 +214,14 @@ export function useInAppLinkChip({
           currentUserId,
           resolveName: (id) => actors.getActorName(id, "user"),
         })
-        return {
-          status: "resolved",
-          icon: MessageSquare,
-          label: `${parts.lead}${parts.tail}`,
-          messageParts: parts,
-        }
+        return { status: "resolved", icon: MessageSquare, label: `${parts.lead}${parts.tail}` }
       }
 
       // 2) Backend fallback (message not in the local cache).
       if (data?.kind === "message" && data.accessTier === "full") {
         const parts = buildMessageChipParts(data)
         if (parts) {
-          return {
-            status: "resolved",
-            icon: MessageSquare,
-            label: `${parts.lead}${parts.tail}`,
-            messageParts: parts,
-          }
+          return { status: "resolved", icon: MessageSquare, label: `${parts.lead}${parts.tail}` }
         }
         // Fully resolved but the author can't be named — settle on the generic
         // word, not the cached parent-stream name (a stream label would mislabel

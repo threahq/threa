@@ -98,8 +98,7 @@ describe("MarkdownContent — inline in-app link chip", () => {
 
     // Author + location resolve straight from the cached event; the
     // permission-checked backend resolver is never called.
-    await waitFor(() => expect(screen.getByText("Pierre Boberg")).toBeInTheDocument())
-    expect(screen.getByText("in #design")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText("Pierre Boberg in #design")).toBeInTheDocument())
     expect(resolve).not.toHaveBeenCalled()
   })
 
