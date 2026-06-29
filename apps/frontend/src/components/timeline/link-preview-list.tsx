@@ -7,7 +7,7 @@ import { usePreferences } from "@/contexts"
 import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
-import { isInAppLinkContentType, isInlineChipContentType, type LinkPreviewSummary } from "@threa/types"
+import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threa/types"
 
 const DEFAULT_VISIBLE_COUNT = 3
 
@@ -86,11 +86,12 @@ export function LinkPreviewList({
     [workspaceId, messageId]
   )
 
-  // Stream/message links render as an inline chip inside the message body, so
-  // their card is suppressed here (the chip is the single surface). Memo and
-  // web previews keep their card.
+  // A stream link is a bare "#channel" reference, fully said by its inline chip,
+  // so its card is suppressed. A message link keeps its card: the inline chip is
+  // a compact named reference in the body, and the card carries the rich preview
+  // (author face, snippet) below. Memo and web previews keep their card too.
   const visiblePreviews = useMemo(
-    () => previews.filter((p) => !dismissedIds.has(p.id) && !isInlineChipContentType(p.contentType)),
+    () => previews.filter((p) => !dismissedIds.has(p.id) && p.contentType !== LinkPreviewContentTypes.STREAM_LINK),
     [previews, dismissedIds]
   )
 

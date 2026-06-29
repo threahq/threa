@@ -29,21 +29,10 @@ export type InAppLinkChipState =
       icon: ChipIcon
       label: string
       prefix?: string
-      avatar?: ChipAvatar
       messageParts?: ChipMessageParts
     }
   | { status: "restricted"; icon: ChipIcon; label: string }
   | { status: "pending" }
-
-/**
- * Leading author face for a message chip — the avatar image when the author has
- * one, with `name` driving the alt text and the initial fallback. Absent for
- * stream chips and unnamed (bot/persona) authors, which keep their type glyph.
- */
-export interface ChipAvatar {
-  url?: string
-  name: string
-}
 
 /**
  * A message chip split into the author (`lead`) and the location suffix
@@ -232,12 +221,10 @@ export function useInAppLinkChip({
           currentUserId,
           resolveName: (id) => actors.getActorName(id, "user"),
         })
-        const avatar = { url: actors.getActorAvatar(authorId, authorType).avatarUrl, name: lead }
         return {
           status: "resolved",
           icon: MessageSquare,
           label: `${parts.lead}${parts.tail}`,
-          avatar,
           messageParts: parts,
         }
       }
@@ -246,18 +233,10 @@ export function useInAppLinkChip({
       if (data?.kind === "message" && data.accessTier === "full") {
         const parts = buildMessageChipParts(data)
         if (parts) {
-          // Prefer the author's live avatar from the workspace store; fall back to
-          // the resolve's point-in-time snapshot for an author not cached locally.
-          const liveAvatarUrl = data.authorId
-            ? actors.getActorAvatar(data.authorId, data.authorType ?? "user").avatarUrl
-            : undefined
-          const avatarUrl = liveAvatarUrl ?? data.authorAvatarUrl
-          const avatar = data.authorName ? { url: avatarUrl, name: data.authorName } : undefined
           return {
             status: "resolved",
             icon: MessageSquare,
             label: `${parts.lead}${parts.tail}`,
-            avatar,
             messageParts: parts,
           }
         }
@@ -288,16 +267,5 @@ export function useInAppLinkChip({
       }
     }
     return { status: "resolved", icon: Hash, label: "Conversation" }
-  }, [
-    localName,
-    loading,
-    data,
-    cachedType,
-    isMessage,
-    cachedMessageEvent,
-    actors,
-    dmPeers,
-    streamId,
-    currentUserId,
-  ])
+  }, [localName, loading, data, cachedType, isMessage, cachedMessageEvent, actors, dmPeers, streamId, currentUserId])
 }

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+import { ActorAvatar } from "@/components/actor-avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { classifyDraftLink } from "@/lib/in-app-links"
@@ -186,7 +186,14 @@ function MessageLinkCard({
   const body = (
     <CardBody>
       <div className="flex gap-3">
-        <AuthorAvatar avatarUrl={data.authorAvatarUrl} authorName={data.authorName} />
+        <ActorAvatar
+          actorId={data.authorId ?? null}
+          actorType={data.authorType ?? "user"}
+          workspaceId={workspaceId}
+          size="lg"
+          alt={data.authorName ?? ""}
+          showStatus={false}
+        />
         <div className="min-w-0 flex-1">
           {data.authorName && <span className="text-xs font-semibold text-foreground">{data.authorName}</span>}
           {data.contentPreview && (
@@ -494,27 +501,6 @@ function getInternalPath(url: string): string | null {
   } catch {
     return null
   }
-}
-
-function AuthorAvatar({ avatarUrl, authorName }: { avatarUrl?: string; authorName?: string }) {
-  if (avatarUrl) {
-    return (
-      <Avatar className="h-9 w-9 shrink-0 rounded-lg">
-        <AvatarImage src={avatarUrl} alt={authorName ?? ""} />
-        <AvatarFallback className="rounded-lg text-xs">{authorName?.charAt(0)?.toUpperCase() ?? "?"}</AvatarFallback>
-      </Avatar>
-    )
-  }
-
-  if (authorName) {
-    return (
-      <Avatar className="h-9 w-9 shrink-0 rounded-lg">
-        <AvatarFallback className="rounded-lg text-xs">{authorName.charAt(0).toUpperCase()}</AvatarFallback>
-      </Avatar>
-    )
-  }
-
-  return null
 }
 
 function DismissButton({ onDismiss }: { onDismiss?: () => void }) {

@@ -63,6 +63,9 @@ function getPreviewText(doc: JSONContent): string {
     if (node.type === "mention") return `@${node.attrs?.label ?? ""}`
     if (node.type === "emoji") return String(node.attrs?.emoji ?? node.attrs?.shortcode ?? "")
     if (node.type === "hardBreak") return null
+    // Atom node: no child text, so surface its baked label or it reads as empty.
+    if (node.type === "inAppLink")
+      return typeof node.attrs?.name === "string" && node.attrs.name ? node.attrs.name : "Link"
 
     if (node.type === "quoteReply") {
       const author = typeof node.attrs?.authorName === "string" ? node.attrs.authorName : ""

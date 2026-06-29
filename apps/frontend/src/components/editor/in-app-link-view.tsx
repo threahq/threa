@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { MessageSquare } from "lucide-react"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { useParams } from "react-router-dom"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
@@ -34,23 +35,15 @@ export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
     }
   }, [resolvedName, attrs.name, updateAttributes])
 
-  const icon = state.status === "pending" ? undefined : state.icon
+  const pendingIcon = attrs.messageId ? MessageSquare : undefined
+  const icon = state.status === "pending" ? pendingIcon : state.icon
   const label = state.status === "pending" ? attrs.name || "Link" : state.label
   const prefix = state.status === "resolved" ? state.prefix : undefined
-  const avatar = state.status === "resolved" ? state.avatar : undefined
   const messageParts = state.status === "resolved" ? state.messageParts : undefined
-  const avatarSkeleton = state.status === "pending" && Boolean(attrs.messageId)
 
   return (
     <NodeViewWrapper as="span" data-type="in-app-link">
-      <InAppLinkChip
-        icon={icon}
-        prefix={prefix}
-        label={label}
-        avatar={avatar}
-        messageParts={messageParts}
-        avatarSkeleton={avatarSkeleton}
-      />
+      <InAppLinkChip icon={icon} prefix={prefix} label={label} messageParts={messageParts} />
     </NodeViewWrapper>
   )
 }
