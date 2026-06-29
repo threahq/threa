@@ -177,20 +177,9 @@ export function useInAppLinkChip({
     undefined
   )
 
-  // A DM chip names the other participant, which needs the viewer id + the peer
-  // row. When the local stores can't supply them, the backend resolve is
-  // authoritative for the recipient — fall back to it rather than flash an
-  // author-only label or wedge on a permanently-missing peer.
-  const dmPeerEntry = dmPeers.find((p) => p.streamId === streamId)
-  const dmRecipientUnresolved =
-    (cachedType === "dm" || Boolean(dmPeerEntry)) && (currentUserId === null || !dmPeerEntry)
-
   // Hit the access-tiered backend resolve only when the target isn't already
-  // local: a message that isn't cached here (or whose DM recipient the local
-  // stores can't name), or an uncached stream link.
-  const needsResolve = isMessage
-    ? cachedMessageEvent === null || (Boolean(cachedMessageEvent) && dmRecipientUnresolved)
-    : !localName
+  // local: a message that isn't cached here, or an uncached stream link.
+  const needsResolve = isMessage ? cachedMessageEvent === null : !localName
   const { data, loading } = useResolvedInAppLink(workspaceId, undefined, needsResolve ? url : undefined, true)
 
   return useMemo<InAppLinkChipState>(() => {
@@ -222,12 +211,17 @@ export function useInAppLinkChip({
       //    timeline event. A locally-cached message is by definition one the
       //    viewer can read, so no access tier or round-trip is needed.
       const authorId = cachedMessageEvent?.actorId
-      // Resolve locally only when the chip is fully nameable from the stores: any
-      // message except a DM whose recipient the local stores can't supply yet
-      // (`dmRecipientUnresolved`), which falls through to the backend resolve
-      // rather than rendering an author-only / wrong-preposition label.
-      if (authorId && !dmRecipientUnresolved) {
+      if (authorId) {
         const authorType = cachedMessageEvent.actorType ?? "user"
+        const dmPeer = dmPeers.find((p) => p.streamId === streamId)
+        const isDmStream = cachedType === "dm" || Boolean(dmPeer)
+        // A DM chip names the other participant (viewer id + peer row). Until both
+        // load, stay pending — which renders the baked label, not a skeleton — so
+        // a half-resolved "author only" / "… in {peer}" label never flashes. No
+        // wedge: a permanently-missing peer just keeps showing the baked label.
+        if (isDmStream && (currentUserId === null || !dmPeer)) {
+          return { status: "pending" }
+        }
         const lead = actors.getActorName(authorId, authorType)
         const parts = buildLocalMessageParts({
           authorId,
@@ -305,6 +299,5 @@ export function useInAppLinkChip({
     dmPeers,
     streamId,
     currentUserId,
-    dmRecipientUnresolved,
   ])
 }
