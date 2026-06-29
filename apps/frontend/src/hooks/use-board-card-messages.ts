@@ -1,8 +1,8 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
-import { db, type CachedEvent } from "@/db"
+import { db, type CachedEvent, type PendingMessage } from "@/db"
 import type { RenderableMessage } from "@/components/message/message-item"
-import type { AuthorType } from "@threa/types"
+import { ConversationIntents, type AuthorType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
 
 interface MessageCreatedPayloadShape {
@@ -146,11 +146,116 @@ function useStreamRail(streamId: string): StreamRail {
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
-/** Tear down every shared stream subscription — for tests, so a module-level
+/**
+ * Convert-to-thread board replies in flight, keyed by the SOURCE conversation
+ * they thread off — shared across every card in a workspace by one liveQuery
+ * (the same INV-9 carve-out the rail registry takes).
+ *
+ * A lone channel/DM post's board reply doesn't land on the source card's stream:
+ * it's queued as a thread-draft reply (`threadFromMessage`), so its optimistic
+ * event lives on the thread-draft stream, never on this card's rail. Without
+ * this the source card would show the bare opener until the server echo swaps it
+ * for the thread card — a dead "did my reply send?" window. The pending send row
+ * carries the `sourceConversationId` directive, so reading it lets the source
+ * card render the reply in place from send through promotion; the row is deleted
+ * on send success, just as the `conversation:*` echo hands the card over to the
+ * thread. Bodies come from the optimistic event (full attachments), found by the
+ * pending send's `clientId`.
+ */
+function buildPendingConversions(
+  pendings: PendingMessage[],
+  events: (CachedEvent | undefined)[]
+): Map<string, RenderableMessage[]> {
+  const map = new Map<string, RenderableMessage[]>()
+  pendings.forEach((pending, i) => {
+    if (pending.conversation?.intent !== ConversationIntents.THREAD_FROM_MESSAGE) return
+    const event = events[i]
+    const message = event ? eventToRenderable(event) : null
+    if (!message) return
+    const sourceConversationId = pending.conversation.sourceConversationId
+    const list = map.get(sourceConversationId)
+    if (list) list.push(message)
+    else map.set(sourceConversationId, [message])
+  })
+  for (const list of map.values()) {
+    list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  }
+  return map
+}
+
+interface PendingConversionsEntry {
+  conversions: Map<string, RenderableMessage[]>
+  listeners: Set<() => void>
+  subscription: Subscription
+  refCount: number
+}
+
+const EMPTY_CONVERSIONS: Map<string, RenderableMessage[]> = new Map()
+const pendingConversionsRegistry = new Map<string, PendingConversionsEntry>()
+
+function subscribePendingConversions(workspaceId: string, listener: () => void): () => void {
+  let entry = pendingConversionsRegistry.get(workspaceId)
+  if (!entry) {
+    const created: PendingConversionsEntry = {
+      conversions: EMPTY_CONVERSIONS,
+      listeners: new Set(),
+      refCount: 0,
+      subscription: { unsubscribe() {} } as Subscription,
+    }
+    pendingConversionsRegistry.set(workspaceId, created)
+    created.subscription = liveQuery(async () => {
+      // pendingMessages is the in-flight outbox (tiny), so a full scan + JS
+      // filter is cheaper than indexing a new column. bulkGet observes only the
+      // optimistic events' own keys, so unrelated message writes don't re-run this.
+      const pendings = (await db.pendingMessages.toArray()).filter(
+        (p) => p.workspaceId === workspaceId && p.conversation?.intent === ConversationIntents.THREAD_FROM_MESSAGE
+      )
+      if (pendings.length === 0) return EMPTY_CONVERSIONS
+      const events = await db.events.bulkGet(pendings.map((p) => p.clientId))
+      return buildPendingConversions(pendings, events)
+    }).subscribe((conversions) => {
+      const live = pendingConversionsRegistry.get(workspaceId)
+      if (!live) return
+      live.conversions = conversions
+      for (const notify of live.listeners) notify()
+    })
+    entry = created
+  }
+  entry.listeners.add(listener)
+  entry.refCount += 1
+  return () => {
+    const current = pendingConversionsRegistry.get(workspaceId)
+    if (!current) return
+    current.listeners.delete(listener)
+    current.refCount -= 1
+    if (current.refCount <= 0) {
+      current.subscription.unsubscribe()
+      pendingConversionsRegistry.delete(workspaceId)
+    }
+  }
+}
+
+/** Convert-to-thread replies in flight for the workspace, keyed by the source
+ *  conversation each retires. See {@link buildPendingConversions}. */
+function usePendingThreadConversions(workspaceId: string): Map<string, RenderableMessage[]> {
+  const subscribe = useCallback(
+    (onChange: () => void) => subscribePendingConversions(workspaceId, onChange),
+    [workspaceId]
+  )
+  const getSnapshot = useCallback(
+    () => pendingConversionsRegistry.get(workspaceId)?.conversions ?? EMPTY_CONVERSIONS,
+    [workspaceId]
+  )
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
+/** Tear down every shared board subscription — for tests, so a module-level
  *  registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardRailRegistry(): void {
   for (const entry of railRegistry.values()) entry.subscription.unsubscribe()
   railRegistry.clear()
+  for (const entry of pendingConversionsRegistry.values()) entry.subscription.unsubscribe()
+  pendingConversionsRegistry.clear()
 }
 
 export interface BoardCardMessages {
@@ -205,6 +310,7 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
   )
 
   const rail = useStreamRail(streamId)
+  const pendingConversions = usePendingThreadConversions(post.workspaceId)
   const conversationId = post.conversation.id
 
   return useMemo(() => {
@@ -214,8 +320,17 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
     // in `replyIds` so a confirmed reply renders once (via `replies`), not twice.
     const replyIdSet = new Set(replyIds)
     const tagged = rail.taggedByConversation.get(conversationId)
-    const unconfirmed = tagged ? tagged.filter((m) => !replyIdSet.has(m.id)) : NO_PENDING
-    const pendingReplies = unconfirmed.length > 0 ? unconfirmed : NO_PENDING
+    const taggedUnconfirmed = tagged ? tagged.filter((m) => !replyIdSet.has(m.id)) : []
+    // A convert-to-thread reply attaches to THIS source conversation but its
+    // optimistic event lives on the thread-draft stream, not this card's rail —
+    // fold the pending send in (deduped against tagged + confirmed ids) so the
+    // lone source card shows the reply in place until the thread card takes over
+    // on echo. See `usePendingThreadConversions`.
+    const conversionReplies = pendingConversions.get(conversationId) ?? NO_PENDING
+    const taggedIds = new Set(taggedUnconfirmed.map((m) => m.id))
+    const conversionUnconfirmed = conversionReplies.filter((m) => !replyIdSet.has(m.id) && !taggedIds.has(m.id))
+    const merged = [...taggedUnconfirmed, ...conversionUnconfirmed]
+    const pendingReplies = merged.length > 0 ? merged : NO_PENDING
 
     // The server's count excludes `messageIds[0]` for a flat conversation even
     // when that opening was deleted, so trust it when the flat relationship is
@@ -258,5 +373,5 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
     const totalReplies = fullySynced ? liveReplies.length : serverTotal
 
     return { openingMessage, replies: liveReplies, totalReplies, pendingReplies, source: "events" }
-  }, [rail, replyIds, openingId, messageIds, post, conversationId])
+  }, [rail, pendingConversions, replyIds, openingId, messageIds, post, conversationId])
 }

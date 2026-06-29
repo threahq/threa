@@ -22,9 +22,11 @@ const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-w
 
 // Resting-affordance state. `draft` signals a persisted-but-collapsed reply (so
 // the user knows reopening restores it); `posted` is a transient confirmation
-// that a convert-to-thread reply went through — it bridges the brief swap where
-// this lone card retires and the thread card takes its place on the server echo,
-// since (unlike a same-conversation reply) the reply isn't shown in place here.
+// that a convert-to-thread reply went through. The reply itself shows in place on
+// the card (its in-flight send surfaces under this lone source card until the
+// thread card takes over on echo — see `usePendingThreadConversions`), so this
+// note isn't covering an invisible reply; it names the routing outcome the reply
+// alone doesn't convey — that this lone card is becoming a thread.
 type RestingState = "idle" | "draft" | "posted"
 const RESTING_LABEL: Record<RestingState, string> = {
   idle: "Write a reply…",
@@ -199,11 +201,11 @@ function BoardReplyComposerForm({
     try {
       // Eager + offline-first: the reply is enqueued as an optimistic event and
       // the send drains in the background, so there's no created message to await
-      // here — only the resolved plan, which selects the resting note. An
-      // `intoConversation` reply rides the card's own rail and shows in place; a
-      // `convertToThread` reply lands in a thread off the opener (and retires this
-      // lone card, which swaps to the thread on echo), so the transient "Posted to
-      // a new thread" note bridges the brief swap.
+      // here — only the resolved plan, which selects the resting note. Both routes
+      // show the reply in place: an `intoConversation` reply rides the card's own
+      // rail, and a `convertToThread` reply surfaces from its in-flight send under
+      // this lone card until the thread card takes over on echo. The transient
+      // "Posted to a new thread" note only names the convert-to-thread routing.
       const { plan } = await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,

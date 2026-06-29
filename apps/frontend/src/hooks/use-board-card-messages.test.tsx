@@ -65,7 +65,43 @@ function makePost(opts: {
 beforeEach(async () => {
   __clearBoardRailRegistry()
   await db.events.clear()
+  await db.pendingMessages.clear()
 })
+
+/** Seed a convert-to-thread board reply in flight: the optimistic event (on the
+ *  thread-draft stream, NOT the source card's stream) plus the pending send row
+ *  that carries the `sourceConversationId` directive. */
+async function seedPendingConversion(opts: {
+  clientId: string
+  sourceConversationId: string
+  contentMarkdown: string
+  createdAtMs: number
+}): Promise<void> {
+  await db.events.put({
+    id: opts.clientId,
+    workspaceId: WS,
+    streamId: `draft:${opts.sourceConversationId}`,
+    sequence: String(opts.createdAtMs),
+    _sequenceNum: opts.createdAtMs,
+    eventType: "message_created",
+    payload: { messageId: opts.clientId, contentMarkdown: opts.contentMarkdown, reactions: {} },
+    actorId: "usr_1",
+    actorType: "user",
+    createdAt: new Date(opts.createdAtMs).toISOString(),
+    _cachedAt: opts.createdAtMs,
+    _status: "pending",
+  } as CachedEvent)
+  await db.pendingMessages.add({
+    clientId: opts.clientId,
+    workspaceId: WS,
+    streamId: `draft:${opts.sourceConversationId}`,
+    content: opts.contentMarkdown,
+    contentFormat: "markdown",
+    createdAt: opts.createdAtMs,
+    retryCount: 0,
+    conversation: { intent: "threadFromMessage", sourceConversationId: opts.sourceConversationId },
+  })
+}
 
 describe("useBoardCardMessages", () => {
   it("reads a flat conversation's replies live from db.events when the stream is synced", async () => {
@@ -164,6 +200,61 @@ describe("useBoardCardMessages", () => {
     await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["r1", "msg_real"]))
     expect(result.current.pendingReplies).toEqual([])
     expect(shown().filter((id) => id === "msg_real")).toHaveLength(1)
+  })
+
+  it("surfaces a convert-to-thread reply on the lone source card from the in-flight pending send", async () => {
+    // A lone channel post: just the opener, in the source stream's rail.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    // The reply was queued as a thread-draft send — its optimistic event lives on
+    // the thread-draft stream, not this card's stream, so the source card only
+    // learns of it through the pending send's `sourceConversationId` directive.
+    await seedPendingConversion({
+      clientId: "temp_thread",
+      sourceConversationId: "conv_1",
+      contentMarkdown: "my thread reply",
+      createdAtMs: 2,
+    })
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_thread"]))
+    expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("my thread reply")
+    // The reply isn't a member of this lone conversation's messageIds (it lands
+    // in the thread), so it never inflates the confirmed replies.
+    expect(result.current.replies).toEqual([])
+  })
+
+  it("clears the convert-to-thread reply once its pending send is deleted on send success", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    await seedPendingConversion({
+      clientId: "temp_thread",
+      sourceConversationId: "conv_1",
+      contentMarkdown: "my thread reply",
+      createdAtMs: 2,
+    })
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_thread"]))
+
+    // The drain deletes the pending row on send success — the source card stops
+    // showing the reply as the `conversation:*` echo hands it over to the thread.
+    await db.pendingMessages.delete("temp_thread")
+    await waitFor(() => expect(result.current.pendingReplies).toEqual([]))
+  })
+
+  it("does not surface a convert-to-thread reply on a card other than its source conversation", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    await seedPendingConversion({
+      clientId: "temp_thread",
+      sourceConversationId: "conv_other",
+      contentMarkdown: "for another card",
+      createdAtMs: 2,
+    })
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.pendingReplies).toEqual([])
   })
 
   it("keeps a failed (mid-backoff) optimistic reply visible instead of blinking it out", async () => {
