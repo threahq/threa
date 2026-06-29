@@ -53,3 +53,36 @@ export async function emitAssignmentEvents(
 
   return refreshed
 }
+
+/**
+ * Emit the aggregate update for a conversation that just lost its last message
+ * (e.g. a lone source conversation retired when its message was threaded off).
+ * Mirrors the reassignment path's emptied-source emit (`service.ts`): the board
+ * drops a now-empty conversation (its `cardinality > 0` filter on the server,
+ * the delete-on-empty merge on the client), so this is the signal that retires
+ * the card. Routed by the conversation's OWN stream (INV-62) — `streamId` here
+ * is the source's parent stream, not the thread the reply landed in.
+ */
+export async function emitConversationRetired(
+  client: PoolClient,
+  params: { workspaceId: string; conversationId: string; streamId: string }
+): Promise<void> {
+  const { workspaceId, conversationId, streamId } = params
+  const stream = await StreamRepository.findById(client, streamId)
+  const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+  const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationId])
+  if (!refreshed) {
+    // The row we just locked + emptied in this same transaction is gone — an
+    // invariant break (INV-11). Throwing rolls back the whole send rather than
+    // silently dropping the board-removal event and leaving a stale source card.
+    throw new Error(`Conversation ${conversationId} vanished during retirement`)
+  }
+  await OutboxRepository.insert(client, "conversation:updated", {
+    workspaceId,
+    streamId,
+    conversationId,
+    conversation: addStalenessFields(refreshed),
+    parentStreamId,
+    streamVisibility,
+  })
+}

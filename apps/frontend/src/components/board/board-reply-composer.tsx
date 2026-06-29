@@ -22,9 +22,9 @@ const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-w
 
 // Resting-affordance state. `draft` signals a persisted-but-collapsed reply (so
 // the user knows reopening restores it); `posted` is a transient confirmation
-// that a new-thread reply went through — it stands in for the in-place echo a
-// same-conversation reply gets, since a new-thread reply lands in its own
-// conversation and only surfaces on the next board load.
+// that a convert-to-thread reply went through — it bridges the brief swap where
+// this lone card retires and the thread card takes its place on the server echo,
+// since (unlike a same-conversation reply) the reply isn't shown in place here.
 type RestingState = "idle" | "draft" | "posted"
 const RESTING_LABEL: Record<RestingState, string> = {
   idle: "Write a reply…",
@@ -50,13 +50,14 @@ interface BoardReplyComposerProps {
  * mirrors the composer's own container — same radius, border, surface, padding,
  * and placeholder — and the composer mounts already open (`initialMobileChromeOpen`)
  * so the tap lands straight in the toolbar view instead of stepping through the
- * mobile compacted phase. Routing — channel → thread, everything else → the
- * conversation — lives in {@link useReplyToBoardPost}.
+ * mobile compacted phase. Routing — a lone channel/DM post converts to a thread,
+ * everything else replies flat into the conversation — lives in
+ * {@link useReplyToBoardPost}.
  *
  * The resting affordance carries state (best-effort, in-session): it flags a
  * persisted draft after an Escape ("Continue reply…") and a transient "Posted to
- * a new thread" confirmation after a new-thread send, so a collapse never reads
- * as a no-op or an accidental discard.
+ * a new thread" confirmation after a convert-to-thread send, so a collapse never
+ * reads as a no-op or an accidental discard.
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
@@ -197,12 +198,12 @@ function BoardReplyComposerForm({
     composer.setIsSending(true)
     try {
       // Eager + offline-first: the reply is enqueued as an optimistic event and
-      // shows in place immediately (an `intoConversation` reply rides the card's
-      // own rail; a `newThread` reply lands in its own thread, surfacing as its
-      // own board post on the next load). The send drains in the background, so
-      // there's no created message to await here — only the resolved plan, which
-      // selects the resting note: the visible in-place reply is the feedback for
-      // the former, the transient "Posted to a new thread" note for the latter.
+      // the send drains in the background, so there's no created message to await
+      // here — only the resolved plan, which selects the resting note. An
+      // `intoConversation` reply rides the card's own rail and shows in place; a
+      // `convertToThread` reply lands in a thread off the opener (and retires this
+      // lone card, which swaps to the thread on echo), so the transient "Posted to
+      // a new thread" note bridges the brief swap.
       const { plan } = await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
@@ -215,7 +216,7 @@ function BoardReplyComposerForm({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true, posted: plan.kind === "newThread" })
+      onClose({ refocus: true, posted: plan.kind === "convertToThread" })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")
     } finally {
