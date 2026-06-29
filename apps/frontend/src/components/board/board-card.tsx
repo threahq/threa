@@ -80,10 +80,14 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   else if (incompleteLocally && allMessages)
     replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
   else replies = railReplies
-  // Append this card's own just-sent replies, skipping any the rail or a backfill
-  // already carries.
+  // Merge this card's own just-sent replies with the confirmed set, skipping any
+  // the rail or a backfill already carries, then sort by time: a pending reply
+  // can be OLDER than a confirmed one (someone else's reply lands while yours is
+  // still in flight), so appending blindly would render it out of order.
   const seenReplyIds = new Set(replies.map((m) => m.id))
-  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))]
+  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  )
   const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.length)
   const loadingMore = expanded && incompleteLocally && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that

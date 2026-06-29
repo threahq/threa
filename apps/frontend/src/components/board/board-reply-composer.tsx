@@ -6,6 +6,7 @@ import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { BoardPost, JSONContent } from "@threa/types"
@@ -132,6 +133,16 @@ function BoardReplyComposerForm({
   )
   const streamContext = useMentionStreamContext(workspaceId, hostStream)
 
+  // Whether the host is end-to-end-encrypted. Read from the synced IDB stream row
+  // (`useStreamFromStore`) as the authority, NOT just the workspace cache: a
+  // thread card's host is absent from `useWorkspaceStreams` (it holds sidebar
+  // streams) but the board syncs every on-screen card's host into `db.streams`
+  // (useBoardStreamSubscriptions), so the IDB row carries `e2eEnabled` where the
+  // workspace cache has no row. Falling back to the cache alone would skip the
+  // block below for thread hosts.
+  const idbHostStream = useStreamFromStore(streamId)
+  const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
+
   const draftKey = `board:reply:${post.conversation.id}`
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
 
@@ -172,7 +183,7 @@ function BoardReplyComposerForm({
     // this conversation anyway. Surface it instead of queuing a doomed send —
     // E2E board replies belong to the encrypted-streams workstream. The draft is
     // kept so nothing the user typed is lost.
-    if (hostStream?.e2eEnabled) {
+    if (hostIsE2e) {
       toast.error("Encrypted notes can't be replied to from the board yet — open the note to reply there.")
       return
     }
