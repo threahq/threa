@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import Dexie from "dexie"
 import { db } from "@/db"
-import { seedBoardPosts, mergeBoardConversation, optimisticBoardReply } from "./board-store"
+import { seedBoardPosts, mergeBoardConversation } from "./board-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 
 const WORKSPACE_ID = "ws_1"
@@ -101,40 +101,13 @@ describe("mergeBoardConversation", () => {
     expect(await readBoard()).toHaveLength(0)
   })
 
-  it("clears the optimistic pending flag when the authoritative echo merges over it", async () => {
+  it("clears a pending flag when the authoritative echo merges over it", async () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z")])
-    await optimisticBoardReply("conv_1", makeMessage("r1"), Date.parse("2026-06-21T12:00:00.000Z"))
-    expect((await db.conversations.get("conv_1"))?._status).toBe("pending")
+    // A row left pending by an in-flight optimistic write (the reply rides the
+    // events rail now; the projection row can still be flagged pending elsewhere).
+    const seeded = await db.conversations.get("conv_1")
+    await db.conversations.put({ ...seeded!, _status: "pending" })
     await mergeBoardConversation("conv_1", makeConversation("conv_1", "2026-06-21T12:00:05.000Z"))
     expect((await db.conversations.get("conv_1"))?._status).toBeUndefined()
-  })
-})
-
-describe("optimisticBoardReply", () => {
-  it("appends the reply, bumps activity to the top, and marks the row pending", async () => {
-    await seedBoardPosts(WORKSPACE_ID, [
-      makePost("conv_1", "2026-06-20T12:00:00.000Z"),
-      makePost("conv_2", "2026-06-21T12:00:00.000Z"),
-    ])
-    await optimisticBoardReply("conv_1", makeMessage("r1"), Date.parse("2026-06-22T12:00:00.000Z"))
-    const board = await readBoard()
-    expect(board.map((p) => p.id)).toEqual(["conv_1", "conv_2"])
-    expect(board[0]?.recentMessages.map((m) => m.id)).toEqual(["r1"])
-    expect(board[0]?.totalReplies).toBe(1)
-    expect(board[0]?._status).toBe("pending")
-  })
-
-  it("caps the preview at the latest three replies", async () => {
-    await seedBoardPosts(WORKSPACE_ID, [
-      makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1"), makeMessage("r2"), makeMessage("r3")]),
-    ])
-    await optimisticBoardReply("conv_1", makeMessage("r4"), Date.parse("2026-06-22T12:00:00.000Z"))
-    const row = await db.conversations.get("conv_1")
-    expect(row?.recentMessages.map((m) => m.id)).toEqual(["r2", "r3", "r4"])
-  })
-
-  it("is a no-op when the conversation isn't cached", async () => {
-    await optimisticBoardReply("conv_absent", makeMessage("r1"), Date.now())
-    expect(await readBoard()).toHaveLength(0)
   })
 })

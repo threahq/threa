@@ -667,14 +667,40 @@ export function registerStreamSocketHandlers(
         gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
       }
 
-      // Add the real event BEFORE deleting the optimistic one so that
-      // Dexie live-query observers never see a frame with neither event.
-      await db.events.put({ ...newEvent, workspaceId, _sequenceNum: sequenceToNum(newEvent.sequence), _cachedAt: now })
-
-      // Now remove the optimistic event, keyed by the client id the server echoes back.
+      // Read the optimistic row (keyed by the client id the server echoes back)
+      // BEFORE writing the real event, so we can carry forward state the server
+      // event doesn't itself carry.
+      let carriedConversationId: string | undefined
       if (newPayload.clientMessageId) {
         const optimistic = await db.events.get(newPayload.clientMessageId)
         optimisticPlaintext = readPlaintextContent(optimistic?.payload)
+        // A board reply tags its optimistic event with the conversation it
+        // attaches to; the server `message:created` does NOT carry that (the
+        // conversation aggregate rides a separate `conversation:updated`). Carry
+        // it onto the real event so the board card keeps showing the reply in the
+        // window between this swap and the aggregate update — otherwise the row
+        // would blink out (its id isn't in `conversation.messageIds` yet, and the
+        // optimistic copy is about to be deleted). Read-side only; ignored by the
+        // timeline. See `useBoardCardMessages`.
+        carriedConversationId = (optimistic?.payload as { conversationId?: string } | undefined)?.conversationId
+      }
+
+      // Add the real event BEFORE deleting the optimistic one so that
+      // Dexie live-query observers never see a frame with neither event.
+      const eventToStore = carriedConversationId
+        ? {
+            ...newEvent,
+            payload: { ...(newEvent.payload as Record<string, unknown>), conversationId: carriedConversationId },
+          }
+        : newEvent
+      await db.events.put({
+        ...eventToStore,
+        workspaceId,
+        _sequenceNum: sequenceToNum(newEvent.sequence),
+        _cachedAt: now,
+      })
+
+      if (newPayload.clientMessageId) {
         await db.events.delete(newPayload.clientMessageId).catch(() => {})
         await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
       }

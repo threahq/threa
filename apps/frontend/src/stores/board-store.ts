@@ -1,7 +1,7 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedBoardPost } from "@/db"
-import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
+import type { BoardPost, ConversationWithStaleness } from "@threa/types"
 
 /**
  * How many trailing replies a board card previews. Mirrors the backend's
@@ -82,41 +82,5 @@ export async function mergeBoardConversation(
       _status: undefined,
     })
     return true
-  })
-}
-
-/**
- * Optimistically reflect the viewer's own reply into a visible card: append the
- * message to the preview, bump activity to `atMs`, and mark the row pending until
- * the authoritative `conversation:updated` echo merges over it. No-op when the
- * card isn't cached (a reply into a not-yet-seen conversation surfaces via the
- * event path).
- *
- * The `_lastActivityMs` bump is IDB truth (it re-sorts the live feed and a fresh
- * snapshot lands the card at the top), but the stable view holds a committed
- * card's position frozen, so the reply shows in place — it does not yank the card
- * to the top under the reader (`use-stable-board-view`, INV-61).
- */
-export async function optimisticBoardReply(
-  conversationId: string,
-  message: BoardPostMessage,
-  atMs: number
-): Promise<void> {
-  // Read-modify-write in one rw transaction so it can't race the authoritative
-  // echo's merge through a stale read. Dedup by id so a retry can't double-append.
-  await db.transaction("rw", db.conversations, async () => {
-    const existing = await db.conversations.get(conversationId)
-    if (!existing) return
-    if (existing.recentMessages.some((m) => m.id === message.id)) return
-    const recentMessages = [...existing.recentMessages, message].slice(-RECENT_PREVIEW_CAP)
-    await db.conversations.put({
-      ...existing,
-      conversation: { ...existing.conversation, lastActivityAt: new Date(atMs).toISOString() },
-      recentMessages,
-      totalReplies: existing.totalReplies + 1,
-      _lastActivityMs: atMs,
-      _cachedAt: Date.now(),
-      _status: "pending",
-    })
   })
 }

@@ -12,6 +12,9 @@ interface MessageCreatedPayloadShape {
   attachments?: RenderableMessage["attachments"]
   linkPreviews?: RenderableMessage["linkPreviews"]
   deletedAt?: string | null
+  /** Set only on an optimistic board reply, naming the conversation it attaches
+   *  to so a card can surface the pending row before the server echo lands. */
+  conversationId?: string
 }
 
 /** Project a `message_created` event row into the shared render shape the timeline
@@ -37,22 +40,50 @@ interface StreamRail {
   /** Every message id the stream has synced — INCLUDING soft-deleted tombstones,
    *  which are absent from `messages`. Lets a card tell "deleted" from "unsynced". */
   seen: Set<string>
+  /** Renderable rows that carry a `conversationId`, grouped by it, chronological.
+   *  A board reply tags its optimistic event with the conversation it attaches to,
+   *  and the swap carries that tag onto the real event (stream-sync), so this holds
+   *  the reply continuously from optimistic insert through the server echo. The
+   *  card unions this with the conversation's server `messageIds`: the tag covers
+   *  the reply BEFORE the id lands in `messageIds` (no blink-out at the echo
+   *  hand-off); once it's in `messageIds` the card dedups it. Only board replies
+   *  carry the tag, so this stays proportional to the stream's reply count. */
+  taggedByConversation: Map<string, RenderableMessage[]>
   /** False until the first IDB read resolves — distinguishes loading from empty. */
   resolved: boolean
 }
 
-const LOADING_RAIL: StreamRail = { messages: new Map(), seen: new Set(), resolved: false }
+const LOADING_RAIL: StreamRail = {
+  messages: new Map(),
+  seen: new Set(),
+  taggedByConversation: new Map(),
+  resolved: false,
+}
 
 function buildRail(events: CachedEvent[]): StreamRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
+  const taggedByConversation = new Map<string, RenderableMessage[]>()
   for (const event of events) {
     const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
     if (payload.messageId) seen.add(payload.messageId)
     const message = eventToRenderable(event)
-    if (message) messages.set(message.id, message)
+    if (!message) continue
+    messages.set(message.id, message)
+    // Group every conversation-tagged row (optimistic OR the swapped real one,
+    // any `_status`) so the card can show the reply continuously across the echo
+    // hand-off — gating on `_status` would drop the real row the instant the
+    // swap clears `pending`, blinking the reply out until `messageIds` catches up.
+    if (payload.conversationId) {
+      const list = taggedByConversation.get(payload.conversationId)
+      if (list) list.push(message)
+      else taggedByConversation.set(payload.conversationId, [message])
+    }
   }
-  return { messages, seen, resolved: true }
+  for (const list of taggedByConversation.values()) {
+    list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  }
+  return { messages, seen, taggedByConversation, resolved: true }
 }
 
 interface StreamRailEntry {
@@ -134,10 +165,18 @@ export interface BoardCardMessages {
    *  reply can't inflate the gap); otherwise the server count, since older replies
    *  aren't in IDB yet. */
   totalReplies: number
+  /** Replies known from the rail but not yet in the conversation's server
+   *  `messageIds` — the optimistic row, and the swapped real row in the window
+   *  before `conversation:updated` lands — chronological. The card appends these
+   *  in place so a just-sent reply shows immediately and stays put across the
+   *  echo hand-off; each empties once its id appears in `messageIds`. */
+  pendingReplies: RenderableMessage[]
   /** Where the bodies came from: the live `db.events` rail, or the cached server
    *  projection (a stream not yet synced into IDB — a cold/offline first open). */
   source: "events" | "projection"
 }
+
+const NO_PENDING: RenderableMessage[] = []
 
 /**
  * A board card's messages, read OFFLINE-FIRST from the same `db.events` store the
@@ -166,8 +205,18 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
   )
 
   const rail = useStreamRail(streamId)
+  const conversationId = post.conversation.id
 
   return useMemo(() => {
+    // Replies for this conversation the card knows from the rail but the server
+    // `messageIds` doesn't list yet — the optimistic row, and the swapped real
+    // row in the window before `conversation:updated` lands. Exclude ids already
+    // in `replyIds` so a confirmed reply renders once (via `replies`), not twice.
+    const replyIdSet = new Set(replyIds)
+    const tagged = rail.taggedByConversation.get(conversationId)
+    const unconfirmed = tagged ? tagged.filter((m) => !replyIdSet.has(m.id)) : NO_PENDING
+    const pendingReplies = unconfirmed.length > 0 ? unconfirmed : NO_PENDING
+
     // The server's count excludes `messageIds[0]` for a flat conversation even
     // when that opening was deleted, so trust it when the flat relationship is
     // unknown (deleted opening → `openingId` null).
@@ -189,6 +238,7 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
         openingMessage,
         replies: post.recentMessages as RenderableMessage[],
         totalReplies: serverTotal,
+        pendingReplies,
         source: "projection",
       }
     }
@@ -207,6 +257,6 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
     const fullySynced = replyIds.every((id) => rail.seen.has(id))
     const totalReplies = fullySynced ? liveReplies.length : serverTotal
 
-    return { openingMessage, replies: liveReplies, totalReplies, source: "events" }
-  }, [rail, replyIds, openingId, messageIds, post])
+    return { openingMessage, replies: liveReplies, totalReplies, pendingReplies, source: "events" }
+  }, [rail, replyIds, openingId, messageIds, post, conversationId])
 }

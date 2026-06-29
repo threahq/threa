@@ -3,17 +3,18 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import {
   useConversationService,
   useMessageService,
-  useStreamService,
   useSocket,
   useSocketReconnectCount,
+  createDraftPanelId,
 } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { seedBoardPosts, optimisticBoardReply } from "@/stores/board-store"
+import { seedBoardPosts } from "@/stores/board-store"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
+import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { StreamTypes } from "@threa/types"
-import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent, Message } from "@threa/types"
+import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
 
 /**
  * Where a board post lands: an existing channel/DM the user picked, or a
@@ -197,6 +198,8 @@ export interface ReplyToBoardPostInput {
   messageCount: number
   contentJson: JSONContent
   attachmentIds?: string[]
+  /** Full attachment info for the optimistic event so files render in place. */
+  attachments?: AttachmentSummary[]
 }
 
 /**
@@ -232,17 +235,19 @@ export function planBoardReply(input: {
 }
 
 /**
- * Reply to a board post from the feed, routed by {@link planBoardReply}. Returns
- * the created message AND the resolved plan so the caller knows where it landed:
- * a `newThread` reply lives in a brand-new thread stream (its own conversation),
- * NOT this card's conversation, so the card must not show it in place — only an
- * `intoConversation` reply belongs under the card that produced it. Board-wide
- * liveness/optimism across cards is a follow-up (no cache writes here).
+ * Reply to a board post from the feed, routed by {@link planBoardReply}. Eager
+ * and offline-first: the reply is written as an optimistic `message_created`
+ * event into the same `db.events` rail the card reads (and a durable pending row
+ * the background queue drains), so it shows the instant the user sends — no
+ * round-trip — exactly like a stream send. The server echo swaps the optimistic
+ * event for the real one. Returns only the resolved plan: a `newThread` reply
+ * lives in a brand-new thread stream (its own conversation), surfacing as its
+ * own board post, NOT under this card; an `intoConversation` reply is tagged
+ * with the target conversation so it renders in place under the card that
+ * produced it (see `useQueueDraftMessage` / `useBoardCardMessages`).
  */
 export function useReplyToBoardPost(workspaceId: string) {
-  const messageService = useMessageService()
-  const streamService = useStreamService()
-  const queryClient = useQueryClient()
+  const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
 
   return useMutation({
     mutationFn: async ({
@@ -252,61 +257,41 @@ export function useReplyToBoardPost(workspaceId: string) {
       messageCount,
       contentJson,
       attachmentIds,
-    }: ReplyToBoardPostInput): Promise<{ message: Message; plan: BoardReplyPlan }> => {
-      const base = {
+      attachments,
+    }: ReplyToBoardPostInput): Promise<{ plan: BoardReplyPlan }> => {
+      const input = {
         contentJson,
         attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
-        clientMessageId: generateClientId(),
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
       }
 
       const plan = planBoardReply({ hostStreamType, messageCount, openingMessageId })
 
       if (plan.kind === "newThread") {
-        // Create-or-find is idempotent server-side on (parentStreamId,
-        // parentMessageId), so this can't double-create the thread.
-        const thread = await streamService.create(workspaceId, {
-          type: StreamTypes.THREAD,
-          parentStreamId: conversation.streamId,
-          parentMessageId: plan.parentMessageId,
+        // Promote a draft thread off the opening message, mirroring the timeline's
+        // thread-reply path (`stream-panel.tsx`): the queue create-or-finds the
+        // thread (idempotent server-side on (parentStreamId, parentMessageId))
+        // then sends into it. A lone channel/DM root is never E2E, so no sealing.
+        const panelId = createDraftPanelId(conversation.streamId, plan.parentMessageId)
+        await queueDraftMessage(input, {
+          workspaceId,
+          streamId: panelId,
+          streamCreation: {
+            type: StreamTypes.THREAD,
+            parentStreamId: conversation.streamId,
+            parentMessageId: plan.parentMessageId,
+          },
+          draftId: panelId,
         })
-        const message = await messageService.create(workspaceId, thread.id, { streamId: thread.id, ...base })
-        return { message, plan }
+        return { plan }
       }
 
-      const message = await messageService.create(workspaceId, conversation.streamId, {
+      await queueDraftMessage(input, {
+        workspaceId,
         streamId: conversation.streamId,
-        ...base,
         conversation: { intent: "existing", conversationId: conversation.id },
       })
-      // Optimistically reflect the reply on the board's IDB feed: the card jumps
-      // to the top and shows the reply before the round-trip's `conversation:updated`
-      // echo merges over it (clearing pending). The echo carries only the
-      // aggregate, so this preview is the lasting one until the next seed —
-      // correct for a text reply, but it can't show attachments/previews.
-      void optimisticBoardReply(
-        conversation.id,
-        {
-          id: message.id,
-          authorId: message.authorId,
-          authorType: message.authorType,
-          contentMarkdown: message.contentMarkdown,
-          reactions: message.reactions,
-          attachments: [],
-          linkPreviews: [],
-          createdAt: message.createdAt,
-        },
-        Date.parse(message.createdAt) || Date.now()
-      )
-      // A reply with attachments can't be previewed fully from the optimistic
-      // row (the message wire shape carries no attachment summaries), so refetch
-      // the board head to backfill them; the text/bump still showed instantly.
-      if (base.attachmentIds) {
-        void queryClient.invalidateQueries({
-          queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
-          refetchType: "active",
-        })
-      }
-      return { message, plan }
+      return { plan }
     },
   })
 }

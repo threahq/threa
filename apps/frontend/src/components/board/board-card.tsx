@@ -42,16 +42,13 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const [expanded, setExpanded] = useState(false)
-  // Replies sent from this card, shown in place immediately. The events rail
-  // carries the authoritative copy once the send round-trips (and any foreign
-  // reply), so these are deduped by id against the rail below. A channel reply
-  // lands in a thread off the post, so it surfaces as its own post on the next
-  // board refresh rather than under this card; that's expected.
-  const [localReplies, setLocalReplies] = useState<RenderableMessage[]>([])
 
   // Bodies ride the same `db.events` rail the timeline does — live and
   // offline-first — with the cached server projection as the cold-start fallback.
-  const { openingMessage, replies: railReplies, totalReplies, source } = useBoardCardMessages(post)
+  // `pendingReplies` are the viewer's own just-sent replies awaiting their echo:
+  // they aren't in the conversation's `messageIds` yet, so the card appends them
+  // in place (deduped by id below) until the echo swaps each for the real row.
+  const { openingMessage, replies: railReplies, totalReplies, pendingReplies, source } = useBoardCardMessages(post)
 
   const streamId = conversation.streamId
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
@@ -83,10 +80,14 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   else if (incompleteLocally && allMessages)
     replies = (allMessages as RenderableMessage[]).filter((m) => m.id !== openingMessage?.id)
   else replies = railReplies
-  // Append this card's own just-sent replies, skipping any the rail or a backfill
-  // already carries.
+  // Merge this card's own just-sent replies with the confirmed set, skipping any
+  // the rail or a backfill already carries, then sort by time: a pending reply
+  // can be OLDER than a confirmed one (someone else's reply lands while yours is
+  // still in flight), so appending blindly would render it out of order.
   const seenReplyIds = new Set(replies.map((m) => m.id))
-  const displayedReplies = [...replies, ...localReplies.filter((m) => !seenReplyIds.has(m.id))]
+  const displayedReplies = [...replies, ...pendingReplies.filter((m) => !seenReplyIds.has(m.id))].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  )
   const hiddenCount = expanded ? 0 : Math.max(0, totalReplies - replies.length)
   const loadingMore = expanded && incompleteLocally && !allMessages && !expandFailed
   // No middle is hidden, so opening + replies form one uninterrupted run that
@@ -157,12 +158,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         )}
       </div>
 
-      <BoardReplyComposer
-        workspaceId={workspaceId}
-        post={post}
-        hostStreamType={streamType}
-        onReplied={(message) => setLocalReplies((prev) => [...prev, message])}
-      />
+      <BoardReplyComposer workspaceId={workspaceId} post={post} hostStreamType={streamType} />
     </div>
   )
 }

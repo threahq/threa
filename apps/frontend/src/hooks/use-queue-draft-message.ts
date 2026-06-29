@@ -4,7 +4,7 @@ import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { db, sequenceToNum, type CachedStream, type PendingStreamCreation } from "@/db"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import { StreamTypes, Visibilities, type JSONContent, type StreamEvent } from "@threa/types"
+import { StreamTypes, Visibilities, type ConversationDirective, type JSONContent, type StreamEvent } from "@threa/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { optimisticReplyCountUpdate } from "@/sync/stream-sync"
 import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypto/seal-send"
@@ -20,12 +20,23 @@ export interface QueueDraftMessageInput {
 
 export interface QueueDraftMessageParams {
   workspaceId: string
-  /** The draft/synthetic streamId used for the optimistic event */
+  /** The streamId the optimistic event is written under — a draft/synthetic id
+   *  when `streamCreation` is set, or a real stream id for a send into one that
+   *  already exists (a board reply attaching to an existing conversation). */
   streamId: string
-  /** Stream creation metadata for the background queue */
-  streamCreation: PendingStreamCreation
-  /** The draft ID to clean up after promotion (may differ from streamId for threads) */
-  draftId: string
+  /** Stream creation metadata for the background queue. Omit to send into the
+   *  existing `streamId` (no promotion). */
+  streamCreation?: PendingStreamCreation
+  /**
+   * Conversation directive forwarded on send (see {@link ConversationDirective}).
+   * `existing` also tags the optimistic event's payload with `conversationId` so
+   * a board card can surface the pending reply under the right conversation
+   * before the server echo lands. Omit to let the async extractor infer.
+   */
+  conversation?: ConversationDirective
+  /** The draft ID to clean up after promotion (may differ from streamId for
+   *  threads). Omit when there is no draft to clean up (an existing-stream send). */
+  draftId?: string
   /**
    * Set when this draft lives under an end-to-end-encrypted root (a thread reply
    * in an encrypted scratchpad). The promoted stream inherits the root's SSK
@@ -40,8 +51,12 @@ export interface QueueDraftMessageParams {
 }
 
 /**
- * Writes an optimistic event to IDB and enqueues the message + stream creation
- * for the background queue, so components don't import @/db directly.
+ * Writes an optimistic event to IDB and enqueues the message for the background
+ * queue, so components don't import @/db directly. Handles both the
+ * stream-creation path (a scratchpad/thread draft promoted on first send) and a
+ * plain send into an existing stream (a board reply, via the `conversation`
+ * directive) — the queue drain forwards whichever fields are set. Returns the
+ * generated `clientId` so the caller can correlate the optimistic event.
  */
 export function useQueueDraftMessage(workspaceId: string) {
   const user = useUser()
@@ -50,7 +65,7 @@ export function useQueueDraftMessage(workspaceId: string) {
   const { markPending, notifyQueue } = usePendingMessages()
 
   const queueDraftMessage = useCallback(
-    async (input: QueueDraftMessageInput, params: QueueDraftMessageParams) => {
+    async (input: QueueDraftMessageInput, params: QueueDraftMessageParams): Promise<{ clientId: string }> => {
       if (!currentUserId) {
         throw new Error("Cannot send message: user identity not resolved yet")
       }
@@ -73,6 +88,11 @@ export function useQueueDraftMessage(workspaceId: string) {
           // contentMarkdown + contentJson) — without it an encrypted thread reply
           // would flash the opaque placeholder for its own author.
           contentJson: input.contentJson,
+          // Tag the optimistic reply with its target conversation so a board card
+          // surfaces it under the right card before the server echo (which carries
+          // the real id in the conversation aggregate) lands. Read-side only; the
+          // timeline ignores it, and the row is swapped for the real event on echo.
+          ...(params.conversation?.intent === "existing" ? { conversationId: params.conversation.conversationId } : {}),
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         },
         actorId: currentUserId,
@@ -133,6 +153,7 @@ export function useQueueDraftMessage(workspaceId: string) {
         createdAt: Date.now(),
         retryCount: 0,
         streamCreation: params.streamCreation,
+        conversation: params.conversation,
         draftId: params.draftId,
         ...(e2eFields
           ? { ciphertext: e2eFields.ciphertext, envelope: e2eFields.envelope, e2eVersion: e2eFields.e2eVersion }
@@ -151,8 +172,8 @@ export function useQueueDraftMessage(workspaceId: string) {
       // Surface the committed draft in the sidebar and quick switcher so the
       // user can navigate back to it even before the real stream exists. The
       // promotion step will replace this entry with the server-assigned one.
-      if (params.streamCreation.type === StreamTypes.SCRATCHPAD) {
-        const draftScratchpad = await db.draftScratchpads.get(params.draftId)
+      if (params.streamCreation?.type === StreamTypes.SCRATCHPAD) {
+        const draftScratchpad = params.draftId ? await db.draftScratchpads.get(params.draftId) : undefined
         const optimisticStream: CachedStream = {
           id: params.streamId,
           workspaceId: params.workspaceId,
@@ -186,7 +207,7 @@ export function useQueueDraftMessage(workspaceId: string) {
       // bumping its replyCount. The promotion step swaps the threadId to the
       // real thread stream without re-incrementing.
       if (
-        params.streamCreation.type === StreamTypes.THREAD &&
+        params.streamCreation?.type === StreamTypes.THREAD &&
         params.streamCreation.parentStreamId &&
         params.streamCreation.parentMessageId
       ) {
@@ -202,6 +223,8 @@ export function useQueueDraftMessage(workspaceId: string) {
       }
 
       notifyQueue()
+
+      return { clientId }
     },
     [currentUserId, markPending, notifyQueue]
   )

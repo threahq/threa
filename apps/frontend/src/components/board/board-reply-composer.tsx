@@ -6,9 +6,10 @@ import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useReplyToBoardPost } from "@/hooks/use-conversations"
 import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
-import type { BoardPost, JSONContent, Message } from "@threa/types"
+import type { BoardPost, JSONContent } from "@threa/types"
 
 // Focus moving into one of these means a composer popover is open (the inline
 // suggestion lists render as `[role="listbox"]`; emoji/format/link popovers are
@@ -39,8 +40,6 @@ interface BoardReplyComposerProps {
   post: BoardPost
   /** Host stream type of the post's conversation, selecting the reply routing. */
   hostStreamType: string | undefined
-  /** Called with the created reply so the card can show it in place. */
-  onReplied: (message: Message) => void
 }
 
 /**
@@ -116,7 +115,6 @@ function BoardReplyComposerForm({
   workspaceId,
   post,
   hostStreamType,
-  onReplied,
   onClose,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean; posted?: boolean }) => void
@@ -134,6 +132,16 @@ function BoardReplyComposerForm({
     [streams, streamId]
   )
   const streamContext = useMentionStreamContext(workspaceId, hostStream)
+
+  // Whether the host is end-to-end-encrypted. Read from the synced IDB stream row
+  // (`useStreamFromStore`) as the authority, NOT just the workspace cache: a
+  // thread card's host is absent from `useWorkspaceStreams` (it holds sidebar
+  // streams) but the board syncs every on-screen card's host into `db.streams`
+  // (useBoardStreamSubscriptions), so the IDB row carries `e2eEnabled` where the
+  // workspace cache has no row. Falling back to the cache alone would skip the
+  // block below for thread hosts.
+  const idbHostStream = useStreamFromStore(streamId)
+  const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
 
   const draftKey = `board:reply:${post.conversation.id}`
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
@@ -169,31 +177,44 @@ function BoardReplyComposerForm({
   const handleSubmit = async (editorContent?: JSONContent) => {
     if (!composer.canSend) return
 
+    // Board replies into an end-to-end-encrypted host aren't supported: the send
+    // path here is plaintext (a sealed send is rejected by INV-E1), and the
+    // boundary extractor skips E2E streams so the reply couldn't be assigned to
+    // this conversation anyway. Surface it instead of queuing a doomed send —
+    // E2E board replies belong to the encrypted-streams workstream. The draft is
+    // kept so nothing the user typed is lost.
+    if (hostIsE2e) {
+      toast.error("Encrypted notes can't be replied to from the board yet — open the note to reply there.")
+      return
+    }
+
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
     const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-    const attachmentIds = extractUploadedAttachments(normalizedContent).map((a) => a.id)
+    const attachments = extractUploadedAttachments(normalizedContent)
+    const attachmentIds = attachments.map((a) => a.id)
 
     composer.setIsSending(true)
     try {
-      const { message, plan } = await reply.mutateAsync({
+      // Eager + offline-first: the reply is enqueued as an optimistic event and
+      // shows in place immediately (an `intoConversation` reply rides the card's
+      // own rail; a `newThread` reply lands in its own thread, surfacing as its
+      // own board post on the next load). The send drains in the background, so
+      // there's no created message to await here — only the resolved plan, which
+      // selects the resting note: the visible in-place reply is the feedback for
+      // the former, the transient "Posted to a new thread" note for the latter.
+      const { plan } = await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
         hostStreamType,
         messageCount: post.conversation.messageIds.length,
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
       })
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
-      // Only an `intoConversation` reply belongs under this card; a `newThread`
-      // reply lives in its own thread conversation and surfaces as its own board
-      // post on the next load, so showing it here would render it under the wrong
-      // card with stream-mismatched action links. The visible in-place reply IS
-      // the feedback for the former; the latter gets a transient resting note
-      // instead, since nothing changes on this card.
-      if (plan.kind === "intoConversation") onReplied(message)
       onClose({ refocus: true, posted: plan.kind === "newThread" })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")

@@ -242,6 +242,10 @@ export function useMessageQueue(): void {
             attachmentIds: next.attachmentIds,
             clientMessageId: next.clientId,
             confirmedPrivacyWarning: next.confirmedPrivacyWarning,
+            // A board reply declares its conversation so the send attaches it
+            // synchronously (in the message's transaction) instead of waiting on
+            // the async extractor; omitted on ordinary sends.
+            conversation: next.conversation,
           })
         }
 
