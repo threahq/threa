@@ -173,7 +173,7 @@ function BoardReplyComposerForm({
     // E2E board replies belong to the encrypted-streams workstream. The draft is
     // kept so nothing the user typed is lost.
     if (hostStream?.e2eEnabled) {
-      toast.error("Replying from the board isn't available for encrypted notes yet.")
+      toast.error("Encrypted notes can't be replied to from the board yet — open the note to reply there.")
       return
     }
 

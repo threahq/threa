@@ -66,9 +66,13 @@ function buildRail(events: CachedEvent[]): StreamRail {
     const message = eventToRenderable(event)
     if (!message) continue
     messages.set(message.id, message)
-    // An optimistic reply (pending, not yet echoed) carries its target
-    // conversation so the card can show it before the id lands in `messageIds`.
-    if (event._status === "pending" && payload.conversationId) {
+    // An optimistic reply carries its target conversation so the card can show
+    // it before the id lands in `messageIds`. Keep it visible while it's still
+    // in flight — `pending` AND `failed`, since the queue cycles a reply through
+    // `failed` between retry-backoff attempts; gating on `pending` alone would
+    // make a reply blink out for the whole backoff window, then reappear. The
+    // server echo deletes the optimistic row, so this set stays bounded.
+    if ((event._status === "pending" || event._status === "failed") && payload.conversationId) {
       const list = pendingByConversation.get(payload.conversationId)
       if (list) list.push(message)
       else pendingByConversation.set(payload.conversationId, [message])

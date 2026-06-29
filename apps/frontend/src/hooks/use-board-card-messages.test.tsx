@@ -112,6 +112,30 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
   })
 
+  it("keeps a failed (mid-backoff) optimistic reply visible instead of blinking it out", async () => {
+    await db.events.put({
+      id: "temp_y",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "2",
+      _sequenceNum: 2,
+      eventType: "message_created",
+      payload: { messageId: "temp_y", contentMarkdown: "retrying reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(2).toISOString(),
+      _cachedAt: 2,
+      // The queue marks the row `failed` between retry-backoff attempts; the reply
+      // must stay on the card across that window, not vanish until the retry lands.
+      _status: "failed",
+    } as CachedEvent)
+
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_y"]))
+  })
+
   it("falls back to the cached projection when the stream isn't in IDB (cold/offline)", async () => {
     const post = makePost({
       messageIds: ["m1", "r1"],
