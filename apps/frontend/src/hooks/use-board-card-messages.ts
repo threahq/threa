@@ -151,16 +151,16 @@ function useStreamRail(streamId: string): StreamRail {
  * they thread off — shared across every card in a workspace by one liveQuery
  * (the same INV-9 carve-out the rail registry takes).
  *
- * A lone channel/DM post's board reply doesn't land on the source card's stream:
- * it's queued as a thread-draft reply (`threadFromMessage`), so its optimistic
- * event lives on the thread-draft stream, never on this card's rail. Without
- * this the source card would show the bare opener until the server echo swaps it
- * for the thread card — a dead "did my reply send?" window. The pending send row
- * carries the `sourceConversationId` directive, so reading it lets the source
- * card render the reply in place from send through promotion; the row is deleted
- * on send success, just as the `conversation:*` echo hands the card over to the
- * thread. Bodies come from the optimistic event (full attachments), found by the
- * pending send's `clientId`.
+ * A lone channel/DM post's board reply is queued as a thread-draft reply
+ * (`threadFromMessage`), so its optimistic event lives on the thread-draft
+ * stream, never on the source card's own rail — the card can't surface the
+ * in-flight reply from `db.events` the way a flat reply does. The pending send
+ * row is the one place that links the reply back to this card (it carries the
+ * `sourceConversationId` directive), so reading it lets the source card render
+ * the reply in place from send through promotion. The row is deleted on send
+ * success, in step with the `conversation:*` echo that hands the card over to
+ * the thread. Bodies come from the optimistic event (full attachments), found
+ * by the pending send's `clientId`.
  */
 function buildPendingConversions(
   pendings: PendingMessage[],
@@ -205,8 +205,11 @@ function subscribePendingConversions(workspaceId: string, listener: () => void):
     pendingConversionsRegistry.set(workspaceId, created)
     created.subscription = liveQuery(async () => {
       // pendingMessages is the in-flight outbox (tiny), so a full scan + JS
-      // filter is cheaper than indexing a new column. bulkGet observes only the
-      // optimistic events' own keys, so unrelated message writes don't re-run this.
+      // filter is cheaper than indexing a new column; any outbox write re-runs
+      // this, which is fine at that table's size. The early return below skips
+      // db.events entirely when nothing is converting, so the message-write
+      // firehose never re-runs this in the common case; only while a conversion
+      // is in flight does bulkGet observe those events' own keys.
       const pendings = (await db.pendingMessages.toArray()).filter(
         (p) => p.workspaceId === workspaceId && p.conversation?.intent === ConversationIntents.THREAD_FROM_MESSAGE
       )
