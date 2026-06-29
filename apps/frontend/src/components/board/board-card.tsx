@@ -20,6 +20,11 @@ interface BoardCardProps {
   contextLabel: string
   /** Resolved stream type, selecting the context glyph. */
   streamType: string | undefined
+  /** Called when a reply here converts this lone post into a thread. The reply
+   *  retires this card and mints a new thread card, a fresh board arrival that
+   *  would otherwise wait behind the "N new" pill — arming the stable view's
+   *  reveal lets the thread card take this card's place in line instead. */
+  onConvertedToThread: () => void
 }
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
@@ -36,7 +41,7 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
  * conversation (no reply indentation); a collapsed "N more messages" gap fills
  * in on click. The stream it lives in is the header locator, not a topic line.
  */
-export function BoardCard({ workspaceId, post, contextLabel, streamType }: BoardCardProps) {
+export function BoardCard({ workspaceId, post, contextLabel, streamType, onConvertedToThread }: BoardCardProps) {
   const { conversation } = post
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
@@ -158,7 +163,12 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         )}
       </div>
 
-      <BoardReplyComposer workspaceId={workspaceId} post={post} hostStreamType={streamType} />
+      <BoardReplyComposer
+        workspaceId={workspaceId}
+        post={post}
+        hostStreamType={streamType}
+        onConvertedToThread={onConvertedToThread}
+      />
     </div>
   )
 }

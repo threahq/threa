@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
-import { db, type CachedEvent, type PendingMessage } from "@/db"
+import { db, type CachedEvent } from "@/db"
 import type { RenderableMessage } from "@/components/message/message-item"
 import { ConversationIntents, type AuthorType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
@@ -155,42 +155,70 @@ function useStreamRail(streamId: string): StreamRail {
  * (`threadFromMessage`), so its optimistic event lives on the thread-draft
  * stream, never on the source card's own rail — the card can't surface the
  * in-flight reply from `db.events` the way a flat reply does. The pending send
- * row is the one place that links the reply back to this card (it carries the
- * `sourceConversationId` directive), so reading it lets the source card render
- * the reply in place from send through promotion. The row is deleted on send
- * success, in step with the `conversation:*` echo that hands the card over to
- * the thread. Bodies come from the optimistic event (full attachments), found
- * by the pending send's `clientId`.
+ * row links the reply back to this card (it carries the `sourceConversationId`
+ * directive), so reading it lets the source card render the reply in place.
+ *
+ * The continuity is the load-bearing part. The pending row is deleted on send
+ * SUCCESS (the HTTP response), but the thread card that replaces this one only
+ * arrives later on the `conversation:*` echo the async outbox dispatches — so
+ * keying the reply on the pending row alone blinks it out for that gap. Instead
+ * the reply is held until its OPTIMISTIC EVENT is gone: `handleMessageCreated`
+ * deletes that event in the same step it writes the real reply onto the thread
+ * stream (which is what the new thread card renders), so the source card lets go
+ * of the reply exactly as the thread card picks it up. The `links` carried on the
+ * registry entry bridge the window after the pending row is deleted but before
+ * the event is swapped — re-checking the event by `clientId` clears each as its
+ * echo lands. Bodies come from the optimistic event (full attachments).
  */
-function buildPendingConversions(
-  pendings: PendingMessage[],
+interface PendingConversionLink {
+  sourceConversationId: string
+  clientId: string
+}
+
+interface ConversionProjection {
+  conversions: Map<string, RenderableMessage[]>
+  links: PendingConversionLink[]
+}
+
+/** Project the surviving optimistic events (those not yet swapped by their echo)
+ *  into per-source-conversation reply lists, dropping any whose event is gone. */
+function projectConversions(
+  linkByClient: Map<string, string>,
+  clientIds: string[],
   events: (CachedEvent | undefined)[]
-): Map<string, RenderableMessage[]> {
-  const map = new Map<string, RenderableMessage[]>()
-  pendings.forEach((pending, i) => {
-    if (pending.conversation?.intent !== ConversationIntents.THREAD_FROM_MESSAGE) return
+): ConversionProjection {
+  const conversions = new Map<string, RenderableMessage[]>()
+  const links: PendingConversionLink[] = []
+  clientIds.forEach((clientId, i) => {
     const event = events[i]
     const message = event ? eventToRenderable(event) : null
     if (!message) return
-    const sourceConversationId = pending.conversation.sourceConversationId
-    const list = map.get(sourceConversationId)
+    const sourceConversationId = linkByClient.get(clientId)!
+    links.push({ sourceConversationId, clientId })
+    const list = conversions.get(sourceConversationId)
     if (list) list.push(message)
-    else map.set(sourceConversationId, [message])
+    else conversions.set(sourceConversationId, [message])
   })
-  for (const list of map.values()) {
+  if (links.length === 0) return EMPTY_PROJECTION
+  for (const list of conversions.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
-  return map
+  return { conversions, links }
 }
 
 interface PendingConversionsEntry {
   conversions: Map<string, RenderableMessage[]>
+  /** Conversions still on screen, so a run after the pending row is deleted still
+   *  knows which optimistic events to re-check for the echo-swap (the bridge). */
+  links: PendingConversionLink[]
   listeners: Set<() => void>
   subscription: Subscription
   refCount: number
 }
 
 const EMPTY_CONVERSIONS: Map<string, RenderableMessage[]> = new Map()
+const EMPTY_LINKS: PendingConversionLink[] = []
+const EMPTY_PROJECTION: ConversionProjection = { conversions: EMPTY_CONVERSIONS, links: EMPTY_LINKS }
 const pendingConversionsRegistry = new Map<string, PendingConversionsEntry>()
 
 function subscribePendingConversions(workspaceId: string, listener: () => void): () => void {
@@ -198,6 +226,7 @@ function subscribePendingConversions(workspaceId: string, listener: () => void):
   if (!entry) {
     const created: PendingConversionsEntry = {
       conversions: EMPTY_CONVERSIONS,
+      links: EMPTY_LINKS,
       listeners: new Set(),
       refCount: 0,
       subscription: { unsubscribe() {} } as Subscription,
@@ -206,20 +235,33 @@ function subscribePendingConversions(workspaceId: string, listener: () => void):
     created.subscription = liveQuery(async () => {
       // pendingMessages is the in-flight outbox (tiny), so a full scan + JS
       // filter is cheaper than indexing a new column; any outbox write re-runs
-      // this, which is fine at that table's size. The early return below skips
-      // db.events entirely when nothing is converting, so the message-write
-      // firehose never re-runs this in the common case; only while a conversion
-      // is in flight does bulkGet observe those events' own keys.
+      // this, which is fine at that table's size.
       const pendings = (await db.pendingMessages.toArray()).filter(
         (p) => p.workspaceId === workspaceId && p.conversation?.intent === ConversationIntents.THREAD_FROM_MESSAGE
       )
-      if (pendings.length === 0) return EMPTY_CONVERSIONS
-      const events = await db.events.bulkGet(pendings.map((p) => p.clientId))
-      return buildPendingConversions(pendings, events)
-    }).subscribe((conversions) => {
+      // Union the still-pending sends with the ones already on screen whose row
+      // was deleted on send success (carried `links`) — their optimistic event
+      // outlives the row, so they stay visible until the echo swaps it. Pending
+      // rows win on key (a re-send reuses the same clientId).
+      const carried = pendingConversionsRegistry.get(workspaceId)?.links ?? EMPTY_LINKS
+      const linkByClient = new Map<string, string>()
+      for (const link of carried) linkByClient.set(link.clientId, link.sourceConversationId)
+      for (const p of pendings) {
+        if (p.conversation?.intent === ConversationIntents.THREAD_FROM_MESSAGE) {
+          linkByClient.set(p.clientId, p.conversation.sourceConversationId)
+        }
+      }
+      if (linkByClient.size === 0) return EMPTY_PROJECTION
+      const clientIds = [...linkByClient.keys()]
+      // bulkGet observes only these events' own keys, so the swap that deletes one
+      // (the echo) re-runs this, but the unrelated message-write firehose doesn't.
+      const events = await db.events.bulkGet(clientIds)
+      return projectConversions(linkByClient, clientIds, events)
+    }).subscribe((projection) => {
       const live = pendingConversionsRegistry.get(workspaceId)
       if (!live) return
-      live.conversions = conversions
+      live.conversions = projection.conversions
+      live.links = projection.links
       for (const notify of live.listeners) notify()
     })
     entry = created
@@ -239,7 +281,7 @@ function subscribePendingConversions(workspaceId: string, listener: () => void):
 }
 
 /** Convert-to-thread replies in flight for the workspace, keyed by the source
- *  conversation each retires. See {@link buildPendingConversions}. */
+ *  conversation each retires. See {@link projectConversions}. */
 function usePendingThreadConversions(workspaceId: string): Map<string, RenderableMessage[]> {
   const subscribe = useCallback(
     (onChange: () => void) => subscribePendingConversions(workspaceId, onChange),

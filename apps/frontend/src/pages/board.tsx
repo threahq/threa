@@ -162,6 +162,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
                       post={post}
                       contextLabel={contextLabel}
                       streamType={streamType}
+                      onConvertedToThread={revealNext}
                     />
                   </div>
                 )

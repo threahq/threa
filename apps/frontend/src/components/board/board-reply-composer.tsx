@@ -42,6 +42,9 @@ interface BoardReplyComposerProps {
   post: BoardPost
   /** Host stream type of the post's conversation, selecting the reply routing. */
   hostStreamType: string | undefined
+  /** Invoked once a reply converts this lone post into a thread, so the board can
+   *  reveal the resulting thread card in place instead of behind the "N new" pill. */
+  onConvertedToThread: () => void
 }
 
 /**
@@ -118,6 +121,7 @@ function BoardReplyComposerForm({
   workspaceId,
   post,
   hostStreamType,
+  onConvertedToThread,
   onClose,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean; posted?: boolean }) => void
@@ -218,6 +222,11 @@ function BoardReplyComposerForm({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
+      // A convert-to-thread reply retires this lone card and mints a new thread
+      // card — a fresh board arrival. Arm the stable view's one-shot reveal so it
+      // takes this card's place in line rather than waiting behind the "N new"
+      // pill (the viewer's own action should surface, not be held back).
+      if (plan.kind === "convertToThread") onConvertedToThread()
       onClose({ refocus: true, posted: plan.kind === "convertToThread" })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")

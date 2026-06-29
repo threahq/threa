@@ -224,7 +224,7 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies).toEqual([])
   })
 
-  it("clears the convert-to-thread reply once its pending send is deleted on send success", async () => {
+  it("keeps the convert-to-thread reply visible after the pending row is deleted, until the optimistic event is swapped on echo", async () => {
     await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
     await seedPendingConversion({
       clientId: "temp_thread",
@@ -236,9 +236,17 @@ describe("useBoardCardMessages", () => {
     const { result } = renderHook(() => useBoardCardMessages(post))
     await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_thread"]))
 
-    // The drain deletes the pending row on send success — the source card stops
-    // showing the reply as the `conversation:*` echo hands it over to the thread.
+    // Send success deletes the durable pending row, but the optimistic event
+    // lives until its echo — the reply must stay on the source card across that
+    // gap (the thread card hasn't arrived yet), not blink out.
     await db.pendingMessages.delete("temp_thread")
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_thread"])
+
+    // The echo swaps the optimistic event for the real one (handleMessageCreated
+    // deletes it in the same step it writes the reply onto the thread stream, which
+    // the new thread card renders) — so the source card lets go of it here.
+    await db.events.delete("temp_thread")
     await waitFor(() => expect(result.current.pendingReplies).toEqual([]))
   })
 
