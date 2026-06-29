@@ -197,12 +197,12 @@ function BoardReplyComposerForm({
     composer.setIsSending(true)
     try {
       // Eager + offline-first: the reply is enqueued as an optimistic event and
-      // shows in place immediately (an `intoConversation` reply rides the card's
-      // own rail; a `newThread` reply lands in its own thread, surfacing as its
-      // own board post on the next load). The send drains in the background, so
-      // there's no created message to await here — only the resolved plan, which
-      // selects the resting note: the visible in-place reply is the feedback for
-      // the former, the transient "Posted to a new thread" note for the latter.
+      // the send drains in the background, so there's no created message to await
+      // here — only the resolved plan, which selects the resting note. An
+      // `intoConversation` reply rides the card's own rail and shows in place; a
+      // `convertToThread` reply lands in a thread off the opener (and retires this
+      // lone card, which swaps to the thread on echo), so the transient "Posted to
+      // a new thread" note bridges the brief swap.
       const { plan } = await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
@@ -215,7 +215,7 @@ function BoardReplyComposerForm({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true, posted: plan.kind === "newThread" })
+      onClose({ refocus: true, posted: plan.kind === "convertToThread" })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")
     } finally {

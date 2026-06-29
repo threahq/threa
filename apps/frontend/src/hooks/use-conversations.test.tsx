@@ -247,13 +247,13 @@ describe("useCreateBoardPost", () => {
 })
 
 describe("planBoardReply", () => {
-  it("threads a lone root message in a channel or DM off the opening message", () => {
+  it("converts a lone message in a channel or DM into a thread off the opener", () => {
     expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 1, openingMessageId: "m1" })).toEqual({
-      kind: "newThread",
+      kind: "convertToThread",
       parentMessageId: "m1",
     })
     expect(planBoardReply({ hostStreamType: StreamTypes.DM, messageCount: 1, openingMessageId: "m1" })).toEqual({
-      kind: "newThread",
+      kind: "convertToThread",
       parentMessageId: "m1",
     })
   })
@@ -304,7 +304,7 @@ describe("useReplyToBoardPost", () => {
 
   const DOC = { type: "doc", content: [] }
 
-  it("threads a lone channel root off the opening message, promoting a draft thread (no directive)", async () => {
+  it("converts a lone channel post into a thread, retiring the source via the threadFromMessage directive", async () => {
     const { queueDraftMessage } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
@@ -320,9 +320,9 @@ describe("useReplyToBoardPost", () => {
       })
     })
 
-    // The reply rides the durable queue with THREAD stream-creation, keyed on the
-    // draft panel id; no existing-conversation directive (a fresh thread is its
-    // own conversation).
+    // The reply rides the durable queue with THREAD stream-creation (keyed on the
+    // draft panel id) AND the threadFromMessage directive, which mints the thread's
+    // conversation and retires the lone source `conv_1`.
     expect(queueDraftMessage).toHaveBeenCalledWith(
       expect.objectContaining({ contentJson: DOC }),
       expect.objectContaining({
@@ -330,11 +330,35 @@ describe("useReplyToBoardPost", () => {
         streamId: "draft:chan_1:msg_open",
         draftId: "draft:chan_1:msg_open",
         streamCreation: { type: StreamTypes.THREAD, parentStreamId: "chan_1", parentMessageId: "msg_open" },
+        conversation: { intent: "threadFromMessage", sourceConversationId: "conv_1" },
       })
     )
-    expect(queueDraftMessage.mock.calls[0][1]).not.toHaveProperty("conversation")
-    // The plan rides back so the composer shows the "posted to a new thread" note.
-    expect(res).toEqual({ plan: { kind: "newThread", parentMessageId: "msg_open" } })
+    expect(res).toEqual({ plan: { kind: "convertToThread", parentMessageId: "msg_open" } })
+  })
+
+  it("converts a lone DM post into a thread the same way a channel does", async () => {
+    const { queueDraftMessage } = mockReplyDeps()
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        conversation: { id: "conv_dm", streamId: "dm_1" },
+        openingMessageId: "msg_open",
+        hostStreamType: StreamTypes.DM,
+        messageCount: 1,
+        contentJson: DOC,
+      })
+    })
+
+    expect(queueDraftMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentJson: DOC }),
+      expect.objectContaining({
+        streamId: "draft:dm_1:msg_open",
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "dm_1", parentMessageId: "msg_open" },
+        conversation: { intent: "threadFromMessage", sourceConversationId: "conv_dm" },
+      })
+    )
   })
 
   it("keeps a multi-message channel reply flat, attached to the conversation via the existing directive", async () => {

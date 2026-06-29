@@ -72,6 +72,15 @@ export async function mergeBoardConversation(
   // Read-modify-write in one rw transaction so a concurrent optimistic write or
   // a second echo can't merge over a stale read of this row.
   return db.transaction("rw", db.conversations, async () => {
+    // An emptied conversation is no longer a board card — it mirrors the server's
+    // `cardinality(message_ids) > 0` board filter, so a conversation whose last
+    // message was reassigned or threaded off (the source of a `threadFromMessage`
+    // reply) drops here rather than lingering as a stale card. Report it handled
+    // even with no row so the caller doesn't hydrate a card that shouldn't exist.
+    if (conversation.messageIds.length === 0) {
+      await db.conversations.delete(conversationId)
+      return true
+    }
     const existing = await db.conversations.get(conversationId)
     if (!existing) return false
     await db.conversations.put({

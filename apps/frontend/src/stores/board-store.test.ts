@@ -110,4 +110,22 @@ describe("mergeBoardConversation", () => {
     await mergeBoardConversation("conv_1", makeConversation("conv_1", "2026-06-21T12:00:05.000Z"))
     expect((await db.conversations.get("conv_1"))?._status).toBeUndefined()
   })
+
+  it("drops the card when the conversation is emptied (its last message threaded off / reassigned)", async () => {
+    await seedBoardPosts(WORKSPACE_ID, [
+      makePost("conv_1", "2026-06-20T12:00:00.000Z"),
+      makePost("conv_2", "2026-06-21T12:00:00.000Z"),
+    ])
+    const emptied = { ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"), messageIds: [] }
+    const merged = await mergeBoardConversation("conv_1", emptied)
+    expect(merged).toBe(true)
+    expect((await readBoard()).map((p) => p.id)).toEqual(["conv_2"])
+  })
+
+  it("reports an emptied conversation handled even when uncached, so the caller doesn't hydrate it", async () => {
+    const emptied = { ...makeConversation("conv_absent", "2026-06-22T12:00:00.000Z"), messageIds: [] }
+    const merged = await mergeBoardConversation("conv_absent", emptied)
+    expect(merged).toBe(true)
+    expect(await readBoard()).toHaveLength(0)
+  })
 })

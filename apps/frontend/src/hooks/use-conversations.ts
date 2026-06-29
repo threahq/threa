@@ -203,24 +203,22 @@ export interface ReplyToBoardPostInput {
 }
 
 /**
- * Where a board reply lands. A conversation owns exactly one stream — its
- * messages are wholly flat or wholly inside a thread; a thread is always its own
- * conversation — so "follow where the conversation lives" reduces to the host
- * stream type plus whether the conversation is still a lone root (user ruling):
+ * Where a board reply lands. Replying from the board joins the conversation, but
+ * a conversation that is still a lone message (a fresh post, no back-and-forth)
+ * in a channel or DM has no established shape — so the reply converts it into a
+ * thread, keeping the parent stream's top level clean (one opener, the exchange
+ * underneath) instead of sprouting interleaved flat replies (user ruling):
  *
- *  - **thread conversation** → into the thread (it IS the thread).
- *  - **flat conversation with replies** (channel/DM) → flat in its stream.
- *  - **scratchpad** → always flat (scratchpads don't thread).
- *  - **a lone root message** in a channel/DM → start a thread off it: a single
- *    message has no established shape, and threading a bare message keeps the
- *    channel from sprouting a stray top-level reply. Scratchpads stay flat even
- *    when lone; a deleted root (no opening id) can't be threaded, so it stays flat.
- *
- * "Into the thread" and "flat" are the same send — into the conversation's own
- * stream, attached via the `existing` directive — so only the lone channel/DM
- * root diverges into a new thread.
+ *  - **lone message in a channel or DM** (≤1 message, has an opening id) →
+ *    `convertToThread`: thread off the opener (it stays in the parent stream as
+ *    the thread's root) and retire the now-empty source conversation, so the
+ *    board shows one card — the thread — not the post plus the thread.
+ *  - **everything else** → flat into the conversation's own stream via the
+ *    `existing` directive: an established channel/DM conversation stays where it
+ *    is, a thread card replies into its thread, a scratchpad stays flat. A
+ *    deleted opener (no id) can't be threaded, so it stays flat too.
  */
-export type BoardReplyPlan = { kind: "newThread"; parentMessageId: string } | { kind: "intoConversation" }
+export type BoardReplyPlan = { kind: "convertToThread"; parentMessageId: string } | { kind: "intoConversation" }
 
 export function planBoardReply(input: {
   hostStreamType: string | undefined
@@ -229,7 +227,7 @@ export function planBoardReply(input: {
 }): BoardReplyPlan {
   const threadable = input.hostStreamType === StreamTypes.CHANNEL || input.hostStreamType === StreamTypes.DM
   if (threadable && input.messageCount <= 1 && input.openingMessageId) {
-    return { kind: "newThread", parentMessageId: input.openingMessageId }
+    return { kind: "convertToThread", parentMessageId: input.openingMessageId }
   }
   return { kind: "intoConversation" }
 }
@@ -240,11 +238,12 @@ export function planBoardReply(input: {
  * event into the same `db.events` rail the card reads (and a durable pending row
  * the background queue drains), so it shows the instant the user sends — no
  * round-trip — exactly like a stream send. The server echo swaps the optimistic
- * event for the real one. Returns only the resolved plan: a `newThread` reply
- * lives in a brand-new thread stream (its own conversation), surfacing as its
- * own board post, NOT under this card; an `intoConversation` reply is tagged
- * with the target conversation so it renders in place under the card that
- * produced it (see `useQueueDraftMessage` / `useBoardCardMessages`).
+ * event for the real one. Returns the resolved plan so the composer can confirm
+ * a conversion: a `convertToThread` reply lands in a thread off the opener and
+ * retires the lone source (the board card becomes the thread); an
+ * `intoConversation` reply is tagged with the target conversation so it renders
+ * in place under the card that produced it (see `useQueueDraftMessage` /
+ * `useBoardCardMessages`).
  */
 export function useReplyToBoardPost(workspaceId: string) {
   const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
@@ -267,11 +266,14 @@ export function useReplyToBoardPost(workspaceId: string) {
 
       const plan = planBoardReply({ hostStreamType, messageCount, openingMessageId })
 
-      if (plan.kind === "newThread") {
-        // Promote a draft thread off the opening message, mirroring the timeline's
+      if (plan.kind === "convertToThread") {
+        // Promote a draft thread off the opener, mirroring the timeline's
         // thread-reply path (`stream-panel.tsx`): the queue create-or-finds the
         // thread (idempotent server-side on (parentStreamId, parentMessageId))
-        // then sends into it. A lone channel/DM root is never E2E, so no sealing.
+        // then sends into it. The `threadFromMessage` directive mints the thread's
+        // conversation seeded with this reply AND retires the lone source so the
+        // board shows one card (the thread), not the post plus the thread. A lone
+        // channel/DM root is never E2E, so no sealing.
         const panelId = createDraftPanelId(conversation.streamId, plan.parentMessageId)
         await queueDraftMessage(input, {
           workspaceId,
@@ -282,6 +284,7 @@ export function useReplyToBoardPost(workspaceId: string) {
             parentMessageId: plan.parentMessageId,
           },
           draftId: panelId,
+          conversation: { intent: "threadFromMessage", sourceConversationId: conversation.id },
         })
         return { plan }
       }

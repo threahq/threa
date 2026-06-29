@@ -333,13 +333,16 @@ export const ConversationStatuses = {
 // async boundary-extractor inferred (clustered) it — the default. A set value
 // records that the sender DECLARED the conversation at send time, so the
 // extractor must not re-cluster it: 'new' minted a fresh conversation seeded
-// with the message; 'existing' attached it to a caller-named conversation.
-export const CONVERSATION_INTENTS = ["new", "existing"] as const
+// with the message; 'existing' attached it to a caller-named conversation;
+// 'threadFromMessage' minted the thread's conversation seeded with this reply
+// and retired the lone source conversation it threaded off (board reply path).
+export const CONVERSATION_INTENTS = ["new", "existing", "threadFromMessage"] as const
 export type ConversationIntent = (typeof CONVERSATION_INTENTS)[number]
 
 export const ConversationIntents = {
   NEW: "new",
   EXISTING: "existing",
+  THREAD_FROM_MESSAGE: "threadFromMessage",
 } as const satisfies Record<string, ConversationIntent>
 
 // Memo types (GAM)
