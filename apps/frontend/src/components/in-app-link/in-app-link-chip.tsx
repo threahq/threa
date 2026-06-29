@@ -14,9 +14,10 @@ const inlineChip = "inline-flex max-w-[16rem] items-center gap-1 align-bottom"
  * the channel `triggerStyles` palette): a channel shows its `#` as a text
  * prefix, reading exactly like a `#channel` mention. A message leads with its
  * author's face (`avatar`) and a "{author} in #channel" label; kinds with no
- * face or sigil (restricted/pending, uncached message) fall back to a glyph. The
- * leading face/glyph occupies the same 16px slot in every variant so the chip
- * never changes height as it resolves (INV-21).
+ * face or sigil (restricted, uncached message) fall back to a glyph, and a
+ * pending message shows a neutral placeholder in the same slot. The leading
+ * face/glyph/placeholder occupies the same 16px slot in every variant so the
+ * chip never changes height as it resolves (INV-21).
  */
 export function InAppLinkChip({
   icon: Icon,
@@ -32,7 +33,7 @@ export function InAppLinkChip({
   label: ReactNode
   avatar?: ChipAvatar
   messageParts?: ChipMessageParts
-  /** Pending message chip: reserve the resolved avatar's footprint with a skeleton. */
+  /** Pending message chip: show the baked label with a neutral avatar placeholder. */
   avatarSkeleton?: boolean
   className?: string
 }) {
@@ -46,22 +47,17 @@ export function InAppLinkChip({
   }
 
   if (avatarSkeleton && !avatar) {
-    // A message resolves to "{author} to/in {where}", but the in-flight fallback
-    // label is the link's baked markdown text, which can be stale (e.g. an older
-    // viewer-relative "… to You"). Render it transparently under a shimmer: the
-    // text is hidden so wrong words never flash, but it still reserves the baked
-    // label's width — which for a current-generation chip equals the resolved
-    // label — so the chip doesn't reflow surrounding text when it settles
-    // (INV-21). Goes loading → final, never wrong-text → final.
+    // Pending message chip: render the baked label as real text behind a neutral,
+    // gently-pulsing avatar placeholder — the exact footprint the resolved chip
+    // occupies. For a current-generation link the baked label already equals the
+    // resolved "{author} … {where}", so resolving only swaps the placeholder for
+    // the avatar image; the text doesn't move and the chip never reflows (INV-21).
+    // Deliberately not a shimmer bar: a grey bar collapsing into taller, colored
+    // text is itself the layout shift this is meant to avoid.
     return (
       <span className={cn(chipBase, inlineChip, triggerStyles.channel, className)} data-type="in-app-link-chip">
         <span className="h-4 w-4 shrink-0 animate-pulse rounded-[4px] bg-foreground/10" aria-hidden="true" />
-        <span
-          className="inline-flex h-3 min-w-0 max-w-full animate-pulse items-center truncate rounded bg-foreground/10 text-transparent"
-          aria-hidden="true"
-        >
-          {label}
-        </span>
+        <span className="truncate">{label}</span>
       </span>
     )
   }
