@@ -27,7 +27,7 @@ export function InAppLinkInline({
   fallbackLabel: string
 }) {
   const navigate = useNavigate()
-  const state = useInAppLinkChip({ workspaceId, streamId, isMessage: Boolean(messageId), url: href })
+  const state = useInAppLinkChip({ workspaceId, streamId, messageId, isMessage: Boolean(messageId), url: href })
 
   const icon = state.status === "pending" ? undefined : state.icon
   const label = state.status === "pending" ? fallbackLabel || "Link" : state.label

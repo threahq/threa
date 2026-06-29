@@ -18,6 +18,7 @@ export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
   const state = useInAppLinkChip({
     workspaceId: workspaceId ?? "",
     streamId: attrs.streamId,
+    messageId: attrs.messageId,
     isMessage: Boolean(attrs.messageId),
     url: attrs.url,
   })

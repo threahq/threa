@@ -1,7 +1,11 @@
 import { useMemo, type ComponentType } from "react"
 import { Hash, NotebookPen, MessageSquare, Lock, Globe } from "lucide-react"
-import { getAvatarUrl, type StreamType, type MessageLinkPreviewData } from "@threa/types"
+import { useLiveQuery } from "dexie-react-hooks"
+import type { StreamType, MessageLinkPreviewData } from "@threa/types"
+import { db } from "@/db"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
+import { useActors } from "@/hooks/use-actors"
+import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 import { resolveStreamName } from "@/lib/streams"
 import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 
@@ -92,6 +96,32 @@ export function buildMessageChipLabel(data: MessageLinkPreviewData): string | nu
 }
 
 /**
+ * Build a message chip's parts from locally-known data (the cached timeline
+ * event + workspace stores), so a link to a message in a stream the viewer can
+ * see resolves with no backend round-trip. DM → "{author} to {recipient}" (the
+ * other participant — the peer, or the viewer when the viewer authored it);
+ * otherwise "{author} in {streamLabel}". `resolveName` maps a user id to its
+ * display name (the live actor resolver).
+ */
+export function buildLocalMessageParts(params: {
+  authorId: string
+  authorName: string
+  streamId: string
+  localName: string | null
+  dmPeers: ReadonlyArray<{ streamId: string; userId: string }>
+  currentUserId: string | null
+  resolveName: (userId: string) => string
+}): ChipMessageParts {
+  const { authorId, authorName, streamId, localName, dmPeers, currentUserId, resolveName } = params
+  const dmPeer = dmPeers.find((p) => p.streamId === streamId)
+  if (dmPeer) {
+    const recipientId = authorId === currentUserId ? dmPeer.userId : currentUserId
+    return { lead: authorName, tail: recipientId ? ` to ${resolveName(recipientId)}` : "" }
+  }
+  return { lead: authorName, tail: localName ? ` in ${localName}` : "" }
+}
+
+/**
  * Resolve a stream/message in-app link to a chip icon + label. Local workspace
  * cache first (the canonical name source — handles channels, scratchpads, DM
  * peers, decrypted E2E names, and any stream the viewer can see without a
@@ -103,11 +133,13 @@ export function buildMessageChipLabel(data: MessageLinkPreviewData): string | nu
 export function useInAppLinkChip({
   workspaceId,
   streamId,
+  messageId,
   isMessage,
   url,
 }: {
   workspaceId: string
   streamId: string
+  messageId: string | null
   isMessage: boolean
   url: string
 }): InAppLinkChipState {
@@ -117,17 +149,37 @@ export function useInAppLinkChip({
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+  const actors = useActors(workspaceId)
   const localName = useMemo(
     () => resolveStreamName(streamId, { streams, users, dmPeers }),
     [streamId, streams, users, dmPeers]
   )
   const cachedType = useMemo(() => streams.find((s) => s.id === streamId)?.type, [streams, streamId])
 
-  // A local name covers a stream link outright, but a message link still needs
-  // the backend resolve to learn the message is deleted/restricted — the local
-  // cache only names the parent stream. So message links always resolve; stream
-  // links resolve only when uncached.
-  const needsResolve = isMessage || !localName
+  // Message links resolve local-first: the target message is almost always
+  // already in the timeline cache (it's a message in a stream the viewer can
+  // see), so its author and context resolve with no round-trip and stay behind
+  // the same coordinated-loading gate as the rest of the surface. `undefined`
+  // means the IDB read is still in flight; `null` is a genuine miss (a message
+  // in another stream / not synced) that falls back to the backend resolve.
+  const cachedMessageEvent = useLiveQuery(
+    async () => {
+      if (!isMessage || !streamId || !messageId) return null
+      const event = await db.events
+        .where("[streamId+eventType]")
+        .equals([streamId, "message_created"])
+        .filter((e) => (e.payload as { messageId?: string } | null)?.messageId === messageId)
+        .first()
+      return event ?? null
+    },
+    [isMessage, streamId, messageId],
+    undefined
+  )
+
+  // Hit the access-tiered backend resolve only when the target isn't already
+  // local: a message that isn't cached here, or an uncached stream link.
+  const needsResolve = isMessage ? cachedMessageEvent === null : !localName
   const { data, loading } = useResolvedInAppLink(workspaceId, undefined, needsResolve ? url : undefined, true)
 
   return useMemo<InAppLinkChipState>(() => {
@@ -143,32 +195,60 @@ export function useInAppLinkChip({
       return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
     }
 
-    // A message reads as "{author} in #channel" / "{author} to {peer}" — that
-    // rich backend label is the whole point, so it wins over the cached
-    // parent-stream name; the parent name (or a generic word) is only a fallback
-    // while the resolve is in flight or the author couldn't be named.
+    // A message reads as "{author} in #channel" / "{author} to {peer}", with the
+    // author's live avatar leading the chip.
     if (isMessage) {
+      // 1) Local-first: name the author + context straight from the cached
+      //    timeline event. A locally-cached message is by definition one the
+      //    viewer can read, so no access tier or round-trip is needed.
+      const authorId = cachedMessageEvent?.actorId
+      if (authorId) {
+        const authorType = cachedMessageEvent.actorType ?? "user"
+        const lead = actors.getActorName(authorId, authorType)
+        const parts = buildLocalMessageParts({
+          authorId,
+          authorName: lead,
+          streamId,
+          localName,
+          dmPeers,
+          currentUserId,
+          resolveName: (id) => actors.getActorName(id, "user"),
+        })
+        const avatar = { url: actors.getActorAvatar(authorId, authorType).avatarUrl, name: lead }
+        return {
+          status: "resolved",
+          icon: MessageSquare,
+          label: `${parts.lead}${parts.tail}`,
+          avatar,
+          messageParts: parts,
+        }
+      }
+
+      // 2) Backend fallback (message not in the local cache).
       if (data?.kind === "message" && data.accessTier === "full") {
         const parts = buildMessageChipParts(data)
         if (parts) {
-          const label = `${parts.lead}${parts.tail}`
-          // Prefer the author's live avatar from the workspace store (reactive to
-          // avatar changes, like the rest of the app); fall back to the resolve's
-          // point-in-time snapshot for an author not in the local cache.
-          const liveUser =
-            data.authorType === "user" && data.authorId ? users.find((u) => u.id === data.authorId) : undefined
-          const liveAvatarUrl = liveUser ? getAvatarUrl(workspaceId, liveUser.avatarUrl, 64) : undefined
+          // Prefer the author's live avatar from the workspace store; fall back to
+          // the resolve's point-in-time snapshot for an author not cached locally.
+          const liveAvatarUrl = data.authorId
+            ? actors.getActorAvatar(data.authorId, data.authorType ?? "user").avatarUrl
+            : undefined
           const avatarUrl = liveAvatarUrl ?? data.authorAvatarUrl
           const avatar = data.authorName ? { url: avatarUrl, name: data.authorName } : undefined
-          return { status: "resolved", icon: MessageSquare, label, avatar, messageParts: parts }
+          return {
+            status: "resolved",
+            icon: MessageSquare,
+            label: `${parts.lead}${parts.tail}`,
+            avatar,
+            messageParts: parts,
+          }
         }
-        // Fully resolved but the author can't be named (bot/persona) — settle on
-        // the generic word, not the cached parent-stream name. The parent name is
-        // a stream label; stamping it onto a message node (InAppLinkView writes
-        // the resolved label into attrs.name) would mislabel the link.
+        // Fully resolved but the author can't be named — settle on the generic
+        // word, not the cached parent-stream name (a stream label would mislabel
+        // the message node InAppLinkView serializes into attrs.name).
         return { status: "resolved", icon: MessageSquare, label: "Message" }
       }
-      if (loading) return { status: "pending" }
+      if (cachedMessageEvent === undefined || loading) return { status: "pending" }
       return { status: "resolved", icon: MessageSquare, label: localName ?? "Message" }
     }
 
@@ -190,5 +270,5 @@ export function useInAppLinkChip({
       }
     }
     return { status: "resolved", icon: Hash, label: "Conversation" }
-  }, [localName, loading, data, cachedType, isMessage, users, workspaceId])
+  }, [localName, loading, data, cachedType, isMessage, cachedMessageEvent, actors, dmPeers, streamId, currentUserId])
 }

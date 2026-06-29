@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { MessageLinkPreviewData } from "@threa/types"
-import { buildMessageChipLabel } from "./use-in-app-link-chip"
+import { buildMessageChipLabel, buildLocalMessageParts } from "./use-in-app-link-chip"
 
 function messageData(overrides: Partial<MessageLinkPreviewData>): MessageLinkPreviewData {
   return { kind: "message", accessTier: "full", ...overrides }
@@ -47,5 +47,69 @@ describe("buildMessageChipLabel", () => {
 
   it("falls back to just the author when a DM recipient could not be resolved", () => {
     expect(buildMessageChipLabel(messageData({ streamType: "dm", authorName: "Pierre" }))).toBe("Pierre")
+  })
+})
+
+describe("buildLocalMessageParts", () => {
+  const names: Record<string, string> = {
+    user_pierre: "Pierre Boberg",
+    user_viewer: "Kristoffer Remback",
+  }
+  const resolveName = (id: string) => names[id] ?? id
+
+  it("names a channel message as '{author} in {streamLabel}'", () => {
+    expect(
+      buildLocalMessageParts({
+        authorId: "user_pierre",
+        authorName: "Pierre Boberg",
+        streamId: "stream_1",
+        localName: "#general",
+        dmPeers: [],
+        currentUserId: "user_viewer",
+        resolveName,
+      })
+    ).toEqual({ lead: "Pierre Boberg", tail: " in #general" })
+  })
+
+  it("names a DM the peer authored as '{author} to {viewer}'", () => {
+    expect(
+      buildLocalMessageParts({
+        authorId: "user_pierre",
+        authorName: "Pierre Boberg",
+        streamId: "stream_dm",
+        localName: "Pierre Boberg",
+        dmPeers: [{ streamId: "stream_dm", userId: "user_pierre" }],
+        currentUserId: "user_viewer",
+        resolveName,
+      })
+    ).toEqual({ lead: "Pierre Boberg", tail: " to Kristoffer Remback" })
+  })
+
+  it("names a DM the viewer authored as '{author} to {peer}'", () => {
+    expect(
+      buildLocalMessageParts({
+        authorId: "user_viewer",
+        authorName: "Kristoffer Remback",
+        streamId: "stream_dm",
+        localName: "Pierre Boberg",
+        dmPeers: [{ streamId: "stream_dm", userId: "user_pierre" }],
+        currentUserId: "user_viewer",
+        resolveName,
+      })
+    ).toEqual({ lead: "Kristoffer Remback", tail: " to Pierre Boberg" })
+  })
+
+  it("drops the location tail when neither a DM peer nor a stream label is known", () => {
+    expect(
+      buildLocalMessageParts({
+        authorId: "user_pierre",
+        authorName: "Pierre Boberg",
+        streamId: "stream_x",
+        localName: null,
+        dmPeers: [],
+        currentUserId: "user_viewer",
+        resolveName,
+      })
+    ).toEqual({ lead: "Pierre Boberg", tail: "" })
   })
 })

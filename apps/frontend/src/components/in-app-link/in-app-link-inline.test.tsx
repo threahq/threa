@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as workspaceStore from "@/stores/workspace-store"
+import * as currentUserModule from "@/hooks/use-current-workspace-user-id"
 import { InAppLinkInline } from "./in-app-link-inline"
 
 const origin = window.location.origin
@@ -23,6 +24,10 @@ function renderMessageLink(streamId: string) {
 describe("InAppLinkInline (message chip)", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    // The chip resolves the viewer via auth; stub it so the component tree
+    // doesn't require an AuthProvider. The backend-resolve tests below seed no
+    // local event, so the message falls through to the mocked backend resolve.
+    vi.spyOn(currentUserModule, "useCurrentWorkspaceUserId").mockReturnValue("user_viewer")
   })
 
   it("renders a DM message as '{author} to {recipient}' with full names", async () => {
