@@ -177,8 +177,7 @@ export function useInAppLinkChip({
       return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
     }
 
-    // A message reads as "{author} in #channel" / "{author} to {peer}", with the
-    // author's live avatar leading the chip.
+    // A message reads as "{author} in #channel" / "{author} to {peer}".
     if (isMessage) {
       // A delete is a patch-style event that stamps `deletedAt` onto the cached
       // create row (see stream-sync `handleMessageDeleted`), so the tombstone is
