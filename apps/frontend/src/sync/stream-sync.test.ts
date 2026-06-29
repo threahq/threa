@@ -1102,6 +1102,142 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
 })
 
 // ---------------------------------------------------------------------------
+// Board reply: the swap carries the optimistic conversationId onto the real event
+// ---------------------------------------------------------------------------
+
+describe("registerStreamSocketHandlers — board reply conversationId carry-forward", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.pendingMessages.clear()
+  })
+
+  it("carries the optimistic event's conversationId onto the real event so the board card doesn't blink the reply out", async () => {
+    const streamId = "stream_board_reply"
+
+    // The optimistic board reply tags its event with the target conversation.
+    await db.events.put({
+      id: "temp_reply",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "1700000000000",
+      _sequenceNum: 1700000000000,
+      eventType: "message_created",
+      payload: {
+        messageId: "temp_reply",
+        contentMarkdown: "my reply",
+        contentJson: { type: "doc", content: [] },
+        conversationId: "conv_42",
+      },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    // The server echo carries clientMessageId but NOT conversationId (that rides a
+    // separate conversation:updated). The swap must carry it forward.
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id: "msg_real",
+        streamId,
+        sequence: "5",
+        eventType: "message_created",
+        payload: {
+          messageId: "msg_real",
+          clientMessageId: "temp_reply",
+          contentMarkdown: "my reply",
+          contentJson: { type: "doc", content: [] },
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    expect(await db.events.get("temp_reply")).toBeUndefined()
+    const real = await db.events.get("msg_real")
+    expect((real?.payload as { conversationId?: string }).conversationId).toBe("conv_42")
+
+    cleanup()
+  })
+
+  it("leaves an ordinary send (no optimistic conversationId) untagged", async () => {
+    const streamId = "stream_plain_send"
+
+    await db.events.put({
+      id: "temp_plain",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "1700000000001",
+      _sequenceNum: 1700000000001,
+      eventType: "message_created",
+      payload: { messageId: "temp_plain", contentMarkdown: "hi", contentJson: { type: "doc", content: [] } },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient())
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id: "msg_plain",
+        streamId,
+        sequence: "6",
+        eventType: "message_created",
+        payload: {
+          messageId: "msg_plain",
+          clientMessageId: "temp_plain",
+          contentMarkdown: "hi",
+          contentJson: { type: "doc", content: [] },
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    const real = await db.events.get("msg_plain")
+    expect((real?.payload as { conversationId?: string }).conversationId).toBeUndefined()
+
+    cleanup()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Sequence gap detection — live events that skip past the cached tail
 // ---------------------------------------------------------------------------
 

@@ -112,6 +112,60 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
   })
 
+  it("keeps a reply continuously visible across the optimistic→echo→messageIds hand-off (no blink-out)", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })
+    const { result, rerender } = renderHook((p: typeof post) => useBoardCardMessages(p), { initialProps: post })
+    const shown = () => [...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)
+
+    // 1) Optimistic insert: the reply (tagged with its conversation, not yet in
+    //    messageIds) shows immediately.
+    await db.events.put({
+      id: "temp_z",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "1700000000000",
+      _sequenceNum: 1700000000000,
+      eventType: "message_created",
+      payload: { messageId: "temp_z", contentMarkdown: "my reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+    await waitFor(() => expect(shown()).toContain("temp_z"))
+
+    // 2) Server echo (stream-sync swap): the real event replaces the optimistic
+    //    one, carrying the conversationId tag forward. messageIds hasn't updated
+    //    yet — the reply must NOT disappear in this window.
+    await db.transaction("rw", db.events, async () => {
+      await db.events.put({
+        id: "msg_real",
+        workspaceId: WS,
+        streamId: STREAM,
+        sequence: "3",
+        _sequenceNum: 3,
+        eventType: "message_created",
+        payload: { messageId: "msg_real", contentMarkdown: "my reply", reactions: {}, conversationId: "conv_1" },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: new Date(3).toISOString(),
+        _cachedAt: 4,
+      } as CachedEvent)
+      await db.events.delete("temp_z")
+    })
+    await waitFor(() => expect(shown()).toContain("msg_real"))
+    expect(shown()).not.toContain("temp_z")
+
+    // 3) conversation:updated lands: messageIds now lists the real id. The reply
+    //    renders via `replies` and is deduped out of `pendingReplies` (shown once).
+    rerender(makePost({ messageIds: ["m1", "r1", "msg_real"], openingId: "m1" }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["r1", "msg_real"]))
+    expect(result.current.pendingReplies).toEqual([])
+    expect(shown().filter((id) => id === "msg_real")).toHaveLength(1)
+  })
+
   it("keeps a failed (mid-backoff) optimistic reply visible instead of blinking it out", async () => {
     await db.events.put({
       id: "temp_y",
