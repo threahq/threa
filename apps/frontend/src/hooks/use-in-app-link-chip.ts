@@ -213,6 +213,15 @@ export function useInAppLinkChip({
       const authorId = cachedMessageEvent?.actorId
       if (authorId) {
         const authorType = cachedMessageEvent.actorType ?? "user"
+        const dmPeer = dmPeers.find((p) => p.streamId === streamId)
+        const isDmStream = cachedType === "dm" || Boolean(dmPeer)
+        // A DM chip names the other participant, which needs both the viewer id
+        // and the peer row; either can lag the cached event during cold load, so
+        // hold at the skeleton rather than flash an author-only or wrong-
+        // preposition ("… in {peer}") label (INV-21).
+        if (isDmStream && (currentUserId === null || !dmPeer)) {
+          return { status: "pending" }
+        }
         const lead = actors.getActorName(authorId, authorType)
         const parts = buildLocalMessageParts({
           authorId,
@@ -258,7 +267,9 @@ export function useInAppLinkChip({
         return { status: "resolved", icon: MessageSquare, label: "Message" }
       }
       if (cachedMessageEvent === undefined || loading) return { status: "pending" }
-      return { status: "resolved", icon: MessageSquare, label: localName ?? "Message" }
+      // A message link never settles on the parent-stream name — that would
+      // mislabel the message node InAppLinkView serializes into attrs.name.
+      return { status: "resolved", icon: MessageSquare, label: "Message" }
     }
 
     // Stream links: a channel renders its `#` as a text prefix (mention-style),

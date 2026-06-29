@@ -48,13 +48,20 @@ export function InAppLinkChip({
   if (avatarSkeleton && !avatar) {
     // A message resolves to "{author} to/in {where}", but the in-flight fallback
     // label is the link's baked markdown text, which can be stale (e.g. an older
-    // viewer-relative "… to You"). Showing it would flash the wrong words before
-    // the resolve corrects them, so render a neutral skeleton instead — the chip
-    // goes loading → final, never wrong-text → final.
+    // viewer-relative "… to You"). Render it transparently under a shimmer: the
+    // text is hidden so wrong words never flash, but it still reserves the baked
+    // label's width — which for a current-generation chip equals the resolved
+    // label — so the chip doesn't reflow surrounding text when it settles
+    // (INV-21). Goes loading → final, never wrong-text → final.
     return (
       <span className={cn(chipBase, inlineChip, triggerStyles.channel, className)} data-type="in-app-link-chip">
         <span className="h-4 w-4 shrink-0 animate-pulse rounded-[4px] bg-foreground/10" aria-hidden="true" />
-        <span className="h-3 w-24 animate-pulse rounded bg-foreground/10" aria-hidden="true" />
+        <span
+          className="inline-flex h-3 min-w-0 max-w-full animate-pulse items-center truncate rounded bg-foreground/10 text-transparent"
+          aria-hidden="true"
+        >
+          {label}
+        </span>
       </span>
     )
   }

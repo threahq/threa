@@ -72,6 +72,37 @@ describe("MarkdownContent — inline in-app link chip", () => {
     expect(screen.queryByText("#design")).not.toBeInTheDocument()
   })
 
+  it("resolves a cached channel message from the local timeline, naming author + location, without a backend resolve", async () => {
+    vi.spyOn(workspaceStore, "useWorkspaceStreams").mockReturnValue([
+      { id: "stream_1", type: "channel", slug: "design", displayName: null },
+    ] as unknown as ReturnType<typeof workspaceStore.useWorkspaceStreams>)
+    vi.spyOn(workspaceStore, "useWorkspaceUsers").mockReturnValue([
+      { id: "user_pierre", name: "Pierre Boberg", workosUserId: "wos_pierre", avatarUrl: null },
+    ] as never)
+    vi.spyOn(workspaceStore, "useWorkspaceDmPeers").mockReturnValue([])
+    const resolve = vi.spyOn(linkPreviewsApi, "resolveInAppLinkByUrl")
+    await db.events.add({
+      id: "evt_live",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      eventType: "message_created",
+      actorId: "user_pierre",
+      actorType: "user",
+      sequence: 1,
+      payload: { messageId: "msg_2", contentMarkdown: "hi" },
+      _cachedAt: 0,
+    } as never)
+
+    const url = `${origin}/w/ws_1/s/stream_1?m=msg_2`
+    renderMarkdown(`see [whatever](${url})`)
+
+    // Author + location resolve straight from the cached event; the
+    // permission-checked backend resolver is never called.
+    await waitFor(() => expect(screen.getByText("Pierre Boberg")).toBeInTheDocument())
+    expect(screen.getByText("in #design")).toBeInTheDocument()
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
   it("shows a locally-deleted message as restricted from its tombstone, without a backend resolve", async () => {
     // A delete stamps `deletedAt` onto the cached create row, so the tombstone is
     // local — the chip must read it rather than render a live chip or round-trip.
