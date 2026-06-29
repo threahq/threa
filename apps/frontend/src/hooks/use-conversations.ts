@@ -1,12 +1,6 @@
 import { useEffect } from "react"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import {
-  useConversationService,
-  useMessageService,
-  useSocket,
-  useSocketReconnectCount,
-  createDraftPanelId,
-} from "@/contexts"
+import { useConversationService, useMessageService, useSocket, useSocketReconnectCount } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { seedBoardPosts } from "@/stores/board-store"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -190,12 +184,6 @@ export function useCreateBoardPost(workspaceId: string) {
 export interface ReplyToBoardPostInput {
   /** The post's conversation — supplies the host stream and the attach target. */
   conversation: Pick<ConversationWithStaleness, "id" | "streamId">
-  /** The post's opening message id — the thread parent for a lone-message reply. */
-  openingMessageId: string | null
-  /** Host stream type (`channel` | `dm` | `scratchpad` | `thread` | undefined). */
-  hostStreamType: string | undefined
-  /** Count of messages in the conversation, deciding the lone-root case. */
-  messageCount: number
   contentJson: JSONContent
   attachmentIds?: string[]
   /** Full attachment info for the optimistic event so files render in place. */
@@ -203,48 +191,20 @@ export interface ReplyToBoardPostInput {
 }
 
 /**
- * Where a board reply lands. A conversation owns exactly one stream — its
- * messages are wholly flat or wholly inside a thread; a thread is always its own
- * conversation — so "follow where the conversation lives" reduces to the host
- * stream type plus whether the conversation is still a lone root (user ruling):
+ * Reply to a board post from the feed. Eager and offline-first: the reply is
+ * written as an optimistic `message_created` event into the same `db.events`
+ * rail the card reads (and a durable pending row the background queue drains),
+ * so it shows the instant the user sends — no round-trip — exactly like a stream
+ * send. The server echo swaps the optimistic event for the real one.
  *
- *  - **thread conversation** → into the thread (it IS the thread).
- *  - **flat conversation with replies** (channel/DM) → flat in its stream.
- *  - **scratchpad** → always flat (scratchpads don't thread).
- *  - **a lone root message** in a channel/DM → start a thread off it: a single
- *    message has no established shape, and threading a bare message keeps the
- *    channel from sprouting a stray top-level reply. Scratchpads stay flat even
- *    when lone; a deleted root (no opening id) can't be threaded, so it stays flat.
- *
- * "Into the thread" and "flat" are the same send — into the conversation's own
- * stream, attached via the `existing` directive — so only the lone channel/DM
- * root diverges into a new thread.
- */
-export type BoardReplyPlan = { kind: "newThread"; parentMessageId: string } | { kind: "intoConversation" }
-
-export function planBoardReply(input: {
-  hostStreamType: string | undefined
-  messageCount: number
-  openingMessageId: string | null
-}): BoardReplyPlan {
-  const threadable = input.hostStreamType === StreamTypes.CHANNEL || input.hostStreamType === StreamTypes.DM
-  if (threadable && input.messageCount <= 1 && input.openingMessageId) {
-    return { kind: "newThread", parentMessageId: input.openingMessageId }
-  }
-  return { kind: "intoConversation" }
-}
-
-/**
- * Reply to a board post from the feed, routed by {@link planBoardReply}. Eager
- * and offline-first: the reply is written as an optimistic `message_created`
- * event into the same `db.events` rail the card reads (and a durable pending row
- * the background queue drains), so it shows the instant the user sends — no
- * round-trip — exactly like a stream send. The server echo swaps the optimistic
- * event for the real one. Returns only the resolved plan: a `newThread` reply
- * lives in a brand-new thread stream (its own conversation), surfacing as its
- * own board post, NOT under this card; an `intoConversation` reply is tagged
- * with the target conversation so it renders in place under the card that
- * produced it (see `useQueueDraftMessage` / `useBoardCardMessages`).
+ * A board reply always lands flat in the conversation's own stream, attached via
+ * the `existing` directive, so it renders in place under the card that produced
+ * it (see `useQueueDraftMessage` / `useBoardCardMessages`). Threading is the
+ * timeline's gesture, not the board's: replying from the board joins the
+ * conversation — itself a soft thread — while the timeline's explicit
+ * thread-reply affordance (`stream-panel.tsx`) is what starts a strict thread.
+ * A lone channel/DM root therefore gains an in-place reply here rather than
+ * sprouting a separate thread card.
  */
 export function useReplyToBoardPost(workspaceId: string) {
   const { queueDraftMessage } = useQueueDraftMessage(workspaceId)
@@ -252,46 +212,22 @@ export function useReplyToBoardPost(workspaceId: string) {
   return useMutation({
     mutationFn: async ({
       conversation,
-      openingMessageId,
-      hostStreamType,
-      messageCount,
       contentJson,
       attachmentIds,
       attachments,
-    }: ReplyToBoardPostInput): Promise<{ plan: BoardReplyPlan }> => {
-      const input = {
-        contentJson,
-        attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
-        attachments: attachments && attachments.length > 0 ? attachments : undefined,
-      }
-
-      const plan = planBoardReply({ hostStreamType, messageCount, openingMessageId })
-
-      if (plan.kind === "newThread") {
-        // Promote a draft thread off the opening message, mirroring the timeline's
-        // thread-reply path (`stream-panel.tsx`): the queue create-or-finds the
-        // thread (idempotent server-side on (parentStreamId, parentMessageId))
-        // then sends into it. A lone channel/DM root is never E2E, so no sealing.
-        const panelId = createDraftPanelId(conversation.streamId, plan.parentMessageId)
-        await queueDraftMessage(input, {
+    }: ReplyToBoardPostInput): Promise<void> => {
+      await queueDraftMessage(
+        {
+          contentJson,
+          attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+        },
+        {
           workspaceId,
-          streamId: panelId,
-          streamCreation: {
-            type: StreamTypes.THREAD,
-            parentStreamId: conversation.streamId,
-            parentMessageId: plan.parentMessageId,
-          },
-          draftId: panelId,
-        })
-        return { plan }
-      }
-
-      await queueDraftMessage(input, {
-        workspaceId,
-        streamId: conversation.streamId,
-        conversation: { intent: "existing", conversationId: conversation.id },
-      })
-      return { plan }
+          streamId: conversation.streamId,
+          conversation: { intent: "existing", conversationId: conversation.id },
+        }
+      )
     },
   })
 }

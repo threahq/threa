@@ -158,7 +158,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         )}
       </div>
 
-      <BoardReplyComposer workspaceId={workspaceId} post={post} hostStreamType={streamType} />
+      <BoardReplyComposer workspaceId={workspaceId} post={post} />
     </div>
   )
 }

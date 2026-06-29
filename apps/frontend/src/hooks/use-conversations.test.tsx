@@ -9,13 +9,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as draftScratchpadsModule from "./use-draft-scratchpads"
 import * as queueDraftModule from "./use-queue-draft-message"
 import { SocketEventGate } from "@/sync/socket-event-gate"
-import {
-  useConversations,
-  useCreateBoardPost,
-  useReplyToBoardPost,
-  planBoardReply,
-  conversationKeys,
-} from "./use-conversations"
+import { useConversations, useCreateBoardPost, useReplyToBoardPost, conversationKeys } from "./use-conversations"
 
 const WORKSPACE_ID = "ws_1"
 const STREAM_ID = "stream_1"
@@ -246,48 +240,6 @@ describe("useCreateBoardPost", () => {
   })
 })
 
-describe("planBoardReply", () => {
-  it("threads a lone root message in a channel or DM off the opening message", () => {
-    expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 1, openingMessageId: "m1" })).toEqual({
-      kind: "newThread",
-      parentMessageId: "m1",
-    })
-    expect(planBoardReply({ hostStreamType: StreamTypes.DM, messageCount: 1, openingMessageId: "m1" })).toEqual({
-      kind: "newThread",
-      parentMessageId: "m1",
-    })
-  })
-
-  it("keeps a flat conversation with replies flat — no stray thread", () => {
-    expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 3, openingMessageId: "m1" })).toEqual({
-      kind: "intoConversation",
-    })
-    expect(planBoardReply({ hostStreamType: StreamTypes.DM, messageCount: 2, openingMessageId: "m1" })).toEqual({
-      kind: "intoConversation",
-    })
-  })
-
-  it("replies into a thread conversation's own stream, even when it holds a single message", () => {
-    expect(planBoardReply({ hostStreamType: StreamTypes.THREAD, messageCount: 1, openingMessageId: "m1" })).toEqual({
-      kind: "intoConversation",
-    })
-  })
-
-  it("never threads a scratchpad, even a lone one", () => {
-    expect(planBoardReply({ hostStreamType: StreamTypes.SCRATCHPAD, messageCount: 1, openingMessageId: "m1" })).toEqual(
-      {
-        kind: "intoConversation",
-      }
-    )
-  })
-
-  it("stays flat when a lone root has been deleted (no anchor to thread off)", () => {
-    expect(planBoardReply({ hostStreamType: StreamTypes.CHANNEL, messageCount: 1, openingMessageId: null })).toEqual({
-      kind: "intoConversation",
-    })
-  })
-})
-
 describe("useReplyToBoardPost", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -304,66 +256,30 @@ describe("useReplyToBoardPost", () => {
 
   const DOC = { type: "doc", content: [] }
 
-  it("threads a lone channel root off the opening message, promoting a draft thread (no directive)", async () => {
+  it("replies flat into a lone channel root's own stream via the existing directive (no new thread)", async () => {
     const { queueDraftMessage } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
 
-    let res: Awaited<ReturnType<typeof result.current.mutateAsync>> | undefined
     await act(async () => {
-      res = await result.current.mutateAsync({
+      await result.current.mutateAsync({
         conversation: { id: "conv_1", streamId: "chan_1" },
-        openingMessageId: "msg_open",
-        hostStreamType: StreamTypes.CHANNEL,
-        messageCount: 1,
         contentJson: DOC,
       })
     })
 
-    // The reply rides the durable queue with THREAD stream-creation, keyed on the
-    // draft panel id; no existing-conversation directive (a fresh thread is its
-    // own conversation).
+    // A board reply always joins the conversation in place — even a lone root
+    // attaches via the existing directive rather than promoting a draft thread,
+    // so the reply renders under the card it came from.
     expect(queueDraftMessage).toHaveBeenCalledWith(
       expect.objectContaining({ contentJson: DOC }),
       expect.objectContaining({
         workspaceId: WORKSPACE_ID,
-        streamId: "draft:chan_1:msg_open",
-        draftId: "draft:chan_1:msg_open",
-        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "chan_1", parentMessageId: "msg_open" },
-      })
-    )
-    expect(queueDraftMessage.mock.calls[0][1]).not.toHaveProperty("conversation")
-    // The plan rides back so the composer shows the "posted to a new thread" note.
-    expect(res).toEqual({ plan: { kind: "newThread", parentMessageId: "msg_open" } })
-  })
-
-  it("keeps a multi-message channel reply flat, attached to the conversation via the existing directive", async () => {
-    const { queueDraftMessage } = mockReplyDeps()
-    const { wrapper } = createWrapper()
-    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
-
-    let res: Awaited<ReturnType<typeof result.current.mutateAsync>> | undefined
-    await act(async () => {
-      res = await result.current.mutateAsync({
-        conversation: { id: "conv_1", streamId: "chan_1" },
-        openingMessageId: "msg_open",
-        hostStreamType: StreamTypes.CHANNEL,
-        messageCount: 3,
-        contentJson: DOC,
-      })
-    })
-
-    expect(queueDraftMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ contentJson: DOC }),
-      expect.objectContaining({
         streamId: "chan_1",
         conversation: { intent: "existing", conversationId: "conv_1" },
       })
     )
-    // No stream creation — it attaches to the existing conversation in place.
     expect(queueDraftMessage.mock.calls[0][1]).not.toHaveProperty("streamCreation")
-    // intoConversation → the card shows it in place.
-    expect(res?.plan).toEqual({ kind: "intoConversation" })
   })
 
   it("replies straight into a thread card's own stream via the existing directive", async () => {
@@ -374,9 +290,6 @@ describe("useReplyToBoardPost", () => {
     await act(async () => {
       await result.current.mutateAsync({
         conversation: { id: "conv_thread", streamId: "thread_x" },
-        openingMessageId: "msg_open",
-        hostStreamType: StreamTypes.THREAD,
-        messageCount: 2,
         contentJson: DOC,
       })
     })
