@@ -77,7 +77,9 @@ export async function mergeBoardConversation(
     // message was reassigned or threaded off (the source of a `threadFromMessage`
     // reply) drops here rather than lingering as a stale card. Report it handled
     // even with no row so the caller doesn't hydrate a card that shouldn't exist.
-    if (conversation.messageIds.length === 0) {
+    // Guard on an EXPLICIT empty array: a payload that omits `messageIds` (a
+    // partial/aggregate-only event) is not "known empty" — fall through to upsert.
+    if (Array.isArray(conversation.messageIds) && conversation.messageIds.length === 0) {
       await db.conversations.delete(conversationId)
       return true
     }

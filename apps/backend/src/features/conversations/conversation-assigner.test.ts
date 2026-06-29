@@ -43,6 +43,13 @@ describe("conversationAssigner — threadFromMessage", () => {
     removePrimaryMessage = spyOn(ConversationRepository, "removePrimaryMessage").mockResolvedValue(undefined as never)
     resolveIfEmpty = spyOn(ConversationRepository, "resolveIfEmpty").mockResolvedValue(undefined as never)
     emitRetired = spyOn(assignmentEvents, "emitConversationRetired").mockResolvedValue(undefined as never)
+    // The thread (the reply's stream `thr_1`) hangs off `msg_open` in `chan_1` —
+    // so the only retire-able source is the lone conversation owning that message.
+    spyOn(streams.StreamRepository, "findById").mockResolvedValue({
+      id: "thr_1",
+      parentStreamId: "chan_1",
+      parentMessageId: "msg_open",
+    } as never)
     // Default: the actor can reach the source stream (the legit board-reply case).
     checkStreamAccess = spyOn(streams, "checkStreamAccess").mockResolvedValue({ id: "chan_1" } as never)
   })
@@ -123,6 +130,20 @@ describe("conversationAssigner — threadFromMessage", () => {
     // a lone conversation in a stream the actor can't see — is left untouched.
     expect(insert).toHaveBeenCalledTimes(1)
     expect(checkStreamAccess).toHaveBeenCalledWith(CLIENT, "chan_1", WORKSPACE_ID, "usr_1")
+    expect(removePrimaryMessage).not.toHaveBeenCalled()
+    expect(resolveIfEmpty).not.toHaveBeenCalled()
+    expect(emitRetired).not.toHaveBeenCalled()
+  })
+
+  test("only retires the thread's actual parent — not an unrelated accessible lone source", async () => {
+    // A crafted id pointing at a different lone conversation the actor CAN see:
+    // it's in the parent stream and accessible, but its message isn't the thread's
+    // parent (`msg_open`), so it must be left intact.
+    findByIdForUpdate.mockResolvedValue(makeSource({ id: "conv_other", messageIds: ["msg_unrelated"] }))
+
+    await thread("conv_other")
+
+    expect(insert).toHaveBeenCalledTimes(1)
     expect(removePrimaryMessage).not.toHaveBeenCalled()
     expect(resolveIfEmpty).not.toHaveBeenCalled()
     expect(emitRetired).not.toHaveBeenCalled()

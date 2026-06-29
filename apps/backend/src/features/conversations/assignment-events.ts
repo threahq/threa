@@ -71,7 +71,12 @@ export async function emitConversationRetired(
   const stream = await StreamRepository.findById(client, streamId)
   const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
   const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationId])
-  if (!refreshed) return
+  if (!refreshed) {
+    // The row we just locked + emptied in this same transaction is gone — an
+    // invariant break (INV-11). Throwing rolls back the whole send rather than
+    // silently dropping the board-removal event and leaving a stale source card.
+    throw new Error(`Conversation ${conversationId} vanished during retirement`)
+  }
   await OutboxRepository.insert(client, "conversation:updated", {
     workspaceId,
     streamId,

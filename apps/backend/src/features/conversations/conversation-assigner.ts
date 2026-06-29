@@ -1,6 +1,6 @@
 import { ConversationRepository } from "./repository"
 import type { ConversationAssigner } from "../messaging"
-import { checkStreamAccess } from "../streams"
+import { checkStreamAccess, StreamRepository } from "../streams"
 import { emitAssignmentEvents, emitConversationRetired } from "./assignment-events"
 import { conversationId } from "../../lib/id"
 import { ConversationIntents, ConversationStatuses } from "@threa/types"
@@ -48,31 +48,30 @@ export const conversationAssigner: ConversationAssigner = {
       })
 
       if (directive.intent === ConversationIntents.THREAD_FROM_MESSAGE) {
-        // Retire the source. Lock + workspace-scope (INV-8/20); only empty a
-        // source that is still lone and lives in a DIFFERENT stream than this
-        // reply (the parent stream, not the thread) — a non-lone source is a real
-        // conversation we must not gut, and a missing/foreign id is a no-op
-        // (retirement is idempotent, unlike `existing`'s 400).
+        // Retire the source — but ONLY the lone conversation this thread was
+        // actually created off, never an arbitrary id the client supplied. The
+        // thread (this reply's stream) carries its parent message/stream, so the
+        // source is bound to that identity: it must live in the parent stream and
+        // its single message must BE the thread's parent message. Lock +
+        // workspace-scope (INV-8/20); gate on the actor's access to the source
+        // stream (INV-62). Any mismatch — foreign/non-lone/wrong-parent/no-access —
+        // is a silent no-op, so retirement stays idempotent (never a 400).
+        const thread = await StreamRepository.findById(client, message.streamId)
         const source = await ConversationRepository.findByIdForUpdate(
           client,
           workspaceId,
           directive.sourceConversationId
         )
-        // Gate the retire on the actor's access to the SOURCE stream (INV-62),
-        // not just the thread they're writing to: the legit board reply targets a
-        // card on the actor's own board (access always holds), so this only blocks
-        // a crafted `sourceConversationId` from emptying a lone conversation in a
-        // stream the actor can't see. A denied/missing/non-lone/same-stream source
-        // is a silent no-op — retirement stays idempotent (never a 400).
         if (
+          thread?.parentStreamId &&
+          thread.parentMessageId &&
           source &&
-          source.streamId !== message.streamId &&
-          source.messageIds.length <= 1 &&
+          source.streamId === thread.parentStreamId &&
+          source.messageIds.length === 1 &&
+          source.messageIds[0] === thread.parentMessageId &&
           (await checkStreamAccess(client, source.streamId, workspaceId, message.authorId))
         ) {
-          for (const sourceMessageId of source.messageIds) {
-            await ConversationRepository.removePrimaryMessage(client, workspaceId, source.id, sourceMessageId)
-          }
+          await ConversationRepository.removePrimaryMessage(client, workspaceId, source.id, thread.parentMessageId)
           await ConversationRepository.resolveIfEmpty(client, workspaceId, source.id)
           await emitConversationRetired(client, { workspaceId, conversationId: source.id, streamId: source.streamId })
         }
