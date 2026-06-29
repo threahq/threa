@@ -198,6 +198,15 @@ export function useInAppLinkChip({
     // A message reads as "{author} in #channel" / "{author} to {peer}", with the
     // author's live avatar leading the chip.
     if (isMessage) {
+      // A delete is a patch-style event that stamps `deletedAt` onto the cached
+      // create row (see stream-sync `handleMessageDeleted`), so the tombstone is
+      // local too — gate on it before the live chip, matching the backend
+      // `data.deleted` branch above, so a cached-then-deleted message never
+      // renders as a normal, navigable chip.
+      if ((cachedMessageEvent?.payload as { deletedAt?: string } | null)?.deletedAt) {
+        return { status: "restricted", icon: MessageSquare, label: "Deleted message" }
+      }
+
       // 1) Local-first: name the author + context straight from the cached
       //    timeline event. A locally-cached message is by definition one the
       //    viewer can read, so no access tier or round-trip is needed.
