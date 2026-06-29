@@ -22,9 +22,9 @@ const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-w
 
 // Resting-affordance state. `draft` signals a persisted-but-collapsed reply (so
 // the user knows reopening restores it); `posted` is a transient confirmation
-// that a new-thread reply went through — it stands in for the in-place echo a
-// same-conversation reply gets, since a new-thread reply lands in its own
-// conversation and only surfaces on the next board load.
+// that a convert-to-thread reply went through — it bridges the brief swap where
+// this lone card retires and the thread card takes its place on the server echo,
+// since (unlike a same-conversation reply) the reply isn't shown in place here.
 type RestingState = "idle" | "draft" | "posted"
 const RESTING_LABEL: Record<RestingState, string> = {
   idle: "Write a reply…",
@@ -50,13 +50,14 @@ interface BoardReplyComposerProps {
  * mirrors the composer's own container — same radius, border, surface, padding,
  * and placeholder — and the composer mounts already open (`initialMobileChromeOpen`)
  * so the tap lands straight in the toolbar view instead of stepping through the
- * mobile compacted phase. Routing — channel → thread, everything else → the
- * conversation — lives in {@link useReplyToBoardPost}.
+ * mobile compacted phase. Routing — a lone channel/DM post converts to a thread,
+ * everything else replies flat into the conversation — lives in
+ * {@link useReplyToBoardPost}.
  *
  * The resting affordance carries state (best-effort, in-session): it flags a
  * persisted draft after an Escape ("Continue reply…") and a transient "Posted to
- * a new thread" confirmation after a new-thread send, so a collapse never reads
- * as a no-op or an accidental discard.
+ * a new thread" confirmation after a convert-to-thread send, so a collapse never
+ * reads as a no-op or an accidental discard.
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)

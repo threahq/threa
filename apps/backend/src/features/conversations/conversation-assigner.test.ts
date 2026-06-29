@@ -2,6 +2,7 @@ import { describe, test, expect, spyOn, mock, beforeEach, afterEach } from "bun:
 import { conversationAssigner } from "./conversation-assigner"
 import { ConversationRepository, type Conversation } from "./repository"
 import * as assignmentEvents from "./assignment-events"
+import * as streams from "../streams"
 import type { Message } from "../messaging"
 
 // The assigner only passes `client` through to the (spied) repositories, so a
@@ -31,6 +32,7 @@ describe("conversationAssigner — threadFromMessage", () => {
   let removePrimaryMessage: ReturnType<typeof spyOn>
   let resolveIfEmpty: ReturnType<typeof spyOn>
   let emitRetired: ReturnType<typeof spyOn>
+  let checkStreamAccess: ReturnType<typeof spyOn>
 
   beforeEach(() => {
     insert = spyOn(ConversationRepository, "insert").mockResolvedValue(undefined as never)
@@ -41,6 +43,8 @@ describe("conversationAssigner — threadFromMessage", () => {
     removePrimaryMessage = spyOn(ConversationRepository, "removePrimaryMessage").mockResolvedValue(undefined as never)
     resolveIfEmpty = spyOn(ConversationRepository, "resolveIfEmpty").mockResolvedValue(undefined as never)
     emitRetired = spyOn(assignmentEvents, "emitConversationRetired").mockResolvedValue(undefined as never)
+    // Default: the actor can reach the source stream (the legit board-reply case).
+    checkStreamAccess = spyOn(streams, "checkStreamAccess").mockResolvedValue({ id: "chan_1" } as never)
   })
 
   afterEach(() => {
@@ -106,6 +110,21 @@ describe("conversationAssigner — threadFromMessage", () => {
     await thread("conv_src")
 
     expect(removePrimaryMessage).not.toHaveBeenCalled()
+    expect(emitRetired).not.toHaveBeenCalled()
+  })
+
+  test("does not retire a source the actor cannot access (crafted sourceConversationId)", async () => {
+    findByIdForUpdate.mockResolvedValue(makeSource())
+    checkStreamAccess.mockResolvedValue(null)
+
+    await thread("conv_src")
+
+    // The thread is still minted (the reply is the actor's own), but the source —
+    // a lone conversation in a stream the actor can't see — is left untouched.
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect(checkStreamAccess).toHaveBeenCalledWith(CLIENT, "chan_1", WORKSPACE_ID, "usr_1")
+    expect(removePrimaryMessage).not.toHaveBeenCalled()
+    expect(resolveIfEmpty).not.toHaveBeenCalled()
     expect(emitRetired).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,6 @@
 import { ConversationRepository } from "./repository"
 import type { ConversationAssigner } from "../messaging"
+import { checkStreamAccess } from "../streams"
 import { emitAssignmentEvents, emitConversationRetired } from "./assignment-events"
 import { conversationId } from "../../lib/id"
 import { ConversationIntents, ConversationStatuses } from "@threa/types"
@@ -57,7 +58,18 @@ export const conversationAssigner: ConversationAssigner = {
           workspaceId,
           directive.sourceConversationId
         )
-        if (source && source.streamId !== message.streamId && source.messageIds.length <= 1) {
+        // Gate the retire on the actor's access to the SOURCE stream (INV-62),
+        // not just the thread they're writing to: the legit board reply targets a
+        // card on the actor's own board (access always holds), so this only blocks
+        // a crafted `sourceConversationId` from emptying a lone conversation in a
+        // stream the actor can't see. A denied/missing/non-lone/same-stream source
+        // is a silent no-op — retirement stays idempotent (never a 400).
+        if (
+          source &&
+          source.streamId !== message.streamId &&
+          source.messageIds.length <= 1 &&
+          (await checkStreamAccess(client, source.streamId, workspaceId, message.authorId))
+        ) {
           for (const sourceMessageId of source.messageIds) {
             await ConversationRepository.removePrimaryMessage(client, workspaceId, source.id, sourceMessageId)
           }
