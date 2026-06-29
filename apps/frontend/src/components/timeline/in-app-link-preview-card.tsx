@@ -4,12 +4,10 @@ import { Link } from "react-router-dom"
 import { MessageSquare, Hash, Brain, Lock, Globe, NotebookPen, ArrowUpRight, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ActorAvatar } from "@/components/actor-avatar"
-import { MarkdownContent } from "@/components/ui/markdown-content"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { linkPreviewsApi } from "@/api"
-import { LinkPreviewBody } from "./link-preview-body"
 import type {
   InAppLinkPreviewData,
   LinkPreviewSummary,
@@ -57,22 +55,11 @@ export function useResolvedInAppLink(
 interface InAppLinkPreviewCardProps {
   preview: LinkPreviewSummary
   workspaceId: string
-  /**
-   * Scopes the per-preview "Show more" persistence key. Optional so tests and
-   * transient previews without a host message still render.
-   */
-  messageId?: string
   onDismiss?: (previewId: string) => void
   hydrate?: boolean
 }
 
-export function InAppLinkPreviewCard({
-  preview,
-  workspaceId,
-  messageId,
-  onDismiss,
-  hydrate = true,
-}: InAppLinkPreviewCardProps) {
+export function InAppLinkPreviewCard({ preview, workspaceId, onDismiss, hydrate = true }: InAppLinkPreviewCardProps) {
   const { data, loading } = useResolvedInAppLink(workspaceId, preview.id, undefined, hydrate)
 
   if (loading) return <CardSkeleton />
@@ -83,8 +70,6 @@ export function InAppLinkPreviewCard({
       data={data}
       url={preview.url}
       workspaceId={workspaceId}
-      previewKey={preview.id}
-      messageId={messageId}
       onDismiss={onDismiss ? () => onDismiss(preview.id) : undefined}
     />
   )
@@ -101,45 +86,28 @@ function ResolvedInAppLink({
   data,
   url,
   workspaceId,
-  previewKey,
-  messageId,
   onDismiss,
 }: {
   data: InAppLinkPreviewData
   url: string
   workspaceId: string
-  previewKey: string
-  messageId?: string
   onDismiss?: () => void
 }) {
   if (data.kind === "stream")
     return <StreamLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
   if (data.kind === "memo") return <MemoLinkCard data={data} url={url} onDismiss={onDismiss} />
-  return (
-    <MessageLinkCard
-      data={data}
-      url={url}
-      workspaceId={workspaceId}
-      previewKey={previewKey}
-      messageId={messageId}
-      onDismiss={onDismiss}
-    />
-  )
+  return <MessageLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
 }
 
 function MessageLinkCard({
   data,
   url,
   workspaceId,
-  previewKey,
-  messageId,
   onDismiss,
 }: {
   data: MessageLinkPreviewData
   url: string
   workspaceId: string
-  previewKey: string
-  messageId?: string
   onDismiss?: () => void
 }) {
   // A DM/stream name is per-viewer and absent from the backend resolve, so
@@ -197,12 +165,9 @@ function MessageLinkCard({
         <div className="min-w-0 flex-1">
           {data.authorName && <span className="text-xs font-semibold text-foreground">{data.authorName}</span>}
           {data.contentPreview && (
-            <div className="mt-0.5">
-              <MarkdownContent
-                content={data.contentPreview}
-                className="text-xs leading-relaxed text-muted-foreground"
-              />
-            </div>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground line-clamp-2">
+              {stripMarkdownToInline(data.contentPreview)}
+            </p>
           )}
         </div>
       </div>
@@ -217,9 +182,7 @@ function MessageLinkCard({
   else if (data.streamName) headerLabel = `#${data.streamName}`
   return (
     <CardShell header={<CardHeader label={headerLabel} onDismiss={onDismiss} />}>
-      <LinkPreviewBody messageId={messageId} previewId={previewKey}>
-        <InternalLink path={internalPath}>{body}</InternalLink>
-      </LinkPreviewBody>
+      <InternalLink path={internalPath}>{body}</InternalLink>
     </CardShell>
   )
 }
@@ -436,8 +399,9 @@ function CardShell({ header, children }: { header: ReactNode; children: ReactNod
 }
 
 /**
- * Loading placeholder. Mirrors the resolved card's header bar + tile + two text
- * lines so resolving doesn't shift following timeline rows (INV-21).
+ * Loading placeholder. Mirrors the resolved card's header bar + tile/avatar +
+ * the title line and the `line-clamp-2` body every in-app card commits to, so
+ * resolving doesn't shift following timeline rows (INV-21).
  */
 function CardSkeleton() {
   return (

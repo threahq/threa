@@ -111,7 +111,6 @@ export function LinkPreviewList({
               <InAppLinkPreviewCard
                 preview={preview}
                 workspaceId={workspaceId}
-                messageId={messageId}
                 onDismiss={handleDismiss}
                 hydrate={hydrateFromApi}
               />
