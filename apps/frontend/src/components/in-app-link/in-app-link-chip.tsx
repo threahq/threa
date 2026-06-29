@@ -46,10 +46,15 @@ export function InAppLinkChip({
   }
 
   if (avatarSkeleton && !avatar) {
+    // A message resolves to "{author} to/in {where}", but the in-flight fallback
+    // label is the link's baked markdown text, which can be stale (e.g. an older
+    // viewer-relative "… to You"). Showing it would flash the wrong words before
+    // the resolve corrects them, so render a neutral skeleton instead — the chip
+    // goes loading → final, never wrong-text → final.
     return (
       <span className={cn(chipBase, inlineChip, triggerStyles.channel, className)} data-type="in-app-link-chip">
         <span className="h-4 w-4 shrink-0 animate-pulse rounded-[4px] bg-foreground/10" aria-hidden="true" />
-        <span className="truncate">{label}</span>
+        <span className="h-3 w-24 animate-pulse rounded bg-foreground/10" aria-hidden="true" />
       </span>
     )
   }
