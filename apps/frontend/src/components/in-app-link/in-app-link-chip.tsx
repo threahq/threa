@@ -76,11 +76,14 @@ export function InAppLinkChip({
           </AvatarFallback>
         </Avatar>
         {messageParts ? (
-          <>
-            {/* Author truncates; the location suffix stays pinned so it survives. */}
+          // One text child, so the chip has a single avatar↔text gap that matches
+          // the pending skeleton's footprint and doesn't reflow when it settles
+          // (INV-21). Author truncates; the location suffix stays pinned so it
+          // survives — its own leading space separates it from the author.
+          <span className="inline-flex min-w-0 items-center">
             <span className="min-w-0 truncate">{messageParts.lead}</span>
             {messageParts.tail && <span className="shrink-0 whitespace-nowrap">{messageParts.tail}</span>}
-          </>
+          </span>
         ) : (
           <span className="truncate">{label}</span>
         )}

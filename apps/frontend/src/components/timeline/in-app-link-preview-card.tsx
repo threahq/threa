@@ -26,10 +26,10 @@ import type {
  * resolver; only the lookup key differs. Pass both undefined to no-op (a chip
  * that resolved its name locally and needs no fetch).
  *
- * Backed by a shared query cache keyed on the lookup id, so a link the composer
- * already resolved renders resolved the instant the sent message re-mounts on
- * the timeline — no second round-trip and no pending-glyph flash between the two
- * surfaces (offline-first; INV-21). `loading` is only true on a cold miss.
+ * Backed by a shared (in-memory, 5-min) query cache keyed on the lookup id, so a
+ * link the composer already resolved renders resolved the instant the sent
+ * message re-mounts on the timeline — no second round-trip and no pending-glyph
+ * flash between the two surfaces (INV-21). `loading` is only true on a cold miss.
  */
 export function useResolvedInAppLink(
   workspaceId: string,
