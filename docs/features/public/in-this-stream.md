@@ -9,6 +9,7 @@ summary: >
   A panel that collects the links, files, images, captured memories, and threads
   from a conversation into one recency-ordered timeline, each item linking back to
   where it came from.
+related: [public/link-previews.md]
 ---
 
 ## What it does
