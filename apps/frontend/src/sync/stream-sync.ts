@@ -474,8 +474,10 @@ interface LinkPreviewReadyPayload {
  * single viewer to resolve against), so it would wipe data the history fetch
  * already baked onto the cached event. Carry that `inAppData` forward by preview
  * id when the incoming copy lacks it, so an in-app card keeps rendering
- * synchronously instead of dropping back to the async resolve. A re-extracted
- * preview (message edit) gets a fresh id and so is correctly not matched.
+ * synchronously instead of dropping back to the async resolve. Matching on id is
+ * safe because a preview row is keyed by normalized url: the same id always means
+ * the same link target, so the carried tier still applies; a preview pointing at a
+ * different target carries a different id and is correctly left to resolve async.
  */
 export function preserveBakedInAppData(
   incoming: LinkPreviewSummary[],

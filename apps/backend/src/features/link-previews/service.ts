@@ -282,20 +282,32 @@ export class LinkPreviewService {
 
     // A memo's tier is gated by the viewer's accessible streams — the same list
     // for every memo on the page — so resolve it once and share it instead of
-    // re-running that query per memo preview.
-    const accessibleStreamIds = pending.some((p) => p.row.contentType === "memo_link")
-      ? await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
+    // re-running that query per memo preview. A failure here must only skip the
+    // memo bakes (below), never reject the page — baking is optional (the card
+    // falls back to an async resolve when `inAppData` is absent).
+    let accessibleStreamIds: string[] | undefined
+    let memoAccessResolved = true
+    if (pending.some((p) => p.row.contentType === "memo_link")) {
+      try {
+        accessibleStreamIds = await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
           archiveStatus: ["active", "archived"],
         })
-      : undefined
+      } catch (err) {
+        memoAccessResolved = false
+        logger.warn(
+          { err, workspaceId, userId },
+          "Failed to resolve memo preview access; leaving memo previews unbaked"
+        )
+      }
+    }
 
-    // Baking is an optional enhancement — the card falls back to an async resolve
-    // when `inAppData` is absent — so a single resolve failure must leave that one
-    // preview unbaked, never reject the whole history/catch-up enrichment.
+    // Likewise a single resolve failure leaves that one preview unbaked rather
+    // than rejecting the whole history/catch-up enrichment.
     const limit = pLimit(IN_APP_RESOLVE_CONCURRENCY)
     await Promise.all(
       pending.map(({ summary, row }) =>
         limit(async () => {
+          if (row.contentType === "memo_link" && !memoAccessResolved) return
           try {
             const data = await this.resolveInAppTarget(workspaceId, userId, row.contentType, row, {
               accessibleStreamIds,

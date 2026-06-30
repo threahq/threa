@@ -405,6 +405,28 @@ describe("LinkPreviewService.getPreviewsForMessages", () => {
     expect(previews.every((p) => p.inAppData?.kind === "memo")).toBe(true)
     expect(accessibleSpy).toHaveBeenCalledTimes(1)
   })
+
+  test("a failed memo-access lookup leaves memo previews unbaked without failing the page", async () => {
+    spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(
+      new Map([
+        [
+          "msg_1",
+          [
+            makePreview({ id: "lp_memo", contentType: "memo_link", targetStreamId: null, targetMemoId: "memo_a" }),
+            makePreview({ id: "lp_stream", contentType: "stream_link", targetStreamId: "stream_ok" }),
+          ],
+        ],
+      ]) as never
+    )
+    spyOn(SearchRepository, "getAccessibleStreamsWithMembers").mockRejectedValue(new Error("db down"))
+    const service = makeService({ tryAccess: async () => makeStream({ id: "stream_ok", slug: "general" }) }, {})
+
+    const previews = (await service.getPreviewsForMessages(WORKSPACE_ID, VIEWER_ID, ["msg_1"])).get("msg_1")!
+
+    // The non-memo preview still bakes; the memo one is left unbaked, no throw.
+    expect(previews.find((p) => p.id === "lp_stream")!.inAppData).toMatchObject({ kind: "stream", accessTier: "full" })
+    expect(previews.find((p) => p.id === "lp_memo")!.inAppData).toBeUndefined()
+  })
 })
 
 describe("LinkPreviewService.resolveInAppLinkByUrl", () => {
