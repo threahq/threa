@@ -55,8 +55,9 @@ import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-dec
 import { Skeleton } from "@/components/ui/skeleton"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
-import { StreamPanel, ThreadHeader } from "@/components/thread"
+import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview } from "@/components/layout"
+import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
@@ -822,7 +823,7 @@ export function StreamPage() {
     return (
       <>
         <div className="flex h-full flex-col">
-          <StreamPanel key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+          <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
         </div>
         {conversationPanel}
       </>
@@ -852,7 +853,7 @@ export function StreamPage() {
           onResizeStart={handleResizeStart}
           onResizeKeyDown={handleResizeKeyDown}
         >
-          <StreamPanel key={panelId} workspaceId={workspaceId} onClose={closePanel} />
+          <PanelHost key={panelId} workspaceId={workspaceId} onClose={closePanel} />
         </ThreadPanelSlot>
       </div>
       {conversationPanel}

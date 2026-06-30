@@ -78,6 +78,20 @@ export const conversationsApi = {
   },
 
   /**
+   * The board post for a single conversation — backs the conversation side panel
+   * (Mechanism B). Used when the panel is opened by id without the board feed
+   * having seeded the post (a /s/:id deep-link, or the in-stream conversation
+   * list). Board-gated server-side (404 without the flag); 404 when the
+   * conversation is gone/empty/cross-workspace.
+   */
+  async getBoardPost(workspaceId: string, conversationId: string): Promise<BoardPost> {
+    const res = await api.get<{ post: BoardPost }>(
+      `/api/workspaces/${workspaceId}/conversations/${conversationId}/board-post`
+    )
+    return res.post
+  },
+
+  /**
    * User correction: make `conversationId` the message's primary conversation.
    * The backend applies the move and records it as boundary-extraction feedback.
    */

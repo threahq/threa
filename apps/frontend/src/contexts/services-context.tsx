@@ -68,6 +68,7 @@ export interface ConversationService {
   getById: typeof conversationsApi.getById
   getMessages: typeof conversationsApi.getMessages
   getBoardMessages: typeof conversationsApi.getBoardMessages
+  getBoardPost: typeof conversationsApi.getBoardPost
   reassignMessage: typeof conversationsApi.reassignMessage
 }
 

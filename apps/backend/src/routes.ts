@@ -494,6 +494,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     conversation.getBoardMessages
   )
+  app.get("/api/workspaces/:workspaceId/conversations/:conversationId/board-post", ...authed, conversation.getBoardPost)
   app.post(
     "/api/workspaces/:workspaceId/conversations/:conversationId/messages/:messageId/reassign",
     ...authed,

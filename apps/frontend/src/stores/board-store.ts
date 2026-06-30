@@ -47,6 +47,19 @@ export function useBoardPosts(workspaceId: string): CachedBoardPost[] | undefine
 }
 
 /**
+ * One board post from the reactive store, by conversation id — the conversation
+ * panel's static projection (opening/recent/streamIds), live-merged in place as
+ * the feed reconciles. `undefined` until the first IDB read resolves (loading),
+ * `null` once it resolves to no such row (the panel then fetches it by id).
+ */
+export function useBoardPost(conversationId: string | null): CachedBoardPost | null | undefined {
+  return useLiveQuery(async () => {
+    if (!conversationId) return null
+    return (await db.conversations.get(conversationId)) ?? null
+  }, [conversationId])
+}
+
+/**
  * Seed the board store from a bootstrap/page fetch (subscribe-then-fetch,
  * INV-53). `bulkPut` upserts the fetched cards without touching rows the page
  * didn't return, so optimistic-pending rows not yet visible to the server

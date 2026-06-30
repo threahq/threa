@@ -4,7 +4,10 @@ import { Navigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PageHeaderTabs } from "@/components/layout"
+import { PageHeaderTabs, ThreadPanelSlot } from "@/components/layout"
+import { PanelHost } from "@/components/layout/panel-host"
+import { usePanel, useSidebar } from "@/contexts"
+import { usePanelLayout } from "@/hooks"
 import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
@@ -85,6 +88,22 @@ function BoardPageGate({ workspaceId }: { workspaceId: string }) {
 }
 
 function BoardPageInner({ workspaceId }: { workspaceId: string }) {
+  const { isMobile } = useSidebar()
+  const { isPanelOpen, closePanel } = usePanel()
+  const {
+    containerRef,
+    panelWidth,
+    maxWidth,
+    minWidth,
+    displayWidth,
+    shouldAnimate,
+    isResizing,
+    showContent,
+    handleResizeStart,
+    handleResizeKeyDown,
+    handleTransitionEnd,
+  } = usePanelLayout(isPanelOpen)
+
   // The query is the fetch/seed engine; the board reads reactively from IDB. The
   // stable-view projection holds the order the viewer is looking at frozen and
   // accumulates live changes behind the "N new" pill (INV-61, extended from the
@@ -225,7 +244,7 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     )
   }
 
-  return (
+  const boardColumn = (
     <div className="flex h-full flex-col">
       <PageHeaderTabs
         backTo={`/w/${workspaceId}`}
@@ -263,6 +282,36 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
           </main>
         </ScrollArea>
       </div>
+    </div>
+  )
+
+  // Mobile: an open conversation panel takes over the full screen (mirrors the
+  // stream page), so the narrow board feed isn't crushed beside it.
+  if (isMobile && isPanelOpen) {
+    return (
+      <div className="flex h-full flex-col">
+        <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+      </div>
+    )
+  }
+
+  return (
+    <div ref={containerRef} className="flex h-full">
+      <div className="min-w-0 flex-1 overflow-hidden">{boardColumn}</div>
+      <ThreadPanelSlot
+        displayWidth={displayWidth}
+        panelWidth={panelWidth}
+        shouldAnimate={shouldAnimate}
+        showContent={showContent}
+        isResizing={isResizing}
+        maxWidth={maxWidth}
+        minWidth={minWidth}
+        onTransitionEnd={handleTransitionEnd}
+        onResizeStart={handleResizeStart}
+        onResizeKeyDown={handleResizeKeyDown}
+      >
+        <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+      </ThreadPanelSlot>
     </div>
   )
 }

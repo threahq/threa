@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
 import { BoardPage } from "./board"
 import * as boardStoreModule from "@/stores/board-store"
-import { ServicesProvider, SidebarProvider } from "@/contexts"
+import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
@@ -110,9 +110,11 @@ function mountBoard(
         <ServicesProvider services={{ conversations: { listByWorkspace, getBoardMessages } as never }}>
           <SidebarProvider>
             <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board`]}>
-              <Routes>
-                <Route path="/w/:workspaceId/board" element={<BoardPage />} />
-              </Routes>
+              <PanelProvider>
+                <Routes>
+                  <Route path="/w/:workspaceId/board" element={<BoardPage />} />
+                </Routes>
+              </PanelProvider>
             </MemoryRouter>
           </SidebarProvider>
         </ServicesProvider>

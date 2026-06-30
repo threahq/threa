@@ -184,6 +184,13 @@ export class SyncEngine {
    *  bodies ride `db.events`, so the board joins + catches them up like any opened
    *  stream and re-asserts them across reconnects (see setBoardStreamIds). */
   private boardStreamIds = new Set<string>()
+  /** Streams an open conversation panel (Mechanism B) reads — its conversation's
+   *  root + threads. Kept in its own slot, NOT folded into boardStreamIds, so the
+   *  panel and the board feed each own their declaration: a panel open over the
+   *  board page mustn't clobber the feed's larger set (both would otherwise race
+   *  the single board slot). Same lifecycle as board streams — caught up + joined
+   *  here, re-asserted across reconnects, never torn down per-card. */
+  private panelStreamIds = new Set<string>()
   private currentUser: { id: string } | null = null
   /** Last workspace bootstrap error, if any. Consumers can check this for 404/403 handling. */
   lastWorkspaceError: unknown = null
@@ -244,6 +251,26 @@ export class SyncEngine {
       toSync.push(streamId)
     }
     this.boardStreamIds = next
+    if (toSync.length > 0) void this.syncBoardStreams(toSync)
+  }
+
+  /**
+   * Declare the streams an open conversation panel reads (its conversation's root
+   * + threads). Same mechanics as {@link setBoardStreamIds} but on its own slot,
+   * so it composes with the board feed instead of clobbering it. Newly-declared
+   * unsubscribed streams are caught up + joined; the set is re-asserted across
+   * reconnects via getVisibleServerStreamIds.
+   */
+  setPanelStreamIds(ids: string[]): void {
+    const next = new Set(ids)
+    const toSync: string[] = []
+    for (const streamId of next) {
+      if (this.panelStreamIds.has(streamId)) continue
+      if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) continue
+      if (this.subscribedStreams.has(streamId)) continue
+      toSync.push(streamId)
+    }
+    this.panelStreamIds = next
     if (toSync.length > 0) void this.syncBoardStreams(toSync)
   }
 
@@ -309,11 +336,11 @@ export class SyncEngine {
     // open that just came online), so sync any declared board streams whose rooms
     // the fresh bootstrap didn't join — otherwise their cards wouldn't go live
     // until the next reconnect.
-    if (!isReconnect && this.boardStreamIds.size > 0) {
-      const pending = [...this.boardStreamIds].filter(
+    if (!isReconnect && (this.boardStreamIds.size > 0 || this.panelStreamIds.size > 0)) {
+      const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(
         (id) => !this.subscribedStreams.has(id) && !id.startsWith("draft_") && !id.startsWith("draft:")
       )
-      if (pending.length > 0) void this.syncBoardStreams(pending)
+      if (pending.length > 0) void this.syncBoardStreams([...new Set(pending)])
     }
 
     // Process pending offline operations (edits, deletes, reactions, drafts)
@@ -878,6 +905,7 @@ export class SyncEngine {
       ...(this.currentStreamId ? [this.currentStreamId] : []),
       ...this.visibleStreamIds,
       ...this.boardStreamIds,
+      ...this.panelStreamIds,
     ]
     return Array.from(
       new Set(streamIds.filter((streamId) => !streamId.startsWith("draft_") && !streamId.startsWith("draft:")))

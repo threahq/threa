@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight, PanelRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { RelativeTime } from "@/components/relative-time"
-import { useConversationService } from "@/contexts"
+import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
 import { useActors } from "@/hooks"
 import { conversationKeys } from "@/hooks/use-conversations"
 import type { AuthorType, ConversationWithStaleness, Message } from "@threa/types"
@@ -30,38 +31,67 @@ export function ConversationItem({
   className,
 }: ConversationItemProps) {
   const { topicSummary, messageIds, status, lastActivityAt, effectiveCompleteness, temporalStaleness } = conversation
+  const { openPanel } = usePanel()
 
   return (
     <Collapsible open={isExpanded} onOpenChange={onToggle}>
       <div
         className={cn("rounded-lg border bg-card transition-colors", temporalStaleness >= 3 && "opacity-60", className)}
       >
-        <CollapsibleTrigger asChild>
-          <button type="button" className="w-full text-left p-3 hover:bg-accent/50 transition-colors rounded-lg">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2 flex-1 min-w-0">
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{topicSummary || "Untitled conversation"}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-muted-foreground">
-                      {messageIds.length} {messageIds.length === 1 ? "message" : "messages"}
-                    </span>
-                    <StatusBadge status={status} />
+        {/* Header row: the inline-expand trigger fills the row, the panel-open
+            button sits beside it (outside the trigger so it isn't a nested button). */}
+        <div className="flex items-stretch">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="min-w-0 flex-1 rounded-l-lg p-3 text-left transition-colors hover:bg-accent/50"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{topicSummary || "Untitled conversation"}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-muted-foreground">
+                        {messageIds.length} {messageIds.length === 1 ? "message" : "messages"}
+                      </span>
+                      <StatusBadge status={status} />
+                    </div>
                   </div>
                 </div>
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <CompletenessIndicator score={effectiveCompleteness} />
+                  <RelativeTime date={lastActivityAt} className="text-xs text-muted-foreground" />
+                </div>
               </div>
-              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                <CompletenessIndicator score={effectiveCompleteness} />
-                <RelativeTime date={lastActivityAt} className="text-xs text-muted-foreground" />
-              </div>
-            </div>
-          </button>
-        </CollapsibleTrigger>
+            </button>
+          </CollapsibleTrigger>
+          {/* Open the whole conversation in the side panel (Mechanism B) — peer to
+              the inline expand, but coherent and reply-able. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="m-1 h-8 w-8 shrink-0 self-center text-muted-foreground hover:text-foreground"
+                aria-label="Open conversation in panel"
+                onClick={() => {
+                  openPanel(createConversationPanelId(conversation.id))
+                  // Close the conversation-list overlay (when this item is shown in
+                  // one) so the panel it just opened isn't hidden behind it.
+                  onMessageClick?.()
+                }}
+              >
+                <PanelRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Open in panel</TooltipContent>
+          </Tooltip>
+        </div>
         <CollapsibleContent>
           <div className="border-t px-3 py-2">
             <ConversationMessages
