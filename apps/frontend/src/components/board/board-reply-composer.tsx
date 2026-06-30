@@ -186,6 +186,11 @@ function BoardReplyComposerForm({
     const attachmentIds = attachments.map((a) => a.id)
 
     composer.setIsSending(true)
+    // Clear the editor up front so it empties in the same frame the optimistic
+    // reply appears on the card — otherwise the just-sent text lingers in the
+    // composer for a frame next to its own posted copy. Restored on failure so
+    // nothing the user typed is lost.
+    composer.setContent(EMPTY_DOC)
     try {
       // Eager + offline-first: the reply is enqueued as an optimistic event and
       // the send drains in the background, so there's no created message to await.
@@ -203,11 +208,11 @@ function BoardReplyComposerForm({
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
       })
-      composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
       onClose({ refocus: true })
     } catch {
+      composer.setContent(normalizedContent)
       toast.error("Couldn't post your reply. Please try again.")
     } finally {
       composer.setIsSending(false)

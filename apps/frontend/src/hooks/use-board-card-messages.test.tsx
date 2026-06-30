@@ -189,6 +189,47 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
   })
 
+  it("bridges a convert-to-thread reply across the swap (no blink / no '1 more') until the real row renders", async () => {
+    // Lone root post; the opener is synced in the root stream.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const lone = makePost({ messageIds: ["m1"], openingId: "m1", streamIds: [STREAM] })
+    const { result, rerender } = renderHook((p: BoardViewPost) => useBoardCardMessages(p, "channel"), {
+      initialProps: lone,
+    })
+
+    // 1) Optimistic convert reply: tagged with the conversation, written under the
+    //    draft-thread panel (a stream the card watches for a lone threadable post).
+    const PANEL = "draft:" + STREAM + ":m1"
+    await db.events.put({
+      id: "temp_c",
+      workspaceId: WS,
+      streamId: PANEL,
+      sequence: "1700000000001",
+      _sequenceNum: 1700000000001,
+      eventType: "message_created",
+      payload: { messageId: "temp_c", contentMarkdown: "my convert reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+    // The card must subscribe to the draft panel for a lone channel post.
+    rerender({ ...lone } as BoardViewPost)
+    await waitFor(() =>
+      expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toContain("temp_c")
+    )
+
+    // 2) The swap deletes the optimistic row (it moved to the real thread stream,
+    //    which the card isn't subscribed to yet) AND messageIds now lists the real
+    //    id — the gap where it belongs to no rail. The reply must NOT blink out and
+    //    must NOT collapse under a "1 more" gap.
+    await db.events.delete("temp_c")
+    rerender(makePost({ messageIds: ["m1", "msg_real_c"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["my convert reply"]))
+    expect(result.current.totalReplies).toBe(1)
+  })
+
   it("keeps a reply continuously visible across the optimistic→echo→messageIds hand-off (no blink-out)", async () => {
     await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
     const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })

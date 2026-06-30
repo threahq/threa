@@ -409,6 +409,13 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
 
   const rail = useMergedStreamRail(gatingStreamIds, extraStreamIds)
   const conversationId = post.conversation.id
+  // The viewer's just-sent reply, kept alive across the convert-to-thread hand-off.
+  // When a lone post's first reply lands, its optimistic row is swapped onto a
+  // freshly-created thread stream the card is still catching up to, and for a beat
+  // it's also absent from `messageIds` — so it belongs to no subscribed rail and
+  // would blink out / collapse under "1 more". Holding the last-shown copy bridges
+  // that window until the real row renders.
+  const retainedPendingRef = useRef<RenderableMessage[]>(NO_PENDING)
 
   return useMemo(() => {
     // Replies for this conversation the card knows from the rail but the server
@@ -419,6 +426,7 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     const tagged = rail.taggedByConversation.get(conversationId)
     const unconfirmed = tagged ? tagged.filter((m) => !replyIdSet.has(m.id)) : NO_PENDING
     const pendingReplies = unconfirmed.length > 0 ? unconfirmed : NO_PENDING
+    if (pendingReplies !== NO_PENDING) retainedPendingRef.current = pendingReplies
 
     // The server's count excludes `messageIds[0]` for a flat conversation even
     // when that opening was deleted, so trust it when the flat relationship is
@@ -453,13 +461,29 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     }
     liveReplies.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
 
+    // Bridge the convert-to-thread hand-off: when the optimistic reply has left
+    // every subscribed rail (`pendingReplies` empty) but the real row hasn't
+    // rendered yet, keep showing the retained copy in its place. `bridgeCount`
+    // shrinks to zero as the live rows render, so the retained copy never
+    // double-renders alongside its confirmed twin, and is forgotten once covered.
+    const retained = retainedPendingRef.current
+    const bridgeCount = pendingReplies === NO_PENDING ? Math.max(0, retained.length - liveReplies.length) : 0
+    if (bridgeCount === 0 && pendingReplies === NO_PENDING) retainedPendingRef.current = NO_PENDING
+    const replies =
+      bridgeCount > 0
+        ? [...liveReplies, ...retained.slice(retained.length - bridgeCount)].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          )
+        : liveReplies
+
     // When the rail holds every one of this conversation's replies, its displayable
     // (non-deleted) count IS the total — a tombstone is "seen" but not shown, so it
-    // must not inflate the "N more" gap. Otherwise older replies aren't local yet,
-    // so trust the server count and let expand backfill the rest.
+    // must not inflate the "N more" gap. Otherwise trust the server count, but never
+    // below what's already on screen (a bridged reply fills its own slot, so it
+    // mustn't also leave a phantom "1 more").
     const fullySynced = replyIds.every((id) => rail.seen.has(id))
-    const totalReplies = fullySynced ? liveReplies.length : serverTotal
+    const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal, replies.length)
 
-    return { openingMessage, replies: liveReplies, totalReplies, pendingReplies, source: "events" }
+    return { openingMessage, replies, totalReplies, pendingReplies, source: "events" }
   }, [rail, replyIds, openingId, messageIds, post, conversationId])
 }
