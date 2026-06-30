@@ -471,6 +471,21 @@ export function useConversations(workspaceId: string, streamId: string, options?
     // reflects the new membership.
     const handleMessageAssigned = (payload: ConversationMessageAssignedPayload) => {
       if (payload.streamId !== streamId && payload.parentStreamId !== streamId) return
+      // Reflect the new membership in the list aggregate immediately so the
+      // message→conversation map (and "Show in conversation") updates from this
+      // per-message event, not only when the heavier `conversation:updated`
+      // aggregate replace lands. Idempotent: skip when the id is already
+      // present, append to the field its primacy selects.
+      queryClient.setQueryData(
+        conversationKeys.list(workspaceId, streamId, { status, limit }),
+        (old: ConversationWithStaleness[] | undefined) =>
+          old?.map((c) => {
+            if (c.id !== payload.conversationId) return c
+            const field = payload.isPrimary ? "messageIds" : "secondaryMessageIds"
+            if (c[field].includes(payload.messageId)) return c
+            return { ...c, [field]: [...c[field], payload.messageId] }
+          })
+      )
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.conversationId) })
     }
 

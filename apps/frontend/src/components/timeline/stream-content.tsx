@@ -75,7 +75,7 @@ import {
 } from "./event-list"
 import { ConversationOverlayPanel } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlay } from "./conversation-overlay/use-conversation-overlay"
-import { buildConversationOverlayModel } from "./conversation-overlay/model"
+import { buildMessageConversationMap } from "./conversation-overlay/model"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageConversationProvider } from "./conversation-overlay/message-conversation-context"
 import { useConversations } from "@/hooks/use-conversations"
@@ -445,15 +445,16 @@ export function StreamContent({
   // Always-on membership for the per-message "Show in conversation" action —
   // it should open the conversation panel without the user first painting the
   // overlay. Same per-stream conversation query (deduped with the overlay's
-  // when both are live) and the same membership model, so the two never
-  // disagree. Channels/DMs only: a thread's messages resolve through their
-  // root, which this stream's list doesn't carry.
-  const { conversations: streamConversations } = useConversations(workspaceId, streamId, {
-    enabled: supportsConversationOverlay,
-  })
+  // when both are live). Channels/DMs only: a thread's messages resolve through
+  // their root, which this stream's list doesn't carry.
+  const { conversations: streamConversations, refetch: refetchStreamConversations } = useConversations(
+    workspaceId,
+    streamId,
+    { enabled: supportsConversationOverlay }
+  )
   const conversationIdByMessageId = useMemo(
-    () => buildConversationOverlayModel(streamConversations, streamId).conversationIdByMessageId,
-    [streamConversations, streamId]
+    () => buildMessageConversationMap(streamConversations),
+    [streamConversations]
   )
   const closeConversationOverlay = useCallback(() => {
     setSearchParams(
@@ -519,6 +520,36 @@ export function StreamContent({
     exitJumpMode,
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
+
+  // Heal a missed/raced conversation assignment so "Show in conversation"
+  // resolves without a manual reload. The per-stream conversation list is a
+  // one-time fetch + live `conversation:*` events; sending from another surface
+  // (e.g. a board reply, then opening the DM) can land the message before the
+  // list's fetch sees it and after the live event was delivered to a room the
+  // sender wasn't yet in. When the viewer's OWN newest message isn't mapped
+  // yet, refetch the list once for it — scoped to own sends (the case users
+  // notice) so an ambient unassigned message from others doesn't trigger
+  // refetches, and ref-guarded so a genuinely unassigned message refetches at
+  // most once.
+  const ownLatestMessageId = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i]
+      if (event.eventType !== "message_created" || event.actorId !== currentWorkspaceUserId) continue
+      return (event.payload as { messageId?: string })?.messageId ?? null
+    }
+    return null
+  }, [events, currentWorkspaceUserId])
+  const conversationHealedForRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!supportsConversationOverlay || !ownLatestMessageId) return
+    if (conversationIdByMessageId.has(ownLatestMessageId)) {
+      conversationHealedForRef.current = ownLatestMessageId
+      return
+    }
+    if (conversationHealedForRef.current === ownLatestMessageId) return
+    conversationHealedForRef.current = ownLatestMessageId
+    void refetchStreamConversations()
+  }, [supportsConversationOverlay, ownLatestMessageId, conversationIdByMessageId, refetchStreamConversations])
 
   // Merge bootstrap + paginated `sharedMessages` so pointers in pages older
   // than the bootstrap window (or in jump-mode windows) hydrate without

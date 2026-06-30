@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest"
 import type { ConversationWithStaleness, StreamEvent } from "@threa/types"
 import { annotateConversationRows, type TimelineItem } from "../event-list"
-import { buildConversationOverlayModel, CONVERSATION_COLOR_COUNT, conversationColor } from "./model"
+import {
+  buildConversationOverlayModel,
+  buildMessageConversationMap,
+  CONVERSATION_COLOR_COUNT,
+  conversationColor,
+} from "./model"
 
 function makeConversation(overrides: Partial<ConversationWithStaleness>): ConversationWithStaleness {
   return {
@@ -75,6 +80,43 @@ describe("buildConversationOverlayModel", () => {
 
     expect(model.conversations.map((c) => c.id)).toEqual(["conv_here"])
     expect(model.conversationIdByMessageId.has("msg_t1")).toBe(false)
+  })
+})
+
+describe("buildMessageConversationMap", () => {
+  it("maps both primary and secondary members, with primary winning a conflict", () => {
+    const conversations = [
+      makeConversation({ id: "conv_a", messageIds: ["msg_1", "msg_2"], secondaryMessageIds: ["msg_3"] }),
+      // msg_3 is conv_b's primary (its canonical home) and conv_a's secondary.
+      makeConversation({ id: "conv_b", messageIds: ["msg_3"] }),
+    ]
+
+    const map = buildMessageConversationMap(conversations)
+
+    expect(map.get("msg_1")).toBe("conv_a")
+    // Secondary membership is still resolvable — unlike the overlay model.
+    expect(map.get("msg_2")).toBe("conv_a")
+    // Primary wins: msg_3 resolves to its home conv_b, not the secondary conv_a.
+    expect(map.get("msg_3")).toBe("conv_b")
+  })
+
+  it("resolves a cross-stream (thread) member of a root conversation", () => {
+    // A conversation can span the root + its threads (one root): the opener is
+    // a primary member in the root, the thread reply a secondary member living
+    // in the thread stream. Both must resolve to the same conversation.
+    const conversations = [
+      makeConversation({
+        id: "conv_root",
+        streamId: "stream_123",
+        messageIds: ["msg_root"],
+        secondaryMessageIds: ["msg_thread_reply"],
+      }),
+    ]
+
+    const map = buildMessageConversationMap(conversations)
+
+    expect(map.get("msg_root")).toBe("conv_root")
+    expect(map.get("msg_thread_reply")).toBe("conv_root")
   })
 
   it("wraps palette slots beyond the palette size", () => {
