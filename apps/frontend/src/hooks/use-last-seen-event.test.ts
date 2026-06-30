@@ -502,6 +502,59 @@ describe("useLastSeenEvent re-scan triggers", () => {
     expect(result.current.lastSeenEventId).toBeUndefined()
   })
 
+  it("re-resolves lastSeenEventId when the trailing row's id is swapped in place (optimistic send reconciled)", () => {
+    // The viewer sends their own message: it renders immediately as an
+    // optimistic `temp_` row at the bottom, and the frontier advances to it
+    // (no gap, viewport covers it). When the server echo lands, the optimistic
+    // row is reconciled to its real id in the SAME array slot — same length, no
+    // scroll, no resize — so neither the scroll listener nor the ResizeObserver
+    // fires. Without depending on `events` itself (not just `.length`), the
+    // frontier's index stays correct but `lastSeenEventId` stays pinned to the
+    // now-dead `temp_` id forever, and auto-mark-as-read refuses to ever persist
+    // a `temp_`-prefixed id — so the viewer's own send never gets marked read.
+    const positions: Record<string, { top: number; bottom: number }> = {
+      e0: { top: 5, bottom: 50 },
+      temp_abc: { top: 50, bottom: 95 },
+    }
+
+    const container = document.createElement("div")
+    container.getBoundingClientRect = () => rect(0, 100)
+    for (const id of Object.keys(positions)) {
+      const row = document.createElement("div")
+      row.setAttribute("data-event-id", id)
+      row.getBoundingClientRect = () => rect(positions[id].top, positions[id].bottom)
+      container.appendChild(row)
+    }
+
+    const optimisticEvents = [
+      { id: "e0", sequence: "0" },
+      { id: "temp_abc", sequence: "1" },
+    ] as unknown as StreamEvent[]
+    const scrollContainerRef = { current: container }
+
+    const { result, rerender } = renderHook(
+      ({ events }) =>
+        useLastSeenEvent({ scrollContainerRef, events, streamId: "stream_1", lastReadEventId: "e0", enabled: true }),
+      { initialProps: { events: optimisticEvents } }
+    )
+
+    // Frontier advances straight through to the optimistic row.
+    expect(result.current.lastSeenEventId).toBe("temp_abc")
+
+    // Server echo reconciles the optimistic row to its real id, same slot, same
+    // array length — no scroll or resize accompanies this.
+    container.querySelector('[data-event-id="temp_abc"]')!.setAttribute("data-event-id", "evt_real")
+    const reconciledEvents = [
+      { id: "e0", sequence: "0" },
+      { id: "evt_real", sequence: "1" },
+    ] as unknown as StreamEvent[]
+    act(() => rerender({ events: reconciledEvents }))
+
+    // Must re-resolve to the real id — staying on "temp_abc" would permanently
+    // block auto-mark-as-read for this stream.
+    expect(result.current.lastSeenEventId).toBe("evt_real")
+  })
+
   it("does not emit a mark target while the read pointer sits outside the loaded window", () => {
     // Mark-as-unread on the oldest loaded row moves the pointer to a message below
     // the loaded window, so it is unresolvable in `events`. Emitting the stale
