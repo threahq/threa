@@ -26,19 +26,15 @@ import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useStreamFromStore } from "@/stores/stream-store"
-import { STREAM_ICONS } from "@/lib/streams"
+import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
 
-/** Stream-type noun for the "View in …" jump action. Defaults to "channel"
- * (the common case) when the row's stream isn't cached to read its type. */
-const STREAM_NOUN: Record<string, string> = {
-  channel: "channel",
-  thread: "thread",
-  dm: "DM",
-  scratchpad: "scratchpad",
-}
-function viewInStreamLabel(type: string | undefined): string {
-  return `View in ${(type && STREAM_NOUN[type]) || "channel"}`
+/** Label for the "View in …" jump action. Uses the shared stream-type noun
+ * ("channel"/"thread"/"DM"/"scratchpad") when the row's stream is cached; a
+ * type-neutral phrase otherwise, so an uncached thread row never mislabels as
+ * "channel". */
+function viewInStreamLabel(type: StreamType | undefined): string {
+  return type ? `View in ${streamFallbackLabel(type, "noun")}` : "Go to message"
 }
 
 /** Same-author messages within this window collapse into a continuation (no

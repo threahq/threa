@@ -32,6 +32,9 @@ export interface CreateBoardPostInput {
   attachmentIds?: string[]
 }
 
+/** Shared stable empty list so a disabled/loading query returns one identity. */
+const EMPTY_CONVERSATIONS: ConversationWithStaleness[] = []
+
 export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
@@ -391,7 +394,11 @@ export function useConversations(workspaceId: string, streamId: string, options?
   const syncEngine = useOptionalSyncEngine()
 
   const {
-    data: conversations = [],
+    // Stable empty fallback: a fresh `[]` here would change identity every
+    // render while the query is disabled/loading, defeating downstream
+    // `useMemo`s keyed on the list (e.g. the overlay model rebuild) and
+    // re-rendering every consumer of the derived map.
+    data: conversations = EMPTY_CONVERSATIONS,
     isLoading,
     error,
     refetch,
