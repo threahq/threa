@@ -144,18 +144,22 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
 
 /** Union several stream rails into one. A conversation can span its root + the
  *  root's threads (one root — board-view-design.md), so the card reads every
- *  member's stream and merges them by id. A single rail passes through unchanged
- *  (referentially stable, so a one-stream card never re-merges). */
-function mergeRails(rails: StreamRail[]): StreamRail {
+ *  member's stream and merges them by id. `gatingCount` is how many of the leading
+ *  rails are server-known member streams that gate `resolved`; rails past it are
+ *  opportunistically-discovered threads (and the optimistic draft panel) that
+ *  CONTRIBUTE content but must not drag the card back to its projection while they
+ *  load — otherwise discovering a new thread re-flashes an already-live card. */
+function mergeRails(rails: StreamRail[], gatingCount: number): StreamRail {
   if (rails.length === 1) return rails[0]
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
-  // Resolved only once every constituent rail has read — until then the card
-  // keeps the cached projection rather than treating an unsynced thread as empty.
+  // Resolved once every GATING rail has read — a still-loading discovered thread
+  // doesn't count, so the card keeps its live view instead of dropping to the
+  // projection the instant a thread appears.
   let resolved = true
-  for (const rail of rails) {
-    if (!rail.resolved) resolved = false
+  rails.forEach((rail, i) => {
+    if (i < gatingCount && !rail.resolved) resolved = false
     for (const [id, message] of rail.messages) messages.set(id, message)
     for (const id of rail.seen) seen.add(id)
     for (const [conversationId, list] of rail.taggedByConversation) {
@@ -163,7 +167,7 @@ function mergeRails(rails: StreamRail[]): StreamRail {
       if (existing) existing.push(...list)
       else taggedByConversation.set(conversationId, [...list])
     }
-  }
+  })
   for (const list of taggedByConversation.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
@@ -172,14 +176,20 @@ function mergeRails(rails: StreamRail[]): StreamRail {
 
 /**
  * Subscribe to the rails of several streams and return their union as one rail.
- * `streamIds` must be a stable, deduped, sorted array (the caller derives it from
- * the post's stream set) so subscribe/getSnapshot identities only change when the
- * set changes. The merged snapshot is cached and recomputed only when one of the
- * underlying rail references changes — `useSyncExternalStore` requires a stable
- * snapshot, so re-merging on every read would loop.
+ * `gatingStreamIds` are the server-known member streams (their loading gates the
+ * card's resolved state); `extraStreamIds` are discovered threads + the optimistic
+ * draft panel (content only). Both must be stable, deduped, sorted arrays so
+ * subscribe/getSnapshot identities only change when the set changes. The merged
+ * snapshot is cached and recomputed only when one of the underlying rail
+ * references changes — `useSyncExternalStore` requires a stable snapshot, so
+ * re-merging on every read would loop.
  */
-function useMergedStreamRail(streamIds: string[]): StreamRail {
-  const key = streamIds.join(",")
+function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]): StreamRail {
+  const gatingCount = gatingStreamIds.length
+  const gatingKey = gatingStreamIds.join(",")
+  const extraKey = extraStreamIds.join(",")
+  const streamIds = useMemo(() => [...gatingStreamIds, ...extraStreamIds], [gatingKey, extraKey])
+  const key = gatingKey + "|" + extraKey
   const cacheRef = useRef<{ inputs: StreamRail[]; merged: StreamRail } | null>(null)
 
   const subscribe = useCallback(
@@ -199,7 +209,7 @@ function useMergedStreamRail(streamIds: string[]): StreamRail {
     if (cached && cached.inputs.length === inputs.length && cached.inputs.every((rail, i) => rail === inputs[i])) {
       return cached.merged
     }
-    const merged = mergeRails(inputs)
+    const merged = mergeRails(inputs, gatingCount)
     cacheRef.current = { inputs, merged }
     return merged
   }, [key])
@@ -374,19 +384,30 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   const openingStreamId = post.openingMessage?.streamId ?? null
   const recentStreamsKey = post.recentMessages.map((m) => m.streamId ?? "").join(",")
   const threadable = hostStreamType === StreamTypes.CHANNEL || hostStreamType === StreamTypes.DM
-  // Keyed on stable primitives, not the post.* objects (which a parent re-render
-  // would re-create, churning every rail subscription).
-  const streamIds = useMemo(() => {
+  // Server-known member streams gate the card's resolved state; discovered threads
+  // + the optimistic draft panel only contribute content (so finding one mid-render
+  // never flips the card back to its projection). Keyed on stable primitives, not
+  // the post.* objects (which a parent re-render would re-create, churning subs).
+  const gatingStreamIds = useMemo(() => {
     const set = new Set<string>([streamId])
     for (const id of post.streamIds ?? []) set.add(id)
     if (openingStreamId) set.add(openingStreamId)
     for (const message of post.recentMessages) if (message.streamId) set.add(message.streamId)
-    for (const id of childThreadIds) set.add(id)
-    if (threadable && messageIds.length <= 1 && openingId) set.add(createDraftPanelId(streamId, openingId))
     return [...set].sort()
-  }, [streamId, streamIdsKey, openingStreamId, recentStreamsKey, childThreadKey, threadable, messageIdsKey, openingId])
+  }, [streamId, streamIdsKey, openingStreamId, recentStreamsKey])
+  const gatingKey = gatingStreamIds.join(",")
+  const extraStreamIds = useMemo(() => {
+    const gating = new Set(gatingStreamIds)
+    const set = new Set<string>()
+    for (const id of childThreadIds) if (!gating.has(id)) set.add(id)
+    if (threadable && messageIds.length <= 1 && openingId) {
+      const panel = createDraftPanelId(streamId, openingId)
+      if (!gating.has(panel)) set.add(panel)
+    }
+    return [...set].sort()
+  }, [childThreadKey, gatingKey, threadable, messageIdsKey, openingId, streamId])
 
-  const rail = useMergedStreamRail(streamIds)
+  const rail = useMergedStreamRail(gatingStreamIds, extraStreamIds)
   const conversationId = post.conversation.id
 
   return useMemo(() => {

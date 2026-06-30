@@ -134,6 +134,33 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies[0]?.streamId).toBe(THREAD)
   })
 
+  it("keeps rendering live events when a discovered thread is present but unsynced (no projection flip)", async () => {
+    const THREAD = "thr_unsynced"
+    // A thread off the opener exists in db.streams but has no events synced yet —
+    // a discovered (non-gating) rail. The root rail IS synced, so the card must
+    // keep its live view instead of flipping back to the projection.
+    await db.streams.put({
+      id: THREAD,
+      workspaceId: WS,
+      type: "thread",
+      parentMessageId: "m1",
+      rootStreamId: STREAM,
+      parentStreamId: STREAM,
+    } as never)
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "root reply", 2, STREAM)])
+    const post = makePost({
+      messageIds: ["m1", "r1"],
+      openingId: "m1",
+      streamIds: [STREAM],
+      recentMessages: [projectionMessage("r1")],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+    expect(result.current.replies[0]?.contentMarkdown).toBe("root reply")
+  })
+
   it("surfaces a pending optimistic reply tagged with its conversation, before the id lands in messageIds", async () => {
     await db.events.bulkPut([msgEvent("m1", "the opening", 1), msgEvent("r1", "first reply", 2)])
     // The viewer's just-sent reply: an optimistic pending event tagged with the
