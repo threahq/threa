@@ -90,7 +90,7 @@ describe("useBoardCardMessages", () => {
   })
 
   it("merges a conversation that spans its root + a thread (one root) into one chronological run", async () => {
-    const THREAD = "thr_2"
+    const THREAD = "stream_thread2"
     await db.events.bulkPut([
       msgEvent("m1", "the opening", 1, STREAM),
       // The reply lives in a thread under the same root — a cross-stream member.
@@ -114,7 +114,7 @@ describe("useBoardCardMessages", () => {
   })
 
   it("subscribes to a thread resolved from db.streams even before it lands in the post's streamIds (no convert blink)", async () => {
-    const THREAD = "thr_blink"
+    const THREAD = "stream_threadblink"
     // The thread off the opener exists in db.streams (created at promotion) but the
     // server projection's streamIds hasn't widened yet (message_assigned lags).
     await db.streams.put({
@@ -135,7 +135,7 @@ describe("useBoardCardMessages", () => {
   })
 
   it("keeps rendering live events when a discovered thread is present but unsynced (no projection flip)", async () => {
-    const THREAD = "thr_unsynced"
+    const THREAD = "stream_threadunsynced"
     // A thread off the opener exists in db.streams but has no events synced yet —
     // a discovered (non-gating) rail. The root rail IS synced, so the card must
     // keep its live view instead of flipping back to the projection.
