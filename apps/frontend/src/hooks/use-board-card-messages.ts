@@ -207,11 +207,98 @@ function useMergedStreamRail(streamIds: string[]): StreamRail {
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
+interface ThreadIndexEntry {
+  /** parent message id → its thread's stream id, for every thread in the workspace. */
+  byParent: Map<string, string>
+  listeners: Set<() => void>
+  subscription: Subscription
+  refCount: number
+}
+
+// INV-9 exception: one shared `[workspaceId+type]=thread` liveQuery for the whole
+// board, ref-counted across cards. A board card's conversation can move into a
+// thread (convert-to-thread, or a cross-stream continuation); the thread's stream
+// is created at promotion — BEFORE the reply's message echo swaps the optimistic
+// row onto it — so resolving "the thread off message X" from `db.streams` here
+// subscribes the card to that rail ahead of the swap, closing the gap where a
+// just-sent reply would otherwise blink out between the swap and the slower
+// `conversation:message_assigned` widening of the server `streamIds`.
+const threadIndexRegistry = new Map<string, ThreadIndexEntry>()
+const EMPTY_THREAD_IDS: string[] = []
+
+function subscribeChildThreadIndex(workspaceId: string, listener: () => void): () => void {
+  let entry = threadIndexRegistry.get(workspaceId)
+  if (!entry) {
+    const created: ThreadIndexEntry = {
+      byParent: new Map(),
+      listeners: new Set(),
+      refCount: 0,
+      subscription: { unsubscribe() {} } as Subscription,
+    }
+    threadIndexRegistry.set(workspaceId, created)
+    created.subscription = liveQuery(() =>
+      db.streams.where("[workspaceId+type]").equals([workspaceId, StreamTypes.THREAD]).toArray()
+    ).subscribe((threads) => {
+      const live = threadIndexRegistry.get(workspaceId)
+      if (!live) return
+      const byParent = new Map<string, string>()
+      for (const thread of threads) if (thread.parentMessageId) byParent.set(thread.parentMessageId, thread.id)
+      live.byParent = byParent
+      for (const notify of live.listeners) notify()
+    })
+    entry = created
+  }
+  entry.listeners.add(listener)
+  entry.refCount += 1
+  return () => {
+    const current = threadIndexRegistry.get(workspaceId)
+    if (!current) return
+    current.listeners.delete(listener)
+    current.refCount -= 1
+    if (current.refCount <= 0) {
+      current.subscription.unsubscribe()
+      threadIndexRegistry.delete(workspaceId)
+    }
+  }
+}
+
+/** The stream ids of the threads hanging off any of `parentMessageIds`, live from
+ *  `db.streams`. Used to fold a conversation's thread streams into the card's rail
+ *  set the moment the thread exists, independent of `conversation:*` event timing. */
+function useChildThreadStreamIds(workspaceId: string, parentMessageIds: string[]): string[] {
+  const parentsKey = parentMessageIds.join(",")
+  const cacheRef = useRef<{ byParent: Map<string, string> | null; parentsKey: string; result: string[] } | null>(null)
+
+  const subscribe = useCallback(
+    (onChange: () => void) => subscribeChildThreadIndex(workspaceId, onChange),
+    [workspaceId]
+  )
+
+  const getSnapshot = useCallback(() => {
+    const byParent = threadIndexRegistry.get(workspaceId)?.byParent ?? null
+    const cached = cacheRef.current
+    if (cached && cached.byParent === byParent && cached.parentsKey === parentsKey) return cached.result
+    const ids: string[] = []
+    if (byParent)
+      for (const parentId of parentMessageIds) {
+        const threadId = byParent.get(parentId)
+        if (threadId) ids.push(threadId)
+      }
+    const result = ids.length > 0 ? ids : EMPTY_THREAD_IDS
+    cacheRef.current = { byParent, parentsKey, result }
+    return result
+  }, [workspaceId, parentsKey])
+
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
 /** Tear down every shared stream subscription — for tests, so a module-level
  *  registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardRailRegistry(): void {
   for (const entry of railRegistry.values()) entry.subscription.unsubscribe()
   railRegistry.clear()
+  for (const entry of threadIndexRegistry.values()) entry.subscription.unsubscribe()
+  threadIndexRegistry.clear()
 }
 
 export interface BoardCardMessages {
@@ -265,23 +352,39 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     [openingId, messageIds]
   )
 
-  // The streams this conversation's members span — its anchor, plus every stream
-  // the server projection's opening/recent messages live in (a conversation spans
-  // its root + the root's threads, one root — board-view-design.md). For a lone
-  // channel/DM post mid-convert-to-thread, also watch the optimistic draft-thread
-  // panel: the reply is written there (tagged with this conversation) before the
-  // thread is promoted, so the card surfaces it in place; once promoted, the real
-  // thread joins `streamIds` via `conversation:message_assigned`.
+  // The streams this conversation's members span — its anchor, the streams the
+  // server projection's opening/recent messages live in, and the threads hanging
+  // off its messages resolved live from `db.streams` (a conversation spans its
+  // root + the root's threads, one root — board-view-design.md). The live thread
+  // resolution closes the convert-to-thread gap: the thread stream exists at
+  // promotion, ahead of the reply's message echo, so the card is already
+  // subscribed to it when the optimistic row swaps onto it — no blink. The
+  // optimistic draft-thread panel covers the pre-promotion window (the reply is
+  // tagged with this conversation there, before any real thread exists).
+  // `messageIdsKey` proxies the messageIds content so the memos below key on a
+  // stable string, not the array reference.
+  const messageIdsKey = messageIds.join(",")
+  const parentMessageIds = useMemo(
+    () => [...new Set([...(openingId ? [openingId] : []), ...messageIds])],
+    [openingId, messageIdsKey]
+  )
+  const childThreadIds = useChildThreadStreamIds(post.workspaceId, parentMessageIds)
+  const childThreadKey = childThreadIds.join(",")
   const streamIdsKey = (post.streamIds ?? []).join(",")
+  const openingStreamId = post.openingMessage?.streamId ?? null
+  const recentStreamsKey = post.recentMessages.map((m) => m.streamId ?? "").join(",")
   const threadable = hostStreamType === StreamTypes.CHANNEL || hostStreamType === StreamTypes.DM
+  // Keyed on stable primitives, not the post.* objects (which a parent re-render
+  // would re-create, churning every rail subscription).
   const streamIds = useMemo(() => {
     const set = new Set<string>([streamId])
     for (const id of post.streamIds ?? []) set.add(id)
-    if (post.openingMessage?.streamId) set.add(post.openingMessage.streamId)
+    if (openingStreamId) set.add(openingStreamId)
     for (const message of post.recentMessages) if (message.streamId) set.add(message.streamId)
+    for (const id of childThreadIds) set.add(id)
     if (threadable && messageIds.length <= 1 && openingId) set.add(createDraftPanelId(streamId, openingId))
     return [...set].sort()
-  }, [streamId, streamIdsKey, post.openingMessage, post.recentMessages, threadable, messageIds.length, openingId])
+  }, [streamId, streamIdsKey, openingStreamId, recentStreamsKey, childThreadKey, threadable, messageIdsKey, openingId])
 
   const rail = useMergedStreamRail(streamIds)
   const conversationId = post.conversation.id

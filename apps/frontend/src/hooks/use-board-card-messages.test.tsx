@@ -69,6 +69,7 @@ function makePost(opts: {
 beforeEach(async () => {
   __clearBoardRailRegistry()
   await db.events.clear()
+  await db.streams.clear()
 })
 
 describe("useBoardCardMessages", () => {
@@ -110,6 +111,27 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies[0]?.contentMarkdown).toBe("thread reply")
     expect(result.current.replies[0]?.streamId).toBe(THREAD)
     expect(result.current.totalReplies).toBe(1)
+  })
+
+  it("subscribes to a thread resolved from db.streams even before it lands in the post's streamIds (no convert blink)", async () => {
+    const THREAD = "thr_blink"
+    // The thread off the opener exists in db.streams (created at promotion) but the
+    // server projection's streamIds hasn't widened yet (message_assigned lags).
+    await db.streams.put({
+      id: THREAD,
+      workspaceId: WS,
+      type: "thread",
+      parentMessageId: "m1",
+      rootStreamId: STREAM,
+      parentStreamId: STREAM,
+    } as never)
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "thread reply", 2, THREAD)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM] })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    // The reply draws live from the discovered thread rail despite streamIds=[STREAM].
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["r1"]))
+    expect(result.current.replies[0]?.streamId).toBe(THREAD)
   })
 
   it("surfaces a pending optimistic reply tagged with its conversation, before the id lands in messageIds", async () => {

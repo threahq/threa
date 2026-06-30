@@ -55,14 +55,17 @@ export const conversationAssigner: ConversationAssigner = {
     // message's. Same stream (the common case) trivially passes; a cross-stream
     // attach from the root or one of its threads passes; a cross-root attach is
     // rejected (board-view-design.md "Boundary extraction needs no tightening").
-    if (
-      target.streamId !== message.streamId &&
-      (await effectiveRootId(client, target.streamId)) !== (await effectiveRootId(client, message.streamId))
-    ) {
-      throw new HttpError("Conversation is in a different root stream", {
-        status: 400,
-        code: "CONVERSATION_NOT_IN_ROOT",
-      })
+    if (target.streamId !== message.streamId) {
+      const [targetRoot, messageRoot] = await Promise.all([
+        effectiveRootId(client, target.streamId),
+        effectiveRootId(client, message.streamId),
+      ])
+      if (targetRoot !== messageRoot) {
+        throw new HttpError("Conversation is in a different root stream", {
+          status: 400,
+          code: "CONVERSATION_NOT_IN_ROOT",
+        })
+      }
     }
     await ConversationRepository.addPrimaryMessage(client, workspaceId, target.id, message.id, message.authorId)
     // Attaching a message to a resolved conversation revives it — it has activity again.

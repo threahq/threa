@@ -304,7 +304,7 @@ describe("useReplyToBoardPost", () => {
 
   const DOC = { type: "doc", content: [] }
 
-  it("converts a lone channel post into a thread, retiring the source via the threadFromMessage directive", async () => {
+  it("converts a lone channel post into a thread, attaching the reply to the same source via threadFromMessage", async () => {
     const { queueDraftMessage } = mockReplyDeps()
     const { wrapper } = createWrapper()
     const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
@@ -321,8 +321,8 @@ describe("useReplyToBoardPost", () => {
     })
 
     // The reply rides the durable queue with THREAD stream-creation (keyed on the
-    // draft panel id) AND the threadFromMessage directive, which mints the thread's
-    // conversation and retires the lone source `conv_1`.
+    // draft panel id) AND the threadFromMessage directive, which attaches the reply
+    // to the same source conversation `conv_1` (one conversation, no card swap).
     expect(queueDraftMessage).toHaveBeenCalledWith(
       expect.objectContaining({ contentJson: DOC }),
       expect.objectContaining({
