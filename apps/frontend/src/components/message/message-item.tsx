@@ -40,6 +40,10 @@ export const GROUP_WINDOW_MS = 5 * 60_000
  */
 export interface RenderableMessage {
   id: string
+  /** The stream this message lives in. A board conversation can span its root +
+   * threads (one root), so a card renders each row against its own stream — the
+   * caller passes `message.streamId ?? <card stream>` to {@link MessageItem}. */
+  streamId?: string
   authorId: string
   authorType: AuthorType
   contentMarkdown: string

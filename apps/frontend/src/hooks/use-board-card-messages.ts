@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useSyncExternalStore } from "react"
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedEvent } from "@/db"
+import { createDraftPanelId } from "@/contexts/panel-context"
 import type { RenderableMessage } from "@/components/message/message-item"
-import type { AuthorType } from "@threa/types"
+import { StreamTypes, type AuthorType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
 
 interface MessageCreatedPayloadShape {
@@ -24,6 +25,7 @@ function eventToRenderable(event: CachedEvent): RenderableMessage | null {
   if (!p.messageId || p.deletedAt) return null
   return {
     id: p.messageId,
+    streamId: event.streamId,
     authorId: event.actorId ?? "",
     authorType: (event.actorType ?? "user") as AuthorType,
     contentMarkdown: p.contentMarkdown ?? "",
@@ -140,9 +142,68 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
   }
 }
 
-function useStreamRail(streamId: string): StreamRail {
-  const subscribe = useCallback((onChange: () => void) => subscribeStreamRail(streamId, onChange), [streamId])
-  const getSnapshot = useCallback(() => railRegistry.get(streamId)?.rail ?? LOADING_RAIL, [streamId])
+/** Union several stream rails into one. A conversation can span its root + the
+ *  root's threads (one root — board-view-design.md), so the card reads every
+ *  member's stream and merges them by id. A single rail passes through unchanged
+ *  (referentially stable, so a one-stream card never re-merges). */
+function mergeRails(rails: StreamRail[]): StreamRail {
+  if (rails.length === 1) return rails[0]
+  const messages = new Map<string, RenderableMessage>()
+  const seen = new Set<string>()
+  const taggedByConversation = new Map<string, RenderableMessage[]>()
+  // Resolved only once every constituent rail has read — until then the card
+  // keeps the cached projection rather than treating an unsynced thread as empty.
+  let resolved = true
+  for (const rail of rails) {
+    if (!rail.resolved) resolved = false
+    for (const [id, message] of rail.messages) messages.set(id, message)
+    for (const id of rail.seen) seen.add(id)
+    for (const [conversationId, list] of rail.taggedByConversation) {
+      const existing = taggedByConversation.get(conversationId)
+      if (existing) existing.push(...list)
+      else taggedByConversation.set(conversationId, [...list])
+    }
+  }
+  for (const list of taggedByConversation.values()) {
+    list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  }
+  return { messages, seen, taggedByConversation, resolved }
+}
+
+/**
+ * Subscribe to the rails of several streams and return their union as one rail.
+ * `streamIds` must be a stable, deduped, sorted array (the caller derives it from
+ * the post's stream set) so subscribe/getSnapshot identities only change when the
+ * set changes. The merged snapshot is cached and recomputed only when one of the
+ * underlying rail references changes — `useSyncExternalStore` requires a stable
+ * snapshot, so re-merging on every read would loop.
+ */
+function useMergedStreamRail(streamIds: string[]): StreamRail {
+  const key = streamIds.join(",")
+  const cacheRef = useRef<{ inputs: StreamRail[]; merged: StreamRail } | null>(null)
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const unsubscribes = streamIds.map((id) => subscribeStreamRail(id, onChange))
+      return () => {
+        for (const unsubscribe of unsubscribes) unsubscribe()
+      }
+    },
+    // `key` captures the set; the closure over `streamIds` is consistent with it.
+    [key]
+  )
+
+  const getSnapshot = useCallback(() => {
+    const inputs = streamIds.map((id) => railRegistry.get(id)?.rail ?? LOADING_RAIL)
+    const cached = cacheRef.current
+    if (cached && cached.inputs.length === inputs.length && cached.inputs.every((rail, i) => rail === inputs[i])) {
+      return cached.merged
+    }
+    const merged = mergeRails(inputs)
+    cacheRef.current = { inputs, merged }
+    return merged
+  }, [key])
+
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
@@ -191,7 +252,7 @@ const NO_PENDING: RenderableMessage[] = []
  * which catches them up + joins their rooms, so the fallback resolves to the live
  * rail once that sync lands — the projection just covers the cold-open window.
  */
-export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
+export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: string): BoardCardMessages {
   const streamId = post.conversation.streamId
   const messageIds = post.conversation.messageIds
   const openingId = post.openingMessage?.id ?? null
@@ -204,7 +265,25 @@ export function useBoardCardMessages(post: BoardViewPost): BoardCardMessages {
     [openingId, messageIds]
   )
 
-  const rail = useStreamRail(streamId)
+  // The streams this conversation's members span — its anchor, plus every stream
+  // the server projection's opening/recent messages live in (a conversation spans
+  // its root + the root's threads, one root — board-view-design.md). For a lone
+  // channel/DM post mid-convert-to-thread, also watch the optimistic draft-thread
+  // panel: the reply is written there (tagged with this conversation) before the
+  // thread is promoted, so the card surfaces it in place; once promoted, the real
+  // thread joins `streamIds` via `conversation:message_assigned`.
+  const streamIdsKey = (post.streamIds ?? []).join(",")
+  const threadable = hostStreamType === StreamTypes.CHANNEL || hostStreamType === StreamTypes.DM
+  const streamIds = useMemo(() => {
+    const set = new Set<string>([streamId])
+    for (const id of post.streamIds ?? []) set.add(id)
+    if (post.openingMessage?.streamId) set.add(post.openingMessage.streamId)
+    for (const message of post.recentMessages) if (message.streamId) set.add(message.streamId)
+    if (threadable && messageIds.length <= 1 && openingId) set.add(createDraftPanelId(streamId, openingId))
+    return [...set].sort()
+  }, [streamId, streamIdsKey, post.openingMessage, post.recentMessages, threadable, messageIds.length, openingId])
+
+  const rail = useMergedStreamRail(streamIds)
   const conversationId = post.conversation.id
 
   return useMemo(() => {

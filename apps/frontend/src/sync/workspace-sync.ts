@@ -37,7 +37,7 @@ import type {
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
-import { mergeBoardConversation } from "@/stores/board-store"
+import { mergeBoardConversation, addBoardConversationStream } from "@/stores/board-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
@@ -1681,6 +1681,21 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
+  // A conversation can span its root + the root's threads (one root —
+  // board-view-design.md). When a reply lands in a stream the card's snapshot
+  // didn't list (a convert-to-thread, or a cross-stream continuation), record
+  // that stream on the board row so the card subscribes to its rail and draws the
+  // member live — no board refetch. The aggregate `conversation:updated` re-sorts
+  // the card; this only widens its stream set.
+  const handleConversationMessageAssigned = (payload: {
+    workspaceId: string
+    streamId: string
+    conversationId: string
+  }) => {
+    if (payload.workspaceId !== workspaceId) return
+    void addBoardConversationStream(payload.conversationId, payload.streamId)
+  }
+
   socket.on("stream:created", handleStreamCreated)
   socket.on("stream:updated", handleStreamUpdated)
   socket.on("stream:archived", handleStreamArchived)
@@ -1727,6 +1742,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("draft:deleted", handleDraftDeleted)
   socket.on("conversation:created", handleConversationUpserted)
   socket.on("conversation:updated", handleConversationUpserted)
+  socket.on("conversation:message_assigned", handleConversationMessageAssigned)
 
   return () => {
     abortController.abort()
@@ -1778,6 +1794,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("draft:deleted", handleDraftDeleted)
     socket.off("conversation:created", handleConversationUpserted)
     socket.off("conversation:updated", handleConversationUpserted)
+    socket.off("conversation:message_assigned", handleConversationMessageAssigned)
   }
 }
 

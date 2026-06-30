@@ -413,4 +413,31 @@ describe("useReplyToBoardPost", () => {
       })
     )
   })
+
+  it("targets the conversation's most-recently-active stream, not its anchor (recency-biased)", async () => {
+    const { queueDraftMessage } = mockReplyDeps()
+    const { wrapper } = createWrapper()
+    const { result } = renderHook(() => useReplyToBoardPost(WORKSPACE_ID), { wrapper })
+
+    // A channel-anchored conversation that has moved into a thread: the
+    // continuation must follow it into the thread, not re-interleave the channel.
+    await act(async () => {
+      await result.current.mutateAsync({
+        conversation: { id: "conv_1", streamId: "chan_1" },
+        openingMessageId: "msg_open",
+        hostStreamType: StreamTypes.CHANNEL,
+        messageCount: 3,
+        lastActiveStreamId: "thread_x",
+        contentJson: DOC,
+      })
+    })
+
+    expect(queueDraftMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ contentJson: DOC }),
+      expect.objectContaining({
+        streamId: "thread_x",
+        conversation: { intent: "existing", conversationId: "conv_1" },
+      })
+    )
+  })
 })

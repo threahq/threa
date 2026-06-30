@@ -32,6 +32,10 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
  */
 export interface BoardPostMessage {
   id: string
+  /** The stream this message lives in. A conversation can span its root + the
+   * root's threads (one root, board-view-design.md), so each message carries its
+   * own origin — the client merges the rails of the streams its members span. */
+  streamId: string
   authorId: string
   authorType: Message["authorType"]
   contentMarkdown: string
@@ -51,6 +55,10 @@ export interface BoardPost {
   recentMessages: BoardPostMessage[]
   /** Total replies under the origin (excludes the origin). Drives the "N more" gap. */
   totalReplies: number
+  /** Distinct streams this post's rendered messages span (opening + recent) — the
+   * root and any threads the conversation reaches under it. The client subscribes
+   * to each one's rail so a cross-stream member draws live (board-view-design.md). */
+  streamIds: string[]
 }
 
 export interface ReassignMessageParams {
@@ -153,11 +161,23 @@ export class ConversationService {
       const recentMessages = plan.recentIds
         .map((id) => hydratedById.get(id))
         .filter((m): m is BoardPostMessage => Boolean(m))
+      // The streams this card's rendered messages span — the conversation's
+      // anchor plus any thread an opening/recent message lives in. The client
+      // merges these rails so a cross-stream member draws live; new threads added
+      // after this snapshot arrive via `conversation:message_assigned`.
+      const streamIds = [
+        ...new Set([
+          conversation.streamId,
+          ...(opening ? [opening.streamId] : []),
+          ...recentMessages.map((m) => m.streamId),
+        ]),
+      ]
       return {
         conversation,
         openingMessage: opening ?? null,
         recentMessages,
         totalReplies: plan.totalReplies,
+        streamIds,
       }
     })
 
@@ -201,7 +221,11 @@ export class ConversationService {
     const messagesMap = await MessageRepository.findByIds(this.pool, conversation.messageIds)
     const ordered = conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => Boolean(m))
     const hydratedById = await this.hydrateBoardMessages(workspaceId, ordered)
-    return conversation.messageIds.map((id) => hydratedById.get(id)).filter((m): m is BoardPostMessage => Boolean(m))
+    // Flattened-chronological across the root + its threads (the conversation can
+    // span streams under one root, board-view-design.md): `message_ids` is
+    // insertion order, which a cross-stream attach interleaves out of time, so
+    // sort by `createdAt` rather than trusting array position.
+    return [...hydratedById.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
   }
 
   async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {
@@ -355,6 +379,7 @@ function toBoardPostMessage(
 ): BoardPostMessage {
   return {
     id: message.id,
+    streamId: message.streamId,
     authorId: message.authorId,
     authorType: message.authorType,
     contentMarkdown: message.contentMarkdown,

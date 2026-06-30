@@ -48,7 +48,13 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   // `pendingReplies` are the viewer's own just-sent replies awaiting their echo:
   // they aren't in the conversation's `messageIds` yet, so the card appends them
   // in place (deduped by id below) until the echo swaps each for the real row.
-  const { openingMessage, replies: railReplies, totalReplies, pendingReplies, source } = useBoardCardMessages(post)
+  const {
+    openingMessage,
+    replies: railReplies,
+    totalReplies,
+    pendingReplies,
+    source,
+  } = useBoardCardMessages(post, streamType)
 
   const streamId = conversation.streamId
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
@@ -98,7 +104,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     <MessageItem
       key={message.id}
       workspaceId={workspaceId}
-      streamId={streamId}
+      // A conversation can span its root + threads (one root); render each row
+      // against its own stream so reactions and the permalink target where the
+      // message actually lives, falling back to the card's anchor stream.
+      streamId={message.streamId ?? streamId}
       message={message}
       authorName={getActorName(message.authorId, message.authorType)}
       currentUserId={currentUserId}
@@ -158,7 +167,15 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         )}
       </div>
 
-      <BoardReplyComposer workspaceId={workspaceId} post={post} hostStreamType={streamType} />
+      <BoardReplyComposer
+        workspaceId={workspaceId}
+        post={post}
+        hostStreamType={streamType}
+        // The conversation's most-recently-active stream — the latest reply's own
+        // stream (it can be a thread under the root), so a continuation lands where
+        // the conversation is live instead of re-interleaving the channel.
+        lastActiveStreamId={railReplies.at(-1)?.streamId ?? openingMessage?.streamId ?? streamId}
+      />
     </div>
   )
 }

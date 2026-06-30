@@ -7,11 +7,11 @@ import { useBoardCardMessages, __clearBoardRailRegistry } from "./use-board-card
 const WS = "ws_1"
 const STREAM = "stream_1"
 
-function msgEvent(messageId: string, contentMarkdown: string, seq: number): CachedEvent {
+function msgEvent(messageId: string, contentMarkdown: string, seq: number, streamId = STREAM): CachedEvent {
   return {
     id: `evt_${messageId}`,
     workspaceId: WS,
-    streamId: STREAM,
+    streamId,
     sequence: String(seq),
     _sequenceNum: seq,
     eventType: "message_created",
@@ -23,9 +23,10 @@ function msgEvent(messageId: string, contentMarkdown: string, seq: number): Cach
   } as CachedEvent
 }
 
-function projectionMessage(id: string) {
+function projectionMessage(id: string, streamId = STREAM) {
   return {
     id,
+    streamId,
     authorId: "usr_1",
     authorType: "user" as const,
     contentMarkdown: `projection ${id}`,
@@ -40,15 +41,18 @@ function makePost(opts: {
   messageIds: string[]
   openingId: string | null
   recentMessages?: ReturnType<typeof projectionMessage>[]
+  /** Streams the card reads — defaults to the anchor stream only. */
+  streamIds?: string[]
   /** Server-projected reply count; defaults to the flat/thread derivation. */
   totalReplies?: number
 }): BoardViewPost {
-  const { messageIds, openingId, recentMessages = [] } = opts
+  const { messageIds, openingId, recentMessages = [], streamIds = [STREAM] } = opts
   return {
     id: "conv_1",
     workspaceId: WS,
     _lastActivityMs: 0,
     _cachedAt: 0,
+    streamIds,
     conversation: {
       id: "conv_1",
       streamId: STREAM,
@@ -82,6 +86,30 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1", "r2"])
     expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["first reply", "second reply"])
     expect(result.current.totalReplies).toBe(2)
+  })
+
+  it("merges a conversation that spans its root + a thread (one root) into one chronological run", async () => {
+    const THREAD = "thr_2"
+    await db.events.bulkPut([
+      msgEvent("m1", "the opening", 1, STREAM),
+      // The reply lives in a thread under the same root — a cross-stream member.
+      msgEvent("r1", "thread reply", 2, THREAD),
+    ])
+    const post = makePost({
+      messageIds: ["m1", "r1"],
+      openingId: "m1",
+      streamIds: [STREAM, THREAD],
+      recentMessages: [projectionMessage("r1", THREAD)],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.openingMessage?.contentMarkdown).toBe("the opening")
+    // The thread member draws live from its own stream's rail, merged in by time.
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+    expect(result.current.replies[0]?.contentMarkdown).toBe("thread reply")
+    expect(result.current.replies[0]?.streamId).toBe(THREAD)
+    expect(result.current.totalReplies).toBe(1)
   })
 
   it("surfaces a pending optimistic reply tagged with its conversation, before the id lands in messageIds", async () => {

@@ -59,6 +59,26 @@ export async function seedBoardPosts(workspaceId: string, posts: BoardPost[]): P
 }
 
 /**
+ * Record a stream a conversation now reaches, from a `conversation:message_assigned`
+ * event, onto its board row's `streamIds`. A conversation can span its root + the
+ * root's threads (one root — board-view-design.md); the card subscribes to each
+ * stream's rail, and a convert-to-thread / cross-stream reply lands in a stream
+ * the snapshot didn't list yet. Adding it here lets the card draw that member live
+ * without a board refetch. No-op when the card isn't cached or already lists the
+ * stream; never creates a row (a card we don't have can't be rendered from this
+ * event alone).
+ */
+export async function addBoardConversationStream(conversationId: string, streamId: string): Promise<void> {
+  await db.transaction("rw", db.conversations, async () => {
+    const existing = await db.conversations.get(conversationId)
+    if (!existing) return
+    const streamIds = existing.streamIds ?? []
+    if (streamIds.includes(streamId)) return
+    await db.conversations.put({ ...existing, streamIds: [...streamIds, streamId] })
+  })
+}
+
+/**
  * Apply a conversation aggregate from a `conversation:*` event onto the board's
  * IDB row: merge the new aggregate (re-sorting on `lastActivityAt`) while
  * keeping the cached preview messages — the event carries the aggregate, not the

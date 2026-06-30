@@ -20,26 +20,25 @@ import type { BoardPost, JSONContent } from "@threa/types"
 // the Radix poppers and dialog.
 const COMPOSER_POPOVER_SELECTOR = '[role="listbox"],[data-radix-popper-content-wrapper],[role="dialog"]'
 
-// Resting-affordance state. `draft` signals a persisted-but-collapsed reply (so
-// the user knows reopening restores it); `posted` is a transient confirmation
-// that a convert-to-thread reply went through — it bridges the brief swap where
-// this lone card retires and the thread card takes its place on the server echo,
-// since (unlike a same-conversation reply) the reply isn't shown in place here.
-type RestingState = "idle" | "draft" | "posted"
+// Resting-affordance state. `draft` signals a persisted-but-collapsed reply, so
+// the user knows reopening restores it. Every reply — including a lone post's
+// convert-to-thread — now joins the same conversation and renders in place on the
+// card (board-view-design.md "Convert-to-thread, corrected"), so there is no card
+// swap to bridge: a successful send just returns the affordance to its invitation.
+type RestingState = "idle" | "draft"
 const RESTING_LABEL: Record<RestingState, string> = {
   idle: "Write a reply…",
   draft: "Continue reply…",
-  posted: "Posted to a new thread",
 }
-// How long the transient "posted" confirmation stays before the affordance
-// returns to its normal invitation.
-const POSTED_NOTE_MS = 4000
 
 interface BoardReplyComposerProps {
   workspaceId: string
   post: BoardPost
   /** Host stream type of the post's conversation, selecting the reply routing. */
   hostStreamType: string | undefined
+  /** The conversation's most-recently-active stream, for recency-biased
+   *  continuation (a reply follows the conversation into its thread). */
+  lastActiveStreamId: string | null
 }
 
 /**
@@ -51,13 +50,12 @@ interface BoardReplyComposerProps {
  * and placeholder — and the composer mounts already open (`initialMobileChromeOpen`)
  * so the tap lands straight in the toolbar view instead of stepping through the
  * mobile compacted phase. Routing — a lone channel/DM post converts to a thread,
- * everything else replies flat into the conversation — lives in
- * {@link useReplyToBoardPost}.
+ * everything else replies flat into the conversation (recency-biased — into the
+ * thread the conversation moved to) — lives in {@link useReplyToBoardPost}.
  *
  * The resting affordance carries state (best-effort, in-session): it flags a
- * persisted draft after an Escape ("Continue reply…") and a transient "Posted to
- * a new thread" confirmation after a convert-to-thread send, so a collapse never
- * reads as a no-op or an accidental discard.
+ * persisted draft after an Escape ("Continue reply…") so a collapse never reads
+ * as an accidental discard.
  */
 export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
@@ -75,18 +73,9 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     }
   }, [open])
 
-  // Let the transient "posted" confirmation fade back to the normal invitation.
-  useEffect(() => {
-    if (resting !== "posted") return
-    const timer = window.setTimeout(() => setResting("idle"), POSTED_NOTE_MS)
-    return () => window.clearTimeout(timer)
-  }, [resting])
-
-  const close = useCallback((opts?: { refocus?: boolean; hadContent?: boolean; posted?: boolean }) => {
+  const close = useCallback((opts?: { refocus?: boolean; hadContent?: boolean }) => {
     refocusOnCollapseRef.current = opts?.refocus ?? false
-    if (opts?.posted) setResting("posted")
-    else if (opts?.hadContent) setResting("draft")
-    else setResting("idle")
+    setResting(opts?.hadContent ? "draft" : "idle")
     setOpen(false)
   }, [])
 
@@ -116,9 +105,10 @@ function BoardReplyComposerForm({
   workspaceId,
   post,
   hostStreamType,
+  lastActiveStreamId,
   onClose,
 }: BoardReplyComposerProps & {
-  onClose: (opts?: { refocus?: boolean; hadContent?: boolean; posted?: boolean }) => void
+  onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
 }) {
   const { preferences } = usePreferences()
   const streams = useWorkspaceStreams(workspaceId)
@@ -198,17 +188,17 @@ function BoardReplyComposerForm({
     composer.setIsSending(true)
     try {
       // Eager + offline-first: the reply is enqueued as an optimistic event and
-      // the send drains in the background, so there's no created message to await
-      // here — only the resolved plan, which selects the resting note. An
-      // `intoConversation` reply rides the card's own rail and shows in place; a
-      // `convertToThread` reply lands in a thread off the opener (and retires this
-      // lone card, which swaps to the thread on echo), so the transient "Posted to
-      // a new thread" note bridges the brief swap.
-      const { plan } = await reply.mutateAsync({
+      // the send drains in the background, so there's no created message to await.
+      // Every reply joins the same conversation and rides the card's own (merged)
+      // rail — an `intoConversation` reply shows in place, and a `convertToThread`
+      // reply shows in place too now that it stays one conversation (no card swap),
+      // so a successful send just collapses the affordance.
+      await reply.mutateAsync({
         conversation: post.conversation,
         openingMessageId: post.openingMessage?.id ?? null,
         hostStreamType,
         messageCount: post.conversation.messageIds.length,
+        lastActiveStreamId,
         contentJson: normalizedContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
@@ -216,7 +206,7 @@ function BoardReplyComposerForm({
       composer.setContent(EMPTY_DOC)
       await composer.resolveDraft()
       composer.clearAttachments()
-      onClose({ refocus: true, posted: plan.kind === "convertToThread" })
+      onClose({ refocus: true })
     } catch {
       toast.error("Couldn't post your reply. Please try again.")
     } finally {

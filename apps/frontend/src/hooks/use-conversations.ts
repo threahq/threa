@@ -196,6 +196,14 @@ export interface ReplyToBoardPostInput {
   hostStreamType: string | undefined
   /** Count of messages in the conversation, deciding the lone-root case. */
   messageCount: number
+  /**
+   * The conversation's most-recently-active stream — its latest message's stream
+   * (a conversation can span its root + threads, one root). A continuation targets
+   * this, not the anchor: once a conversation has moved into a thread, replying in
+   * the root would re-interleave the channel (board-view-design.md "Continuation
+   * is recency-biased"). Omit to fall back to the conversation's anchor stream.
+   */
+  lastActiveStreamId?: string | null
   contentJson: JSONContent
   attachmentIds?: string[]
   /** Full attachment info for the optimistic event so files render in place. */
@@ -254,6 +262,7 @@ export function useReplyToBoardPost(workspaceId: string) {
       openingMessageId,
       hostStreamType,
       messageCount,
+      lastActiveStreamId,
       contentJson,
       attachmentIds,
       attachments,
@@ -289,9 +298,14 @@ export function useReplyToBoardPost(workspaceId: string) {
         return { plan }
       }
 
+      // Recency-biased continuation: target the conversation's most-recently-active
+      // stream (the thread, if it has moved there), not its anchor — posting into
+      // the anchor root would re-interleave the channel a convert avoided
+      // (board-view-design.md). The same-root `existing` guard accepts a reply from
+      // any stream under the conversation's root.
       await queueDraftMessage(input, {
         workspaceId,
-        streamId: conversation.streamId,
+        streamId: lastActiveStreamId ?? conversation.streamId,
         conversation: { intent: "existing", conversationId: conversation.id },
       })
       return { plan }

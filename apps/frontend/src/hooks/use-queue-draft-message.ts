@@ -92,7 +92,11 @@ export function useQueueDraftMessage(workspaceId: string) {
           // surfaces it under the right card before the server echo (which carries
           // the real id in the conversation aggregate) lands. Read-side only; the
           // timeline ignores it, and the row is swapped for the real event on echo.
-          ...(params.conversation?.intent === "existing" ? { conversationId: params.conversation.conversationId } : {}),
+          // `existing` names the conversation directly; `threadFromMessage` (a
+          // lone post converting to a thread) joins its source conversation, so the
+          // reply renders in place under the same card — no card swap
+          // (board-view-design.md "Convert-to-thread, corrected").
+          ...conversationTag(params.conversation),
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         },
         actorId: currentUserId,
@@ -230,4 +234,15 @@ export function useQueueDraftMessage(workspaceId: string) {
   )
 
   return { queueDraftMessage, currentUserId }
+}
+
+/** The conversation a board reply's optimistic event is tagged with, so the card
+ *  surfaces it in place before the server echo. `existing` carries the id; a
+ *  `threadFromMessage` convert joins its source conversation. */
+function conversationTag(
+  directive: ConversationDirective | undefined
+): { conversationId: string } | Record<string, never> {
+  if (directive?.intent === "existing") return { conversationId: directive.conversationId }
+  if (directive?.intent === "threadFromMessage") return { conversationId: directive.sourceConversationId }
+  return {}
 }
