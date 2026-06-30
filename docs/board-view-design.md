@@ -545,6 +545,88 @@ stops being load-bearing for the surfaces people actually drive.
    an expandable "re: Pizza, this morning" card that makes a revived reply self-
    contained for someone (or GAM) who wasn't there? _Same node, more rendering._
 
+## Conversations span streams within one root — the model, made precise (2026-06-30)
+
+This doc has said from the start that a conversation "spans a root message and its
+thread replies" (see "The post = a conversation" above). The implementation drifted
+from it, and dogfooding surfaced the gap: a DM top-level message rendered as missing
+from the board because its conversation also held a thread reply, and the board card
+reads only one stream. Three places assume one-stream-per-conversation:
+
+- **Boundary extraction** scopes assignment to a single stream
+  (`boundary-extraction-service.ts`), and the synchronous `existing` assigner
+  rejects any cross-stream attach (`conversation-assigner.ts`,
+  `streamId !== message.streamId` → `CONVERSATION_NOT_IN_STREAM`).
+- **The board card** reads one stream's event rail
+  (`useBoardCardMessages` → `useStreamRail(conversation.streamId)`), so a member
+  message in another stream of the same conversation never draws.
+- **Convert-to-thread** (#1113): a board reply to a lone post **retires** the source
+  conversation and **mints a new** thread conversation, rather than letting one
+  conversation span both. #1114 then built optimistic-swap machinery
+  (`usePendingThreadConversions`, a pending-row bridge, `revealNext`-on-convert) to
+  mask the cross-row card swap that retire+mint creates. **#1114 is closed**; this
+  section is the corrected model.
+
+**The invariant: a conversation is confined to exactly one root stream.** It may span
+that root and any of its threads (equal `root_stream_id` across every member message);
+it may **never** hold messages from two different roots. This matches the access model
+exactly — access is **root-stream membership only**; thread membership is participation,
+not access (INV-62, `core-concepts.md:42-45,261`). So a single access check on the
+conversation's root (`streamAccessPredicateSql` on `conversation.stream_id`, whose
+effective root `COALESCE(root_stream_id, id)` is that one root) gates **every** member,
+with **no per-message-stream gating**. The per-message-access worry only exists in a
+cross-root world, which this invariant forbids.
+
+**Why span streams at all** (rather than forcing one): the real cases require it —
+a **top-level discussion that continues in a thread**, and a **thread answered at the
+top level** (the Slack case — a thread holds the topic, a less thread-savvy person
+replies in the channel). Both are _the same conversation_ split across the root and a
+thread; forcing one stream either loses half of it or shoves unrelated content together.
+Moving messages to "fix" alignment is rejected for the same reason it always is here
+(never mutate a stream's order automatically — see "soft threads" above).
+
+**Convert-to-thread, corrected.** A board reply to a lone post still creates the thread
+(keeps the channel/DM top level clean — Kris's ruling), but the reply joins the **same**
+conversation as a cross-stream member (root opener + thread reply, one root). No retire,
+no new conversation, **stable conversation id**. The board card never swaps — it renders
+in place across the root + thread. The seamless behavior #1114 chased with optimistic
+gymnastics falls out for free: the reply is an ordinary optimistic message tagged to the
+conversation, shown via the existing rail tagging (#1111).
+
+**Continuation is recency-biased.** Once a conversation spans streams, "where does the
+next message go?" is answered by **where the conversation is currently live**, not its
+anchor. A board reply / continuation targets the conversation's most-recently-active
+stream (the thread, if it moved there) — posting into the anchor root would re-interleave
+the channel, the exact mess convert-to-thread avoids. Both `planBoardReply` and the
+extractor's continuation need this; lone-post→thread stays the one special case.
+
+**Board rendering.** The card renders a conversation's messages **flattened-chronological
+across the root + its threads, live** — it subscribes to the rails of the streams its
+members span (a bounded set under one root) and merges by time. A thread-anchored
+conversation (legacy, below) still shows its thread parent as the opener; a root-anchored
+multi-stream conversation's opener is just its earliest member.
+
+**Boundary extraction needs no tightening.** Same-root thread conversations appearing as
+assignment candidates (`findByMessageIds` over thread-context messages,
+`boundary-extraction-service.ts:120-131`) is **correct** under this model — they share
+the root. The misclassification that surfaced all this (a DM-root message clustered into
+a same-root thread conversation) was a **quality** error, not a structural one; it's
+addressed by recency-biased continuation and the eval loop, not by forbidding the shape.
+The one structural rule to enforce: assignment never crosses roots — relax the
+synchronous `existing` guard from same-**stream** to same-**root**, and reject cross-root.
+
+**Follow-ups / constraints.**
+
+1. **Legacy data.** Conversations converted under #1113 are thread-anchored with the
+   source retired (empty). They render fine via the thread-anchored path; the empty
+   sources stay filtered by `cardinality(message_ids) > 0`. An optional backfill could
+   re-anchor them to the root and re-absorb the opener, but it isn't required.
+2. **Move-message** must respect one-root: moving a member message to a different root
+   removes/reassigns it from its conversation, or the invariant breaks.
+3. **Access stays a single root check** everywhere a conversation's messages are read
+   (board list, expand, rails). Do **not** add per-message-stream gating — it's redundant
+   under the invariant and only invites drift.
+
 ## Phasing
 
 The inversion changes the order. Two candidate entry points:
