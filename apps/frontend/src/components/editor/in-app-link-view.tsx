@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { MessageSquare } from "lucide-react"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { useParams } from "react-router-dom"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
@@ -18,6 +19,7 @@ export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
   const state = useInAppLinkChip({
     workspaceId: workspaceId ?? "",
     streamId: attrs.streamId,
+    messageId: attrs.messageId,
     isMessage: Boolean(attrs.messageId),
     url: attrs.url,
   })
@@ -33,7 +35,8 @@ export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
     }
   }, [resolvedName, attrs.name, updateAttributes])
 
-  const icon = state.status === "pending" ? undefined : state.icon
+  const pendingIcon = attrs.messageId ? MessageSquare : undefined
+  const icon = state.status === "pending" ? pendingIcon : state.icon
   const label = state.status === "pending" ? attrs.name || "Link" : state.label
   const prefix = state.status === "resolved" ? state.prefix : undefined
 

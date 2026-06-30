@@ -12,6 +12,7 @@ import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams }
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { StreamService } from "../streams"
+import { StreamMemberRepository } from "../streams"
 import type { MemoExplorerService } from "../memos"
 import { resolveUserAccessibleStreamIds } from "../search"
 import { OutboxRepository } from "../../lib/outbox"
@@ -358,6 +359,22 @@ export class LinkPreviewService {
       }
     }
 
+    // A DM message reads "{author} to {recipient}", so resolve the non-author
+    // participant. DMs are 1:1 in the display model (display-name.ts collapses to
+    // "the other participant"). Prefer the member who is neither the author nor
+    // the viewer so a non-member author (e.g. a persona) still names the other
+    // person; only then fall back to any non-author member.
+    let recipientName: string | undefined
+    if (stream.type === "dm") {
+      const members = await StreamMemberRepository.list(this.deps.pool, { streamId: targetStreamId })
+      const recipientId =
+        members.find((m) => m.memberId !== message.authorId && m.memberId !== userId)?.memberId ??
+        members.find((m) => m.memberId !== message.authorId)?.memberId
+      if (recipientId) {
+        recipientName = (await UserRepository.findById(this.deps.pool, workspaceId, recipientId))?.name
+      }
+    }
+
     const contentPreview =
       message.contentMarkdown.length > CONTENT_PREVIEW_MAX_LENGTH
         ? message.contentMarkdown.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…"
@@ -370,6 +387,10 @@ export class LinkPreviewService {
       authorAvatarUrl,
       contentPreview,
       streamName: stream.displayName ?? stream.slug ?? undefined,
+      streamType: stream.type,
+      recipientName,
+      authorId: message.authorId,
+      authorType: message.authorType,
     }
   }
 
