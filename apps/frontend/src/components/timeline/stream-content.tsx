@@ -443,15 +443,20 @@ export function StreamContent({
     streamId,
     enabled: conversationOverlayActive,
   })
-  // Always-on membership for the per-message "Show in conversation" action —
-  // it should open the conversation panel without the user first painting the
-  // overlay. Same per-stream conversation query (deduped with the overlay's
-  // when both are live). Channels/DMs only: a thread's messages resolve through
-  // their root, which this stream's list doesn't carry.
+  // Always-on membership for the per-message "Show in conversation" action — it
+  // should open the conversation panel without the user first painting the
+  // overlay. A conversation spans its root + the root's threads (one root), so a
+  // THREAD view resolves membership from the ROOT's conversation list (where the
+  // thread's replies live as secondary members and the opener as primary), not
+  // the thread's own list (which has none). A channel/DM uses its own list. The
+  // query key matches the overlay's when both are live, so they dedupe.
+  const conversationMembershipStreamId = isThread ? rootStreamId : streamId
+  const conversationMembershipEnabled =
+    !isDraft && !!conversationMembershipStreamId && (isThread || supportsConversationOverlay)
   const { conversations: streamConversations, refetch: refetchStreamConversations } = useConversations(
     workspaceId,
-    streamId,
-    { enabled: supportsConversationOverlay }
+    conversationMembershipStreamId ?? "",
+    { enabled: conversationMembershipEnabled }
   )
   const conversationIdByMessageId = useMemo(
     () => buildMessageConversationMap(streamConversations),
@@ -533,7 +538,7 @@ export function StreamContent({
     return null
   }, [events, currentWorkspaceUserId])
   useConversationMembershipHeal({
-    enabled: supportsConversationOverlay,
+    enabled: conversationMembershipEnabled,
     latestOwnMessageId: ownLatestMessageId,
     conversationIdByMessageId,
     refetch: refetchStreamConversations,
