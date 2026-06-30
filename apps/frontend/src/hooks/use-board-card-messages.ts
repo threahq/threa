@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
@@ -417,7 +417,12 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   // that window until the real row renders.
   const retainedPendingRef = useRef<RenderableMessage[]>(NO_PENDING)
 
-  return useMemo(() => {
+  const view = useMemo(() => {
+    // The retained copy is read here but written only after commit (the effect
+    // below) — mutating a ref during render is unsafe under concurrent rendering,
+    // where a discarded render could clear the bridge before it paints.
+    const retained = retainedPendingRef.current
+
     // Replies for this conversation the card knows from the rail but the server
     // `messageIds` doesn't list yet — the optimistic row, and the swapped real
     // row in the window before `conversation:updated` lands. Exclude ids already
@@ -426,7 +431,6 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     const tagged = rail.taggedByConversation.get(conversationId)
     const unconfirmed = tagged ? tagged.filter((m) => !replyIdSet.has(m.id)) : NO_PENDING
     const pendingReplies = unconfirmed.length > 0 ? unconfirmed : NO_PENDING
-    if (pendingReplies !== NO_PENDING) retainedPendingRef.current = pendingReplies
 
     // The server's count excludes `messageIds[0]` for a flat conversation even
     // when that opening was deleted, so trust it when the flat relationship is
@@ -445,12 +449,15 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     if (openingId !== null && rail.seen.has(openingId)) openingMessage = rail.messages.get(openingId) ?? null
 
     if (!conversationSeen) {
+      // Cold/unsynced: capture a fresh pending row but never drop a live bridge.
+      const nextRetained = pendingReplies.length > 0 ? pendingReplies : retained
       return {
         openingMessage,
         replies: post.recentMessages as RenderableMessage[],
         totalReplies: serverTotal,
         pendingReplies,
-        source: "projection",
+        source: "projection" as const,
+        nextRetained,
       }
     }
 
@@ -466,9 +473,7 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     // rendered yet, keep showing the retained copy in its place. `bridgeCount`
     // shrinks to zero as the live rows render, so the retained copy never
     // double-renders alongside its confirmed twin, and is forgotten once covered.
-    const retained = retainedPendingRef.current
     const bridgeCount = pendingReplies === NO_PENDING ? Math.max(0, retained.length - liveReplies.length) : 0
-    if (bridgeCount === 0 && pendingReplies === NO_PENDING) retainedPendingRef.current = NO_PENDING
     const replies =
       bridgeCount > 0
         ? [...liveReplies, ...retained.slice(retained.length - bridgeCount)].sort(
@@ -484,6 +489,20 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     const fullySynced = replyIds.every((id) => rail.seen.has(id))
     const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal, replies.length)
 
-    return { openingMessage, replies, totalReplies, pendingReplies, source: "events" }
+    // Retain a fresh pending row; keep the retained copy while it's still bridging;
+    // forget it once the live rows cover it.
+    let nextRetained: RenderableMessage[]
+    if (pendingReplies.length > 0) nextRetained = pendingReplies
+    else if (bridgeCount > 0) nextRetained = retained
+    else nextRetained = NO_PENDING
+
+    return { openingMessage, replies, totalReplies, pendingReplies, source: "events" as const, nextRetained }
   }, [rail, replyIds, openingId, messageIds, post, conversationId])
+
+  // Commit the bridge bookkeeping after render, never during it.
+  useEffect(() => {
+    retainedPendingRef.current = view.nextRetained
+  }, [view])
+
+  return view
 }
