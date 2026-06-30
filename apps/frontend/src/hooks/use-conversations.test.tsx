@@ -164,6 +164,93 @@ describe("useConversations event registration", () => {
 
     gate.dispose()
   })
+
+  it("patches list-cache membership from conversation:message_assigned (primary → messageIds, idempotent)", async () => {
+    const { socket, emit } = createTestSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue(null)
+
+    const { queryClient, wrapper } = createWrapper()
+    renderHook(() => useConversations(WORKSPACE_ID, STREAM_ID), { wrapper })
+    await waitFor(() => expect(queryClient.getQueryData(listKey())).toEqual([]))
+
+    const conv = {
+      id: "conv_1",
+      messageIds: ["msg_1"],
+      secondaryMessageIds: [],
+    } as unknown as ConversationWithStaleness
+    const other = {
+      id: "conv_2",
+      messageIds: ["msg_x"],
+      secondaryMessageIds: [],
+    } as unknown as ConversationWithStaleness
+    queryClient.setQueryData(listKey(), [conv, other])
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+
+    act(() => {
+      emit("conversation:message_assigned", {
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        messageId: "msg_2",
+        conversationId: "conv_1",
+        isPrimary: true,
+        reason: "declared",
+      })
+    })
+
+    const afterAssign = queryClient.getQueryData<ConversationWithStaleness[]>(listKey())!
+    // Appends to the matching conversation's primary membership; others untouched.
+    expect(afterAssign.find((c) => c.id === "conv_1")!.messageIds).toEqual(["msg_1", "msg_2"])
+    expect(afterAssign.find((c) => c.id === "conv_2")!.messageIds).toEqual(["msg_x"])
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: conversationKeys.messages("conv_1") })
+
+    // Idempotent: re-emitting the same assignment adds no duplicate.
+    act(() => {
+      emit("conversation:message_assigned", {
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        messageId: "msg_2",
+        conversationId: "conv_1",
+        isPrimary: true,
+        reason: "declared",
+      })
+    })
+    expect(
+      queryClient.getQueryData<ConversationWithStaleness[]>(listKey())!.find((c) => c.id === "conv_1")!.messageIds
+    ).toEqual(["msg_1", "msg_2"])
+  })
+
+  it("routes a non-primary assignment to secondaryMessageIds", async () => {
+    const { socket, emit } = createTestSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue(null)
+
+    const { queryClient, wrapper } = createWrapper()
+    renderHook(() => useConversations(WORKSPACE_ID, STREAM_ID), { wrapper })
+    await waitFor(() => expect(queryClient.getQueryData(listKey())).toEqual([]))
+
+    const conv = {
+      id: "conv_1",
+      messageIds: ["msg_1"],
+      secondaryMessageIds: [],
+    } as unknown as ConversationWithStaleness
+    queryClient.setQueryData(listKey(), [conv])
+
+    act(() => {
+      emit("conversation:message_assigned", {
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        messageId: "msg_thread",
+        conversationId: "conv_1",
+        isPrimary: false,
+        reason: "thread-reply",
+      })
+    })
+
+    const updated = queryClient.getQueryData<ConversationWithStaleness[]>(listKey())![0]
+    expect(updated.secondaryMessageIds).toEqual(["msg_thread"])
+    expect(updated.messageIds).toEqual(["msg_1"])
+  })
 })
 
 describe("useCreateBoardPost", () => {

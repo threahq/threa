@@ -17,7 +17,14 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { MessageContextBadge } from "@/components/composer"
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
-import { usePendingMessages, usePanel, createDraftPanelId, useTrace, useMessageService } from "@/contexts"
+import {
+  usePendingMessages,
+  usePanel,
+  createDraftPanelId,
+  createConversationPanelId,
+  useTrace,
+  useMessageService,
+} from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { formatStatusClearLabel } from "@/lib/status"
@@ -83,6 +90,7 @@ import { dispatchMarkReadUpToHere, dispatchMarkUnread } from "@/lib/mark-read-ev
 import { useReadFrontier, rowReadState } from "./read-frontier-context"
 import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlayRow } from "./conversation-overlay/row-context"
+import { useMessageConversationId } from "./conversation-overlay/message-conversation-context"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
 
@@ -845,7 +853,7 @@ function SentMessageEvent({
   e2eDecryptedMarkdown,
   batch,
 }: MessageEventInnerProps) {
-  const { panelId, getPanelUrl } = usePanel()
+  const { panelId, getPanelUrl, openPanel } = usePanel()
   const messageService = useMessageService()
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { getTraceUrl } = useTrace()
@@ -1053,6 +1061,15 @@ function SentMessageEvent({
   const [conversationPickerOpen, setConversationPickerOpen] = useState(false)
   const handleRequestConversationPicker = useCallback(() => setConversationPickerOpen(true), [])
 
+  // The message's primary conversation, when the stream's membership is loaded
+  // (channels/DMs). Drives the "Show in conversation" action — the mirror of
+  // the board/panel's "View in channel". Null when no conversation is known.
+  const messageConversationId = useMessageConversationId(payload.messageId)
+  const handleShowInConversation = useCallback(
+    () => messageConversationId && openPanel(createConversationPanelId(messageConversationId)),
+    [messageConversationId, openPanel]
+  )
+
   const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const handleDiscussWithAriadne = useCallback(
     // `useDiscussWithAriadne` rethrows after toasting so the surrounding
@@ -1172,6 +1189,7 @@ function SentMessageEvent({
       // flight.
       onShowMoveDetails: movedTombstoneEvent ? () => setTimeout(() => setMoveDetailsOpen(true), 0) : undefined,
       onReassignConversation: conversationOverlayRow && !batch?.enabled ? handleRequestConversationPicker : undefined,
+      onShowInConversation: messageConversationId ? handleShowInConversation : undefined,
       onMarkReadUpToHere: rowRead !== "read" ? () => dispatchMarkReadUpToHere(streamId, event.id) : undefined,
       onMarkUnread: rowRead !== "unread" ? () => dispatchMarkUnread(streamId, payload.messageId) : undefined,
     }),
@@ -1215,6 +1233,8 @@ function SentMessageEvent({
       movedTombstoneEvent,
       conversationOverlayRow,
       handleRequestConversationPicker,
+      messageConversationId,
+      handleShowInConversation,
     ]
   )
 

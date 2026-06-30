@@ -75,7 +75,11 @@ import {
 } from "./event-list"
 import { ConversationOverlayPanel } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlay } from "./conversation-overlay/use-conversation-overlay"
+import { buildMessageConversationMap } from "./conversation-overlay/model"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
+import { MessageConversationProvider } from "./conversation-overlay/message-conversation-context"
+import { useConversationMembershipHeal } from "./conversation-overlay/use-conversation-membership-heal"
+import { useConversations } from "@/hooks/use-conversations"
 import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
 import { JoinChannelBar } from "./join-channel-bar"
@@ -439,6 +443,25 @@ export function StreamContent({
     streamId,
     enabled: conversationOverlayActive,
   })
+  // Always-on membership for the per-message "Show in conversation" action — it
+  // should open the conversation panel without the user first painting the
+  // overlay. A conversation spans its root + the root's threads (one root), so a
+  // THREAD view resolves membership from the ROOT's conversation list (where the
+  // thread's replies live as secondary members and the opener as primary), not
+  // the thread's own list (which has none). A channel/DM uses its own list. The
+  // query key matches the overlay's when both are live, so they dedupe.
+  const conversationMembershipStreamId = isThread ? rootStreamId : streamId
+  const conversationMembershipEnabled =
+    !isDraft && !!conversationMembershipStreamId && (isThread || supportsConversationOverlay)
+  const { conversations: streamConversations, refetch: refetchStreamConversations } = useConversations(
+    workspaceId,
+    conversationMembershipStreamId ?? "",
+    { enabled: conversationMembershipEnabled }
+  )
+  const conversationIdByMessageId = useMemo(
+    () => buildMessageConversationMap(streamConversations),
+    [streamConversations]
+  )
   const closeConversationOverlay = useCallback(() => {
     setSearchParams(
       (prev) => {
@@ -503,6 +526,23 @@ export function StreamContent({
     exitJumpMode,
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
+
+  // The viewer's newest message in this stream — drives the "Show in
+  // conversation" membership heal below.
+  const ownLatestMessageId = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i]
+      if (event.eventType !== "message_created" || event.actorId !== currentWorkspaceUserId) continue
+      return (event.payload as { messageId?: string })?.messageId ?? null
+    }
+    return null
+  }, [events, currentWorkspaceUserId])
+  useConversationMembershipHeal({
+    enabled: conversationMembershipEnabled,
+    latestOwnMessageId: ownLatestMessageId,
+    conversationIdByMessageId,
+    refetch: refetchStreamConversations,
+  })
 
   // Merge bootstrap + paginated `sharedMessages` so pointers in pages older
   // than the bootstrap window (or in jump-mode windows) hydrate without
@@ -1849,148 +1889,75 @@ export function StreamContent({
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
         <QuoteReplyProvider>
           <SharedMessagesProvider map={mergedSharedMessages}>
-            <TextSelectionQuote streamId={streamId} />
-            <div className="relative h-full">
-              <div className="absolute inset-0 overflow-hidden">
-                {isSearchOpen && (
-                  <StreamSearchBar
-                    search={streamSearch}
-                    onClose={handleSearchClose}
-                    onNavigate={handleSearchNavigate}
-                  />
-                )}
-                {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
-                {activeConversationOverlay && (
-                  <ConversationOverlayPanel
-                    overlay={activeConversationOverlay}
-                    inViewConversations={inViewConversations}
-                    onClose={closeConversationOverlay}
-                    searchBarOpen={isSearchOpen}
-                  />
-                )}
-                {isDraft && (
-                  <div
-                    ref={draftScrollRef}
-                    className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
-                    style={{ paddingBottom: "var(--composer-height, 0px)" }}
-                  >
-                    {hasDraftPendingEvents ? (
-                      <EventList
-                        timelineItems={draftTimelineItems}
-                        isLoading={false}
-                        workspaceId={workspaceId}
-                        streamId={streamId}
-                        batch={batchState}
-                      />
-                    ) : (
-                      <Empty className="h-full border-0">
-                        <EmptyHeader>
-                          <EmptyMedia variant="icon">
-                            <MessageSquare />
-                          </EmptyMedia>
-                          <EmptyTitle>Start a conversation</EmptyTitle>
-                          <EmptyDescription>Type a message below to begin this scratchpad.</EmptyDescription>
-                        </EmptyHeader>
-                      </Empty>
-                    )}
-                  </div>
-                )}
-                {!isDraft && useVirtualized && (
-                  <>
-                    <TimelineMessageList
-                      visibleItems={visibleItems}
-                      isLoading={isLoading}
-                      holdForDeepLink={holdForDeepLink}
-                      isConfirmedEmpty={isConfirmedEmpty}
-                      listRef={listRef}
-                      scrollerRef={virtualScrollerRef}
-                      registerScroller={registerVirtualScroller}
-                      contentRef={virtualContentRef}
-                      scrollAbortRef={scrollAbortRef}
-                      shift={shift}
-                      isInitialSettling={virtualIsInitialSettling}
-                      onTimelineScroll={handleVirtualScroll}
-                      isFollowingTailRef={isFollowingTailRef}
-                      hasOlderEvents={hasOlderEvents}
-                      hasNewerEvents={hasNewerEvents}
-                      fetchOlderEvents={fetchOlderEvents}
-                      fetchNewerEvents={fetchNewerEvents}
-                      isFetchingOlder={isFetchingOlder}
-                      isFetchingNewer={isFetchingNewer}
-                      workspaceId={workspaceId}
-                      streamId={streamId}
-                      highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
-                      firstUnreadEventId={dividerEventId}
-                      isDividerDimmed={isDividerDimmed}
-                      agentActivity={agentActivity}
-                      hideSessionCards={isChannel}
-                      newMessageIds={newMessageIds}
-                      isSearchOpen={isSearchOpen}
-                      batch={batchState}
-                      batchPointerHandlers={batchPointerHandlers}
-                      conversationOverlay={activeConversationOverlay}
-                      onJumpToDate={handleJumpToDate}
+            <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>
+              <TextSelectionQuote streamId={streamId} />
+              <div className="relative h-full">
+                <div className="absolute inset-0 overflow-hidden">
+                  {isSearchOpen && (
+                    <StreamSearchBar
+                      search={streamSearch}
+                      onClose={handleSearchClose}
+                      onNavigate={handleSearchNavigate}
                     />
-                    {/* Overlay loading indicators — absolutely positioned so they
-                    don't cause layout shift when prepending older messages. */}
+                  )}
+                  {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
+                  {activeConversationOverlay && (
+                    <ConversationOverlayPanel
+                      overlay={activeConversationOverlay}
+                      inViewConversations={inViewConversations}
+                      onClose={closeConversationOverlay}
+                      searchBarOpen={isSearchOpen}
+                    />
+                  )}
+                  {isDraft && (
                     <div
-                      aria-hidden={!isFetchingOlder}
-                      className={cn(
-                        "pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
-                        isSearchOpen ? "top-14" : "top-2",
-                        isFetchingOlder ? "opacity-100" : "opacity-0"
-                      )}
+                      ref={draftScrollRef}
+                      className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
+                      style={{ paddingBottom: "var(--composer-height, 0px)" }}
                     >
-                      Loading older messages...
-                    </div>
-                    <div
-                      aria-hidden={!isFetchingNewer}
-                      className={cn(
-                        "pointer-events-none absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
-                        isFetchingNewer ? "opacity-100" : "opacity-0"
-                      )}
-                      style={{
-                        // Sit above the Jump to latest button (when visible) which itself sits above the floating composer.
-                        bottom:
-                          isJumpMode || isScrolledFarFromBottom
-                            ? "calc(var(--composer-height, 0px) + 3.5rem)"
-                            : "calc(var(--composer-height, 0px) + 0.5rem)",
-                      }}
-                    >
-                      Loading newer messages...
-                    </div>
-                  </>
-                )}
-                {!isDraft && !useVirtualized && (
-                  <div
-                    ref={plainScrollRef}
-                    className={cn(
-                      "h-full overflow-y-auto overflow-x-hidden overscroll-y-contain",
-                      (isSearchOpen || batchMode) && "pt-11",
-                      batchMode && "select-none"
-                    )}
-                    style={{ paddingBottom: "var(--composer-height, 0px)" }}
-                    data-suppress-pull-refresh="true"
-                    onScroll={plainHandleScroll}
-                    {...batchPointerHandlers}
-                  >
-                    <div ref={plainContentRef}>
-                      {isThread && parentMessage && parentStreamId && (
-                        <ThreadParentMessage
-                          event={parentMessage}
+                      {hasDraftPendingEvents ? (
+                        <EventList
+                          timelineItems={draftTimelineItems}
+                          isLoading={false}
                           workspaceId={workspaceId}
-                          streamId={parentStreamId}
-                          replyCount={displayEvents.length}
+                          streamId={streamId}
+                          batch={batchState}
                         />
+                      ) : (
+                        <Empty className="h-full border-0">
+                          <EmptyHeader>
+                            <EmptyMedia variant="icon">
+                              <MessageSquare />
+                            </EmptyMedia>
+                            <EmptyTitle>Start a conversation</EmptyTitle>
+                            <EmptyDescription>Type a message below to begin this scratchpad.</EmptyDescription>
+                          </EmptyHeader>
+                        </Empty>
                       )}
-                      {isFetchingOlder && (
-                        <div className="flex justify-center py-2">
-                          <p className="text-sm text-muted-foreground">Loading older messages...</p>
-                        </div>
-                      )}
-                      <EventList
-                        timelineItems={timelineItems}
+                    </div>
+                  )}
+                  {!isDraft && useVirtualized && (
+                    <>
+                      <TimelineMessageList
+                        visibleItems={visibleItems}
                         isLoading={isLoading}
+                        holdForDeepLink={holdForDeepLink}
+                        isConfirmedEmpty={isConfirmedEmpty}
+                        listRef={listRef}
+                        scrollerRef={virtualScrollerRef}
+                        registerScroller={registerVirtualScroller}
+                        contentRef={virtualContentRef}
+                        scrollAbortRef={scrollAbortRef}
+                        shift={shift}
+                        isInitialSettling={virtualIsInitialSettling}
+                        onTimelineScroll={handleVirtualScroll}
+                        isFollowingTailRef={isFollowingTailRef}
+                        hasOlderEvents={hasOlderEvents}
+                        hasNewerEvents={hasNewerEvents}
+                        fetchOlderEvents={fetchOlderEvents}
+                        fetchNewerEvents={fetchNewerEvents}
+                        isFetchingOlder={isFetchingOlder}
+                        isFetchingNewer={isFetchingNewer}
                         workspaceId={workspaceId}
                         streamId={streamId}
                         highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
@@ -1999,153 +1966,228 @@ export function StreamContent({
                         agentActivity={agentActivity}
                         hideSessionCards={isChannel}
                         newMessageIds={newMessageIds}
+                        isSearchOpen={isSearchOpen}
                         batch={batchState}
+                        batchPointerHandlers={batchPointerHandlers}
                         conversationOverlay={activeConversationOverlay}
+                        onJumpToDate={handleJumpToDate}
                       />
-                      {isFetchingNewer && (
-                        <div className="flex justify-center py-2">
-                          <p className="text-sm text-muted-foreground">Loading newer messages...</p>
-                        </div>
+                      {/* Overlay loading indicators — absolutely positioned so they
+                    don't cause layout shift when prepending older messages. */}
+                      <div
+                        aria-hidden={!isFetchingOlder}
+                        className={cn(
+                          "pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
+                          isSearchOpen ? "top-14" : "top-2",
+                          isFetchingOlder ? "opacity-100" : "opacity-0"
+                        )}
+                      >
+                        Loading older messages...
+                      </div>
+                      <div
+                        aria-hidden={!isFetchingNewer}
+                        className={cn(
+                          "pointer-events-none absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-background/90 px-3 py-1 shadow-sm border text-xs text-muted-foreground transition-opacity",
+                          isFetchingNewer ? "opacity-100" : "opacity-0"
+                        )}
+                        style={{
+                          // Sit above the Jump to latest button (when visible) which itself sits above the floating composer.
+                          bottom:
+                            isJumpMode || isScrolledFarFromBottom
+                              ? "calc(var(--composer-height, 0px) + 3.5rem)"
+                              : "calc(var(--composer-height, 0px) + 0.5rem)",
+                        }}
+                      >
+                        Loading newer messages...
+                      </div>
+                    </>
+                  )}
+                  {!isDraft && !useVirtualized && (
+                    <div
+                      ref={plainScrollRef}
+                      className={cn(
+                        "h-full overflow-y-auto overflow-x-hidden overscroll-y-contain",
+                        (isSearchOpen || batchMode) && "pt-11",
+                        batchMode && "select-none"
                       )}
+                      style={{ paddingBottom: "var(--composer-height, 0px)" }}
+                      data-suppress-pull-refresh="true"
+                      onScroll={plainHandleScroll}
+                      {...batchPointerHandlers}
+                    >
+                      <div ref={plainContentRef}>
+                        {isThread && parentMessage && parentStreamId && (
+                          <ThreadParentMessage
+                            event={parentMessage}
+                            workspaceId={workspaceId}
+                            streamId={parentStreamId}
+                            replyCount={displayEvents.length}
+                          />
+                        )}
+                        {isFetchingOlder && (
+                          <div className="flex justify-center py-2">
+                            <p className="text-sm text-muted-foreground">Loading older messages...</p>
+                          </div>
+                        )}
+                        <EventList
+                          timelineItems={timelineItems}
+                          isLoading={isLoading}
+                          workspaceId={workspaceId}
+                          streamId={streamId}
+                          highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
+                          firstUnreadEventId={dividerEventId}
+                          isDividerDimmed={isDividerDimmed}
+                          agentActivity={agentActivity}
+                          hideSessionCards={isChannel}
+                          newMessageIds={newMessageIds}
+                          batch={batchState}
+                          conversationOverlay={activeConversationOverlay}
+                        />
+                        {isFetchingNewer && (
+                          <div className="flex justify-center py-2">
+                            <p className="text-sm text-muted-foreground">Loading newer messages...</p>
+                          </div>
+                        )}
+                      </div>
                     </div>
+                  )}
+                </div>
+                {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
+              Positioned above the floating composer pill. */}
+                {(isJumpMode || isScrolledFarFromBottom) && (
+                  <div
+                    className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
+                    style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
+                  >
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="pointer-events-auto shadow-lg gap-1.5"
+                      onClick={handleJumpToLatest}
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" />
+                      Jump to latest
+                    </Button>
                   </div>
                 )}
-              </div>
-              {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
-              Positioned above the floating composer pill. */}
-              {(isJumpMode || isScrolledFarFromBottom) && (
-                <div
-                  className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
-                  style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
-                >
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="pointer-events-auto shadow-lg gap-1.5"
-                    onClick={handleJumpToLatest}
-                  >
-                    <ArrowDown className="h-3.5 w-3.5" />
-                    Jump to latest
-                  </Button>
-                </div>
-              )}
-              {/* "N new messages" jump — shown when unread sits above the viewport.
+                {/* "N new messages" jump — shown when unread sits above the viewport.
               Jumps up to the "New" divider so the viewer can read from there.
               Hidden while search is open: jumping the timeline would yank it out
               from under the active search-result navigation, and the Escape
               mark-read shortcut is gated on `!isSearchOpen` too. */}
-              {unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen && (
-                <div
-                  // Sits clearly below the floating date pill (top-2, ~30px tall)
-                  // so the top-center affordances never overlap.
-                  className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
-                  style={{ top: "3.5rem" }}
-                >
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="pointer-events-auto shadow-lg gap-1.5"
-                    onClick={scrollToFirstUnread}
+                {unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen && (
+                  <div
+                    // Sits clearly below the floating date pill (top-2, ~30px tall)
+                    // so the top-center affordances never overlap.
+                    className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
+                    style={{ top: "3.5rem" }}
                   >
-                    <ArrowUp className="h-3.5 w-3.5" />
-                    {unreadCount} new message{unreadCount === 1 ? "" : "s"}
-                  </Button>
-                  {/* Dismiss without scrolling up: mark all loaded read and tail
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="pointer-events-auto shadow-lg gap-1.5"
+                      onClick={scrollToFirstUnread}
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                      {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+                    </Button>
+                    {/* Dismiss without scrolling up: mark all loaded read and tail
                   the live bottom — the touchable equivalent of Escape. */}
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    className="pointer-events-auto h-9 w-9 shadow-lg"
-                    onClick={escapeUnread}
-                    aria-label="Mark all read"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
-              {dragGhost && (
-                <div
-                  className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
-                  style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
-                >
-                  <div className="font-medium">{selectedMessageIds.size} selected</div>
-                  <div className="line-clamp-1 text-xs text-muted-foreground">
-                    {Array.from(selectedMessageIds)
-                      .map((messageId) => {
-                        const content = messageEventMeta.get(messageId)?.content
-                        return content ? stripMarkdownToInline(content) : null
-                      })
-                      .filter(Boolean)
-                      .slice(0, 1)
-                      .join("")}
+                    <Button
+                      variant="secondary"
+                      size="icon"
+                      className="pointer-events-auto h-9 w-9 shadow-lg"
+                      onClick={escapeUnread}
+                      aria-label="Mark all read"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
-                </div>
-              )}
-              <AlertDialog
-                open={moveDialogOpen}
-                onOpenChange={(open) => {
-                  if (open) return
-                  // Cancel + Esc are allowed during validating (we just bump the
-                  // cancellation token and the in-flight request becomes a no-op
-                  // on resolve). Only the irreversible commit phase blocks
-                  // dismiss — there is no rollback once moveToThread succeeds.
-                  if (isMoveConfirming) return
-                  closePendingMove()
-                }}
-              >
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Move messages?</AlertDialogTitle>
-                    <AlertDialogDescription>{`Move ${moveMessageCountLabel} into this thread?`}</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  {/* Custom footer: status row (left) + actions (right). Replaces
+                )}
+                {dragGhost && (
+                  <div
+                    className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
+                    style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
+                  >
+                    <div className="font-medium">{selectedMessageIds.size} selected</div>
+                    <div className="line-clamp-1 text-xs text-muted-foreground">
+                      {Array.from(selectedMessageIds)
+                        .map((messageId) => {
+                          const content = messageEventMeta.get(messageId)?.content
+                          return content ? stripMarkdownToInline(content) : null
+                        })
+                        .filter(Boolean)
+                        .slice(0, 1)
+                        .join("")}
+                    </div>
+                  </div>
+                )}
+                <AlertDialog
+                  open={moveDialogOpen}
+                  onOpenChange={(open) => {
+                    if (open) return
+                    // Cancel + Esc are allowed during validating (we just bump the
+                    // cancellation token and the in-flight request becomes a no-op
+                    // on resolve). Only the irreversible commit phase blocks
+                    // dismiss — there is no rollback once moveToThread succeeds.
+                    if (isMoveConfirming) return
+                    closePendingMove()
+                  }}
+                >
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Move messages?</AlertDialogTitle>
+                      <AlertDialogDescription>{`Move ${moveMessageCountLabel} into this thread?`}</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    {/* Custom footer: status row (left) + actions (right). Replaces
                   shadcn's AlertDialogFooter, which forces flex-col-reverse on
                   mobile and would invert our vertical stacking. */}
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                    <MoveStatusRow phase={movePhase} />
-                    <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-2">
-                      <AlertDialogCancel disabled={movePhase === "moving"}>Cancel</AlertDialogCancel>
-                      {/* `preventDefault` keeps the dialog open through the
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                      <MoveStatusRow phase={movePhase} />
+                      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-2">
+                        <AlertDialogCancel disabled={movePhase === "moving"}>Cancel</AlertDialogCancel>
+                        {/* `preventDefault` keeps the dialog open through the
                       moving phase so the inline status row can transition
                       to "Moving…" — Radix's default Action behavior would
                       auto-close on click. confirmPendingMove closes the
                       dialog itself on success via cancelBatchMode. */}
-                      <AlertDialogAction
-                        onClick={(event) => {
-                          event.preventDefault()
-                          void confirmPendingMove()
-                        }}
-                        disabled={movePhase !== "validated"}
-                        aria-busy={movePhase === "moving"}
-                      >
-                        Move
-                      </AlertDialogAction>
+                        <AlertDialogAction
+                          onClick={(event) => {
+                            event.preventDefault()
+                            void confirmPendingMove()
+                          }}
+                          disabled={movePhase !== "validated"}
+                          aria-busy={movePhase === "moving"}
+                        >
+                          Move
+                        </AlertDialogAction>
+                      </div>
                     </div>
+                  </AlertDialogContent>
+                </AlertDialog>
+                {membershipResolved && !isMember && isPublicChannel && (
+                  <div className="absolute inset-x-0 bottom-0 z-10">
+                    <JoinChannelBar
+                      workspaceId={workspaceId}
+                      streamId={streamId}
+                      channelName={stream?.slug ?? stream?.displayName ?? ""}
+                      onJoined={handleJoined}
+                      onHeightChange={handleComposerHeightChange}
+                    />
                   </div>
-                </AlertDialogContent>
-              </AlertDialog>
-              {membershipResolved && !isMember && isPublicChannel && (
-                <div className="absolute inset-x-0 bottom-0 z-10">
-                  <JoinChannelBar
+                )}
+                {(isMember || !isPublicChannel || !membershipResolved) && (
+                  <MessageInput
                     workspaceId={workspaceId}
                     streamId={streamId}
-                    channelName={stream?.slug ?? stream?.displayName ?? ""}
-                    onJoined={handleJoined}
-                    onHeightChange={handleComposerHeightChange}
+                    disabled={isArchived || isSystem}
+                    disabledReason={disabledReason}
+                    autoFocus={autoFocus}
+                    onComposerHeightChange={useVirtualized ? handleComposerHeightChange : undefined}
                   />
-                </div>
-              )}
-              {(isMember || !isPublicChannel || !membershipResolved) && (
-                <MessageInput
-                  workspaceId={workspaceId}
-                  streamId={streamId}
-                  disabled={isArchived || isSystem}
-                  disabledReason={disabledReason}
-                  autoFocus={autoFocus}
-                  onComposerHeightChange={useVirtualized ? handleComposerHeightChange : undefined}
-                />
-              )}
-            </div>
+                )}
+              </div>
+            </MessageConversationProvider>
           </SharedMessagesProvider>
         </QuoteReplyProvider>
       </EditLastMessageContext.Provider>

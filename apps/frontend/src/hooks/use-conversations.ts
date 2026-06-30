@@ -32,6 +32,9 @@ export interface CreateBoardPostInput {
   attachmentIds?: string[]
 }
 
+/** Shared stable empty list so a disabled/loading query returns one identity. */
+const EMPTY_CONVERSATIONS: ConversationWithStaleness[] = []
+
 export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
@@ -391,7 +394,11 @@ export function useConversations(workspaceId: string, streamId: string, options?
   const syncEngine = useOptionalSyncEngine()
 
   const {
-    data: conversations = [],
+    // Stable empty fallback: a fresh `[]` here would change identity every
+    // render while the query is disabled/loading, defeating downstream
+    // `useMemo`s keyed on the list (e.g. the overlay model rebuild) and
+    // re-rendering every consumer of the derived map.
+    data: conversations = EMPTY_CONVERSATIONS,
     isLoading,
     error,
     refetch,
@@ -464,6 +471,21 @@ export function useConversations(workspaceId: string, streamId: string, options?
     // reflects the new membership.
     const handleMessageAssigned = (payload: ConversationMessageAssignedPayload) => {
       if (payload.streamId !== streamId && payload.parentStreamId !== streamId) return
+      // Reflect the new membership in the list aggregate immediately so the
+      // message→conversation map (and "Show in conversation") updates from this
+      // per-message event, not only when the heavier `conversation:updated`
+      // aggregate replace lands. Idempotent: skip when the id is already
+      // present, append to the field its primacy selects.
+      queryClient.setQueryData(
+        conversationKeys.list(workspaceId, streamId, { status, limit }),
+        (old: ConversationWithStaleness[] | undefined) =>
+          old?.map((c) => {
+            if (c.id !== payload.conversationId) return c
+            const field = payload.isPrimary ? "messageIds" : "secondaryMessageIds"
+            if (c[field].includes(payload.messageId)) return c
+            return { ...c, [field]: [...c[field], payload.messageId] }
+          })
+      )
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.conversationId) })
     }
 

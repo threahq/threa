@@ -55,6 +55,32 @@ export function buildConversationOverlayModel(
 }
 
 /**
+ * Map every message id in `conversations` to the conversation it belongs to,
+ * for the "Show in conversation" action. Unlike {@link buildConversationOverlayModel}
+ * (which colors one stream's own conversations by PRIMARY membership), this:
+ *
+ * - includes `secondaryMessageIds` — a reply that joined a conversation as a
+ *   cross-stream member (e.g. a thread reply off a root opener) is mapped too;
+ * - does NOT filter by `streamId` — a conversation spans its root and the root's
+ *   threads (one root), and message ids are globally unique, so any message
+ *   rendered in the current stream resolves regardless of the conversation's
+ *   anchor.
+ *
+ * Primary membership wins when an id appears in both lists (it's the message's
+ * canonical home), so secondaries are written first and overwritten by primaries.
+ */
+export function buildMessageConversationMap(conversations: ConversationWithStaleness[]): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const conversation of conversations) {
+    for (const messageId of conversation.secondaryMessageIds) map.set(messageId, conversation.id)
+  }
+  for (const conversation of conversations) {
+    for (const messageId of conversation.messageIds) map.set(messageId, conversation.id)
+  }
+  return map
+}
+
+/**
  * Per-row annotation stamped onto message timeline items while the overlay
  * is active (see `annotateConversationRows` in event-list.tsx).
  */
