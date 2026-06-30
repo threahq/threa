@@ -8,6 +8,7 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { classifyDraftLink } from "@/lib/in-app-links"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { AccentGlow } from "./link-preview-primitives"
 import { linkPreviewsApi } from "@/api"
 import type {
   InAppLinkPreviewData,
@@ -385,16 +386,6 @@ function MemoLinkCard({
   )
 }
 
-/** Soft golden corner glow — the "golden thread" depth cue shared by every in-app card body. */
-function CardGlow() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute -right-12 -top-12 h-28 w-28 rounded-full bg-primary/10 blur-2xl"
-    />
-  )
-}
-
 /** Rounded primary-tinted tile that anchors a stream/memo card the way an avatar anchors a message. */
 function IconTile({ children }: { children: ReactNode }) {
   return (
@@ -434,7 +425,7 @@ function CardHeader({ label, onDismiss }: { label: string; onDismiss?: () => voi
 function CardBody({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className={cn("relative overflow-hidden px-3.5 py-3", className)}>
-      <CardGlow />
+      <AccentGlow />
       <div className="relative">{children}</div>
     </div>
   )
