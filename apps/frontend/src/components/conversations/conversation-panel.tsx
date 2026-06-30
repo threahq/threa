@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ChevronLeft, Hash, FileEdit, User, MessageSquareText, type LucideIcon } from "lucide-react"
 import {
@@ -60,6 +60,21 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   )
   usePanelStreamSubscriptions(panelStreamIds)
 
+  // Escape closes the panel, matching StreamPanel — the two are peers in the same
+  // slot, so the keyboard affordance should be consistent. Skip when the event was
+  // already handled (the reply composer's own Escape collapses the editor first) or
+  // when focus is in a text field, so closing the panel never eats a composer Escape.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return
+      const active = document.activeElement as HTMLElement | null
+      if (active?.closest('[contenteditable="true"], input, textarea')) return
+      onClose()
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [onClose])
+
   const anchorStreamId = post?.conversation.streamId
   const hostStream = useStreamFromStore(anchorStreamId)
   const hostStreamType = hostStream?.type
@@ -90,8 +105,13 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
           <EmptyMedia variant="icon">
             <MessageSquareText />
           </EmptyMedia>
-          <EmptyTitle>Conversation not found</EmptyTitle>
-          <EmptyDescription>It may have been moved, merged, or you no longer have access.</EmptyDescription>
+          <EmptyTitle>Couldn't open this conversation</EmptyTitle>
+          {/* The state covers both a transient load failure (retry helps) and a
+              gone/merged/access-lost conversation (retry won't) — so the copy names
+              both rather than asserting one, keeping "Try again" honest. */}
+          <EmptyDescription>
+            It may have moved or been merged, you may have lost access, or there was a problem loading it.
+          </EmptyDescription>
         </EmptyHeader>
         <Button variant="outline" size="sm" onClick={() => refetch()} className="mt-2">
           Try again

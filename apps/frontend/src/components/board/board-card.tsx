@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type LucideIcon } from "lucide-react"
 import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { useActors } from "@/hooks"
@@ -131,15 +132,20 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         <RelativeTime date={conversation.lastActivityAt} terse className="ml-auto shrink-0" />
         {/* Open the whole conversation in the side panel (Mechanism B) — reads it
             coherently and replies scoped to it, peer to a thread. */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
-          aria-label="Open conversation"
-          onClick={() => openPanel(createConversationPanelId(conversation.id))}
-        >
-          <PanelRight className="h-3.5 w-3.5" />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              aria-label="Open conversation"
+              onClick={() => openPanel(createConversationPanelId(conversation.id))}
+            >
+              <PanelRight className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Open conversation</TooltipContent>
+        </Tooltip>
       </div>
 
       <div className="mt-3 [&>*:first-child]:mt-0">

@@ -72,20 +72,25 @@ export function ConversationItem({
           </CollapsibleTrigger>
           {/* Open the whole conversation in the side panel (Mechanism B) — peer to
               the inline expand, but coherent and reply-able. */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="m-1 h-8 w-8 shrink-0 self-center text-muted-foreground hover:text-foreground"
-            aria-label="Open conversation in panel"
-            onClick={() => {
-              openPanel(createConversationPanelId(conversation.id))
-              // Close the conversation-list overlay (when this item is shown in one)
-              // so the panel it just opened isn't hidden behind it.
-              onMessageClick?.()
-            }}
-          >
-            <PanelRight className="h-4 w-4" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="m-1 h-8 w-8 shrink-0 self-center text-muted-foreground hover:text-foreground"
+                aria-label="Open conversation in panel"
+                onClick={() => {
+                  openPanel(createConversationPanelId(conversation.id))
+                  // Close the conversation-list overlay (when this item is shown in
+                  // one) so the panel it just opened isn't hidden behind it.
+                  onMessageClick?.()
+                }}
+              >
+                <PanelRight className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Open in panel</TooltipContent>
+          </Tooltip>
         </div>
         <CollapsibleContent>
           <div className="border-t px-3 py-2">

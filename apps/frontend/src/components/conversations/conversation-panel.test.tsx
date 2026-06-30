@@ -158,6 +158,6 @@ describe("ConversationPanel", () => {
         throw new Error("404")
       },
     })
-    expect(await screen.findByText("Conversation not found")).toBeTruthy()
+    expect(await screen.findByText("Couldn't open this conversation")).toBeTruthy()
   })
 })
