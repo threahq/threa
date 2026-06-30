@@ -195,6 +195,94 @@ The cheap wins (#7, #10–#12) can ride along anytime.
 
 ---
 
+## 6. Deep dive: Ariadne as dispatcher, local agents as executors
+
+The idea that excites us most, and that no competitor is positioned to do: **Ariadne doesn't execute the heavy
+work — she _delegates_ it to the local agent the user already pays for** (Claude Code, Pi), handing over a brief
+assembled from the entire workspace's memory. Ariadne is the cheap, always-on, GAM-rich **dispatcher**; the local
+agent is the capable **executor**.
+
+### Why this is the right division of labor
+
+- **Cost asymmetry.** Noticing + briefing is cheap and is Ariadne's strength. The expensive multi-step agentic
+  loop runs on the user's _own_ subscription (Claude Code Max, etc.), not our inference bill. The customer base
+  we target already holds these subscriptions — delegating to a less-capable, more-expensive hosted agent when a
+  more-capable local one is sitting idle is the wrong trade.
+- **Capability asymmetry.** The local agent has the real environment — repo, filesystem, shell, the user's actual
+  tools and credentials. Ariadne is read-mostly and sandboxed. (This mirrors Claude Tag's one genuinely smart
+  identity decision: in DMs it acts with _the user's_ credentials, not a service account. Local execution is that
+  by construction.)
+- **The brief is the product.** A cold `claude` session has zero context. Ariadne hands it a brief built from
+  unified GAM — relevant memos, the source thread, prior decisions, linked issues. That is exactly the thing a
+  local agent can never assemble alone, and that Claude Tag's _siloed_ memory structurally cannot produce either.
+- **It unifies our two halves.** Built-in Ariadne and BYOA stop being alternatives and become one loop:
+  **notice → brief → delegate → execute → report → capture.** The executor's output posts back into a stream,
+  normal memo extraction runs, and execution becomes durable workspace knowledge. The flywheel closes — and the
+  compounding is something Claude Tag (siloed memory, no BYOA) can't replicate.
+
+### The substrate already exists (this is mostly wiring, not a redesign)
+
+The bot-runtime is already a **pull-based task queue**, which is exactly the right model — it decouples Ariadne's
+noticing from whether a local agent happens to be online (subscription users run them intermittently):
+
+- `bot_invocations` is the task table: atomic claim (`FOR UPDATE SKIP LOCKED`), claim TTL + renew, bounded
+  retries (`BOT_CLAIM_MAX_ATTEMPTS=5`), `pending → claimed → completed/failed` lifecycle.
+  (`apps/backend/src/features/bot-runtimes/repository.ts`, `service.ts:416` `createInvocation()`)
+- Claude Code & Pi already **claim** work, **renew**, post **trace steps**, and **complete** with a reply +
+  **sources** — over Socket.IO with HTTP fallback. (`extensions/bot-runtime-client/src/transport.ts`)
+- The **context-bag** system already assembles rich Markdown briefs (GAM memos + quoted messages + decisions) —
+  it's just wired to Ariadne/companion today, not to bot handover.
+  (`apps/backend/src/features/agents/context-bag/`)
+- A recent fix (N-4) already inlines the last ~25 messages into the claim response, so the brief has a delivery
+  channel. (`apps/backend/src/features/public-api/handlers.ts:467`)
+- Bots already declare **traits** (`mentionable`, `active-scratchpad`) and **presence** (Available/Busy/Offline).
+
+So the gap from today to "Ariadne briefs a task → local Claude Code claims it with full GAM context → executes →
+reports back → becomes a memo" is small and additive.
+
+### What's actually new
+
+1. **`delegate_task` tool for Ariadne** _(small)_ — calls the existing `createInvocation()` with a new
+   `trigger: "delegation"`. Inputs: target agent slug (or "any available executor"), task brief, context refs
+   (stream / messageIds / memoIds). This single tool is the seed — even with nothing else, the user can say
+   "hand this to my local agent" and it works.
+2. **`DELEGATE_TASK` context-bag intent** _(small–medium)_ — assembles the handover brief: goal + acceptance
+   criteria (Ariadne writes these), relevant GAM memos, the source thread window, attachments, external refs
+   (GitHub/Linear). Delivered via the existing N-4 claim-context channel, extended with a structured brief field.
+   **This is where the moat shows up — invest here.**
+3. **"Handoffs" inbox surface** _(medium)_ — a user-facing lane listing pending/claimed/done tasks. The queue
+   already persists work; this makes it visible and lets an agent that connects later drain the inbox. INV-63:
+   surface here, don't toast.
+4. **`task-executor` trait** _(small)_ — a bot opts in to claiming delegation invocations. Keeps it explicit and
+   opt-in; reuses the existing claim path.
+5. **Status correlation** _(small, mostly reuse)_ — invocation status + response message + sources + trace
+   already exist; surface them as task status in the inbox, post the result back into the originating scratchpad,
+   and optionally let Ariadne fold the result into her next turn.
+
+### Sequencing
+
+- **MVP — user-triggered handover** (#1, #2, #3-lite, #4). Right-click a message or ask Ariadne → she builds the
+  GAM brief → invocation queued → local agent (now or on next connect) claims, executes, completes → result posts
+  back and becomes a memo. No ambient mode required. This alone is the "extremely easy handover" we want.
+- **V2 — ambient generation.** Ambient Ariadne (§4 #1) drops task _proposals_ into the Handoffs inbox; one-tap
+  approve → dispatch. Proactivity and delegation compose cleanly.
+- **V3 — routing & autonomy.** Route a task to the right agent by repo/skill/availability; full delegation audit
+  trail (who briefed, who claimed, what it did); optional auto-dispatch under a token budget (§4 #8).
+
+### Decisions to flag before building
+
+- **Brief access scope.** The brief must be scoped to what the _requesting user_ can access (they own the local
+  agent and its creds), not Ariadne's stream scope. Resolve the brief against user access, not persona access.
+- **E2E boundary.** Delegation from an E2E scratchpad can't egress plaintext to a server-built brief. The sealed
+  invocation machinery exists but `externalSealedDelivery` is off. MVP: disable delegation from E2E streams (or
+  limit it to the in-enclave window) and revisit with the sealed wire.
+- **Pull-first.** The inbox/claim model is primary (survives offline agents). Direct push to a live-linked agent
+  is an optimization, not the foundation.
+- **No spam.** Proactively generated tasks are _proposals_ until the user approves (or until V3 + a budget makes
+  auto-dispatch safe).
+
+---
+
 ## Sources
 
 - [Introducing Claude Tag — Anthropic](https://www.anthropic.com/news/introducing-claude-tag)
