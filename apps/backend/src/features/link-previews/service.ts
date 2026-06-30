@@ -1,4 +1,6 @@
 import type { Pool } from "pg"
+import pLimit from "p-limit"
+import { logger } from "@threa/backend-common"
 import { withTransaction } from "../../db"
 import { linkPreviewId } from "../../lib/id"
 import type {
@@ -20,6 +22,12 @@ import { extractUrls, normalizeUrl, detectContentType, parseInAppLink, type InAp
 import { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
 const CONTENT_PREVIEW_MAX_LENGTH = 200
+
+// Cap concurrent per-viewer in-app resolves when assembling a history page. Each
+// resolve runs several sequential queries and holds a pool connection for its
+// duration; a large page of in-app links would otherwise fan out far past the
+// pool size (main pool is 30) and queue unrelated transactional work behind it.
+const IN_APP_RESOLVE_CONCURRENCY = 8
 
 export interface LinkPreviewServiceDeps {
   pool: Pool
@@ -256,27 +264,48 @@ export class LinkPreviewService {
     const previewMap = await LinkPreviewRepository.findByMessageIds(this.deps.pool, workspaceId, messageIds)
     const result = new Map<string, LinkPreviewSummary[]>()
 
-    // Collect every in-app resolve across the page so they run concurrently
-    // rather than serializing one message at a time (INV-56 in spirit).
-    const inAppResolves: Array<Promise<void>> = []
-
+    // Build the summaries up front, collecting the in-app ones that still need a
+    // per-viewer resolve so the whole page resolves under one bounded fan-out.
+    const pending: Array<{ summary: LinkPreviewSummary; row: LinkPreview }> = []
     for (const [msgId, previews] of previewMap) {
       const completedRows = previews.filter((p) => p.status === "completed")
       if (completedRows.length === 0) continue
 
       const summaries = completedRows.map((p, i) => toLinkPreviewSummary(p, i))
       completedRows.forEach((row, i) => {
-        if (!isInAppLinkContentType(row.contentType)) return
-        inAppResolves.push(
-          this.resolveInAppTarget(workspaceId, userId, row.contentType, row).then((data) => {
-            if (data) summaries[i].inAppData = data
-          })
-        )
+        if (isInAppLinkContentType(row.contentType)) pending.push({ summary: summaries[i], row })
       })
       result.set(msgId, summaries)
     }
+    if (pending.length === 0) return result
 
-    await Promise.all(inAppResolves)
+    // A memo's tier is gated by the viewer's accessible streams — the same list
+    // for every memo on the page — so resolve it once and share it instead of
+    // re-running that query per memo preview.
+    const accessibleStreamIds = pending.some((p) => p.row.contentType === "memo_link")
+      ? await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
+          archiveStatus: ["active", "archived"],
+        })
+      : undefined
+
+    // Baking is an optional enhancement — the card falls back to an async resolve
+    // when `inAppData` is absent — so a single resolve failure must leave that one
+    // preview unbaked, never reject the whole history/catch-up enrichment.
+    const limit = pLimit(IN_APP_RESOLVE_CONCURRENCY)
+    await Promise.all(
+      pending.map(({ summary, row }) =>
+        limit(async () => {
+          try {
+            const data = await this.resolveInAppTarget(workspaceId, userId, row.contentType, row, {
+              accessibleStreamIds,
+            })
+            if (data) summary.inAppData = data
+          } catch (err) {
+            logger.warn({ err, workspaceId, previewId: row.id }, "Failed to bake in-app preview data; leaving unbaked")
+          }
+        })
+      )
+    )
     return result
   }
 
@@ -334,7 +363,8 @@ export class LinkPreviewService {
     workspaceId: string,
     userId: string,
     contentType: LinkPreviewContentType,
-    target: InAppLinkTarget
+    target: InAppLinkTarget,
+    opts?: { accessibleStreamIds?: string[] }
   ): Promise<InAppLinkPreviewData | null> {
     switch (contentType) {
       case "message_link":
@@ -342,7 +372,7 @@ export class LinkPreviewService {
       case "stream_link":
         return this.resolveStreamTarget(workspaceId, userId, target)
       case "memo_link":
-        return this.resolveMemoTarget(workspaceId, userId, target)
+        return this.resolveMemoTarget(workspaceId, userId, target, opts?.accessibleStreamIds)
       default:
         return Promise.resolve(null)
     }
@@ -453,7 +483,9 @@ export class LinkPreviewService {
   private async resolveMemoTarget(
     workspaceId: string,
     userId: string,
-    target: InAppLinkTarget
+    target: InAppLinkTarget,
+    /** Precomputed once by the batch path so memos on a page don't each re-query it. */
+    sharedAccessibleStreamIds?: string[]
   ): Promise<InAppLinkPreviewData | null> {
     const { targetWorkspaceId, targetMemoId } = target
     if (!targetWorkspaceId || !targetMemoId) return null
@@ -463,9 +495,11 @@ export class LinkPreviewService {
     }
 
     // A memo's visibility is inherited from the streams its source messages live in.
-    const accessibleStreamIds = await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
-      archiveStatus: ["active", "archived"],
-    })
+    const accessibleStreamIds =
+      sharedAccessibleStreamIds ??
+      (await resolveUserAccessibleStreamIds(this.deps.pool, workspaceId, userId, {
+        archiveStatus: ["active", "archived"],
+      }))
     // No accessible streams means no memo is reachable — return the private tier
     // without reading the memo row, matching how the message/stream paths collapse
     // "not found" and "no access" into one response (no existence side-channel).

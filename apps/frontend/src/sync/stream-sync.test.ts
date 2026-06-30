@@ -7,6 +7,7 @@ import {
   detectSequenceGap,
   getLatestPersistedSequence,
   getPersistedTail,
+  preserveBakedInAppData,
   registerStreamSocketHandlers,
   toCachedStreamBootstrap,
   updateMessageEvent,
@@ -14,7 +15,7 @@ import {
 } from "./stream-sync"
 import { streamKeys } from "@/hooks/use-streams"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
-import type { BotRuntimePresenceSummary, StreamBootstrap, StreamEvent } from "@threa/types"
+import type { BotRuntimePresenceSummary, LinkPreviewSummary, StreamBootstrap, StreamEvent } from "@threa/types"
 
 // With fake-indexeddb loaded in test setup, Dexie works against a real
 // in-memory IndexedDB. No mocks needed — tests exercise actual queries.
@@ -1651,5 +1652,64 @@ describe("bootstrap no-op rewrite skip (perceived-perf: silence spurious liveQue
 
     expect(second).toEqual(first)
     expect(second?._cachedAt).toBe(12345)
+  })
+})
+
+describe("preserveBakedInAppData", () => {
+  const inAppData: LinkPreviewSummary["inAppData"] = {
+    kind: "message",
+    accessTier: "full",
+    authorName: "Author",
+    contentPreview: "hi",
+  }
+
+  function preview(overrides: Partial<LinkPreviewSummary> & { id: string }): LinkPreviewSummary {
+    return {
+      url: `https://app.threa.io/p/${overrides.id}`,
+      title: null,
+      description: null,
+      imageUrl: null,
+      faviconUrl: null,
+      siteName: null,
+      contentType: "message_link",
+      position: 0,
+      ...overrides,
+    }
+  }
+
+  it("carries baked inAppData forward by id when the broadcast lacks it", () => {
+    const existing = [preview({ id: "lp_1", inAppData })]
+    const incoming = [preview({ id: "lp_1" })]
+
+    const merged = preserveBakedInAppData(incoming, existing)
+
+    expect(merged[0].inAppData).toEqual(inAppData)
+  })
+
+  it("does not carry to a re-extracted preview with a fresh id", () => {
+    const existing = [preview({ id: "lp_old", inAppData })]
+    const incoming = [preview({ id: "lp_new" })]
+
+    const merged = preserveBakedInAppData(incoming, existing)
+
+    expect(merged[0].inAppData).toBeUndefined()
+  })
+
+  it("keeps the incoming inAppData when it already carries one", () => {
+    const fresh = { ...inAppData, authorName: "Fresh" }
+    const existing = [preview({ id: "lp_1", inAppData })]
+    const incoming = [preview({ id: "lp_1", inAppData: fresh })]
+
+    const merged = preserveBakedInAppData(incoming, existing)
+
+    expect(merged[0].inAppData).toEqual(fresh)
+  })
+
+  it("returns the incoming array unchanged when nothing was baked", () => {
+    const incoming = [preview({ id: "lp_1" })]
+
+    const merged = preserveBakedInAppData(incoming, [preview({ id: "lp_1" })])
+
+    expect(merged).toBe(incoming)
   })
 })

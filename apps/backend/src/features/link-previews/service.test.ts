@@ -348,6 +348,63 @@ describe("LinkPreviewService.getPreviewsForMessages", () => {
 
     expect(result.get("msg_1")![0].inAppData).toEqual({ kind: "stream", accessTier: "private" })
   })
+
+  test("a single resolve failure leaves that preview unbaked without failing the page", async () => {
+    spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(
+      new Map([
+        [
+          "msg_1",
+          [
+            makePreview({ id: "lp_ok", contentType: "stream_link", targetStreamId: "stream_ok" }),
+            makePreview({ id: "lp_bad", contentType: "stream_link", targetStreamId: "stream_err" }),
+          ],
+        ],
+      ]) as never
+    )
+    const service = makeService(
+      {
+        tryAccess: (async (streamId: string) => {
+          if (streamId === "stream_err") throw new Error("boom")
+          return makeStream({ id: "stream_ok", slug: "general" })
+        }) as never,
+      },
+      {}
+    )
+
+    const previews = (await service.getPreviewsForMessages(WORKSPACE_ID, VIEWER_ID, ["msg_1"])).get("msg_1")!
+
+    expect(previews.find((p) => p.id === "lp_ok")!.inAppData).toMatchObject({ kind: "stream", accessTier: "full" })
+    expect(previews.find((p) => p.id === "lp_bad")!.inAppData).toBeUndefined()
+  })
+
+  test("resolves the viewer's accessible streams once for multiple memo previews", async () => {
+    spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(
+      new Map([
+        [
+          "msg_1",
+          [
+            makePreview({ id: "lp_a", contentType: "memo_link", targetStreamId: null, targetMemoId: "memo_a" }),
+            makePreview({ id: "lp_b", contentType: "memo_link", targetStreamId: null, targetMemoId: "memo_b" }),
+          ],
+        ],
+      ]) as never
+    )
+    const accessibleSpy = spyOn(SearchRepository, "getAccessibleStreamsWithMembers").mockResolvedValue(["stream_1"])
+    const service = makeService(
+      {},
+      {
+        getById: (async (_ws: string, memoId: string) => ({
+          memo: { title: memoId, abstract: "abstract", knowledgeType: "decision" },
+          sourceStream: { id: "stream_1", type: "channel", name: "eng" },
+        })) as never,
+      }
+    )
+
+    const previews = (await service.getPreviewsForMessages(WORKSPACE_ID, VIEWER_ID, ["msg_1"])).get("msg_1")!
+
+    expect(previews.every((p) => p.inAppData?.kind === "memo")).toBe(true)
+    expect(accessibleSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("LinkPreviewService.resolveInAppLinkByUrl", () => {

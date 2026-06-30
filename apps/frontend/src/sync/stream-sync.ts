@@ -469,6 +469,23 @@ interface LinkPreviewReadyPayload {
   previews: LinkPreviewSummary[]
 }
 
+/**
+ * The live `link_preview:ready` broadcast can't carry per-viewer `inAppData` (no
+ * single viewer to resolve against), so it would wipe data the history fetch
+ * already baked onto the cached event. Carry that `inAppData` forward by preview
+ * id when the incoming copy lacks it, so an in-app card keeps rendering
+ * synchronously instead of dropping back to the async resolve. A re-extracted
+ * preview (message edit) gets a fresh id and so is correctly not matched.
+ */
+export function preserveBakedInAppData(
+  incoming: LinkPreviewSummary[],
+  existing: LinkPreviewSummary[] | undefined
+): LinkPreviewSummary[] {
+  const baked = new Map(existing?.filter((p) => p.inAppData).map((p) => [p.id, p.inAppData]))
+  if (baked.size === 0) return incoming
+  return incoming.map((p) => (p.inAppData || !baked.has(p.id) ? p : { ...p, inAppData: baked.get(p.id) }))
+}
+
 // ============================================================================
 // Helper: find and update a message_created event in IndexedDB
 // ============================================================================
@@ -981,7 +998,7 @@ export function registerStreamSocketHandlers(
     if (payload.streamId !== streamId) return
     await updateMessageEvent(streamId, payload.messageId, (p) => ({
       ...p,
-      linkPreviews: payload.previews,
+      linkPreviews: preserveBakedInAppData(payload.previews, p.linkPreviews as LinkPreviewSummary[] | undefined),
     }))
   }
 
