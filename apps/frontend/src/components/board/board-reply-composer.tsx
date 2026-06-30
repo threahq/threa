@@ -90,9 +90,9 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
         }}
         className="mt-3 flex w-full min-w-0 items-center rounded-[16px] border border-input bg-card p-3 text-left text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
-        {/* Label-only confirmation: the text IS the in-place signal. No leading
-            icon — adding one only in the "posted" state would shift the label
-            (INV-21) and misalign the resting text against the open composer's. */}
+        {/* No leading icon: it would misalign the resting text against the open
+            composer's placeholder, and a state-dependent icon would shift the
+            label (INV-21). */}
         <span className="truncate">{RESTING_LABEL[resting]}</span>
       </button>
     )
