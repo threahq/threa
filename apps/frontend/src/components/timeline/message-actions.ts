@@ -23,7 +23,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
-import { buildStreamLink } from "@/lib/stream-links"
+import { buildStreamLink, buildConversationLink } from "@/lib/stream-links"
 
 /**
  * Context available to message actions.
@@ -45,6 +45,15 @@ export interface MessageActionContext {
   workspaceId?: string
   /** Stream ID for constructing permalink URLs */
   streamId?: string
+  /**
+   * Conversation ID — set ONLY by the conversation surfaces (board card,
+   * conversation panel) so "Copy link" emits a conversation-panel link
+   * (`?panel=conv:<id>&m=<msgId>`) that reopens the message in the panel rather
+   * than its home stream. A stream or label surface leaves this unset and the
+   * link stays the stream permalink, so copy-link is surface-specific (the same
+   * gate-by-a-field-exactly-one-side-sets pattern as `viewInStream`).
+   */
+  conversationId?: string
   /** Author's user ID */
   authorId?: string
   /** Current user's user ID */
@@ -278,8 +287,16 @@ export const messageActions: MessageAction[] = [
     id: "edit-message",
     label: "Edit message",
     icon: Pencil,
+    // Requires `onEdit` so the entry never shows on a surface that supplies
+    // identity (for reactions) but no edit handler — e.g. the board/conversation
+    // row, which carries `currentUserId` for react toggling but can't host the
+    // inline edit form.
     when: (ctx) =>
-      ctx.actorType === "user" && !!ctx.authorId && ctx.authorId === ctx.currentUserId && ctx.e2eEnabled !== true,
+      ctx.actorType === "user" &&
+      !!ctx.authorId &&
+      ctx.authorId === ctx.currentUserId &&
+      ctx.e2eEnabled !== true &&
+      !!ctx.onEdit,
     action: (ctx) => ctx.onEdit?.(),
   },
   {
@@ -471,12 +488,16 @@ export const messageActions: MessageAction[] = [
     id: "copy-link",
     label: "Copy link to message",
     icon: Link2,
-    when: (ctx) => !!ctx.messageId && !!ctx.workspaceId && !!ctx.streamId,
+    when: (ctx) => !!ctx.messageId && !!ctx.workspaceId && (!!ctx.streamId || !!ctx.conversationId),
     action: async (ctx) => {
       try {
-        // `when` above guarantees these are present; compose on the shared
-        // builder so the route shape lives in one place (stream-links.ts).
-        const url = `${buildStreamLink(ctx.workspaceId!, ctx.streamId!)}?m=${ctx.messageId}`
+        // Surface-specific: a conversation surface (board/panel) sets
+        // `conversationId`, so the link reopens the message in the conversation
+        // panel; otherwise it's the stream permalink. Both compose on the shared
+        // builders so each route shape lives in one place (stream-links.ts).
+        const url = ctx.conversationId
+          ? buildConversationLink(ctx.workspaceId!, ctx.conversationId, ctx.messageId)
+          : `${buildStreamLink(ctx.workspaceId!, ctx.streamId!)}?m=${ctx.messageId}`
         await copyToClipboard(url)
         toast.success("Link copied") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
       } catch {
@@ -490,7 +511,9 @@ export const messageActions: MessageAction[] = [
     icon: Trash2,
     separatorBefore: true,
     variant: "destructive",
-    when: (ctx) => ctx.actorType === "user" && !!ctx.authorId && ctx.authorId === ctx.currentUserId,
+    // See edit-message: gate on the handler so a react-only surface that
+    // supplies `currentUserId` doesn't surface a no-op Delete.
+    when: (ctx) => ctx.actorType === "user" && !!ctx.authorId && ctx.authorId === ctx.currentUserId && !!ctx.onDelete,
     action: (ctx) => ctx.onDelete?.(),
   },
 ]

@@ -115,6 +115,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
       authorName={getActorName(message.authorId, message.authorType)}
       currentUserId={currentUserId}
       continuation={continuation}
+      conversationId={conversation.id}
     />
   )
 
