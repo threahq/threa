@@ -264,8 +264,9 @@ export class LinkPreviewService {
     const previewMap = await LinkPreviewRepository.findByMessageIds(this.deps.pool, workspaceId, messageIds)
     const result = new Map<string, LinkPreviewSummary[]>()
 
-    // Build the summaries up front, collecting the in-app ones that still need a
-    // per-viewer resolve so the whole page resolves under one bounded fan-out.
+    // Each pending entry holds the SAME summary object that goes into `result`,
+    // so the fan-out below writes `inAppData` through the shared reference and the
+    // returned map sees it with no second pass. (Breaks if this ever stores copies.)
     const pending: Array<{ summary: LinkPreviewSummary; row: LinkPreview }> = []
     for (const [msgId, previews] of previewMap) {
       const completedRows = previews.filter((p) => p.status === "completed")
