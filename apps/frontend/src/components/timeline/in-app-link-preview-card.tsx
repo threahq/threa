@@ -61,19 +61,29 @@ interface InAppLinkPreviewCardProps {
 }
 
 export function InAppLinkPreviewCard({ preview, workspaceId, onDismiss, hydrate = true }: InAppLinkPreviewCardProps) {
-  const { data, loading } = useResolvedInAppLink(workspaceId, preview.id, undefined, hydrate)
+  // When the message was assembled for this viewer (history/catch-up fetch), the
+  // backend bakes the resolved, access-tiered data onto the preview. Render it
+  // synchronously — no skeleton, no second round-trip, and no reserved fixed
+  // footprint, so a short card sizes to its content. Only fall back to the async
+  // per-viewer resolve when the data is absent (the shared live broadcast).
+  const baked = preview.inAppData
+  const { data, loading } = useResolvedInAppLink(workspaceId, preview.id, undefined, hydrate && !baked)
+  const resolved = baked ?? data
+
+  if (resolved) {
+    return (
+      <ResolvedInAppLink
+        data={resolved}
+        url={preview.url}
+        workspaceId={workspaceId}
+        reserve={!baked}
+        onDismiss={onDismiss ? () => onDismiss(preview.id) : undefined}
+      />
+    )
+  }
 
   if (loading) return <CardSkeleton variant={preview.contentType === "memo_link" ? "memo" : "message"} />
-  if (!data) return null
-
-  return (
-    <ResolvedInAppLink
-      data={data}
-      url={preview.url}
-      workspaceId={workspaceId}
-      onDismiss={onDismiss ? () => onDismiss(preview.id) : undefined}
-    />
-  )
+  return null
 }
 
 // The timeline does not compensate a row that grows after its first paint — its
@@ -95,33 +105,43 @@ function streamIdFromUrl(url: string): string | null {
   return ref && (ref.kind === "stream" || ref.kind === "message") ? ref.streamId : null
 }
 
-/** Dispatches resolved data to the matching card. `onDismiss` is already bound. */
+/**
+ * Dispatches resolved data to the matching card. `onDismiss` is already bound.
+ * `reserve` is true on the async path (a skeleton preceded this card, so the body
+ * must commit the same fixed footprint to avoid an INV-21 jump) and false when the
+ * data was baked into the payload (rendered synchronously — no skeleton, so the
+ * card sizes to its content with no reserved padding).
+ */
 function ResolvedInAppLink({
   data,
   url,
   workspaceId,
+  reserve,
   onDismiss,
 }: {
   data: InAppLinkPreviewData
   url: string
   workspaceId: string
+  reserve: boolean
   onDismiss?: () => void
 }) {
   if (data.kind === "stream")
     return <StreamLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
-  if (data.kind === "memo") return <MemoLinkCard data={data} url={url} onDismiss={onDismiss} />
-  return <MessageLinkCard data={data} url={url} workspaceId={workspaceId} onDismiss={onDismiss} />
+  if (data.kind === "memo") return <MemoLinkCard data={data} url={url} reserve={reserve} onDismiss={onDismiss} />
+  return <MessageLinkCard data={data} url={url} workspaceId={workspaceId} reserve={reserve} onDismiss={onDismiss} />
 }
 
 function MessageLinkCard({
   data,
   url,
   workspaceId,
+  reserve,
   onDismiss,
 }: {
   data: MessageLinkPreviewData
   url: string
   workspaceId: string
+  reserve: boolean
   onDismiss?: () => void
 }) {
   // A DM/stream name is per-viewer and absent from the backend resolve, so
@@ -135,6 +155,7 @@ function MessageLinkCard({
         kindIcon={<MessageSquare />}
         kindLabel="Message"
         label="In another workspace"
+        reserve={reserve}
         onDismiss={onDismiss}
       />
     )
@@ -147,6 +168,7 @@ function MessageLinkCard({
         kindLabel="Message"
         bodyIcon={<Lock />}
         label="In a private conversation"
+        reserve={reserve}
         onDismiss={onDismiss}
       />
     )
@@ -159,6 +181,7 @@ function MessageLinkCard({
         kindLabel="Message"
         label="This message was deleted"
         italic
+        reserve={reserve}
         onDismiss={onDismiss}
       />
     )
@@ -166,7 +189,7 @@ function MessageLinkCard({
 
   const internalPath = getInternalPath(url)
   const body = (
-    <CardBody className={CARD_BODY_MESSAGE}>
+    <CardBody className={reserve ? CARD_BODY_MESSAGE : undefined}>
       <div className="flex gap-3">
         <ActorAvatar
           actorId={data.authorId ?? null}
@@ -289,7 +312,17 @@ function StreamLinkCard({
   )
 }
 
-function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url: string; onDismiss?: () => void }) {
+function MemoLinkCard({
+  data,
+  url,
+  reserve,
+  onDismiss,
+}: {
+  data: MemoLinkPreviewData
+  url: string
+  reserve: boolean
+  onDismiss?: () => void
+}) {
   if (data.accessTier === "cross_workspace") {
     return (
       <MinimalCard
@@ -297,6 +330,7 @@ function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url
         kindLabel="Memory"
         label="In another workspace"
         variant="memo"
+        reserve={reserve}
         onDismiss={onDismiss}
       />
     )
@@ -310,6 +344,7 @@ function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url
         bodyIcon={<Lock />}
         label="From a private conversation"
         variant="memo"
+        reserve={reserve}
         onDismiss={onDismiss}
       />
     )
@@ -317,7 +352,7 @@ function MemoLinkCard({ data, url, onDismiss }: { data: MemoLinkPreviewData; url
 
   const internalPath = getInternalPath(url)
   const body = (
-    <CardBody className={CARD_BODY_MEMO}>
+    <CardBody className={reserve ? CARD_BODY_MEMO : undefined}>
       <div className="flex items-start gap-3">
         <IconTile>
           <Brain />
@@ -461,6 +496,7 @@ function MinimalCard({
   label,
   italic,
   variant = "message",
+  reserve = true,
   onDismiss,
 }: {
   kindIcon: ReactNode
@@ -470,6 +506,8 @@ function MinimalCard({
   italic?: boolean
   /** Match the skeleton/full-card footprint of the link's kind so the tier swap doesn't shift. */
   variant?: CardVariant
+  /** False when rendered synchronously from baked data — no skeleton preceded it, so no fixed footprint. */
+  reserve?: boolean
   onDismiss?: () => void
 }) {
   return (
@@ -484,7 +522,7 @@ function MinimalCard({
       <div
         className={cn(
           "flex items-center gap-3 px-3.5 py-3 text-muted-foreground",
-          variant === "memo" ? CARD_BODY_MEMO : CARD_BODY_MESSAGE
+          reserve && (variant === "memo" ? CARD_BODY_MEMO : CARD_BODY_MESSAGE)
         )}
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-muted/40 [&>svg]:h-[18px] [&>svg]:w-[18px]">

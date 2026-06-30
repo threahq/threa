@@ -1021,6 +1021,16 @@ export interface LinkPreviewSummary {
   previewType?: GitHubPreviewType | LinearPreviewType | null
   previewData?: GitHubPreview | LinearPreview | null
   position: number
+  /**
+   * Resolved, access-tiered in-app link data (message/stream/memo), populated
+   * per-viewer when a message is assembled for a specific user (the history /
+   * catch-up REST fetch, which carries a `userId`). When present, the in-app
+   * preview card renders synchronously without a second permission-checked
+   * round-trip, so it never flashes a skeleton or reserves a fixed footprint.
+   * Absent on the shared live broadcast, where there is no single viewer to
+   * resolve against — there the card falls back to an async per-viewer resolve.
+   */
+  inAppData?: InAppLinkPreviewData
 }
 
 export interface WorkspaceIntegration {

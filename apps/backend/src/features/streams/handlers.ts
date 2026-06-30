@@ -398,9 +398,19 @@ function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, ne
       preview.faviconUrl === nextPreview.faviconUrl &&
       preview.siteName === nextPreview.siteName &&
       preview.contentType === nextPreview.contentType &&
-      preview.position === nextPreview.position
+      preview.position === nextPreview.position &&
+      // The stored payload carries no per-viewer `inAppData`; the enriched copy
+      // does, so this difference must register or the override is skipped and the
+      // card loses its synchronous data.
+      isInAppDataEqual(preview.inAppData, nextPreview.inAppData)
     )
   })
+}
+
+function isInAppDataEqual(current: LinkPreviewSummary["inAppData"], next: LinkPreviewSummary["inAppData"]): boolean {
+  if (current === next) return true
+  if (!current || !next) return false
+  return JSON.stringify(current) === JSON.stringify(next)
 }
 
 export function applyLinkPreviewStateToEvents(
@@ -452,7 +462,7 @@ async function enrichEventsWithLinkPreviews(
   if (messageIds.length === 0) return events
 
   const [previewMap, dismissals] = await Promise.all([
-    linkPreviewService.getPreviewsForMessages(workspaceId, messageIds),
+    linkPreviewService.getPreviewsForMessages(workspaceId, userId, messageIds),
     linkPreviewService.getDismissals(workspaceId, userId, messageIds),
   ])
 

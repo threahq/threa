@@ -78,6 +78,32 @@ describe("applyLinkPreviewStateToEvents", () => {
 
     expect((event.payload as { linkPreviews?: LinkPreviewSummary[] }).linkPreviews).toEqual([visiblePreview])
   })
+
+  it("applies the enriched preview when only the per-viewer inAppData differs", () => {
+    // The stored event payload carries the same preview with no inAppData; the map
+    // version adds it. The override must win or the card loses its synchronous data.
+    const basePreview: LinkPreviewSummary = {
+      id: "preview_msg",
+      url: "https://app.threa.io/w/ws_1/s/stream_1?m=msg_target",
+      title: null,
+      description: null,
+      imageUrl: null,
+      faviconUrl: null,
+      siteName: null,
+      contentType: "message_link",
+      position: 0,
+    }
+    const stored = createMessageEvent("msg_1")
+    ;(stored.payload as { linkPreviews?: LinkPreviewSummary[] }).linkPreviews = [basePreview]
+    const enriched: LinkPreviewSummary = {
+      ...basePreview,
+      inAppData: { kind: "message", accessTier: "full", authorName: "Author", contentPreview: "hi" },
+    }
+
+    const [event] = applyLinkPreviewStateToEvents([stored], new Map([["msg_1", [enriched]]]), new Set())
+
+    expect((event.payload as { linkPreviews?: LinkPreviewSummary[] }).linkPreviews).toEqual([enriched])
+  })
 })
 
 describe("createStreamHandlers.updateToolPolicy", () => {

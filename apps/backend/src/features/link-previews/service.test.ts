@@ -292,6 +292,64 @@ describe("LinkPreviewService.resolveInAppLink", () => {
   })
 })
 
+describe("LinkPreviewService.getPreviewsForMessages", () => {
+  test("bakes per-viewer in-app data onto in-app previews but not web previews", async () => {
+    const messagePreview = makePreview({
+      id: "lp_inapp",
+      contentType: "message_link",
+      targetStreamId: "stream_1",
+      targetMessageId: "msg_target",
+      url: "https://app.threa.io/w/ws_self/s/stream_1?m=msg_target",
+    })
+    const webPreview = makePreview({
+      id: "lp_web",
+      contentType: "website",
+      targetWorkspaceId: null,
+      targetStreamId: null,
+      url: "https://example.com/blog",
+    })
+    spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(
+      new Map([["msg_1", [messagePreview, webPreview]]]) as never
+    )
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_target",
+      streamId: "stream_1",
+      authorType: "user",
+      authorId: "user_author",
+      contentMarkdown: "Hello there",
+      deletedAt: null,
+    } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Author", avatarUrl: null } as never)
+    const service = makeService({ tryAccess: async () => makeStream({ slug: "general" }) }, {})
+
+    const result = await service.getPreviewsForMessages(WORKSPACE_ID, VIEWER_ID, ["msg_1"])
+
+    const previews = result.get("msg_1")!
+    expect(previews.find((p) => p.id === "lp_inapp")!.inAppData).toMatchObject({
+      kind: "message",
+      accessTier: "full",
+      authorName: "Author",
+      contentPreview: "Hello there",
+      streamType: "channel",
+    })
+    // A plain web preview carries no in-app resolve.
+    expect(previews.find((p) => p.id === "lp_web")!.inAppData).toBeUndefined()
+  })
+
+  test("bakes the per-viewer private tier when the viewer cannot access the target", async () => {
+    spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(
+      new Map([
+        ["msg_1", [makePreview({ id: "lp_inapp", contentType: "stream_link", targetStreamId: "stream_secret" })]],
+      ]) as never
+    )
+    const service = makeService({ tryAccess: async () => null }, {})
+
+    const result = await service.getPreviewsForMessages(WORKSPACE_ID, VIEWER_ID, ["msg_1"])
+
+    expect(result.get("msg_1")![0].inAppData).toEqual({ kind: "stream", accessTier: "private" })
+  })
+})
+
 describe("LinkPreviewService.resolveInAppLinkByUrl", () => {
   const previousOrigins = process.env.CORS_ALLOWED_ORIGINS
   beforeAll(() => {

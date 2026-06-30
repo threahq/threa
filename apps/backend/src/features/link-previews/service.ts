@@ -7,7 +7,7 @@ import type {
   LinkPreviewSummary,
   MessageLinkPreviewData,
 } from "@threa/types"
-import { getAvatarUrl } from "@threa/types"
+import { getAvatarUrl, isInAppLinkContentType } from "@threa/types"
 import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams } from "./repository"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
@@ -242,17 +242,41 @@ export class LinkPreviewService {
     return previews.filter((p) => p.status === "completed").map((p, i) => toLinkPreviewSummary(p, i))
   }
 
-  async getPreviewsForMessages(workspaceId: string, messageIds: string[]): Promise<Map<string, LinkPreviewSummary[]>> {
+  /**
+   * Assembles previews for a viewer's history/catch-up fetch. In-app previews are
+   * resolved per-viewer here (access tier, DM recipient) and baked onto
+   * `inAppData` so the card renders synchronously — the live broadcast can't carry
+   * this because it has no single viewer to resolve against (see `LinkPreviewSummary`).
+   */
+  async getPreviewsForMessages(
+    workspaceId: string,
+    userId: string,
+    messageIds: string[]
+  ): Promise<Map<string, LinkPreviewSummary[]>> {
     const previewMap = await LinkPreviewRepository.findByMessageIds(this.deps.pool, workspaceId, messageIds)
     const result = new Map<string, LinkPreviewSummary[]>()
 
+    // Collect every in-app resolve across the page so they run concurrently
+    // rather than serializing one message at a time (INV-56 in spirit).
+    const inAppResolves: Array<Promise<void>> = []
+
     for (const [msgId, previews] of previewMap) {
-      const completed = previews.filter((p) => p.status === "completed").map((p, i) => toLinkPreviewSummary(p, i))
-      if (completed.length > 0) {
-        result.set(msgId, completed)
-      }
+      const completedRows = previews.filter((p) => p.status === "completed")
+      if (completedRows.length === 0) continue
+
+      const summaries = completedRows.map((p, i) => toLinkPreviewSummary(p, i))
+      completedRows.forEach((row, i) => {
+        if (!isInAppLinkContentType(row.contentType)) return
+        inAppResolves.push(
+          this.resolveInAppTarget(workspaceId, userId, row.contentType, row).then((data) => {
+            if (data) summaries[i].inAppData = data
+          })
+        )
+      })
+      result.set(msgId, summaries)
     }
 
+    await Promise.all(inAppResolves)
     return result
   }
 
