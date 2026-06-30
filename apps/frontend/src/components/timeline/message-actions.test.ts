@@ -445,6 +445,52 @@ describe("mark-unread action", () => {
   })
 })
 
+describe("view-in-stream action (conversation/board → stream)", () => {
+  it("is hidden when viewInStream is not supplied (in-stream timeline)", () => {
+    const actions = getVisibleActions(createContext())
+    expect(actions.find((a) => a.id === "view-in-stream")).toBeUndefined()
+  })
+
+  it("is visible when viewInStream is supplied", () => {
+    const actions = getVisibleActions(
+      createContext({ viewInStream: { href: "/w/ws_1/s/stream_1?m=msg_1", label: "View in channel" } })
+    )
+    expect(actions.find((a) => a.id === "view-in-stream")).toBeDefined()
+  })
+
+  it("navigates to the message permalink via getHref", () => {
+    const ctx = createContext({ viewInStream: { href: "/w/ws_1/s/stream_1?m=msg_1", label: "View in thread" } })
+    const action = getVisibleActions(ctx).find((a) => a.id === "view-in-stream")!
+    expect(action.getHref!(ctx)).toBe("/w/ws_1/s/stream_1?m=msg_1")
+  })
+
+  it("uses the stream-type-aware label", () => {
+    const ctx = createContext({ viewInStream: { href: "/x", label: "View in thread" } })
+    const action = getVisibleActions(ctx).find((a) => a.id === "view-in-stream")!
+    expect(resolveActionLabel(action, ctx)).toBe("View in thread")
+  })
+})
+
+describe("show-in-conversation action (stream → conversation panel)", () => {
+  it("is hidden when onShowInConversation is not supplied", () => {
+    const actions = getVisibleActions(createContext())
+    expect(actions.find((a) => a.id === "show-in-conversation")).toBeUndefined()
+  })
+
+  it("is visible when onShowInConversation is supplied", () => {
+    const actions = getVisibleActions(createContext({ onShowInConversation: () => {} }))
+    expect(actions.find((a) => a.id === "show-in-conversation")).toBeDefined()
+  })
+
+  it("invokes the onShowInConversation callback when run", () => {
+    const onShowInConversation = vi.fn()
+    const ctx = createContext({ onShowInConversation })
+    const action = getVisibleActions(ctx).find((a) => a.id === "show-in-conversation")!
+    action.action!(ctx)
+    expect(onShowInConversation).toHaveBeenCalledOnce()
+  })
+})
+
 describe("groupVisibleActions", () => {
   it("returns single items for ungrouped actions and groups same-id ones", () => {
     const ctx = createContext()

@@ -25,8 +25,21 @@ import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { STREAM_ICONS } from "@/lib/streams"
 import { cn } from "@/lib/utils"
+
+/** Stream-type noun for the "View in …" jump action. Defaults to "channel"
+ * (the common case) when the row's stream isn't cached to read its type. */
+const STREAM_NOUN: Record<string, string> = {
+  channel: "channel",
+  thread: "thread",
+  dm: "DM",
+  scratchpad: "scratchpad",
+}
+function viewInStreamLabel(type: string | undefined): string {
+  return `View in ${(type && STREAM_NOUN[type]) || "channel"}`
+}
 
 /** Same-author messages within this window collapse into a continuation (no
  * repeated header) — matches the timeline's grouping. */
@@ -111,12 +124,14 @@ export function MessageItem({
   const interactiveName = message.authorType === "user" && Boolean(message.authorId)
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
+  // The row's own stream — only to pick the "View in channel/thread/…" noun.
+  const rowStream = useStreamFromStore(streamId)
 
-  // A deliberately small action set for surfaces with no thread context: file
-  // under a label, copy the content, copy a link. `isThreadParent: true`
-  // suppresses "Reply in thread" (its only gate) rather than point it at a
-  // thread we don't have here; the timestamp is the way back into the stream.
-  // No `currentUserId`, so the owner-only edit/delete actions stay hidden.
+  // A deliberately small action set for surfaces with no thread context: jump
+  // to where the message lives, file under a label, copy the content, copy a
+  // link. `isThreadParent: true` suppresses "Reply in thread" (its only gate)
+  // rather than point it at a thread we don't have here. No `currentUserId`,
+  // so the owner-only edit/delete actions stay hidden.
   const menuContext: MessageActionContext = {
     contentMarkdown: message.contentMarkdown,
     actorType: message.authorType,
@@ -126,6 +141,10 @@ export function MessageItem({
     messageId: message.id,
     workspaceId,
     streamId,
+    viewInStream: {
+      href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
+      label: viewInStreamLabel(rowStream?.type),
+    },
     onLabelMessage: () => setLabelPickerOpen(true),
   }
 

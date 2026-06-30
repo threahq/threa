@@ -18,6 +18,8 @@ import {
   CheckCheck,
   CircleDot,
   Tag,
+  ArrowUpRight,
+  PanelRight,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -132,6 +134,21 @@ export interface MessageActionContext {
    */
   onReassignConversation?: () => void
   /**
+   * Jump to where this message actually lives — its own stream timeline,
+   * `?m=` highlighted. Set only on surfaces that render a message OUTSIDE its
+   * home stream (the board card, the conversation panel, the label page), so
+   * it never appears on the in-stream timeline (you're already there). The
+   * label is stream-type aware ("View in channel" / "View in thread" / …).
+   */
+  viewInStream?: { href: string; label: string }
+  /**
+   * Open this message's conversation in the side panel (Mechanism B). Set on
+   * in-stream message rows whose primary conversation is locally known, so the
+   * action mirrors "View in channel" from the other direction. Absent for
+   * messages with no known conversation.
+   */
+  onShowInConversation?: () => void
+  /**
    * Advance the stream's read pointer to this message. Lets the user mark
    * read up to a chosen row where scroll-driven marking is fiddly (notably
    * mobile). The row only signals intent; the stream decides partial-vs-full.
@@ -241,6 +258,16 @@ async function copyToClipboard(text: string): Promise<void> {
 
 export const messageActions: MessageAction[] = [
   {
+    // Board card / conversation panel / label page → the message's home
+    // stream. Gated on `viewInStream`, which only those out-of-stream surfaces
+    // set, so the in-stream timeline never shows it.
+    id: "view-in-stream",
+    label: (ctx) => ctx.viewInStream?.label ?? "View in channel",
+    icon: ArrowUpRight,
+    when: (ctx) => !!ctx.viewInStream,
+    getHref: (ctx) => ctx.viewInStream?.href,
+  },
+  {
     id: "show-trace",
     label: "Show trace and sources",
     icon: Sparkles,
@@ -277,6 +304,15 @@ export const messageActions: MessageAction[] = [
     groupId: "reply",
     when: (ctx) => !!ctx.onQuoteReply,
     action: (ctx) => ctx.onQuoteReply?.(),
+  },
+  {
+    // In-stream → conversation panel (the mirror of "View in channel"). Only
+    // present when the message's conversation is locally known.
+    id: "show-in-conversation",
+    label: "Show in conversation",
+    icon: PanelRight,
+    when: (ctx) => !!ctx.onShowInConversation,
+    action: (ctx) => ctx.onShowInConversation?.(),
   },
   {
     // Default share entry — opens the cross-stream picker modal. Listed
