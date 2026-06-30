@@ -39,6 +39,9 @@ export function useBoardStreamSubscriptions(posts: BoardViewPost[]): void {
       add(post.conversation.streamId)
       for (const streamId of post.streamIds ?? []) add(streamId)
     }
+    // Sort so the key reflects stream membership, not card order — a reorder of
+    // the same visible streams mustn't re-fire setBoardStreamIds.
+    ids.sort()
     return ids.join(",")
     // Stream ids are prefixed ULIDs (no commas), so join/split round-trips cleanly.
   }, [posts])

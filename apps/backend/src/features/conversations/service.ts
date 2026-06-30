@@ -124,36 +124,53 @@ export class ConversationService {
       (streamIds.length > 0 ? await StreamRepository.findByIds(this.pool, streamIds) : []).map((s) => [s.id, s])
     )
 
-    // Hydrate each post's origin message plus its last few replies so the board
-    // renders real post content + reactions, not just a topic line. One batch
-    // read over the union of needed ids (INV-56); the access filter already ran
-    // in the conversation query, so these ids are all viewer-readable.
+    // Fetch every member message row (opening + all replies) in one batch
+    // (INV-56) so the recent window is chosen by `createdAt`, not by `message_ids`
+    // insertion order — a cross-stream attach interleaves the array out of time
+    // (board-view-design.md). The access filter already ran in the conversation
+    // query, so these ids are viewer-readable. Rich hydration (attachments / link
+    // previews) below is then limited to the opening + the chosen window.
+    const memberIdsToFetch = new Set<string>()
+    for (const conversation of conversations) {
+      const stream = streamById.get(conversation.streamId)
+      if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) memberIdsToFetch.add(stream.parentMessageId)
+      for (const id of conversation.messageIds) memberIdsToFetch.add(id)
+    }
+    const memberIds = [...memberIdsToFetch]
+    const messageById: Map<string, Message> =
+      memberIds.length > 0 ? await MessageRepository.findByIds(this.pool, memberIds) : new Map()
+
     const planByConversation = new Map<
       string,
       { originId: string | undefined; recentIds: string[]; totalReplies: number }
     >()
-    const idsToFetch = new Set<string>()
+    const hydrateIds = new Set<string>()
     for (const conversation of conversations) {
       const stream = streamById.get(conversation.streamId)
-      const ids = conversation.messageIds
       let originId: string | undefined
       let replyIds: string[]
       if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
         originId = stream.parentMessageId
-        replyIds = ids
+        replyIds = conversation.messageIds
       } else {
-        originId = ids[0]
-        replyIds = ids.slice(1)
+        originId = conversation.messageIds[0]
+        replyIds = conversation.messageIds.slice(1)
       }
-      const recentIds = replyIds.slice(Math.max(0, replyIds.length - 3))
+      // Chronological by `createdAt`; an id with no fetched row (deleted /
+      // unreadable) sinks to the end so it can't claim a recent slot.
+      const orderedReplyIds = [...replyIds].sort(
+        (a, b) =>
+          (messageById.get(a)?.createdAt.getTime() ?? Infinity) - (messageById.get(b)?.createdAt.getTime() ?? Infinity)
+      )
+      const recentIds = orderedReplyIds.slice(Math.max(0, orderedReplyIds.length - 3))
       planByConversation.set(conversation.id, { originId, recentIds, totalReplies: replyIds.length })
-      if (originId) idsToFetch.add(originId)
-      for (const id of recentIds) idsToFetch.add(id)
+      if (originId) hydrateIds.add(originId)
+      for (const id of recentIds) hydrateIds.add(id)
     }
-    const ids = [...idsToFetch]
-    const messageById: Map<string, Message> =
-      ids.length > 0 ? await MessageRepository.findByIds(this.pool, ids) : new Map()
-    const hydratedById = await this.hydrateBoardMessages(workspaceId, [...messageById.values()])
+    const hydratedById = await this.hydrateBoardMessages(
+      workspaceId,
+      [...hydrateIds].map((id) => messageById.get(id)).filter((m): m is Message => Boolean(m))
+    )
 
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!

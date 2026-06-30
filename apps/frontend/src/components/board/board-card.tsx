@@ -173,10 +173,12 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         hostStreamType={streamType}
         // The conversation's most-recently-active stream — the latest displayed
         // reply's own stream (a thread under the root), INCLUDING the viewer's own
-        // pending reply, so a continuation follows the conversation into the thread
-        // it just moved to instead of re-interleaving the channel. `displayedReplies`
-        // is chronological; its last entry is the freshest activity.
-        lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? openingMessage?.streamId ?? streamId}
+        // pending reply and any expand-backfilled rows, so a continuation follows
+        // the conversation into the thread it moved to instead of re-interleaving
+        // the channel. `displayedReplies` is chronological; its last entry is the
+        // freshest activity. Falls back to the conversation's own stream — NOT the
+        // opening message's, which for a thread post is the parent-stream message.
+        lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
       />
     </div>
   )
