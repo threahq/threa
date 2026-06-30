@@ -158,4 +158,34 @@ describe("InAppLinkPreviewCard", () => {
     await waitFor(() => expect(screen.getByText("In another workspace")).toBeInTheDocument())
     expect(screen.getByText("Memory")).toBeInTheDocument()
   })
+
+  it("renders synchronously from baked inAppData without an async resolve", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <InAppLinkPreviewCard
+            preview={makePreview({
+              contentType: "message_link",
+              url: "not a valid url",
+              inAppData: {
+                kind: "message",
+                accessTier: "full",
+                deleted: false,
+                streamName: "general",
+                authorName: "Baked Author",
+                contentPreview: "Baked snippet",
+              },
+            })}
+            workspaceId={workspaceId}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    // Content is present on first paint (no waitFor) and the resolve endpoint is never hit.
+    expect(screen.getByText("Baked Author")).toBeInTheDocument()
+    expect(screen.getByText("Baked snippet")).toBeInTheDocument()
+    expect(mockResolveInAppLink).not.toHaveBeenCalled()
+  })
 })
