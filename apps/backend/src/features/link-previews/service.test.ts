@@ -210,6 +210,40 @@ describe("LinkPreviewService.resolveInAppLink", () => {
     })
   })
 
+  test("strips markdown before truncating so a link cut at the boundary never leaks literal syntax", async () => {
+    // A link whose markdown spans the snippet cut: a raw slice would drop the
+    // closing `](url)` and ship the literal "[label…". Stripping first leaves
+    // clean text to truncate, so no bracket or url leaks to the card.
+    const label = "Kristoffer Östlund"
+    const longContent = `[${label}](https://app.threa.io/w/ws_self/s/stream_1?m=msg_2) ${"x".repeat(300)}`
+    spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
+      makePreview({
+        contentType: "message_link",
+        targetMessageId: "msg_1",
+        url: "https://app.threa.io/w/ws_self/s/stream_1?m=msg_1",
+      })
+    )
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_1",
+      authorType: "user",
+      authorId: "user_author",
+      contentMarkdown: longContent,
+      deletedAt: null,
+    } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Author", avatarUrl: null } as never)
+    const service = makeService({ tryAccess: async () => makeStream({ slug: "general" }) }, {})
+
+    const result = await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")
+
+    const preview = (result as { contentPreview?: string }).contentPreview ?? ""
+    expect(preview.startsWith(`${label} `)).toBe(true)
+    expect(preview).not.toContain("](")
+    expect(preview).not.toContain("https://")
+    // Truncated to the 200-char cap plus the single ellipsis, not the full tail.
+    expect(preview.length).toBeLessThanOrEqual(201)
+  })
+
   test("a DM message resolves the non-author participant as the recipient", async () => {
     spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
       makePreview({

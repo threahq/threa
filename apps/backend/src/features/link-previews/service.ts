@@ -9,7 +9,7 @@ import type {
   LinkPreviewSummary,
   MessageLinkPreviewData,
 } from "@threa/types"
-import { getAvatarUrl, isInAppLinkContentType } from "@threa/types"
+import { getAvatarUrl, isInAppLinkContentType, stripMarkdownToInline } from "@threa/types"
 import { LinkPreviewRepository, type LinkPreview, type UpdateLinkPreviewParams } from "./repository"
 import { MessageRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
@@ -22,6 +22,14 @@ import { extractUrls, normalizeUrl, detectContentType, parseInAppLink, type InAp
 import { MAX_PREVIEWS_PER_MESSAGE, getAppOrigins } from "./config"
 
 const CONTENT_PREVIEW_MAX_LENGTH = 200
+
+// Strip before truncating: truncating raw markdown can sever a `[label](url)`
+// mid-token, leaving a half-link the card's render-time strip can't repair
+// (INV-60). Inline variant flattens to the single line the card shows.
+function buildPreviewSnippet(markdown: string): string {
+  const text = stripMarkdownToInline(markdown)
+  return text.length > CONTENT_PREVIEW_MAX_LENGTH ? text.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…" : text
+}
 
 // Cap concurrent per-viewer in-app resolves when assembling a history page. Each
 // resolve runs several sequential queries and holds a pool connection for its
@@ -442,10 +450,7 @@ export class LinkPreviewService {
       }
     }
 
-    const contentPreview =
-      message.contentMarkdown.length > CONTENT_PREVIEW_MAX_LENGTH
-        ? message.contentMarkdown.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…"
-        : message.contentMarkdown
+    const contentPreview = buildPreviewSnippet(message.contentMarkdown)
 
     return {
       kind: "message",
@@ -478,10 +483,7 @@ export class LinkPreviewService {
       return { kind: "stream", accessTier: "private" }
     }
 
-    const description =
-      stream.description && stream.description.length > CONTENT_PREVIEW_MAX_LENGTH
-        ? stream.description.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…"
-        : (stream.description ?? undefined)
+    const description = stream.description ? buildPreviewSnippet(stream.description) : undefined
 
     return {
       kind: "stream",
@@ -524,10 +526,7 @@ export class LinkPreviewService {
       return { kind: "memo", accessTier: "private" }
     }
 
-    const abstract =
-      memo.memo.abstract.length > CONTENT_PREVIEW_MAX_LENGTH
-        ? memo.memo.abstract.slice(0, CONTENT_PREVIEW_MAX_LENGTH) + "…"
-        : memo.memo.abstract
+    const abstract = buildPreviewSnippet(memo.memo.abstract)
 
     return {
       kind: "memo",
