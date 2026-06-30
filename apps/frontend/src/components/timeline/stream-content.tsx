@@ -78,6 +78,7 @@ import { useConversationOverlay } from "./conversation-overlay/use-conversation-
 import { buildMessageConversationMap } from "./conversation-overlay/model"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageConversationProvider } from "./conversation-overlay/message-conversation-context"
+import { useConversationMembershipHeal } from "./conversation-overlay/use-conversation-membership-heal"
 import { useConversations } from "@/hooks/use-conversations"
 import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
@@ -521,16 +522,8 @@ export function StreamContent({
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
 
-  // Heal a missed/raced conversation assignment so "Show in conversation"
-  // resolves without a manual reload. The per-stream conversation list is a
-  // one-time fetch + live `conversation:*` events; sending from another surface
-  // (e.g. a board reply, then opening the DM) can land the message before the
-  // list's fetch sees it and after the live event was delivered to a room the
-  // sender wasn't yet in. When the viewer's OWN newest message isn't mapped
-  // yet, refetch the list once for it — scoped to own sends (the case users
-  // notice) so an ambient unassigned message from others doesn't trigger
-  // refetches, and ref-guarded so a genuinely unassigned message refetches at
-  // most once.
+  // The viewer's newest message in this stream — drives the "Show in
+  // conversation" membership heal below.
   const ownLatestMessageId = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i]
@@ -539,17 +532,12 @@ export function StreamContent({
     }
     return null
   }, [events, currentWorkspaceUserId])
-  const conversationHealedForRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!supportsConversationOverlay || !ownLatestMessageId) return
-    if (conversationIdByMessageId.has(ownLatestMessageId)) {
-      conversationHealedForRef.current = ownLatestMessageId
-      return
-    }
-    if (conversationHealedForRef.current === ownLatestMessageId) return
-    conversationHealedForRef.current = ownLatestMessageId
-    void refetchStreamConversations()
-  }, [supportsConversationOverlay, ownLatestMessageId, conversationIdByMessageId, refetchStreamConversations])
+  useConversationMembershipHeal({
+    enabled: supportsConversationOverlay,
+    latestOwnMessageId: ownLatestMessageId,
+    conversationIdByMessageId,
+    refetch: refetchStreamConversations,
+  })
 
   // Merge bootstrap + paginated `sharedMessages` so pointers in pages older
   // than the bootstrap window (or in jump-mode windows) hydrate without
