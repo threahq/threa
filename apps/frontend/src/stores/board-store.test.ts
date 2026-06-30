@@ -27,9 +27,10 @@ function makeConversation(id: string, lastActivityAt: string): ConversationWithS
   }
 }
 
-function makeMessage(id: string): BoardPostMessage {
+function makeMessage(id: string, streamId = "stream_1"): BoardPostMessage {
   return {
     id,
+    streamId,
     authorId: "usr_1",
     authorType: "user",
     contentMarkdown: id,
@@ -41,11 +42,14 @@ function makeMessage(id: string): BoardPostMessage {
 }
 
 function makePost(id: string, lastActivityAt: string, recentMessages: BoardPostMessage[] = []): BoardPost {
+  const conversation = makeConversation(id, lastActivityAt)
+  const openingMessage = makeMessage("m1")
   return {
-    conversation: makeConversation(id, lastActivityAt),
-    openingMessage: makeMessage("m1"),
+    conversation,
+    openingMessage,
     recentMessages,
     totalReplies: recentMessages.length,
+    streamIds: [...new Set([conversation.streamId, openingMessage.streamId, ...recentMessages.map((m) => m.streamId)])],
   }
 }
 

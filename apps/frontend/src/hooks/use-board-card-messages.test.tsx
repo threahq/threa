@@ -7,11 +7,11 @@ import { useBoardCardMessages, __clearBoardRailRegistry } from "./use-board-card
 const WS = "ws_1"
 const STREAM = "stream_1"
 
-function msgEvent(messageId: string, contentMarkdown: string, seq: number): CachedEvent {
+function msgEvent(messageId: string, contentMarkdown: string, seq: number, streamId = STREAM): CachedEvent {
   return {
     id: `evt_${messageId}`,
     workspaceId: WS,
-    streamId: STREAM,
+    streamId,
     sequence: String(seq),
     _sequenceNum: seq,
     eventType: "message_created",
@@ -23,9 +23,10 @@ function msgEvent(messageId: string, contentMarkdown: string, seq: number): Cach
   } as CachedEvent
 }
 
-function projectionMessage(id: string) {
+function projectionMessage(id: string, streamId = STREAM) {
   return {
     id,
+    streamId,
     authorId: "usr_1",
     authorType: "user" as const,
     contentMarkdown: `projection ${id}`,
@@ -40,15 +41,18 @@ function makePost(opts: {
   messageIds: string[]
   openingId: string | null
   recentMessages?: ReturnType<typeof projectionMessage>[]
+  /** Streams the card reads — defaults to the anchor stream only. */
+  streamIds?: string[]
   /** Server-projected reply count; defaults to the flat/thread derivation. */
   totalReplies?: number
 }): BoardViewPost {
-  const { messageIds, openingId, recentMessages = [] } = opts
+  const { messageIds, openingId, recentMessages = [], streamIds = [STREAM] } = opts
   return {
     id: "conv_1",
     workspaceId: WS,
     _lastActivityMs: 0,
     _cachedAt: 0,
+    streamIds,
     conversation: {
       id: "conv_1",
       streamId: STREAM,
@@ -65,6 +69,7 @@ function makePost(opts: {
 beforeEach(async () => {
   __clearBoardRailRegistry()
   await db.events.clear()
+  await db.streams.clear()
 })
 
 describe("useBoardCardMessages", () => {
@@ -82,6 +87,78 @@ describe("useBoardCardMessages", () => {
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1", "r2"])
     expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["first reply", "second reply"])
     expect(result.current.totalReplies).toBe(2)
+  })
+
+  it("merges a conversation that spans its root + a thread (one root) into one chronological run", async () => {
+    const THREAD = "stream_thread2"
+    await db.events.bulkPut([
+      msgEvent("m1", "the opening", 1, STREAM),
+      // The reply lives in a thread under the same root — a cross-stream member.
+      msgEvent("r1", "thread reply", 2, THREAD),
+    ])
+    const post = makePost({
+      messageIds: ["m1", "r1"],
+      openingId: "m1",
+      streamIds: [STREAM, THREAD],
+      recentMessages: [projectionMessage("r1", THREAD)],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.openingMessage?.contentMarkdown).toBe("the opening")
+    // The thread member draws live from its own stream's rail, merged in by time.
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+    expect(result.current.replies[0]?.contentMarkdown).toBe("thread reply")
+    expect(result.current.replies[0]?.streamId).toBe(THREAD)
+    expect(result.current.totalReplies).toBe(1)
+  })
+
+  it("subscribes to a thread resolved from db.streams even before it lands in the post's streamIds (no convert blink)", async () => {
+    const THREAD = "stream_threadblink"
+    // The thread off the opener exists in db.streams (created at promotion) but the
+    // server projection's streamIds hasn't widened yet (message_assigned lags).
+    await db.streams.put({
+      id: THREAD,
+      workspaceId: WS,
+      type: "thread",
+      parentMessageId: "m1",
+      rootStreamId: STREAM,
+      parentStreamId: STREAM,
+    } as never)
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "thread reply", 2, THREAD)])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM] })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    // The reply draws live from the discovered thread rail despite streamIds=[STREAM].
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["r1"]))
+    expect(result.current.replies[0]?.streamId).toBe(THREAD)
+  })
+
+  it("keeps rendering live events when a discovered thread is present but unsynced (no projection flip)", async () => {
+    const THREAD = "stream_threadunsynced"
+    // A thread off the opener exists in db.streams but has no events synced yet —
+    // a discovered (non-gating) rail. The root rail IS synced, so the card must
+    // keep its live view instead of flipping back to the projection.
+    await db.streams.put({
+      id: THREAD,
+      workspaceId: WS,
+      type: "thread",
+      parentMessageId: "m1",
+      rootStreamId: STREAM,
+      parentStreamId: STREAM,
+    } as never)
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "root reply", 2, STREAM)])
+    const post = makePost({
+      messageIds: ["m1", "r1"],
+      openingId: "m1",
+      streamIds: [STREAM],
+      recentMessages: [projectionMessage("r1")],
+    })
+    const { result } = renderHook(() => useBoardCardMessages(post))
+
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+    expect(result.current.replies[0]?.contentMarkdown).toBe("root reply")
   })
 
   it("surfaces a pending optimistic reply tagged with its conversation, before the id lands in messageIds", async () => {
@@ -110,6 +187,47 @@ describe("useBoardCardMessages", () => {
     expect(result.current.pendingReplies[0]?.contentMarkdown).toBe("my pending reply")
     // Optimistic, so it doesn't inflate the rail replies (not yet in messageIds).
     expect(result.current.replies.map((m) => m.id)).toEqual(["r1"])
+  })
+
+  it("bridges a convert-to-thread reply across the swap (no blink / no '1 more') until the real row renders", async () => {
+    // Lone root post; the opener is synced in the root stream.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const lone = makePost({ messageIds: ["m1"], openingId: "m1", streamIds: [STREAM] })
+    const { result, rerender } = renderHook((p: BoardViewPost) => useBoardCardMessages(p, "channel"), {
+      initialProps: lone,
+    })
+
+    // 1) Optimistic convert reply: tagged with the conversation, written under the
+    //    draft-thread panel (a stream the card watches for a lone threadable post).
+    const PANEL = "draft:" + STREAM + ":m1"
+    await db.events.put({
+      id: "temp_c",
+      workspaceId: WS,
+      streamId: PANEL,
+      sequence: "1700000000001",
+      _sequenceNum: 1700000000001,
+      eventType: "message_created",
+      payload: { messageId: "temp_c", contentMarkdown: "my convert reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+    // The card must subscribe to the draft panel for a lone channel post.
+    rerender({ ...lone } as BoardViewPost)
+    await waitFor(() =>
+      expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toContain("temp_c")
+    )
+
+    // 2) The swap deletes the optimistic row (it moved to the real thread stream,
+    //    which the card isn't subscribed to yet) AND messageIds now lists the real
+    //    id — the gap where it belongs to no rail. The reply must NOT blink out and
+    //    must NOT collapse under a "1 more" gap.
+    await db.events.delete("temp_c")
+    rerender(makePost({ messageIds: ["m1", "msg_real_c"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["my convert reply"]))
+    expect(result.current.totalReplies).toBe(1)
   })
 
   it("keeps a reply continuously visible across the optimistic→echo→messageIds hand-off (no blink-out)", async () => {

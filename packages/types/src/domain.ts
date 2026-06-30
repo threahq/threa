@@ -652,6 +652,13 @@ export interface ConversationWithStaleness extends Conversation {
  */
 export interface BoardPostMessage {
   id: string
+  /**
+   * The stream this message lives in. A conversation can span its root and the
+   * root's threads (one root — board-view-design.md), so each rendered message
+   * carries its own origin; the client merges the rails of the streams a post's
+   * members span and opens each message in its own stream.
+   */
+  streamId: string
   authorId: string
   authorType: AuthorType
   contentMarkdown: string
@@ -665,15 +672,11 @@ export interface BoardPostMessage {
 
 /**
  * A message gathered under a label, for the label landing page's Messages
- * section. Same lean rendering projection as {@link BoardPostMessage}, plus the
- * `streamId` it lives in: labeled messages span streams, so each row carries its
- * own origin to render the author/context and to open in its own stream
- * (`/w/:workspaceId/s/:streamId?m=:id`) — the board derives `streamId` from the
- * post instead.
+ * section. Same lean rendering projection as {@link BoardPostMessage} — including
+ * the `streamId` it lives in, so each labeled row (they span streams) renders its
+ * author/context and opens in its own stream (`/w/:workspaceId/s/:streamId?m=:id`).
  */
-export interface LabeledMessage extends BoardPostMessage {
-  streamId: string
-}
+export type LabeledMessage = BoardPostMessage
 
 /**
  * One board post: a conversation (the grouping) surfaced as a feed post (the
@@ -698,6 +701,14 @@ export interface BoardPost {
   recentMessages: BoardPostMessage[]
   /** Total replies under the origin (excludes it). Drives the "N more" gap. */
   totalReplies: number
+  /**
+   * Distinct streams this post's rendered messages span — the conversation's root
+   * and any threads an opening/recent message reaches under it (one root —
+   * board-view-design.md). The client subscribes to each stream's rail so a
+   * cross-stream member draws live; threads added after this snapshot arrive via
+   * `conversation:message_assigned`.
+   */
+  streamIds: string[]
 }
 
 /**

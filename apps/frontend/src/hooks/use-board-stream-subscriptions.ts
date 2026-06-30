@@ -26,12 +26,22 @@ export function useBoardStreamSubscriptions(posts: BoardViewPost[]): void {
   const streamSetKey = useMemo(() => {
     const seen = new Set<string>()
     const ids: string[] = []
-    for (const post of posts) {
-      const streamId = post.conversation.streamId
-      if (seen.has(streamId)) continue
+    const add = (streamId: string) => {
+      if (seen.has(streamId)) return
       seen.add(streamId)
       ids.push(streamId)
     }
+    for (const post of posts) {
+      // A conversation spans its root + the root's threads (one root); declare
+      // every stream the card reads so the SyncEngine catches up + joins each
+      // thread's room, not just the anchor — otherwise a cross-stream reply never
+      // syncs into the rail (board-view-design.md).
+      add(post.conversation.streamId)
+      for (const streamId of post.streamIds ?? []) add(streamId)
+    }
+    // Sort so the key reflects stream membership, not card order — a reorder of
+    // the same visible streams mustn't re-fire setBoardStreamIds.
+    ids.sort()
     return ids.join(",")
     // Stream ids are prefixed ULIDs (no commas), so join/split round-trips cleanly.
   }, [posts])

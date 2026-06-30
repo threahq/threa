@@ -43,6 +43,7 @@ function makeConversation(overrides: Partial<ConversationWithStaleness> = {}): C
 function makeOpeningMessage(overrides: Partial<BoardPostMessage> = {}): BoardPostMessage {
   return {
     id: "msg_1",
+    streamId: "stream_1",
     // usr_me isn't in the mocked user cache, so the author renders as a short id
     // — distinct from any DM-peer name asserted on elsewhere.
     authorId: "usr_me",
@@ -63,12 +64,22 @@ function makePost(
   totalReplies?: number
 ): BoardPost {
   const conversation = makeConversation(convOverrides)
+  const openingMessage =
+    msgOverrides === null ? null : makeOpeningMessage({ streamId: conversation.streamId, ...msgOverrides })
   return {
     conversation,
-    openingMessage: msgOverrides === null ? null : makeOpeningMessage(msgOverrides),
+    openingMessage,
     recentMessages,
     // Default mirrors a non-thread post: every message after the origin is a reply.
     totalReplies: totalReplies ?? Math.max(0, conversation.messageIds.length - 1),
+    // The streams the card reads — anchor plus any opening/recent message's stream.
+    streamIds: [
+      ...new Set([
+        conversation.streamId,
+        ...(openingMessage ? [openingMessage.streamId] : []),
+        ...recentMessages.map((m) => m.streamId),
+      ]),
+    ],
   }
 }
 
