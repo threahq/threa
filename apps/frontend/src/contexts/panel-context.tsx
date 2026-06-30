@@ -31,6 +31,25 @@ export function createDraftPanelId(parentStreamId: string, parentMessageId: stri
   return `draft:${parentStreamId}:${parentMessageId}`
 }
 
+/** A conversation panel (Mechanism B) opens a single conversation as a projection
+ *  peer to a thread, keyed by its conversation id rather than a stream id. */
+const CONVERSATION_PANEL_PREFIX = "conv:"
+
+export function isConversationPanel(panelId: string): boolean {
+  return panelId.startsWith(CONVERSATION_PANEL_PREFIX)
+}
+
+/** The conversation id behind a `conv:<id>` panel, or null when it isn't one. */
+export function parseConversationPanel(panelId: string): string | null {
+  if (!isConversationPanel(panelId)) return null
+  const conversationId = panelId.slice(CONVERSATION_PANEL_PREFIX.length)
+  return conversationId || null
+}
+
+export function createConversationPanelId(conversationId: string): string {
+  return `${CONVERSATION_PANEL_PREFIX}${conversationId}`
+}
+
 interface PanelContextValue {
   /** ID of the currently open panel (stream ID or draft panel ID) */
   panelId: string | null

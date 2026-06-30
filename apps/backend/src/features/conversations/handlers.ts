@@ -145,6 +145,38 @@ export function createConversationHandlers({ conversationService, streamService,
     },
 
     /**
+     * The board post for a single conversation — backs the conversation side
+     * panel (Mechanism B, board-view-design.md), which renders the same projection
+     * a board card does but reachable by id (a board-card expand or an /s/:id
+     * deep-link, where the board feed never seeded the post). Board-gated (404
+     * without the flag), same access as {@link getBoardMessages}.
+     */
+    async getBoardPost(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId } = req.params
+
+      const boardFlag = await featureFlagService.getFlag(workspaceId, userId, "board-view")
+      if (boardFlag !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const post = await conversationService.getBoardPostById(workspaceId, conversationId)
+      if (!post) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+      res.json({ post })
+    },
+
+    /**
      * User correction from the timeline conversation overlay: make
      * `conversationId` the message's primary conversation. Applies the move
      * and records it as boundary-extraction feedback.

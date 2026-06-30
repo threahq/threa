@@ -115,6 +115,43 @@ export class ConversationService {
     })
     const conversations = rows.map(addStalenessFields)
 
+    const posts = await this.buildBoardPosts(workspaceId, conversations)
+
+    // A full page means there may be more; the last row's (activity, id) is the
+    // next cursor — matching the repo's `(last_activity_at, id) DESC` order.
+    const last = conversations.length === limit ? conversations[conversations.length - 1] : null
+    const nextCursor = last ? `${last.lastActivityAt.toISOString()}|${last.id}` : null
+    return { posts, nextCursor }
+  }
+
+  /**
+   * The board post for a single conversation — the same projection
+   * {@link listByWorkspace} builds per row, for the conversation panel
+   * (Mechanism B, board-view-design.md). Access is the caller's responsibility
+   * (the handler runs the single-root check, INV-62), matching
+   * {@link getBoardMessages}. Returns `null` when the conversation is in another
+   * workspace or has no messages (an emptied conversation is no longer a card,
+   * mirroring the board feed's `cardinality(message_ids) > 0` filter).
+   */
+  async getBoardPostById(workspaceId: string, conversationId: string): Promise<BoardPost | null> {
+    const conversation = await ConversationRepository.findById(this.pool, conversationId)
+    if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return null
+    const [post] = await this.buildBoardPosts(workspaceId, [addStalenessFields(conversation)])
+    return post ?? null
+  }
+
+  /**
+   * Project access-filtered conversations into board posts: resolve each one's
+   * origin (a thread's opener lives in the parent stream, not the thread), pick
+   * the recent reply window by `createdAt` (not `message_ids` insertion order — a
+   * cross-stream attach interleaves the array out of time, board-view-design.md),
+   * and hydrate the opening + window with attachments/link previews. Callers must
+   * have already enforced access (SQL filter for the feed, single-root check for
+   * the single fetch); this does no access work of its own.
+   */
+  private async buildBoardPosts(workspaceId: string, conversations: ConversationWithStaleness[]): Promise<BoardPost[]> {
+    if (conversations.length === 0) return []
+
     // Resolve each conversation's stream so a thread post can show its true
     // origin: a thread is its own stream, so its `messageIds` are the replies and
     // the originating message lives in the parent stream (`parentMessageId`),
@@ -198,11 +235,7 @@ export class ConversationService {
       }
     })
 
-    // A full page means there may be more; the last row's (activity, id) is the
-    // next cursor — matching the repo's `(last_activity_at, id) DESC` order.
-    const last = conversations.length === limit ? conversations[conversations.length - 1] : null
-    const nextCursor = last ? `${last.lastActivityAt.toISOString()}|${last.id}` : null
-    return { posts, nextCursor }
+    return posts
   }
 
   /**

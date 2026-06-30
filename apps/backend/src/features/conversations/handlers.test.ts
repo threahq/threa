@@ -36,6 +36,7 @@ describe("Conversation Handlers", () => {
   )
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
+  const mockGetBoardPostById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetFlag = mock(() => Promise.resolve("on" as string))
 
   const handlers = createConversationHandlers({
@@ -44,6 +45,7 @@ describe("Conversation Handlers", () => {
       listByWorkspace: mockListByWorkspace,
       getById: mockGetById,
       getMessages: mockGetMessages,
+      getBoardPostById: mockGetBoardPostById,
     } as never,
     streamService: {
       validateStreamAccess: mockValidateStreamAccess,
@@ -59,6 +61,7 @@ describe("Conversation Handlers", () => {
     mockListByWorkspace.mockReset()
     mockGetById.mockReset()
     mockGetMessages.mockReset()
+    mockGetBoardPostById.mockReset()
     mockGetFlag.mockReset()
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
@@ -71,6 +74,7 @@ describe("Conversation Handlers", () => {
       workspaceId: "ws_1",
     })
     mockGetMessages.mockResolvedValue([])
+    mockGetBoardPostById.mockResolvedValue({ conversation: { id: "conv_1" }, openingMessage: null })
   })
 
   describe("listByStream", () => {
@@ -182,6 +186,52 @@ describe("Conversation Handlers", () => {
       await handlers.getMessages(mockReq({ params: { conversationId: "conv_1" } }), res)
 
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+    })
+  })
+
+  describe("getBoardPost", () => {
+    test("404s when the board-view feature flag is not 'on'", async () => {
+      mockGetFlag.mockResolvedValue("off")
+      await expect(
+        handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), mockRes())
+      ).rejects.toMatchObject({ status: 404 })
+      expect(mockGetBoardPostById).not.toHaveBeenCalled()
+    })
+
+    test("gates on the conversation's single root via validateStreamAccess (INV-62)", async () => {
+      await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), mockRes())
+      expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+    })
+
+    test("propagates a stream-access rejection", async () => {
+      mockValidateStreamAccess.mockRejectedValue(new StreamNotFoundError())
+      await expect(handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), mockRes())).rejects.toThrow(
+        "Stream not found"
+      )
+      expect(mockGetBoardPostById).not.toHaveBeenCalled()
+    })
+
+    test("404s when the conversation is in another workspace", async () => {
+      mockGetById.mockResolvedValue({ id: "conv_1", streamId: "stream_1", workspaceId: "ws_other" })
+      const res = mockRes()
+      await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), res)
+      expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
+      expect(mockValidateStreamAccess).not.toHaveBeenCalled()
+    })
+
+    test("404s when the post is empty/gone after the access check", async () => {
+      mockGetBoardPostById.mockResolvedValue(null)
+      const res = mockRes()
+      await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), res)
+      expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
+    })
+
+    test("returns the projected post the service resolves", async () => {
+      const post = { conversation: { id: "conv_1" }, openingMessage: null, recentMessages: [], streamIds: ["stream_1"] }
+      mockGetBoardPostById.mockResolvedValue(post)
+      const res = mockRes()
+      await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), res)
+      expect((res as unknown as { body: unknown }).body).toEqual({ post })
     })
   })
 })

@@ -8,13 +8,14 @@ import {
   createDraftPanelId,
 } from "@/contexts"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { seedBoardPosts } from "@/stores/board-store"
+import { seedBoardPosts, useBoardPost } from "@/stores/board-store"
+import type { BoardViewPost } from "./use-stable-board-view"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { StreamTypes } from "@threa/types"
-import type { CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
+import type { BoardPost, CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
 
 /**
  * Where a board post lands: an existing channel/DM the user picked, or a
@@ -41,6 +42,7 @@ export const conversationKeys = {
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
   boardMessages: (conversationId: string) => ["conversations", conversationId, "board-messages"] as const,
+  boardPost: (conversationId: string) => ["conversations", conversationId, "board-post"] as const,
 }
 
 interface ConversationCreatedPayload {
@@ -312,6 +314,71 @@ export function useReplyToBoardPost(workspaceId: string) {
       return { plan }
     },
   })
+}
+
+function toBoardViewPost(workspaceId: string, post: BoardPost): BoardViewPost {
+  const ms = Date.parse(post.conversation.lastActivityAt)
+  return {
+    ...post,
+    id: post.conversation.id,
+    workspaceId,
+    _lastActivityMs: Number.isNaN(ms) ? 0 : ms,
+    _cachedAt: Date.now(),
+  }
+}
+
+export interface ConversationBoardPost {
+  /** The post projection for the conversation panel, or null until it resolves. */
+  post: BoardViewPost | null
+  /** True only before any source (the reactive store or the by-id fetch) resolves. */
+  isLoading: boolean
+  /** The conversation couldn't be found — gone, emptied, or not readable. */
+  notFound: boolean
+  refetch: () => void
+}
+
+/**
+ * The board post backing the conversation side panel (Mechanism B), reachable by
+ * id from any surface. Prefers the reactive board-store row — already live and
+ * already feeding the board — and falls back to a by-id fetch when the panel is
+ * opened without the board feed having seeded it (a `/s/:id` deep-link or the
+ * in-stream conversation list). The fetched projection is held in query cache,
+ * NOT seeded into the board store, so opening a conversation panel never surfaces
+ * a spurious card / "N new" bump on the board. Either way the panel body reads
+ * live message rows off the `db.events` rail (use-board-card-messages), so a
+ * synthesized projection still fills in and patches in place.
+ */
+export function useConversationBoardPost(workspaceId: string, conversationId: string | null): ConversationBoardPost {
+  const conversationService = useConversationService()
+  const cached = useBoardPost(conversationId)
+  // Fetch only once the store has resolved to genuinely no row (`null`, not the
+  // still-loading `undefined`) — a card already on the board never round-trips.
+  const shouldFetch = !!conversationId && cached === null
+
+  const {
+    data: fetched,
+    isLoading: fetchLoading,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: conversationId ? conversationKeys.boardPost(conversationId) : conversationKeys.boardPost("none"),
+    queryFn: () => conversationService.getBoardPost(workspaceId, conversationId!),
+    enabled: shouldFetch,
+    staleTime: 60_000,
+  })
+
+  if (cached) return { post: cached, isLoading: false, notFound: false, refetch: () => void refetch() }
+  if (fetched)
+    return {
+      post: toBoardViewPost(workspaceId, fetched),
+      isLoading: false,
+      notFound: false,
+      refetch: () => void refetch(),
+    }
+  // A 404 (gone/empty/cross-workspace) resolves the load as not-found, not a spinner.
+  const notFound = shouldFetch && isError
+  const isLoading = cached === undefined || (shouldFetch && fetchLoading)
+  return { post: null, isLoading, notFound, refetch: () => void refetch() }
 }
 
 export function useConversations(workspaceId: string, streamId: string, options?: UseConversationsOptions) {

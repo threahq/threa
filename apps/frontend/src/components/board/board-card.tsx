@@ -1,13 +1,14 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Hash, FileEdit, User, MessageSquareText, ChevronDown, type LucideIcon } from "lucide-react"
+import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type LucideIcon } from "lucide-react"
 import { RelativeTime } from "@/components/relative-time"
+import { Button } from "@/components/ui/button"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useConversationService } from "@/contexts"
+import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
@@ -41,6 +42,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
+  const { openPanel } = usePanel()
   const [expanded, setExpanded] = useState(false)
 
   // Bodies ride the same `db.events` rail the timeline does — live and
@@ -127,6 +129,17 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
           <span className="truncate font-medium">{contextLabel}</span>
         </Link>
         <RelativeTime date={conversation.lastActivityAt} terse className="ml-auto shrink-0" />
+        {/* Open the whole conversation in the side panel (Mechanism B) — reads it
+            coherently and replies scoped to it, peer to a thread. */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label="Open conversation"
+          onClick={() => openPanel(createConversationPanelId(conversation.id))}
+        >
+          <PanelRight className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
       <div className="mt-3 [&>*:first-child]:mt-0">
