@@ -73,9 +73,17 @@ describe("getVisibleActions", () => {
 
   describe("edit action visibility", () => {
     it("should show edit action when author matches current user", () => {
-      const actions = getVisibleActions(createContext({ authorId: "member_1", currentUserId: "member_1" }))
+      const actions = getVisibleActions(
+        createContext({ authorId: "member_1", currentUserId: "member_1", onEdit: () => {} })
+      )
 
       expect(actions.find((a) => a.id === "edit-message")).toBeDefined()
+    })
+
+    it("should not show edit action when the surface supplies no onEdit handler (react-only row)", () => {
+      const actions = getVisibleActions(createContext({ authorId: "member_1", currentUserId: "member_1" }))
+
+      expect(actions.find((a) => a.id === "edit-message")).toBeUndefined()
     })
 
     it("should not show edit action when author differs from current user", () => {
@@ -100,7 +108,7 @@ describe("getVisibleActions", () => {
 
     it("should not show edit action for own messages in an E2E stream (E2EE-1)", () => {
       const actions = getVisibleActions(
-        createContext({ authorId: "member_1", currentUserId: "member_1", e2eEnabled: true })
+        createContext({ authorId: "member_1", currentUserId: "member_1", e2eEnabled: true, onEdit: () => {} })
       )
 
       expect(actions.find((a) => a.id === "edit-message")).toBeUndefined()
@@ -123,11 +131,19 @@ describe("getVisibleActions", () => {
 
   describe("delete action visibility", () => {
     it("should show delete action when author matches current user", () => {
-      const actions = getVisibleActions(createContext({ authorId: "member_1", currentUserId: "member_1" }))
+      const actions = getVisibleActions(
+        createContext({ authorId: "member_1", currentUserId: "member_1", onDelete: () => {} })
+      )
 
       const deleteAction = actions.find((a) => a.id === "delete-message")
       expect(deleteAction).toBeDefined()
       expect(deleteAction!.variant).toBe("destructive")
+    })
+
+    it("should not show delete action when the surface supplies no onDelete handler (react-only row)", () => {
+      const actions = getVisibleActions(createContext({ authorId: "member_1", currentUserId: "member_1" }))
+
+      expect(actions.find((a) => a.id === "delete-message")).toBeUndefined()
     })
 
     it("should not show delete action when author differs from current user", () => {
@@ -147,7 +163,9 @@ describe("getVisibleActions", () => {
 
   describe("action ordering for own messages", () => {
     it("should place edit before copy and delete after copy", () => {
-      const actions = getVisibleActions(createContext({ authorId: "member_1", currentUserId: "member_1" }))
+      const actions = getVisibleActions(
+        createContext({ authorId: "member_1", currentUserId: "member_1", onEdit: () => {}, onDelete: () => {} })
+      )
 
       const ids = actions.map((a) => a.id)
       const editIdx = ids.indexOf("edit-message")
@@ -160,7 +178,12 @@ describe("getVisibleActions", () => {
 
     it("should place see-revisions between edit and copy for edited messages", () => {
       const actions = getVisibleActions(
-        createContext({ authorId: "member_1", currentUserId: "member_1", editedAt: "2026-02-17T12:00:00Z" })
+        createContext({
+          authorId: "member_1",
+          currentUserId: "member_1",
+          editedAt: "2026-02-17T12:00:00Z",
+          onEdit: () => {},
+        })
       )
 
       const ids = actions.map((a) => a.id)
@@ -442,6 +465,37 @@ describe("mark-unread action", () => {
     const ctx = createContext({ onMarkReadUpToHere: () => {}, onMarkUnread: () => {} })
     const ids = getVisibleActions(ctx).map((a) => a.id)
     expect(ids.indexOf("mark-unread")).toBe(ids.indexOf("mark-read-up-to-here") + 1)
+  })
+})
+
+describe("copy-link action (surface-specific)", () => {
+  it("writes the stream permalink when no conversationId is set", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    const action = messageActions.find((a) => a.id === "copy-link")!
+    await action.action!(createContext({ messageId: "msg_1", workspaceId: "ws_1", streamId: "stream_1" }))
+
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/s/stream_1?m=msg_1`)
+  })
+
+  it("writes a conversation-panel link when conversationId is set (board/conversation surface)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    const action = messageActions.find((a) => a.id === "copy-link")!
+    await action.action!(
+      createContext({ messageId: "msg_1", workspaceId: "ws_1", streamId: "stream_1", conversationId: "conv_1" })
+    )
+
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/board?panel=conv%3Aconv_1&m=msg_1`)
+  })
+
+  it("is visible when only conversationId (no streamId) is present", () => {
+    const actions = getVisibleActions(
+      createContext({ messageId: "msg_1", workspaceId: "ws_1", conversationId: "conv_1" })
+    )
+    expect(actions.find((a) => a.id === "copy-link")).toBeDefined()
   })
 })
 

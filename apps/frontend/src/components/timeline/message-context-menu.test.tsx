@@ -79,6 +79,8 @@ describe("MessageContextMenu", () => {
         context={createContext({
           authorId: "member_1",
           currentUserId: "member_1",
+          onEdit: () => {},
+          onDelete: () => {},
         })}
       />
     )

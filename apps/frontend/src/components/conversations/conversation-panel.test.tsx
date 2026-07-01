@@ -75,6 +75,8 @@ function mountPanel(opts: {
   cached?: BoardViewPost | null
   getBoardPost?: () => Promise<BoardPost>
   getBoardMessages?: () => Promise<BoardPostMessage[]>
+  /** `?m=` deep-link target appended to the panel URL. */
+  highlightMessageId?: string
 }) {
   const getBoardPost = vi.fn(opts.getBoardPost ?? (async () => makePost()))
   const getBoardMessages = vi.fn(
@@ -82,13 +84,14 @@ function mountPanel(opts: {
   )
   vi.spyOn(boardStoreModule, "useBoardPost").mockReturnValue(opts.cached as never)
 
+  const mParam = opts.highlightMessageId ? `&m=${opts.highlightMessageId}` : ""
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: { getBoardPost, getBoardMessages } as never }}>
           <SidebarProvider>
-            <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board?panel=conv:${CONVERSATION_ID}`]}>
+            <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board?panel=conv:${CONVERSATION_ID}${mParam}`]}>
               <PanelProvider>
                 <ConversationPanel workspaceId={WORKSPACE_ID} onClose={vi.fn()} />
               </PanelProvider>
@@ -149,6 +152,21 @@ describe("ConversationPanel", () => {
     const { getBoardPost } = mountPanel({ cached: null })
     expect(await screen.findByText("Opening message body.")).toBeTruthy()
     await waitFor(() => expect(getBoardPost).toHaveBeenCalledWith(WORKSPACE_ID, CONVERSATION_ID))
+  })
+
+  it("flashes the ?m= deep-link target row and leaves the others unhighlighted", async () => {
+    mountPanel({ cached: asCached(makePost()), highlightMessageId: "msg_2" })
+    const replyBody = await screen.findByText("Reply two body.")
+    expect(replyBody.closest(".animate-highlight-flash")).toBeTruthy()
+
+    const openingBody = screen.getByText("Opening message body.")
+    expect(openingBody.closest(".animate-highlight-flash")).toBeNull()
+  })
+
+  it("offers a conversation-level copy-link affordance in the header", async () => {
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    expect(screen.getByRole("button", { name: "Copy link to conversation" })).toBeTruthy()
   })
 
   it("shows a not-found state when the conversation is gone/unreadable", async () => {

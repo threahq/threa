@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import {
   LabelableResourceTypes,
@@ -18,7 +18,9 @@ import { GiphyPreviewList } from "@/components/timeline/giphy-preview-list"
 import { MessageReactions } from "@/components/timeline/message-reactions"
 import { MessageContextMenu } from "@/components/timeline/message-context-menu"
 import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
+import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { LabelStack } from "@/components/labels/label-stack"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useUserProfile } from "@/components/user-profile"
@@ -83,6 +85,13 @@ interface MessageItemProps {
    * label page (messages span streams, so each row names its origin); the board
    * leaves it off because it shows the stream at the card level. */
   streamLabel?: { name: string; type: StreamType }
+  /** The conversation this row belongs to, set by the conversation surfaces
+   * (board card, conversation panel). Makes "Copy link" emit a conversation-panel
+   * link instead of the stream permalink; the label page leaves it unset. */
+  conversationId?: string
+  /** Scroll this row into view and flash it — the conversation panel sets it for
+   * the `?m=` deep-link target so a shared message link lands on the right row. */
+  isHighlighted?: boolean
 }
 
 /**
@@ -103,11 +112,14 @@ export function MessageItem({
   currentUserId,
   continuation,
   streamLabel,
+  conversationId,
+  isHighlighted,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const { openUserProfile } = useUserProfile()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [mobilePickerOpen, setMobilePickerOpen] = useState(false)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
   // the timeline uses; the hover overflow button is desktop/keyboard only. This
   // mirrors `SentMessageEvent` rather than exposing a tap-sized dropdown.
@@ -123,20 +135,52 @@ export function MessageItem({
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
   const rowStream = useStreamFromStore(streamId)
 
-  // A deliberately small action set for surfaces with no thread context: jump
-  // to where the message lives, file under a label, copy the content, copy a
-  // link. `isThreadParent: true` suppresses "Reply in thread" (its only gate)
-  // rather than point it at a thread we don't have here. No `currentUserId`,
-  // so the owner-only edit/delete actions stay hidden.
+  // Reactions are self-contained on any surface (no thread/composer context),
+  // so the out-of-stream row gets the same add/toggle path the timeline uses.
+  const { toggleByEmoji } = useMessageReactions(workspaceId, message.id)
+  const handleAddReaction = useCallback(
+    (emoji: string) => toggleByEmoji(emoji, message.reactions, currentUserId),
+    [toggleByEmoji, message.reactions, currentUserId]
+  )
+  const activeReactionShortcodes = useMemo(() => {
+    if (!currentUserId) return new Set<string>()
+    const active = new Set<string>()
+    for (const [shortcode, userIds] of Object.entries(message.reactions)) {
+      if (userIds.includes(currentUserId)) active.add(stripColons(shortcode))
+    }
+    return active
+  }, [currentUserId, message.reactions])
+  const allReactionShortcodes = useMemo(() => reactionShortcodes(message.reactions), [message.reactions])
+
+  // Scroll + flash the `?m=` deep-link target (conversation panel sets
+  // `isHighlighted`). Mirrors the timeline's highlight effect.
+  const containerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (isHighlighted && containerRef.current) {
+      containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
+    }
+  }, [isHighlighted])
+
+  // Reactions/copy/label plus copy-link (surface-specific via `conversationId`)
+  // and "View in channel/thread/…". `isThreadParent: true` suppresses "Reply in
+  // thread" (no thread context here); `currentUserId` powers react toggling —
+  // edit/delete stay hidden because this surface supplies no edit/delete handler
+  // (their `when` gates require one). Quote/reply are deferred (no composer
+  // context on board/conversation surfaces yet).
   const menuContext: MessageActionContext = {
     contentMarkdown: message.contentMarkdown,
     actorType: message.authorType,
     authorId: message.authorId,
+    currentUserId: currentUserId ?? undefined,
     isThreadParent: true,
     replyUrl: "",
     messageId: message.id,
     workspaceId,
     streamId,
+    conversationId,
+    reactions: message.reactions,
+    onReact: handleAddReaction,
+    onOpenFullPicker: () => setMobilePickerOpen(true),
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
       label: viewInStreamLabel(rowStream?.type),
@@ -149,10 +193,16 @@ export function MessageItem({
   // opacity-0 + pointer-events-none for touch (so a tap can't trigger the
   // invisible button — it passes through), revealing it on mouse hover / focus.
   // Touch reaches the same actions through the long-press drawer below. The body
-  // columns carry `pr-7` so this absolute button never overlays the row's
-  // top-right content (INV-21).
+  // columns carry `pr-14` so this absolute react+overflow cluster never overlays
+  // the row's top-right content (INV-21).
   const overflowMenu = (
-    <div className="reveal-actions-hover-only absolute right-0 top-0">
+    <div className="reveal-actions-hover-only absolute right-0 top-0 flex items-center gap-0.5">
+      <ReactionEmojiPicker
+        workspaceId={workspaceId}
+        onSelect={handleAddReaction}
+        activeShortcodes={activeReactionShortcodes}
+        allReactionShortcodes={allReactionShortcodes}
+      />
       <MessageContextMenu context={menuContext} />
     </div>
   )
@@ -174,6 +224,16 @@ export function MessageItem({
           onOpenChange={setDrawerOpen}
           context={menuContext}
           authorName={authorName}
+        />
+      )}
+      {mobilePickerOpen && (
+        <ReactionEmojiPicker
+          workspaceId={workspaceId}
+          onSelect={handleAddReaction}
+          activeShortcodes={activeReactionShortcodes}
+          allReactionShortcodes={allReactionShortcodes}
+          open={mobilePickerOpen}
+          onOpenChange={setMobilePickerOpen}
         />
       )}
     </>
@@ -235,9 +295,11 @@ export function MessageItem({
     const sentAt = new Date(message.createdAt)
     return (
       <div
+        ref={containerRef}
         className={cn(
-          "group reveal-host relative mt-0.5 flex gap-3",
-          longPress.isPressed && "opacity-70 transition-opacity"
+          "group reveal-host relative mt-0.5 flex scroll-mt-12 gap-3",
+          longPress.isPressed && "opacity-70 transition-opacity",
+          isHighlighted && "animate-highlight-flash"
         )}
         {...touchHandlers}
       >
@@ -249,7 +311,7 @@ export function MessageItem({
         >
           {formatTime(sentAt)}
         </div>
-        <div className="min-w-0 flex-1 pr-7">
+        <div className="min-w-0 flex-1 pr-14">
           {body}
           {labelStack}
         </div>
@@ -261,9 +323,11 @@ export function MessageItem({
 
   return (
     <div
+      ref={containerRef}
       className={cn(
-        "group reveal-host relative mt-3 flex items-start gap-3",
-        longPress.isPressed && "opacity-70 transition-opacity"
+        "group reveal-host relative mt-3 flex scroll-mt-12 items-start gap-3",
+        longPress.isPressed && "opacity-70 transition-opacity",
+        isHighlighted && "animate-highlight-flash"
       )}
       {...touchHandlers}
     >
@@ -275,7 +339,7 @@ export function MessageItem({
         alt={authorName}
         showStatus={false}
       />
-      <div className="min-w-0 flex-1 pr-7">
+      <div className="min-w-0 flex-1 pr-14">
         <div className="mb-0.5 flex items-baseline gap-2">
           {interactiveName ? (
             <button

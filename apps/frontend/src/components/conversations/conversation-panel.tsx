@@ -1,6 +1,8 @@
-import { useEffect, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { ChevronLeft, Hash, FileEdit, User, MessageSquareText, type LucideIcon } from "lucide-react"
+import { toast } from "sonner"
+import { ChevronLeft, Hash, FileEdit, User, MessageSquareText, Link2, Check, type LucideIcon } from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -9,6 +11,7 @@ import {
   SidePanelContent,
 } from "@/components/ui/side-panel"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
@@ -23,6 +26,7 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { conversationKeys, useConversationBoardPost } from "@/hooks/use-conversations"
 import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
+import { buildConversationLink } from "@/lib/stream-links"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
@@ -74,6 +78,31 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [onClose])
+
+  // Header "Copy link" confirms in place — the icon swaps to a checkmark for a
+  // beat (same footprint, no shift per INV-21) rather than a toast, because a
+  // persistent header button is an on-screen anchor (INV-63; mirrors the
+  // image-gallery toolbar). Only the anchorless callers (the mod+Shift+L
+  // shortcut, the message-menu item) keep `copyConversationLink`'s toast.
+  const [copyDone, setCopyDone] = useState(false)
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (copyResetRef.current) clearTimeout(copyResetRef.current)
+    },
+    []
+  )
+  const handleCopyLink = useCallback(async () => {
+    if (!conversationId) return
+    try {
+      await navigator.clipboard.writeText(buildConversationLink(workspaceId, conversationId))
+      setCopyDone(true)
+      if (copyResetRef.current) clearTimeout(copyResetRef.current)
+      copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
+    } catch {
+      toast.error("Failed to copy link")
+    }
+  }, [conversationId, workspaceId])
 
   const anchorStreamId = post?.conversation.streamId
   const hostStream = useStreamFromStore(anchorStreamId)
@@ -142,6 +171,22 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
             />
           )}
         </SidePanelTitle>
+        {conversationId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                aria-label={copyDone ? "Link copied" : "Copy link to conversation"}
+                onClick={() => void handleCopyLink()}
+              >
+                {copyDone ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{copyDone ? "Copied" : "Copy link"}</TooltipContent>
+          </Tooltip>
+        )}
         {!isMobile && <SidePanelClose onClose={onClose} />}
       </SidePanelHeader>
       <SidePanelContent className="flex flex-col">{body}</SidePanelContent>
@@ -167,6 +212,13 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const { conversation } = post
+  // Deep-link target from `?m=` — the row to scroll to + flash. Shared with the
+  // host page's `m` param, but only the conversation panel reads it here (the
+  // board page, the panel's host for a conversation link, ignores it), so a
+  // shared conversation link lands on the right message without a competing
+  // main-view highlight.
+  const [searchParams] = useSearchParams()
+  const highlightMessageId = searchParams.get("m")
 
   const {
     openingMessage,
@@ -228,6 +280,8 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
             authorName={getActorName(message.authorId, message.authorType)}
             currentUserId={currentUserId}
             continuation={i > 0 && isContinuation(all[i - 1], message)}
+            conversationId={conversation.id}
+            isHighlighted={message.id === highlightMessageId}
           />
         ))}
         {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}

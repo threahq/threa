@@ -42,6 +42,8 @@ import {
   MediaGalleryProvider,
   usePanel,
   isDraftPanel,
+  isConversationPanel,
+  parseConversationPanel,
 } from "@/contexts"
 import {
   useKeyboardShortcuts,
@@ -72,7 +74,7 @@ import { EnclaveRewrapNudgeListener } from "@/components/encryption/enclave-rewr
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
-import { copyStreamLink } from "@/lib/stream-links"
+import { copyStreamLink, copyConversationLink } from "@/lib/stream-links"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 
@@ -126,8 +128,9 @@ function useOnlineStatus(): boolean {
 /**
  * Registers the "copy link" shortcut. Must be rendered inside PanelProvider so
  * it can read which pane (main view vs thread panel) the user last interacted
- * with. Copies the thread link when the panel is focused and shows a real
- * (non-draft) thread; otherwise copies the main stream link.
+ * with. When the panel is focused: a conversation panel copies the conversation
+ * link, a real (non-draft) thread copies the thread link; otherwise it falls
+ * through to the main stream link.
  */
 function StreamLinkKeyboardHandler({
   workspaceId,
@@ -140,9 +143,20 @@ function StreamLinkKeyboardHandler({
 
   useKeyboardShortcuts({
     copyStreamLink: () => {
-      const targetStreamId = getFocusedPane() === "panel" && panelId && !isDraftPanel(panelId) ? panelId : mainStreamId
-      if (!targetStreamId) return
-      void copyStreamLink(workspaceId, targetStreamId)
+      if (getFocusedPane() === "panel" && panelId) {
+        if (isConversationPanel(panelId)) {
+          const conversationId = parseConversationPanel(panelId)
+          if (conversationId) {
+            void copyConversationLink(workspaceId, conversationId)
+            return
+          }
+          // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
+        } else if (!isDraftPanel(panelId)) {
+          void copyStreamLink(workspaceId, panelId)
+          return
+        }
+      }
+      if (mainStreamId) void copyStreamLink(workspaceId, mainStreamId)
     },
   })
 
