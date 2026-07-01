@@ -6,6 +6,7 @@ import type { LinkPreview, UpdateLinkPreviewParams } from "./repository"
 import { detectContentType, isBlockedUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
 import { fetchGitHubPreview } from "./github-preview"
 import { fetchLinearPreview } from "./linear-preview"
+import { buildVideoPreviewParams, detectVideoProvider } from "./video-preview"
 import {
   FETCH_TIMEOUT_MS,
   FETCH_USER_AGENT,
@@ -31,6 +32,8 @@ interface OEmbedResponse {
   provider_name?: string
   thumbnail_url?: string
   html?: string
+  width?: number
+  height?: number
 }
 
 /**
@@ -70,6 +73,27 @@ async function tryOEmbed(url: string): Promise<UpdateLinkPreviewParams | null> {
       faviconUrl = `${new URL(url).origin}/favicon.ico`
     } catch {
       /* ignore */
+    }
+
+    // A video provider that also serves oEmbed (YouTube/Vimeo/Loom): fold the
+    // oEmbed title/thumbnail/dimensions into a video preview whose embed URL is
+    // reconstructed from the parsed id — never from `data.html`.
+    const videoMatch = detectVideoProvider(url)
+    if (videoMatch) {
+      return buildVideoPreviewParams(
+        videoMatch,
+        url,
+        {
+          title: data.title ?? null,
+          posterUrl: data.thumbnail_url ?? null,
+          authorName: data.author_name ?? null,
+          width: data.width ?? null,
+          height: data.height ?? null,
+          siteName: data.provider_name ?? null,
+          faviconUrl,
+        },
+        new Date().toISOString()
+      )
     }
 
     return {
@@ -318,6 +342,26 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
       return { status: "failed", expiresAt: minutesFromNow(30) }
     }
 
+    // Video providers without oEmbed (Twitch), or one whose oEmbed failed above:
+    // classify from the URL pattern and use the scraped og:image/title as poster.
+    const videoMatch = detectVideoProvider(url)
+    if (videoMatch && metadata.status === "completed") {
+      return buildVideoPreviewParams(
+        videoMatch,
+        url,
+        {
+          title: metadata.title ?? null,
+          posterUrl: metadata.imageUrl ?? null,
+          authorName: null,
+          width: null,
+          height: null,
+          siteName: metadata.siteName ?? null,
+          faviconUrl: metadata.faviconUrl ?? null,
+        },
+        new Date().toISOString()
+      )
+    }
+
     return metadata
   } catch (err) {
     log.warn({ err, url }, "Failed to fetch link preview metadata")
@@ -541,8 +585,18 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
         const isLinearUrl = !isGitHubUrl && parseLinearUrl(p.url) !== null
         const isProviderUrl = isGitHubUrl || isLinearUrl
         const shouldAttemptProviderUpgrade = isProviderUrl && existing.previewType === null
+        // A video URL cached as a plain website (e.g. before this feature shipped)
+        // must re-run classification even while fresh; video classification happens
+        // inside fetchGenericMetadata, not the provider-fetch branch below. Gated to
+        // `completed` rows so a recently-failed fetch still honors its retry backoff
+        // (a failed row also carries the default `website` contentType).
+        const shouldReclassifyVideo =
+          !isProviderUrl &&
+          existing.status === "completed" &&
+          existing.contentType !== "video" &&
+          detectVideoProvider(p.url) !== null
 
-        if (isPreviewCacheFresh(existing) && !shouldAttemptProviderUpgrade) {
+        if (isPreviewCacheFresh(existing) && !shouldAttemptProviderUpgrade && !shouldReclassifyVideo) {
           return { id: p.id, skipped: true }
         }
 
@@ -553,7 +607,10 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
           providerMetadata = await fetchLinearPreview(workspaceId, p.url, deps.workspaceIntegrationService)
         }
 
-        if (existing.previewType && providerMetadata === null) {
+        // Guard against downgrading a rich provider (GitHub/Linear) preview when its
+        // fetch comes back empty. Scoped to provider URLs: video never populates
+        // providerMetadata, so an unscoped check froze video rows past their TTL.
+        if (isProviderUrl && existing.previewType && providerMetadata === null) {
           return { id: p.id, skipped: true }
         }
         if (shouldAttemptProviderUpgrade && providerMetadata === null && isPreviewCacheFresh(existing)) {

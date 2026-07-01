@@ -28,6 +28,7 @@ export const OEMBED_PROVIDERS: ReadonlyArray<{ pattern: RegExp; endpoint: string
   { pattern: /^https?:\/\/(?:www\.)?youtube\.com\/watch/, endpoint: "https://www.youtube.com/oembed" },
   { pattern: /^https?:\/\/youtu\.be\//, endpoint: "https://www.youtube.com/oembed" },
   { pattern: /^https?:\/\/(?:www\.)?vimeo\.com\/\d+/, endpoint: "https://vimeo.com/api/oembed.json" },
+  { pattern: /^https?:\/\/(?:www\.)?loom\.com\/share\//, endpoint: "https://www.loom.com/v1/oembed" },
   {
     pattern: /^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/]+\/status\/\d+/,
     endpoint: "https://publish.twitter.com/oembed",

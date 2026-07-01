@@ -978,6 +978,362 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
+  /** Build a link-preview service mock for a single pending preview of `url`. */
+  function pendingServiceMock(id: string, url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
+    return {
+      extractAndCreatePending: mock(async () => [{ id, url }]),
+      getPreviewById: mock(async () => ({
+        id,
+        workspaceId: "ws_123",
+        url,
+        normalizedUrl: url,
+        title: null,
+        description: null,
+        imageUrl: null,
+        faviconUrl: null,
+        siteName: null,
+        contentType: "website",
+        status: "pending",
+        previewType: null,
+        previewData: null,
+        targetWorkspaceId: null,
+        targetStreamId: null,
+        targetMessageId: null,
+        fetchedAt: null,
+        expiresAt: null,
+        createdAt: new Date("2026-07-01T10:00:00.000Z"),
+      })),
+      completePreviewsAndPublish,
+      replacePreviewsForMessage: mock(async () => []),
+      publishEmptyPreviews: mock(async () => {}),
+    } as any
+  }
+
+  test("classifies a YouTube link as a video preview with an embed URL built from the parsed id", async () => {
+    // The oEmbed `html` deliberately points its iframe at an attacker origin; the stored embedUrl
+    // must be reconstructed from the video id against youtube-nocookie.com, never lifted from html.
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.startsWith("https://www.youtube.com/oembed")) {
+        return new Response(
+          JSON.stringify({
+            title: "Never Gonna Give You Up",
+            author_name: "Rick Astley",
+            provider_name: "YouTube",
+            thumbnail_url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            width: 480,
+            height: 270,
+            html: '<iframe src="https://evil.example.com/steal"></iframe>',
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: pendingServiceMock("lp_yt", url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_yt",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_yt", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_yt",
+      [
+        expect.objectContaining({
+          id: "lp_yt",
+          skipped: false,
+          metadata: expect.objectContaining({
+            contentType: "video",
+            previewType: "video",
+            imageUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            previewData: expect.objectContaining({
+              provider: "youtube",
+              videoId: "dQw4w9WgXcQ",
+              embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+              authorName: "Rick Astley",
+            }),
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test("classifies a Twitch VOD as a video preview via the HTML fallback (no oEmbed)", async () => {
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          `<html><head>` +
+            `<meta property="og:title" content="Epic Play">` +
+            `<meta property="og:image" content="https://static-cdn.jtvnw.net/cf_vods/thumb.jpg">` +
+            `<meta property="og:site_name" content="Twitch">` +
+            `</head></html>`,
+          { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+        )
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.twitch.tv/videos/123456789"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: pendingServiceMock("lp_tw", url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_tw",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_tw", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_tw",
+      [
+        expect.objectContaining({
+          id: "lp_tw",
+          skipped: false,
+          metadata: expect.objectContaining({
+            contentType: "video",
+            previewType: "video",
+            imageUrl: "https://static-cdn.jtvnw.net/cf_vods/thumb.jpg",
+            previewData: expect.objectContaining({
+              provider: "twitch",
+              videoId: "123456789",
+              embedUrl: "https://player.twitch.tv/?video=123456789",
+              title: "Epic Play",
+            }),
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test("refetches an expired video preview instead of freezing it past its TTL", async () => {
+    // A completed video row whose 24h TTL has lapsed must re-run classification.
+    // Regression guard: the GitHub/Linear-scoped "keep existing rich preview when
+    // provider fetch is empty" skip must not apply to video (which never populates
+    // providerMetadata), or every video preview freezes at first classification.
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.startsWith("https://www.youtube.com/oembed")) {
+        return new Response(
+          JSON.stringify({
+            title: "Refreshed Title",
+            provider_name: "YouTube",
+            thumbnail_url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            width: 480,
+            height: 270,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_ttl", url }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_ttl",
+          workspaceId: "ws_123",
+          url,
+          normalizedUrl: url,
+          title: "Stale Title",
+          description: null,
+          imageUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/old.jpg",
+          faviconUrl: null,
+          siteName: "YouTube",
+          contentType: "video",
+          status: "completed",
+          previewType: "video",
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: new Date("2026-06-01T10:00:00.000Z"),
+          expiresAt: new Date("2026-06-02T10:00:00.000Z"), // long past — expired
+          createdAt: new Date("2026-06-01T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_ttl",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_ttl", contentMarkdown: url },
+    })
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_ttl",
+      [
+        expect.objectContaining({
+          id: "lp_ttl",
+          skipped: false,
+          overwrite: true,
+          metadata: expect.objectContaining({
+            contentType: "video",
+            title: "Refreshed Title",
+            previewData: expect.objectContaining({ embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" }),
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test("upgrades a still-fresh website-cached video URL to a video preview", async () => {
+    // A YouTube link cached as a plain website before this feature shipped must
+    // reclassify to a video card even while the website TTL is still fresh —
+    // detectContentType() is extension-based and never yields "video" at insert.
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.startsWith("https://www.youtube.com/oembed")) {
+        return new Response(
+          JSON.stringify({ title: "A Video", provider_name: "YouTube", thumbnail_url: "https://i.ytimg.com/x.jpg" }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_up", url }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_up",
+          workspaceId: "ws_123",
+          url,
+          normalizedUrl: url,
+          title: "Generic OG Title",
+          description: "og desc",
+          imageUrl: "https://og.example/img.jpg",
+          faviconUrl: null,
+          siteName: "YouTube",
+          contentType: "website",
+          status: "completed",
+          previewType: null,
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: new Date("2026-06-30T10:00:00.000Z"),
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000), // still fresh
+          createdAt: new Date("2026-06-30T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_up",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_up", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_up",
+      [
+        expect.objectContaining({
+          id: "lp_up",
+          skipped: false,
+          overwrite: true,
+          metadata: expect.objectContaining({ contentType: "video", previewType: "video" }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test("does not retry a video URL whose recent fetch failed while its backoff is still fresh", async () => {
+    // A failed row keeps the default "website" contentType; the reclassify path must
+    // not bypass the 1-minute retry backoff, or a burst of messages referencing the
+    // same failing link would hammer the provider.
+    const fetchMock = mock(async () => {
+      throw new Error("fetch should not run while the failure backoff is fresh")
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_fail", url }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_fail",
+          workspaceId: "ws_123",
+          url,
+          normalizedUrl: url,
+          title: null,
+          description: null,
+          imageUrl: null,
+          faviconUrl: null,
+          siteName: null,
+          contentType: "website",
+          status: "failed",
+          previewType: null,
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: new Date("2026-06-30T10:00:00.000Z"),
+          expiresAt: new Date(Date.now() + 60 * 1000), // backoff still active
+          createdAt: new Date("2026-06-30T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_fail",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_fail", contentMarkdown: url },
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_fail",
+      [{ id: "lp_fail", skipped: true }],
+      { forcePublish: undefined }
+    )
+  })
+
   /** Build the link-preview service mock for a single pending preview of `url`. */
   function redditServiceMock(url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
     return {

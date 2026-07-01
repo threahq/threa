@@ -31,6 +31,8 @@ import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
 import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
+import { buildEmbedPlaybackSrc } from "@/components/gallery/video-embed"
+import type { VideoPreviewProvider } from "@threa/types"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
@@ -41,6 +43,18 @@ import { fetchTextContent } from "@/components/gallery/use-text-content"
 export type GalleryItem =
   | { type: "image"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
   | { type: "video"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
+  // Third-party video embed (link preview). No attachment bytes — plays via an
+  // iframe against a trusted provider origin; download/copy are gated off.
+  | {
+      type: "video-embed"
+      url: string
+      embedUrl: string
+      provider: VideoPreviewProvider
+      posterUrl: string | null
+      aspectRatio: number
+      filename: string
+      attachmentId: string
+    }
   | { type: "markdown"; url: string; filename: string; attachmentId: string }
   | { type: "html"; url: string; filename: string; attachmentId: string }
   | { type: "pdf"; url: string; filename: string; attachmentId: string }
@@ -49,6 +63,7 @@ export type GalleryItem =
 const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   image: "Image",
   video: "Video",
+  "video-embed": "Video",
   markdown: "Markdown document",
   html: "HTML document",
   pdf: "PDF document",
@@ -114,6 +129,10 @@ function GalleryVideo({ current }: { current: Extract<GalleryItem, { type: "vide
 interface GalleryMediaContentProps {
   current: GalleryItem
   isActive?: boolean
+  /** True only for the exact viewed slide (not the ±1 preload window `isActive`
+   *  covers). Gates third-party embed playback so a swipe-adjacent video-embed
+   *  never autoplays off-screen. Defaults to `isActive` for single-slide callers. */
+  isCurrent?: boolean
   /** Non-null only for the currently-displayed slide. When present with an image,
    *  the image is rendered via ZoomableImage so it can be zoomed/panned. */
   zoomableRef?: React.Ref<ZoomableImageHandle>
@@ -126,6 +145,7 @@ interface GalleryMediaContentProps {
 function GalleryMediaContent({
   current,
   isActive = true,
+  isCurrent = isActive,
   zoomableRef,
   onZoomChange,
   onScaleChange,
@@ -206,6 +226,48 @@ function GalleryMediaContent({
       </div>
     )
   }
+  if (current.type === "video-embed") {
+    // Only the exact current slide mounts the (autoplaying) iframe — a ±1 preload
+    // neighbor shows the poster, so no third-party player loads or plays off-screen.
+    if (!isCurrent) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          {current.posterUrl ? (
+            <img
+              src={current.posterUrl}
+              alt={current.filename}
+              className="max-w-full max-h-full object-contain select-none"
+              draggable={false}
+            />
+          ) : (
+            <div className="h-16 w-16 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
+              <Play className="h-7 w-7 text-white/60 ml-0.5" fill="currentColor" />
+            </div>
+          )}
+        </div>
+      )
+    }
+    return (
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div
+          className="relative max-w-full max-h-full overflow-hidden rounded-lg bg-black shadow-2xl"
+          style={{
+            aspectRatio: current.aspectRatio,
+            width: `min(100%, calc(85vh * ${current.aspectRatio}))`,
+          }}
+        >
+          <iframe
+            src={buildEmbedPlaybackSrc(current.embedUrl, current.provider)}
+            title={current.filename}
+            className="absolute inset-0 h-full w-full"
+            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        </div>
+      </div>
+    )
+  }
   // While the full-resolution URL hasn't arrived yet, show the already-loaded
   // thumbnail as a poster instead of a blank loader — matches the video path
   // (poster while bytes stream in) and makes large-image opens feel instant.
@@ -271,8 +333,9 @@ function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
       </div>
     )
   }
-  if (item.type === "video") {
-    if (!item.thumbnailUrl) {
+  if (item.type === "video" || item.type === "video-embed") {
+    const poster = item.type === "video" ? item.thumbnailUrl : item.posterUrl
+    if (!poster) {
       return (
         <div className="w-full h-20 flex items-center justify-center bg-gradient-to-br from-white/10 to-white/5">
           <div className="h-7 w-7 rounded-full bg-white/10 backdrop-blur-sm flex items-center justify-center">
@@ -284,7 +347,7 @@ function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
     return (
       <div className="relative w-full h-20 bg-black/40">
         <img
-          src={item.thumbnailUrl}
+          src={poster}
           alt={item.filename}
           className="absolute inset-0 w-full h-full object-contain"
           loading="lazy"
@@ -931,6 +994,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                         <GalleryMediaContent
                           current={item}
                           isActive={Math.abs(i - currentIndex) <= 1}
+                          isCurrent={i === currentIndex}
                           zoomableRef={i === currentIndex && item.type === "image" ? zoomableRef : undefined}
                           onZoomChange={i === currentIndex && item.type === "image" ? setIsZoomed : undefined}
                           onScaleChange={i === currentIndex && item.type === "image" ? publishScale : undefined}
