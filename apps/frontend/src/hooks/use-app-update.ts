@@ -281,6 +281,13 @@ export function shouldAnnounceStalePage(
  */
 async function announceIfPageStale(registration: ServiceWorkerRegistration): Promise<void> {
   if (registration.waiting || registration.installing) return
+  // Only while a controller is serving this page: the announce's premise is
+  // that Reload is an instant local activation onto the already-active
+  // precache. An uncontrolled page has no precache to land on — its version
+  // mismatch is a stale server response, not an SW update, and a toast here
+  // would route a later (possibly offline) click into reloadOrRecover's
+  // no-controller branch: a cache wipe not proven online at wipe time.
+  if (!navigator.serviceWorker?.controller) return
   const latest = await fetchLatestVersion()
   if (!shouldAnnounceStalePage(currentAppVersion(), latest, announcedStaleVersion)) return
   // A worker that started installing during the fetch owns the announce.
