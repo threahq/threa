@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, type ReactNode } from "react"
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react"
 import {
   ExternalLink,
   X,
@@ -138,8 +138,13 @@ export function LinkPreviewCard({
   )
 
   if (preview.contentType === "image") {
+    // data-native-context makes the row long-press hook defer to the browser's
+    // native menu (via `deferToNativeLinks`), so long-pressing the image still
+    // gets "save/copy image" on touch instead of the app drawer — the tap opens
+    // the gallery, and the gallery gates download/copy off for external images.
     return (
       <div
+        data-native-context="true"
         className={cn(
           "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
           "hover:border-primary/50 hover:shadow-sm",
@@ -276,6 +281,15 @@ function ImagePreviewContent({ preview, workspaceId }: { preview: LinkPreviewSum
 
   const src = preview.imageUrl ?? preview.url
   const filename = preview.title ?? getDomain(preview.url)
+
+  // A link preview is PATCHed in place as its metadata resolves (a real
+  // `imageUrl` can replace the raw url on the same mounted card), so a stale
+  // error or a `contain` fit measured off the previous image must not carry
+  // over to the new one.
+  useEffect(() => {
+    setImageError(false)
+    setFit("cover")
+  }, [src])
 
   const galleryItems = useMemo<GalleryItem[]>(
     () => [{ type: "image", url: src, thumbnailUrl: src, filename, attachmentId: linkPreviewGalleryId(src) }],
