@@ -17,6 +17,20 @@ export const RELOAD_FALLBACK_TIMEOUT_MS = 3000
 // reload actually swapped in new code — see reconcilePostReload.
 declare const __APP_VERSION__: string
 
+// True only in the Playwright E2E build (vite `define`, gated on VITE_BACKEND_PORT).
+// The update toast uses `duration: Infinity` and renders in the aria-live
+// Notifications region, so under Playwright it parks over the composer and
+// intercepts pointer events for the rest of the test — every spec that clicks a
+// button underneath it flakes. Suppress only the toast in that build; the SW and
+// its update pipeline still run (push tests need the registration). typeof-guarded
+// because the `define` isn't applied under vitest (see currentAppVersion). Never
+// gated in production — the toast is the only signal a new build is parked.
+declare const __E2E_BUILD__: boolean
+
+export function isE2eBuild(): boolean {
+  return typeof __E2E_BUILD__ === "boolean" && __E2E_BUILD__
+}
+
 // Marks that the user clicked Reload, so the first check after the page comes
 // back can verify the swap actually happened (running build == server's latest)
 // rather than silently re-announcing the same build forever. The window bounds a
@@ -194,6 +208,7 @@ function announceIfWaiting(registration: ServiceWorkerRegistration): void {
   const waiting = registration.waiting
   if (!shouldAnnounceWaiting(waiting, announcedWaiting)) return
   announcedWaiting = waiting
+  if (isE2eBuild()) return
   toast("A new version of Threa is available", {
     id: TOAST_ID,
     duration: Infinity,
