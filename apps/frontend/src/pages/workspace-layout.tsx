@@ -80,10 +80,10 @@ import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 
 /**
  * How long the tab must be backgrounded before a resume triggers the engine's
- * socket probe + catch-up. Tighter than `useAppUpdate`'s 10s version-check
- * window: a few seconds away is enough for socket events to be missed (a
- * notification-shade peek that delivered a push, a quick app switch), and the
- * resume path is cheap in active mode (cursor catch-up + per-stream deltas).
+ * socket probe + catch-up. A few seconds away is enough for socket events to
+ * be missed (a notification-shade peek that delivered a push, a quick app
+ * switch), and the resume path is cheap in active mode (cursor catch-up +
+ * per-stream deltas).
  */
 const PAGE_RESUME_THRESHOLD_MS = 5_000
 
