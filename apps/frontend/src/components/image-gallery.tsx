@@ -30,6 +30,7 @@ import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
 import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
+import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
@@ -589,8 +590,14 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // Giphy items are cross-origin CDN urls, not attachments — the attachment
   // download API can't serve them, so the download affordance is hidden.
   const isGiphy = current ? isGiphyGalleryId(current.attachmentId) : false
+  // Link-preview images are arbitrary external urls: the download API can't
+  // serve them, and copy fetches the bytes so a site without CORS would only
+  // toast an error — hide both, leaving view/zoom (which need no fetch).
+  const isLinkPreviewImage = current ? isLinkPreviewGalleryId(current.attachmentId) : false
+  const canDownload = !isGiphy && !isLinkPreviewImage
   const canCopy =
-    current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text"
+    !isLinkPreviewImage &&
+    (current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text")
   const copyLabel = copyLabelForType(current?.type)
   const canToggleRaw = current?.type === "markdown" || current?.type === "html"
 
@@ -832,7 +839,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
               <span className="sr-only">{rawMode ? "Show rendered preview" : "Show raw source"}</span>
             </Button>
           )}
-          {!isGiphy && (
+          {canDownload && (
             <Button
               variant="ghost"
               size="icon"

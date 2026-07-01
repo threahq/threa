@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, fireEvent, within } from "@testing-library/react"
 import { LinkPreviewCard } from "./link-preview-card"
 import type { LinkPreviewSummary } from "@threa/types"
 
@@ -281,5 +281,43 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText(/commented on/)).toBeInTheDocument()
     expect(screen.getByText(/Issue #7/)).toBeInTheDocument()
     expect(screen.getByText("Looks good to me!")).toBeInTheDocument()
+  })
+
+  it("renders an image preview inside the shared card chrome", () => {
+    const preview = makeGitHubPreview({
+      url: "https://example.com/photo.png",
+      contentType: "image",
+      title: "A nice photo",
+      siteName: "Example",
+      imageUrl: null,
+      previewType: null,
+      previewData: null,
+    })
+
+    render(<LinkPreviewCard preview={preview} onToggleCollapse={() => {}} />)
+
+    expect(screen.getByText("Example")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Collapse preview/i })).toBeInTheDocument()
+    const img = screen.getByAltText("A nice photo") as HTMLImageElement
+    expect(img.src).toContain("https://example.com/photo.png")
+  })
+
+  it("opens the media gallery when an image preview is clicked", () => {
+    const preview = makeGitHubPreview({
+      url: "https://example.com/photo.png",
+      contentType: "image",
+      title: "A nice photo",
+      siteName: "Example",
+      imageUrl: null,
+      previewType: null,
+      previewData: null,
+    })
+
+    render(<LinkPreviewCard preview={preview} workspaceId="ws_1" onToggleCollapse={() => {}} />)
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Open image preview/i }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getAllByText("A nice photo").length).toBeGreaterThan(0)
   })
 })
