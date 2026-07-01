@@ -8,8 +8,8 @@ import { useLinkPreviewCollapse } from "@/hooks/use-link-preview-collapse"
  * overflow detection compares `scrollHeight` against this value. Keep in sync
  * with `BODY_HEIGHT_CLASS`.
  */
-export const LINK_PREVIEW_BODY_HEIGHT_PX = 128
-const BODY_HEIGHT_CLASS = "max-h-32"
+export const LINK_PREVIEW_BODY_HEIGHT_PX = 200
+const BODY_HEIGHT_CLASS = "max-h-[200px]"
 
 interface LinkPreviewBodyProps {
   children: ReactNode
