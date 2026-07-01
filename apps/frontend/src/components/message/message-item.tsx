@@ -151,6 +151,22 @@ export function MessageItem({
   // action hides, the same field-one-side-sets gate as `conversationId`.
   const quoteReplyCtx = useQuoteReply()
 
+  // One guarded builder for both quote entry points (menu action + swipe) so they
+  // behave identically — trim the snippet and no-op on empty content (an
+  // attachment-only message) rather than emitting a degenerate empty quote node.
+  const triggerQuote = useCallback(() => {
+    const snippet = message.contentMarkdown.trim()
+    if (!snippet || !quoteReplyCtx) return
+    quoteReplyCtx.triggerQuoteReply({
+      messageId: message.id,
+      streamId,
+      authorName,
+      authorId: message.authorId,
+      actorType: message.authorType,
+      snippet,
+    })
+  }, [quoteReplyCtx, message.contentMarkdown, message.id, message.authorId, message.authorType, streamId, authorName])
+
   // Reactions are self-contained on any surface (no thread/composer context),
   // so the out-of-stream row gets the same add/toggle path the timeline uses.
   const { toggleByEmoji } = useMessageReactions(workspaceId, message.id)
@@ -197,17 +213,7 @@ export function MessageItem({
     reactions: message.reactions,
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
-    onQuoteReply: quoteReplyCtx
-      ? () =>
-          quoteReplyCtx.triggerQuoteReply({
-            messageId: message.id,
-            streamId,
-            authorName,
-            authorId: message.authorId,
-            actorType: message.authorType,
-            snippet: message.contentMarkdown,
-          })
-      : undefined,
+    onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
       label: viewInStreamLabel(rowStream?.type),
@@ -321,19 +327,7 @@ export function MessageItem({
   // supply the provider; the label page doesn't → gesture off). The reveal icon
   // sits behind the row and the row slides left over it, so it needs an opaque
   // `surfaceClassName` fill during the swipe.
-  const handleSwipeQuote = useCallback(() => {
-    const snippet = message.contentMarkdown.trim()
-    if (!snippet || !quoteReplyCtx) return
-    quoteReplyCtx.triggerQuoteReply({
-      messageId: message.id,
-      streamId,
-      authorName,
-      authorId: message.authorId,
-      actorType: message.authorType,
-      snippet,
-    })
-  }, [quoteReplyCtx, message.contentMarkdown, message.id, message.authorId, message.authorType, streamId, authorName])
-  const swipe = useSwipeAction({ onSwipe: handleSwipeQuote, enabled: touchCapable && !!quoteReplyCtx })
+  const swipe = useSwipeAction({ onSwipe: triggerQuote, enabled: touchCapable && !!quoteReplyCtx })
   const hasSwipe = swipe.offset !== 0
   const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
 
