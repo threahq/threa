@@ -50,9 +50,13 @@ import {
 import type { Message } from "../../../src/features/messaging"
 import { ulid } from "ulid"
 
-/** Default ages when a case doesn't specify them: a live exchange. */
+/**
+ * Default ages when a case doesn't specify them: a live exchange. The two
+ * defaults match so a conversation is never rendered staler than its own
+ * newest recent message.
+ */
 const DEFAULT_RECENT_MESSAGE_MINUTES_AGO = 2
-const DEFAULT_CONVERSATION_LAST_ACTIVITY_MINUTES_AGO = 5
+const DEFAULT_CONVERSATION_LAST_ACTIVITY_MINUTES_AGO = 2
 
 /**
  * Convert eval message to production Message type. `now` anchors the relative
