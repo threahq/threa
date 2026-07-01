@@ -302,6 +302,57 @@ describe("LinkPreviewCard", () => {
     expect(img.src).toContain("https://example.com/photo.png")
   })
 
+  function makeVideoPreview(overrides: Partial<LinkPreviewSummary> = {}): LinkPreviewSummary {
+    return makeGitHubPreview({
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      contentType: "video",
+      title: "Never Gonna Give You Up",
+      siteName: "YouTube",
+      imageUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+      previewType: "video",
+      previewData: {
+        type: "video",
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        provider: "youtube",
+        videoId: "dQw4w9WgXcQ",
+        embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+        posterUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+        aspectRatio: 16 / 9,
+        title: "Never Gonna Give You Up",
+        authorName: "Rick Astley",
+        fetchedAt: "2026-07-01T00:00:00.000Z",
+      },
+      ...overrides,
+    })
+  }
+
+  it("renders a video preview as a click-to-play facade with no iframe mounted", () => {
+    render(<LinkPreviewCard preview={makeVideoPreview()} onToggleCollapse={() => {}} />)
+
+    expect(screen.getByText("YouTube")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Play video: Never Gonna Give You Up/i })).toBeInTheDocument()
+    // The third-party iframe must not load until the user clicks play.
+    expect(screen.queryByTitle("Never Gonna Give You Up")).not.toBeInTheDocument()
+  })
+
+  it("mounts the embed iframe with the trusted playback src after clicking play", () => {
+    render(<LinkPreviewCard preview={makeVideoPreview()} onToggleCollapse={() => {}} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /Play video/i }))
+
+    const iframe = screen.getByTitle("Never Gonna Give You Up") as HTMLIFrameElement
+    expect(iframe.src).toBe("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1")
+  })
+
+  it("opens the media gallery with the embed when the expand control is clicked", () => {
+    render(<LinkPreviewCard preview={makeVideoPreview()} workspaceId="ws_1" onToggleCollapse={() => {}} />)
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Open video fullscreen/i }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByTitle("Never Gonna Give You Up")).toBeInTheDocument()
+  })
+
   it("opens the media gallery when an image preview is clicked", () => {
     const preview = makeGitHubPreview({
       url: "https://example.com/photo.png",

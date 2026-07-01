@@ -189,7 +189,7 @@ describe("fetchLinearPreview", () => {
       })
     )
 
-    const data = preview?.previewData?.data as { body: string; truncated: boolean } | undefined
+    const data = (preview?.previewData as { data?: { body: string; truncated: boolean } } | null | undefined)?.data
     expect(data?.truncated).toBe(true)
     expect(data?.body.length).toBeLessThanOrEqual(321) // 320 chars + trailing ellipsis
     expect(data?.body.endsWith("…")).toBe(true)

@@ -4,15 +4,17 @@ import {
   type GitHubPreviewType,
   type LinearPreview,
   type LinearPreviewType,
+  type VideoPreview,
+  type VideoPreviewType,
   type LinkPreviewContentType,
   type LinkPreviewStatus,
   isInAppLinkContentType,
 } from "@threa/types"
 
 /** Union of all rich provider preview types persisted in `link_previews.preview_type`. */
-export type RichPreviewType = GitHubPreviewType | LinearPreviewType
+export type RichPreviewType = GitHubPreviewType | LinearPreviewType | VideoPreviewType
 /** Union of all rich provider preview payloads stored in `link_previews.preview_data`. */
-export type RichPreview = GitHubPreview | LinearPreview
+export type RichPreview = GitHubPreview | LinearPreview | VideoPreview
 
 export interface LinkPreview {
   id: string

@@ -6,6 +6,7 @@ import type { LinkPreview, UpdateLinkPreviewParams } from "./repository"
 import { detectContentType, isBlockedUrl, parseGitHubUrl, parseLinearUrl } from "./url-utils"
 import { fetchGitHubPreview } from "./github-preview"
 import { fetchLinearPreview } from "./linear-preview"
+import { buildVideoPreviewParams, detectVideoProvider } from "./video-preview"
 import {
   FETCH_TIMEOUT_MS,
   FETCH_USER_AGENT,
@@ -31,6 +32,8 @@ interface OEmbedResponse {
   provider_name?: string
   thumbnail_url?: string
   html?: string
+  width?: number
+  height?: number
 }
 
 /**
@@ -70,6 +73,27 @@ async function tryOEmbed(url: string): Promise<UpdateLinkPreviewParams | null> {
       faviconUrl = `${new URL(url).origin}/favicon.ico`
     } catch {
       /* ignore */
+    }
+
+    // A video provider that also serves oEmbed (YouTube/Vimeo/Loom): fold the
+    // oEmbed title/thumbnail/dimensions into a video preview whose embed URL is
+    // reconstructed from the parsed id — never from `data.html`.
+    const videoMatch = detectVideoProvider(url)
+    if (videoMatch) {
+      return buildVideoPreviewParams(
+        videoMatch,
+        url,
+        {
+          title: data.title ?? null,
+          posterUrl: data.thumbnail_url ?? null,
+          authorName: data.author_name ?? null,
+          width: data.width ?? null,
+          height: data.height ?? null,
+          siteName: data.provider_name ?? null,
+          faviconUrl,
+        },
+        new Date().toISOString()
+      )
     }
 
     return {
@@ -316,6 +340,26 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     if (isRedditUrl(url) && !metadata.imageUrl && !metadata.description) {
       log.warn({ url }, "Reddit served anti-bot interstitial; marking preview failed for retry")
       return { status: "failed", expiresAt: minutesFromNow(30) }
+    }
+
+    // Video providers without oEmbed (Twitch), or one whose oEmbed failed above:
+    // classify from the URL pattern and use the scraped og:image/title as poster.
+    const videoMatch = detectVideoProvider(url)
+    if (videoMatch && metadata.status === "completed") {
+      return buildVideoPreviewParams(
+        videoMatch,
+        url,
+        {
+          title: metadata.title ?? null,
+          posterUrl: metadata.imageUrl ?? null,
+          authorName: null,
+          width: null,
+          height: null,
+          siteName: metadata.siteName ?? null,
+          faviconUrl: metadata.faviconUrl ?? null,
+        },
+        new Date().toISOString()
+      )
     }
 
     return metadata

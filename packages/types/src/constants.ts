@@ -623,6 +623,7 @@ export const LINK_PREVIEW_CONTENT_TYPES = [
   "website",
   "pdf",
   "image",
+  "video",
   "message_link",
   "stream_link",
   "memo_link",
@@ -633,6 +634,7 @@ export const LinkPreviewContentTypes = {
   WEBSITE: "website",
   PDF: "pdf",
   IMAGE: "image",
+  VIDEO: "video",
   MESSAGE_LINK: "message_link",
   STREAM_LINK: "stream_link",
   MEMO_LINK: "memo_link",
@@ -705,6 +707,29 @@ export const LinearPreviewTypes = {
   PROJECT: "linear_project",
   DOCUMENT: "linear_document",
 } as const satisfies Record<string, LinearPreviewType>
+
+// Video-embed providers whose links unfurl into a click-to-play facade card.
+// The embed URL is always reconstructed from the parsed video id against a
+// trusted per-provider origin — never from oEmbed HTML (iframe-injection guard).
+export const VIDEO_PREVIEW_PROVIDERS = ["youtube", "vimeo", "loom", "twitch"] as const
+export type VideoPreviewProvider = (typeof VIDEO_PREVIEW_PROVIDERS)[number]
+
+export const VideoPreviewProviders = {
+  YOUTUBE: "youtube",
+  VIMEO: "vimeo",
+  LOOM: "loom",
+  TWITCH: "twitch",
+} as const satisfies Record<string, VideoPreviewProvider>
+
+// Video is a single rich preview variant (unlike GitHub/Linear which fan out
+// into many). Kept as a one-member list for parity with the other unions so
+// `preview_type` stays a closed set derived from a source-of-truth constant.
+export const VIDEO_PREVIEW_TYPES = ["video"] as const
+export type VideoPreviewType = (typeof VIDEO_PREVIEW_TYPES)[number]
+
+export const VideoPreviewTypes = {
+  VIDEO: "video",
+} as const satisfies Record<string, VideoPreviewType>
 
 export const SHARE_FLAVORS = ["pointer", "quote"] as const
 export type ShareFlavor = (typeof SHARE_FLAVORS)[number]

@@ -182,6 +182,12 @@ export {
   LINEAR_PREVIEW_TYPES,
   type LinearPreviewType,
   LinearPreviewTypes,
+  VIDEO_PREVIEW_PROVIDERS,
+  type VideoPreviewProvider,
+  VideoPreviewProviders,
+  VIDEO_PREVIEW_TYPES,
+  type VideoPreviewType,
+  VideoPreviewTypes,
   // Share flavors
   SHARE_FLAVORS,
   type ShareFlavor,
@@ -333,6 +339,8 @@ export type {
   GitHubCommentParent,
   GitHubCommentPreviewData,
   GitHubPreview,
+  // Video-embed previews
+  VideoPreview,
   // Linear integration + previews
   LinearWorkspaceIntegration,
   LinearAuthorizedUser,

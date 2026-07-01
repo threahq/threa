@@ -46,6 +46,8 @@ import type {
   WorkspaceIntegrationStatus,
   GitHubPreviewType,
   LinearPreviewType,
+  VideoPreviewType,
+  VideoPreviewProvider,
   BotRuntimeKind,
   BotRuntimeSessionLinkStatus,
   BotRuntimeStatus,
@@ -1009,8 +1011,8 @@ export interface LinkPreview {
   siteName: string | null
   contentType: LinkPreviewContentType
   status: LinkPreviewStatus
-  previewType?: GitHubPreviewType | LinearPreviewType | null
-  previewData?: GitHubPreview | LinearPreview | null
+  previewType?: GitHubPreviewType | LinearPreviewType | VideoPreviewType | null
+  previewData?: GitHubPreview | LinearPreview | VideoPreview | null
   fetchedAt: string | null
   expiresAt?: string | null
   createdAt: string
@@ -1029,8 +1031,8 @@ export interface LinkPreviewSummary {
   faviconUrl: string | null
   siteName: string | null
   contentType: LinkPreviewContentType
-  previewType?: GitHubPreviewType | LinearPreviewType | null
-  previewData?: GitHubPreview | LinearPreview | null
+  previewType?: GitHubPreviewType | LinearPreviewType | VideoPreviewType | null
+  previewData?: GitHubPreview | LinearPreview | VideoPreview | null
   position: number
   /**
    * Resolved, access-tiered in-app link data (message/stream/memo), populated
@@ -1227,6 +1229,28 @@ export interface GitHubPreview {
     | GitHubFilePreviewData
     | GitHubDiffPreviewData
     | GitHubCommentPreviewData
+  fetchedAt: string
+}
+
+/**
+ * Rich preview for an embeddable video link (YouTube/Vimeo/Loom/Twitch).
+ * `embedUrl` is reconstructed server-side from the parsed `videoId` against a
+ * trusted per-provider origin, so it is safe to hand to an `<iframe src>` — it
+ * is never taken from the provider's oEmbed HTML. `aspectRatio` is width/height
+ * (defaults to 16/9 when the provider gives no dimensions) and lets the card
+ * reserve a fixed box up front (INV-21). Twitch embeds still need a `parent`
+ * query param matching the host, which the frontend appends at play time.
+ */
+export interface VideoPreview {
+  type: VideoPreviewType
+  url: string
+  provider: VideoPreviewProvider
+  videoId: string
+  embedUrl: string
+  posterUrl: string | null
+  aspectRatio: number
+  title: string | null
+  authorName: string | null
   fetchedAt: string
 }
 

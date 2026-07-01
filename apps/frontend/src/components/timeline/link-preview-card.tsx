@@ -15,6 +15,9 @@ import {
   FileCode,
   Folder,
   File,
+  Play,
+  Video as VideoIcon,
+  Maximize2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
@@ -22,6 +25,7 @@ import { MarkdownContent } from "@/components/ui/markdown-content"
 import { cn } from "@/lib/utils"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { linkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
+import { isVideoPreview, videoPlaybackSrc } from "@/components/gallery/video-embed"
 import { LinkPreviewBody } from "./link-preview-body"
 import { AccentGlow, colorWithAlpha, Field, FieldGrid, LabelChip, MonoTag, StatePill } from "./link-preview-primitives"
 import type {
@@ -40,9 +44,12 @@ import type {
   LinearPreview,
   LinearProjectPreviewData,
   LinkPreviewSummary,
+  VideoPreview,
 } from "@threa/types"
 
-function isLinearPreview(preview: GitHubPreview | LinearPreview | null | undefined): preview is LinearPreview {
+function isLinearPreview(
+  preview: GitHubPreview | LinearPreview | VideoPreview | null | undefined
+): preview is LinearPreview {
   return !!preview && typeof preview.type === "string" && preview.type.startsWith("linear_")
 }
 
@@ -70,6 +77,8 @@ function ContentTypeIcon({ contentType }: { contentType: string }) {
       return <FileText className="h-4 w-4 text-red-500 shrink-0" />
     case "image":
       return <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+    case "video":
+      return <VideoIcon className="h-4 w-4 text-rose-500 shrink-0" />
     default:
       return <ExternalLink className="h-4 w-4 text-muted-foreground shrink-0" />
   }
@@ -116,7 +125,9 @@ export function LinkPreviewCard({
   const [imageError, setImageError] = useState(false)
   const domain = getDomain(preview.url)
   const providerPreview = preview.previewData
-  const githubPreview = providerPreview && !isLinearPreview(providerPreview) ? providerPreview : null
+  const videoPreview = isVideoPreview(providerPreview) ? providerPreview : null
+  const githubPreview =
+    providerPreview && !isLinearPreview(providerPreview) && !isVideoPreview(providerPreview) ? providerPreview : null
   const linearPreview = isLinearPreview(providerPreview) ? providerPreview : null
 
   const handleDismiss = useCallback(
@@ -160,6 +171,29 @@ export function LinkPreviewCard({
           onDismiss={onDismiss ? handleDismiss : undefined}
         />
         {!isCollapsedProp && <ImagePreviewContent preview={preview} workspaceId={workspaceId} />}
+      </div>
+    )
+  }
+
+  if (preview.contentType === "video" && videoPreview) {
+    return (
+      <div
+        data-native-context="true"
+        className={cn(
+          "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
+          "hover:border-primary/50 hover:shadow-sm",
+          isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
+        )}
+      >
+        <PreviewCardHeader
+          icon={<ContentTypeIcon contentType="video" />}
+          label={preview.siteName ?? domain}
+          faviconUrl={preview.faviconUrl}
+          isCollapsed={isCollapsedProp}
+          onToggleCollapse={handleToggleCollapse}
+          onDismiss={onDismiss ? handleDismiss : undefined}
+        />
+        {!isCollapsedProp && <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />}
       </div>
     )
   }
@@ -328,6 +362,109 @@ function ImagePreviewContent({ preview, workspaceId }: { preview: LinkPreviewSum
           </div>
         )}
       </button>
+      {galleryOpen && (
+        <MediaGallery
+          isOpen={galleryOpen}
+          onClose={() => setGalleryOpen(false)}
+          items={galleryItems}
+          initialIndex={0}
+          workspaceId={workspaceId ?? ""}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * Video link preview: a click-to-play facade. The poster + play button occupy a
+ * fixed-aspect box (reserved up front so neither the poster nor the iframe swap
+ * reflows the timeline — INV-21). The third-party iframe only mounts after an
+ * explicit click, so no external JS/cookies load until the user opts in. A
+ * separate expand control opens the same embed fullscreen in the media gallery.
+ */
+function VideoPreviewContent({ video, workspaceId }: { video: VideoPreview; workspaceId?: string }) {
+  const [playing, setPlaying] = useState(false)
+  const [posterError, setPosterError] = useState(false)
+  const [galleryOpen, setGalleryOpen] = useState(false)
+
+  // Previews are PATCHed in place as metadata resolves; if the embed target
+  // changes on the same mounted card, drop any in-progress playback/error state.
+  useEffect(() => {
+    setPlaying(false)
+    setPosterError(false)
+  }, [video.embedUrl])
+
+  const title = video.title ?? getDomain(video.url)
+  const aspectRatio = video.aspectRatio > 0 ? video.aspectRatio : 16 / 9
+
+  const galleryItems = useMemo<GalleryItem[]>(
+    () => [
+      {
+        type: "video-embed",
+        url: video.url,
+        embedUrl: video.embedUrl,
+        provider: video.provider,
+        posterUrl: video.posterUrl,
+        aspectRatio,
+        filename: title,
+        attachmentId: linkPreviewGalleryId(video.embedUrl),
+      },
+    ],
+    [video.url, video.embedUrl, video.provider, video.posterUrl, aspectRatio, title]
+  )
+
+  return (
+    <>
+      <div className="relative w-full overflow-hidden bg-black" style={{ aspectRatio }}>
+        <AccentGlow />
+        {playing ? (
+          <iframe
+            src={videoPlaybackSrc(video)}
+            title={title}
+            className="absolute inset-0 h-full w-full"
+            allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
+            allowFullScreen
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setPlaying(true)}
+              className="group/play absolute inset-0 flex cursor-pointer items-center justify-center"
+              aria-label={`Play video: ${title}`}
+            >
+              {video.posterUrl && !posterError ? (
+                <img
+                  src={video.posterUrl}
+                  alt=""
+                  loading="lazy"
+                  onError={() => setPosterError(true)}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 bg-gradient-to-br from-muted to-muted/40" />
+              )}
+              <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur-sm transition-transform group-hover/play:scale-110">
+                <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" />
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setGalleryOpen(true)}
+              className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-black/75"
+              aria-label="Open video fullscreen"
+            >
+              <Maximize2 className="h-4 w-4" />
+            </button>
+            {video.title && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2.5">
+                <span className="line-clamp-1 text-xs font-medium text-white">{video.title}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
       {galleryOpen && (
         <MediaGallery
           isOpen={galleryOpen}

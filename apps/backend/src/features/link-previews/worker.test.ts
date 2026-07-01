@@ -978,6 +978,150 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
+  /** Build a link-preview service mock for a single pending preview of `url`. */
+  function pendingServiceMock(id: string, url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
+    return {
+      extractAndCreatePending: mock(async () => [{ id, url }]),
+      getPreviewById: mock(async () => ({
+        id,
+        workspaceId: "ws_123",
+        url,
+        normalizedUrl: url,
+        title: null,
+        description: null,
+        imageUrl: null,
+        faviconUrl: null,
+        siteName: null,
+        contentType: "website",
+        status: "pending",
+        previewType: null,
+        previewData: null,
+        targetWorkspaceId: null,
+        targetStreamId: null,
+        targetMessageId: null,
+        fetchedAt: null,
+        expiresAt: null,
+        createdAt: new Date("2026-07-01T10:00:00.000Z"),
+      })),
+      completePreviewsAndPublish,
+      replacePreviewsForMessage: mock(async () => []),
+      publishEmptyPreviews: mock(async () => {}),
+    } as any
+  }
+
+  test("classifies a YouTube link as a video preview with an embed URL built from the parsed id", async () => {
+    // The oEmbed `html` deliberately points its iframe at an attacker origin; the stored embedUrl
+    // must be reconstructed from the video id against youtube-nocookie.com, never lifted from html.
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.startsWith("https://www.youtube.com/oembed")) {
+        return new Response(
+          JSON.stringify({
+            title: "Never Gonna Give You Up",
+            author_name: "Rick Astley",
+            provider_name: "YouTube",
+            thumbnail_url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            width: 480,
+            height: 270,
+            html: '<iframe src="https://evil.example.com/steal"></iframe>',
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: pendingServiceMock("lp_yt", url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_yt",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_yt", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_yt",
+      [
+        expect.objectContaining({
+          id: "lp_yt",
+          skipped: false,
+          metadata: expect.objectContaining({
+            contentType: "video",
+            previewType: "video",
+            imageUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            previewData: expect.objectContaining({
+              provider: "youtube",
+              videoId: "dQw4w9WgXcQ",
+              embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+              authorName: "Rick Astley",
+            }),
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test("classifies a Twitch VOD as a video preview via the HTML fallback (no oEmbed)", async () => {
+    const fetchMock = mock(
+      async () =>
+        new Response(
+          `<html><head>` +
+            `<meta property="og:title" content="Epic Play">` +
+            `<meta property="og:image" content="https://static-cdn.jtvnw.net/cf_vods/thumb.jpg">` +
+            `<meta property="og:site_name" content="Twitch">` +
+            `</head></html>`,
+          { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+        )
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.twitch.tv/videos/123456789"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: pendingServiceMock("lp_tw", url, completePreviewsAndPublish),
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_tw",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_tw", contentMarkdown: url },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_tw",
+      [
+        expect.objectContaining({
+          id: "lp_tw",
+          skipped: false,
+          metadata: expect.objectContaining({
+            contentType: "video",
+            previewType: "video",
+            imageUrl: "https://static-cdn.jtvnw.net/cf_vods/thumb.jpg",
+            previewData: expect.objectContaining({
+              provider: "twitch",
+              videoId: "123456789",
+              embedUrl: "https://player.twitch.tv/?video=123456789",
+              title: "Epic Play",
+            }),
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
   /** Build the link-preview service mock for a single pending preview of `url`. */
   function redditServiceMock(url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
     return {
