@@ -1,7 +1,8 @@
-import { useEffect, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { ChevronLeft, Hash, FileEdit, User, MessageSquareText, Link2, type LucideIcon } from "lucide-react"
+import { toast } from "sonner"
+import { ChevronLeft, Hash, FileEdit, User, MessageSquareText, Link2, Check, type LucideIcon } from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -25,7 +26,7 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { conversationKeys, useConversationBoardPost } from "@/hooks/use-conversations"
 import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
-import { copyConversationLink } from "@/lib/stream-links"
+import { buildConversationLink } from "@/lib/stream-links"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
@@ -77,6 +78,31 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [onClose])
+
+  // Header "Copy link" confirms in place — the icon swaps to a checkmark for a
+  // beat (same footprint, no shift per INV-21) rather than a toast, because a
+  // persistent header button is an on-screen anchor (INV-63; mirrors the
+  // image-gallery toolbar). Only the anchorless callers (the mod+Shift+L
+  // shortcut, the message-menu item) keep `copyConversationLink`'s toast.
+  const [copyDone, setCopyDone] = useState(false)
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (copyResetRef.current) clearTimeout(copyResetRef.current)
+    },
+    []
+  )
+  const handleCopyLink = useCallback(async () => {
+    if (!conversationId) return
+    try {
+      await navigator.clipboard.writeText(buildConversationLink(workspaceId, conversationId))
+      setCopyDone(true)
+      if (copyResetRef.current) clearTimeout(copyResetRef.current)
+      copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
+    } catch {
+      toast.error("Failed to copy link")
+    }
+  }, [conversationId, workspaceId])
 
   const anchorStreamId = post?.conversation.streamId
   const hostStream = useStreamFromStore(anchorStreamId)
@@ -152,13 +178,13 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                aria-label="Copy link to conversation"
-                onClick={() => void copyConversationLink(workspaceId, conversationId)}
+                aria-label={copyDone ? "Link copied" : "Copy link to conversation"}
+                onClick={() => void handleCopyLink()}
               >
-                <Link2 className="h-4 w-4" />
+                {copyDone ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Copy link</TooltipContent>
+            <TooltipContent side="bottom">{copyDone ? "Copied" : "Copy link"}</TooltipContent>
           </Tooltip>
         )}
         {!isMobile && <SidePanelClose onClose={onClose} />}

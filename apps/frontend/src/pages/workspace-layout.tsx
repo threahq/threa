@@ -146,10 +146,12 @@ function StreamLinkKeyboardHandler({
       if (getFocusedPane() === "panel" && panelId) {
         if (isConversationPanel(panelId)) {
           const conversationId = parseConversationPanel(panelId)
-          if (conversationId) void copyConversationLink(workspaceId, conversationId)
-          return
-        }
-        if (!isDraftPanel(panelId)) {
+          if (conversationId) {
+            void copyConversationLink(workspaceId, conversationId)
+            return
+          }
+          // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
+        } else if (!isDraftPanel(panelId)) {
           void copyStreamLink(workspaceId, panelId)
           return
         }
