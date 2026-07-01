@@ -17,6 +17,7 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
+import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { SidebarToggle } from "@/components/layout"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -266,7 +267,8 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
   const lastActiveStreamId = displayedReplies.at(-1)?.streamId ?? conversation.streamId
 
   return (
-    <>
+    // Quote reply from a row routes into this conversation's reply composer.
+    <QuoteReplyProvider>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&>*:first-child]:mt-0">
         {all.map((message, i) => (
           <MessageItem
@@ -303,6 +305,6 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
           lastActiveStreamId={lastActiveStreamId}
         />
       </div>
-    </>
+    </QuoteReplyProvider>
   )
 }

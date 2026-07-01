@@ -20,6 +20,7 @@ import { MessageContextMenu } from "@/components/timeline/message-context-menu"
 import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { LabelStack } from "@/components/labels/label-stack"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -135,6 +136,12 @@ export function MessageItem({
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
   const rowStream = useStreamFromStore(streamId)
 
+  // Quote reply routes to the conversation's reply composer through the provider
+  // the conversation surfaces (board card, panel) wrap this row in. Absent on the
+  // label page (no provider, no composer) → `onQuoteReply` stays undefined and the
+  // action hides, the same field-one-side-sets gate as `conversationId`.
+  const quoteReplyCtx = useQuoteReply()
+
   // Reactions are self-contained on any surface (no thread/composer context),
   // so the out-of-stream row gets the same add/toggle path the timeline uses.
   const { toggleByEmoji } = useMessageReactions(workspaceId, message.id)
@@ -161,12 +168,12 @@ export function MessageItem({
     }
   }, [isHighlighted])
 
-  // Reactions/copy/label plus copy-link (surface-specific via `conversationId`)
-  // and "View in channel/thread/…". `isThreadParent: true` suppresses "Reply in
-  // thread" (no thread context here); `currentUserId` powers react toggling —
-  // edit/delete stay hidden because this surface supplies no edit/delete handler
-  // (their `when` gates require one). Quote/reply are deferred (no composer
-  // context on board/conversation surfaces yet).
+  // Reactions/copy/label plus copy-link (surface-specific via `conversationId`),
+  // "View in channel/thread/…", and quote reply when a conversation composer is in
+  // the tree. `isThreadParent: true` suppresses "Reply in thread" (no thread
+  // context here); `currentUserId` powers react toggling — edit/delete stay hidden
+  // because this surface supplies no edit/delete handler (their `when` gates
+  // require one).
   const menuContext: MessageActionContext = {
     contentMarkdown: message.contentMarkdown,
     actorType: message.authorType,
@@ -181,6 +188,17 @@ export function MessageItem({
     reactions: message.reactions,
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
+    onQuoteReply: quoteReplyCtx
+      ? () =>
+          quoteReplyCtx.triggerQuoteReply({
+            messageId: message.id,
+            streamId,
+            authorName,
+            authorId: message.authorId,
+            actorType: message.authorType,
+            snippet: message.contentMarkdown,
+          })
+      : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
       label: viewInStreamLabel(rowStream?.type),

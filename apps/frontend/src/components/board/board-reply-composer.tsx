@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
-import { MessageComposer } from "@/components/composer"
+import { MessageComposer, type ComposerControlHandle } from "@/components/composer"
+import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useDraftComposer } from "@/hooks"
 import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
@@ -61,6 +62,24 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
   const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
+
+  // Quote reply from a message row in this conversation lands here. The form
+  // registers its own insertion handler while mounted, but the resting affordance
+  // is collapsed by default, so this always-mounted outer component owns the
+  // registration: it opens the form and stashes the quote for the form to consume
+  // on mount (or immediately, if already open). Scoped by the per-conversation
+  // QuoteReplyProvider the card/panel wraps around its rows + this composer.
+  const quoteReplyCtx = useQuoteReply()
+  const [pendingQuote, setPendingQuote] = useState<QuoteReplyData | null>(null)
+  const onQuoteConsumed = useCallback(() => setPendingQuote(null), [])
+  useEffect(() => {
+    if (!quoteReplyCtx) return
+    return quoteReplyCtx.registerHandler((data) => {
+      setPendingQuote(data)
+      setResting("idle")
+      setOpen(true)
+    })
+  }, [quoteReplyCtx])
   // Return focus to the resting button after an explicit collapse (Escape /
   // after-send) so keyboard navigation isn't dropped onto <body> when the form
   // unmounts. A blur-driven collapse passes refocus=false — the user already
@@ -98,7 +117,9 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     )
   }
 
-  return <BoardReplyComposerForm {...props} onClose={close} />
+  return (
+    <BoardReplyComposerForm {...props} onClose={close} pendingQuote={pendingQuote} onQuoteConsumed={onQuoteConsumed} />
+  )
 }
 
 function BoardReplyComposerForm({
@@ -107,8 +128,12 @@ function BoardReplyComposerForm({
   hostStreamType,
   lastActiveStreamId,
   onClose,
+  pendingQuote,
+  onQuoteConsumed,
 }: BoardReplyComposerProps & {
   onClose: (opts?: { refocus?: boolean; hadContent?: boolean }) => void
+  pendingQuote: QuoteReplyData | null
+  onQuoteConsumed: () => void
 }) {
   const { preferences } = usePreferences()
   const streams = useWorkspaceStreams(workspaceId)
@@ -136,6 +161,28 @@ function BoardReplyComposerForm({
 
   const draftKey = `board:reply:${post.conversation.id}`
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })
+
+  // Imperative handle for post-quote focus. A ref to the composer keeps the
+  // insertion off the un-memoized composer object (a fresh identity every render),
+  // so it fires only when a new quote arrives.
+  const composerControlRef = useRef<ComposerControlHandle | null>(null)
+  const composerRef = useRef(composer)
+  composerRef.current = composer
+  // Append the quote once its target composer exists. Gate on `isLoaded` and defer
+  // a frame: a quote from a collapsed card mounts this form fresh, and a saved
+  // draft late-hydrates into the empty editor on the load commit. Inserting in that
+  // same flush would run last and clobber the draft (our setContent wins over the
+  // hydrate's), so we wait for the draft body to land, then append onto it — the
+  // same preserve-what's-there append the stream composer does.
+  useEffect(() => {
+    if (!pendingQuote || !composer.isLoaded) return
+    const raf = requestAnimationFrame(() => {
+      composerRef.current.setContent(appendQuoteReplyNode(composerRef.current.content, pendingQuote))
+      composerControlRef.current?.focusAfterQuoteReply()
+      onQuoteConsumed()
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [pendingQuote, composer.isLoaded, onQuoteConsumed])
 
   const canSubmit = composer.canSend && !reply.isPending
 
@@ -227,6 +274,7 @@ function BoardReplyComposerForm({
   return (
     <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
       <MessageComposer
+        composerRef={composerControlRef}
         content={composer.content}
         onContentChange={composer.handleContentChange}
         pendingAttachments={composer.pendingAttachments}

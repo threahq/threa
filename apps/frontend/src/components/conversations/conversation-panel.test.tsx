@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
@@ -161,6 +162,17 @@ describe("ConversationPanel", () => {
 
     const openingBody = screen.getByText("Opening message body.")
     expect(openingBody.closest(".animate-highlight-flash")).toBeNull()
+  })
+
+  it("surfaces a Quote reply action on message rows (the conversation composer is in the tree)", async () => {
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+
+    expect(await screen.findByText("Quote reply")).toBeTruthy()
   })
 
   it("offers a conversation-level copy-link affordance in the header", async () => {
