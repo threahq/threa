@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { Quote } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -43,14 +43,22 @@ function getAuthorFromDom(messageEl: HTMLElement): { authorName: string; authorI
 }
 
 interface TextSelectionQuoteProps {
+  /** Anchor stream for the quote when a row omits its own `data-stream-id`. The
+   * stream timeline is single-stream, so this is its whole answer; a board
+   * conversation spans streams, so the row's DOM `data-stream-id` wins. */
   streamId: string
+  /** Scope detection to selections inside this element. Omit for the stream
+   * timeline (one instance, whole document). The board mounts one instance per
+   * card — each must ignore selections in sibling cards so the quote routes to
+   * its own composer, not the last-mounted provider's. */
+  containerRef?: RefObject<HTMLElement | null>
 }
 
 /**
  * Shows a floating "Quote" button when the user selects text within a message.
  * Active mouse only — touch input uses select-none on messages.
  */
-export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
+export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuoteProps) {
   const inputMode = useInputMode()
   const quoteReplyCtx = useQuoteReply()
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
@@ -78,6 +86,13 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
       return
     }
 
+    // Scope to this instance's container when one is given (a board card/panel):
+    // a selection in a sibling card belongs to that card's own instance.
+    if (containerRef && !containerRef.current?.contains(startCtx.element)) {
+      setSelection(null)
+      return
+    }
+
     // Must be within the message content area (not author name, timestamp, etc.)
     const contentEl = startCtx.element.querySelector(".message-content .markdown-content")
     if (!contentEl || !contentEl.contains(range.startContainer) || !contentEl.contains(range.endContainer)) {
@@ -87,17 +102,20 @@ export function TextSelectionQuote({ streamId }: TextSelectionQuoteProps) {
 
     const rect = range.getBoundingClientRect()
     const { authorName, authorId, actorType } = getAuthorFromDom(startCtx.element)
+    // A conversation row carries its own stream (one root, many threads), so the
+    // quote points at where the message actually lives; fall back to the anchor.
+    const messageStreamId = startCtx.element.getAttribute("data-stream-id")?.trim() || streamId
 
     setSelection({
       text,
       messageId: startCtx.messageId,
-      streamId,
+      streamId: messageStreamId,
       authorName,
       authorId,
       actorType,
       rect,
     })
-  }, [streamId])
+  }, [streamId, containerRef])
 
   useEffect(() => {
     // Clear any stale selection when leaving mouse input, so switching back to a

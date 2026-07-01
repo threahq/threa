@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type LucideIcon } from "lucide-react"
@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
+import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
@@ -46,6 +47,9 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const conversationService = useConversationService()
   const { openPanel } = usePanel()
   const [expanded, setExpanded] = useState(false)
+  // Scopes text-selection quoting to this card so a selection routes into this
+  // card's composer, not a sibling card's provider.
+  const cardRef = useRef<HTMLDivElement>(null)
 
   // Bodies ride the same `db.events` rail the timeline does — live and
   // offline-first — with the cached server projection as the cold-start fallback.
@@ -125,7 +129,9 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     // Scope quote reply to this card: a message row's "Quote reply" routes into
     // this card's own reply composer, not another card's.
     <QuoteReplyProvider>
-      <div className="rounded-xl border bg-card p-3 sm:p-4">
+      {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
+      <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
+      <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           {/* The stream the post lives in — a real link back into it (INV-40). */}
           <Link
