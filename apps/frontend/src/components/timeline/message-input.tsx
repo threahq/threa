@@ -26,7 +26,7 @@ import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractCommandNode, extractCommandFromRawText } from "@/lib/commands"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
-import { useQuoteReply, type QuoteReplyData } from "./quote-reply-context"
+import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
@@ -283,37 +283,7 @@ function MessageInputComponent({
   useEffect(() => {
     if (!quoteReplyCtx) return
     return quoteReplyCtx.registerHandler((data: QuoteReplyData) => {
-      const quoteNode: JSONContent = {
-        type: "quoteReply",
-        attrs: {
-          messageId: data.messageId,
-          streamId: data.streamId,
-          authorName: data.authorName,
-          authorId: data.authorId,
-          actorType: data.actorType,
-          snippet: data.snippet,
-        },
-      }
-
-      const currentContent = composerRef.current.content
-      const existingBlocks = currentContent.content ?? []
-
-      // Strip trailing empty paragraphs so the quote appends cleanly and we
-      // re-add exactly one trailing paragraph for post-quote typing.
-      const trimmedBlocks = [...existingBlocks]
-      while (
-        trimmedBlocks.length > 0 &&
-        trimmedBlocks[trimmedBlocks.length - 1].type === "paragraph" &&
-        (trimmedBlocks[trimmedBlocks.length - 1].content?.length ?? 0) === 0
-      ) {
-        trimmedBlocks.pop()
-      }
-
-      composerRef.current.setContent({
-        type: "doc",
-        content: [...trimmedBlocks, quoteNode, { type: "paragraph" }],
-      })
-
+      composerRef.current.setContent(appendQuoteReplyNode(composerRef.current.content, data))
       composerFocusRef.current?.focusAfterQuoteReply()
     })
   }, [quoteReplyCtx])

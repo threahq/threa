@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import { Quote } from "lucide-react"
 import {
   LabelableResourceTypes,
   type AttachmentSummary,
@@ -20,6 +21,7 @@ import { MessageContextMenu } from "@/components/timeline/message-context-menu"
 import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { LabelStack } from "@/components/labels/label-stack"
 import { LabelPicker } from "@/components/labels/label-picker"
@@ -27,6 +29,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
+import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { STREAM_ICONS, streamFallbackLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
@@ -92,6 +95,12 @@ interface MessageItemProps {
   /** Scroll this row into view and flash it — the conversation panel sets it for
    * the `?m=` deep-link target so a shared message link lands on the right row. */
   isHighlighted?: boolean
+  /** Background of the surface this row sits on (`bg-card` on a board card,
+   * `bg-background` in the conversation panel). The row is filled with it during a
+   * mobile swipe-to-quote so the reveal icon stays hidden behind the row until the
+   * content slides off it. Omitted where swipe isn't wired (the label page has no
+   * quote provider, so the gesture is disabled). */
+  surfaceClassName?: string
 }
 
 /**
@@ -114,6 +123,7 @@ export function MessageItem({
   streamLabel,
   conversationId,
   isHighlighted,
+  surfaceClassName,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const { openUserProfile } = useUserProfile()
@@ -134,6 +144,28 @@ export function MessageItem({
   const linkPreviews = message.linkPreviews ?? []
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
   const rowStream = useStreamFromStore(streamId)
+
+  // Quote reply routes to the conversation's reply composer through the provider
+  // the conversation surfaces (board card, panel) wrap this row in. Absent on the
+  // label page (no provider, no composer) → `onQuoteReply` stays undefined and the
+  // action hides, the same field-one-side-sets gate as `conversationId`.
+  const quoteReplyCtx = useQuoteReply()
+
+  // One guarded builder for both quote entry points (menu action + swipe) so they
+  // behave identically — trim the snippet and no-op on empty content (an
+  // attachment-only message) rather than emitting a degenerate empty quote node.
+  const triggerQuote = useCallback(() => {
+    const snippet = message.contentMarkdown.trim()
+    if (!snippet || !quoteReplyCtx) return
+    quoteReplyCtx.triggerQuoteReply({
+      messageId: message.id,
+      streamId,
+      authorName,
+      authorId: message.authorId,
+      actorType: message.authorType,
+      snippet,
+    })
+  }, [quoteReplyCtx, message.contentMarkdown, message.id, message.authorId, message.authorType, streamId, authorName])
 
   // Reactions are self-contained on any surface (no thread/composer context),
   // so the out-of-stream row gets the same add/toggle path the timeline uses.
@@ -161,12 +193,12 @@ export function MessageItem({
     }
   }, [isHighlighted])
 
-  // Reactions/copy/label plus copy-link (surface-specific via `conversationId`)
-  // and "View in channel/thread/…". `isThreadParent: true` suppresses "Reply in
-  // thread" (no thread context here); `currentUserId` powers react toggling —
-  // edit/delete stay hidden because this surface supplies no edit/delete handler
-  // (their `when` gates require one). Quote/reply are deferred (no composer
-  // context on board/conversation surfaces yet).
+  // Reactions/copy/label plus copy-link (surface-specific via `conversationId`),
+  // "View in channel/thread/…", and quote reply when a conversation composer is in
+  // the tree. `isThreadParent: true` suppresses "Reply in thread" (no thread
+  // context here); `currentUserId` powers react toggling — edit/delete stay hidden
+  // because this surface supplies no edit/delete handler (their `when` gates
+  // require one).
   const menuContext: MessageActionContext = {
     contentMarkdown: message.contentMarkdown,
     actorType: message.authorType,
@@ -181,6 +213,7 @@ export function MessageItem({
     reactions: message.reactions,
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
+    onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
       label: viewInStreamLabel(rowStream?.type),
@@ -289,34 +322,80 @@ export function MessageItem({
     <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.MESSAGE} resourceId={message.id} />
   )
 
-  const touchHandlers = touchCapable ? longPress.handlers : undefined
+  // Swipe-left-to-quote on touch, mirroring the stream timeline (message-event).
+  // Enabled only where a quote composer exists (board card / conversation panel
+  // supply the provider; the label page doesn't → gesture off). The reveal icon
+  // sits behind the row and the row slides left over it, so it needs an opaque
+  // `surfaceClassName` fill during the swipe.
+  const swipe = useSwipeAction({ onSwipe: triggerQuote, enabled: touchCapable && !!quoteReplyCtx })
+  const hasSwipe = swipe.offset !== 0
+  const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
+
+  // Long-press (→ action drawer) and swipe (→ quote) share the touch surface, so
+  // their handlers are fanned out to both. `onContextMenu` comes from long-press.
+  const touchHandlers = touchCapable
+    ? {
+        onTouchStart: (e: React.TouchEvent) => {
+          longPress.handlers.onTouchStart(e)
+          swipe.handlers.onTouchStart(e)
+        },
+        onTouchMove: (e: React.TouchEvent) => {
+          longPress.handlers.onTouchMove(e)
+          swipe.handlers.onTouchMove(e)
+        },
+        onTouchEnd: () => {
+          longPress.handlers.onTouchEnd()
+          swipe.handlers.onTouchEnd()
+        },
+        onTouchCancel: () => {
+          longPress.handlers.onTouchCancel()
+          swipe.handlers.onTouchCancel()
+        },
+        onContextMenu: longPress.handlers.onContextMenu,
+      }
+    : undefined
+
+  // The quote-reveal icon behind the row (right edge), shown only during a swipe;
+  // it fills the strip the row uncovers as it slides left.
+  const swipeReveal = hasSwipe ? (
+    <div className="absolute inset-y-0 right-0 flex items-center pr-4">
+      <Quote className={cn("h-5 w-5 transition-colors", swipe.isLocked ? "text-primary" : "text-muted-foreground")} />
+    </div>
+  ) : null
 
   if (continuation) {
     const sentAt = new Date(message.createdAt)
     return (
       <div
         ref={containerRef}
-        className={cn(
-          "group reveal-host relative mt-0.5 flex scroll-mt-12 gap-3",
-          longPress.isPressed && "opacity-70 transition-opacity",
-          isHighlighted && "animate-highlight-flash"
-        )}
+        className="relative mt-0.5 scroll-mt-12 overflow-hidden sm:overflow-visible"
         {...touchHandlers}
       >
-        {/* Gutter reveals the message time on hover (desktop), mirroring the
-            timeline's grouped-continuation micro-time. */}
+        {swipeReveal}
         <div
-          className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] tabular-nums leading-5 text-transparent transition-colors group-hover:text-muted-foreground/60"
-          title={formatFull(sentAt)}
+          className={cn(
+            "group reveal-host relative flex gap-3",
+            surfaceClassName,
+            longPress.isPressed && "opacity-70 transition-opacity",
+            isHighlighted && "animate-highlight-flash"
+          )}
+          style={swipeStyle}
         >
-          {formatTime(sentAt)}
+          {/* Gutter reveals the message time on hover (desktop), mirroring the
+              timeline's grouped-continuation micro-time. */}
+          <div
+            className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] tabular-nums leading-5 text-transparent transition-colors group-hover:text-muted-foreground/60"
+            title={formatFull(sentAt)}
+          >
+            {formatTime(sentAt)}
+          </div>
+          <div className="min-w-0 flex-1 pr-14">
+            {body}
+            {labelStack}
+          </div>
+          {overflowMenu}
+          {overlays}
         </div>
-        <div className="min-w-0 flex-1 pr-14">
-          {body}
-          {labelStack}
-        </div>
-        {overflowMenu}
-        {overlays}
       </div>
     )
   }
@@ -324,56 +403,63 @@ export function MessageItem({
   return (
     <div
       ref={containerRef}
-      className={cn(
-        "group reveal-host relative mt-3 flex scroll-mt-12 items-start gap-3",
-        longPress.isPressed && "opacity-70 transition-opacity",
-        isHighlighted && "animate-highlight-flash"
-      )}
+      className="relative mt-3 scroll-mt-12 overflow-hidden sm:overflow-visible"
       {...touchHandlers}
     >
-      <ActorAvatar
-        actorId={message.authorId}
-        actorType={message.authorType}
-        workspaceId={workspaceId}
-        size="md"
-        alt={authorName}
-        showStatus={false}
-      />
-      <div className="min-w-0 flex-1 pr-14">
-        <div className="mb-0.5 flex items-baseline gap-2">
-          {interactiveName ? (
-            <button
-              type="button"
-              onClick={() => openUserProfile(message.authorId)}
-              className="min-w-0 truncate text-left text-sm font-semibold hover:underline"
-            >
-              {authorName}
-            </button>
-          ) : (
-            <span className="min-w-0 truncate text-sm font-semibold">{authorName}</span>
-          )}
-          {/* Permalink to the message in its stream timeline — the body is
+      {swipeReveal}
+      <div
+        className={cn(
+          "group reveal-host relative flex items-start gap-3",
+          surfaceClassName,
+          longPress.isPressed && "opacity-70 transition-opacity",
+          isHighlighted && "animate-highlight-flash"
+        )}
+        style={swipeStyle}
+      >
+        <ActorAvatar
+          actorId={message.authorId}
+          actorType={message.authorType}
+          workspaceId={workspaceId}
+          size="md"
+          alt={authorName}
+          showStatus={false}
+        />
+        <div className="min-w-0 flex-1 pr-14">
+          <div className="mb-0.5 flex items-baseline gap-2">
+            {interactiveName ? (
+              <button
+                type="button"
+                onClick={() => openUserProfile(message.authorId)}
+                className="min-w-0 truncate text-left text-sm font-semibold hover:underline"
+              >
+                {authorName}
+              </button>
+            ) : (
+              <span className="min-w-0 truncate text-sm font-semibold">{authorName}</span>
+            )}
+            {/* Permalink to the message in its stream timeline — the body is
               interactive, so navigation lives on the timestamp instead. */}
-          <Link
-            to={`/w/${workspaceId}/s/${streamId}?m=${message.id}`}
-            className="shrink-0 text-xs text-muted-foreground hover:underline"
-          >
-            <RelativeTime date={message.createdAt} />
-          </Link>
-          {labelStack}
-          {streamLabel && (
-            <MessageStreamByline
-              workspaceId={workspaceId}
-              streamId={streamId}
-              name={streamLabel.name}
-              type={streamLabel.type}
-            />
-          )}
+            <Link
+              to={`/w/${workspaceId}/s/${streamId}?m=${message.id}`}
+              className="shrink-0 text-xs text-muted-foreground hover:underline"
+            >
+              <RelativeTime date={message.createdAt} />
+            </Link>
+            {labelStack}
+            {streamLabel && (
+              <MessageStreamByline
+                workspaceId={workspaceId}
+                streamId={streamId}
+                name={streamLabel.name}
+                type={streamLabel.type}
+              />
+            )}
+          </div>
+          {body}
         </div>
-        {body}
+        {overflowMenu}
+        {overlays}
       </div>
-      {overflowMenu}
-      {overlays}
     </div>
   )
 }
