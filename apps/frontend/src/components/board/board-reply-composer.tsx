@@ -63,12 +63,12 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // Quote reply from a message row in this conversation lands here. The form
-  // registers its own insertion handler while mounted, but the resting affordance
-  // is collapsed by default, so this always-mounted outer component owns the
-  // registration: it opens the form and stashes the quote for the form to consume
-  // on mount (or immediately, if already open). Scoped by the per-conversation
-  // QuoteReplyProvider the card/panel wraps around its rows + this composer.
+  // Quote reply from a message row in this conversation lands here. The resting
+  // affordance leaves the form unmounted while collapsed, so this always-mounted
+  // outer owns the provider registration: it opens the form and stashes the quote
+  // for the form to consume on mount (or immediately, if already open). Scoped by
+  // the per-conversation QuoteReplyProvider the card/panel wraps around its rows +
+  // this composer.
   const quoteReplyCtx = useQuoteReply()
   const [pendingQuote, setPendingQuote] = useState<QuoteReplyData | null>(null)
   const onQuoteConsumed = useCallback(() => setPendingQuote(null), [])
