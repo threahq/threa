@@ -57,6 +57,7 @@ describe("detectVideoProvider", () => {
     ["https://vimeo.com/about"], // no numeric id
     ["https://www.loom.com/share/tiny"], // id too short
     ["https://www.twitch.tv/somestreamer"], // bare channel, not a VOD/clip
+    ["https://www.twitch.tv/clip/videos/12345"], // channel named "clip" browsing VODs — not a clip
     ["javascript:alert(1)//youtube.com/watch?v=dQw4w9WgXcQ"],
     ["not a url"],
   ])("returns null for %s", (url) => {

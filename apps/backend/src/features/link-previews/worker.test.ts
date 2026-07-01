@@ -1122,6 +1122,89 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
+  test("refetches an expired video preview instead of freezing it past its TTL", async () => {
+    // A completed video row whose 24h TTL has lapsed must re-run classification.
+    // Regression guard: the GitHub/Linear-scoped "keep existing rich preview when
+    // provider fetch is empty" skip must not apply to video (which never populates
+    // providerMetadata), or every video preview freezes at first classification.
+    const fetchMock = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.startsWith("https://www.youtube.com/oembed")) {
+        return new Response(
+          JSON.stringify({
+            title: "Refreshed Title",
+            provider_name: "YouTube",
+            thumbnail_url: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            width: 480,
+            height: 270,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+      }
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_ttl", url }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_ttl",
+          workspaceId: "ws_123",
+          url,
+          normalizedUrl: url,
+          title: "Stale Title",
+          description: null,
+          imageUrl: "https://i.ytimg.com/vi/dQw4w9WgXcQ/old.jpg",
+          faviconUrl: null,
+          siteName: "YouTube",
+          contentType: "video",
+          status: "completed",
+          previewType: "video",
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: new Date("2026-06-01T10:00:00.000Z"),
+          expiresAt: new Date("2026-06-02T10:00:00.000Z"), // long past — expired
+          createdAt: new Date("2026-06-01T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_ttl",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_ttl", contentMarkdown: url },
+    })
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_ttl",
+      [
+        expect.objectContaining({
+          id: "lp_ttl",
+          skipped: false,
+          overwrite: true,
+          metadata: expect.objectContaining({
+            contentType: "video",
+            title: "Refreshed Title",
+            previewData: expect.objectContaining({ embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" }),
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
   /** Build the link-preview service mock for a single pending preview of `url`. */
   function redditServiceMock(url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
     return {

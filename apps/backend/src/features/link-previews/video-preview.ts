@@ -101,10 +101,10 @@ function detectTwitch(url: URL, host: string): VideoProviderMatch | null {
       embedUrl: `https://player.twitch.tv/?video=${segments[1]}`,
     }
   }
-  // /<channel>/clip/<slug>
-  const clipIndex = segments.indexOf("clip")
-  if (clipIndex >= 0 && segments[clipIndex + 1] && TWITCH_CLIP_SLUG.test(segments[clipIndex + 1])) {
-    const slug = segments[clipIndex + 1]
+  // /<channel>/clip/<slug> — anchored at position 1 so a channel named "clip"
+  // browsing its own VODs (/clip/videos/123) can't be misread as a clip.
+  if (segments[1] === "clip" && segments[2] && TWITCH_CLIP_SLUG.test(segments[2])) {
+    const slug = segments[2]
     return {
       provider: VideoPreviewProviders.TWITCH,
       videoId: slug,

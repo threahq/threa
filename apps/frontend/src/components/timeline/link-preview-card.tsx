@@ -449,14 +449,6 @@ function VideoPreviewContent({ video, workspaceId }: { video: VideoPreview; work
                 <Play className="h-7 w-7 translate-x-0.5" fill="currentColor" />
               </span>
             </button>
-            <button
-              type="button"
-              onClick={() => setGalleryOpen(true)}
-              className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-black/75"
-              aria-label="Open video fullscreen"
-            >
-              <Maximize2 className="h-4 w-4" />
-            </button>
             {video.title && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2.5">
                 <span className="line-clamp-1 text-xs font-medium text-white">{video.title}</span>
@@ -464,6 +456,18 @@ function VideoPreviewContent({ video, workspaceId }: { video: VideoPreview; work
             )}
           </>
         )}
+        {/* Expand-to-gallery stays mounted in both the facade and playing states
+            (z-10 above the iframe) so fullscreen is reachable after playback
+            starts — the moment a user is most likely to want it. */}
+        <button
+          type="button"
+          onClick={() => setGalleryOpen(true)}
+          title="Open in gallery"
+          className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-black/75"
+          aria-label="Open video in fullscreen gallery"
+        >
+          <Maximize2 className="h-4 w-4" />
+        </button>
       </div>
       {galleryOpen && (
         <MediaGallery

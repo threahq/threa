@@ -585,8 +585,13 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
         const isLinearUrl = !isGitHubUrl && parseLinearUrl(p.url) !== null
         const isProviderUrl = isGitHubUrl || isLinearUrl
         const shouldAttemptProviderUpgrade = isProviderUrl && existing.previewType === null
+        // A video URL cached as a plain website (e.g. before this feature shipped)
+        // must re-run classification even while fresh; video classification happens
+        // inside fetchGenericMetadata, not the provider-fetch branch below.
+        const shouldReclassifyVideo =
+          !isProviderUrl && existing.contentType !== "video" && detectVideoProvider(p.url) !== null
 
-        if (isPreviewCacheFresh(existing) && !shouldAttemptProviderUpgrade) {
+        if (isPreviewCacheFresh(existing) && !shouldAttemptProviderUpgrade && !shouldReclassifyVideo) {
           return { id: p.id, skipped: true }
         }
 
@@ -597,7 +602,10 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
           providerMetadata = await fetchLinearPreview(workspaceId, p.url, deps.workspaceIntegrationService)
         }
 
-        if (existing.previewType && providerMetadata === null) {
+        // Guard against downgrading a rich provider (GitHub/Linear) preview when its
+        // fetch comes back empty. Scoped to provider URLs: video never populates
+        // providerMetadata, so an unscoped check froze video rows past their TTL.
+        if (isProviderUrl && existing.previewType && providerMetadata === null) {
           return { id: p.id, skipped: true }
         }
         if (shouldAttemptProviderUpgrade && providerMetadata === null && isPreviewCacheFresh(existing)) {

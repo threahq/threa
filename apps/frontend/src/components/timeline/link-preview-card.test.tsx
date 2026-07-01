@@ -348,9 +348,19 @@ describe("LinkPreviewCard", () => {
     render(<LinkPreviewCard preview={makeVideoPreview()} workspaceId="ws_1" onToggleCollapse={() => {}} />)
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: /Open video fullscreen/i }))
+    fireEvent.click(screen.getByRole("button", { name: /Open video in fullscreen gallery/i }))
     const dialog = screen.getByRole("dialog")
     expect(within(dialog).getByTitle("Never Gonna Give You Up")).toBeInTheDocument()
+  })
+
+  it("keeps the expand-to-gallery control available after playback starts", () => {
+    render(<LinkPreviewCard preview={makeVideoPreview()} workspaceId="ws_1" onToggleCollapse={() => {}} />)
+
+    fireEvent.click(screen.getByRole("button", { name: /Play video/i }))
+    // Iframe is now mounted, and the expand control must still be reachable.
+    expect(screen.getByTitle("Never Gonna Give You Up")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: /Open video in fullscreen gallery/i }))
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
   })
 
   it("opens the media gallery when an image preview is clicked", () => {
