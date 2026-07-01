@@ -398,7 +398,7 @@ describe("SyncEngine.handlePageResume", () => {
     expect(deps.workspaceService.bootstrap.mock.calls.length).toBeLessThanOrEqual(2)
   })
 
-  it("does not refresh a route stream while the socket transport is disconnected", async () => {
+  it("leaves a fresh open (no persisted window) to the query layer while the socket is disconnected", async () => {
     const deps = makeDeps()
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
@@ -409,7 +409,9 @@ describe("SyncEngine.handlePageResume", () => {
     engine.onDisconnect()
 
     engine.setCurrentStreamId("stream_1")
-    await Promise.resolve()
+    // The warm-fetch decision reads IDB asynchronously; give it a macrotask to
+    // settle before asserting it declined to fetch.
+    await new Promise((resolve) => setTimeout(resolve, 25))
 
     expect(deps.streamService.bootstrap).not.toHaveBeenCalled()
     expect(socket.emittedEvents.filter((event) => event.event === "join")).toHaveLength(1)
@@ -758,6 +760,131 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
     await vi.waitFor(() => {
       expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
     })
+  })
+})
+
+describe("SyncEngine HTTP-first warm fetch", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.events.clear(), db.streams.clear(), db.streamMemberships.clear()])
+  })
+
+  async function seedEvent(streamId: string, sequence: number): Promise<void> {
+    await db.events.put({
+      id: `evt_${sequence}`,
+      workspaceId: "ws_1",
+      streamId,
+      sequence: String(sequence),
+      eventType: "message_created",
+      payload: {
+        messageId: `msg_${sequence}`,
+        contentMarkdown: "old",
+        contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+      },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _sequenceNum: sequence,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  it("warms a persisted route stream over HTTP while the socket transport is disconnected", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    await seedEvent("stream_1", 1)
+    deps.streamService.bootstrap.mockClear()
+    const joinsBefore = socket.emittedEvents.filter((event) => event.event === "join").length
+    socket.connected = false
+    engine.onDisconnect()
+
+    engine.setCurrentStreamId("stream_1")
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+    })
+    // The delta is applied to IDB so the open timeline fills in immediately…
+    await vi.waitFor(async () => {
+      expect(await db.events.get("evt_2")).toBeTruthy()
+    })
+    // …but no room join happened: the warm fetch is display-only, and the
+    // reconnect path still owns subscription + cursor discipline.
+    expect(socket.emittedEvents.filter((event) => event.event === "join").length).toBe(joinsBefore)
+  })
+
+  it("fires the warm delta for the current stream on page resume before the ping settles", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    engine.setCurrentStreamId("stream_1")
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalled()
+    })
+    await vi.waitFor(async () => {
+      expect(await db.events.get("evt_2")).toBeTruthy()
+    })
+    deps.streamService.bootstrap.mockClear()
+
+    // Zombie transport: the ping never acks. The warm fetch must not wait for it.
+    socket.ackBehavior = "never"
+    const resumePromise = engine.handlePageResume()
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "2" })
+    })
+
+    // Settle the hung ping so the resume promise resolves.
+    socket.trigger("disconnect", "transport close")
+    await resumePromise
+  })
+
+  it("single-flights concurrent warm fetches for the same stream", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    await seedEvent("stream_1", 1)
+    deps.streamService.bootstrap.mockClear()
+    socket.connected = false
+    engine.onDisconnect()
+
+    // Navigation and a page resume land together (notification tap): one fetch.
+    engine.setCurrentStreamId("stream_1")
+    const resumePromise = engine.handlePageResume()
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(1)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(1)
+    await resumePromise
+  })
+
+  it("swallows warm fetch failures and leaves retries to the socket-gated refresh", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    await seedEvent("stream_1", 1)
+    deps.streamService.bootstrap.mockClear()
+    deps.streamService.bootstrap.mockRejectedValueOnce(new Error("offline"))
+    socket.connected = false
+    engine.onDisconnect()
+
+    engine.setCurrentStreamId("stream_1")
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(1)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    // No error status: the warm fetch is speculative and must not flash chrome.
+    expect(deps.syncStatus.get("stream:stream_1")).not.toBe("error")
   })
 })
 

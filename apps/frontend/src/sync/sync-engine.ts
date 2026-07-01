@@ -138,6 +138,10 @@ export class SyncEngine {
    *  queued upgrades the queued run rather than being collapsed away. */
   private queuedReconnectForceFull = false
   private activeStreamRefreshes = new Map<string, Promise<void>>()
+  /** Single-flighted display-only HTTP warm fetches (see warmStreamOverHttp).
+   *  Kept separate from activeStreamRefreshes: a warm fetch performs no room
+   *  join, so it must never satisfy a reconnect-path refresh that needs one. */
+  private activeWarmFetches = new Map<string, Promise<void>>()
   private activeGapBackfills = new Map<string, { cursor: string; promise: Promise<void> }>()
   /** Lowest gap cursor reported per stream while a backfill was in flight —
    *  drained into one follow-up backfill when the active one settles. */
@@ -387,6 +391,13 @@ export class SyncEngine {
    */
   async handlePageResume(): Promise<void> {
     if (this.isDestroyed || !this.socket || !this.hasEverConnected) return
+    // Warm the open stream over plain HTTP before anything socket-shaped runs.
+    // The socket is the slowest thing on a phone resume — a zombie transport
+    // takes a ping timeout to detect and seconds more to reconnect and rejoin
+    // rooms — while an HTTP delta needs one round trip. This is what puts the
+    // message the user is coming back for on screen; the socket paths below
+    // remain the correctness authority and re-refresh behind it.
+    if (this.currentStreamId) void this.warmStreamOverHttp(this.currentStreamId)
     // If the transport is already down, socket.io is handling the reconnect;
     // don't layer another probe on top of it.
     if (!this.socket.connected) return
@@ -1003,14 +1014,16 @@ export class SyncEngine {
   }
 
   private refreshStreamAfterNavigation(streamId: string): Promise<void> {
-    if (
-      this.isDestroyed ||
-      !this.socket ||
-      !this.socket.connected ||
-      streamId.startsWith("draft_") ||
-      streamId.startsWith("draft:")
-    ) {
+    if (this.isDestroyed || streamId.startsWith("draft_") || streamId.startsWith("draft:")) {
       return Promise.resolve()
+    }
+
+    // Socket down (backgrounded transport, reconnect in flight): don't skip
+    // freshness entirely — HTTP can succeed while the socket can't. Warm the
+    // window now; the reconnect's slim bootstrap re-runs the cursor-owned
+    // refresh (with the room join) once the socket is back.
+    if (!this.socket || !this.socket.connected) {
+      return this.warmStreamOverHttp(streamId)
     }
 
     const existing = this.activeStreamRefreshes.get(streamId)
@@ -1053,6 +1066,64 @@ export class SyncEngine {
     } catch (error) {
       this.applyReconnectStreamError(streamId, error)
       syncStatus.set(key, syncStatus.getError(key) ? "error" : "stale")
+    }
+  }
+
+  /**
+   * Display-only warm fetch: pull the stream's bootstrap delta (`after` = the
+   * latest persisted sequence) over plain HTTP and merge it into IDB, without
+   * waiting for the socket. No-op for streams with no persisted window.
+   *
+   * This deliberately performs NO room join and therefore sits outside the
+   * cursor-before-join discipline of joinStreamForCatchUp: nothing here
+   * advances a catch-up cursor or opens a live subscription, so a gap between
+   * this fetch and the eventual join is impossible — the socket-gated refresh
+   * that follows re-derives its own cursor and covers everything after this
+   * fetch's window. Overlap is safe (applyStreamBootstrap merges and dedupes
+   * by event id). It also stays out of SyncStatusStore: it is a speculative
+   * warm-up, not the sync authority, and must not flash loading chrome.
+   */
+  private warmStreamOverHttp(streamId: string): Promise<void> {
+    if (this.isDestroyed || streamId.startsWith("draft_") || streamId.startsWith("draft:")) {
+      return Promise.resolve()
+    }
+
+    const existing = this.activeWarmFetches.get(streamId)
+    if (existing) return existing
+
+    const warm = this.performHttpWarmFetch(streamId).finally(() => {
+      if (this.activeWarmFetches.get(streamId) === warm) {
+        this.activeWarmFetches.delete(streamId)
+      }
+    })
+    this.activeWarmFetches.set(streamId, warm)
+    return warm
+  }
+
+  private async performHttpWarmFetch(streamId: string): Promise<void> {
+    const { workspaceId, streamService, queryClient } = this.deps
+
+    try {
+      // Delta-only: no persisted window means a fresh open, and fresh opens
+      // belong to the bootstrap query layer (useStreamBootstrap / the
+      // coordinated stream queries) — warming here too would double-fetch the
+      // full window on every cold open.
+      const after = await getLatestPersistedSequence(streamId)
+      if (after === null || this.isDestroyed) return
+
+      const bootstrap = await streamService.bootstrap(workspaceId, streamId, { after })
+      if (this.isDestroyed) return
+      await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+
+      const queryKey = streamKeys.bootstrap(workspaceId, streamId)
+      queryClient.setQueryData<CachedStreamBootstrap>(queryKey, (currentBootstrap) =>
+        toCachedStreamBootstrap(bootstrap, currentBootstrap, {
+          incrementWindowVersionOnReplace: bootstrap.syncMode === "replace",
+        })
+      )
+    } catch {
+      // Speculative warm-up only — the socket-gated refresh path owns errors,
+      // retries, and terminal 403/404 handling.
     }
   }
 
