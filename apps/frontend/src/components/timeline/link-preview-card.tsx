@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useMemo, type ReactNode } from "react"
 import {
   ExternalLink,
   X,
@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { cn } from "@/lib/utils"
+import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
+import { linkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
 import { LinkPreviewBody } from "./link-preview-body"
 import { AccentGlow, colorWithAlpha, Field, FieldGrid, LabelChip, MonoTag, StatePill } from "./link-preview-primitives"
 import type {
@@ -51,6 +53,11 @@ interface LinkPreviewCardProps {
    * transient previews without a host message still render.
    */
   messageId?: string
+  /**
+   * Workspace scope for the image gallery. Unused for external link-preview
+   * images (their download/copy are gated off), so optional for tests.
+   */
+  workspaceId?: string
   isHighlighted?: boolean
   isCollapsed?: boolean
   onDismiss?: (previewId: string) => void
@@ -100,6 +107,7 @@ function resolveHeaderLabel(
 export function LinkPreviewCard({
   preview,
   messageId,
+  workspaceId,
   isHighlighted,
   isCollapsed: isCollapsedProp,
   onDismiss,
@@ -131,47 +139,23 @@ export function LinkPreviewCard({
 
   if (preview.contentType === "image") {
     return (
-      <a
-        href={preview.url}
-        target="_blank"
-        rel="noopener noreferrer"
+      <div
         className={cn(
-          "group/preview reveal-host relative block overflow-hidden rounded-lg border bg-muted/30 transition-all max-w-xs",
-          "hover:border-primary hover:shadow-sm",
+          "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
+          "hover:border-primary/50 hover:shadow-sm",
           isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
         )}
       >
-        <div className="reveal-actions absolute top-1.5 right-1.5 z-10 flex gap-1">
-          {onDismiss && (
-            <Button
-              variant="secondary"
-              size="icon"
-              className="h-6 w-6 shadow-sm"
-              onClick={handleDismiss}
-              aria-label="Dismiss preview"
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          )}
-        </div>
-        {!imageError ? (
-          <img
-            src={preview.url}
-            alt={preview.title ?? "Image preview"}
-            className="h-32 w-auto max-w-xs object-cover"
-            loading="lazy"
-            onError={() => setImageError(true)}
-          />
-        ) : (
-          <div className="flex h-32 w-40 items-center justify-center text-muted-foreground">
-            <ImageIcon className="h-8 w-8" />
-          </div>
-        )}
-        <div className="flex items-center gap-1.5 px-2 py-1.5 text-xs text-muted-foreground">
-          <ExternalLink className="h-3 w-3 shrink-0" />
-          <span className="truncate">{domain}</span>
-        </div>
-      </a>
+        <PreviewCardHeader
+          icon={<ContentTypeIcon contentType="image" />}
+          label={preview.siteName ?? domain}
+          faviconUrl={preview.faviconUrl}
+          isCollapsed={isCollapsedProp}
+          onToggleCollapse={handleToggleCollapse}
+          onDismiss={onDismiss ? handleDismiss : undefined}
+        />
+        {!isCollapsedProp && <ImagePreviewContent preview={preview} workspaceId={workspaceId} />}
+      </div>
     )
   }
 
@@ -190,43 +174,14 @@ export function LinkPreviewCard({
         isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
       )}
     >
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
-        <button
-          type="button"
-          onClick={handleToggleCollapse}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          aria-label={isCollapsedProp ? "Expand preview" : "Collapse preview"}
-        >
-          {isCollapsedProp ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-        </button>
-        {headerIcon}
-        {!githubPreview && !linearPreview && preview.faviconUrl && (
-          <img
-            src={preview.faviconUrl}
-            alt=""
-            className="h-3.5 w-3.5 rounded-sm"
-            loading="lazy"
-            onError={(e) => {
-              ;(e.target as HTMLImageElement).style.display = "none"
-            }}
-          />
-        )}
-        <span className="text-xs text-muted-foreground truncate">{headerLabel}</span>
-        <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
-        <div className="reveal-actions flex gap-1">
-          {onDismiss && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5"
-              onClick={handleDismiss}
-              aria-label="Dismiss preview"
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          )}
-        </div>
-      </div>
+      <PreviewCardHeader
+        icon={headerIcon}
+        label={headerLabel}
+        faviconUrl={!githubPreview && !linearPreview ? preview.faviconUrl : null}
+        isCollapsed={isCollapsedProp}
+        onToggleCollapse={handleToggleCollapse}
+        onDismiss={onDismiss ? handleDismiss : undefined}
+      />
 
       {/* Clamped to a shared body height so a message with mixed preview types
           (e.g. a PR + a diff) lines up. */}
@@ -243,6 +198,132 @@ export function LinkPreviewCard({
         </LinkPreviewBody>
       )}
     </div>
+  )
+}
+
+/**
+ * Card chrome header shared by every preview family: collapse toggle, provider
+ * icon, optional favicon, source label, and dismiss. `faviconUrl` is null when
+ * the provider already carries its own icon (GitHub/Linear).
+ */
+function PreviewCardHeader({
+  icon,
+  label,
+  faviconUrl,
+  isCollapsed,
+  onToggleCollapse,
+  onDismiss,
+}: {
+  icon: ReactNode
+  label: string
+  faviconUrl: string | null
+  isCollapsed?: boolean
+  onToggleCollapse: (e: React.MouseEvent) => void
+  onDismiss?: (e: React.MouseEvent) => void
+}) {
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
+      <button
+        type="button"
+        onClick={onToggleCollapse}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        aria-label={isCollapsed ? "Expand preview" : "Collapse preview"}
+      >
+        {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+      </button>
+      {icon}
+      {faviconUrl && (
+        <img
+          src={faviconUrl}
+          alt=""
+          className="h-3.5 w-3.5 rounded-sm"
+          loading="lazy"
+          onError={(e) => {
+            ;(e.target as HTMLImageElement).style.display = "none"
+          }}
+        />
+      )}
+      <span className="text-xs text-muted-foreground truncate">{label}</span>
+      <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
+      <div className="reveal-actions flex gap-1">
+        {onDismiss && (
+          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">
+            <X className="h-3 w-3" />
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Below this width/height (px) an og:image is a logo/icon rather than a hero
+// shot: filling the box would upscale and crop it, so switch to a contained,
+// centered fit. The box height is fixed either way, so this never reflows the
+// timeline (INV-21) — only object-fit changes.
+const HERO_MIN_WIDTH = 400
+const HERO_MIN_HEIGHT = 200
+
+/**
+ * Image link preview: fixed-height hero inside the shared card chrome. Clicking
+ * opens the full media gallery (zoom/pan) rather than leaving the app — the
+ * image rides the gallery via a `link-preview:` sentinel id, so its bytes never
+ * touch the attachment API (download/copy are gated off there).
+ */
+function ImagePreviewContent({ preview, workspaceId }: { preview: LinkPreviewSummary; workspaceId?: string }) {
+  const [imageError, setImageError] = useState(false)
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [fit, setFit] = useState<"cover" | "contain">("cover")
+
+  const src = preview.imageUrl ?? preview.url
+  const filename = preview.title ?? getDomain(preview.url)
+
+  const galleryItems = useMemo<GalleryItem[]>(
+    () => [{ type: "image", url: src, thumbnailUrl: src, filename, attachmentId: linkPreviewGalleryId(src) }],
+    [src, filename]
+  )
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setGalleryOpen(true)}
+        className="relative block w-full cursor-zoom-in overflow-hidden"
+        aria-label={`Open image preview${preview.title ? `: ${preview.title}` : ""}`}
+      >
+        <AccentGlow />
+        {!imageError ? (
+          <div className="relative flex h-48 w-full items-center justify-center overflow-hidden bg-muted/30">
+            <img
+              src={src}
+              alt={preview.title ?? "Image preview"}
+              loading="lazy"
+              onLoad={(e) => {
+                const img = e.currentTarget
+                if (img.naturalWidth < HERO_MIN_WIDTH || img.naturalHeight < HERO_MIN_HEIGHT) setFit("contain")
+              }}
+              onError={() => setImageError(true)}
+              className={cn(
+                "transition-transform duration-200 group-hover/preview:scale-[1.02]",
+                fit === "cover" ? "h-full w-full object-cover" : "max-h-full max-w-full object-contain"
+              )}
+            />
+          </div>
+        ) : (
+          <div className="flex h-48 w-full items-center justify-center bg-muted/30 text-muted-foreground">
+            <ImageIcon className="h-8 w-8" />
+          </div>
+        )}
+      </button>
+      {galleryOpen && (
+        <MediaGallery
+          isOpen={galleryOpen}
+          onClose={() => setGalleryOpen(false)}
+          items={galleryItems}
+          initialIndex={0}
+          workspaceId={workspaceId ?? ""}
+        />
+      )}
+    </>
   )
 }
 

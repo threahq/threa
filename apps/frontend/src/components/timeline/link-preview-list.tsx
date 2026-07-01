@@ -129,6 +129,7 @@ export function LinkPreviewList({
             <LinkPreviewCard
               preview={preview}
               messageId={messageId}
+              workspaceId={workspaceId}
               isHighlighted={isHighlighted}
               isCollapsed={isCollapsed}
               onDismiss={handleDismiss}
