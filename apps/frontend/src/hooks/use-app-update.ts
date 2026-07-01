@@ -27,7 +27,7 @@ declare const __APP_VERSION__: string
 // gated in production — the toast is the only signal a new build is parked.
 declare const __E2E_BUILD__: boolean
 
-function isE2eBuild(): boolean {
+export function isE2eBuild(): boolean {
   return typeof __E2E_BUILD__ === "boolean" && __E2E_BUILD__
 }
 

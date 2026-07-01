@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   currentAppVersion,
+  isE2eBuild,
   reconcilePostReload,
   reloadForUpdate,
   shouldAnnounceWaiting,
@@ -9,6 +10,28 @@ import {
 } from "./use-app-update"
 import * as swRecovery from "@/lib/sw-recovery"
 import { SW_MSG_SKIP_WAITING } from "@/lib/sw-messages"
+
+describe("isE2eBuild", () => {
+  // The vite `define` isn't applied under vitest, so the bare `__E2E_BUILD__`
+  // resolves to the global — stub it to stand in for the E2E vs. prod build.
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("is false when the define wasn't applied (prod/unit build): the toast still fires", () => {
+    expect(isE2eBuild()).toBe(false)
+  })
+
+  it("is true only in the E2E build, so announceIfWaiting suppresses the click-blocking toast", () => {
+    vi.stubGlobal("__E2E_BUILD__", true)
+    expect(isE2eBuild()).toBe(true)
+  })
+
+  it("is false when the flag is explicitly false", () => {
+    vi.stubGlobal("__E2E_BUILD__", false)
+    expect(isE2eBuild()).toBe(false)
+  })
+})
 
 describe("shouldAnnounceWaiting", () => {
   // Distinct objects stand in for distinct parked workers — the gate keys on
