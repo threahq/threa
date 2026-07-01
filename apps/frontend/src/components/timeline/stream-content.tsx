@@ -178,6 +178,39 @@ export function shouldStartHighlightClear(args: {
 }
 
 /**
+ * Max time the deep-link (?m=) mount hold may keep the skeleton up while the
+ * jump window is fetched. The hold exists so a fast fetch mounts the list
+ * already anchored on the target (no tail-paint-then-yank), and the push
+ * prefetch usually has the target in IDB already — so within this bound the
+ * hold is invisible. Past it, a skeleton is strictly worse than showing the
+ * cached timeline: release, paint the window we have, and let the jump swap
+ * anchor/highlight the target when it lands.
+ */
+export const DEEP_LINK_HOLD_MAX_MS = 600
+
+/**
+ * Whether the timeline should keep showing the skeleton while a deep-link
+ * (?m=) target is fetched into the window. Holds only while there is real
+ * cached content that would otherwise paint at the wrong anchor, and never
+ * past `DEEP_LINK_HOLD_MAX_MS` (`holdExpired`), never after the target loaded,
+ * and never after the jump conclusively failed.
+ */
+export function shouldHoldForDeepLink(args: {
+  highlightMessageId: string | null | undefined
+  deepLinkTargetLoaded: boolean
+  deepLinkGaveUp: boolean
+  holdExpired: boolean
+  isLoading: boolean
+  isConfirmedEmpty: boolean
+  hasEvents: boolean
+}): boolean {
+  if (!args.highlightMessageId || args.deepLinkTargetLoaded || args.deepLinkGaveUp || args.holdExpired) {
+    return false
+  }
+  return !args.isLoading && !args.isConfirmedEmpty && args.hasEvents
+}
+
+/**
  * Whether the deep-link / search highlight effect may claim a navigation and
  * act on it this render. The event window must have hydrated first: on a cold
  * open `isLoading` can read false while `events` is still empty (the IDB
@@ -347,6 +380,10 @@ export function StreamContent({
   // access / fetch failed). Releases the deep-link mount hold so the timeline
   // falls back to the loaded window instead of holding the skeleton forever.
   const [deepLinkGaveUp, setDeepLinkGaveUp] = useState(false)
+  // Set when the deep-link mount hold has been up for DEEP_LINK_HOLD_MAX_MS
+  // without the target landing — releases the skeleton in favor of the cached
+  // window while the jump keeps working. Re-armed with deepLinkGaveUp.
+  const [deepLinkHoldExpired, setDeepLinkHoldExpired] = useState(false)
   const user = useUser()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
@@ -1512,6 +1549,7 @@ export function StreamContent({
     // Fresh navigation: re-arm the mount hold for this target and clear any
     // prior manual-control stamp so the refine loop is allowed to run.
     setDeepLinkGaveUp(false)
+    setDeepLinkHoldExpired(false)
     userInteractedAtRef.current = 0
 
     // Disable auto-scroll so highlight scroll-into-view isn't overridden
@@ -1565,6 +1603,7 @@ export function StreamContent({
     }
     pendingScrollTarget.current = null
     setDeepLinkGaveUp(false)
+    setDeepLinkHoldExpired(false)
     userInteractedAtRef.current = 0
     exitJumpMode()
     setIsSearchOpen(false)
@@ -1809,21 +1848,32 @@ export function StreamContent({
   // makes the single keyed mount land already-anchored on it (the pre-paint
   // centering jump needs the target row to exist at mount). Uses the
   // raw ?m= id (not the search-active id) so in-stream search is unaffected,
-  // and releases when the target loads (deepLinkTargetLoaded) or the jump
-  // conclusively fails (deepLinkGaveUp) so it never hangs.
+  // and releases when the target loads (deepLinkTargetLoaded), the jump
+  // conclusively fails (deepLinkGaveUp), or the hold has been up for
+  // DEEP_LINK_HOLD_MAX_MS (deepLinkHoldExpired) — past that bound a skeleton
+  // reads worse than painting the cached window and snapping to the target
+  // when the jump lands.
   const deepLinkTargetLoaded = useMemo(
     () =>
       !highlightMessageId ||
       events.some((e) => (e.payload as { messageId?: string })?.messageId === highlightMessageId),
     [events, highlightMessageId]
   )
-  const holdForDeepLink =
-    !!highlightMessageId &&
-    !deepLinkTargetLoaded &&
-    !deepLinkGaveUp &&
-    !isLoading &&
-    !isConfirmedEmpty &&
-    events.length > 0
+  const holdForDeepLink = shouldHoldForDeepLink({
+    highlightMessageId,
+    deepLinkTargetLoaded,
+    deepLinkGaveUp,
+    holdExpired: deepLinkHoldExpired,
+    isLoading,
+    isConfirmedEmpty,
+    hasEvents: events.length > 0,
+  })
+
+  useEffect(() => {
+    if (!holdForDeepLink) return
+    const timer = setTimeout(() => setDeepLinkHoldExpired(true), DEEP_LINK_HOLD_MAX_MS)
+    return () => clearTimeout(timer)
+  }, [holdForDeepLink])
 
   const prevHoldForDeepLinkRef = useRef(holdForDeepLink)
   if (prevHoldForDeepLinkRef.current !== holdForDeepLink) {
