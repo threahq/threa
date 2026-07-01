@@ -658,6 +658,7 @@ export class BoundaryExtractionService {
         participantIds: c.participantIds,
         completenessScore: c.completenessScore,
         status: c.status,
+        lastActivityAt: c.lastActivityAt,
         contextMessageIds: contextIds,
       }
     })

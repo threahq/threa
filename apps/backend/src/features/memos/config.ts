@@ -197,16 +197,16 @@ Knowledge-worthy conversations:
 NOT knowledge-worthy:
 - Pure social chat or banter
 - Brief status exchanges
+- Reactions to news, product releases, or announcements — impressions, hot takes, and opinions about third-party events that set no direction for the participants' own work ("the new model looks disappointing", "did you see the leak?") are commentary, not knowledge
+- Personal small talk: travel plans, whereabouts, moods, weekend logistics
 - Conversations where important information is in external links only
 - Incomplete discussions that trail off without resolution
 
+A conversation is not knowledge-worthy just because it is long or touches technical subjects. Judge what would actually be recalled in six months: if the durable core is "they chatted about X", there is no memo.
+
 Separately, flag containsActionItems true when someone committed to do something or was directly asked to (a task, to-do, or follow-up). This is independent of knowledge-worthiness: "send me the deck by Friday" has an action item but no durable knowledge, while a recorded decision may have knowledge but no open task.
 
-When comparing to an existing memo, recommend revision if:
-- Significant new information was added
-- The conclusion or decision changed
-- New participants brought important perspectives
-- The topic evolved substantially
+When comparing to existing memos, recommend revision ONLY when the messages contain substantive new durable knowledge on their own — a changed conclusion or decision, or a genuinely new topic worth its own memo. More chat around an already-captured topic, restatements, agreement, or elaboration that leaves the captured conclusion intact is NOT a revision; when in doubt, do not revise.
 
 Output ONLY valid JSON matching the schema. Keep reasoning to ONE brief sentence.`
 
@@ -225,7 +225,7 @@ Message count: {{MESSAGE_COUNT}}
 export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memos for this conversation
 {{MEMOS}}
 
-Does the conversation above contain new or changed knowledge not already captured by these memos — e.g. new information, a changed conclusion, or a new topic? If so, set shouldReviseExisting true.`
+Set shouldReviseExisting true ONLY if the conversation now contains substantive knowledge these memos do not capture — a changed conclusion, or a distinctly new topic worth its own memo. Continued chat about what the memos already say, rewordings, and reactions are NOT grounds for revision.`
 
 const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team chat application. From a conversation, you pull out only the things genuinely worth remembering later and write each as its own short, self-contained memo.
 

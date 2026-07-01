@@ -558,4 +558,280 @@ Any ideas what's causing this?`,
       minConfidence: 0.6,
     },
   },
+
+  // Session gaps: DMs happen in sessions. A message that opens a new subject a
+  // day after the stream's last activity starts a NEW conversation, even though
+  // the stale conversation holds every message in the recent window. This is
+  // the prod mega-conversation failure: one DM conversation absorbing six days
+  // of unrelated sessions because the extractor had no time signal.
+  {
+    id: "session-gap-next-day-new-topic-001",
+    name: "Session gap: next-day message on a new subject leaves the stale conversation",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: "Helt sjukt, min agent har bränt 4GB mobildata på en dag. Det är ju bara text?!",
+      },
+      activeConversations: [
+        {
+          id: "conv_grillkvall",
+          topicSummary: "Grillkväll på lördag",
+          messageCount: 14,
+          lastMessagePreview: "kör vi 17 då, jag tar med kol",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 1560, // 26h — yesterday evening's session
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "ska vi säga lördag eftermiddag?",
+          minutesAgo: 1575,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ja perfekt",
+          minutesAgo: 1570,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "kör vi 17 då, jag tar med kol",
+          minutesAgo: 1560,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["data", "agent", "mobildata"],
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "session-gap-resolved-stale-001",
+    name: "Session gap: casual opener two days after a resolved conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Såg att nya Gemini släpps idag, benchmarks ser galna ut",
+      },
+      activeConversations: [
+        {
+          id: "conv_tagresa",
+          topicSummary: "Tågresa till Berlin",
+          messageCount: 22,
+          lastMessagePreview: "biljetterna bokade, kvitto i mejlen",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 7,
+          status: "resolved",
+          lastActivityMinutesAgo: 2880, // 2 days
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "biljetterna bokade, kvitto i mejlen",
+          minutesAgo: 2880,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["gemini"],
+      minConfidence: 0.6,
+    },
+  },
+
+  // Counter-case: a gap alone is not a boundary. A message that directly
+  // answers the stale conversation's open question continues it — the fix must
+  // not overcorrect into fragmenting slow-paced exchanges.
+  {
+    id: "session-gap-direct-answer-001",
+    name: "Session gap: next-morning answer to an open question continues the conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Inte än, vi åker upp på torsdag. Ska packa ikväll",
+      },
+      activeConversations: [
+        {
+          id: "conv_stugan",
+          topicSummary: "Stugan vecka 28",
+          messageCount: 9,
+          lastMessagePreview: "Är ni uppe i stugan nu?",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 3,
+          lastActivityMinutesAgo: 540, // 9h — question asked last night
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Är ni uppe i stugan nu?",
+          minutesAgo: 540,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_stugan",
+      minConfidence: 0.6,
+    },
+  },
+
+  // Counter-case: explicit topic revival. Days later, a message that names the
+  // old conversation's concrete subject resumes THAT conversation — not the
+  // fresher unrelated one, and not a new singleton.
+  {
+    id: "session-gap-topic-revival-001",
+    name: "Session gap: explicit revival rejoins the days-old conversation about that subject",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: "Har du kvar din zellij-setup förresten? Tänkte testa den på servern",
+      },
+      activeConversations: [
+        {
+          id: "conv_zellij",
+          topicSummary: "zellij-setup",
+          messageCount: 12,
+          lastMessagePreview: "kör med den dagligen nu, funkar fint",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 6,
+          lastActivityMinutesAgo: 4320, // 3 days
+        },
+        {
+          id: "conv_lunch",
+          topicSummary: "Lunch imorgon",
+          messageCount: 4,
+          lastMessagePreview: "12:30 funkar",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 60,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "12:30 funkar",
+          minutesAgo: 60,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_zellij",
+      minConfidence: 0.6,
+    },
+  },
+
+  // A short enthusiastic opener hours after an unrelated discussion is a new
+  // topic, not a continuation — brevity is only a continuity signal in a LIVE
+  // exchange.
+  {
+    id: "session-gap-short-opener-001",
+    name: "Session gap: short opener on a new subject after hours of quiet",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: "Shit vad fjärrstyrningen är nice",
+      },
+      activeConversations: [
+        {
+          id: "conv_lakemedel",
+          topicSummary: "AI-läkemedelsnyheten",
+          messageCount: 18,
+          lastMessagePreview: "ja, känns som hype men vi får se",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 390, // 6.5h
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ja, känns som hype men vi får se",
+          minutesAgo: 390,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      minConfidence: 0.5,
+    },
+  },
+
+  // The absorption guard at scale: a huge, day-stale conversation must not
+  // swallow an unrelated message just because it owns every message in the
+  // recent window and nothing else is listed.
+  {
+    id: "session-gap-mega-conversation-001",
+    name: "Session gap: day-old mega-conversation does not absorb an unrelated message",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Du, har du nån bra mall för konsultavtal? Fick en förfrågan igår",
+      },
+      activeConversations: [
+        {
+          id: "conv_semester",
+          topicSummary: "Semesterplaner juli",
+          messageCount: 79,
+          lastMessagePreview: "haha ja, klassiskt",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 1740, // 29h
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "vi kör måndag som sagt då",
+          minutesAgo: 1750,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "yes",
+          minutesAgo: 1745,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "haha ja, klassiskt",
+          minutesAgo: 1740,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["konsultavtal", "avtal", "mall"],
+      minConfidence: 0.6,
+    },
+  },
 ]

@@ -79,6 +79,13 @@ export interface ConversationSummary {
   /** Lifecycle status so the model treats "resolved" conversations as closed. */
   status: (typeof CONVERSATION_STATUSES)[number]
   /**
+   * When the conversation last saw activity. The prompt renders this as a
+   * relative age next to the summary so the model can weigh session gaps —
+   * without it a conversation idle for days is indistinguishable from a live
+   * exchange.
+   */
+  lastActivityAt: Date
+  /**
    * Message IDs from this conversation that appear in the current extraction
    * context. The LLM may reassign these to a different conversation.
    */

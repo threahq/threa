@@ -16,6 +16,11 @@ export interface EvalConversationSummary {
   completenessScore: number
   /** Lifecycle status; defaults to "active" when omitted. */
   status?: ConversationStatus
+  /**
+   * How long before the new message this conversation last saw activity.
+   * Defaults to 5 minutes (a live conversation) when omitted.
+   */
+  lastActivityMinutesAgo?: number
 }
 
 /**
@@ -25,6 +30,11 @@ export interface EvalMessage {
   authorId: string
   authorType: "user" | "persona"
   contentMarkdown: string
+  /**
+   * How long before the new message this message was sent. Defaults to
+   * 2 minutes (part of a live exchange) when omitted.
+   */
+  minutesAgo?: number
 }
 
 /**
@@ -54,7 +64,15 @@ export interface BoundaryExtractionInput {
   /** Stream type (channel, scratchpad, thread, dm) */
   streamType?: string
   /** Category for organizing test cases */
-  category?: "new-topic" | "continue-existing" | "topic-shift" | "resolution" | "ambiguous" | "reply" | "continuity"
+  category?:
+    | "new-topic"
+    | "continue-existing"
+    | "topic-shift"
+    | "resolution"
+    | "ambiguous"
+    | "reply"
+    | "continuity"
+    | "session-gap"
 }
 
 /**

@@ -342,12 +342,12 @@ export const MemoRepository = {
 
   /**
    * Closest active memo in `streamId` whose abstract embedding sits within
-   * `maxDistance` (pgvector cosine distance) of `embedding`, ignoring memos
-   * already attached to `excludeConversationId`. Drives the cross-conversation
-   * dedup gate (INV-20): the per-conversation revision path handles repeats
-   * within one conversation; this catches the same knowledge recurring across
-   * different conversations before a duplicate row is inserted. Returns null
-   * when nothing is close enough.
+   * `maxDistance` (pgvector cosine distance) of `embedding`. Drives the dedup
+   * gate (INV-20) for repeats both across conversations AND within one: the
+   * revision prompt asks the memorizer to emit only new/changed topics, but in
+   * practice it re-emits near-identical rewordings on every re-processing of a
+   * long conversation, so the embedding gate — not the prompt — is the
+   * authoritative guard. Returns null when nothing is close enough.
    */
   async findNearDuplicate(
     db: Querier,
@@ -356,10 +356,9 @@ export const MemoRepository = {
       streamId: string
       embedding: number[]
       maxDistance: number
-      excludeConversationId: string
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const { workspaceId, streamId, embedding, maxDistance, excludeConversationId } = params
+    const { workspaceId, streamId, embedding, maxDistance } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
 
     const result = await db.query<MemoRow & { distance: number }>(sql`
@@ -373,7 +372,6 @@ export const MemoRepository = {
           AND m.status = 'active'
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
-          AND m.source_conversation_id IS DISTINCT FROM ${excludeConversationId}
         UNION
         SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
                m.embedding <=> ${embeddingLiteral}::vector AS distance

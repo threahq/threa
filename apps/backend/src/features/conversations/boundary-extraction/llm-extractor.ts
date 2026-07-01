@@ -29,6 +29,25 @@ function indent(text: string, prefix: string): string {
     .join("\n")
 }
 
+/**
+ * Age of `date` relative to `reference` (the new message), rendered for the
+ * prompt: "just now", "5m ago", "3h ago", "2d ago". Ages at or after the
+ * reference clamp to "just now" — `recentMessages` includes a couple of
+ * messages sent AFTER the new message (MESSAGES_AFTER), and their sub-minute
+ * skew carries no boundary signal.
+ */
+export function formatRelativeAge(date: Date, reference: Date): string {
+  const minutes = Math.floor((reference.getTime() - date.getTime()) / 60_000)
+  if (minutes < 1) return "just now"
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  // Hours up to two days: "26h ago" carries the overnight-vs-full-day nuance
+  // that "1d ago" would flatten, and that nuance is exactly what the model
+  // weighs at session boundaries.
+  if (hours < 48) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 export class LLMBoundaryExtractor implements BoundaryExtractor {
   constructor(
     private ai: AI,
@@ -95,6 +114,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   }
 
   private buildPrompt(context: ExtractionContext): string {
+    const now = context.newMessage.createdAt
     const allConvs = [
       ...(context.parentMessageConversations ?? []).map((c) => ({ ...c, isParent: true })),
       ...context.activeConversations.map((c) => ({ ...c, isParent: false })),
@@ -107,7 +127,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
               const tag = c.isParent ? " [parent-thread]" : ""
               const contextIds =
                 c.contextMessageIds.length > 0 ? `, in-context messages: [${c.contextMessageIds.join(", ")}]` : ""
-              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})`
+              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, last active ${formatRelativeAge(c.lastActivityAt, now)}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})`
             })
             .join("\n")
         : "No active conversations in this stream yet."
@@ -116,7 +136,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
     const recentSection = context.recentMessages
       .map((m) => {
-        const head = `[${m.id}] ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
+        const head = `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
         const atts = attachmentsByMessageId.get(m.id)
         const attBlock = atts && atts.length > 0 ? `\n${this.renderAttachments(atts, RECENT_ATTACHMENT_CHARS)}` : ""
         return head + attBlock
