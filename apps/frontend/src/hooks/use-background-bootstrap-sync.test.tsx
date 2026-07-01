@@ -3,6 +3,7 @@ import { renderHook, act } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { useBackgroundBootstrapSync } from "./use-background-bootstrap-sync"
+import * as accountScope from "@/auth/account-scope"
 import { SW_MSG_QUEUE_BOOTSTRAP_SYNC } from "@/lib/sw-messages"
 
 let visibilityState: DocumentVisibilityState = "visible"
@@ -48,6 +49,7 @@ describe("useBackgroundBootstrapSync", () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     if (originalVisibilityState) {
       Object.defineProperty(document, "visibilityState", originalVisibilityState)
     } else {
@@ -71,6 +73,26 @@ describe("useBackgroundBootstrapSync", () => {
       type: SW_MSG_QUEUE_BOOTSTRAP_SYNC,
       workspaceId: "ws_1",
       streamId: "stream_1",
+      workosUserId: null,
+    })
+  })
+
+  it("carries the active account id so the SW can open the per-account database", () => {
+    vi.spyOn(accountScope, "useAccountScopeOptional").mockReturnValue({
+      activeWorkosUserId: "user_workos_1",
+    } as ReturnType<typeof accountScope.useAccountScopeOptional>)
+
+    renderHook(() => useBackgroundBootstrapSync(), {
+      wrapper: makeWrapper("/w/ws_1/s/stream_1"),
+    })
+
+    act(() => setVisibility("hidden"))
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: SW_MSG_QUEUE_BOOTSTRAP_SYNC,
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      workosUserId: "user_workos_1",
     })
   })
 
@@ -85,6 +107,7 @@ describe("useBackgroundBootstrapSync", () => {
       type: SW_MSG_QUEUE_BOOTSTRAP_SYNC,
       workspaceId: "ws_1",
       streamId: null,
+      workosUserId: null,
     })
   })
 

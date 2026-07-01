@@ -1,6 +1,7 @@
 export {
   db,
   ThreaDatabase,
+  accountDbName,
   clearAllCachedData,
   clearPendingMessages,
   sequenceToNum,

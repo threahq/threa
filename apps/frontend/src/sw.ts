@@ -1,8 +1,17 @@
 /// <reference lib="webworker" />
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
-import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threa/types"
 import { resolveTag } from "./lib/sw-notification-format"
 import { isDevicePresent, PRESENCE_CACHE } from "./lib/sw-presence"
+import {
+  BOOTSTRAP_SYNC_TAG,
+  PENDING_SYNC_CACHE,
+  PENDING_SYNC_KEY,
+  PUSH_BOOTSTRAP_CACHE,
+  WORKSPACE_BOOTSTRAP_PATH_RE,
+  parsePersistedSyncTarget,
+  queueBootstrapSync,
+  runBootstrapSync,
+} from "./lib/sw-bootstrap-prefetch"
 import {
   SW_MSG_NOTIFICATION_CLICK,
   SW_MSG_SUBSCRIPTION_CHANGED,
@@ -163,202 +172,28 @@ self.addEventListener("fetch", (event) => {
 
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
 // (stream: IndexedDB; workspace: the Cache API entry served by the interceptor).
-
-/** Cache name for pre-fetched workspace bootstrap responses triggered by push or background sync. */
-const PUSH_BOOTSTRAP_CACHE = "push-bootstrap"
-
-/** Cache name used to persist pending Background Sync targets across SW restarts. */
-const PENDING_SYNC_CACHE = "pending-sync"
-
-/** Single sync tag for bootstrap refresh — browsers coalesce repeat registrations under the same tag. */
-const BOOTSTRAP_SYNC_TAG = "threa-bootstrap-refresh"
-
-/** Cache key for the persisted sync target. Last write wins; only the most recent target is replayed. */
-const PENDING_SYNC_KEY = `/_sync/${BOOTSTRAP_SYNC_TAG}`
-
-/** Regex matching workspace bootstrap API paths. */
-const WORKSPACE_BOOTSTRAP_PATH_RE = /^\/api\/workspaces\/[^/]+\/bootstrap$/
-
-interface BootstrapSyncTarget {
-  workspaceId: string
-  streamId: string | null
-  messageId: string | null
-}
-
-/**
- * Pre-fetch events around a specific message so it's available in IDB
- * when the user taps the push notification. Best-effort.
- */
-async function prefetchEventsAround(workspaceId: string, streamId: string, messageId: string): Promise<void> {
-  try {
-    const url = `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?messageId=${messageId}&limit=30`
-    const response = await fetch(url, { credentials: "include" })
-    if (!response.ok) return
-
-    const body = await response.json()
-    const data = body.data ?? body
-    if (data?.events?.length > 0) {
-      const now = Date.now()
-      const { db, sequenceToNum } = await import("./db/database")
-      await db.events.bulkPut(
-        data.events.map((e: Record<string, unknown>) => ({
-          ...e,
-          workspaceId,
-          _sequenceNum: sequenceToNum(e.sequence as string),
-          _cachedAt: now,
-        }))
-      )
-    }
-  } catch {
-    // Best-effort
-  }
-}
-
-async function prefetchStreamBootstrap(workspaceId: string, streamId: string): Promise<void> {
-  const url = `/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap`
-  const response = await fetch(url, { credentials: "include" })
-  if (!response.ok) return
-
-  // Warm IndexedDB so useLiveQuery renders the stream instantly when the user
-  // taps the notification. We deliberately do NOT cache the response for the
-  // fetch interceptor to replay: the page's own bootstrap GET passes through to
-  // the network and applies the fresh result on top of this warm paint
-  // (stale-while-revalidate), so replaying a snapshot captured before later
-  // activity would only reintroduce staleness. Best-effort: errors are swallowed.
-  try {
-    const body = await response.json()
-    const bootstrap = body.data ?? body
-    if (!bootstrap?.events?.length) return
-
-    const now = Date.now()
-    // Dynamic import to avoid bundling Dexie into the SW critical path.
-    // The SW shares the same origin and IndexedDB database as the main thread.
-    const { db, sequenceToNum } = await import("./db/database")
-
-    const events: StreamEvent[] = bootstrap.events
-    const latestMessageEvent = findLatestMessageEvent(events)
-    const derivedPreview = latestMessageEvent ? buildPreviewFromEvent(latestMessageEvent) : null
-
-    // The stream bootstrap endpoint returns a plain Stream without
-    // lastMessagePreview — a blind put would wipe the sidebar preview and
-    // sink the stream into "Other". Merge via update() so lastMessagePreview
-    // and membership-derived fields (notificationLevel, lastReadEventId)
-    // from applyWorkspaceBootstrap survive.
-    await db.transaction("rw", [db.events, db.streams], async () => {
-      await db.events.bulkPut(
-        events.map((e) => ({
-          ...e,
-          workspaceId,
-          _sequenceNum: sequenceToNum(e.sequence),
-          _cachedAt: now,
-        }))
-      )
-
-      if (!bootstrap.stream) return
-
-      const patch: { _cachedAt: number; lastMessagePreview?: LastMessagePreview } = { _cachedAt: now }
-      if (derivedPreview) patch.lastMessagePreview = derivedPreview
-
-      const updated = await db.streams.update(bootstrap.stream.id, patch)
-      if (updated === 0) {
-        await db.streams.put({ ...bootstrap.stream, ...patch })
-      }
-    })
-  } catch {
-    // Best-effort — normal fetch path takes over if this fails
-  }
-}
-
-/**
- * Pre-fetch the workspace bootstrap so the next workspace bootstrap fetch in the
- * page is served from the warm push cache by the interceptor above.
- *
- * Errors propagate so the `sync` event handler sees the rejection and the
- * browser retries Background Sync. Inline callers (push handler, no-sync
- * fallback) catch separately and treat failures as best-effort.
- *
- * Unlike stream bootstrap, we don't seed IDB here — the workspace bootstrap
- * apply pipeline is large and lives in workspace-sync; running it from the SW
- * would duplicate that surface. Cache-API hydration alone is enough because
- * TanStack always issues a fresh GET on app load and that GET hits the cache.
- */
-async function prefetchWorkspaceBootstrap(workspaceId: string): Promise<void> {
-  const url = `/api/workspaces/${workspaceId}/bootstrap`
-  const response = await fetch(url, { credentials: "include" })
-  if (!response.ok) return
-  const cache = await caches.open(PUSH_BOOTSTRAP_CACHE)
-  await cache.put(url, response)
-}
-
-/**
- * Run a bootstrap prefetch for the given target. Pure-ish: does network + cache
- * + IDB writes but no event-listener wiring, so unit tests can drive it directly.
- *
- * Stream prefetch runs first because that's the user's perceived loading path
- * after tapping a notification; workspace prefetch is the ambient sidebar
- * freshness pass that can land slightly later without affecting the open-stream
- * experience.
- */
-export async function runBootstrapSync(target: BootstrapSyncTarget): Promise<void> {
-  if (target.streamId) {
-    await prefetchStreamBootstrap(target.workspaceId, target.streamId)
-    if (target.messageId) {
-      await prefetchEventsAround(target.workspaceId, target.streamId, target.messageId)
-    }
-  }
-  await prefetchWorkspaceBootstrap(target.workspaceId)
-}
-
-/**
- * Persist the sync target and register a Background Sync. The browser fires the
- * `sync` event once connectivity is available and retries on failure, so the
- * prefetch survives flaky networks and SW termination.
- *
- * Browsers without Background Sync (Safari, Firefox) throw on register — we
- * fall through to running the prefetch immediately. Inline runs delete the
- * persisted target after the run so a sync-capable browser that gains support
- * later (or a leftover entry from a previous SW version) doesn't replay stale.
- */
-async function queueBootstrapSync(target: BootstrapSyncTarget): Promise<void> {
-  const cache = await caches.open(PENDING_SYNC_CACHE)
-  await cache.put(
-    PENDING_SYNC_KEY,
-    new Response(JSON.stringify(target), { headers: { "Content-Type": "application/json" } })
-  )
-
-  const reg = self.registration as ServiceWorkerRegistration & {
-    sync?: { register: (tag: string) => Promise<void> }
-  }
-  if (reg.sync) {
-    try {
-      await reg.sync.register(BOOTSTRAP_SYNC_TAG)
-      return
-    } catch {
-      // Fall through to immediate prefetch below
-    }
-  }
-
-  try {
-    await runBootstrapSync(target)
-  } finally {
-    void caches.open(PENDING_SYNC_CACHE).then((c) => c.delete(PENDING_SYNC_KEY))
-  }
-}
+// The prefetch logic lives in lib/sw-bootstrap-prefetch (testable without a
+// ServiceWorkerGlobalScope); this file wires it to the SW events.
 
 self.addEventListener("message", (event) => {
   if (event.data?.type !== SW_MSG_QUEUE_BOOTSTRAP_SYNC) return
-  const { workspaceId, streamId, messageId } = event.data as {
+  const { workspaceId, streamId, messageId, workosUserId } = event.data as {
     workspaceId?: string
     streamId?: string | null
     messageId?: string | null
+    workosUserId?: string | null
   }
   if (!workspaceId) return
   event.waitUntil(
-    queueBootstrapSync({
-      workspaceId,
-      streamId: streamId ?? null,
-      messageId: messageId ?? null,
-    })
+    queueBootstrapSync(
+      {
+        workspaceId,
+        streamId: streamId ?? null,
+        messageId: messageId ?? null,
+        workosUserId: workosUserId ?? null,
+      },
+      self.registration
+    )
   )
 })
 
@@ -375,7 +210,11 @@ self.addEventListener("sync", ((event: SyncEvent) => {
       const cached = await cache.match(PENDING_SYNC_KEY)
       if (!cached) return
 
-      const target = (await cached.json()) as BootstrapSyncTarget
+      const target = parsePersistedSyncTarget(await cached.json())
+      if (!target) {
+        await cache.delete(PENDING_SYNC_KEY)
+        return
+      }
       // Run before delete: if the run throws, the entry stays so the browser's
       // `sync` retry has a target to replay. A new `queueBootstrapSync` call
       // (e.g. another tab hide) overwrites the entry with a fresher target,
@@ -385,25 +224,6 @@ self.addEventListener("sync", ((event: SyncEvent) => {
     })()
   )
 }) as EventListener)
-
-/** Find the most recent message_created event. Bootstrap events are ordered oldest → newest. */
-function findLatestMessageEvent(events: StreamEvent[]): StreamEvent | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    if (events[i].eventType === "message_created") return events[i]
-  }
-  return null
-}
-
-function buildPreviewFromEvent(event: StreamEvent): LastMessagePreview {
-  const payload = (event.payload ?? {}) as { contentJson?: unknown; contentMarkdown?: string }
-  return {
-    authorId: event.actorId ?? "",
-    authorType: event.actorType ?? AuthorTypes.USER,
-    // Sidebar's truncateContent accepts either JSONContent or a markdown string.
-    content: (payload.contentJson ?? payload.contentMarkdown ?? "") as string,
-    createdAt: event.createdAt,
-  }
-}
 
 /**
  * When the OS shares content to Threa (Web Share Target API), the browser sends
@@ -685,11 +505,15 @@ self.addEventListener("push", (event) => {
         // browser retries `sync` until it succeeds. Best-effort: errors here
         // never block notification display.
         if (data.workspaceId) {
-          await queueBootstrapSync({
-            workspaceId: data.workspaceId,
-            streamId: data.streamId ?? null,
-            messageId: data.messageId ?? null,
-          }).catch(() => {})
+          await queueBootstrapSync(
+            {
+              workspaceId: data.workspaceId,
+              streamId: data.streamId ?? null,
+              messageId: data.messageId ?? null,
+              workosUserId: data.workosUserId ?? null,
+            },
+            self.registration
+          ).catch(() => {})
         }
       }
     )

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import type { QueryClient } from "@tanstack/react-query"
 import { API_BASE } from "@/api/client"
-import { ThreaDatabase } from "@/db"
+import { ThreaDatabase, accountDbName } from "@/db"
 // Imported from the module directly, not the @/db barrel: AccountScope is the
 // sole writer of the active-db pointer, so the mutator is intentionally kept
 // off the shared barrel (INV-9 — single-owner scope bridge).
@@ -110,7 +110,7 @@ export function AccountScopeProvider({ children }: AccountScopeProviderProps) {
   const resolveDb = useCallback((id: string): ThreaDatabase => {
     let inst = dbRegistry.current.get(id)
     if (!inst) {
-      inst = new ThreaDatabase(`threa_${id}`)
+      inst = new ThreaDatabase(accountDbName(id))
       dbRegistry.current.set(id, inst)
     }
     return inst

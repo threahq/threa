@@ -1238,6 +1238,15 @@ export class ThreaDatabase extends Dexie {
 // which have no account yet) keep working unchanged.
 let activeDb: ThreaDatabase = new ThreaDatabase("threa")
 
+// Single source of truth for the per-account database name (INV-33). The main
+// thread (AccountScope) and the service worker's push prefetch open the same
+// IndexedDB independently — they only meet if they derive the name from the
+// same place. The argument is the WorkOS user id (the auth identity), which is
+// also what push payloads carry as `workosUserId`.
+export function accountDbName(workosUserId: string): string {
+  return `threa_${workosUserId}`
+}
+
 /** AccountScope-only: point the shared `db` proxy at an account's instance. */
 export function setActiveDb(instance: ThreaDatabase): void {
   activeDb = instance
