@@ -281,8 +281,16 @@ export function useLastSeenEvent({
     }
   }, [enabled, streamId, recompute, scrollContainerRef, scrollContainerEl, contentRef])
 
-  // Re-scan when the window grows (live append) or the read pointer moves under
-  // us (external read), so the frontier and the affordance stay current.
+  // Re-scan when the window grows (live append), an event at the same index is
+  // replaced (the optimistic temp_ row for the viewer's own send is swapped for
+  // its server-confirmed id in place — same length, new reference), or the read
+  // pointer moves under us (external read) — so the frontier and the affordance
+  // stay current. Depending on `events` itself (not just `.length`) matters: a
+  // same-length swap leaves the frontier's index unchanged but its `.id` stale,
+  // and `lastSeenEventId` is read off that id — without this, a viewer whose own
+  // message is the last thing they did stays pinned to the dead temp_ id, and
+  // auto-mark-as-read silently never advances past it (it refuses to persist a
+  // temp_ id as the read pointer) until some other event nudges a re-scan.
   useEffect(() => {
     if (!enabled) return
     // Detect a genuine pointer move (the id changed), not a windowing artifact
@@ -306,7 +314,7 @@ export function useLastSeenEvent({
     prevLastReadIdRef.current = lastReadEventId
     const raf = requestAnimationFrame(recompute)
     return () => cancelAnimationFrame(raf)
-  }, [enabled, events.length, streamId, lastReadEventId, readIndex, recompute])
+  }, [enabled, events, streamId, lastReadEventId, readIndex, recompute])
 
   return { lastSeenEventId, atLastRow, unreadAboveViewport }
 }
