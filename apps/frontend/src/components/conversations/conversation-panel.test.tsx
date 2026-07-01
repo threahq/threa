@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -15,6 +15,7 @@ import * as messageReactionsModule from "@/hooks/use-message-reactions"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
+import * as touchCapableModule from "@/hooks/use-touch-capable"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const WORKSPACE_ID = "ws_1"
@@ -173,6 +174,19 @@ describe("ConversationPanel", () => {
     await user.click(firstRowMenu)
 
     expect(await screen.findByText("Quote reply")).toBeTruthy()
+  })
+
+  it("reveals the quote affordance when a row is swiped left on touch", async () => {
+    vi.spyOn(touchCapableModule, "useTouchCapable").mockReturnValue(true)
+    mountPanel({ cached: asCached(makePost()) })
+    const replyBody = await screen.findByText("Reply two body.")
+    const row = replyBody.closest("[class*='overflow-hidden']") as HTMLElement
+
+    fireEvent.touchStart(row, { touches: [{ clientX: 200, clientY: 100 }] })
+    fireEvent.touchMove(row, { touches: [{ clientX: 90, clientY: 100 }] })
+
+    // Past the horizontal threshold → the swipe-to-quote reveal icon renders.
+    expect(document.querySelector(".lucide-quote")).toBeTruthy()
   })
 
   it("offers a conversation-level copy-link affordance in the header", async () => {

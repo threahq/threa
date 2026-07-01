@@ -284,6 +284,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
             continuation={i > 0 && isContinuation(all[i - 1], message)}
             conversationId={conversation.id}
             isHighlighted={message.id === highlightMessageId}
+            surfaceClassName="bg-background"
           />
         ))}
         {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
