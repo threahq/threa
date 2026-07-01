@@ -1142,6 +1142,12 @@ export function StreamContent({
   const plainScrollToBottomRef = useRef(plainScrollToBottom)
   plainScrollToBottomRef.current = plainScrollToBottom
   const draftScrollRef = useRef<HTMLDivElement | null>(null)
+  // Scopes text-selection quoting to the stream's own message list. Without it,
+  // this unscoped instance would also match the shared `MessageItem` rows a
+  // conversation side panel (PanelHost) renders beside the timeline — those now
+  // carry `data-message-id`/`.message-content`, so an unscoped detector would
+  // fire a second "Quote" button and route the quote to the wrong composer.
+  const quoteScopeRef = useRef<HTMLDivElement>(null)
   const handleComposerHeightChange = useCallback(
     (_px: number, opts: { initial: boolean }) => {
       if (skipInitialScroll || isJumpMode) return
@@ -1890,8 +1896,8 @@ export function StreamContent({
         <QuoteReplyProvider>
           <SharedMessagesProvider map={mergedSharedMessages}>
             <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>
-              <TextSelectionQuote streamId={streamId} />
-              <div className="relative h-full">
+              <TextSelectionQuote streamId={streamId} containerRef={quoteScopeRef} />
+              <div ref={quoteScopeRef} className="relative h-full">
                 <div className="absolute inset-0 overflow-hidden">
                   {isSearchOpen && (
                     <StreamSearchBar

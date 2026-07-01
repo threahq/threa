@@ -70,25 +70,28 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
       return
     }
 
+    const range = sel.getRangeAt(0)
+
+    // Scope to this instance's container when one is given (a board card/panel,
+    // or the timeline beside a side panel): a selection outside it belongs to
+    // another instance. Gate on the raw range node first — before the string
+    // serialization and DOM walks below — so the N instances a board mounts each
+    // bail cheaply on every `selectionchange` tick during a drag.
+    if (containerRef && !containerRef.current?.contains(range.startContainer)) {
+      setSelection(null)
+      return
+    }
+
     const text = sel.toString().trim()
     if (!text) {
       setSelection(null)
       return
     }
 
-    const range = sel.getRangeAt(0)
-
     // Both ends of the selection must be within the same message
     const startCtx = getMessageContext(range.startContainer)
     const endCtx = getMessageContext(range.endContainer)
     if (!startCtx || !endCtx || startCtx.messageId !== endCtx.messageId) {
-      setSelection(null)
-      return
-    }
-
-    // Scope to this instance's container when one is given (a board card/panel):
-    // a selection in a sibling card belongs to that card's own instance.
-    if (containerRef && !containerRef.current?.contains(startCtx.element)) {
       setSelection(null)
       return
     }
