@@ -587,9 +587,14 @@ export function createLinkPreviewWorker(deps: WorkerDeps): JobHandler<LinkPrevie
         const shouldAttemptProviderUpgrade = isProviderUrl && existing.previewType === null
         // A video URL cached as a plain website (e.g. before this feature shipped)
         // must re-run classification even while fresh; video classification happens
-        // inside fetchGenericMetadata, not the provider-fetch branch below.
+        // inside fetchGenericMetadata, not the provider-fetch branch below. Gated to
+        // `completed` rows so a recently-failed fetch still honors its retry backoff
+        // (a failed row also carries the default `website` contentType).
         const shouldReclassifyVideo =
-          !isProviderUrl && existing.contentType !== "video" && detectVideoProvider(p.url) !== null
+          !isProviderUrl &&
+          existing.status === "completed" &&
+          existing.contentType !== "video" &&
+          detectVideoProvider(p.url) !== null
 
         if (isPreviewCacheFresh(existing) && !shouldAttemptProviderUpgrade && !shouldReclassifyVideo) {
           return { id: p.id, skipped: true }

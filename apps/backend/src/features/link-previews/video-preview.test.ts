@@ -55,6 +55,8 @@ describe("detectVideoProvider", () => {
     ["https://www.youtube.com/watch?v=short"], // id too short
     ["https://www.youtube.com/watch?list=PLxyz"], // no v param
     ["https://vimeo.com/about"], // no numeric id
+    ["https://vimeo.com/blog/12345"], // non-video page with an incidental numeric segment
+    ["https://vimeo.com/settings/67890"], // settings page, not a video
     ["https://www.loom.com/share/tiny"], // id too short
     ["https://www.twitch.tv/somestreamer"], // bare channel, not a VOD/clip
     ["https://www.twitch.tv/clip/videos/12345"], // channel named "clip" browsing VODs — not a clip

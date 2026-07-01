@@ -1276,6 +1276,64 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
+  test("does not retry a video URL whose recent fetch failed while its backoff is still fresh", async () => {
+    // A failed row keeps the default "website" contentType; the reclassify path must
+    // not bypass the 1-minute retry backoff, or a burst of messages referencing the
+    // same failing link would hammer the provider.
+    const fetchMock = mock(async () => {
+      throw new Error("fetch should not run while the failure backoff is fresh")
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_fail", url }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_fail",
+          workspaceId: "ws_123",
+          url,
+          normalizedUrl: url,
+          title: null,
+          description: null,
+          imageUrl: null,
+          faviconUrl: null,
+          siteName: null,
+          contentType: "website",
+          status: "failed",
+          previewType: null,
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: new Date("2026-06-30T10:00:00.000Z"),
+          expiresAt: new Date(Date.now() + 60 * 1000), // backoff still active
+          createdAt: new Date("2026-06-30T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: { getGithubClient: mock(async () => null) } as any,
+    })
+
+    await worker({
+      id: "job_fail",
+      name: "link_preview.extract",
+      data: { workspaceId: "ws_123", streamId: "stream_123", messageId: "msg_fail", contentMarkdown: url },
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_fail",
+      [{ id: "lp_fail", skipped: true }],
+      { forcePublish: undefined }
+    )
+  })
+
   /** Build the link-preview service mock for a single pending preview of `url`. */
   function redditServiceMock(url: string, completePreviewsAndPublish: ReturnType<typeof mock>) {
     return {

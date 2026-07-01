@@ -463,7 +463,12 @@ function VideoPreviewContent({ video, workspaceId }: { video: VideoPreview; work
             left corner avoids colliding with the player's own controls. */}
         <button
           type="button"
-          onClick={() => setGalleryOpen(true)}
+          onClick={() => {
+            // The gallery mounts its own playing embed; stop the facade's iframe
+            // so the same video doesn't autoplay twice behind the overlay.
+            setPlaying(false)
+            setGalleryOpen(true)
+          }}
           title="Open in gallery"
           className="absolute left-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white shadow-md backdrop-blur-sm transition-colors hover:bg-black/75"
           aria-label="Open video in fullscreen gallery"

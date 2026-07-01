@@ -66,10 +66,15 @@ function detectYouTube(url: URL, host: string): VideoProviderMatch | null {
 function detectVimeo(url: URL, host: string): VideoProviderMatch | null {
   if (host !== "vimeo.com" && host !== "player.vimeo.com") return null
   const segments = url.pathname.split("/").filter(Boolean)
-  // Vimeo nests the numeric id at the tail of several shapes: /<id>,
-  // /video/<id>, /channels/<name>/<id>, /groups/<name>/videos/<id>.
-  const id = [...segments].reverse().find((s) => VIMEO_ID.test(s))
-  if (!id) return null
+  // Anchor to Vimeo's known video shapes so an unrelated numeric segment (a blog
+  // post id, a settings page) isn't misread as a video: /<id>, /video/<id>,
+  // /channels/<name>/<id>, /groups/<name>/videos/<id>.
+  let id: string | undefined
+  if (segments.length === 1) id = segments[0]
+  else if (segments[0] === "video" && segments.length === 2) id = segments[1]
+  else if (segments[0] === "channels" && segments.length === 3) id = segments[2]
+  else if (segments[0] === "groups" && segments[2] === "videos" && segments.length === 4) id = segments[3]
+  if (!id || !VIMEO_ID.test(id)) return null
   return { provider: VideoPreviewProviders.VIMEO, videoId: id, embedUrl: `https://player.vimeo.com/video/${id}` }
 }
 

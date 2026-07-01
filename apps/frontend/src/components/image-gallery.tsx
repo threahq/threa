@@ -129,6 +129,10 @@ function GalleryVideo({ current }: { current: Extract<GalleryItem, { type: "vide
 interface GalleryMediaContentProps {
   current: GalleryItem
   isActive?: boolean
+  /** True only for the exact viewed slide (not the ±1 preload window `isActive`
+   *  covers). Gates third-party embed playback so a swipe-adjacent video-embed
+   *  never autoplays off-screen. Defaults to `isActive` for single-slide callers. */
+  isCurrent?: boolean
   /** Non-null only for the currently-displayed slide. When present with an image,
    *  the image is rendered via ZoomableImage so it can be zoomed/panned. */
   zoomableRef?: React.Ref<ZoomableImageHandle>
@@ -141,6 +145,7 @@ interface GalleryMediaContentProps {
 function GalleryMediaContent({
   current,
   isActive = true,
+  isCurrent = isActive,
   zoomableRef,
   onZoomChange,
   onScaleChange,
@@ -222,9 +227,9 @@ function GalleryMediaContent({
     )
   }
   if (current.type === "video-embed") {
-    // Inactive slides never mount the iframe — poster only, so no third-party
-    // player loads for a video the user isn't looking at.
-    if (!isActive) {
+    // Only the exact current slide mounts the (autoplaying) iframe — a ±1 preload
+    // neighbor shows the poster, so no third-party player loads or plays off-screen.
+    if (!isCurrent) {
       return (
         <div className="absolute inset-0 flex items-center justify-center">
           {current.posterUrl ? (
@@ -989,6 +994,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                         <GalleryMediaContent
                           current={item}
                           isActive={Math.abs(i - currentIndex) <= 1}
+                          isCurrent={i === currentIndex}
                           zoomableRef={i === currentIndex && item.type === "image" ? zoomableRef : undefined}
                           onZoomChange={i === currentIndex && item.type === "image" ? setIsZoomed : undefined}
                           onScaleChange={i === currentIndex && item.type === "image" ? publishScale : undefined}

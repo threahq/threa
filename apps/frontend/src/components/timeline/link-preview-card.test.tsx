@@ -353,14 +353,17 @@ describe("LinkPreviewCard", () => {
     expect(within(dialog).getByTitle("Never Gonna Give You Up")).toBeInTheDocument()
   })
 
-  it("keeps the expand-to-gallery control available after playback starts", () => {
+  it("keeps expand reachable during playback and hands off to a single gallery embed", () => {
     render(<LinkPreviewCard preview={makeVideoPreview()} workspaceId="ws_1" onToggleCollapse={() => {}} />)
 
     fireEvent.click(screen.getByRole("button", { name: /Play video/i }))
     // Iframe is now mounted, and the expand control must still be reachable.
-    expect(screen.getByTitle("Never Gonna Give You Up")).toBeInTheDocument()
+    expect(screen.getAllByTitle("Never Gonna Give You Up")).toHaveLength(1)
     fireEvent.click(screen.getByRole("button", { name: /Open video in fullscreen gallery/i }))
     expect(screen.getByRole("dialog")).toBeInTheDocument()
+    // The facade's iframe must stop when the gallery takes over — exactly one
+    // embed plays, never two overlapping audio streams.
+    expect(screen.getAllByTitle("Never Gonna Give You Up")).toHaveLength(1)
   })
 
   it("opens the media gallery when an image preview is clicked", () => {
