@@ -125,6 +125,12 @@ export default defineConfig({
   // Same value as the emitted version.json, so a post-reload mismatch is decisive.
   define: {
     __APP_VERSION__: JSON.stringify(buildVersion),
+    // True only in the Playwright E2E build (VITE_BACKEND_PORT is set). Lets the
+    // app suppress the persistent "new version available" update toast, which
+    // otherwise parks over the composer in the aria-live region and intercepts
+    // pointer events for the rest of a test (see use-app-update). The SW itself
+    // still registers — only the click-blocking toast is gated.
+    __E2E_BUILD__: JSON.stringify(isE2ETest),
   },
   resolve: {
     dedupe: ["react", "react-dom"],
