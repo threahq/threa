@@ -269,15 +269,15 @@ function MessageLinkPreviews({
  *
  * On its own full-width line (not squeezed into the header meta row), so a long
  * topic truncates cleanly instead of overflowing a phone's non-wrapping header.
- * Its late appearance — conversation membership resolves from a query that
- * lands after the timeline paints — occupies space the way `ThreadSlot`'s card,
- * `LabelStack`, and link previews already do on this row: it just appears, with
- * no grow-in animation. Animating the height (an earlier attempt) reads as
- * "messages loading in late" and jitters virtua's scroll on mobile — the exact
- * antipattern `ThreadSlot`'s settle-guard exists to avoid — so it is omitted
- * deliberately, not forgotten.
+ * Conversation membership resolves from a query that lands after the timeline
+ * paints, so the chip mounts at its final size like `ThreadSlot`'s card,
+ * `LabelStack`, and link previews already do on this row — no grow-in height
+ * animation, which on a late-hydrating row jitters virtua's scroll compensation
+ * on mobile.
  *
- * The "· <terse time>" is the topic's last activity, the same shape as
+ * `min-h` matches the footer's tap-target floor (`MessageReactions` pills are
+ * `min-h-[26px]`) so this navigation target isn't smaller than its neighbors on
+ * touch. The "· <terse time>" is the topic's last activity, the same shape as
  * `ThreadSlot`'s "<n> replies · <last reply>" — a footer affordance's own time,
  * read as such, not the message's send time.
  *
@@ -296,7 +296,7 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
       to={href}
       aria-label={`Continues ${topic} — open conversation`}
       className={cn(
-        "group/prov mt-1 flex min-w-0 items-center gap-1.5 text-xs",
+        "group/prov mt-0.5 flex min-h-[26px] min-w-0 items-center gap-1.5 text-xs",
         "text-muted-foreground transition-colors hover:text-foreground"
       )}
     >
