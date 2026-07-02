@@ -145,3 +145,31 @@ describe("AgentFollowUpRepository.acquireStreamCapLock", () => {
     expect(captured.values).toEqual(["ws_1", "stream_1"])
   })
 })
+
+describe("AgentFollowUpRepository.countPending", () => {
+  afterEach(() => mock.restore())
+
+  it("counts only pending rows for the workspace + stream (INV-8)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [{ count: 3 }])
+
+    const result = await AgentFollowUpRepository.countPending(db, "ws_1", "stream_1")
+
+    expect(result).toBe(3)
+    expect(captured.values).toEqual(["ws_1", "stream_1", FollowUpStatuses.PENDING])
+  })
+})
+
+describe("AgentFollowUpRepository.setQueueMessageId", () => {
+  afterEach(() => mock.restore())
+
+  it("updates queue_message_id scoped to workspace + id", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [])
+
+    await AgentFollowUpRepository.setQueueMessageId(db, "ws_1", "agfu_01", "agfuq_1")
+
+    expect(captured.text).toContain("UPDATE agent_follow_ups")
+    expect(captured.values).toEqual(["agfuq_1", "agfu_01", "ws_1"])
+  })
+})

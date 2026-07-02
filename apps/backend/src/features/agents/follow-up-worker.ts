@@ -17,5 +17,3 @@ export function createAgentFollowUpFireWorker(deps: {
     logger.debug({ jobId: job.id, workspaceId, followUpId, fired: result.fired }, "agent follow-up fire processed")
   }
 }
-
-export { AgentFollowUpService }
