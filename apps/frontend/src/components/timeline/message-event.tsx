@@ -174,13 +174,6 @@ interface MessageLayoutProps {
    */
   hoverActions?: ReactNode
   footer?: ReactNode
-  /**
-   * Slot rendered above the header row inside the content column — the topic
-   * provenance chip on a revived-conversation message ("↪ continues X · 3h
-   * ago"). Renders on continuations too (which have no header row), so it
-   * always prefaces the body.
-   */
-  preface?: ReactNode
   children?: ReactNode
   /**
    * Decrypted E2E attachment refs (key/iv/filename/mime), surfaced from the
@@ -267,17 +260,28 @@ function MessageLinkPreviews({
 
 /**
  * On-message topic-provenance chip (board-view-design.md mechanism A). Rendered
- * above a message that revives a scattered conversation — its previous member
- * row is not the one directly above — so a late "Pizza" reads as
- * "continues Pizza · 3h ago" instead of a non-sequitur. Tapping opens the
- * conversation's side panel (`conv:<id>`); a `<Link>` keeps it URL-driven
- * (INV-40, INV-59). Static footprint — no hover-driven resize (INV-21).
+ * in the header meta row of a message that revives a scattered conversation —
+ * its previous member row is not the one directly above — so a late "Pizza"
+ * reads as "continues Pizza · 3h ago" instead of a non-sequitur. Tapping opens
+ * the conversation's side panel (`conv:<id>`); a `<Link>` keeps it URL-driven
+ * (INV-40, INV-59).
+ *
+ * It sits in the header beside `MovedFromIndicator`/labels — the app's existing
+ * home for per-message provenance — precisely so its late appearance shifts
+ * nothing: conversation membership resolves from a query that lands after the
+ * timeline has painted (the coordinated-loading reveal gates on bootstrap/
+ * events, not conversations), and the header is a fixed-height, non-wrapping
+ * baseline row, so the chip fills horizontal space without growing the row or
+ * pushing the body down (INV-21). Because the header renders only on head rows,
+ * the chip is naturally absent on grouped continuations — which have no visible
+ * send-time of their own, so the chip's topic time can't be misread as one.
  *
  * Uses the `Layers` glyph (the conversation identity across the overlay) rather
  * than the move indicator's `CornerDownRight`, and stays neutral/muted rather
  * than the thread affordance's gold — a conversation is a quiet "soft thread",
  * not Ariadne's structural gold line. The topic label mirrors the overlay's
- * `topicSummary || fallback` rendering and separator (`·` + terse time).
+ * `topicSummary || fallback` rendering and separator (`·` + terse time), capped
+ * so a long topic truncates instead of crowding the header.
  */
 function ConversationProvenanceChip({ revival }: { revival: ConversationRevival }) {
   const { getPanelUrl } = usePanel()
@@ -288,7 +292,7 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
       to={href}
       aria-label={`Continues ${topic} — open conversation`}
       className={cn(
-        "group/prov mb-1 inline-flex max-w-full items-center gap-1.5 text-xs",
+        "group/prov inline-flex min-w-0 max-w-[200px] items-center gap-1 text-xs",
         "text-muted-foreground transition-colors hover:text-foreground"
       )}
     >
@@ -301,29 +305,6 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
       </span>
       <RelativeTime date={revival.previousActivityAt} terse className="shrink-0 text-muted-foreground/70" />
     </Link>
-  )
-}
-
-/**
- * Always-mounted wrapper for the provenance chip. Conversation membership
- * resolves from a separate query that lands after the timeline has already
- * painted (the coordinated-loading reveal gates on bootstrap/events, not
- * conversations), so a revival is stamped onto a row that is already on screen.
- * Rendering the chip directly would grow the row and shove the body down
- * mid-read (INV-21). Keeping this grid mounted at `0fr` and easing to `1fr`
- * when `revival` arrives slides the chip in instead of snapping — the same
- * `grid-template-rows` transition `ThreadSlot` uses for its late-hydrating card.
- * A row scrolled in after membership loaded mounts already at `1fr`, so the
- * transition plays only on the real appearance, never on virtua remount.
- */
-function MessagePreface({ revival }: { revival?: ConversationRevival }) {
-  return (
-    <div
-      className="grid transition-[grid-template-rows] duration-300 ease-out"
-      style={{ gridTemplateRows: revival ? "1fr" : "0fr" }}
-    >
-      <div className="overflow-hidden">{revival && <ConversationProvenanceChip revival={revival} />}</div>
-    </div>
   )
 }
 
@@ -556,7 +537,6 @@ function MessageLayout({
   actions,
   hoverActions,
   footer,
-  preface,
   children,
   attachmentRefs,
   sources,
@@ -811,7 +791,6 @@ function MessageLayout({
           inert={batchEnabled || undefined}
           className={cn("message-content flex-1 min-w-0", batchEnabled && "pointer-events-none")}
         >
-          {preface}
           {headerRow}
           {messageBody}
           {footer}
@@ -1344,7 +1323,6 @@ function SentMessageEvent({
         isFirstMessage={isFirstMessage}
         attachmentRefs={attachmentRefs}
         sources={sources}
-        preface={<MessagePreface revival={revival} />}
         statusIndicator={
           <>
             <RelativeTime date={event.createdAt} className="text-xs text-muted-foreground" />
@@ -1358,6 +1336,7 @@ function SentMessageEvent({
                 onClick={movedTombstoneEvent ? () => setMoveDetailsOpen(true) : undefined}
               />
             )}
+            {revival && <ConversationProvenanceChip revival={revival} />}
             <SavedIndicator saved={savedForMessage ?? null} />
             {/* Labels beside the time — standalone rows only; this header isn't
                 rendered for continuations, which keep them in the footer. */}

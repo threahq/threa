@@ -654,13 +654,10 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         isNew={ctx.newMessageIds?.has(item.event.id)}
         deferSecondaryHydration={deferSecondaryHydration}
         batch={ctx.batch}
-        // Continuations directly under an UnreadDivider — or that revive a
-        // scattered topic — promote back to head so the row reads as a fresh
-        // turn. A revival is a topic switch, so it should never render as a
-        // silent same-author continuation; the head also restores the message's
-        // own send-time in the header, keeping it distinct from the provenance
-        // chip's topic-activity time above it.
-        groupContinuation={item.groupContinuation && !showUnreadDivider && !item.revival}
+        // Continuations directly under an UnreadDivider promote back to head so
+        // the first unread message in a run still reads as a fresh turn for the
+        // viewer (fixes the "continuation starting an unread block" edge case).
+        groupContinuation={item.groupContinuation && !showUnreadDivider}
         isFirstMessage={
           ctx.firstMessageId != null && (item.event.payload as { messageId?: string })?.messageId === ctx.firstMessageId
         }

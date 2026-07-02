@@ -200,6 +200,27 @@ describe("MessageEvent", () => {
 
       expect(screen.queryByRole("link", { name: /continues/i })).not.toBeInTheDocument()
     })
+
+    it("omits the chip on a grouped continuation (no header to anchor it)", () => {
+      const event = createMessageEvent("msg_123", "Pizza")
+
+      render(
+        <MessageEvent
+          event={event}
+          workspaceId={workspaceId}
+          streamId={streamId}
+          groupContinuation
+          revival={{
+            conversationId: "conv_a",
+            topicSummary: "Pizza",
+            previousActivityAt: "2026-06-01T00:00:00.000Z",
+          }}
+        />,
+        { wrapper: Wrapper }
+      )
+
+      expect(screen.queryByRole("link", { name: /continues/i })).not.toBeInTheDocument()
+    })
   })
 
   describe("content rendering", () => {
