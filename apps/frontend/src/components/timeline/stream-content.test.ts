@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   classifyDeepLinkScrollTick,
   shouldStartHighlightClear,
+  shouldHoldForDeepLink,
   canActOnDeepLinkNavigation,
   computeScrollEdges,
   shouldPrefetchOlderHistory,
@@ -157,6 +158,48 @@ describe("shouldStartHighlightClear", () => {
         deepLinkGaveUp: true,
       })
     ).toBe(true)
+  })
+})
+
+describe("shouldHoldForDeepLink", () => {
+  const base = {
+    highlightMessageId: "msg_1" as string | null,
+    deepLinkTargetLoaded: false,
+    deepLinkGaveUp: false,
+    holdExpired: false,
+    isLoading: false,
+    isConfirmedEmpty: false,
+    hasEvents: true,
+  }
+
+  it("holds while the target is being fetched into the window", () => {
+    expect(shouldHoldForDeepLink(base)).toBe(true)
+  })
+
+  it("releases when the hold expires so a slow jump shows the cached window instead of a skeleton", () => {
+    // The regression guard for the bound: a cold push-open whose events-around
+    // fetch is slow must not sit on a skeleton indefinitely — past
+    // DEEP_LINK_HOLD_MAX_MS the cached timeline paints and the jump snaps to
+    // the target when it lands.
+    expect(shouldHoldForDeepLink({ ...base, holdExpired: true })).toBe(false)
+  })
+
+  it("releases when the target lands in the loaded window", () => {
+    expect(shouldHoldForDeepLink({ ...base, deepLinkTargetLoaded: true })).toBe(false)
+  })
+
+  it("releases when the jump conclusively fails", () => {
+    expect(shouldHoldForDeepLink({ ...base, deepLinkGaveUp: true })).toBe(false)
+  })
+
+  it("never holds without a highlight target", () => {
+    expect(shouldHoldForDeepLink({ ...base, highlightMessageId: null })).toBe(false)
+  })
+
+  it("defers to the loading skeleton and empty states while the window itself is unresolved", () => {
+    expect(shouldHoldForDeepLink({ ...base, isLoading: true })).toBe(false)
+    expect(shouldHoldForDeepLink({ ...base, isConfirmedEmpty: true })).toBe(false)
+    expect(shouldHoldForDeepLink({ ...base, hasEvents: false })).toBe(false)
   })
 })
 

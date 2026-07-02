@@ -88,9 +88,12 @@ cursor read would advance the cursor past the disconnect gap — the `after` fet
 permanently skips everything missed while offline ("an older message never appears while
 newer ones do"). Overlap is safe (writes dedupe by event id); gaps are not. Both the
 reconnect path and the navigation refresh go through it; call sites never read
-`getLatestPersistedSequence` and order it against a join themselves. The one intentional
-exception is `backfillStreamGap`, which takes an explicit **pre-gap** cursor — the current
-latest would skip the very hole it exists to fill.
+`getLatestPersistedSequence` and order it against a join themselves. Two intentional
+exceptions: `backfillStreamGap` takes an explicit **pre-gap** cursor (the current latest
+would skip the very hole it exists to fill), and `performHttpWarmFetch` — the display-only
+HTTP delta fired on page resume and socket-down navigation — reads the latest persisted
+sequence with **no join paired at all**, so it sits outside the subscribe→fetch window
+this rule guards; the socket-gated refresh that follows re-derives its own cursor.
 
 ### Timeline contiguity is verified, not assumed (INV-61)
 
