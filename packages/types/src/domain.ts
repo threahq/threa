@@ -670,6 +670,9 @@ export interface BoardPostMessage {
   /** Completed link previews for this message. */
   linkPreviews: LinkPreviewSummary[]
   createdAt: string
+  /** When the message was last edited, or null if never — drives the "(edited)"
+   * affordance and the revisions dialog on the row (parity with the timeline). */
+  editedAt: string | null
 }
 
 /**

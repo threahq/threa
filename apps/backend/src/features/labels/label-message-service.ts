@@ -102,5 +102,6 @@ function toLabeledMessage(
     attachments,
     linkPreviews,
     createdAt: message.createdAt.toISOString(),
+    editedAt: message.editedAt?.toISOString() ?? null,
   }
 }

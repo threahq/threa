@@ -12,6 +12,7 @@ const USER_ID = "usr_1"
 const USER_ACTOR = { type: LabelActorTypes.USER, id: USER_ID } as const
 const LABEL_ID = "label_1"
 const CREATED_AT = "2026-05-28T12:00:00.000Z"
+const EDITED_AT = "2026-05-28T12:30:00.000Z"
 
 function messageAssignment(resourceId: string): LabelAssignment {
   return {
@@ -66,7 +67,10 @@ describe("LabelMessageService.listLabeledMessages", () => {
     spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["msg_1", fakeMessage({ id: "msg_1", streamId: "stream_a", contentMarkdown: "first" })],
-        ["msg_2", fakeMessage({ id: "msg_2", streamId: "stream_b", contentMarkdown: "second" })],
+        [
+          "msg_2",
+          fakeMessage({ id: "msg_2", streamId: "stream_b", contentMarkdown: "second", editedAt: new Date(EDITED_AT) }),
+        ],
       ])
     )
     const access = spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_a", "stream_b"]))
@@ -87,6 +91,7 @@ describe("LabelMessageService.listLabeledMessages", () => {
       attachments: [],
       linkPreviews: [],
       createdAt: CREATED_AT,
+      editedAt: EDITED_AT,
     })
     expect(access).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, USER_ID, ["stream_b", "stream_a"])
   })

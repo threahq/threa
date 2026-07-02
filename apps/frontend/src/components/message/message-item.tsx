@@ -22,6 +22,8 @@ import { MessageActionDrawer } from "@/components/timeline/message-action-drawer
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import { MessageEditForm } from "@/components/timeline/message-edit-form"
 import { DeleteMessageDialog } from "@/components/timeline/delete-message-dialog"
+import { EditedIndicator } from "@/components/timeline/edited-indicator"
+import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
@@ -68,6 +70,9 @@ export interface RenderableMessage {
   contentMarkdown: string
   reactions: Record<string, string[]>
   createdAt: string | Date
+  /** Last edit time, or null/absent if never edited — drives the "(edited)"
+   * affordance and the revisions dialog (parity with the timeline row). */
+  editedAt?: string | null
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
 }
@@ -138,6 +143,7 @@ export function MessageItem({
   const [isEditing, setIsEditing] = useState(false)
   const [editingSurfaceTouch, setEditingSurfaceTouch] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
   // the timeline uses; the hover overflow button is desktop/keyboard only. This
@@ -276,6 +282,9 @@ export function MessageItem({
     // path — a plaintext update is rejected and the offline queue would retry it
     // forever). E2E rows can reach here via the label page.
     e2eEnabled: rowStream?.e2eEnabled === true,
+    editedAt: message.editedAt ?? undefined,
+    // Defer so the closing menu/drawer doesn't fight the dialog open (as MessageEvent).
+    onShowHistory: () => setTimeout(() => setHistoryOpen(true), 0),
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
     onEdit: startEditing,
@@ -344,6 +353,19 @@ export function MessageItem({
           onOpenChange={setDeleteDialogOpen}
           onConfirm={handleDelete}
           isDeleting={isDeleting}
+        />
+      )}
+      {historyOpen && (
+        <MessageHistoryDialog
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          messageId={message.id}
+          workspaceId={workspaceId}
+          messageCreatedAt={String(message.createdAt)}
+          currentContent={{
+            contentMarkdown: message.contentMarkdown,
+            editedAt: message.editedAt ?? undefined,
+          }}
         />
       )}
     </>
@@ -540,6 +562,9 @@ export function MessageItem({
             >
               <RelativeTime date={message.createdAt} />
             </Link>
+            {message.editedAt && (
+              <EditedIndicator editedAt={String(message.editedAt)} onShowHistory={() => setHistoryOpen(true)} />
+            )}
             {labelStack}
             {streamLabel && (
               <MessageStreamByline
