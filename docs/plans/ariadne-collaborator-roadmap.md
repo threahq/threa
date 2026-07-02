@@ -43,6 +43,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |     |
 | 3.1  | Persisted episode summaries                          | ☐      |     |
 | 3.2  | Per-thread session concurrency                       | ☐      |     |
+| 3.3  | Conversation-anchored agent replies                  | ☐      |     |
 | 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |     |
 | 4.2  | `update_stream_brief` tool + timeline event          | ☐      |     |
 | 4.3  | Brief UI: settings editor + timeline event           | ☐      |     |
@@ -211,6 +212,18 @@ Not a duplicate of the two existing summaries: `conversations.topic_summary` nam
 
 **Done when:** the concurrency semantics are tested, whichever way the investigation lands.
 
+### 3.3 Conversation-anchored agent replies
+
+**Goal:** Ariadne's reply lands in the conversation she's actually participating in — declared at send time, not inferred.
+
+**Shape:** today agent replies skip the LLM extractor (good) but join the stream's **most-recently-active** conversation (`assignAgentReply`, `boundary-extraction-service.ts:595-618` — `findActiveByStream(...)[0]`). In a busy channel with interleaved topics, a reply triggered by a message in conversation X gets filed into whichever conversation Y was touched last. The fix mirrors the board composer's declared path: a message carrying `conversationIntent` is assigned synchronously in the send transaction and the extractor short-circuits (`boundary-extraction-service.ts:74`; `CreateMessageParams.conversationIntent`, `messaging/repository.ts:80`; the conversation-assigner is already injected into `EventService`). The companion already resolves the trigger's primary conversation for its "Current Topic" highlight (`companion/conversation-highlight.ts`) — thread that same anchor through `doSendMessage` (`persona-agent.ts:423`) so the persona write declares its conversation explicitly; fall back to today's most-recently-active behavior when no anchor resolves (highlight is best-effort — segmenter lag, E2E). Resolve in-step whether the wire is `conversationIntent: 'existing'` + assigner resolution or a direct conversation-id param on the persona write path — whichever the assigner seam supports without a parallel path (INV-35).
+
+**Files:** `persona-agent.ts` (`doSendMessage` + anchor threading from context assembly), possibly `conversation-assigner.ts`/`messaging` param plumbing, tests.
+
+**Tests:** the interleaved-topics case — two active conversations in one channel, trigger in the older one, reply lands in the trigger's conversation; fallback when no primary resolves; board card shows the reply under the right post.
+
+**Done when:** in a channel with two live topics, Ariadne's reply is assigned to the trigger's conversation, synchronously, without the extractor.
+
 ---
 
 ## Phase 4 — Durable stream brief (big rock 1)
@@ -285,7 +298,7 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 **Shape:**
 
 - Migration: `delegated_tasks` — `id` (`dlg_`), `workspace_id`, `stream_id`, `session_id` (creating session, nullable — users can delegate manually later), `source_conversation_id` (nullable — trigger message's primary conversation, same anchor as follow-ups; the later board-lens bridge: a status change bumps the owning conversation's `last_activity_at` so delegations ride the existing `conversation:*` sync path once board lenses land), `created_by_kind/id`, `title`, `brief` TEXT (the compiled hand-off prompt, markdown), `context_refs` JSONB (pointer URLs: `shared-message:`, `memo:`, `attachment:` — the syntax Ariadne already uses), `status` TEXT (`open|claimed|running|completed|failed|cancelled|expired`), `claim_token_hash`, `claim_expires_at`, `claimed_by_label` (free text: "Kris's MacBook / Claude Code"), `result_message_id`, timestamps. Status transitions CAS-guarded (INV-20).
-- Service in new `features/delegations/` (INV-51 colocation): create/cancel/claim/heartbeat/complete/fail + expiry sweep (orphan-cleanup precedent: `orphan-session-cleanup.ts`). Broadcast events `delegation:created|claimed|completed|cancelled` (one payload type, status-carrying) appended in-txn.
+- Service in new `features/delegations/` (INV-51 colocation): create/cancel/claim/heartbeat/complete/fail + expiry sweep (orphan-cleanup precedent: `orphan-session-cleanup.ts`). Broadcast events for **every** lifecycle transition — `delegation:created|claimed|status|completed|failed|cancelled|expired` (one status-carrying payload type; the expiry sweep emits `expired` in its own transaction) — appended in-txn so the card can never sit on stale state.
 - Tool per the 1.1 checklist: `delegate_task`, input `{ title, brief, contextRefs }`. promptBlock guidance: the brief must be self-contained (assume the executor has repo access but zero Threa context); include acceptance criteria; link sources as pointer URLs rather than inlining walls of text; suggest delegation when the user describes work that is long-horizon, code-heavy, or local-filesystem-shaped — do not attempt such work in-session (INV-64). Tool is available in the live companion turn only (not inside the researcher sub-loop).
 - CLAUDE.md: add INV-64 (sessions minutes-bounded; long-horizon work delegates) with pointer here.
 
@@ -389,7 +402,7 @@ Completes GAM into the two-tier private/shared shape (Collaborative Memory, arXi
 
 **Goal:** the private/shared tier split.
 
-**Shape:** migration adds `scope` TEXT default `'workspace'` + `scope_user_id` nullable (set when `scope='user'`). Write policy: memos extracted from DMs/private scratchpads default to `user` scope for the owning user (extractor config change); `save_memo` gains an optional scope arg. Retrieval: `hybridSearch`/`semanticSearch` (`memos/repository.ts:527,671`) gain a scope predicate — `user`-scoped memos visible only when the invoking user matches (from `computeAgentAccessSpec`'s invoking context); stream/workspace scopes keep the existing access-spec filtering. Explorer: "About you" filter showing the user's private-tier memos, with delete — the "what Ariadne knows about you" panel.
+**Shape:** migration adds `scope` TEXT default `'workspace'` + `scope_user_id` nullable (set when `scope='user'`). `workspace_id` stays required regardless of scope (INV-8) — `user` scope subdivides _within_ the workspace boundary, it is not a global private store. Write policy: memos extracted from DMs/private scratchpads default to `user` scope for the owning user (extractor config change); `save_memo` gains an optional scope arg. Retrieval: `hybridSearch`/`semanticSearch` (`memos/repository.ts:527,671`) gain a scope predicate — `user`-scoped memos visible only when the invoking user matches (from `computeAgentAccessSpec`'s invoking context); stream/workspace scopes keep the existing access-spec filtering. Explorer: "About you" filter showing the user's private-tier memos, with delete — the "what Ariadne knows about you" panel.
 
 **Files:** migration, `memos/{repository,service,config}.ts`, `researcher/access-spec.ts` (carry invoking user), explorer UI filter.
 
