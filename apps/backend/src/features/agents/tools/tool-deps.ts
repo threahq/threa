@@ -26,3 +26,23 @@ export interface ReactionToolDeps {
   addReaction: (params: { streamId: string; messageId: string; emoji: string }) => Promise<{ id: string } | null>
   removeReaction: (params: { streamId: string; messageId: string; emoji: string }) => Promise<{ id: string } | null>
 }
+
+/**
+ * Result the `schedule_follow_up` tool reports back to the model. On success it
+ * carries the resolved cap + current pending count so the model can self-regulate
+ * (don't pile up follow-ups); `cap_reached` tells it to schedule fewer.
+ */
+export type ScheduleFollowUpToolResult =
+  | { ok: true; followUpId: string; scheduledFor: Date; pendingCount: number; limit: number }
+  | { ok: false; reason: "cap_reached"; pendingCount: number; limit: number }
+
+/**
+ * Follow-up scheduling callback for the `schedule_follow_up` tool, bound to the
+ * running persona/session/stream by the caller (like `ReactionToolDeps`). The
+ * tool supplies only the note and target time; workspace/stream/persona/session
+ * identity and the source-conversation anchor are fixed at bind time. Present
+ * only on the live companion turn — the researcher sub-agent never schedules.
+ */
+export interface FollowUpToolDeps {
+  scheduleFollowUp: (params: { note: string; scheduledFor: Date }) => Promise<ScheduleFollowUpToolResult>
+}

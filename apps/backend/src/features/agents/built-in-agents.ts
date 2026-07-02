@@ -70,6 +70,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.GENERAL_RESEARCH,
       AgentToolNames.DESCRIBE_MEMO,
       AgentToolNames.REACT_TO_MESSAGE,
+      AgentToolNames.SCHEDULE_FOLLOW_UP,
       AgentToolNames.SEARCH_ATTACHMENTS,
       AgentToolNames.READ_ATTACHMENT,
       AgentToolNames.GITHUB_REPOS,

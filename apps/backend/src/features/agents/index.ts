@@ -92,6 +92,11 @@ export type {
 
 export { createPersonaAgentWorker, checkForUnseenMessages } from "./persona-agent-worker"
 export type { PersonaAgentLike, PersonaAgentWorkerDeps } from "./persona-agent-worker"
+export { AgentFollowUpService } from "./follow-up-service"
+export type { ScheduleFollowUpParams, ScheduleFollowUpResult } from "./follow-up-service"
+export { createAgentFollowUpFireWorker } from "./follow-up-worker"
+export { AgentFollowUpRepository } from "./follow-up-repository"
+export type { AgentFollowUp } from "./follow-up-repository"
 export { createOrphanSessionCleanup, failSessionWithLifecycle } from "./orphan-session-cleanup"
 export type { OrphanSessionCleanup } from "./orphan-session-cleanup"
 

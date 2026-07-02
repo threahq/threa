@@ -92,6 +92,8 @@ export {
   reminderQueueId,
   scheduledMessageId,
   scheduledMessageQueueId,
+  agentFollowUpId,
+  agentFollowUpQueueId,
   draftId,
   sharedMessageId,
   attachmentReferenceId,

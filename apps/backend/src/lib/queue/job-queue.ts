@@ -29,6 +29,7 @@ export const JobQueues = {
   VIDEO_TRANSCODE_CHECK: "video.transcode_check",
   SAVED_REMINDER_FIRE: "saved.reminder_fire",
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
+  AGENT_FOLLOW_UP_FIRE: "agent.follow_up_fire",
   CONTEXT_BAG_PRECOMPUTE: "context_bag.precompute",
   BACKFILL_PLAN: "backfill.plan",
   BACKFILL_CHUNK: "backfill.chunk",
@@ -46,6 +47,25 @@ export interface PersonaAgentJobData {
   trigger?: typeof AgentTriggers.MENTION // undefined = companion mode
   supersedesSessionId?: string
   rerunContext?: AgentSessionRerunContext
+  /**
+   * Set when this job was enqueued by a fired follow-up. The turn handling that
+   * reads it (context assembly + "why you woke up" prompt) lands in roadmap 1.2;
+   * 1.1 only emits it so the fire path is identifiable. When present, `messageId`
+   * is synthetic (no real trigger message) and the job runs as a companion-mode
+   * catch-up turn until 1.2 wires the dedicated context.
+   */
+  followUpId?: string
+}
+
+/**
+ * Agent follow-up fire job. Enqueued with `process_after = scheduled_for` when a
+ * follow-up is created; the worker CASes the row `pending → fired` and, on
+ * success, enqueues a PERSONA_AGENT job so the persona wakes up. A cancelled row
+ * fails the CAS and the worker no-ops (queue delivery can't be revoked).
+ */
+export interface AgentFollowUpFireJobData {
+  workspaceId: string
+  followUpId: string
 }
 
 export interface NamingJobData {
@@ -282,6 +302,7 @@ export interface JobDataMap {
   [JobQueues.VIDEO_TRANSCODE_CHECK]: VideoTranscodeCheckJobData
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
   [JobQueues.SCHEDULED_MESSAGE_SEND]: ScheduledMessageSendJobData
+  [JobQueues.AGENT_FOLLOW_UP_FIRE]: AgentFollowUpFireJobData
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
   [JobQueues.BACKFILL_PLAN]: BackfillPlanJobData
   [JobQueues.BACKFILL_CHUNK]: BackfillChunkJobData

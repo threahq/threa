@@ -35,6 +35,7 @@ export {
   type VideoTranscodeCheckJobData,
   type SavedReminderFireJobData,
   type ScheduledMessageSendJobData,
+  type AgentFollowUpFireJobData,
   type ContextBagPrecomputeJobData,
   type BackfillPlanJobData,
   type BackfillChunkJobData,

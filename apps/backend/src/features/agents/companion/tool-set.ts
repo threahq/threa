@@ -3,7 +3,7 @@ import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threa/a
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
-import type { ReactionToolDeps, WorkspaceToolDeps } from "../tools/tool-deps"
+import type { FollowUpToolDeps, ReactionToolDeps, WorkspaceToolDeps } from "../tools/tool-deps"
 import { logger } from "../../../lib/logger"
 import {
   createGeneralResearchTool,
@@ -15,6 +15,7 @@ import {
   createReadAttachmentTool,
   createDescribeMemoTool,
   createReactToMessageTool,
+  createScheduleFollowUpTool,
   createWorkspaceResearchTool,
   createGithubReposTool,
   createGithubCommitsTool,
@@ -45,6 +46,13 @@ export interface ToolSetConfig {
    * `react_to_message` tool — the researcher reads/searches, it never reacts.
    */
   reactions?: ReactionToolDeps
+  /**
+   * Follow-up scheduling callback bound to the running persona/session/stream.
+   * Present only on the live companion turn (not the researcher sub-agent),
+   * gating the `schedule_follow_up` tool — the researcher reads/searches, it
+   * never schedules durable work.
+   */
+  followUps?: FollowUpToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -65,6 +73,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     runGeneralResearch,
     workspace,
     reactions,
+    followUps,
     github,
     linear,
     supportsVision,
@@ -127,6 +136,9 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     workspace && isToolEnabled(enabledTools, AgentToolNames.DESCRIBE_MEMO) ? createDescribeMemoTool(workspace) : null,
     workspace && reactions && isToolEnabled(enabledTools, AgentToolNames.REACT_TO_MESSAGE)
       ? createReactToMessageTool(workspace, reactions)
+      : null,
+    followUps && isToolEnabled(enabledTools, AgentToolNames.SCHEDULE_FOLLOW_UP)
+      ? createScheduleFollowUpTool(followUps)
       : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)

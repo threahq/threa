@@ -394,6 +394,7 @@ export const AGENT_TOOL_NAMES = [
   "read_attachment",
   "describe_memo",
   "react_to_message",
+  "schedule_follow_up",
   "github_repos",
   "github_commits",
   "github_pulls",
@@ -421,6 +422,7 @@ export const AgentToolNames = {
   READ_ATTACHMENT: "read_attachment",
   DESCRIBE_MEMO: "describe_memo",
   REACT_TO_MESSAGE: "react_to_message",
+  SCHEDULE_FOLLOW_UP: "schedule_follow_up",
   GITHUB_REPOS: "github_repos",
   GITHUB_COMMITS: "github_commits",
   GITHUB_PULLS: "github_pulls",
@@ -450,6 +452,20 @@ export const AgentTriggers = {
   MENTION: "mention",
   COMPANION: "companion",
 } as const satisfies Record<string, AgentTrigger>
+
+// Agent follow-up lifecycle (scheduled "check back later" work an agent creates
+// for itself). `pending` → `fired` when the firing worker CASes it and enqueues
+// the persona turn; `cancelled` when a member cancels before it fires; `failed`
+// when the fire path errors terminally.
+export const FOLLOW_UP_STATUSES = ["pending", "fired", "cancelled", "failed"] as const
+export type FollowUpStatus = (typeof FOLLOW_UP_STATUSES)[number]
+
+export const FollowUpStatuses = {
+  PENDING: "pending",
+  FIRED: "fired",
+  CANCELLED: "cancelled",
+  FAILED: "failed",
+} as const satisfies Record<string, FollowUpStatus>
 
 // Agent session event types (stream events for session lifecycle)
 export const AGENT_SESSION_EVENT_TYPES = [

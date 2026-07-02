@@ -98,6 +98,10 @@ export {
   AGENT_TRIGGERS,
   type AgentTrigger,
   AgentTriggers,
+  // Agent follow-ups
+  FOLLOW_UP_STATUSES,
+  type FollowUpStatus,
+  FollowUpStatuses,
   // Agent session events
   AGENT_SESSION_EVENT_TYPES,
   type AgentSessionEventType,
