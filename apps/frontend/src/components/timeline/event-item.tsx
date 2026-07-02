@@ -1,6 +1,7 @@
 import type { StreamEvent } from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
 import type { BatchTimelineState } from "./event-list"
+import type { ConversationRevival } from "./conversation-overlay/model"
 import { MessageEvent } from "./message-event"
 import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
@@ -35,6 +36,11 @@ interface EventItemProps {
    * — only the opening message gets the breadcrumb.
    */
   isFirstMessage?: boolean
+  /**
+   * Topic-revival annotation for the on-message provenance chip, when this
+   * message reopens a scattered conversation (channel/DM timelines only).
+   */
+  revival?: ConversationRevival
   batch?: BatchTimelineState
 }
 
@@ -49,6 +55,7 @@ export function EventItem({
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
+  revival,
   batch,
 }: EventItemProps) {
   const messageId = (event.payload as { messageId?: string })?.messageId
@@ -78,6 +85,7 @@ export function EventItem({
             deferSecondaryHydration={deferSecondaryHydration}
             groupContinuation={groupContinuation}
             isFirstMessage={isFirstMessage}
+            revival={revival}
             batch={batch}
           />
         </div>

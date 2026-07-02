@@ -81,6 +81,26 @@ export function buildMessageConversationMap(conversations: ConversationWithStale
 }
 
 /**
+ * A topic revival: a message that reopens a conversation whose previous member
+ * message is not the immediately-preceding timeline row (scattered / old), so
+ * in the flat timeline it reads as a non-sequitur. Drives the on-message
+ * provenance chip ("↪ continues Pizza · 3h ago") that links to the
+ * conversation panel. Computed always-on for channels/DMs (independent of the
+ * overlay) by `annotateConversationRevivals` in event-list.tsx.
+ */
+export interface ConversationRevival {
+  /** Conversation to open when the chip is tapped (`conv:<id>` panel). */
+  conversationId: string
+  /** Topic label for the chip; null falls back to a generic label. */
+  topicSummary: string | null
+  /**
+   * `createdAt` of the conversation's previous member row — the "· 3h ago"
+   * anchor. The prior activity of this topic, not this reviving message.
+   */
+  previousActivityAt: string
+}
+
+/**
  * Per-row annotation stamped onto message timeline items while the overlay
  * is active (see `annotateConversationRows` in event-list.tsx).
  */

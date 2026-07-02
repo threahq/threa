@@ -26,8 +26,10 @@ import { ConversationOverlayRow } from "./conversation-overlay/conversation-over
 import type {
   ConversationOverlayContext,
   ConversationOverlayModel,
+  ConversationRevival,
   ConversationRowAnnotation,
 } from "./conversation-overlay/model"
+import type { ConversationWithStaleness } from "@threa/types"
 
 interface EventListProps {
   timelineItems: TimelineItem[]
@@ -121,6 +123,13 @@ export type TimelineItem =
        * active. Absent on non-message events and when the overlay is off.
        */
       conversationRow?: ConversationRowAnnotation
+      /**
+       * Topic-revival annotation, stamped always-on by
+       * `annotateConversationRevivals` on channel/DM timelines. Present only on
+       * a message that reopens a scattered conversation; drives the on-message
+       * provenance chip. Absent on non-message events and non-revival rows.
+       */
+      revival?: ConversationRevival
     }
   | { type: "command_group"; commandId: string; events: StreamEvent[] }
   | { type: "session_group"; sessionId: string; sessionVersion: number; events: StreamEvent[] }
@@ -218,6 +227,66 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
     const blockStart = conversationId != null && conversationId !== previousConversationId
     previousConversationId = conversationId
     return { ...item, conversationRow: { conversationId, blockStart } }
+  })
+}
+
+/**
+ * Stamp message rows that revive a scattered conversation with a
+ * {@link ConversationRevival} for the always-on provenance chip (board-view-
+ * design.md §"Conversations as soft threads", mechanism A) — no dependence on
+ * the conversation overlay being painted.
+ *
+ * A revival is a *block start* (the conversation differs from the previous
+ * message row) whose conversation has already appeared earlier in the timeline.
+ * Because a block start means the previous row is a different conversation, an
+ * earlier member is necessarily separated from this one — that separation is
+ * exactly the non-sequitur the chip explains. A conversation's first appearance
+ * is a fresh topic, not a revival, so it carries no chip.
+ *
+ * `membership` is the always-on `messageId → conversationId` map
+ * (`buildMessageConversationMap`), including cross-stream secondary members.
+ * Non-message items (session/command cards) and unassigned message rows don't
+ * break a run — only a different real conversation does. This diverges from
+ * `annotateConversationRows` (which resets its run on an unassigned row for
+ * coloring): a lone unclustered aside between two members of the same topic is
+ * not a topic switch, so it must not manufacture a revival. Pure and
+ * export-only for isolated coverage.
+ */
+export function annotateConversationRevivals(
+  items: TimelineItem[],
+  membership: ReadonlyMap<string, string>,
+  conversationsById: ReadonlyMap<string, ConversationWithStaleness>
+): TimelineItem[] {
+  const seen = new Set<string>()
+  const lastActivityByConversation = new Map<string, string>()
+  let previousConversationId: string | null = null
+  return items.map((item) => {
+    if (item.type !== "event" || !isGroupableMessage(item.event)) return item
+    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    if (!messageId) return item
+    const conversationId = membership.get(messageId) ?? null
+    let revival: ConversationRevival | undefined
+    if (conversationId != null) {
+      const blockStart = conversationId !== previousConversationId
+      const previousActivityAt = lastActivityByConversation.get(conversationId)
+      if (blockStart && seen.has(conversationId) && previousActivityAt) {
+        revival = {
+          conversationId,
+          topicSummary: conversationsById.get(conversationId)?.topicSummary ?? null,
+          previousActivityAt,
+        }
+      }
+      seen.add(conversationId)
+      lastActivityByConversation.set(conversationId, item.event.createdAt)
+      // Only a real conversation breaks the run. An unassigned message
+      // (extraction pending, or a genuinely unclustered aside) must NOT reset
+      // this — otherwise the next same-conversation message reads as a block
+      // start and gets a false revival chip even though no *other* topic
+      // intervened, just one stray message. A revival requires a different
+      // conversation between the prior member and now, not merely a gap.
+      previousConversationId = conversationId
+    }
+    return revival ? { ...item, revival } : item
   })
 }
 
@@ -592,6 +661,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         isFirstMessage={
           ctx.firstMessageId != null && (item.event.payload as { messageId?: string })?.messageId === ctx.firstMessageId
         }
+        revival={item.revival}
       />
     )
     const overlayMessageId = (item.event.payload as { messageId?: string })?.messageId
@@ -699,11 +769,15 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
       if (a.event !== other.event || (a.groupContinuation ?? false) !== (other.groupContinuation ?? false)) {
         return false
       }
-      // Overlay annotation objects are rebuilt by every annotation pass, so
-      // compare by value — identity would defeat the memo on each data tick.
+      // Overlay + revival annotation objects are rebuilt by every annotation
+      // pass, so compare by value — identity would defeat the memo on each
+      // data tick.
       return (
         (a.conversationRow?.conversationId ?? null) === (other.conversationRow?.conversationId ?? null) &&
-        (a.conversationRow?.blockStart ?? false) === (other.conversationRow?.blockStart ?? false)
+        (a.conversationRow?.blockStart ?? false) === (other.conversationRow?.blockStart ?? false) &&
+        (a.revival?.conversationId ?? null) === (other.revival?.conversationId ?? null) &&
+        (a.revival?.topicSummary ?? null) === (other.revival?.topicSummary ?? null) &&
+        (a.revival?.previousActivityAt ?? null) === (other.revival?.previousActivityAt ?? null)
       )
     }
     case "command_group": {

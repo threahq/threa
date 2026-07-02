@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { ConversationWithStaleness, StreamEvent } from "@threa/types"
-import { annotateConversationRows, type TimelineItem } from "../event-list"
+import { annotateConversationRows, annotateConversationRevivals, type TimelineItem } from "../event-list"
 import {
   buildConversationOverlayModel,
   buildMessageConversationMap,
@@ -203,5 +203,95 @@ describe("annotateConversationRows", () => {
 
     const result = annotateConversationRows([deleted, membership], model)
     expect(result.every((item) => item.type === "event" && item.conversationRow === undefined)).toBe(true)
+  })
+})
+
+describe("annotateConversationRevivals", () => {
+  function msg(messageId: string, createdAt: string): TimelineItem {
+    return {
+      type: "event",
+      event: {
+        id: `evt_${messageId}`,
+        streamId: "stream_123",
+        sequence: "1",
+        eventType: "message_created",
+        payload: { messageId, contentMarkdown: "hi" },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt,
+      },
+    }
+  }
+
+  const conversationsById = new Map<string, ConversationWithStaleness>([
+    ["conv_a", makeConversation({ id: "conv_a", topicSummary: "Pizza" })],
+    ["conv_b", makeConversation({ id: "conv_b", topicSummary: "Bug" })],
+  ])
+
+  function revivals(items: TimelineItem[], membership: Record<string, string>) {
+    return annotateConversationRevivals(items, new Map(Object.entries(membership)), conversationsById).map((item) =>
+      item.type === "event" ? (item.revival ?? null) : null
+    )
+  }
+
+  it("marks a reopened conversation as a revival, anchored to its prior member time", () => {
+    const items = [
+      msg("a1", "2026-06-01T00:00:00.000Z"),
+      msg("b1", "2026-06-01T00:01:00.000Z"),
+      msg("a2", "2026-06-01T03:00:00.000Z"),
+    ]
+    const membership = { a1: "conv_a", b1: "conv_b", a2: "conv_a" }
+
+    expect(revivals(items, membership)).toEqual([
+      null,
+      null,
+      { conversationId: "conv_a", topicSummary: "Pizza", previousActivityAt: "2026-06-01T00:00:00.000Z" },
+    ])
+  })
+
+  it("does not mark a contiguous run or a conversation's first appearance", () => {
+    const items = [
+      msg("a1", "2026-06-01T00:00:00.000Z"),
+      msg("a2", "2026-06-01T00:01:00.000Z"),
+      msg("b1", "2026-06-01T00:02:00.000Z"),
+    ]
+    const membership = { a1: "conv_a", a2: "conv_a", b1: "conv_b" }
+
+    expect(revivals(items, membership)).toEqual([null, null, null])
+  })
+
+  it("does not manufacture a revival when only an unassigned aside separates two members", () => {
+    // a1 → x1(unassigned) → a2, all with no *other* conversation between. A lone
+    // unclustered message is not a topic switch, so a2 must not get a chip.
+    const items = [
+      msg("a1", "2026-06-01T00:00:00.000Z"),
+      msg("x1", "2026-06-01T00:01:00.000Z"),
+      msg("a2", "2026-06-01T00:02:00.000Z"),
+    ]
+    const membership = { a1: "conv_a", a2: "conv_a" }
+
+    expect(revivals(items, membership)).toEqual([null, null, null])
+  })
+
+  it("ignores unassigned rows and does not break the run across non-message items", () => {
+    const gap: TimelineItem = { type: "gap", afterEventId: "evt_a1", missingCount: 1 }
+    const items = [
+      msg("a1", "2026-06-01T00:00:00.000Z"),
+      msg("x1", "2026-06-01T00:01:00.000Z"),
+      msg("b1", "2026-06-01T00:02:00.000Z"),
+      gap,
+      msg("a2", "2026-06-01T00:03:00.000Z"),
+    ]
+    // x1 is unassigned (no membership entry); the gap sits between b1 and a2.
+    const membership = { a1: "conv_a", b1: "conv_b", a2: "conv_a" }
+
+    const result = revivals(items, membership)
+    expect(result[1]).toBeNull()
+    expect(result[3]).toBeNull()
+    expect(result[4]).toEqual({
+      conversationId: "conv_a",
+      topicSummary: "Pizza",
+      previousActivityAt: "2026-06-01T00:00:00.000Z",
+    })
   })
 })

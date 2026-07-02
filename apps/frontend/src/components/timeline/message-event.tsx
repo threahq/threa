@@ -34,7 +34,7 @@ import {
   focusAtEnd,
   type MessageAgentActivity,
 } from "@/hooks"
-import { Quote, MessageSquareReply, Check } from "lucide-react"
+import { Quote, MessageSquareReply, Check, Layers } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -84,6 +84,7 @@ import { useReadFrontier, rowReadState } from "./read-frontier-context"
 import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlayRow } from "./conversation-overlay/row-context"
 import { useMessageConversationId } from "./conversation-overlay/message-conversation-context"
+import type { ConversationRevival } from "./conversation-overlay/model"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
 
@@ -141,6 +142,11 @@ interface MessageEventProps {
    * lives on the message that "carried" it.
    */
   isFirstMessage?: boolean
+  /**
+   * Topic-revival annotation for the on-message provenance chip, when this
+   * message reopens a scattered conversation (channel/DM timelines only).
+   */
+  revival?: ConversationRevival
   batch?: BatchTimelineState
 }
 
@@ -249,6 +255,60 @@ function MessageLinkPreviews({
       hoveredUrl={linkPreviewContext?.hoveredLinkUrl}
       hydrateFromApi={hydrateFromApi}
     />
+  )
+}
+
+/**
+ * On-message topic-provenance chip (board-view-design.md mechanism A). Rendered
+ * in the message footer — under the body, mirroring `ThreadSlot`, which the
+ * design doc names as the affordance to mirror — on a message that revives a
+ * scattered conversation (its previous member row is not the one directly
+ * above), so a late "Pizza" reads as "continues Pizza · 3h ago" instead of a
+ * non-sequitur. Tapping opens the conversation's side panel (`conv:<id>`); a
+ * `<Link>` keeps it URL-driven (INV-40, INV-59).
+ *
+ * On its own full-width line (not squeezed into the header meta row), so a long
+ * topic truncates cleanly instead of overflowing a phone's non-wrapping header.
+ * Conversation membership resolves from a query that lands after the timeline
+ * paints, so the chip mounts at its final size like `ThreadSlot`'s card,
+ * `LabelStack`, and link previews already do on this row — no grow-in height
+ * animation, which on a late-hydrating row jitters virtua's scroll compensation
+ * on mobile.
+ *
+ * `min-h` matches the footer's tap-target floor (`MessageReactions` pills are
+ * `min-h-[26px]`) so this navigation target isn't smaller than its neighbors on
+ * touch. The "· <terse time>" is the topic's last activity, the same shape as
+ * `ThreadSlot`'s "<n> replies · <last reply>" — a footer affordance's own time,
+ * read as such, not the message's send time.
+ *
+ * Uses the `Layers` glyph (the conversation identity across the overlay) rather
+ * than the move indicator's `CornerDownRight`, and stays neutral/muted rather
+ * than the thread affordance's gold — a conversation is a quiet "soft thread",
+ * not Ariadne's structural gold line. The topic label mirrors the overlay's
+ * `topicSummary || fallback` rendering.
+ */
+function ConversationProvenanceChip({ revival }: { revival: ConversationRevival }) {
+  const { getPanelUrl } = usePanel()
+  const href = getPanelUrl(createConversationPanelId(revival.conversationId))
+  const topic = revival.topicSummary || "an earlier conversation"
+  return (
+    <Link
+      to={href}
+      aria-label={`Continues ${topic} — open conversation`}
+      className={cn(
+        "group/prov mt-0.5 flex min-h-[26px] min-w-0 items-center gap-1.5 text-xs",
+        "text-muted-foreground transition-colors hover:text-foreground"
+      )}
+    >
+      <Layers className="h-3 w-3 shrink-0 text-muted-foreground/60 transition-colors group-hover/prov:text-foreground/70" />
+      <span className="min-w-0 truncate">
+        continues <span className="font-medium text-foreground/80 group-hover/prov:underline">{topic}</span>
+      </span>
+      <span aria-hidden className="text-muted-foreground/40">
+        ·
+      </span>
+      <RelativeTime date={revival.previousActivityAt} terse className="shrink-0 text-muted-foreground/70" />
+    </Link>
   )
 }
 
@@ -788,6 +848,8 @@ interface MessageEventInnerProps {
   groupContinuation?: boolean
   /** True when this is the first message in the stream — drives the context-bag attachment badge. */
   isFirstMessage?: boolean
+  /** Topic-revival annotation for the on-message provenance chip (channel/DM only). */
+  revival?: ConversationRevival
   /** Decrypted E2E attachment refs, threaded to the body's `<E2eAttachmentList>`. */
   attachmentRefs?: AttachmentRef[]
   /** Decrypted E2E citation sources, threaded to the body's `<MessageSourceList>` (E2EE-9). */
@@ -840,6 +902,7 @@ function SentMessageEvent({
   deferSecondaryHydration,
   groupContinuation,
   isFirstMessage,
+  revival,
   attachmentRefs,
   sources,
   e2eEnabled,
@@ -1234,6 +1297,7 @@ function SentMessageEvent({
   } else {
     footerContent = (
       <>
+        {revival && <ConversationProvenanceChip revival={revival} />}
         {payload.reactions && Object.keys(payload.reactions).length > 0 && (
           <MessageReactions
             reactions={payload.reactions}
@@ -1786,6 +1850,7 @@ export function MessageEvent({
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
+  revival,
   batch,
 }: MessageEventProps) {
   const rawPayload = event.payload as MessagePayload
@@ -1867,6 +1932,7 @@ export function MessageEvent({
           deferSecondaryHydration={deferSecondaryHydration}
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}
+          revival={revival}
           attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
           sources={decrypted.status === "decrypted" ? decrypted.sources : undefined}
           e2eEnabled={decrypted.status !== "plaintext"}
