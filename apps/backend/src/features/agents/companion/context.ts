@@ -46,6 +46,13 @@ export interface ContextParams {
   policy: ContextWindowPolicy
   /** Invocation time override for deterministic evals/tests. Production uses Date.now(). */
   currentTime?: Date
+  /**
+   * Present when this turn is a fired follow-up (roadmap 1.2): the note the
+   * follow-up carried and when it was scheduled. Drives the "Scheduled follow-up
+   * firing now" prompt section so the turn knows it IS the check-in, not a fresh
+   * request to schedule one.
+   */
+  followUp?: { note: string; scheduledFor: Date }
 }
 
 export interface AgentContext {
@@ -102,7 +109,7 @@ async function resolveScratchpadCustomPrompt(
  */
 export async function buildAgentContext(deps: ContextDeps, params: ContextParams): Promise<AgentContext> {
   const { db, userPreferencesService, conversationSummaryService } = deps
-  const { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime } = params
+  const { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime, followUp } = params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
   const invokingUserId = triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : undefined
@@ -374,7 +381,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       rollingConversationSummary,
       tools,
       conversationTopic,
-      spawnedFromContext
+      spawnedFromContext,
+      followUp
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`

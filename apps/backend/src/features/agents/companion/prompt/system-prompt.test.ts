@@ -145,6 +145,58 @@ describe("buildSystemPrompt", () => {
     expect(blank).not.toContain("## Discussion This Thread Was Spawned From")
   })
 
+  test("injects the scheduled-follow-up section when the turn is a fired follow-up", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      {
+        ...scratchpadContext,
+        temporal: {
+          currentTime: "2026-07-03T09:00:00.000Z",
+          timezone: "UTC",
+          utcOffset: "UTC+0",
+          dateFormat: "YYYY-MM-DD",
+          timeFormat: "24h",
+        },
+      },
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      { note: "check whether the deploy went out", scheduledFor: new Date("2026-07-03T09:00:00.000Z") }
+    )
+
+    expect(prompt).toContain("## Scheduled follow-up firing now")
+    // Carries the note and the scheduled time rendered in the user's timezone.
+    expect(prompt).toContain("check whether the deploy went out")
+    expect(prompt).toContain("2026-07-03 09:00")
+    // The two staging-bug guards: act now (don't decline) and don't re-schedule.
+    expect(prompt).toContain("This IS that reminder firing")
+    expect(prompt).toContain("Do NOT schedule another follow-up")
+    expect(prompt).toContain("keep_response")
+  })
+
+  test("omits the scheduled-follow-up section for a normal turn", () => {
+    const provided = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [], null, null)
+    const explicitNull = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null
+    )
+
+    expect(provided).not.toContain("## Scheduled follow-up firing now")
+    expect(explicitNull).not.toContain("## Scheduled follow-up firing now")
+  })
+
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {
     const prompt = buildSystemPrompt(
       persona,

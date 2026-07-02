@@ -791,6 +791,7 @@ export async function startServer(): Promise<ServerInstance> {
           }
         : { ok: false, reason: "cap_reached", pendingCount: result.pendingCount, limit: result.limit }
     },
+    loadFollowUp: ({ workspaceId, followUpId }) => agentFollowUpService.getById({ workspaceId, followUpId }),
   })
   // Tier assignments (see QueueManager `tiers` config above):
   //  - INTERACTIVE: user-facing work that must drain quickly (agent responses,

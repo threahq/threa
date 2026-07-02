@@ -146,6 +146,31 @@ describe("AgentFollowUpRepository.acquireStreamCapLock", () => {
   })
 })
 
+describe("AgentFollowUpRepository.findById", () => {
+  afterEach(() => mock.restore())
+
+  it("selects the row scoped to workspace + id and maps it (INV-8)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [ROW])
+
+    const result = await AgentFollowUpRepository.findById(db, "ws_1", "agfu_01")
+
+    expect(captured.text).toContain("SELECT")
+    expect(captured.text).toContain("FROM agent_follow_ups")
+    expect(captured.values).toEqual(["agfu_01", "ws_1"])
+    expect(result).toMatchObject({ id: "agfu_01", note: "check back on the deploy", scheduledFor: SCHEDULED_FOR })
+  })
+
+  it("returns null when no row matches", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [])
+
+    const result = await AgentFollowUpRepository.findById(db, "ws_1", "agfu_missing")
+
+    expect(result).toBeNull()
+  })
+})
+
 describe("AgentFollowUpRepository.countPending", () => {
   afterEach(() => mock.restore())
 

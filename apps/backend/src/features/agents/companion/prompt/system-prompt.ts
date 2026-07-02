@@ -1,6 +1,6 @@
 import { AgentTriggers, StreamTypes } from "@threa/types"
 import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentTool } from "@threa/agent-runtime"
-import { buildTemporalPromptSection } from "../../../../lib/temporal"
+import { buildTemporalPromptSection, formatCurrentTime } from "../../../../lib/temporal"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
 import { WORKSPACE_RESEARCH_TOOL_NAME } from "../../tools"
@@ -25,7 +25,8 @@ export function buildSystemPrompt(
   rollingConversationSummary?: string | null,
   tools: AgentTool[] = [],
   conversationTopic?: string | null,
-  spawnedFromContext?: string | null
+  spawnedFromContext?: string | null,
+  followUp?: { note: string; scheduledFor: Date } | null
 ): string {
   if (!persona.systemPrompt) {
     throw new Error(`Persona "${persona.name}" (${persona.id}) has no system prompt configured`)
@@ -57,6 +58,28 @@ You were explicitly @mentioned by ${mentionerDesc} who wants your assistance.`
     if (context.streamType === StreamTypes.CHANNEL) {
       prompt += ` This conversation is happening in a thread created specifically for your response.`
     }
+  }
+
+  if (followUp) {
+    const scheduledForDisplay = context.temporal
+      ? formatCurrentTime(
+          followUp.scheduledFor,
+          context.temporal.timezone,
+          context.temporal.dateFormat,
+          context.temporal.timeFormat
+        )
+      : followUp.scheduledFor.toISOString()
+
+    prompt += `
+
+## Scheduled follow-up firing now
+
+This turn is a follow-up you scheduled for yourself — not a new message from anyone. You are waking up on your own timer to revisit this stream.
+
+- You set this reminder (at ${scheduledForDisplay}) to: "${followUp.note.trim()}"
+- This IS that reminder firing. Act on it now — look at what has happened in the stream since you scheduled it and, if there's something worth saying, post your check-in with \`send_message\`. Do not decline or promise to check back later; later is now.
+- Do NOT schedule another follow-up for the same thing. The note above is what this turn is already handling — re-reading it as a fresh instruction and scheduling again just loops forever. Only schedule a new follow-up if genuinely new future work has surfaced.
+- If nothing needs saying (the matter resolved itself, nothing changed, or you're still waiting on someone), call \`keep_response\` with a brief reason and stay silent. Do not post filler.`
   }
 
   prompt += buildPromptSectionForStreamType(context, workspaceResearchEnabled)

@@ -118,6 +118,15 @@ export const AgentFollowUpRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  /** Read a single follow-up by id, workspace-scoped (INV-8). */
+  async findById(db: Querier, workspaceId: string, id: string): Promise<AgentFollowUp | null> {
+    const result = await db.query<AgentFollowUpRow>(sql`
+      SELECT ${sql.raw(COLUMNS)} FROM agent_follow_ups
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   /** Count pending follow-ups for a stream (INV-8 workspace-scoped). */
   async countPending(db: Querier, workspaceId: string, streamId: string): Promise<number> {
     const result = await db.query<{ count: string }>(sql`

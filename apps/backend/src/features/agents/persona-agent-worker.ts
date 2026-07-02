@@ -35,9 +35,10 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
   const { agent, serverId, pool, jobQueue } = deps
 
   return async (job) => {
-    const { workspaceId, streamId, messageId, personaId, trigger, supersedesSessionId, rerunContext } = job.data
+    const { workspaceId, streamId, messageId, personaId, trigger, supersedesSessionId, rerunContext, followUpId } =
+      job.data
 
-    logger.info({ jobId: job.id, streamId, messageId, personaId, trigger }, "Processing persona agent job")
+    logger.info({ jobId: job.id, streamId, messageId, personaId, trigger, followUpId }, "Processing persona agent job")
 
     const result = await agent.run({
       workspaceId,
@@ -48,6 +49,7 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
       trigger,
       supersedesSessionId,
       rerunContext,
+      followUpId,
     })
 
     if (result.status === "failed") {

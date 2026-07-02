@@ -149,6 +149,17 @@ export interface PersonaAgentDeps {
     note: string
     scheduledFor: Date
   }) => Promise<import("./tools/tool-deps").ScheduleFollowUpToolResult>
+  /**
+   * Load a fired follow-up's context (the note it carries + when it was
+   * scheduled) so the turn it wakes can be told why. Bound to
+   * `AgentFollowUpService.getById` in server.ts; consulted only when a job
+   * carries `followUpId`. Absent in harnesses that don't wire follow-ups, in
+   * which case the turn degrades to a plain catch-up.
+   */
+  loadFollowUp?: (params: {
+    workspaceId: string
+    followUpId: string
+  }) => Promise<{ note: string; scheduledFor: Date } | null>
 }
 
 export interface PersonaAgentInput {
@@ -160,6 +171,12 @@ export interface PersonaAgentInput {
   trigger?: typeof AgentTriggers.MENTION
   supersedesSessionId?: string
   rerunContext?: AgentSessionRerunContext
+  /**
+   * Set when this run was enqueued by a fired follow-up. `messageId` is then
+   * synthetic (no real trigger message); the agent loads the follow-up's context
+   * and injects the "why you woke up" prompt section (roadmap 1.2).
+   */
+  followUpId?: string
   /** Invocation time override for deterministic evals/tests. Production leaves this unset. */
   currentTime?: Date
 }
@@ -217,6 +234,7 @@ export class PersonaAgent {
       removeReaction,
       createThread,
       scheduleFollowUp,
+      loadFollowUp,
     } = this.deps
     const {
       workspaceId,
@@ -227,6 +245,7 @@ export class PersonaAgent {
       trigger,
       supersedesSessionId,
       rerunContext,
+      followUpId,
       currentTime,
     } = input
 
@@ -272,6 +291,25 @@ export class PersonaAgent {
     }
 
     const { persona, stream, initialSequence, triggerMessageRevision, streamToolPolicy } = precheck
+
+    // A fired follow-up has no trigger message (synthetic `messageId`); load its
+    // row so the turn can be told it IS the scheduled check-in firing (roadmap
+    // 1.2). If the row is gone or no loader is wired the turn degrades to a plain
+    // catch-up — the two live staging bugs (declining the check-in, re-scheduling
+    // in a loop) stem from exactly that context-less path, so this is the fix.
+    let followUpContext: { note: string; scheduledFor: Date } | undefined
+    if (followUpId) {
+      const followUp = loadFollowUp ? await loadFollowUp({ workspaceId, followUpId }) : null
+      if (followUp) {
+        followUpContext = { note: followUp.note, scheduledFor: followUp.scheduledFor }
+      } else {
+        logger.warn(
+          { workspaceId, followUpId, streamId },
+          "Fired follow-up row not found or loader unbound; running as a plain catch-up turn"
+        )
+      }
+    }
+    const isFollowUp = followUpContext !== undefined
 
     // Create the thread eagerly so session events go there for channel mentions.
     const isChannelMention = trigger === AgentTriggers.MENTION && stream.type === StreamTypes.CHANNEL
@@ -326,7 +364,7 @@ export class PersonaAgent {
 
         const agentContext = await buildAgentContext(
           { db: pool, userPreferencesService, conversationSummaryService },
-          { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime }
+          { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime, followUp: followUpContext }
         )
 
         // Resolve an attached ContextBag (if any) so `stable + delta` flow into
@@ -694,7 +732,10 @@ export class PersonaAgent {
           tools,
           maxTokens: persona.maxTokens,
           temperature: persona.temperature,
-          allowNoMessageOutput: isSupersedeRerun,
+          // Follow-up turns may legitimately conclude "nothing to add" — enabling
+          // this exposes `keep_response` so they can end silently instead of the
+          // runtime auto-committing filler or throwing (roadmap 1.2).
+          allowNoMessageOutput: isSupersedeRerun || isFollowUp,
           validateFinalResponse: isSupersedeRerun
             ? buildSupersedeResponseValidator({
                 ai,

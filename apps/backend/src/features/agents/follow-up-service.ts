@@ -105,6 +105,15 @@ export class AgentFollowUpService {
   }
 
   /**
+   * Load a follow-up's context so the fired turn can be told why it woke up
+   * (roadmap 1.2). Read-only single-query path, so pass the pool directly
+   * (INV-30). Returns `null` when the row is gone (e.g. hard-deleted).
+   */
+  async getById(params: { workspaceId: string; followUpId: string }): Promise<AgentFollowUp | null> {
+    return AgentFollowUpRepository.findById(this.pool, params.workspaceId, params.followUpId)
+  }
+
+  /**
    * Cancel a pending follow-up (CAS `pending → cancelled`) and tombstone its
    * fire queue row in the same tx. Returns the cancelled row, or `null` when the
    * cancel lost the race to the fire worker (already fired/cancelled).
