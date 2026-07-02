@@ -544,6 +544,12 @@ export interface CachedSavedMessage {
    */
   messageId: string | null
   streamId: string | null
+  /**
+   * Conversation the message was saved from — deep-links the row into the
+   * conversation panel. Null for stream-origin saves and standalone to-dos, and
+   * for rows cached before this field shipped (not indexed, so no version bump).
+   */
+  conversationId: string | null
   status: string
   /** Display line for standalone items; null for message-anchored rows. */
   title: string | null

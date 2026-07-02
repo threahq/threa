@@ -704,6 +704,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       userId: "member_1",
       messageId: "msg_1",
       streamId: "stream_1",
+      conversationId: null,
       status: "saved",
       title: null,
       note: null,

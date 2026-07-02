@@ -6,6 +6,7 @@ import { SavedMessagesRepository } from "./repository"
 // Streams before messaging to avoid a latent circular-init in public-api/schemas.ts.
 import { StreamRepository, StreamMemberRepository } from "../streams"
 import { MessageRepository } from "../messaging"
+import { ConversationRepository } from "../conversations"
 import { OutboxRepository } from "../../lib/outbox"
 import { QueueRepository } from "../../lib/queue"
 import * as dbModule from "../../db"
@@ -80,6 +81,7 @@ function fakeSaved(overrides: Partial<SavedMessage> = {}): SavedMessage {
     userId: USER_ID,
     messageId: MESSAGE_ID,
     streamId: STREAM_ID,
+    conversationId: null,
     status: SavedStatuses.SAVED,
     title: null,
     note: null,
@@ -104,6 +106,7 @@ function setupService() {
       userId: r.userId,
       messageId: r.messageId,
       streamId: r.streamId,
+      conversationId: r.conversationId,
       status: r.status,
       title: r.title,
       note: r.note,
@@ -195,6 +198,57 @@ describe("SavedMessagesService.save", () => {
       targetUserId: USER_ID,
       saved: expect.objectContaining({ id: SAVED_ID, status: SavedStatuses.SAVED }),
     })
+  })
+
+  it("persists a conversation origin whose root matches the message's access root", async () => {
+    const service = setupService()
+    spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage())
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    spyOn(ConversationRepository, "findByIds").mockResolvedValue([{ id: "conv_1", streamId: STREAM_ID } as any])
+    let capturedConversationId: string | null = "unset"
+    spyOn(SavedMessagesRepository, "upsert").mockImplementation(async (_db: any, params: any) => {
+      capturedConversationId = params.conversationId
+      return {
+        saved: fakeSaved({ conversationId: params.conversationId }),
+        inserted: true,
+        previousReminderQueueMessageId: null,
+      }
+    })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.save({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      messageId: MESSAGE_ID,
+      conversationId: "conv_1",
+      remindAt: null,
+    })
+
+    expect(capturedConversationId).toBe("conv_1")
+  })
+
+  it("drops a conversation origin whose root does not match the message's access root", async () => {
+    const service = setupService()
+    spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage())
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    // Conversation belongs to a different root stream — a stale/foreign hint.
+    spyOn(ConversationRepository, "findByIds").mockResolvedValue([{ id: "conv_1", streamId: "stream_other" } as any])
+    let capturedConversationId: string | null = "unset"
+    spyOn(SavedMessagesRepository, "upsert").mockImplementation(async (_db: any, params: any) => {
+      capturedConversationId = params.conversationId
+      return { saved: fakeSaved(), inserted: true, previousReminderQueueMessageId: null }
+    })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.save({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      messageId: MESSAGE_ID,
+      conversationId: "conv_1",
+      remindAt: null,
+    })
+
+    expect(capturedConversationId).toBeNull()
   })
 })
 

@@ -9,6 +9,7 @@ interface SavedMessageRow {
   user_id: string
   message_id: string | null
   stream_id: string | null
+  conversation_id: string | null
   status: string
   title: string | null
   note: string | null
@@ -31,6 +32,12 @@ export interface SavedMessage {
   userId: string
   messageId: string | null
   streamId: string | null
+  /**
+   * The conversation a message-anchored row was saved from (board card /
+   * conversation panel). Null for stream-origin saves and standalone to-dos.
+   * A validated display-origin hint (see service.save), not a foreign key.
+   */
+  conversationId: string | null
   status: SavedStatus
   title: string | null
   note: string | null
@@ -48,6 +55,8 @@ export interface UpsertSavedParams {
   userId: string
   messageId: string
   streamId: string
+  /** Validated conversation origin, or null for a stream-origin save. */
+  conversationId: string | null
   remindAt: Date | null
 }
 
@@ -78,7 +87,7 @@ export interface ListSavedOpts {
 }
 
 const SAVED_MESSAGE_COLUMNS =
-  "id, workspace_id, user_id, message_id, stream_id, status, title, note, remind_at, reminder_sent_at, reminder_queue_message_id, saved_at, status_changed_at, created_at, updated_at"
+  "id, workspace_id, user_id, message_id, stream_id, conversation_id, status, title, note, remind_at, reminder_sent_at, reminder_queue_message_id, saved_at, status_changed_at, created_at, updated_at"
 
 function mapRow(row: SavedMessageRow): SavedMessage {
   return {
@@ -87,6 +96,7 @@ function mapRow(row: SavedMessageRow): SavedMessage {
     userId: row.user_id,
     messageId: row.message_id,
     streamId: row.stream_id,
+    conversationId: row.conversation_id,
     status: row.status as SavedStatus,
     title: row.title,
     note: row.note,
@@ -128,7 +138,7 @@ export const SavedMessagesRepository = {
           AND message_id = ${params.messageId}
       )
       INSERT INTO saved_messages (
-        id, workspace_id, user_id, message_id, stream_id, status, remind_at
+        id, workspace_id, user_id, message_id, stream_id, conversation_id, status, remind_at
       )
       VALUES (
         ${id},
@@ -136,12 +146,17 @@ export const SavedMessagesRepository = {
         ${params.userId},
         ${params.messageId},
         ${params.streamId},
+        ${params.conversationId},
         ${SavedStatuses.SAVED},
         ${params.remindAt}
       )
       ON CONFLICT (workspace_id, user_id, message_id) WHERE message_id IS NOT NULL DO UPDATE SET
         status = ${SavedStatuses.SAVED},
         remind_at = EXCLUDED.remind_at,
+        -- Re-saving overwrites the origin with the current surface's: a save from
+        -- the stream timeline (null) clears a prior conversation origin, matching
+        -- the latest-write-wins semantics of remind_at above.
+        conversation_id = EXCLUDED.conversation_id,
         reminder_sent_at = NULL,
         reminder_queue_message_id = NULL,
         saved_at = CASE

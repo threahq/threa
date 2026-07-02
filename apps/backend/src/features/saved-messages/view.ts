@@ -136,6 +136,7 @@ function toView(
     userId: row.userId,
     messageId: row.messageId,
     streamId: row.streamId,
+    conversationId: row.conversationId,
     status: row.status,
     title: row.title,
     note: row.note,

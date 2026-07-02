@@ -11,6 +11,7 @@ import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository, StreamMemberRepository } from "../streams"
 import { MessageRepository } from "../messaging"
+import { ConversationRepository } from "../conversations"
 import { reminderQueueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type SavedReminderFireJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
@@ -25,6 +26,12 @@ export interface SaveParams {
   workspaceId: string
   userId: string
   messageId: string
+  /**
+   * Conversation the save came from (board card / conversation panel). A
+   * display-origin hint validated against the message's access root before it's
+   * persisted; null (or a mismatch) means the row deep-links to the stream.
+   */
+  conversationId?: string
   remindAt: Date | null
 }
 
@@ -97,11 +104,23 @@ export class SavedMessagesService {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
 
+      const accessStreamId = stream.rootStreamId ?? stream.id
       await ensureStreamAccess(client, {
-        accessStreamId: stream.rootStreamId ?? stream.id,
+        accessStreamId,
         userId: params.userId,
         directStreamVisibility: stream.visibility,
         isThread: stream.rootStreamId !== null,
+      })
+
+      // Validate the conversation origin before persisting it: it must be a
+      // conversation in this workspace whose root stream matches the message's
+      // access root (a conversation spans one root + its threads — INV-62). An
+      // absent or mismatched id is dropped to null so the row deep-links to the
+      // stream rather than a conversation the message doesn't belong to.
+      const conversationId = await resolveConversationOrigin(client, {
+        workspaceId: params.workspaceId,
+        conversationId: params.conversationId,
+        accessStreamId,
       })
 
       const upsert = await SavedMessagesRepository.upsert(client, {
@@ -109,6 +128,7 @@ export class SavedMessagesService {
         userId: params.userId,
         messageId: params.messageId,
         streamId: message.streamId,
+        conversationId,
         remindAt: clampedRemindAt,
       })
 
@@ -403,6 +423,23 @@ async function enqueueReminder(
     { remindAt: params.remindAt, queueMessageId }
   )
   return updated ?? params.saved
+}
+
+/**
+ * Resolve the client-supplied conversation origin to a value safe to persist.
+ * Returns the id only when it names a workspace conversation whose root stream
+ * is the message's access root; otherwise null. Never throws — a stale or
+ * mismatched hint must not block the save, it just falls back to the stream
+ * deep-link.
+ */
+async function resolveConversationOrigin(
+  client: import("pg").PoolClient,
+  params: { workspaceId: string; conversationId: string | undefined; accessStreamId: string }
+): Promise<string | null> {
+  if (!params.conversationId) return null
+  const [conversation] = await ConversationRepository.findByIds(client, params.workspaceId, [params.conversationId])
+  if (!conversation || conversation.streamId !== params.accessStreamId) return null
+  return conversation.id
 }
 
 function clampRemindAt(remindAt: Date | null): Date | null {

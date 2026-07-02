@@ -1661,6 +1661,13 @@ export interface SavedMessageView {
   userId: string
   messageId: string | null
   streamId: string | null
+  /**
+   * The conversation this message was saved from (board card / conversation
+   * panel). When set, the Saved list and reminder surfaces deep-link into the
+   * conversation panel (`?panel=conv:<id>&m=<msgId>`) instead of the stream
+   * permalink. Null for stream-origin saves and standalone to-dos.
+   */
+  conversationId: string | null
   status: SavedStatus
   /** Display line for standalone items; null for message-anchored rows. */
   title: string | null
@@ -1691,6 +1698,13 @@ export interface SavedMessageSnapshot {
  */
 export interface SaveMessageInput {
   messageId?: string
+  /**
+   * Conversation this message is being saved from — set only by the conversation
+   * surfaces (board card / conversation panel) so the saved row remembers its
+   * origin. Validated server-side (workspace-scoped, root must match the
+   * message's access root); accepted only alongside `messageId`.
+   */
+  conversationId?: string
   title?: string
   note?: string
   remindAt?: string | null

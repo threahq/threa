@@ -384,6 +384,9 @@ export class PushService {
         savedId,
         streamId,
         messageId,
+        // When the message was saved from a conversation, the SW deep-links the
+        // click into the conversation panel instead of the stream permalink.
+        conversationId: saved.conversationId ?? undefined,
         streamName: saved.message?.streamName ?? null,
         // Standalone (message-less) items preview their own title.
         contentPreview: resolveSavedReminderPreview(saved.message?.contentMarkdown) ?? saved.title,

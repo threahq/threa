@@ -23,6 +23,7 @@ async function putFiredSaved(id: string): Promise<void> {
     userId: "usr_me",
     messageId: `msg_${id}`,
     streamId: "stream_1",
+    conversationId: null,
     status: "saved",
     title: null,
     note: null,

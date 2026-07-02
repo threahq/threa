@@ -18,6 +18,12 @@ interface ReminderPickerSheetProps {
   workspaceId: string
   /** Null for standalone saved items — those always carry a `saved` row, so the save-new path never runs. */
   messageId: string | null
+  /**
+   * Conversation origin passed to the save-new path so a message first saved via
+   * "Set reminder…" from a conversation surface remembers where it came from.
+   * Omitted on stream/label surfaces.
+   */
+  conversationId?: string
   /** Current saved state (null if not yet saved). Controls save-vs-update behaviour. */
   saved: SavedMessageView | null
 }
@@ -31,7 +37,14 @@ interface ReminderPickerSheetProps {
  * own platform picker on tap — Android's `datetime-local` only reacts to the
  * trailing calendar icon, which meant users couldn't edit just the time.
  */
-export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId, saved }: ReminderPickerSheetProps) {
+export function ReminderPickerSheet({
+  open,
+  onOpenChange,
+  workspaceId,
+  messageId,
+  conversationId,
+  saved,
+}: ReminderPickerSheetProps) {
   // Browser-local timezone — never use `preferences.timezone` in the UI
   // because native pickers always operate in device-local.
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -67,7 +80,7 @@ export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId
     if (!saved) {
       if (!messageId) return
       saveMutation.mutate(
-        { messageId, remindAt: date?.toISOString() ?? null },
+        { messageId, conversationId, remindAt: date?.toISOString() ?? null },
         {
           onSuccess: () => {
             resetAndClose()

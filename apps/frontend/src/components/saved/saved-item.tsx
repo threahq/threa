@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import { buildConversationPanelPath } from "@/lib/stream-links"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -32,7 +33,11 @@ export function SavedItem({ saved, workspaceId, onMarkDone, onArchive, onRestore
   const isStandalone = saved.messageId === null
   const isUnavailable = saved.unavailableReason !== null
   const linkable = !isUnavailable && saved.message !== null
-  const href = `/w/${workspaceId}/s/${saved.streamId}?m=${saved.messageId}`
+  // A message saved from a conversation reopens in the conversation panel;
+  // stream-origin saves keep the stream permalink.
+  const href = saved.conversationId
+    ? buildConversationPanelPath(workspaceId, saved.conversationId, saved.messageId ?? undefined)
+    : `/w/${workspaceId}/s/${saved.streamId}?m=${saved.messageId}`
   const previewText = resolveSavedPreview(saved)
   // The backend snapshot's `streamName` is null for DMs (viewer-specific names
   // aren't persisted on the stream row), so resolve from the workspace caches.

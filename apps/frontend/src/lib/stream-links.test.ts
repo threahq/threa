@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { toast } from "sonner"
-import { buildStreamLink, copyStreamLink, buildConversationLink, copyConversationLink } from "./stream-links"
+import {
+  buildStreamLink,
+  copyStreamLink,
+  buildConversationLink,
+  buildConversationPanelPath,
+  copyConversationLink,
+} from "./stream-links"
 
 describe("buildStreamLink", () => {
   it("builds an absolute main-view URL from workspace and stream ids", () => {
@@ -17,6 +23,16 @@ describe("buildConversationLink", () => {
     expect(buildConversationLink("ws_1", "conv_1", "msg_9")).toBe(
       `${window.location.origin}/w/ws_1/board?panel=conv%3Aconv_1&m=msg_9`
     )
+  })
+})
+
+describe("buildConversationPanelPath", () => {
+  it("returns the origin-less router path the saved/activity Links consume", () => {
+    expect(buildConversationPanelPath("ws_1", "conv_1")).toBe("/w/ws_1/board?panel=conv%3Aconv_1")
+  })
+
+  it("carries the deep-link message id", () => {
+    expect(buildConversationPanelPath("ws_1", "conv_1", "msg_9")).toBe("/w/ws_1/board?panel=conv%3Aconv_1&m=msg_9")
   })
 })
 

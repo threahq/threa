@@ -18,6 +18,7 @@ function makeView(overrides: Partial<SavedMessageView> = {}): SavedMessageView {
     userId: "usr_me",
     messageId: "msg_1",
     streamId: "stream_ch",
+    conversationId: null,
     status: "saved",
     title: null,
     note: null,

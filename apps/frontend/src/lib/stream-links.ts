@@ -22,9 +22,19 @@ export function buildStreamLink(workspaceId: string, streamId: string): string {
  * surface counterpart to a stream permalink.
  */
 export function buildConversationLink(workspaceId: string, conversationId: string, messageId?: string): string {
+  return `${window.location.origin}${buildConversationPanelPath(workspaceId, conversationId, messageId)}`
+}
+
+/**
+ * Relative router path (no origin) that reopens a conversation in the side
+ * panel — the form React-Router `<Link to>` and the saved/activity deep-links
+ * consume. {@link buildConversationLink} prepends the origin for clipboard use;
+ * both keep the `?panel=conv:<id>&m=` route shape in this one place.
+ */
+export function buildConversationPanelPath(workspaceId: string, conversationId: string, messageId?: string): string {
   const params = new URLSearchParams({ panel: createConversationPanelId(conversationId) })
   if (messageId) params.set("m", messageId)
-  return `${window.location.origin}/w/${workspaceId}/board?${params.toString()}`
+  return `/w/${workspaceId}/board?${params.toString()}`
 }
 
 /**

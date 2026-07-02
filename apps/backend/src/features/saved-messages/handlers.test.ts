@@ -21,6 +21,28 @@ function fakeReq(overrides: Partial<Request> = {}): Request {
   } as unknown as Request
 }
 
+describe("createSavedMessagesHandlers.create", () => {
+  afterEach(() => mock.restore())
+
+  it("forwards a conversationId alongside the messageId to the save service", async () => {
+    const save = mock(async (_params: any) => ({ id: "saved_01" }) as any)
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: { save } as any })
+    const req = fakeReq({ body: { messageId: "msg_1", conversationId: "conv_1" } })
+
+    await handlers.create(req, fakeRes())
+
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save.mock.calls[0]![0]).toMatchObject({ messageId: "msg_1", conversationId: "conv_1" })
+  })
+
+  it("rejects a conversationId without a messageId with 400", async () => {
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: {} as any })
+    const req = fakeReq({ body: { title: "todo", conversationId: "conv_1" } })
+
+    await expect(handlers.create(req, fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+})
+
 describe("createSavedMessagesHandlers.update", () => {
   afterEach(() => mock.restore())
 

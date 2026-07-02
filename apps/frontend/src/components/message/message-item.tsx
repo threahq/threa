@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import { toast } from "sonner"
 import { Quote } from "lucide-react"
 import {
   LabelableResourceTypes,
@@ -24,6 +25,7 @@ import { MessageEditForm } from "@/components/timeline/message-edit-form"
 import { DeleteMessageDialog } from "@/components/timeline/delete-message-dialog"
 import { EditedIndicator } from "@/components/timeline/edited-indicator"
 import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
+import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
@@ -34,6 +36,7 @@ import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
+import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { parseMarkdown } from "@threa/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
@@ -151,6 +154,7 @@ export function MessageItem({
   const [editingSurfaceTouch, setEditingSurfaceTouch] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
   // the timeline uses; the hover overflow button is desktop/keyboard only. This
@@ -227,6 +231,38 @@ export function MessageItem({
       /* toast already surfaced inside the hook */
     })
   }, [startDiscussWithAriadne, conversationId, conversationRootStreamId, message.id])
+
+  // Save / Set reminder — the same shared registry actions the in-stream row
+  // exposes (`MessageEvent`). A save from a conversation surface passes
+  // `conversationId` so the saved row (and its reminder) deep-links back into
+  // the conversation panel; the label page leaves it undefined and the row saves
+  // as a plain stream-origin bookmark.
+  const savedForMessage = useSavedForMessage(workspaceId, message.id)
+  const saveMessageMutation = useSaveMessage(workspaceId)
+  const unsaveMessageMutation = useDeleteSaved(workspaceId)
+  const isSaved = !!savedForMessage && savedForMessage.status === "saved"
+  const handleToggleSave = useCallback(() => {
+    if (saveMessageMutation.isPending || unsaveMessageMutation.isPending) return
+    if (!savedForMessage) {
+      saveMessageMutation.mutate(
+        { messageId: message.id, conversationId },
+        { onError: () => toast.error("Could not save message") }
+      )
+      return
+    }
+    if (savedForMessage.status !== "saved") {
+      saveMessageMutation.mutate(
+        { messageId: message.id, conversationId },
+        { onError: () => toast.error("Could not restore saved item") }
+      )
+      return
+    }
+    unsaveMessageMutation.mutate(savedForMessage.id, {
+      onError: () => toast.error("Could not remove saved item"),
+    })
+  }, [savedForMessage, saveMessageMutation, unsaveMessageMutation, message.id, conversationId])
+  const handleRequestReminder = useCallback(() => setReminderSheetOpen(true), [])
+
   // Board/conversation payloads carry only markdown (INV-58 wire format); parse
   // it back to the canonical contentJson the editor edits over. A no-op edit is
   // still detected because the form's baseline re-serializes this same doc.
@@ -322,6 +358,9 @@ export function MessageItem({
     // author's rows, mirroring the timeline row (`MessageEvent`).
     onDelete: () => setDeleteDialogOpen(true),
     onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
+    isSaved,
+    onToggleSave: handleToggleSave,
+    onRequestReminder: handleRequestReminder,
     onDiscussWithAriadne: canDiscussConversation ? handleDiscussWithAriadne : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
@@ -400,6 +439,16 @@ export function MessageItem({
             contentMarkdown: message.contentMarkdown,
             editedAt: message.editedAt ?? undefined,
           }}
+        />
+      )}
+      {reminderSheetOpen && (
+        <ReminderPickerSheet
+          open={reminderSheetOpen}
+          onOpenChange={setReminderSheetOpen}
+          workspaceId={workspaceId}
+          messageId={message.id}
+          conversationId={conversationId}
+          saved={savedForMessage ?? null}
         />
       )}
     </>

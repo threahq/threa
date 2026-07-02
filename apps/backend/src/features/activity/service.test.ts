@@ -693,6 +693,7 @@ describe("ActivityService.processSavedReminderFired", () => {
       savedId: "saved_abc",
       streamId: STREAM_ID,
       messageId: MESSAGE_ID,
+      conversationId: "conv_1",
       contentPreview: "Remember this",
       streamName: "#planning",
     })
@@ -705,8 +706,11 @@ describe("ActivityService.processSavedReminderFired", () => {
     expect(call.actorId).toBe(AuthorTypes.SYSTEM)
     expect(call.actorType).toBe(AuthorTypes.SYSTEM)
     expect(call.activityType).toBe(ActivityTypes.SAVED_REMINDER)
+    // The conversation origin rides in context so the feed row deep-links into
+    // the conversation panel instead of the stream permalink.
     expect(call.context).toEqual({
       savedId: "saved_abc",
+      conversationId: "conv_1",
       contentPreview: "Remember this",
       streamName: "#planning",
     })
@@ -740,6 +744,7 @@ describe("ActivityService.processSavedReminderFired", () => {
       userId: TARGET_USER_ID,
       streamId: STREAM_ID,
       messageId: MESSAGE_ID,
+      conversationId: null,
       contentPreview: null,
       streamName: null,
     }
@@ -781,12 +786,14 @@ describe("ActivityService.processSavedReminderFired", () => {
       savedId: "saved_null",
       streamId: STREAM_ID,
       messageId: MESSAGE_ID,
+      conversationId: null,
       contentPreview: null,
       streamName: null,
     })
 
     expect(insertSpy.mock.calls[0][1].context).toEqual({
       savedId: "saved_null",
+      conversationId: null,
       contentPreview: "",
       streamName: null,
     })
