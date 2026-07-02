@@ -1,5 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test"
-import { LLMBoundaryExtractor } from "./llm-extractor"
+import { LLMBoundaryExtractor, formatRelativeAge } from "./llm-extractor"
 import type { ExtractionContext, ConversationSummary } from "./types"
 import type { Message } from "../../messaging"
 import type { AI } from "@threa/agent-runtime"
@@ -64,6 +64,7 @@ function createMockConversation(overrides: Partial<ConversationSummary> = {}): C
     participantIds: ["usr_test"],
     completenessScore: 3,
     status: "active",
+    lastActivityAt: new Date(),
     contextMessageIds: [],
     ...overrides,
   }
@@ -705,5 +706,68 @@ describe("LLMBoundaryExtractor", () => {
       // no `  [attachment ` anywhere in the prompt.
       expect(userPrompt).not.toContain("  [attachment ")
     })
+  })
+
+  describe("temporal context in prompt", () => {
+    test("renders message ages and conversation last-activity relative to the new message", async () => {
+      const now = new Date("2026-07-01T12:00:00Z")
+      const newMessage = createMockMessage({ id: "msg_new", contentMarkdown: "helt orelaterat ämne", createdAt: now })
+      const staleMessage = createMockMessage({
+        id: "msg_stale",
+        contentMarkdown: "gårdagens sista meddelande",
+        createdAt: new Date("2026-06-30T10:00:00Z"), // 26h before
+      })
+      const staleConv = createMockConversation({
+        id: "conv_stale",
+        lastActivityAt: new Date("2026-06-30T10:00:00Z"),
+      })
+      const context = createMockContext({
+        streamType: "dm",
+        newMessage,
+        recentMessages: [staleMessage],
+        activeConversations: [staleConv],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: null, isPrimary: true }],
+          newConversationTopic: "Nytt ämne",
+          confidence: 0.9,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const call = calls[0]?.[0] ?? { messages: [] }
+      const userPrompt = call.messages.find((m) => m.role === "user")?.content ?? ""
+      expect(userPrompt).toContain("[msg_stale] (26h ago)")
+      expect(userPrompt).toContain("last active 26h ago")
+    })
+  })
+})
+
+describe("formatRelativeAge", () => {
+  const reference = new Date("2026-07-01T12:00:00Z")
+
+  test("renders the age buckets used by the prompt", () => {
+    const cases: [string, string][] = [
+      ["2026-07-01T11:59:30Z", "just now"],
+      ["2026-07-01T11:55:00Z", "5m ago"],
+      ["2026-07-01T09:00:00Z", "3h ago"],
+      ["2026-06-30T10:00:00Z", "26h ago"] as [string, string],
+      ["2026-06-28T12:00:00Z", "3d ago"],
+    ]
+    const rendered = cases.map(([iso]) => formatRelativeAge(new Date(iso), reference))
+    expect(rendered).toEqual(cases.map(([, expected]) => expected))
+  })
+
+  test("clamps messages at or after the reference to 'just now'", () => {
+    // recentMessages includes MESSAGES_AFTER messages sent after the new one.
+    expect(formatRelativeAge(new Date("2026-07-01T12:00:30Z"), reference)).toBe("just now")
   })
 })

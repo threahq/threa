@@ -51,9 +51,25 @@ import type { Message } from "../../../src/features/messaging"
 import { ulid } from "ulid"
 
 /**
- * Convert eval message to production Message type.
+ * Default ages when a case doesn't specify them: a live exchange. The two
+ * defaults match so a conversation is never rendered staler than its own
+ * newest recent message.
  */
-function toMessage(evalMsg: EvalMessage, streamId: string, sequence: number = 1): Message {
+const DEFAULT_RECENT_MESSAGE_MINUTES_AGO = 2
+const DEFAULT_CONVERSATION_LAST_ACTIVITY_MINUTES_AGO = 2
+
+/**
+ * Convert eval message to production Message type. `now` anchors the relative
+ * ages (`minutesAgo`) that session-gap cases use to model time passing.
+ */
+function toMessage(
+  evalMsg: EvalMessage,
+  streamId: string,
+  sequence: number,
+  now: Date,
+  defaultMinutesAgo = 0
+): Message {
+  const minutesAgo = evalMsg.minutesAgo ?? defaultMinutesAgo
   return {
     id: `msg_${ulid()}`,
     streamId,
@@ -73,7 +89,7 @@ function toMessage(evalMsg: EvalMessage, streamId: string, sequence: number = 1)
     sentVia: null,
     editedAt: null,
     deletedAt: null,
-    createdAt: new Date(),
+    createdAt: new Date(now.getTime() - minutesAgo * 60_000),
     ciphertext: null,
     envelope: null,
     e2eVersion: null,
@@ -85,15 +101,24 @@ function toMessage(evalMsg: EvalMessage, streamId: string, sequence: number = 1)
  */
 function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: string): ExtractionContext {
   const streamId = `stream_${ulid()}`
+  const now = new Date()
 
   return {
-    newMessage: toMessage(input.newMessage, streamId, 1),
-    recentMessages: (input.recentMessages || []).map((m, i) => toMessage(m, streamId, i + 2)),
-    activeConversations: (input.activeConversations || []).map((c) => ({
-      ...c,
-      status: c.status ?? "active",
-      contextMessageIds: [],
-    })),
+    newMessage: toMessage(input.newMessage, streamId, 1, now),
+    recentMessages: (input.recentMessages || []).map((m, i) =>
+      toMessage(m, streamId, i + 2, now, DEFAULT_RECENT_MESSAGE_MINUTES_AGO)
+    ),
+    activeConversations: (input.activeConversations || []).map((c) => {
+      const { lastActivityMinutesAgo, ...summary } = c
+      return {
+        ...summary,
+        status: c.status ?? "active",
+        lastActivityAt: new Date(
+          now.getTime() - (lastActivityMinutesAgo ?? DEFAULT_CONVERSATION_LAST_ACTIVITY_MINUTES_AGO) * 60_000
+        ),
+        contextMessageIds: [],
+      }
+    }),
     replyTargets: input.replyTargets,
     streamType: input.streamType || "scratchpad",
     workspaceId,

@@ -428,17 +428,17 @@ export class MemoService implements MemoServiceLike {
 
       const createdMemos: MemoToCreate[] = []
       for (const memoData of memosToCreate) {
-        // Authoritative cross-conversation dedup (INV-20): under the lock this
-        // sees committed memos from other batches AND survivors already inserted
-        // earlier in this same transaction (uncommitted rows are visible to it),
-        // so it subsumes the in-batch check. Excludes the candidate's own
-        // conversation — same-conversation repeats are the revision path's job.
+        // Authoritative dedup (INV-20): under the lock this sees committed
+        // memos from other batches AND survivors already inserted earlier in
+        // this same transaction (uncommitted rows are visible to it), so it
+        // subsumes the in-batch check. Same-conversation repeats are gated
+        // here too — the revision prompt alone demonstrably re-emits
+        // near-identical memos when a conversation is re-processed.
         const duplicate = await MemoRepository.findNearDuplicate(client, {
           workspaceId,
           streamId,
           embedding: memoData.embedding,
           maxDistance: MEMO_DEDUP_DISTANCE,
-          excludeConversationId: memoData.sourceConversationId ?? "",
         })
         if (duplicate) {
           memosDeduped++

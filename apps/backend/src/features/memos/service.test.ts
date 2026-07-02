@@ -200,4 +200,30 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
     expect(streamEventInsertMany).not.toHaveBeenCalled()
     expect(outboxInsertMany).not.toHaveBeenCalled()
   })
+
+  it("drops a re-emitted memo from the SAME conversation (revision prompt is not the dedup guard)", async () => {
+    const { service, streamEventInsertMany } = setupService({ memoContents: [memoContent] })
+
+    // Re-processing a conversation re-emits a near-identical memo; the
+    // embedding gate must catch it even though the source conversation matches.
+    const existing = { ...memoContent, id: "memo_prior_emission", sourceConversationId: CONVERSATION_ID } as never
+    const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: existing,
+      distance: 0.05,
+    })
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(0)
+    expect(insert).not.toHaveBeenCalled()
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    // The gate is stream-wide: no conversation is excluded from the search.
+    expect(findNearDuplicate).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      embedding: expect.any(Array),
+      maxDistance: expect.any(Number),
+    })
+  })
 })
