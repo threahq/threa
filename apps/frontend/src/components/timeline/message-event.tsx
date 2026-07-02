@@ -305,6 +305,29 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
 }
 
 /**
+ * Always-mounted wrapper for the provenance chip. Conversation membership
+ * resolves from a separate query that lands after the timeline has already
+ * painted (the coordinated-loading reveal gates on bootstrap/events, not
+ * conversations), so a revival is stamped onto a row that is already on screen.
+ * Rendering the chip directly would grow the row and shove the body down
+ * mid-read (INV-21). Keeping this grid mounted at `0fr` and easing to `1fr`
+ * when `revival` arrives slides the chip in instead of snapping — the same
+ * `grid-template-rows` transition `ThreadSlot` uses for its late-hydrating card.
+ * A row scrolled in after membership loaded mounts already at `1fr`, so the
+ * transition plays only on the real appearance, never on virtua remount.
+ */
+function MessagePreface({ revival }: { revival?: ConversationRevival }) {
+  return (
+    <div
+      className="grid transition-[grid-template-rows] duration-300 ease-out"
+      style={{ gridTemplateRows: revival ? "1fr" : "0fr" }}
+    >
+      <div className="overflow-hidden">{revival && <ConversationProvenanceChip revival={revival} />}</div>
+    </div>
+  )
+}
+
+/**
  * Per-actor-type row styling. Each entry is the single source of truth for
  * how a message from that actor type looks: the row accent gradient + inset
  * stripe, the author-name color, and an optional inline header badge.
@@ -1321,7 +1344,7 @@ function SentMessageEvent({
         isFirstMessage={isFirstMessage}
         attachmentRefs={attachmentRefs}
         sources={sources}
-        preface={revival ? <ConversationProvenanceChip revival={revival} /> : undefined}
+        preface={<MessagePreface revival={revival} />}
         statusIndicator={
           <>
             <RelativeTime date={event.createdAt} className="text-xs text-muted-foreground" />

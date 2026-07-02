@@ -245,9 +245,12 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  *
  * `membership` is the always-on `messageId → conversationId` map
  * (`buildMessageConversationMap`), including cross-stream secondary members.
- * Non-message items (session/command cards) don't break a run, and unrevived
- * rows pass through untouched, both mirroring `annotateConversationRows`. Pure
- * and export-only for isolated coverage.
+ * Non-message items (session/command cards) and unassigned message rows don't
+ * break a run — only a different real conversation does. This diverges from
+ * `annotateConversationRows` (which resets its run on an unassigned row for
+ * coloring): a lone unclustered aside between two members of the same topic is
+ * not a topic switch, so it must not manufacture a revival. Pure and
+ * export-only for isolated coverage.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
@@ -275,8 +278,14 @@ export function annotateConversationRevivals(
       }
       seen.add(conversationId)
       lastActivityByConversation.set(conversationId, item.event.createdAt)
+      // Only a real conversation breaks the run. An unassigned message
+      // (extraction pending, or a genuinely unclustered aside) must NOT reset
+      // this — otherwise the next same-conversation message reads as a block
+      // start and gets a false revival chip even though no *other* topic
+      // intervened, just one stray message. A revival requires a different
+      // conversation between the prior member and now, not merely a gap.
+      previousConversationId = conversationId
     }
-    previousConversationId = conversationId
     return revival ? { ...item, revival } : item
   })
 }
@@ -645,10 +654,13 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         isNew={ctx.newMessageIds?.has(item.event.id)}
         deferSecondaryHydration={deferSecondaryHydration}
         batch={ctx.batch}
-        // Continuations directly under an UnreadDivider promote back to head so
-        // the first unread message in a run still reads as a fresh turn for the
-        // viewer (fixes the "continuation starting an unread block" edge case).
-        groupContinuation={item.groupContinuation && !showUnreadDivider}
+        // Continuations directly under an UnreadDivider — or that revive a
+        // scattered topic — promote back to head so the row reads as a fresh
+        // turn. A revival is a topic switch, so it should never render as a
+        // silent same-author continuation; the head also restores the message's
+        // own send-time in the header, keeping it distinct from the provenance
+        // chip's topic-activity time above it.
+        groupContinuation={item.groupContinuation && !showUnreadDivider && !item.revival}
         isFirstMessage={
           ctx.firstMessageId != null && (item.event.payload as { messageId?: string })?.messageId === ctx.firstMessageId
         }
