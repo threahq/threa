@@ -12,6 +12,7 @@ const SAVED_ROW = {
   user_id: "usr_1",
   message_id: "msg_1",
   stream_id: "stream_1",
+  conversation_id: null,
   status: SavedStatuses.SAVED,
   title: null,
   note: null,
@@ -56,6 +57,7 @@ describe("SavedMessagesRepository.upsert", () => {
       userId: "usr_1",
       messageId: "msg_1",
       streamId: "stream_1",
+      conversationId: null,
       remindAt: null,
     })
 
@@ -67,6 +69,8 @@ describe("SavedMessagesRepository.upsert", () => {
       "ON CONFLICT (workspace_id, user_id, message_id) WHERE message_id IS NOT NULL DO UPDATE"
     )
     expect(captured.text).toContain("status = $")
+    // Re-saving overwrites the origin with the current surface's (latest-write-wins).
+    expect(captured.text).toContain("conversation_id = EXCLUDED.conversation_id")
     expect(captured.text).toContain("reminder_sent_at = NULL")
     expect(captured.text).toContain("reminder_queue_message_id = NULL")
     // bumps saved_at and status_changed_at only on status transition away from 'saved'
@@ -87,6 +91,7 @@ describe("SavedMessagesRepository.upsert", () => {
       userId: "usr_1",
       messageId: "msg_1",
       streamId: "stream_1",
+      conversationId: null,
       remindAt: null,
     })
 
@@ -109,6 +114,7 @@ describe("SavedMessagesRepository.upsert", () => {
       userId: "usr_1",
       messageId: "msg_1",
       streamId: "stream_1",
+      conversationId: null,
       remindAt: null,
     })
 
@@ -130,6 +136,7 @@ describe("SavedMessagesRepository.upsert", () => {
       userId: "usr_1",
       messageId: "msg_1",
       streamId: "stream_1",
+      conversationId: null,
       remindAt: new Date("2026-04-16T13:00:00.000Z"),
     })
 
@@ -147,6 +154,7 @@ describe("SavedMessagesRepository.upsert", () => {
       userId: "usr_1",
       messageId: "msg_1",
       streamId: "stream_1",
+      conversationId: null,
       remindAt: null,
     })
 

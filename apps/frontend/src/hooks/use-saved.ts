@@ -26,6 +26,7 @@ function toCached(view: SavedMessageView): CachedSavedMessage {
     userId: view.userId,
     messageId: view.messageId,
     streamId: view.streamId,
+    conversationId: view.conversationId,
     status: view.status,
     title: view.title,
     note: view.note,
@@ -51,6 +52,9 @@ function fromCached(row: CachedSavedMessage): SavedMessageView {
     userId: row.userId,
     messageId: row.messageId,
     streamId: row.streamId,
+    // Rows cached before the conversation-origin field predate it; treat missing
+    // as null. Not indexed, so no Dexie schema-version bump (as title/note).
+    conversationId: row.conversationId ?? null,
     status: row.status as SavedStatus,
     // Rows cached before the saved-items upgrade predate these fields; treat
     // missing as null instead of bumping the Dexie schema version.

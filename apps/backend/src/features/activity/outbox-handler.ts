@@ -242,6 +242,7 @@ export class ActivityFeedHandler implements OutboxHandler {
       savedId: payload.savedId,
       streamId: payload.streamId,
       messageId: payload.messageId,
+      conversationId: payload.saved?.conversationId ?? null,
       contentPreview,
       streamName,
     })

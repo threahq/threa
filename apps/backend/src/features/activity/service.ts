@@ -426,11 +426,14 @@ export class ActivityService {
     /** Null for standalone (message-less) saved items. */
     streamId: string | null
     messageId: string | null
+    /** Conversation the message was saved from; deep-links the feed row into the panel. */
+    conversationId: string | null
     contentPreview: string | null
     streamName: string | null
   }): Promise<Activity[]> {
     const context: Record<string, unknown> = {
       savedId: params.savedId,
+      conversationId: params.conversationId,
       contentPreview: params.contentPreview ?? "",
       streamName: params.streamName,
     }

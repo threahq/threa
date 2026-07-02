@@ -17,6 +17,7 @@ function makeView(overrides: Partial<SavedMessageView> = {}): SavedMessageView {
     userId: "usr_me",
     messageId: "msg_1",
     streamId: "stream_dm",
+    conversationId: null,
     status: "saved",
     title: null,
     note: null,
@@ -104,6 +105,24 @@ describe("SavedItem stream label", () => {
     const { getByText } = mount(makeView({ streamId: "stream_ch" }))
 
     expect(getByText("#general")).toBeTruthy()
+  })
+
+  it("deep-links a conversation-origin row into the conversation panel", () => {
+    mockStore({ streams: [{ id: "stream_ch", type: "channel", slug: "general", displayName: null }] })
+
+    const { container } = mount(makeView({ streamId: "stream_ch", conversationId: "conv_1" }))
+    const href = container.querySelector("a")?.getAttribute("href")
+
+    expect(href).toBe(`/w/${WORKSPACE_ID}/board?panel=conv%3Aconv_1&m=msg_1`)
+  })
+
+  it("keeps the stream permalink when there is no conversation origin", () => {
+    mockStore({ streams: [{ id: "stream_ch", type: "channel", slug: "general", displayName: null }] })
+
+    const { container } = mount(makeView({ streamId: "stream_ch", conversationId: null }))
+    const href = container.querySelector("a")?.getAttribute("href")
+
+    expect(href).toBe(`/w/${WORKSPACE_ID}/s/stream_ch?m=msg_1`)
   })
 
   it("falls back to the snapshot stream name when the cache lookup misses", () => {

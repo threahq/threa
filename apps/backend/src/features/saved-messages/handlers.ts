@@ -13,6 +13,9 @@ const NOTE_MAX_LENGTH = 4000
 const saveSchema = z
   .object({
     messageId: z.string().min(1).optional(),
+    // Conversation origin — a display hint the server re-validates; only
+    // meaningful for a message save, never a standalone to-do.
+    conversationId: z.string().min(1).optional(),
     title: z.string().trim().min(1).max(TITLE_MAX_LENGTH).optional(),
     note: z.string().trim().min(1).max(NOTE_MAX_LENGTH).optional(),
     remindAt: z.string().datetime().nullable().optional(),
@@ -22,6 +25,9 @@ const saveSchema = z
   })
   .refine((d) => d.note === undefined || d.title !== undefined, {
     message: "'note' is only allowed together with 'title'",
+  })
+  .refine((d) => d.conversationId === undefined || d.messageId !== undefined, {
+    message: "'conversationId' is only allowed together with 'messageId'",
   })
 
 // Status, remindAt, and content (title/note) must be changed in separate
@@ -73,6 +79,7 @@ export function createSavedMessagesHandlers({ savedMessagesService }: Dependenci
             workspaceId,
             userId,
             messageId: parsed.data.messageId,
+            conversationId: parsed.data.conversationId,
             remindAt,
           })
         : await savedMessagesService.createStandalone({

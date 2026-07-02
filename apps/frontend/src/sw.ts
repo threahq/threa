@@ -336,6 +336,12 @@ interface PushData {
   workosUserId?: string
   streamId?: string
   messageId?: string
+  /**
+   * Conversation origin for a saved-reminder push — when present the click
+   * opens the conversation panel (`/board?panel=conv:<id>&m=<msgId>`) rather
+   * than the stream permalink. Duplicated wire field like the rest of PushData.
+   */
+  conversationId?: string
   activityType?: string
   contentPreview?: string
   streamName?: string
@@ -526,7 +532,15 @@ self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data as PushData | undefined
   let targetUrl = "/"
 
-  if (data?.workspaceId && data?.streamId) {
+  if (data?.workspaceId && data?.conversationId) {
+    // Conversation origin wins over the stream permalink: reopen the message in
+    // the conversation panel. `conv:` is the panel-id wire prefix
+    // (createConversationPanelId); inlined here since the SW can't import the
+    // React panel-context module.
+    const params = new URLSearchParams({ panel: `conv:${data.conversationId}` })
+    if (data.messageId) params.set("m", data.messageId)
+    targetUrl = `/w/${data.workspaceId}/board?${params.toString()}`
+  } else if (data?.workspaceId && data?.streamId) {
     targetUrl = data.messageId
       ? `/w/${data.workspaceId}/s/${data.streamId}?m=${data.messageId}`
       : `/w/${data.workspaceId}/s/${data.streamId}`

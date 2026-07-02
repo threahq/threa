@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom"
 import { Bell } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { buildConversationPanelPath } from "@/lib/stream-links"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { ActivityContent } from "./activity-content"
@@ -46,11 +47,7 @@ export function ActivityItem({
   const isBot = actorType === "bot"
   const isSystem = actorType === "system"
   const isReminder = activity.activityType === "saved_reminder"
-  // Standalone saved-item reminders have no source message to open — land on
-  // the Saved page where the item lives.
-  const href = activity.streamId
-    ? `/w/${workspaceId}/s/${activity.streamId}?m=${activity.messageId}`
-    : `/w/${workspaceId}/saved`
+  const href = resolveActivityHref(workspaceId, activity)
 
   return (
     <Link
@@ -79,6 +76,21 @@ export function ActivityItem({
       />
     </Link>
   )
+}
+
+/**
+ * Where an activity row navigates. A saved-reminder for a message saved from a
+ * conversation carries `context.conversationId` and reopens the conversation
+ * panel; otherwise the source-message stream permalink. Standalone saved-item
+ * reminders have no source message — land on the Saved page where the item lives.
+ */
+function resolveActivityHref(workspaceId: string, activity: Activity): string {
+  const conversationId = activity.context.conversationId
+  if (typeof conversationId === "string" && conversationId) {
+    return buildConversationPanelPath(workspaceId, conversationId, activity.messageId ?? undefined)
+  }
+  if (activity.streamId) return `/w/${workspaceId}/s/${activity.streamId}?m=${activity.messageId}`
+  return `/w/${workspaceId}/saved`
 }
 
 function renderAvatar(params: {
