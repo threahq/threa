@@ -254,6 +254,26 @@ describe("ConversationPanel", () => {
 
     await screen.findByRole("menu")
     expect(screen.queryByText("Edit message")).toBeNull()
+    expect(screen.queryByText("Delete message")).toBeNull()
+  })
+
+  it("offers a standalone Delete message action that confirms then deletes the row", async () => {
+    const deleteMessage = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      delete: deleteMessage,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Delete message"))
+
+    // The owner-only action opens the same confirm dialog as clear-to-empty.
+    await user.click(await screen.findByRole("button", { name: "Delete" }))
+    await waitFor(() => expect(deleteMessage).toHaveBeenCalledWith(WORKSPACE_ID, "msg_1"))
   })
 
   it("clearing an edit to empty confirms then deletes the message", async () => {

@@ -288,6 +288,11 @@ export function MessageItem({
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
     onEdit: startEditing,
+    // Standalone Delete (the registry's owner-only `delete-message`) opens the
+    // same confirm dialog as the edit form's clear-to-empty path — both land on
+    // `handleDelete` → `useDeleteMessage`. The action's own gate keeps it to the
+    // author's rows, mirroring the timeline row (`MessageEvent`).
+    onDelete: () => setDeleteDialogOpen(true),
     onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
