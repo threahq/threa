@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest"
-import { render as rtlRender, screen } from "@testing-library/react"
+import { describe, it, expect, vi } from "vitest"
+import { render as rtlRender, screen, fireEvent } from "@testing-library/react"
 import type { ReactElement } from "react"
 import { MemoryRouter } from "react-router-dom"
+import { StreamTypes } from "@threa/types"
+import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
+import { ChannelLinkProvider } from "@/lib/markdown/channel-link-context"
+import type { Mentionable } from "@/components/editor/triggers/types"
 import { MarkdownContent } from "./markdown-content"
 
 // MarkdownLink intercepts same-origin links through useNavigate, which requires
@@ -144,6 +148,61 @@ describe("MarkdownContent", () => {
       const link = screen.getByRole("link", { name: "outside" })
       expect(link).toHaveAttribute("target", "_blank")
       expect(link).toHaveAttribute("rel", "noopener noreferrer")
+    })
+  })
+
+  describe("mention/channel pointer links (INV-64)", () => {
+    const MENTIONABLES: Mentionable[] = [
+      { id: "usr_1", slug: "pierre", name: "Pierre", type: "user" },
+      { id: "usr_me", slug: "self", name: "Me", type: "user", isCurrentUser: true },
+      { id: "persona_1", slug: "ariadne", name: "Ariadne", type: "persona" },
+    ]
+    const STREAMS = [{ id: "stream_1", type: StreamTypes.CHANNEL, slug: "general" }]
+
+    const renderPointer = (content: string, onMentionClick?: (slug: string, type: MentionType, id?: string) => void) =>
+      render(
+        <MentionProvider mentionables={MENTIONABLES} onMentionClick={onMentionClick}>
+          <ChannelLinkProvider workspaceId="ws_1" streams={STREAMS}>
+            <MarkdownContent content={content} />
+          </ChannelLinkProvider>
+        </MentionProvider>
+      )
+
+    it("renders a user mention pointer as a chip, not a broken link", () => {
+      renderPointer("Hey [@pierre](user:usr_1)")
+      expect(screen.getByText("@pierre")).toBeInTheDocument()
+      expect(screen.queryByRole("link", { name: "@pierre" })).not.toBeInTheDocument()
+    })
+
+    it("colors a persona mention from the scheme, not the slug→type default", () => {
+      renderPointer("[@ariadne](persona:persona_1)")
+      // triggerStyles.persona — distinct from the user/blue styling the bare-slug
+      // fallback would have applied if the slug weren't in the mentionables map.
+      expect(screen.getByText("@ariadne")).toHaveClass("text-primary")
+    })
+
+    it("renders a channel pointer as a link to the stream by id", () => {
+      renderPointer("See [#general](channel:stream_1)")
+      const link = screen.getByRole("link", { name: "#general" })
+      expect(link).toHaveAttribute("href", "/w/ws_1/s/stream_1")
+    })
+
+    it("renders an unknown/inaccessible channel id as plain text, not a dead link", () => {
+      renderPointer("[#ghost](channel:stream_unknown)")
+      expect(screen.getByText("#ghost")).toBeInTheDocument()
+      expect(screen.queryByRole("link", { name: "#ghost" })).not.toBeInTheDocument()
+    })
+
+    it("navigates a user mention by the embedded id, not the slug", () => {
+      const onMentionClick = vi.fn()
+      renderPointer("[@pierre](user:usr_1)", onMentionClick)
+      fireEvent.click(screen.getByText("@pierre"))
+      expect(onMentionClick).toHaveBeenCalledWith("pierre", "user", "usr_1")
+    })
+
+    it("upgrades the current user's own mention to the 'me' styling", () => {
+      renderPointer("[@self](user:usr_me)")
+      expect(screen.getByText("@self")).toHaveClass("font-semibold")
     })
   })
 

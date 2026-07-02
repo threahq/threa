@@ -33,10 +33,15 @@ export {
   parseMemoHref,
   buildGiphyHref,
   parseGiphyHref,
+  parseMentionPointerHref,
   type QuoteHref,
   type SharedMessageHref,
   type MemoHref,
   type GiphyHref,
+  type MentionPointerType,
+  type MentionHrefPointer,
+  type ChannelHrefPointer,
+  type ActorHrefPointer,
 } from "./pointer-urls"
 export {
   collectAttachmentReferenceIds,

@@ -1,7 +1,7 @@
 import { memo, useMemo, type ReactNode } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { normalizeMarkdownTables } from "@threa/prosemirror"
+import { normalizeMarkdownTables, parseMentionPointerHref } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
@@ -50,6 +50,12 @@ function urlTransform(url: string): string {
   // Allow giphy: protocol so the link renderer can swap the anchor for the
   // inline GIF embed. Same reasoning as the pointer protocols above.
   if (url.startsWith("giphy:")) {
+    return url
+  }
+  // Allow the mention/channel pointer schemes (user:/persona:/bot:/broadcast:/
+  // channel:) so MarkdownLink can render them as chips (INV-64). Without this,
+  // react-markdown blanks the unknown scheme and the chip degrades to bare text.
+  if (parseMentionPointerHref(url)) {
     return url
   }
   // For other URLs, use default behavior (returns url as-is for http/https/mailto)
@@ -107,7 +113,7 @@ export function MarkdownWithMentions({ content, className, mentionables }: Markd
 export interface MentionableMarkdownWrapperProps {
   children: ReactNode
   mentionables: Mentionable[]
-  onMentionClick?: (slug: string, type: MentionType) => void
+  onMentionClick?: (slug: string, type: MentionType, id?: string) => void
 }
 
 /**

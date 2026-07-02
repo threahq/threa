@@ -7,19 +7,21 @@
  */
 
 import type { JSONContent, JSONContentMark } from "@threa/types"
-import {
-  actorTypeFromMentionId,
-  isResolvedChannelLinkId,
-  MENTION_BROADCAST_CHANNEL,
-  MENTION_BROADCAST_HERE,
-} from "@threa/types"
+import { actorTypeFromMentionId, isResolvedChannelLinkId } from "@threa/types"
 import {
   escapeMarkdownLinkText,
   parseAttachmentMetadata,
   serializeAttachmentMetadata,
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
-import { buildGiphyHref, buildMemoHref, buildQuoteHref, buildSharedMessageHref, parseGiphyHref } from "./pointer-urls"
+import {
+  buildGiphyHref,
+  buildMemoHref,
+  buildQuoteHref,
+  buildSharedMessageHref,
+  parseGiphyHref,
+  parseMentionPointerHref,
+} from "./pointer-urls"
 
 /**
  * Inline markdown pattern - captures each format type in separate groups.
@@ -890,15 +892,14 @@ function buildTableCell(type: "tableHeader" | "tableCell", text: string, options
   }
 }
 
-const MENTION_POINTER_SCHEMES = ["user", "persona", "bot"] as const
-
 /**
  * Parse an actor/channel pointer link — `[@slug](user:usr_x)`,
  * `[@here](broadcast:here)`, `[#slug](channel:stream_x)` — into its node, or
  * null when the url isn't one of these reserved schemes (so the caller falls
  * back to a normal link). The id rides on the wire (INV-64), so no DB lookup is
- * needed here. Gated by the same enableMentions/enableChannels options as the
- * bare `@slug`/`#slug` forms.
+ * needed here; `parseMentionPointerHref` is the shared decoder the react-markdown
+ * renderer uses too. Gated by the same enableMentions/enableChannels options as
+ * the bare `@slug`/`#slug` forms.
  */
 function parseActorPointer(
   url: string,
@@ -906,32 +907,18 @@ function parseActorPointer(
   allowMentions: boolean,
   allowChannels: boolean
 ): JSONContent | null {
-  // Reject malformed reserved pointers (an id whose prefix doesn't match the
-  // scheme, or an empty slug) so a hand-written `channel:not_stream` or
-  // `user:persona_x` never persists an inconsistent node (INV-64, INV-2).
-  if (url.startsWith("channel:")) {
-    if (!allowChannels) return null
-    const id = url.slice("channel:".length)
+  const pointer = parseMentionPointerHref(url)
+  if (!pointer) return null
+  // An all-sigil label (`[@](user:usr_x)`) strips to an empty slug; reject it
+  // so an empty-slug node — which serializes to nothing — never persists.
+  if (pointer.kind === "channel") {
     const slug = stripMentionSigil(label, "#")
-    return slug && isResolvedChannelLinkId(id) ? { type: "channelLink", attrs: { id, slug } } : null
+    return allowChannels && slug ? { type: "channelLink", attrs: { id: pointer.id, slug } } : null
   }
-  if (url === MENTION_BROADCAST_HERE || url === MENTION_BROADCAST_CHANNEL) {
-    if (!allowMentions) return null
-    const slug = stripMentionSigil(label, "@")
-    return slug ? { type: "mention", attrs: { id: url, slug, mentionType: "broadcast" } } : null
-  }
-  for (const scheme of MENTION_POINTER_SCHEMES) {
-    const prefix = `${scheme}:`
-    if (url.startsWith(prefix)) {
-      if (!allowMentions) return null
-      const id = url.slice(prefix.length)
-      const slug = stripMentionSigil(label, "@")
-      return slug && actorTypeFromMentionId(id) === scheme
-        ? { type: "mention", attrs: { id, slug, mentionType: scheme } }
-        : null
-    }
-  }
-  return null
+  const slug = stripMentionSigil(label, "@")
+  return allowMentions && slug
+    ? { type: "mention", attrs: { id: pointer.id, slug, mentionType: pointer.mentionType } }
+    : null
 }
 
 function stripMentionSigil(label: string, sigil: string): string {

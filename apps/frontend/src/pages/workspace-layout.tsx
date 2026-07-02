@@ -363,8 +363,14 @@ function MentionableWrapper({ children, mentionables }: Omit<MentionableMarkdown
   const { openUserProfile } = useUserProfile()
 
   const handleMentionClick = useCallback(
-    (slug: string, type: MentionType) => {
+    (slug: string, type: MentionType, id?: string) => {
       if (type !== "user" && type !== "me") return
+      // Pointer-link mentions carry the resolved id (INV-64) — use it directly
+      // rather than re-resolving a (mutable) slug. Bare-slug mentions fall back.
+      if (id) {
+        openUserProfile(id)
+        return
+      }
       const mentionable = mentionables.find((m) => m.slug === slug)
       if (mentionable) openUserProfile(mentionable.id)
     },

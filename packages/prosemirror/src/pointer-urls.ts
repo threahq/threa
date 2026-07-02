@@ -21,6 +21,13 @@
  * construction.
  */
 
+import {
+  actorTypeFromMentionId,
+  isResolvedChannelLinkId,
+  MENTION_BROADCAST_CHANNEL,
+  MENTION_BROADCAST_HERE,
+} from "@threa/types"
+
 export interface QuoteHref {
   streamId: string
   messageId: string
@@ -142,6 +149,54 @@ export function parseGiphyHref(href: string): GiphyHref | null {
 
   const dims = queryIndex >= 0 ? parseGiphyDimensions(body.slice(queryIndex + 1)) : undefined
   return dims ? { giphyUrl, ...dims } : { giphyUrl }
+}
+
+export type MentionPointerType = "user" | "persona" | "bot" | "broadcast"
+
+export interface MentionHrefPointer {
+  kind: "mention"
+  mentionType: MentionPointerType
+  /** A `usr_`/`persona_`/`bot_` actor id, or a `broadcast:here`/`broadcast:channel` sentinel. */
+  id: string
+}
+
+export interface ChannelHrefPointer {
+  kind: "channel"
+  /** A `stream_` id. */
+  id: string
+}
+
+export type ActorHrefPointer = MentionHrefPointer | ChannelHrefPointer
+
+const MENTION_POINTER_SCHEMES = ["user", "persona", "bot"] as const
+
+/**
+ * Decode a mention/channel pointer link href — `user:usr_x`, `persona:persona_x`,
+ * `bot:bot_x`, `broadcast:here`/`broadcast:channel`, `channel:stream_x` — into its
+ * kind + actor/stream id (INV-64), or null when the href isn't one of these
+ * reserved schemes. Shared by the markdown parser (`parseMarkdown`) and the
+ * react-markdown renderer so the wire format and the rendered chip agree by
+ * construction.
+ */
+export function parseMentionPointerHref(href: string): ActorHrefPointer | null {
+  // The id must carry the authoritative prefix for its scheme (INV-64, INV-2):
+  // `channel:` → `stream_`, `user:` → `usr_`, etc. A mismatched or prefixless id
+  // (`channel:not_stream`, `user:persona_x`) is rejected, not decoded as resolved.
+  if (href.startsWith("channel:")) {
+    const id = href.slice("channel:".length)
+    return isResolvedChannelLinkId(id) ? { kind: "channel", id } : null
+  }
+  if (href === MENTION_BROADCAST_HERE || href === MENTION_BROADCAST_CHANNEL) {
+    return { kind: "mention", mentionType: "broadcast", id: href }
+  }
+  for (const scheme of MENTION_POINTER_SCHEMES) {
+    const prefix = `${scheme}:`
+    if (href.startsWith(prefix)) {
+      const id = href.slice(prefix.length)
+      return actorTypeFromMentionId(id) === scheme ? { kind: "mention", mentionType: scheme, id } : null
+    }
+  }
+  return null
 }
 
 function isPositiveInt(value: number | undefined): value is number {

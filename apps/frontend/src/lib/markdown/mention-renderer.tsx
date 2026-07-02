@@ -1,8 +1,9 @@
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
+import type { ActorHrefPointer } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { useMentionType, useMentionClick } from "./mention-context"
-import { useChannelUrl } from "./channel-link-context"
+import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand } from "./command-list-context"
 import { MENTION_PATTERN, isValidSlug } from "@threa/types"
@@ -76,11 +77,60 @@ function TriggerChip({ type, text }: TriggerChipProps) {
   }
 
   return (
-    <span className={cn(chipBase, "cursor-pointer", style)}>
+    <span className={cn(chipBase, style)}>
       {prefix}
       {text}
     </span>
   )
+}
+
+/**
+ * Render a pointer-link mention/channel (`[@slug](user:usr_x)` etc.) as a chip.
+ * The type comes from the URL scheme (authoritative, INV-64) — not the slug→type
+ * map the bare-slug path falls back to — and navigation uses the embedded id, so
+ * a renamed slug never mis-colors or breaks the link. The visible label is still
+ * the slug carried in the link text (resolving id → current name is separate
+ * visual-identity work).
+ */
+export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointer; slug: string }) {
+  const getChannelUrlById = useChannelUrlById()
+  const getMentionType = useMentionType()
+  const onMentionClick = useMentionClick()
+
+  if (pointer.kind === "channel") {
+    const url = getChannelUrlById(pointer.id)
+    if (url) {
+      return (
+        <Link
+          to={url}
+          className={cn(chipBase, "hover:underline underline-offset-2 decoration-current/50", triggerStyles.channel)}
+        >
+          #{slug}
+        </Link>
+      )
+    }
+    return <span className={cn(chipBase, triggerStyles.channel)}>#{slug}</span>
+  }
+
+  // "me" is viewer-relative; the scheme only knows "user", so upgrade to the
+  // "me" styling when the slug resolves to the current viewer.
+  const displayType = pointer.mentionType === "user" && getMentionType(slug) === "me" ? "me" : pointer.mentionType
+  const style = triggerStyles[displayType]
+  const isClickable = onMentionClick && pointer.mentionType === "user"
+
+  if (isClickable) {
+    return (
+      <button
+        type="button"
+        onClick={() => onMentionClick(slug, displayType, pointer.id)}
+        className={cn(chipBase, "cursor-pointer hover:underline", style)}
+      >
+        @{slug}
+      </button>
+    )
+  }
+
+  return <span className={cn(chipBase, style)}>@{slug}</span>
 }
 
 // `(?=\s|$)` keeps the command name a whole token, so a path segment like the

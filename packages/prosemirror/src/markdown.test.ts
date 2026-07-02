@@ -794,6 +794,12 @@ describe("@threa/prosemirror mention/channel pointer round-trip (INV-64)", () =>
     expect(nodes.some((node) => node.type === "channelLink" && node.attrs?.id === "not_stream")).toBe(false)
   })
 
+  it("does not materialize a mention pointer whose label strips to an empty slug", () => {
+    const parsed = parseMarkdown("[@](user:usr_1)")
+    const nodes = parsed.content?.[0]?.content ?? []
+    expect(nodes.some((node) => node.type === "mention")).toBe(false)
+  })
+
   it("does not materialize a mention pointer whose id prefix mismatches the scheme", () => {
     const parsed = parseMarkdown("[@x](user:persona_1)")
     const nodes = parsed.content?.[0]?.content ?? []

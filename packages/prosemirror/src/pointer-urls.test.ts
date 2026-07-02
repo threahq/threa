@@ -1,5 +1,50 @@
 import { describe, expect, it } from "bun:test"
-import { buildMemoHref, parseMemoHref } from "./pointer-urls"
+import { buildMemoHref, parseMemoHref, parseMentionPointerHref } from "./pointer-urls"
+
+describe("parseMentionPointerHref", () => {
+  it("decodes user/persona/bot mention schemes to kind + id + type", () => {
+    expect(parseMentionPointerHref("user:usr_1")).toEqual({ kind: "mention", mentionType: "user", id: "usr_1" })
+    expect(parseMentionPointerHref("persona:persona_1")).toEqual({
+      kind: "mention",
+      mentionType: "persona",
+      id: "persona_1",
+    })
+    expect(parseMentionPointerHref("bot:bot_1")).toEqual({ kind: "mention", mentionType: "bot", id: "bot_1" })
+  })
+
+  it("decodes broadcast sentinels (id is the full sentinel)", () => {
+    expect(parseMentionPointerHref("broadcast:here")).toEqual({
+      kind: "mention",
+      mentionType: "broadcast",
+      id: "broadcast:here",
+    })
+    expect(parseMentionPointerHref("broadcast:channel")).toEqual({
+      kind: "mention",
+      mentionType: "broadcast",
+      id: "broadcast:channel",
+    })
+  })
+
+  it("decodes a channel scheme to a stream id", () => {
+    expect(parseMentionPointerHref("channel:stream_1")).toEqual({ kind: "channel", id: "stream_1" })
+  })
+
+  it("returns null for non-pointer hrefs and empty ids", () => {
+    expect(parseMentionPointerHref("https://example.com")).toBeNull()
+    expect(parseMentionPointerHref("attachment:att_1")).toBeNull()
+    expect(parseMentionPointerHref("memo:memo_1")).toBeNull()
+    expect(parseMentionPointerHref("broadcast:everyone")).toBeNull()
+    expect(parseMentionPointerHref("user:")).toBeNull()
+    expect(parseMentionPointerHref("channel:")).toBeNull()
+  })
+
+  it("returns null when the id prefix mismatches the scheme (INV-64, INV-2)", () => {
+    expect(parseMentionPointerHref("user:persona_1")).toBeNull()
+    expect(parseMentionPointerHref("persona:usr_1")).toBeNull()
+    expect(parseMentionPointerHref("bot:usr_1")).toBeNull()
+    expect(parseMentionPointerHref("channel:usr_1")).toBeNull()
+  })
+})
 
 describe("parseMemoHref", () => {
   it("round-trips a canonical memo id", () => {
