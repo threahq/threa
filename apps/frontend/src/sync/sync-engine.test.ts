@@ -865,6 +865,50 @@ describe("SyncEngine HTTP-first warm fetch", () => {
     await resumePromise
   })
 
+  it("never seeds the bootstrap query cache — an append delta must not become the stream's window", async () => {
+    // Regression guard (caught in pre-PR review): with staleTime Infinity and
+    // all refetch triggers off, a seeded entry permanently suppresses the
+    // query layer's full-window fetch — and an append-mode delta as the entry
+    // truncates the display floor to the delta. Warm fetches merge into an
+    // existing entry only, mirroring backfillStreamGap.
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    await seedEvent("stream_1", 1)
+    deps.streamService.bootstrap.mockClear()
+    socket.connected = false
+    engine.onDisconnect()
+
+    engine.setCurrentStreamId("stream_1")
+    await vi.waitFor(async () => {
+      expect(await db.events.get("evt_2")).toBeTruthy()
+    })
+
+    expect(deps.queryClient.getQueryData(["streams", "bootstrap", "ws_1", "stream_1"])).toBeUndefined()
+  })
+
+  it("merges the warm delta into an existing bootstrap cache entry", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    await seedEvent("stream_1", 1)
+    deps.queryClient.setQueryData(["streams", "bootstrap", "ws_1", "stream_1"], makeStreamBootstrap("stream_1", "1"))
+    deps.streamService.bootstrap.mockClear()
+    socket.connected = false
+    engine.onDisconnect()
+
+    engine.setCurrentStreamId("stream_1")
+    await vi.waitFor(() => {
+      expect(deps.queryClient.getQueryData(["streams", "bootstrap", "ws_1", "stream_1"])).toMatchObject({
+        latestSequence: "2",
+      })
+    })
+  })
+
   it("swallows warm fetch failures and leaves retries to the socket-gated refresh", async () => {
     const deps = makeDeps()
     const engine = new SyncEngine(deps)

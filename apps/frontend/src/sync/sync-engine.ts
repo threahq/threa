@@ -978,9 +978,11 @@ export class SyncEngine {
    * by event id); gaps are not.
    *
    * Callers must never read `getLatestPersistedSequence` and order it
-   * against a room join themselves. The one other cursor source is
+   * against a room join themselves. The two other sanctioned readers are
    * `backfillStreamGap`, which intentionally uses an explicit PRE-GAP cursor
-   * (the current latest would skip the very hole it fills).
+   * (the current latest would skip the very hole it fills), and
+   * `performHttpWarmFetch`, which pairs the read with NO join at all — a
+   * display-only fetch outside the subscribe→fetch window this rule guards.
    */
   private async joinStreamForCatchUp(streamId: string): Promise<string | null> {
     const after = await getLatestPersistedSequence(streamId)
@@ -1117,11 +1119,18 @@ export class SyncEngine {
       if (this.isDestroyed) return
       await applyStreamBootstrap(workspaceId, streamId, bootstrap)
 
+      // Merge into the query-cache bridge ONLY when an entry already exists —
+      // same guard as backfillStreamGap. Seeding an append-mode delta as the
+      // entry would freeze it as the stream's bootstrap (staleTime: Infinity,
+      // no refetch triggers), truncating the display floor to the delta and
+      // suppressing the query layer's full-window fetch for the session.
       const queryKey = streamKeys.bootstrap(workspaceId, streamId)
       queryClient.setQueryData<CachedStreamBootstrap>(queryKey, (currentBootstrap) =>
-        toCachedStreamBootstrap(bootstrap, currentBootstrap, {
-          incrementWindowVersionOnReplace: bootstrap.syncMode === "replace",
-        })
+        currentBootstrap
+          ? toCachedStreamBootstrap(bootstrap, currentBootstrap, {
+              incrementWindowVersionOnReplace: bootstrap.syncMode === "replace",
+            })
+          : currentBootstrap
       )
     } catch {
       // Speculative warm-up only — the socket-gated refresh path owns errors,
