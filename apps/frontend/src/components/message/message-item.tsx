@@ -368,6 +368,11 @@ export function MessageItem({
     return (
       <div
         ref={containerRef}
+        data-message-id={message.id}
+        data-stream-id={streamId}
+        data-author-name={authorName}
+        data-author-id={message.authorId}
+        data-actor-type={message.authorType}
         className="relative mt-0.5 scroll-mt-12 overflow-hidden sm:overflow-visible"
         {...touchHandlers}
       >
@@ -389,7 +394,7 @@ export function MessageItem({
           >
             {formatTime(sentAt)}
           </div>
-          <div className="min-w-0 flex-1 pr-14">
+          <div className="message-content min-w-0 flex-1 pr-14">
             {body}
             {labelStack}
           </div>
@@ -403,6 +408,11 @@ export function MessageItem({
   return (
     <div
       ref={containerRef}
+      data-message-id={message.id}
+      data-stream-id={streamId}
+      data-author-name={authorName}
+      data-author-id={message.authorId}
+      data-actor-type={message.authorType}
       className="relative mt-3 scroll-mt-12 overflow-hidden sm:overflow-visible"
       {...touchHandlers}
     >
@@ -424,7 +434,7 @@ export function MessageItem({
           alt={authorName}
           showStatus={false}
         />
-        <div className="min-w-0 flex-1 pr-14">
+        <div className="message-content min-w-0 flex-1 pr-14">
           <div className="mb-0.5 flex items-baseline gap-2">
             {interactiveName ? (
               <button
