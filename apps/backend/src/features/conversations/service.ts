@@ -43,6 +43,7 @@ export interface BoardPostMessage {
   attachments: AttachmentSummary[]
   linkPreviews: LinkPreviewSummary[]
   createdAt: Date
+  editedAt: Date | null
 }
 
 /** A conversation surfaced as a feed post: the grouping, its origin message, and the latest replies. */
@@ -437,5 +438,6 @@ function toBoardPostMessage(
     attachments,
     linkPreviews,
     createdAt: message.createdAt,
+    editedAt: message.editedAt,
   }
 }

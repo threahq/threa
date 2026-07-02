@@ -20,6 +20,10 @@ import { MessageReactions } from "@/components/timeline/message-reactions"
 import { MessageContextMenu } from "@/components/timeline/message-context-menu"
 import { MessageActionDrawer } from "@/components/timeline/message-action-drawer"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
+import { MessageEditForm } from "@/components/timeline/message-edit-form"
+import { DeleteMessageDialog } from "@/components/timeline/delete-message-dialog"
+import { EditedIndicator } from "@/components/timeline/edited-indicator"
+import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
@@ -27,6 +31,9 @@ import { LabelStack } from "@/components/labels/label-stack"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useInputMode } from "@/hooks/use-input-mode"
+import { useDeleteMessage } from "@/hooks/use-delete-message"
+import { parseMarkdown } from "@threa/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
@@ -63,6 +70,9 @@ export interface RenderableMessage {
   contentMarkdown: string
   reactions: Record<string, string[]>
   createdAt: string | Date
+  /** Last edit time, or null/absent if never edited — drives the "(edited)"
+   * affordance and the revisions dialog (parity with the timeline row). */
+  editedAt?: string | null
   attachments?: AttachmentSummary[]
   linkPreviews?: LinkPreviewSummary[]
 }
@@ -130,12 +140,21 @@ export function MessageItem({
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editingSurfaceTouch, setEditingSurfaceTouch] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
   // the timeline uses; the hover overflow button is desktop/keyboard only. This
   // mirrors `SentMessageEvent` rather than exposing a tap-sized dropdown.
   const touchCapable = useTouchCapable()
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
-  const longPress = useLongPress({ onLongPress: openDrawer, enabled: touchCapable, deferToNativeLinks: true })
+  const longPress = useLongPress({
+    onLongPress: openDrawer,
+    enabled: touchCapable && !isEditing,
+    deferToNativeLinks: true,
+  })
   const hasReactions = Object.keys(message.reactions).length > 0
   // Users open their profile on click (same as the timeline); other actor types
   // (persona/bot/system) are non-interactive.
@@ -150,6 +169,56 @@ export function MessageItem({
   // label page (no provider, no composer) → `onQuoteReply` stays undefined and the
   // action hides, the same field-one-side-sets gate as `conversationId`.
   const quoteReplyCtx = useQuoteReply()
+
+  // Own-message edit reuses the timeline's `MessageEditForm` (same save/offline
+  // path). The row can host it wherever a message shows — the form only needs
+  // the app-global message service + query cache, not a timeline. Input mode is
+  // latched at edit start so a mid-edit switch can't remount the form and drop
+  // unsaved text (mirrors `MessageEvent`).
+  const isTouchInput = useInputMode() === "touch"
+  const { deleteMessage, isDeleting } = useDeleteMessage(workspaceId)
+  const startEditing = useCallback(() => {
+    setEditingSurfaceTouch(isTouchInput)
+    setIsEditing(true)
+  }, [isTouchInput])
+  // The editor autofocuses; unlike the timeline (which restores focus to its
+  // editor zone) this row has no zone, so return focus to the row itself on
+  // exit — otherwise a keyboard user's focus drops to <body> when the form
+  // unmounts. Move focus before the state flip so it's off the editor by the
+  // time React tears it down. Skip on touch: the drawer owns its own
+  // close/return-focus, and grabbing focus mid-close fights it (as MessageEvent).
+  const stopEditing = useCallback(() => {
+    if (!editingSurfaceTouch) containerRef.current?.focus()
+    setIsEditing(false)
+    setEditingSurfaceTouch(false)
+  }, [editingSurfaceTouch])
+  // Clearing a message to empty deletes it — the edit form's intrinsic delete
+  // path (see `MessageEditForm.onDelete`), confirmed through the same dialog the
+  // timeline uses. This is not the standalone "Delete message" action.
+  const handleDelete = useCallback(async () => {
+    await deleteMessage(message.id)
+    setDeleteDialogOpen(false)
+  }, [deleteMessage, message.id])
+  // Board/conversation payloads carry only markdown (INV-58 wire format); parse
+  // it back to the canonical contentJson the editor edits over. A no-op edit is
+  // still detected because the form's baseline re-serializes this same doc.
+  const editInitialContentJson = useMemo(() => parseMarkdown(message.contentMarkdown), [message.contentMarkdown])
+  const inlineEditing = isEditing && !editingSurfaceTouch
+  const editForm = (
+    <MessageEditForm
+      messageId={message.id}
+      workspaceId={workspaceId}
+      streamId={streamId}
+      initialContentJson={editInitialContentJson}
+      onSave={stopEditing}
+      onCancel={stopEditing}
+      onDelete={() => {
+        stopEditing()
+        setDeleteDialogOpen(true)
+      }}
+      authorName={authorName}
+    />
+  )
 
   // One guarded builder for both quote entry points (menu action + swipe) so they
   // behave identically — trim the snippet and no-op on empty content (an
@@ -186,7 +255,6 @@ export function MessageItem({
 
   // Scroll + flash the `?m=` deep-link target (conversation panel sets
   // `isHighlighted`). Mirrors the timeline's highlight effect.
-  const containerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (isHighlighted && containerRef.current) {
       containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -196,9 +264,8 @@ export function MessageItem({
   // Reactions/copy/label plus copy-link (surface-specific via `conversationId`),
   // "View in channel/thread/…", and quote reply when a conversation composer is in
   // the tree. `isThreadParent: true` suppresses "Reply in thread" (no thread
-  // context here); `currentUserId` powers react toggling — edit/delete stay hidden
-  // because this surface supplies no edit/delete handler (their `when` gates
-  // require one).
+  // context here); `currentUserId` powers react toggling and gates "Edit message"
+  // to the author's own (user-authored) rows.
   const menuContext: MessageActionContext = {
     contentMarkdown: message.contentMarkdown,
     actorType: message.authorType,
@@ -211,8 +278,16 @@ export function MessageItem({
     streamId,
     conversationId,
     reactions: message.reactions,
+    // Mirror the in-stream surface: hide Edit on E2E messages (no sealed-edit
+    // path — a plaintext update is rejected and the offline queue would retry it
+    // forever). E2E rows can reach here via the label page.
+    e2eEnabled: rowStream?.e2eEnabled === true,
+    editedAt: message.editedAt ?? undefined,
+    // Defer so the closing menu/drawer doesn't fight the dialog open (as MessageEvent).
+    onShowHistory: () => setTimeout(() => setHistoryOpen(true), 0),
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
+    onEdit: startEditing,
     onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
@@ -267,6 +342,30 @@ export function MessageItem({
           allReactionShortcodes={allReactionShortcodes}
           open={mobilePickerOpen}
           onOpenChange={setMobilePickerOpen}
+        />
+      )}
+      {/* Touch edits go in a bottom-sheet drawer (the form portals itself); the
+          row stays rendered beneath. Desktop edits replace the body inline. */}
+      {isEditing && editingSurfaceTouch && editForm}
+      {deleteDialogOpen && (
+        <DeleteMessageDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={handleDelete}
+          isDeleting={isDeleting}
+        />
+      )}
+      {historyOpen && (
+        <MessageHistoryDialog
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          messageId={message.id}
+          workspaceId={workspaceId}
+          messageCreatedAt={String(message.createdAt)}
+          currentContent={{
+            contentMarkdown: message.contentMarkdown,
+            editedAt: message.editedAt ?? undefined,
+          }}
         />
       )}
     </>
@@ -327,7 +426,7 @@ export function MessageItem({
   // supply the provider; the label page doesn't → gesture off). The reveal icon
   // sits behind the row and the row slides left over it, so it needs an opaque
   // `surfaceClassName` fill during the swipe.
-  const swipe = useSwipeAction({ onSwipe: triggerQuote, enabled: touchCapable && !!quoteReplyCtx })
+  const swipe = useSwipeAction({ onSwipe: triggerQuote, enabled: touchCapable && !!quoteReplyCtx && !isEditing })
   const hasSwipe = swipe.offset !== 0
   const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
 
@@ -368,12 +467,13 @@ export function MessageItem({
     return (
       <div
         ref={containerRef}
+        tabIndex={-1}
         data-message-id={message.id}
         data-stream-id={streamId}
         data-author-name={authorName}
         data-author-id={message.authorId}
         data-actor-type={message.authorType}
-        className="relative mt-0.5 scroll-mt-12 overflow-hidden sm:overflow-visible"
+        className="relative mt-0.5 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible"
         {...touchHandlers}
       >
         {swipeReveal}
@@ -395,10 +495,16 @@ export function MessageItem({
             {formatTime(sentAt)}
           </div>
           <div className="message-content min-w-0 flex-1 pr-14">
-            {body}
-            {labelStack}
+            {inlineEditing ? (
+              editForm
+            ) : (
+              <>
+                {body}
+                {labelStack}
+              </>
+            )}
           </div>
-          {overflowMenu}
+          {!inlineEditing && overflowMenu}
           {overlays}
         </div>
       </div>
@@ -408,12 +514,13 @@ export function MessageItem({
   return (
     <div
       ref={containerRef}
+      tabIndex={-1}
       data-message-id={message.id}
       data-stream-id={streamId}
       data-author-name={authorName}
       data-author-id={message.authorId}
       data-actor-type={message.authorType}
-      className="relative mt-3 scroll-mt-12 overflow-hidden sm:overflow-visible"
+      className="relative mt-3 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible"
       {...touchHandlers}
     >
       {swipeReveal}
@@ -455,6 +562,9 @@ export function MessageItem({
             >
               <RelativeTime date={message.createdAt} />
             </Link>
+            {message.editedAt && (
+              <EditedIndicator editedAt={String(message.editedAt)} onShowHistory={() => setHistoryOpen(true)} />
+            )}
             {labelStack}
             {streamLabel && (
               <MessageStreamByline
@@ -465,9 +575,9 @@ export function MessageItem({
               />
             )}
           </div>
-          {body}
+          {inlineEditing ? editForm : body}
         </div>
-        {overflowMenu}
+        {!inlineEditing && overflowMenu}
         {overlays}
       </div>
     </div>

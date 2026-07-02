@@ -7,6 +7,10 @@ import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@th
 import { ConversationPanel } from "./conversation-panel"
 import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { spyOnExport } from "@/test/spy"
+import * as editorModule from "@/components/editor"
+import * as messageEditFormModule from "@/components/timeline/message-edit-form"
+import * as messageHistoryDialogModule from "@/components/timeline/message-history-dialog"
 import * as boardStoreModule from "@/stores/board-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -32,6 +36,7 @@ function makeMessage(overrides: Partial<BoardPostMessage> = {}): BoardPostMessag
     attachments: [],
     linkPreviews: [],
     createdAt: "2026-06-22T12:00:00.000Z",
+    editedAt: null,
     ...overrides,
   }
 }
@@ -203,5 +208,109 @@ describe("ConversationPanel", () => {
       },
     })
     expect(await screen.findByText("Couldn't open this conversation")).toBeTruthy()
+  })
+
+  it("lets the author edit their own row in place, swapping the body for the editor", async () => {
+    // The shared row hosts the timeline's MessageEditForm; stub the real
+    // tiptap editor to a textarea (name = ariaLabel) so we assert the wiring,
+    // not the editor internals.
+    spyOnExport(editorModule, "RichEditor").mockReturnValue((({
+      ariaLabel,
+      placeholder,
+    }: {
+      ariaLabel: string
+      placeholder?: string
+    }) => <textarea aria-label={ariaLabel} placeholder={placeholder} />) as unknown as typeof editorModule.RichEditor)
+    vi.spyOn(editorModule, "DocumentEditorModal").mockImplementation(
+      (() => null) as unknown as typeof editorModule.DocumentEditorModal
+    )
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Edit message"))
+
+    // The inline editor takes over the row; the rendered body is gone.
+    expect(screen.getByRole("textbox", { name: "Edit message" })).toBeTruthy()
+    expect(screen.queryByText("Opening message body.")).toBeNull()
+  })
+
+  it("hides Edit on a row authored by someone else", async () => {
+    const user = userEvent.setup()
+    const post = makePost()
+    post.openingMessage = makeMessage({ id: "msg_1", authorId: "usr_other" })
+    mountPanel({ cached: asCached(post) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+
+    await screen.findByRole("menu")
+    expect(screen.queryByText("Edit message")).toBeNull()
+  })
+
+  it("clearing an edit to empty confirms then deletes the message", async () => {
+    // Stub the edit form to a button that fires its onDelete (the empty-submit
+    // path), so this test exercises MessageItem's clear-to-delete wiring —
+    // confirm dialog → messageService.delete — not the editor internals.
+    spyOnExport(messageEditFormModule, "MessageEditForm").mockReturnValue((({
+      onDelete,
+    }: {
+      onDelete?: () => void
+    }) => (
+      <button type="button" onClick={onDelete}>
+        stub-clear-to-delete
+      </button>
+    )) as unknown as typeof messageEditFormModule.MessageEditForm)
+    const deleteMessage = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      delete: deleteMessage,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Edit message"))
+    await user.click(await screen.findByText("stub-clear-to-delete"))
+
+    // Confirm dialog, then delete routes to the message service.
+    await user.click(await screen.findByRole("button", { name: "Delete" }))
+    await waitFor(() => expect(deleteMessage).toHaveBeenCalledWith(WORKSPACE_ID, "msg_1"))
+  })
+
+  it("shows an (edited) indicator and a See revisions action on an edited row", async () => {
+    // Stub the versions dialog to a marker so we assert the open wiring, not the
+    // version fetch.
+    spyOnExport(messageHistoryDialogModule, "MessageHistoryDialog").mockReturnValue((({ open }: { open: boolean }) =>
+      open ? <div>stub-history</div> : null) as unknown as typeof messageHistoryDialogModule.MessageHistoryDialog)
+
+    const user = userEvent.setup()
+    const post = makePost()
+    post.openingMessage = makeMessage({ id: "msg_1", editedAt: "2026-06-22T13:00:00.000Z" })
+    mountPanel({ cached: asCached(post) })
+    await screen.findByText("Opening message body.")
+
+    // Inline "(edited)" affordance on the row.
+    const edited = await screen.findByText("(edited)")
+
+    // "See revisions" is offered in the row's action menu.
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    expect(await screen.findByText("See revisions")).toBeTruthy()
+    await user.keyboard("{Escape}") // close the menu's modal overlay before clicking the row
+
+    // Clicking the indicator opens the revisions dialog.
+    await user.click(edited)
+    expect(await screen.findByText("stub-history")).toBeTruthy()
   })
 })

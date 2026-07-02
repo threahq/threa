@@ -12,6 +12,9 @@ interface MessageCreatedPayloadShape {
   reactions?: Record<string, string[]>
   attachments?: RenderableMessage["attachments"]
   linkPreviews?: RenderableMessage["linkPreviews"]
+  // Patched onto the row by the live edit handler (stream-sync) and by bootstrap
+  // enrichment for an already-edited message, so the rail carries it too.
+  editedAt?: string | null
   deletedAt?: string | null
   /** Set only on an optimistic board reply, naming the conversation it attaches
    *  to so a card can surface the pending row before the server echo lands. */
@@ -31,6 +34,7 @@ function eventToRenderable(event: CachedEvent): RenderableMessage | null {
     contentMarkdown: p.contentMarkdown ?? "",
     reactions: p.reactions ?? {},
     createdAt: event.createdAt,
+    editedAt: p.editedAt ?? null,
     attachments: p.attachments,
     linkPreviews: p.linkPreviews,
   }
