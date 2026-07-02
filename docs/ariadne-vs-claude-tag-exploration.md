@@ -48,7 +48,7 @@ Threa already has 1 (one session per stream, trace card, new-message reconsidera
 
 Full map in `docs/features/architecture/agent-runtime.md`. The load-bearing facts for the proposals:
 
-- Persona record (`persona_system_ariadne`) on a host-agnostic runtime (`packages/agent-runtime`); outbox-triggered, three-phase sessions (INV-41), ≤20-iteration tool loop, one running session per stream (partial unique index), in-flight `NewMessageAwareness` folds follow-ups, supersede reruns on edits.
+- Persona record (`persona_system_ariadne`) on a host-agnostic runtime (`packages/agent-runtime`); outbox-triggered, three-phase sessions whose AI phase holds no DB connection (INV-41), ≤20-iteration tool loop, one running session per stream (partial unique index), in-flight `NewMessageAwareness` folds follow-ups, supersede reruns on edits.
 - ~20 tools, **all read-only**, three-layer gating (persona `enabledTools` → integration deps → `stream_policies`).
 - GAM is passive: background extraction (gpt-5.4-mini classifier + memorizer), hybrid pgvector+FTS retrieval with RRF + structural boost + nano reranker. Ariadne reads GAM via `workspace_research`/`describe_memo`; she never writes it.
 - Short-term memory = rolling conversation summary + turn digests + context bag, rebuilt per turn. No durable per-stream or per-user agent memory.

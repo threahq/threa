@@ -188,7 +188,7 @@ All models use `provider:modelPath` format:
 - Cost-sensitive workloads where quality bar is low
 - Self-hosted inference on single H100
 
-**Note:** Previously used for memo classification, memorization, and researcher agent. Replaced by `claude-haiku-4.5` (researcher), `gpt-5.4-nano` (memo classifier/memorizer) due to unreliable tail latency on OpenRouter's patchwork provider backing and insufficient quality for structured extraction.
+**Note:** Previously used for memo classification, memorization, and researcher agent. Replaced by `claude-haiku-4.5` (researcher), `gpt-5.4-mini` (memo classifier/memorizer — see `MEMO_CLASSIFIER_MODEL_ID`/`MEMO_MEMORIZER_MODEL_ID` in `apps/backend/src/features/memos/config.ts`) due to unreliable tail latency on OpenRouter's patchwork provider backing and insufficient quality for structured extraction.
 
 ---
 
