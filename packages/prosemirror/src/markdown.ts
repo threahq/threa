@@ -8,6 +8,12 @@
 
 import type { JSONContent, JSONContentMark } from "@threa/types"
 import {
+  actorTypeFromMentionId,
+  isResolvedChannelLinkId,
+  MENTION_BROADCAST_CHANNEL,
+  MENTION_BROADCAST_HERE,
+} from "@threa/types"
+import {
   escapeMarkdownLinkText,
   parseAttachmentMetadata,
   serializeAttachmentMetadata,
@@ -29,6 +35,13 @@ import { buildGiphyHref, buildMemoHref, buildQuoteHref, buildSharedMessageHref, 
  *   21-22: Mention     @slug           → groups: full, slug (requires preceding whitespace or ^)
  *   23-24: Channel     #slug           → groups: full, slug (requires preceding whitespace or ^)
  *   25-26: Emoji       :shortcode:     → groups: full, shortcode
+ *
+ * Resolved mentions/channels also serialize to the pointer form
+ * `[@slug](user:usr_x)` / `[#slug](channel:stream_x)` / `[@here](broadcast:here)`
+ * (INV-64); those match the generic Link group (8-10) and are routed by scheme in
+ * `parseInlineMarkdown` like `giphy:`/`attachment:`, so no dedicated group is
+ * needed. The bare `@slug`/`#slug` groups (21-24) remain as lenient input for
+ * unresolved or markdown-authored mentions.
  *
  * Exported so both the shared package and the frontend editor can use the same
  * source of truth (use `new RegExp(INLINE_MARKDOWN_PATTERN, "g")`).
@@ -228,15 +241,38 @@ function serializeTableCell(cell: JSONContent): string {
   return joined.replace(/\|/g, "\\|").replace(/\n/g, "<br>").trim()
 }
 
+/**
+ * Wire scheme for a resolved mention id: `user:`/`persona:`/`bot:` prefix for
+ * actor ids, or the broadcast sentinel verbatim (`broadcast:here`). null for an
+ * unresolved (bare-slug) id, which the caller serializes as `@slug` instead.
+ */
+function mentionPointerUrl(id: string): string | null {
+  const actorType = actorTypeFromMentionId(id)
+  if (actorType === "broadcast") return id
+  if (actorType === "user" || actorType === "persona" || actorType === "bot") return `${actorType}:${id}`
+  return null
+}
+
 function getNodeText(node: JSONContent): string {
   if (node.type === "hardBreak") return "\n"
   if (node.type === "mention") {
     const slug = node.attrs?.slug as string
-    return slug ? `@${slug}` : ""
+    if (!slug) return ""
+    const id = node.attrs?.id
+    // Encode the resolved actor id on the wire so markdown round-trips
+    // losslessly (INV-64), mirroring attachment/memo pointer links. An
+    // unresolved id (a bare slug from a not-yet-resolved markdown mention)
+    // has no scheme, so it falls back to `@slug`.
+    const url = typeof id === "string" ? mentionPointerUrl(id) : null
+    return url ? `[@${escapeMarkdownLinkText(slug)}](${url})` : `@${slug}`
   }
   if (node.type === "channelLink") {
     const slug = node.attrs?.slug as string
-    return slug ? `#${slug}` : ""
+    if (!slug) return ""
+    const id = node.attrs?.id
+    return typeof id === "string" && isResolvedChannelLinkId(id)
+      ? `[#${escapeMarkdownLinkText(slug)}](channel:${id})`
+      : `#${slug}`
   }
   if (node.type === "slashCommand") {
     const name = node.attrs?.name as string
@@ -854,6 +890,55 @@ function buildTableCell(type: "tableHeader" | "tableCell", text: string, options
   }
 }
 
+const MENTION_POINTER_SCHEMES = ["user", "persona", "bot"] as const
+
+/**
+ * Parse an actor/channel pointer link — `[@slug](user:usr_x)`,
+ * `[@here](broadcast:here)`, `[#slug](channel:stream_x)` — into its node, or
+ * null when the url isn't one of these reserved schemes (so the caller falls
+ * back to a normal link). The id rides on the wire (INV-64), so no DB lookup is
+ * needed here. Gated by the same enableMentions/enableChannels options as the
+ * bare `@slug`/`#slug` forms.
+ */
+function parseActorPointer(
+  url: string,
+  label: string,
+  allowMentions: boolean,
+  allowChannels: boolean
+): JSONContent | null {
+  // Reject malformed reserved pointers (an id whose prefix doesn't match the
+  // scheme, or an empty slug) so a hand-written `channel:not_stream` or
+  // `user:persona_x` never persists an inconsistent node (INV-64, INV-2).
+  if (url.startsWith("channel:")) {
+    if (!allowChannels) return null
+    const id = url.slice("channel:".length)
+    const slug = stripMentionSigil(label, "#")
+    return slug && isResolvedChannelLinkId(id) ? { type: "channelLink", attrs: { id, slug } } : null
+  }
+  if (url === MENTION_BROADCAST_HERE || url === MENTION_BROADCAST_CHANNEL) {
+    if (!allowMentions) return null
+    const slug = stripMentionSigil(label, "@")
+    return slug ? { type: "mention", attrs: { id: url, slug, mentionType: "broadcast" } } : null
+  }
+  for (const scheme of MENTION_POINTER_SCHEMES) {
+    const prefix = `${scheme}:`
+    if (url.startsWith(prefix)) {
+      if (!allowMentions) return null
+      const id = url.slice(prefix.length)
+      const slug = stripMentionSigil(label, "@")
+      return slug && actorTypeFromMentionId(id) === scheme
+        ? { type: "mention", attrs: { id, slug, mentionType: scheme } }
+        : null
+    }
+  }
+  return null
+}
+
+function stripMentionSigil(label: string, sigil: string): string {
+  const text = unescapeMarkdownLinkText(label)
+  return text.startsWith(sigil) ? text.slice(sigil.length) : text
+}
+
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
   if (!text) return []
 
@@ -947,6 +1032,15 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
           attrs.height = giphyHref.height
         }
         result.push({ type: "giphyEmbed", attrs })
+        lastIndex = match.index + match[0].length
+        continue
+      }
+      // `user:`/`persona:`/`bot:`/`broadcast:`/`channel:` pointer links round-trip
+      // back to a mention/channelLink node (INV-64), detected here like `giphy:`
+      // so no dedicated regex group is needed.
+      const actorNode = parseActorPointer(linkUrl, linkText, allowMentions, allowChannels)
+      if (actorNode) {
+        result.push(actorNode)
         lastIndex = match.index + match[0].length
         continue
       }

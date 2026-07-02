@@ -639,7 +639,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("Hey @kristoffer check this out")
+        expect(serializeToMarkdown(doc)).toBe("Hey [@kristoffer](user:usr_123) check this out")
       })
 
       it("should serialize channel link node to #slug format", () => {
@@ -657,7 +657,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("See #general for details")
+        expect(serializeToMarkdown(doc)).toBe("See [#general](channel:stream_456) for details")
       })
 
       it("should serialize multiple mentions in same paragraph", () => {
@@ -675,7 +675,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("@alice and @bob")
+        expect(serializeToMarkdown(doc)).toBe("[@alice](user:usr_1) and [@bob](user:usr_2)")
       })
 
       it("should serialize broadcast mentions", () => {
@@ -716,7 +716,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("@kristoffer posted in #engineering")
+        expect(serializeToMarkdown(doc)).toBe("[@kristoffer](user:usr_1) posted in [#engineering](channel:stream_1)")
       })
 
       it("should handle mention node without slug gracefully", () => {
@@ -757,7 +757,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("**@here hello**")
+        expect(serializeToMarkdown(doc)).toBe("**[@here](broadcast:here) hello**")
       })
 
       it("should wrap mention with italic when adjacent text is italic", () => {
@@ -777,7 +777,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("*@kristoffer check this*")
+        expect(serializeToMarkdown(doc)).toBe("*[@kristoffer](user:usr_1) check this*")
       })
 
       it("should wrap channel with code when adjacent text has code mark", () => {
@@ -794,7 +794,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("`see #general`")
+        expect(serializeToMarkdown(doc)).toBe("`see [#general](channel:stream_1)`")
       })
 
       it("should preserve trailing whitespace outside bold marks", () => {
@@ -816,7 +816,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("**Hello @ariadne** ")
+        expect(serializeToMarkdown(doc)).toBe("**Hello [@ariadne](persona:persona_1)** ")
       })
 
       it("should preserve leading whitespace outside marks", () => {
@@ -889,7 +889,7 @@ const x = 1
           ],
         }
 
-        expect(serializeToMarkdown(doc)).toBe("`@ariadne hello`")
+        expect(serializeToMarkdown(doc)).toBe("`[@ariadne](persona:persona_1) hello`")
       })
 
       it("should wrap mention with strikethrough when surrounded by strikethrough text", () => {

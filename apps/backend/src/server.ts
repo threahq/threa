@@ -194,6 +194,8 @@ import {
 import { UserSocketRegistry } from "./lib/user-socket-registry"
 import { PoolMonitor } from "./lib/observability"
 import { ControlPlaneClient } from "./lib/control-plane-client"
+import { createBackfillPlanWorker, createBackfillChunkWorker } from "./lib/backfill"
+import { registerMentionBackfill } from "./features/mentions"
 
 export interface ServerInstance {
   server: Server
@@ -1019,6 +1021,18 @@ export async function startServer(): Promise<ServerInstance> {
   // Scheduled message send worker — fires due messages via EventService.createMessage
   const scheduledMessageSendWorker = createScheduledMessageSendWorker({ scheduledMessagesService })
   jobQueue.registerHandler(JobQueues.SCHEDULED_MESSAGE_SEND, scheduledMessageSendWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // Generic backfill framework. Register definitions BEFORE the workers can run
+  // so a redelivered plan/chunk job can always resolve its definition by name.
+  registerMentionBackfill()
+  jobQueue.registerHandler(JobQueues.BACKFILL_PLAN, createBackfillPlanWorker({ pool }), {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+  jobQueue.registerHandler(JobQueues.BACKFILL_CHUNK, createBackfillChunkWorker({ pool }), {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

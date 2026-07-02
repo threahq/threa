@@ -36,6 +36,8 @@ export {
   type SavedReminderFireJobData,
   type ScheduledMessageSendJobData,
   type ContextBagPrecomputeJobData,
+  type BackfillPlanJobData,
+  type BackfillChunkJobData,
 } from "./job-queue"
 export { ScheduleManager, type ScheduleManagerConfig } from "./schedule-manager"
 export { CleanupWorker, type CleanupWorkerConfig } from "./cleanup-worker"

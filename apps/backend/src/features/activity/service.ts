@@ -9,7 +9,7 @@ import {
   type Stream,
 } from "../streams"
 import { PersonaRepository } from "../agents"
-import { collectMentionSlugs } from "@threa/prosemirror"
+import { collectMentionActorRefs } from "@threa/prosemirror"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import {
@@ -18,7 +18,8 @@ import {
   StreamTypes,
   AuthorTypes,
   ActivityTypes,
-  isBroadcastSlug,
+  MENTION_BROADCAST_HERE,
+  MENTION_BROADCAST_CHANNEL,
   type JSONContent,
 } from "@threa/types"
 import { withClient } from "../../db"
@@ -47,16 +48,19 @@ export class ActivityService {
   }): Promise<Activity[]> {
     const { workspaceId, streamId, messageId, actorId, actorType, contentMarkdown, contentJson } = params
 
-    // Mentions come from the canonical contentJson mention nodes (INV-58) —
-    // produced by the editor's mention picker and by parseMarkdown on the API
-    // path — not from a pattern over serialized markdown, so non-Latin slugs
-    // notify the same as ASCII ones (INV-54). Null contentJson (events
-    // predating it) means "no structural mentions".
-    const mentionSlugs = contentJson ? Array.from(new Set(collectMentionSlugs(contentJson))) : []
-    if (mentionSlugs.length === 0) return []
+    // Mentions resolve by the authoritative actor id on each mention node
+    // (INV-64): `collectMentionActorRefs` reads `attrs.id`, whose prefix is the
+    // actor kind — user ids notify directly (no slug lookup), broadcast
+    // sentinels expand to their member sets. Null contentJson (events predating
+    // it) means "no structural mentions".
+    const refs = contentJson ? collectMentionActorRefs(contentJson) : []
+    if (refs.length === 0) return []
 
-    const broadcastSlugs = mentionSlugs.filter(isBroadcastSlug)
-    const userSlugs = mentionSlugs.filter((s) => !isBroadcastSlug(s))
+    const mentionedUserIds = refs.filter((r) => r.actorType === "user").map((r) => r.actorId)
+    const broadcastIds = refs.filter((r) => r.actorType === "broadcast").map((r) => r.actorId)
+    // Persona/bot refs are dispatched to their agent/bot runtimes elsewhere;
+    // they don't produce activity-feed rows here.
+    if (mentionedUserIds.length === 0 && broadcastIds.length === 0) return []
 
     return withClient(this.pool, async (client) => {
       const stream = await StreamRepository.findById(client, streamId)
@@ -68,26 +72,28 @@ export class ActivityService {
       const effectiveType = rootStream?.type ?? stream.type
 
       const userIds = new Set<string>()
-      if (userSlugs.length > 0) {
-        const users = await UserRepository.findBySlugs(client, workspaceId, userSlugs)
-        const candidates = users.filter((u) => u.id !== actorId)
-        if (candidates.length > 0) {
-          const eligible = await this.filterByAccess(
-            client,
-            stream,
-            rootStream,
-            candidates.map((u) => u.id)
-          )
-          for (const u of candidates) {
-            if (eligible.has(u.id)) userIds.add(u.id)
+      const candidateIds = mentionedUserIds.filter((id) => id !== actorId)
+      if (candidateIds.length > 0) {
+        // The mention id rides in from contentJson, so confirm it's a real
+        // workspace user (INV-8) before it can mint an activity row. A public
+        // stream's filterByAccess grants read to everyone, so without this a
+        // stale or forged `usr_…` id would notify a non-workspace user.
+        const workspaceUserIds = new Set(
+          (await UserRepository.findByIds(client, workspaceId, candidateIds)).map((user) => user.id)
+        )
+        const validCandidateIds = candidateIds.filter((id) => workspaceUserIds.has(id))
+        if (validCandidateIds.length > 0) {
+          const eligible = await this.filterByAccess(client, stream, rootStream, validCandidateIds)
+          for (const id of validCandidateIds) {
+            if (eligible.has(id)) userIds.add(id)
           }
         }
       }
 
-      if (broadcastSlugs.length > 0) {
+      if (broadcastIds.length > 0) {
         const broadcastUserIds = await this.resolveBroadcastTargets(
           client,
-          broadcastSlugs,
+          broadcastIds,
           stream,
           rootStream,
           effectiveType
@@ -104,12 +110,12 @@ export class ActivityService {
       const contentPreview = contentMarkdown.slice(0, 200)
       const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
 
-      const mentionedUserIds = [...userIds]
-      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, mentionedUserIds)
+      const recipientIds = [...userIds]
+      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, recipientIds)
 
       return ActivityRepository.insertBatch(client, {
         workspaceId,
-        userIds: mentionedUserIds,
+        userIds: recipientIds,
         activityType: ActivityTypes.MENTION,
         streamId,
         messageId,
@@ -165,7 +171,7 @@ export class ActivityService {
   }
 
   /**
-   * Resolve broadcast mention slugs (@channel, @here) to target user IDs.
+   * Resolve broadcast mention sentinel ids (@channel, @here) to target user IDs.
    *
    * @channel — notifies all members of the root channel (or the channel itself if not in a thread).
    *            Only valid in channel-tree streams.
@@ -174,7 +180,7 @@ export class ActivityService {
    */
   private async resolveBroadcastTargets(
     client: PoolClient,
-    broadcastSlugs: string[],
+    broadcastIds: string[],
     stream: Stream,
     rootStream: Stream | null,
     effectiveType: string
@@ -189,15 +195,15 @@ export class ActivityService {
       return memberCache.get(streamId)!
     }
 
-    for (const slug of broadcastSlugs) {
-      if (slug === "channel") {
+    for (const id of broadcastIds) {
+      if (id === MENTION_BROADCAST_CHANNEL) {
         if (effectiveType !== StreamTypes.CHANNEL) continue
 
         // Walk up from a thread to the root channel; @channel targets its members.
         const channelId = rootStream?.id ?? stream.id
         const members = await getMembers(channelId)
         for (const m of members) targetIds.add(m.memberId)
-      } else if (slug === "here") {
+      } else if (id === MENTION_BROADCAST_HERE) {
         if (effectiveType !== StreamTypes.CHANNEL && effectiveType !== StreamTypes.DM) continue
 
         const members = await getMembers(stream.id)

@@ -717,6 +717,90 @@ describe("@threa/prosemirror giphy embed round-trip", () => {
   })
 })
 
+describe("@threa/prosemirror mention/channel pointer round-trip (INV-64)", () => {
+  const cases: Array<{ name: string; node: JSONContent; md: string }> = [
+    {
+      name: "user",
+      node: { type: "mention", attrs: { id: "usr_123", slug: "pierre", mentionType: "user" } },
+      md: "[@pierre](user:usr_123)",
+    },
+    {
+      name: "persona",
+      node: { type: "mention", attrs: { id: "persona_ariadne", slug: "ariadne", mentionType: "persona" } },
+      md: "[@ariadne](persona:persona_ariadne)",
+    },
+    {
+      name: "bot",
+      node: { type: "mention", attrs: { id: "bot_pi", slug: "pi", mentionType: "bot" } },
+      md: "[@pi](bot:bot_pi)",
+    },
+    {
+      name: "broadcast here",
+      node: { type: "mention", attrs: { id: "broadcast:here", slug: "here", mentionType: "broadcast" } },
+      md: "[@here](broadcast:here)",
+    },
+    {
+      name: "broadcast channel",
+      node: { type: "mention", attrs: { id: "broadcast:channel", slug: "channel", mentionType: "broadcast" } },
+      md: "[@channel](broadcast:channel)",
+    },
+    {
+      name: "channelLink",
+      node: { type: "channelLink", attrs: { id: "stream_general", slug: "general" } },
+      md: "[#general](channel:stream_general)",
+    },
+  ]
+
+  for (const c of cases) {
+    it(`serializes a resolved ${c.name} to the pointer form`, () => {
+      const doc: JSONContent = { type: "doc", content: [{ type: "paragraph", content: [c.node] }] }
+      expect(serializeToMarkdown(doc)).toBe(c.md)
+    })
+
+    it(`parses the ${c.name} pointer back to its node`, () => {
+      const parsed = parseMarkdown(c.md)
+      expect(parsed.content?.[0]?.content?.[0]).toEqual(c.node)
+    })
+
+    it(`round-trips ${c.name} md → json → md losslessly`, () => {
+      expect(serializeToMarkdown(parseMarkdown(c.md))).toBe(c.md)
+    })
+  }
+
+  it("keeps bare @slug as lenient input (unresolved id = slug)", () => {
+    const parsed = parseMarkdown("Hey @pierre")
+    expect(parsed.content?.[0]?.content?.[1]).toEqual({
+      type: "mention",
+      attrs: { id: "pierre", slug: "pierre", mentionType: "user" },
+    })
+  })
+
+  it("serializes an unresolved mention (id === slug) as bare @slug", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "mention", attrs: { id: "pierre", slug: "pierre", mentionType: "user" } }],
+        },
+      ],
+    }
+    expect(serializeToMarkdown(doc)).toBe("@pierre")
+  })
+
+  it("does not materialize a channel pointer whose id lacks the stream_ prefix", () => {
+    const parsed = parseMarkdown("[#x](channel:not_stream)")
+    const nodes = parsed.content?.[0]?.content ?? []
+    expect(nodes.some((node) => node.type === "channelLink" && node.attrs?.id === "not_stream")).toBe(false)
+  })
+
+  it("does not materialize a mention pointer whose id prefix mismatches the scheme", () => {
+    const parsed = parseMarkdown("[@x](user:persona_1)")
+    const nodes = parsed.content?.[0]?.content ?? []
+    expect(nodes.some((node) => node.type === "mention" && node.attrs?.id === "persona_1")).toBe(false)
+  })
+})
+
 describe("mention/channel whitespace boundary", () => {
   it("should not parse @ as mention in email addresses", () => {
     const result = parseMarkdown("test@gmail.com")

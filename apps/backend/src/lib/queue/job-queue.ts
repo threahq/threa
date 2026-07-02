@@ -30,6 +30,8 @@ export const JobQueues = {
   SAVED_REMINDER_FIRE: "saved.reminder_fire",
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
   CONTEXT_BAG_PRECOMPUTE: "context_bag.precompute",
+  BACKFILL_PLAN: "backfill.plan",
+  BACKFILL_CHUNK: "backfill.chunk",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -231,6 +233,32 @@ export interface ContextBagPrecomputeJobData {
   bagId: string
 }
 
+/**
+ * Generic backfill plan job. One per (backfill, workspace): the plan worker
+ * runs the named backfill's `plan` to compute chunk descriptors, records a
+ * `backfill_runs` row, and fans out one `backfill.chunk` job per descriptor.
+ * `params` is opaque definition-specific input forwarded to `plan`.
+ */
+export interface BackfillPlanJobData {
+  workspaceId: string
+  backfillName: string
+  params?: unknown
+}
+
+/**
+ * Generic backfill chunk job. Carries one chunk descriptor produced by the
+ * plan worker. `chunk` is opaque definition-specific data handed to the named
+ * backfill's `processChunk`. `runId`/`chunkIndex` key the `backfill_chunks`
+ * row used for exactly-once accounting on redelivery.
+ */
+export interface BackfillChunkJobData {
+  workspaceId: string
+  backfillName: string
+  runId: string
+  chunkIndex: number
+  chunk: unknown
+}
+
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
   [JobQueues.NAMING_GENERATE]: NamingJobData
@@ -255,6 +283,8 @@ export interface JobDataMap {
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
   [JobQueues.SCHEDULED_MESSAGE_SEND]: ScheduledMessageSendJobData
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
+  [JobQueues.BACKFILL_PLAN]: BackfillPlanJobData
+  [JobQueues.BACKFILL_CHUNK]: BackfillChunkJobData
 }
 
 /** Returns void on success, throws on error. */

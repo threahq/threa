@@ -1,0 +1,6 @@
+export { registerBackfill, getBackfill } from "./registry"
+export type { BackfillDefinition, BackfillContext } from "./registry"
+export { createBackfillPlanWorker } from "./plan-worker"
+export type { BackfillPlanWorkerDeps } from "./plan-worker"
+export { createBackfillChunkWorker } from "./chunk-worker"
+export type { BackfillChunkWorkerDeps } from "./chunk-worker"

@@ -42,8 +42,12 @@ export {
   collectAttachmentReferenceIds,
   collectGiphyEmbeds,
   collectLinkUrls,
-  collectMentionSlugs,
   collectQuoteReplyMessageIds,
+  collectMentionActorRefs,
+  collectChannelStreamIds,
+  collectUnresolvedMentionSlugs,
+  collectUnresolvedChannelLinkSlugs,
+  mapMentionAndChannelNodes,
   type GiphyEmbedRef,
 } from "./extractors"
 

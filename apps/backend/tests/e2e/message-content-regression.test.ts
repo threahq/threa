@@ -138,8 +138,10 @@ describe("Message Content Regression", () => {
   })
 
   describe("Mentions and References", () => {
-    test("preserves user mentions by slug", async () => {
-      // Note: @slug format - mentions are stored as-is in markdown
+    test("preserves an unknown user mention as a bare slug", async () => {
+      // No member named @kristoffer exists here, so the slug stays unresolved and
+      // serializes back bare (INV-64 lenient-input fallback). A slug that resolves
+      // comes back in pointer form instead — see the broadcast cases below.
       const input = "Hey @kristoffer check this"
       const { retrievedContent } = await createAndRetrieveMessage(client, workspace.id, stream.id, input)
       expect(retrievedContent).toBe(input)
@@ -151,16 +153,26 @@ describe("Message Content Regression", () => {
       expect(retrievedContent).toBe(input)
     })
 
-    test("preserves broadcast mentions", async () => {
-      const input = "@here please review"
-      const { retrievedContent } = await createAndRetrieveMessage(client, workspace.id, stream.id, input)
-      expect(retrievedContent).toBe(input)
+    test("resolves broadcast mentions to the canonical pointer form", async () => {
+      // @here/@channel are well-known sentinels that always resolve (INV-64), so
+      // unlike an unknown user/channel slug they come back in pointer form.
+      const { retrievedContent } = await createAndRetrieveMessage(
+        client,
+        workspace.id,
+        stream.id,
+        "@here please review"
+      )
+      expect(retrievedContent).toBe("[@here](broadcast:here) please review")
     })
 
-    test("preserves @channel broadcast", async () => {
-      const input = "@channel important announcement"
-      const { retrievedContent } = await createAndRetrieveMessage(client, workspace.id, stream.id, input)
-      expect(retrievedContent).toBe(input)
+    test("resolves @channel broadcast to the canonical pointer form", async () => {
+      const { retrievedContent } = await createAndRetrieveMessage(
+        client,
+        workspace.id,
+        stream.id,
+        "@channel important announcement"
+      )
+      expect(retrievedContent).toBe("[@channel](broadcast:channel) important announcement")
     })
 
     test("preserves multiple mentions", async () => {

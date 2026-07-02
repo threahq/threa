@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { ActivityTypes, AuthorTypes, CompanionModes, NotificationLevels, StreamTypes, Visibilities } from "@threa/types"
+import {
+  ActivityTypes,
+  AuthorTypes,
+  CompanionModes,
+  MENTION_BROADCAST_HERE,
+  NotificationLevels,
+  StreamTypes,
+  Visibilities,
+} from "@threa/types"
 import { ActivityService } from "./service"
 import { ActivityRepository } from "./repository"
 import { UserRepository } from "../workspaces"
@@ -790,28 +798,28 @@ describe("ActivityService mention extraction", () => {
     mock.restore()
   })
 
-  function mentionDoc(...slugs: string[]) {
+  function mentionDoc(...userIds: string[]) {
     return {
       type: "doc",
       content: [
         {
           type: "paragraph",
-          content: slugs.flatMap((slug, i) => [
+          content: userIds.flatMap((id, i) => [
             { type: "text", text: i === 0 ? "hey " : " and " },
-            { type: "mention", attrs: { id: `usr_${i}`, slug, mentionType: "user" } },
+            { type: "mention", attrs: { id, slug: `slug-${i}`, mentionType: "user" } },
           ]),
         },
       ],
     }
   }
 
-  it("creates mention activities from contentJson mention nodes, deduped, for any slug script (INV-54)", async () => {
+  it("creates mention activities from resolved user ids on mention nodes, deduped (INV-64)", async () => {
     const service = setupService()
     // Public stream → filterByAccess passes all candidates without a member lookup.
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
-    const findBySlugs = spyOn(UserRepository, "findBySlugs").mockResolvedValue([
-      { id: TARGET_USER_ID, slug: "лена" },
-    ] as any)
+    const findBySlugs = spyOn(UserRepository, "findBySlugs").mockResolvedValue([] as any)
+    // The mention id is validated against the workspace before it can notify (INV-8).
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: TARGET_USER_ID }] as any)
     spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
     const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
       fakeActivity(params.context)
@@ -823,15 +831,80 @@ describe("ActivityService mention extraction", () => {
       messageId: MESSAGE_ID,
       actorId: USER_ID,
       actorType: AuthorTypes.USER,
-      contentMarkdown: "hey @лена and @лена",
-      contentJson: mentionDoc("лена", "лена"),
+      contentMarkdown: "hey @target and @target",
+      // Same id mentioned twice → deduped to a single activity row.
+      contentJson: mentionDoc(TARGET_USER_ID, TARGET_USER_ID),
     })
 
     expect(activities).toHaveLength(1)
-    // The non-Latin slug reached the user lookup intact, once.
-    expect(findBySlugs).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, ["лена"])
+    // No slug lookup — the mention node's id is the authoritative reference.
+    expect(findBySlugs).not.toHaveBeenCalled()
     expect(insertBatch.mock.calls[0][1]).toMatchObject({
       workspaceId: WORKSPACE_ID,
+      userIds: [TARGET_USER_ID],
+      activityType: ActivityTypes.MENTION,
+    })
+  })
+
+  it("drops a mention id that is not a workspace user, even on a public stream (INV-8)", async () => {
+    const service = setupService()
+    // Public stream → filterByAccess would pass any id; the workspace-existence
+    // check is what stops a stale/forged `usr_…` from minting an activity row.
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
+    spyOn(UserRepository, "findByIds").mockResolvedValue([] as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockResolvedValue([])
+
+    const activities = await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hey @ghost",
+      contentJson: mentionDoc("usr_ghost"),
+    })
+
+    expect(activities).toHaveLength(0)
+    expect(insertBatch).not.toHaveBeenCalled()
+  })
+
+  it("notifies only user mention nodes, ignoring persona and bot mentions", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: TARGET_USER_ID }] as any)
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
+      fakeActivity(params.context)
+    )
+
+    await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hey @target @ada @helper",
+      contentJson: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "hey " },
+              { type: "mention", attrs: { id: TARGET_USER_ID, slug: "target", mentionType: "user" } },
+              { type: "text", text: " " },
+              { type: "mention", attrs: { id: "persona_ada", slug: "ada", mentionType: "persona" } },
+              { type: "text", text: " " },
+              { type: "mention", attrs: { id: "bot_helper", slug: "helper", mentionType: "bot" } },
+            ],
+          },
+        ],
+      },
+    })
+
+    // Persona/bot mentions are dispatched to their runtimes elsewhere — only the
+    // user mention produces an activity row.
+    expect(insertBatch.mock.calls[0][1]).toMatchObject({
       userIds: [TARGET_USER_ID],
       activityType: ActivityTypes.MENTION,
     })
@@ -885,7 +958,7 @@ describe("ActivityService mention extraction", () => {
             type: "paragraph",
             content: [
               { type: "text", text: "heads up " },
-              { type: "mention", attrs: { id: "broadcast_here", slug: "here", mentionType: "broadcast" } },
+              { type: "mention", attrs: { id: MENTION_BROADCAST_HERE, slug: "here", mentionType: "broadcast" } },
             ],
           },
         ],

@@ -230,6 +230,69 @@ export const PersonaRepository = {
   },
 
   /**
+   * Batched slug lookup (INV-56) used by the mention resolver. Returns at most
+   * one active persona per requested slug, applying the same precedence as
+   * `findBySlug`: a workspace-specific active persona wins over a built-in,
+   * which wins over a system (`workspace_id IS NULL`) row. Slugs are matched
+   * case-insensitively.
+   */
+  async findBySlugs(db: Querier, slugs: string[], workspaceId?: string | null): Promise<Persona[]> {
+    if (slugs.length === 0) return []
+
+    const lowered = slugs.map((slug) => slug.toLowerCase())
+    const want = new Set(lowered)
+    const bySlug = new Map<string, Persona>()
+    const resolvedPrecedence = new Map<string, number>()
+
+    const consider = (persona: Persona, precedence: number): void => {
+      const key = persona.slug.toLowerCase()
+      if (!want.has(key)) return
+      const existing = resolvedPrecedence.get(key)
+      if (existing === undefined || precedence < existing) {
+        bySlug.set(key, persona)
+        resolvedPrecedence.set(key, precedence)
+      }
+    }
+
+    if (workspaceId === null || workspaceId === undefined) {
+      const builtIns = listVisibleBuiltInAgentConfigs().map(mapBuiltInToPersona)
+      for (const persona of builtIns) consider(persona, 1)
+
+      const result = await db.query<PersonaRow>(
+        sql`
+          SELECT ${sql.raw(SELECT_FIELDS)}
+          FROM personas
+          WHERE LOWER(slug) = ANY(${lowered}) AND workspace_id IS NULL
+        `
+      )
+      for (const row of result.rows) consider(mapRowToPersona(row), 2)
+      return [...bySlug.values()]
+    }
+
+    const overrides = await AgentConfigOverrideRepository.listActiveByWorkspace(db, workspaceId)
+    const overridesByAgentId = new Map(overrides.map((override) => [override.agentId, override.patch]))
+    const builtIns = listVisibleBuiltInAgentConfigs()
+      .map((agent) => resolveBuiltInPersonaWithOverrides(agent, overridesByAgentId, workspaceId))
+      .filter((persona) => persona.status === "active")
+    for (const persona of builtIns) consider(persona, 1)
+
+    const result = await db.query<PersonaRow>(
+      sql`
+        SELECT ${sql.raw(SELECT_FIELDS)}
+        FROM personas
+        WHERE LOWER(slug) = ANY(${lowered})
+          AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
+          AND status = 'active'
+      `
+    )
+    for (const row of result.rows) {
+      // Workspace-specific rows beat built-in/system; system rows are the fallback.
+      consider(mapRowToPersona(row), row.workspace_id === null ? 2 : 0)
+    }
+    return [...bySlug.values()]
+  },
+
+  /**
    * Get the default system persona (Ariadne).
    */
   async getSystemDefault(db: Querier, workspaceId?: string | null): Promise<Persona | null> {

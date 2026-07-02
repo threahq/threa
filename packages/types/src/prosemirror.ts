@@ -201,7 +201,7 @@ export interface ThreaMention {
   attrs: {
     id: string
     slug: string
-    mentionType: "user" | "persona" | "broadcast" | "me"
+    mentionType: "user" | "persona" | "bot" | "broadcast" | "me"
   }
 }
 
@@ -373,7 +373,7 @@ const mentionNodeSchema = z.object({
   attrs: z.object({
     id: z.string(),
     slug: z.string(),
-    mentionType: z.enum(["user", "persona", "broadcast", "me"]),
+    mentionType: z.enum(["user", "persona", "bot", "broadcast", "me"]),
   }),
 })
 

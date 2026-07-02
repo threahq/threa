@@ -2,10 +2,14 @@ import { describe, expect, it } from "bun:test"
 import type { JSONContent } from "@threa/types"
 import {
   collectAttachmentReferenceIds,
+  collectChannelStreamIds,
   collectGiphyEmbeds,
   collectLinkUrls,
-  collectMentionSlugs,
+  collectMentionActorRefs,
   collectQuoteReplyMessageIds,
+  collectUnresolvedChannelLinkSlugs,
+  collectUnresolvedMentionSlugs,
+  mapMentionAndChannelNodes,
 } from "./extractors"
 
 const quoteReply = (messageId: string): JSONContent => ({
@@ -13,9 +17,14 @@ const quoteReply = (messageId: string): JSONContent => ({
   attrs: { messageId, snippet: "quoted text", authorId: "usr_x", streamId: "stream_x", actorType: "user" },
 })
 
-const mention = (slug: string): JSONContent => ({
+const mention = (id: string, slug: string, mentionType: string): JSONContent => ({
   type: "mention",
-  attrs: { id: slug, slug, mentionType: "bot" },
+  attrs: { id, slug, mentionType },
+})
+
+const channelLink = (id: string, slug: string): JSONContent => ({
+  type: "channelLink",
+  attrs: { id, slug },
 })
 
 const reference = (id: string, status: string = "uploaded"): JSONContent => ({
@@ -169,8 +178,8 @@ describe("collectQuoteReplyMessageIds", () => {
   })
 })
 
-describe("collectMentionSlugs", () => {
-  it("returns slugs in document order across nested blocks, keeping duplicates", () => {
+describe("collectMentionActorRefs", () => {
+  it("derives actorType from the id prefix across user/persona/bot/broadcast", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
@@ -178,56 +187,183 @@ describe("collectMentionSlugs", () => {
           type: "paragraph",
           content: [
             { type: "text", text: "hey " },
-            mention("ariadne"),
+            mention("usr_alice", "alice", "user"),
             { type: "text", text: " and " },
-            mention("scout"),
+            mention("persona_system_ariadne", "ariadne", "persona"),
           ],
         },
         {
           type: "blockquote",
-          content: [{ type: "paragraph", content: [mention("ariadne")] }],
+          content: [
+            {
+              type: "paragraph",
+              content: [mention("bot_scout", "scout", "bot"), mention("broadcast:here", "here", "broadcast")],
+            },
+          ],
         },
       ],
     }
 
-    expect(collectMentionSlugs(doc)).toEqual(["ariadne", "scout", "ariadne"])
+    expect(collectMentionActorRefs(doc)).toEqual([
+      { actorType: "user", actorId: "usr_alice" },
+      { actorType: "persona", actorId: "persona_system_ariadne" },
+      { actorType: "bot", actorId: "bot_scout" },
+      { actorType: "broadcast", actorId: "broadcast:here" },
+    ])
   })
 
-  it("collects non-ASCII slugs the editor produced (no ASCII pattern involved)", () => {
+  it("treats the channel broadcast sentinel as a broadcast ref", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [mention("broadcast:channel", "channel", "broadcast")] }],
+    }
+
+    expect(collectMentionActorRefs(doc)).toEqual([{ actorType: "broadcast", actorId: "broadcast:channel" }])
+  })
+
+  it("derives the ref from the id even when mentionType disagrees (id is authoritative)", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
         {
           type: "paragraph",
-          content: [mention("аріадна"), mention("研究員")],
+          content: [{ type: "mention", attrs: { id: "bot_helper", slug: "helper", mentionType: "user" } }],
         },
       ],
     }
 
-    expect(collectMentionSlugs(doc)).toEqual(["аріадна", "研究員"])
+    expect(collectMentionActorRefs(doc)).toEqual([{ actorType: "bot", actorId: "bot_helper" }])
   })
 
-  it("lowercases slugs", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [{ type: "paragraph", content: [mention("Ariadne")] }],
-    }
-
-    expect(collectMentionSlugs(doc)).toEqual(["ariadne"])
-  })
-
-  it("ignores plain text that merely looks like a mention", () => {
+  it("dedupes by actorId, keeping first-seen order", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
         {
           type: "paragraph",
-          content: [{ type: "text", text: "email test@example.com mentions @nobody as text" }],
+          content: [mention("usr_alice", "alice", "user"), mention("bot_scout", "scout", "bot")],
+        },
+        {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: [mention("usr_alice", "alice", "user")] }],
         },
       ],
     }
 
-    expect(collectMentionSlugs(doc)).toEqual([])
+    expect(collectMentionActorRefs(doc)).toEqual([
+      { actorType: "user", actorId: "usr_alice" },
+      { actorType: "bot", actorId: "bot_scout" },
+    ])
+  })
+
+  it("skips unresolved (bare-slug) ids and missing-id nodes", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            mention("ariadne", "ariadne", "persona"),
+            { type: "mention", attrs: { slug: "noid", mentionType: "user" } },
+            mention("usr_real", "real", "user"),
+          ],
+        },
+      ],
+    }
+
+    expect(collectMentionActorRefs(doc)).toEqual([{ actorType: "user", actorId: "usr_real" }])
+  })
+
+  it("returns empty array for documents without mentions", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "no mentions here" }] }],
+    }
+
+    expect(collectMentionActorRefs(doc)).toEqual([])
+  })
+})
+
+describe("collectChannelStreamIds", () => {
+  it("returns stream ids from resolved channelLink nodes across nested blocks", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [channelLink("stream_general", "general"), channelLink("stream_random", "random")],
+        },
+        {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: [channelLink("stream_general", "general")] }],
+        },
+      ],
+    }
+
+    expect(collectChannelStreamIds(doc)).toEqual(["stream_general", "stream_random"])
+  })
+
+  it("skips unresolved (bare-slug) channel links", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [channelLink("general", "general"), channelLink("stream_real", "real")],
+        },
+      ],
+    }
+
+    expect(collectChannelStreamIds(doc)).toEqual(["stream_real"])
+  })
+
+  it("returns empty array for documents without channel links", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "no channels" }] }],
+    }
+
+    expect(collectChannelStreamIds(doc)).toEqual([])
+  })
+})
+
+describe("collectUnresolvedMentionSlugs", () => {
+  it("lowercases and dedupes unresolved mention slugs, excluding resolved and broadcast nodes", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            mention("Ariadne", "Ariadne", "persona"),
+            mention("scout", "scout", "bot"),
+            mention("usr_resolved", "alreadyresolved", "user"),
+            mention("here", "here", "broadcast"),
+            mention("channel", "channel", "broadcast"),
+          ],
+        },
+        {
+          type: "blockquote",
+          content: [{ type: "paragraph", content: [mention("ARIADNE", "ARIADNE", "persona")] }],
+        },
+      ],
+    }
+
+    expect(collectUnresolvedMentionSlugs(doc)).toEqual(["ariadne", "scout"])
+  })
+
+  it("collects non-Latin slugs the markdown path produced (no ASCII pattern involved)", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [mention("аріадна", "аріадна", "persona"), mention("研究員", "研究員", "user")],
+        },
+      ],
+    }
+
+    expect(collectUnresolvedMentionSlugs(doc)).toEqual(["аріадна", "研究員"])
   })
 
   it("ignores mention nodes with missing or empty slug", () => {
@@ -239,13 +375,175 @@ describe("collectMentionSlugs", () => {
           content: [
             { type: "mention", attrs: { id: "x", mentionType: "bot" } },
             { type: "mention", attrs: { id: "y", slug: "", mentionType: "bot" } },
-            mention("real"),
+            mention("real", "real", "bot"),
           ],
         },
       ],
     }
 
-    expect(collectMentionSlugs(doc)).toEqual(["real"])
+    expect(collectUnresolvedMentionSlugs(doc)).toEqual(["real"])
+  })
+
+  it("returns empty array when all mentions are already resolved", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [mention("usr_alice", "alice", "user"), mention("broadcast:here", "here", "broadcast")],
+        },
+      ],
+    }
+
+    expect(collectUnresolvedMentionSlugs(doc)).toEqual([])
+  })
+})
+
+describe("collectUnresolvedChannelLinkSlugs", () => {
+  it("lowercases and dedupes unresolved channel link slugs, excluding resolved ones", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            channelLink("General", "General"),
+            channelLink("stream_resolved", "alreadyresolved"),
+            channelLink("GENERAL", "GENERAL"),
+          ],
+        },
+      ],
+    }
+
+    expect(collectUnresolvedChannelLinkSlugs(doc)).toEqual(["general"])
+  })
+
+  it("returns empty array when all channel links are resolved", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [channelLink("stream_general", "general")] }],
+    }
+
+    expect(collectUnresolvedChannelLinkSlugs(doc)).toEqual([])
+  })
+})
+
+describe("mapMentionAndChannelNodes", () => {
+  it("rewrites mention and channelLink attrs returned by fn, leaving other nodes untouched", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "hey " },
+            mention("alice", "alice", "user"),
+            { type: "text", text: " in " },
+            channelLink("general", "general"),
+          ],
+        },
+      ],
+    }
+
+    const result = mapMentionAndChannelNodes(doc, (node) => {
+      if (node.type === "mention") return { ...node.attrs, id: "usr_alice", mentionType: "user" }
+      if (node.type === "channelLink") return { ...node.attrs, id: "stream_general" }
+      return undefined
+    })
+
+    expect(result).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "hey " },
+            { type: "mention", attrs: { id: "usr_alice", slug: "alice", mentionType: "user" } },
+            { type: "text", text: " in " },
+            { type: "channelLink", attrs: { id: "stream_general", slug: "general" } },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("leaves a node unchanged when fn returns undefined", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [mention("usr_alice", "alice", "user"), mention("bob", "bob", "user")],
+        },
+      ],
+    }
+
+    const result = mapMentionAndChannelNodes(doc, (node) =>
+      node.attrs?.slug === "bob" ? { ...node.attrs, id: "usr_bob" } : undefined
+    )
+
+    expect(result).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "mention", attrs: { id: "usr_alice", slug: "alice", mentionType: "user" } },
+            { type: "mention", attrs: { id: "usr_bob", slug: "bob", mentionType: "user" } },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("recurses nested content and preserves the surrounding tree structure", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [channelLink("general", "general")] }],
+            },
+          ],
+        },
+      ],
+    }
+
+    const result = mapMentionAndChannelNodes(doc, (node) =>
+      node.type === "channelLink" ? { ...node.attrs, id: "stream_general" } : undefined
+    )
+
+    expect(result).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "channelLink", attrs: { id: "stream_general", slug: "general" } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("returns a document equal to the input when fn never rewrites", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "no targets" }] }],
+    }
+
+    expect(mapMentionAndChannelNodes(doc, () => undefined)).toEqual(doc)
   })
 })
 

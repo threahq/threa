@@ -202,6 +202,8 @@ Avoid magic strings by centralizing constants at the source of truth (INV-33).
 
 `contentJson` (ProseMirror JSONContent) is the canonical internal representation for message content. Markdown is a serialization format for external callers (API wire format). Internal code (components, stores, optimistic events, IDB) should always pass and store `contentJson`; only serialize to markdown at the system boundary when sending to the API (INV-58).
 
+Mentions and channel links resolve to actor/stream ids at ingestion (INV-64). A `mention`/`channelLink` node's `attrs.id` is the authoritative reference in stored `contentJson` — `usr_`/`persona_`/`bot_` for actors, `stream_` for channels, and the `broadcast:here`/`broadcast:channel` sentinels for broadcasts; `slug` is a display label only. Backend logic resolves mentions by id, never slug. The markdown wire format carries the id in an attachment-style pointer link so it round-trips losslessly: `[@slug](user:usr_x)` / `[@slug](persona:persona_x)` / `[@slug](bot:bot_x)` / `[@here](broadcast:here)` / `[#slug](channel:stream_x)`, parsed/serialized in `packages/prosemirror/src/markdown.ts` via the same scheme-routing as `attachment:`/`memo:`. Bare `@slug`/`#slug` is still parsed as *lenient input* (agent/API authored, id unknown) and is the fallback serialization for an unresolved id; `EventService` runs `resolveMentionContent` on every create/edit to rewrite a bare-slug id to a real id (and re-derive `content_markdown` so the two stay consistent) before the body feeds projections, mention extraction, or the outbox. The resolver is idempotent and a no-op when ids are already resolved (rich-client writes / pointer-form markdown). Collision precedence for an ambiguous markdown slug is user › persona › bot.
+
 ### 4) AI Integration and Language Behavior
 
 Use only current-generation models listed in `docs/model-reference.md` (INV-16). All AI usage goes through the project AI wrapper (`createAI`), not raw SDK imports (INV-28).
@@ -293,7 +295,7 @@ When handling variants, colocate variant config and keep shared behavior on one 
 
 - **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57, INV-62
 - **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
-- **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58
+- **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58, INV-64
 - **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54
 - **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60, INV-61, INV-62, INV-63
 - **Testing:** INV-22, INV-23, INV-24, INV-26, INV-39, INV-48

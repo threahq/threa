@@ -26,17 +26,18 @@ function createHandler() {
   return { handler, send }
 }
 
-// Mirrors what the composer/API path emits: the canonical contentJson with
-// structural mention nodes (INV-58); the markdown is just the wire serialization.
-function mentionDoc(...slugs: string[]) {
+// Mirrors what the composer/API path emits AFTER ingestion resolution (INV-64):
+// mention nodes carry the resolved actor id as the authoritative reference; the
+// slug is a display label. Each entry is `[personaId, slug]`.
+function mentionDoc(...mentions: Array<[id: string, slug: string]>) {
   return {
     type: "doc",
     content: [
       {
         type: "paragraph",
-        content: slugs.flatMap((slug, i) => [
+        content: mentions.flatMap(([id, slug], i) => [
           { type: "text", text: i === 0 ? "hey " : " and " },
-          { type: "mention", attrs: { id: `persona_${i}`, slug, mentionType: "persona" } },
+          { type: "mention", attrs: { id, slug, mentionType: "persona" } },
         ]),
       },
     ],
@@ -65,7 +66,8 @@ function makeMessageCreatedEvent(
         payload: {
           messageId: "msg_test",
           contentMarkdown: overrides?.contentMarkdown ?? "hey @ariadne",
-          contentJson: "contentJson" in (overrides ?? {}) ? overrides!.contentJson : mentionDoc("ariadne"),
+          contentJson:
+            "contentJson" in (overrides ?? {}) ? overrides!.contentJson : mentionDoc(["persona_ariadne", "ariadne"]),
         },
       },
     },
@@ -80,19 +82,20 @@ describe("MentionInvokeHandler", () => {
     mock.restore()
   })
 
-  it("dispatches one persona job per mentioned slug from contentJson nodes, deduped", async () => {
+  it("dispatches one persona job per mentioned id from contentJson nodes, deduped", async () => {
     const event = makeMessageCreatedEvent(1n, {
       contentMarkdown: "hey @ariadne and @ariadne",
-      contentJson: mentionDoc("ariadne", "ariadne"),
+      contentJson: mentionDoc(["persona_ariadne", "ariadne"], ["persona_ariadne", "ariadne"]),
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    spyOn(PersonaRepository, "findBySlug").mockResolvedValue(ACTIVE_PERSONA as any)
+    const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
     const { handler, send } = createHandler()
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_ariadne"], "ws_test")
     expect(send).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith(JobQueues.PERSONA_AGENT, {
       workspaceId: "ws_test",
@@ -104,24 +107,83 @@ describe("MentionInvokeHandler", () => {
     })
   })
 
-  it("dispatches for non-Latin slugs the markdown pattern used to miss (INV-54)", async () => {
+  it("selects personas by resolved id regardless of slug script (INV-54)", async () => {
     const event = makeMessageCreatedEvent(1n, {
       contentMarkdown: "hej @лена",
-      contentJson: mentionDoc("лена"),
+      contentJson: mentionDoc(["persona_lena", "лена"]),
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    const findBySlug = spyOn(PersonaRepository, "findBySlug").mockResolvedValue({
-      ...ACTIVE_PERSONA,
-      slug: "лена",
-    } as any)
+    const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([
+      { ...ACTIVE_PERSONA, id: "persona_lena", slug: "лена" },
+    ] as any)
 
     const { handler, send } = createHandler()
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(findBySlug).toHaveBeenCalledWith(expect.anything(), "лена", "ws_test")
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_lena"], "ws_test")
     expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it("ignores non-persona actor refs (user/bot/broadcast) in the same message", async () => {
+    const event = makeMessageCreatedEvent(1n, {
+      contentMarkdown: "hey @here @bob @ariadne @helper",
+      contentJson: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "mention", attrs: { id: "broadcast:here", slug: "here", mentionType: "broadcast" } },
+              { type: "mention", attrs: { id: "usr_bob", slug: "bob", mentionType: "user" } },
+              { type: "mention", attrs: { id: "persona_ariadne", slug: "ariadne", mentionType: "persona" } },
+              { type: "mention", attrs: { id: "bot_helper", slug: "helper", mentionType: "bot" } },
+            ],
+          },
+        ],
+      },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
+
+    const { handler, send } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_ariadne"], "ws_test")
+    expect(send).toHaveBeenCalledTimes(1)
+  })
+
+  it("dispatches nothing for an unresolved (bare-slug) mention id", async () => {
+    const event = makeMessageCreatedEvent(1n, {
+      contentMarkdown: "hey @ariadne",
+      contentJson: mentionDoc(["ariadne", "ariadne"]),
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
+
+    const { handler, send } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(findByIds).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it("skips inactive personas", async () => {
+    const event = makeMessageCreatedEvent(1n)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([{ ...ACTIVE_PERSONA, status: "archived" }] as any)
+
+    const { handler, send } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("dispatches nothing when contentJson is null, even if the markdown contains @-text", async () => {
@@ -131,13 +193,13 @@ describe("MentionInvokeHandler", () => {
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    const findBySlug = spyOn(PersonaRepository, "findBySlug").mockResolvedValue(ACTIVE_PERSONA as any)
+    const findByIds = spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
     const { handler, send } = createHandler()
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(findBySlug).not.toHaveBeenCalled()
+    expect(findByIds).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
   })
 
@@ -151,7 +213,7 @@ describe("MentionInvokeHandler", () => {
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    spyOn(PersonaRepository, "findBySlug").mockResolvedValue(ACTIVE_PERSONA as any)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
     const { handler, send } = createHandler()
     handler.handle()
@@ -164,7 +226,7 @@ describe("MentionInvokeHandler", () => {
     const personaEvent = makeMessageCreatedEvent(1n, { actorType: AuthorTypes.PERSONA })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([personaEvent] as any)
     const e2eSpy = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
-    spyOn(PersonaRepository, "findBySlug").mockResolvedValue(ACTIVE_PERSONA as any)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
 
     const { handler, send } = createHandler()
     handler.handle()
