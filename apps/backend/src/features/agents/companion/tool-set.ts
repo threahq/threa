@@ -138,7 +138,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createReactToMessageTool(workspace, reactions)
       : null,
     followUps && isToolEnabled(enabledTools, AgentToolNames.SCHEDULE_FOLLOW_UP)
-      ? createScheduleFollowUpTool(followUps)
+      ? createScheduleFollowUpTool(followUps, { timezone, currentTime })
       : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)
