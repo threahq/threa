@@ -30,10 +30,8 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useInputMode } from "@/hooks/use-input-mode"
-import { useMessageService } from "@/contexts"
-import { enqueueOperation } from "@/sync/operation-queue"
+import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { parseMarkdown } from "@threa/prosemirror"
-import { toast } from "sonner"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
@@ -140,7 +138,7 @@ export function MessageItem({
   const [isEditing, setIsEditing] = useState(false)
   const [editingSurfaceTouch, setEditingSurfaceTouch] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
   // the timeline uses; the hover overflow button is desktop/keyboard only. This
   // mirrors `SentMessageEvent` rather than exposing a tap-sized dropdown.
@@ -171,32 +169,30 @@ export function MessageItem({
   // the app-global message service + query cache, not a timeline. Input mode is
   // latched at edit start so a mid-edit switch can't remount the form and drop
   // unsaved text (mirrors `MessageEvent`).
-  const messageService = useMessageService()
   const isTouchInput = useInputMode() === "touch"
+  const { deleteMessage, isDeleting } = useDeleteMessage(workspaceId)
   const startEditing = useCallback(() => {
     setEditingSurfaceTouch(isTouchInput)
     setIsEditing(true)
   }, [isTouchInput])
+  // The editor autofocuses; unlike the timeline (which restores focus to its
+  // editor zone) this row has no zone, so return focus to the row itself on
+  // exit — otherwise a keyboard user's focus drops to <body> when the form
+  // unmounts. Move focus before the state flip so it's off the editor by the
+  // time React tears it down. Skip on touch: the drawer owns its own
+  // close/return-focus, and grabbing focus mid-close fights it (as MessageEvent).
   const stopEditing = useCallback(() => {
+    if (!editingSurfaceTouch) containerRef.current?.focus()
     setIsEditing(false)
     setEditingSurfaceTouch(false)
-  }, [])
+  }, [editingSurfaceTouch])
   // Clearing a message to empty deletes it — the edit form's intrinsic delete
   // path (see `MessageEditForm.onDelete`), confirmed through the same dialog the
   // timeline uses. This is not the standalone "Delete message" action.
   const handleDelete = useCallback(async () => {
-    setIsDeleting(true)
-    try {
-      await messageService.delete(workspaceId, message.id)
-      setDeleteDialogOpen(false)
-    } catch {
-      await enqueueOperation(workspaceId, "delete_message", { messageId: message.id })
-      setDeleteDialogOpen(false)
-      toast.info("Delete queued — will complete when back online")
-    } finally {
-      setIsDeleting(false)
-    }
-  }, [messageService, workspaceId, message.id])
+    await deleteMessage(message.id)
+    setDeleteDialogOpen(false)
+  }, [deleteMessage, message.id])
   // Board/conversation payloads carry only markdown (INV-58 wire format); parse
   // it back to the canonical contentJson the editor edits over. A no-op edit is
   // still detected because the form's baseline re-serializes this same doc.
@@ -253,7 +249,6 @@ export function MessageItem({
 
   // Scroll + flash the `?m=` deep-link target (conversation panel sets
   // `isHighlighted`). Mirrors the timeline's highlight effect.
-  const containerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (isHighlighted && containerRef.current) {
       containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -277,6 +272,10 @@ export function MessageItem({
     streamId,
     conversationId,
     reactions: message.reactions,
+    // Mirror the in-stream surface: hide Edit on E2E messages (no sealed-edit
+    // path — a plaintext update is rejected and the offline queue would retry it
+    // forever). E2E rows can reach here via the label page.
+    e2eEnabled: rowStream?.e2eEnabled === true,
     onReact: handleAddReaction,
     onOpenFullPicker: () => setMobilePickerOpen(true),
     onEdit: startEditing,
@@ -446,12 +445,13 @@ export function MessageItem({
     return (
       <div
         ref={containerRef}
+        tabIndex={-1}
         data-message-id={message.id}
         data-stream-id={streamId}
         data-author-name={authorName}
         data-author-id={message.authorId}
         data-actor-type={message.authorType}
-        className="relative mt-0.5 scroll-mt-12 overflow-hidden sm:overflow-visible"
+        className="relative mt-0.5 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible"
         {...touchHandlers}
       >
         {swipeReveal}
@@ -492,12 +492,13 @@ export function MessageItem({
   return (
     <div
       ref={containerRef}
+      tabIndex={-1}
       data-message-id={message.id}
       data-stream-id={streamId}
       data-author-name={authorName}
       data-author-id={message.authorId}
       data-actor-type={message.authorType}
-      className="relative mt-3 scroll-mt-12 overflow-hidden sm:overflow-visible"
+      className="relative mt-3 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible"
       {...touchHandlers}
     >
       {swipeReveal}

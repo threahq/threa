@@ -10,22 +10,15 @@ import {
   type MovedFromProvenance,
 } from "@threa/types"
 import { toast } from "sonner"
-import { enqueueOperation } from "@/sync/operation-queue"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { MessageContextBadge } from "@/components/composer"
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
-import {
-  usePendingMessages,
-  usePanel,
-  createDraftPanelId,
-  createConversationPanelId,
-  useTrace,
-  useMessageService,
-} from "@/contexts"
+import { usePendingMessages, usePanel, createDraftPanelId, createConversationPanelId, useTrace } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
+import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { formatStatusClearLabel } from "@/lib/status"
 import { useMessageMarkdownCopy } from "@/hooks/use-message-markdown-copy"
@@ -854,7 +847,6 @@ function SentMessageEvent({
   batch,
 }: MessageEventInnerProps) {
   const { panelId, getPanelUrl, openPanel } = usePanel()
-  const messageService = useMessageService()
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { getTraceUrl } = useTrace()
   const quoteReplyCtx = useQuoteReply()
@@ -880,7 +872,6 @@ function SentMessageEvent({
   const [isEditing, setIsEditing] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false)
-  const [isDeleting, setIsDeleting] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const [moveDetailsOpen, setMoveDetailsOpen] = useState(false)
@@ -1004,18 +995,10 @@ function SentMessageEvent({
 
   const allReactionShortcodes = useMemo(() => reactionShortcodes(payload.reactions), [payload.reactions])
 
+  const { deleteMessage, isDeleting } = useDeleteMessage(workspaceId)
   const handleDelete = async () => {
-    setIsDeleting(true)
-    try {
-      await messageService.delete(workspaceId, payload.messageId)
-      setDeleteDialogOpen(false)
-    } catch {
-      await enqueueOperation(workspaceId, "delete_message", { messageId: payload.messageId })
-      setDeleteDialogOpen(false)
-      toast.info("Delete queued — will complete when back online")
-    } finally {
-      setIsDeleting(false)
-    }
+    await deleteMessage(payload.messageId)
+    setDeleteDialogOpen(false)
   }
 
   const savedForMessage = useSavedForMessage(workspaceId, payload.messageId)

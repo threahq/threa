@@ -9,6 +9,7 @@ import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
 import * as editorModule from "@/components/editor"
+import * as messageEditFormModule from "@/components/timeline/message-edit-form"
 import * as boardStoreModule from "@/stores/board-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -251,5 +252,37 @@ describe("ConversationPanel", () => {
 
     await screen.findByRole("menu")
     expect(screen.queryByText("Edit message")).toBeNull()
+  })
+
+  it("clearing an edit to empty confirms then deletes the message", async () => {
+    // Stub the edit form to a button that fires its onDelete (the empty-submit
+    // path), so this test exercises MessageItem's clear-to-delete wiring —
+    // confirm dialog → messageService.delete — not the editor internals.
+    spyOnExport(messageEditFormModule, "MessageEditForm").mockReturnValue((({
+      onDelete,
+    }: {
+      onDelete?: () => void
+    }) => (
+      <button type="button" onClick={onDelete}>
+        stub-clear-to-delete
+      </button>
+    )) as unknown as typeof messageEditFormModule.MessageEditForm)
+    const deleteMessage = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      delete: deleteMessage,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Edit message"))
+    await user.click(await screen.findByText("stub-clear-to-delete"))
+
+    // Confirm dialog, then delete routes to the message service.
+    await user.click(await screen.findByRole("button", { name: "Delete" }))
+    await waitFor(() => expect(deleteMessage).toHaveBeenCalledWith(WORKSPACE_ID, "msg_1"))
   })
 })
