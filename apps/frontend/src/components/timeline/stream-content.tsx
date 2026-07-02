@@ -52,6 +52,7 @@ import {
   type StreamMember,
   type WorkspaceBootstrap,
   type StreamBootstrap,
+  type ConversationWithStaleness,
 } from "@threa/types"
 import { isAbortableStepType } from "@/lib/step-config"
 import {
@@ -60,6 +61,7 @@ import {
   groupTimelineItems,
   annotateAuthorGroups,
   annotateConversationRows,
+  annotateConversationRevivals,
   injectGapItems,
   injectDayDividers,
   itemDayStartMs,
@@ -687,6 +689,12 @@ export function StreamContent({
       })
   }, [events, isThread])
 
+  // Conversation lookup for the always-on provenance chips (mechanism A below).
+  const conversationsById = useMemo(() => {
+    const map = new Map<string, ConversationWithStaleness>()
+    for (const conversation of streamConversations) map.set(conversation.id, conversation)
+    return map
+  }, [streamConversations])
   // Gap placeholders are injected AFTER grouping/annotation so a hole in the
   // broadcast chain (INV-61) renders as its own in-place loading row — see
   // useEvents' contiguity gate for how holes are detected and backfilled.
@@ -696,8 +704,24 @@ export function StreamContent({
     if (conversationOverlayModel && conversationOverlayModel.conversations.length > 0) {
       items = annotateConversationRows(items, conversationOverlayModel)
     }
+    // On-message provenance chips (board-view-design.md mechanism A): a late
+    // reply that revives a scattered topic gets a "↪ continues X · 3h ago" chip
+    // linking to the conversation panel. Always-on for the flat channel/DM
+    // timeline (never threads — thread replies are contiguous by construction,
+    // so nothing reads as a revival there).
+    if (supportsConversationOverlay) {
+      items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById)
+    }
     return injectGapItems(items, holes)
-  }, [displayEvents, currentWorkspaceUserId, holes, conversationOverlayModel])
+  }, [
+    displayEvents,
+    currentWorkspaceUserId,
+    holes,
+    conversationOverlayModel,
+    supportsConversationOverlay,
+    conversationIdByMessageId,
+    conversationsById,
+  ])
 
   // `order` is the position in the rendered timeline. Non-thread streams
   // happen to sort by sequence already, but threads re-sort by

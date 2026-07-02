@@ -34,7 +34,7 @@ import {
   focusAtEnd,
   type MessageAgentActivity,
 } from "@/hooks"
-import { Quote, MessageSquareReply, Check } from "lucide-react"
+import { Quote, MessageSquareReply, Check, CornerDownRight } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -84,6 +84,7 @@ import { useReadFrontier, rowReadState } from "./read-frontier-context"
 import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlayRow } from "./conversation-overlay/row-context"
 import { useMessageConversationId } from "./conversation-overlay/message-conversation-context"
+import type { ConversationRevival } from "./conversation-overlay/model"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
 
@@ -141,6 +142,11 @@ interface MessageEventProps {
    * lives on the message that "carried" it.
    */
   isFirstMessage?: boolean
+  /**
+   * Topic-revival annotation for the on-message provenance chip, when this
+   * message reopens a scattered conversation (channel/DM timelines only).
+   */
+  revival?: ConversationRevival
   batch?: BatchTimelineState
 }
 
@@ -168,6 +174,13 @@ interface MessageLayoutProps {
    */
   hoverActions?: ReactNode
   footer?: ReactNode
+  /**
+   * Slot rendered above the header row inside the content column — the topic
+   * provenance chip on a revived-conversation message ("↪ continues X · 3h
+   * ago"). Renders on continuations too (which have no header row), so it
+   * always prefaces the body.
+   */
+  preface?: ReactNode
   children?: ReactNode
   /**
    * Decrypted E2E attachment refs (key/iv/filename/mime), surfaced from the
@@ -249,6 +262,40 @@ function MessageLinkPreviews({
       hoveredUrl={linkPreviewContext?.hoveredLinkUrl}
       hydrateFromApi={hydrateFromApi}
     />
+  )
+}
+
+/**
+ * On-message topic-provenance chip (board-view-design.md mechanism A). Rendered
+ * above a message that revives a scattered conversation — its previous member
+ * row is not the one directly above — so a late "Pizza" reads as
+ * "↪ continues Pizza · 3h ago" instead of a non-sequitur. Tapping opens the
+ * conversation's side panel (`conv:<id>`); a `<Link>` keeps it URL-driven
+ * (INV-40, INV-59). Static footprint — no hover-driven resize (INV-21). The
+ * topic label mirrors the overlay's `topicSummary || fallback` rendering.
+ */
+function ConversationProvenanceChip({ revival }: { revival: ConversationRevival }) {
+  const { getPanelUrl } = usePanel()
+  const href = getPanelUrl(createConversationPanelId(revival.conversationId))
+  const topic = revival.topicSummary || "an earlier conversation"
+  return (
+    <Link
+      to={href}
+      aria-label={`Continues ${topic} — open conversation`}
+      className={cn(
+        "group/prov mb-1 inline-flex max-w-full items-center gap-1 text-xs",
+        "text-muted-foreground/80 transition-colors hover:text-foreground"
+      )}
+    >
+      <CornerDownRight className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover/prov:text-foreground/70" />
+      <span className="min-w-0 truncate">
+        continues <span className="font-medium text-foreground/75 group-hover/prov:underline">{topic}</span>
+      </span>
+      <span aria-hidden className="text-muted-foreground/40">
+        ·
+      </span>
+      <RelativeTime date={revival.previousActivityAt} terse className="shrink-0 text-muted-foreground/70" />
+    </Link>
   )
 }
 
@@ -481,6 +528,7 @@ function MessageLayout({
   actions,
   hoverActions,
   footer,
+  preface,
   children,
   attachmentRefs,
   sources,
@@ -735,6 +783,7 @@ function MessageLayout({
           inert={batchEnabled || undefined}
           className={cn("message-content flex-1 min-w-0", batchEnabled && "pointer-events-none")}
         >
+          {preface}
           {headerRow}
           {messageBody}
           {footer}
@@ -788,6 +837,8 @@ interface MessageEventInnerProps {
   groupContinuation?: boolean
   /** True when this is the first message in the stream — drives the context-bag attachment badge. */
   isFirstMessage?: boolean
+  /** Topic-revival annotation for the on-message provenance chip (channel/DM only). */
+  revival?: ConversationRevival
   /** Decrypted E2E attachment refs, threaded to the body's `<E2eAttachmentList>`. */
   attachmentRefs?: AttachmentRef[]
   /** Decrypted E2E citation sources, threaded to the body's `<MessageSourceList>` (E2EE-9). */
@@ -840,6 +891,7 @@ function SentMessageEvent({
   deferSecondaryHydration,
   groupContinuation,
   isFirstMessage,
+  revival,
   attachmentRefs,
   sources,
   e2eEnabled,
@@ -1264,6 +1316,7 @@ function SentMessageEvent({
         isFirstMessage={isFirstMessage}
         attachmentRefs={attachmentRefs}
         sources={sources}
+        preface={revival ? <ConversationProvenanceChip revival={revival} /> : undefined}
         statusIndicator={
           <>
             <RelativeTime date={event.createdAt} className="text-xs text-muted-foreground" />
@@ -1782,6 +1835,7 @@ export function MessageEvent({
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
+  revival,
   batch,
 }: MessageEventProps) {
   const rawPayload = event.payload as MessagePayload
@@ -1863,6 +1917,7 @@ export function MessageEvent({
           deferSecondaryHydration={deferSecondaryHydration}
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}
+          revival={revival}
           attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
           sources={decrypted.status === "decrypted" ? decrypted.sources : undefined}
           e2eEnabled={decrypted.status !== "plaintext"}

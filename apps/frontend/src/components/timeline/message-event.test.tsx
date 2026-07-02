@@ -171,6 +171,37 @@ describe("MessageEvent", () => {
     })
   })
 
+  describe("provenance chip", () => {
+    it("renders a revival chip linking to the conversation panel", () => {
+      const event = createMessageEvent("msg_123", "Pizza")
+
+      render(
+        <MessageEvent
+          event={event}
+          workspaceId={workspaceId}
+          streamId={streamId}
+          revival={{
+            conversationId: "conv_a",
+            topicSummary: "Pizza",
+            previousActivityAt: "2026-06-01T00:00:00.000Z",
+          }}
+        />,
+        { wrapper: Wrapper }
+      )
+
+      const chip = screen.getByRole("link", { name: /continues pizza/i })
+      expect(chip).toHaveAttribute("href", "/panel/conv:conv_a")
+    })
+
+    it("renders no chip when the message is not a revival", () => {
+      const event = createMessageEvent("msg_123", "Pizza")
+
+      render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
+
+      expect(screen.queryByRole("link", { name: /continues/i })).not.toBeInTheDocument()
+    })
+  })
+
   describe("content rendering", () => {
     it("should render message content", () => {
       const event = createMessageEvent("msg_123", "Hello, world!")
