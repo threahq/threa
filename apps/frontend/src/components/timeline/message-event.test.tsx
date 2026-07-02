@@ -201,7 +201,7 @@ describe("MessageEvent", () => {
       expect(screen.queryByRole("link", { name: /continues/i })).not.toBeInTheDocument()
     })
 
-    it("omits the chip on a grouped continuation (no header to anchor it)", () => {
+    it("still renders the chip on a grouped continuation (footer, both row types)", () => {
       const event = createMessageEvent("msg_123", "Pizza")
 
       render(
@@ -219,7 +219,7 @@ describe("MessageEvent", () => {
         { wrapper: Wrapper }
       )
 
-      expect(screen.queryByRole("link", { name: /continues/i })).not.toBeInTheDocument()
+      expect(screen.getByRole("link", { name: /continues pizza/i })).toHaveAttribute("href", "/panel/conv:conv_a")
     })
   })
 

@@ -260,28 +260,32 @@ function MessageLinkPreviews({
 
 /**
  * On-message topic-provenance chip (board-view-design.md mechanism A). Rendered
- * in the header meta row of a message that revives a scattered conversation —
- * its previous member row is not the one directly above — so a late "Pizza"
- * reads as "continues Pizza · 3h ago" instead of a non-sequitur. Tapping opens
- * the conversation's side panel (`conv:<id>`); a `<Link>` keeps it URL-driven
- * (INV-40, INV-59).
+ * in the message footer — under the body, mirroring `ThreadSlot`, which the
+ * design doc names as the affordance to mirror — on a message that revives a
+ * scattered conversation (its previous member row is not the one directly
+ * above), so a late "Pizza" reads as "continues Pizza · 3h ago" instead of a
+ * non-sequitur. Tapping opens the conversation's side panel (`conv:<id>`); a
+ * `<Link>` keeps it URL-driven (INV-40, INV-59).
  *
- * It sits in the header beside `MovedFromIndicator`/labels — the app's existing
- * home for per-message provenance — precisely so its late appearance shifts
- * nothing: conversation membership resolves from a query that lands after the
- * timeline has painted (the coordinated-loading reveal gates on bootstrap/
- * events, not conversations), and the header is a fixed-height, non-wrapping
- * baseline row, so the chip fills horizontal space without growing the row or
- * pushing the body down (INV-21). Because the header renders only on head rows,
- * the chip is naturally absent on grouped continuations — which have no visible
- * send-time of their own, so the chip's topic time can't be misread as one.
+ * On its own full-width line (not squeezed into the header meta row), so a long
+ * topic truncates cleanly instead of overflowing a phone's non-wrapping header.
+ * Its late appearance — conversation membership resolves from a query that
+ * lands after the timeline paints — occupies space the way `ThreadSlot`'s card,
+ * `LabelStack`, and link previews already do on this row: it just appears, with
+ * no grow-in animation. Animating the height (an earlier attempt) reads as
+ * "messages loading in late" and jitters virtua's scroll on mobile — the exact
+ * antipattern `ThreadSlot`'s settle-guard exists to avoid — so it is omitted
+ * deliberately, not forgotten.
+ *
+ * The "· <terse time>" is the topic's last activity, the same shape as
+ * `ThreadSlot`'s "<n> replies · <last reply>" — a footer affordance's own time,
+ * read as such, not the message's send time.
  *
  * Uses the `Layers` glyph (the conversation identity across the overlay) rather
  * than the move indicator's `CornerDownRight`, and stays neutral/muted rather
  * than the thread affordance's gold — a conversation is a quiet "soft thread",
  * not Ariadne's structural gold line. The topic label mirrors the overlay's
- * `topicSummary || fallback` rendering and separator (`·` + terse time), capped
- * so a long topic truncates instead of crowding the header.
+ * `topicSummary || fallback` rendering.
  */
 function ConversationProvenanceChip({ revival }: { revival: ConversationRevival }) {
   const { getPanelUrl } = usePanel()
@@ -292,7 +296,7 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
       to={href}
       aria-label={`Continues ${topic} — open conversation`}
       className={cn(
-        "group/prov inline-flex min-w-0 max-w-[200px] items-center gap-1 text-xs",
+        "group/prov mt-1 flex min-w-0 items-center gap-1.5 text-xs",
         "text-muted-foreground transition-colors hover:text-foreground"
       )}
     >
@@ -1289,6 +1293,7 @@ function SentMessageEvent({
   } else {
     footerContent = (
       <>
+        {revival && <ConversationProvenanceChip revival={revival} />}
         {payload.reactions && Object.keys(payload.reactions).length > 0 && (
           <MessageReactions
             reactions={payload.reactions}
@@ -1336,7 +1341,6 @@ function SentMessageEvent({
                 onClick={movedTombstoneEvent ? () => setMoveDetailsOpen(true) : undefined}
               />
             )}
-            {revival && <ConversationProvenanceChip revival={revival} />}
             <SavedIndicator saved={savedForMessage ?? null} />
             {/* Labels beside the time — standalone rows only; this header isn't
                 rendered for continuations, which keep them in the footer. */}
