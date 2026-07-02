@@ -3,12 +3,12 @@ import type { Pool } from "pg"
 import { withClient } from "../../../db"
 import type { AI, CostContext } from "@threa/agent-runtime"
 import { logger } from "../../../lib/logger"
-import { ContextIntents, type ContextRefKind } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextRefKind } from "@threa/types"
 import { MessageRepository } from "../../messaging"
 import { StreamRepository } from "../../streams"
 import { ContextBagRepository } from "./repository"
 import { SummaryRepository } from "./summary-repository"
-import { getIntentConfig, getResolver } from "./registry"
+import { canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
 import { diffInputs } from "./diff"
 import { buildSnapshot, renderDelta, renderStable } from "./render"
 import { summarizeThread } from "./summarizer"
@@ -25,7 +25,10 @@ import type { LastRenderedSnapshot, RenderableMessage, ResolvedRef, StoredContex
  * no extra lookups on the frontend.
  */
 export interface ResolvedBagRef {
+  kind: ContextRefKind
   streamId: string
+  /** The conversation for `kind: "conversation"` refs; null for thread refs. */
+  conversationId: string | null
   fromMessageId: string | null
   toMessageId: string | null
   /** Cosmetic deep-link anchor; the focal message the discussion was started from. */
@@ -118,8 +121,7 @@ export async function resolveBagForStream(
         logger.warn({ intent: bag.intent, kind: ref.kind }, "context-bag: unsupported ref kind for intent, skipping")
         continue
       }
-      const resolver = getResolver(ref.kind)
-      const part = await resolver.fetch(db, ref, { intent: bag.intent })
+      const part = await fetchRef(db, ref, { intent: bag.intent })
       resolveds.push({ ref, ...part })
     }
 
@@ -127,7 +129,11 @@ export async function resolveBagForStream(
     // Mirrors `fetchStreamBag` so the agent-session trace renders the same
     // label as the inline message badge — INV-35: don't fork the formatting
     // logic, share the data shape via `formatContextRefLabel` on the FE.
-    const refStreamIds = [...new Set(resolveds.map((r) => r.ref.streamId))]
+    // Enrich from each resolver's authoritative `sourceStreamId`, never the
+    // client-supplied `ref.streamId` — `StreamRepository.findByIds` is not
+    // workspace-scoped, so a conversation ref's unvalidated `ref.streamId`
+    // would leak another workspace's stream metadata into the trace (INV-8).
+    const refStreamIds = [...new Set(resolveds.map((r) => r.sourceStreamId))]
     const [sourceStreams, itemCounts] = refStreamIds.length
       ? await Promise.all([
           StreamRepository.findByIds(db, refStreamIds),
@@ -162,8 +168,7 @@ export async function resolveBagForStream(
 
   for (const resolved of resolveds) {
     const inlineSize = resolved.items.reduce((acc, m) => acc + m.contentMarkdown.length, 0)
-    const resolver = getResolver(resolved.ref.kind)
-    const refKey = resolver.canonicalKey(resolved.ref)
+    const refKey = canonicalRefKey(resolved.ref)
 
     let summaryText: string | undefined
     if (inlineSize > config.inlineCharThreshold && resolved.items.length > 0) {
@@ -198,13 +203,16 @@ export async function resolveBagForStream(
     nextItems.push(...resolved.inputs)
     if (resolved.tailMessageId) nextTail = resolved.tailMessageId
 
-    const sourceStream = streamById.get(resolved.ref.streamId)
-    const totalCount = itemCounts.get(resolved.ref.streamId) ?? 0
+    const sourceStream = streamById.get(resolved.sourceStreamId)
+    const totalCount = itemCounts.get(resolved.sourceStreamId) ?? 0
+    const ref = resolved.ref
     groupedRefs.push({
-      streamId: resolved.ref.streamId,
-      fromMessageId: resolved.ref.fromMessageId ?? null,
-      toMessageId: resolved.ref.toMessageId ?? null,
-      originMessageId: resolved.ref.originMessageId ?? null,
+      kind: ref.kind,
+      streamId: resolved.sourceStreamId,
+      conversationId: ref.kind === ContextRefKinds.CONVERSATION ? ref.conversationId : null,
+      fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
+      toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,
+      originMessageId: ref.originMessageId ?? null,
       source: {
         displayName: sourceStream?.displayName ?? null,
         slug: sourceStream?.slug ?? null,

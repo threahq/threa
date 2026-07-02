@@ -1,6 +1,5 @@
 import { api } from "./client"
 import type { ContextBag, ContextIntent, ContextRef, ContextRefKind } from "@threa/types"
-import { ContextRefKinds } from "@threa/types"
 
 /**
  * Per-ref result from `POST /context-bag/precompute`.
@@ -40,8 +39,10 @@ export interface ContextRefSource {
 }
 
 export interface EnrichedContextRef {
-  kind: typeof ContextRefKinds.THREAD
+  kind: ContextRefKind
   streamId: string
+  /** The conversation for `kind: "conversation"` refs; null for thread refs. */
+  conversationId: string | null
   fromMessageId: string | null
   toMessageId: string | null
   source: ContextRefSource

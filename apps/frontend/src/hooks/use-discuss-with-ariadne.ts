@@ -2,9 +2,40 @@ import { useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { useCreateStream } from "./use-streams"
-import { buildDiscussWithAriadneBag } from "@/lib/ariadne/discuss"
+import { buildDiscussWithAriadneBag, type DiscussTarget } from "@/lib/ariadne/discuss"
 import { seedDraftWithContextRef } from "@/lib/context-bag/seed-draft"
+import type { DraftContextRef } from "@/lib/context-bag/types"
 import { ContextRefKinds } from "@threa/types"
+
+/**
+ * The composer sidecar ref that renders the attached chip the moment the user
+ * lands on the new scratchpad. Mirrors the wire bag but in the draft's shape.
+ * Status is optimistic `"ready"` because the backend precompute handler is
+ * warming `context_summaries` in parallel via the `stream:created` outbox event.
+ * `originMessageId` carries through so the chip deep-links back to the source.
+ */
+function buildDraftContextRef(target: DiscussTarget): DraftContextRef {
+  const originMessageId = target.sourceMessageId ?? null
+  const base = {
+    // Whole-thread / whole-conversation context (don't slice). Source message
+    // stored as a navigation hint via `originMessageId`.
+    fromMessageId: null,
+    toMessageId: null,
+    originMessageId,
+    status: "ready" as const,
+    fingerprint: null,
+    errorMessage: null,
+  }
+  if (target.kind === "conversation") {
+    return {
+      ...base,
+      refKind: ContextRefKinds.CONVERSATION,
+      streamId: target.rootStreamId,
+      conversationId: target.conversationId,
+    }
+  }
+  return { ...base, refKind: ContextRefKinds.THREAD, streamId: target.sourceStreamId, conversationId: null }
+}
 
 /**
  * Hook that triggers "Discuss with Ariadne": creates a private scratchpad
@@ -28,16 +59,13 @@ export function useDiscussWithAriadne(workspaceId: string) {
   const navigate = useNavigate()
 
   return useCallback(
-    async (args: { sourceStreamId: string; sourceMessageId?: string }) => {
+    async (target: DiscussTarget) => {
       let stream
       try {
         stream = await createStream.mutateAsync({
           type: "scratchpad",
           companionMode: "on",
-          contextBag: buildDiscussWithAriadneBag({
-            sourceStreamId: args.sourceStreamId,
-            sourceMessageId: args.sourceMessageId,
-          }),
+          contextBag: buildDiscussWithAriadneBag(target),
         })
       } catch (err) {
         toast.error("Couldn't start a discussion. Please try again.")
@@ -65,18 +93,7 @@ export function useDiscussWithAriadne(workspaceId: string) {
         await seedDraftWithContextRef({
           workspaceId,
           streamId: stream.id,
-          ref: {
-            refKind: ContextRefKinds.THREAD,
-            streamId: args.sourceStreamId,
-            // Whole-thread context (don't slice). Source message stored as
-            // a navigation hint via `originMessageId`.
-            fromMessageId: null,
-            toMessageId: null,
-            originMessageId: args.sourceMessageId ?? null,
-            status: "ready",
-            fingerprint: null,
-            errorMessage: null,
-          },
+          ref: buildDraftContextRef(target),
         })
       } catch (seedErr) {
         console.warn("seedDraftWithContextRef failed; bag is server-side, falling back to bootstrap render", seedErr)

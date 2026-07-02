@@ -64,6 +64,16 @@ export interface RenderableMessage {
  */
 export interface ResolvedRef {
   ref: ContextRef
+  /**
+   * The stream to enrich the trace/badge chip from — the resolver's
+   * authoritative choice, never the client-supplied `ref.streamId`. For a
+   * thread ref it's the (access-checked) source stream; for a conversation ref
+   * it's the conversation's own root. Callers MUST use this, not `ref.streamId`,
+   * for `StreamRepository.findByIds` — that lookup is not workspace-scoped, so
+   * feeding it an unvalidated client id leaks another workspace's stream
+   * metadata (INV-8).
+   */
+  sourceStreamId: string
   items: RenderableMessage[]
   inputs: SummaryInput[]
   /** SHA-256 over the canonical `inputs` manifest. */

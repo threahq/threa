@@ -31,4 +31,14 @@ describe("formatContextRefLabel", () => {
   it("never returns an empty string", () => {
     expect(formatContextRefLabel({})).toBe("Thread in this thread")
   })
+
+  it("labels a conversation ref by member count, not a stream handle", () => {
+    // A conversation spans its root + threads, so the stream handle would
+    // undersell it — count its members and name the shape instead.
+    expect(formatContextRefLabel({ kind: "conversation", slug: "intro", itemCount: 7 })).toBe(
+      "7 messages in this conversation"
+    )
+    expect(formatContextRefLabel({ kind: "conversation", itemCount: 1 })).toBe("1 message in this conversation")
+    expect(formatContextRefLabel({ kind: "conversation", itemCount: 0 })).toBe("This conversation")
+  })
 })

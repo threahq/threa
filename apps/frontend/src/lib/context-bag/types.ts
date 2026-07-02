@@ -17,6 +17,10 @@
  */
 export interface DraftContextRef {
   refKind: string
+  /** The conversation this ref points at, for `refKind: "conversation"`. Null for
+   * thread refs. Keyed alongside `streamId` so a conversation chip is distinct
+   * from a thread chip on the same root stream. */
+  conversationId: string | null
   streamId: string
   /**
    * Lower slice anchor for the resolver. Setting this narrows the AI's

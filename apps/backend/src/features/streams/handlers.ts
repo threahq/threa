@@ -30,7 +30,7 @@ import {
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threa/types"
 import type { Pool } from "pg"
-import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
+import { PersonaRepository, assertRefAccess, fetchStreamBag, contextBagSchema } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -588,8 +588,7 @@ export function createStreamHandlers({
         // the check, but rejecting at create time gives the user a crisp
         // error instead of a silent empty-context scratchpad.
         for (const ref of contextBag.refs) {
-          const resolver = getResolver(ref.kind)
-          await resolver.assertAccess(pool, ref, userId, workspaceId)
+          await assertRefAccess(pool, ref, userId, workspaceId)
         }
 
         const ariadne = await PersonaRepository.findBySlug(pool, ARIADNE_PERSONA_SLUG, workspaceId)

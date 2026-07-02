@@ -14,15 +14,16 @@ export const CONTEXT_INTENTS = Object.values(ContextIntents) as ContextIntent[]
 
 export const ContextRefKinds = {
   THREAD: "thread",
+  CONVERSATION: "conversation",
 } as const
 export type ContextRefKind = (typeof ContextRefKinds)[keyof typeof ContextRefKinds]
 export const CONTEXT_REF_KINDS = Object.values(ContextRefKinds) as ContextRefKind[]
 
 /**
- * A reference to a piece of context. v1 ships only the `thread` kind.
- * Omitting both `fromMessageId` and `toMessageId` means "whole thread, live-follow".
+ * A reference to a whole stream (thread/scratchpad/channel). Omitting both
+ * `fromMessageId` and `toMessageId` means "whole thread, live-follow".
  */
-export type ContextRef = {
+export type ThreadContextRef = {
   kind: typeof ContextRefKinds.THREAD
   streamId: string
   /**
@@ -44,6 +45,33 @@ export type ContextRef = {
    */
   originMessageId?: string
 }
+
+/**
+ * A reference to a conversation — the AI-clustered topic that spans a root
+ * stream and its threads (one root; see board-view-design.md). Unlike a
+ * `thread` ref (a whole stream), this resolves to the conversation's specific
+ * member messages across streams, so Ariadne sees the topic and nothing else
+ * from the surrounding channel.
+ *
+ * `streamId` is the conversation's root stream as the client believes it — a
+ * display hint only (chip identity / optimistic draft root). The server never
+ * trusts it: access AND source-stream enrichment both re-derive the
+ * authoritative root from the conversation record, so a stale/wrong value here
+ * can neither widen access nor leak another stream's metadata (INV-8).
+ */
+export type ConversationContextRef = {
+  kind: typeof ContextRefKinds.CONVERSATION
+  conversationId: string
+  streamId: string
+  /**
+   * The message the discussion was opened from. Cosmetic deep-link anchor and
+   * the focal message the resolver marks with `►`; it never slices the
+   * conversation (its members are already the intended scope).
+   */
+  originMessageId?: string
+}
+
+export type ContextRef = ThreadContextRef | ConversationContextRef
 
 export interface ContextBag {
   intent: ContextIntent

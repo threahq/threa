@@ -33,6 +33,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
+import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { parseMarkdown } from "@threa/prosemirror"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
 import { useLongPress } from "@/hooks/use-long-press"
@@ -102,6 +103,11 @@ interface MessageItemProps {
    * (board card, conversation panel). Makes "Copy link" emit a conversation-panel
    * link instead of the stream permalink; the label page leaves it unset. */
   conversationId?: string
+  /** The conversation's root stream, set alongside `conversationId` by the
+   * conversation surfaces. Enables "Discuss with Ariadne" to seed the scratchpad
+   * with the whole conversation's span (root + threads) rather than one stream's
+   * window. The label page leaves both unset, so the action hides there. */
+  conversationRootStreamId?: string
   /** Scroll this row into view and flash it — the conversation panel sets it for
    * the `?m=` deep-link target so a shared message link lands on the right row. */
   isHighlighted?: boolean
@@ -132,6 +138,7 @@ export function MessageItem({
   continuation,
   streamLabel,
   conversationId,
+  conversationRootStreamId,
   isHighlighted,
   surfaceClassName,
 }: MessageItemProps) {
@@ -199,6 +206,27 @@ export function MessageItem({
     await deleteMessage(message.id)
     setDeleteDialogOpen(false)
   }, [deleteMessage, message.id])
+
+  // "Discuss with Ariadne" from a conversation surface seeds the scratchpad with
+  // the whole conversation's span (root + threads), not one stream's window — a
+  // conversation-scoped context ref the backend resolves. Only wired when both
+  // the conversation id and its root are known (the conversation surfaces set
+  // both); the label page leaves them unset, so the action hides there. The menu
+  // invokes fire-and-forget, so swallow after the hook's own error toast (INV-11:
+  // the toast is the loud failure, not an unhandled rejection).
+  const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
+  const canDiscussConversation = Boolean(conversationId && conversationRootStreamId)
+  const handleDiscussWithAriadne = useCallback(() => {
+    if (!conversationId || !conversationRootStreamId) return
+    void startDiscussWithAriadne({
+      kind: "conversation",
+      conversationId,
+      rootStreamId: conversationRootStreamId,
+      sourceMessageId: message.id,
+    }).catch(() => {
+      /* toast already surfaced inside the hook */
+    })
+  }, [startDiscussWithAriadne, conversationId, conversationRootStreamId, message.id])
   // Board/conversation payloads carry only markdown (INV-58 wire format); parse
   // it back to the canonical contentJson the editor edits over. A no-op edit is
   // still detected because the form's baseline re-serializes this same doc.
@@ -294,6 +322,7 @@ export function MessageItem({
     // author's rows, mirroring the timeline row (`MessageEvent`).
     onDelete: () => setDeleteDialogOpen(true),
     onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
+    onDiscussWithAriadne: canDiscussConversation ? handleDiscussWithAriadne : undefined,
     viewInStream: {
       href: `/w/${workspaceId}/s/${streamId}?m=${message.id}`,
       label: viewInStreamLabel(rowStream?.type),

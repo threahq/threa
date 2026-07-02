@@ -27,11 +27,20 @@ const threadRefSchema = z.object({
   originMessageId: z.string().min(1).optional(),
 })
 
+const conversationRefSchema = z.object({
+  kind: z.literal(ContextRefKinds.CONVERSATION),
+  conversationId: z.string().min(1),
+  /** The conversation's root stream — the resolver re-derives the authoritative root. */
+  streamId: z.string().min(1),
+  /** Cosmetic deep-link anchor + focal message; resolver only marks the focal. */
+  originMessageId: z.string().min(1).optional(),
+})
+
 /**
  * Discriminated on `kind` so that future ref kinds (memo, search, etc.) get
- * their own field shape without contaminating thread-only fields.
+ * their own field shape without contaminating another kind's fields.
  */
-export const contextRefSchema = z.discriminatedUnion("kind", [threadRefSchema])
+export const contextRefSchema = z.discriminatedUnion("kind", [threadRefSchema, conversationRefSchema])
 
 export const contextBagSchema = z.object({
   intent: contextIntentSchema,

@@ -15,13 +15,15 @@
  * unavailable so the strip never renders an empty pill.
  */
 export interface ContextRefLabelInput {
+  /** Ref kind — a conversation labels as "in this conversation", a thread as a stream handle. */
+  kind?: string | null
   /** Display name of the source stream, if known. */
   displayName?: string | null
   /** URL slug of the source stream, if known. Preferred over displayName when both are present. */
   slug?: string | null
   /** Stream type — used to choose between "#name" and "thread in name" framings. */
   streamType?: string | null
-  /** Total non-deleted message count in the source stream. */
+  /** Total non-deleted message count in the source stream (or conversation). */
   itemCount?: number | null
   /** Anchor message id at the lower bound of the slice, if any. */
   fromMessageId?: string | null
@@ -38,6 +40,16 @@ function streamHandle(input: ContextRefLabelInput): string {
 }
 
 export function formatContextRefLabel(input: ContextRefLabelInput): string {
+  // A conversation spans its root + threads, so a single stream handle would
+  // undersell it — label by member count and name the shape, not the stream.
+  if (input.kind === "conversation") {
+    if (typeof input.itemCount === "number" && input.itemCount > 0) {
+      const noun = input.itemCount === 1 ? "message" : "messages"
+      return `${input.itemCount} ${noun} in this conversation`
+    }
+    return "This conversation"
+  }
+
   const handle = streamHandle(input)
   const isAnchored = Boolean(input.fromMessageId || input.toMessageId)
 

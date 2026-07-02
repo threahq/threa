@@ -166,6 +166,9 @@ export const ThreadResolver: Resolver<ThreadRef> = {
       fingerprint,
       tailMessageId: tail?.messageId ?? null,
       focalMessageId,
+      // The source stream is access-checked (assertAccess) and confirmed to
+      // exist above, so it's the trusted id to enrich the chip from.
+      sourceStreamId: ref.streamId,
     }
   },
 }
