@@ -60,9 +60,9 @@ Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and
 
 ---
 
-## Phase 1 — Scheduled follow-ups (the pathfinder write tool)
+## Phase 1 — Scheduled follow-ups (the pathfinder durable-write tool)
 
-The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinder for every later write tool: it exercises the full add-a-tool checklist plus a new invocation path. **Design decision:** follow-ups are NOT scheduled messages. `scheduled_messages` is user-authored by construction (`ScheduleParams.userId`, `features/scheduled-messages/service.ts:26`) and fires by creating a real USER message (`finalizeSendInTx` → `EventService.createMessage` with `AuthorTypes.USER`, `service.ts:518`); a persona must never author as the user, and a synthetic user message would pollute the timeline. Instead: a dedicated tracking table (INV-57) whose firing enqueues a `PERSONA_AGENT` job directly — the queue's `processAfter` is the reusable primitive, not the scheduled-messages table.
+The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinder for every later durable-write tool: it exercises the full add-a-tool checklist plus a new invocation path. (Ariadne already has ephemeral in-product writes — `send_message`, `react_to_message` — but no tool that creates durable state; that's the new territory, so give the write path its own review of access gating and abuse limits rather than assuming the react template covers it.) **Design decision:** follow-ups are NOT scheduled messages. `scheduled_messages` is user-authored by construction (`ScheduleParams.userId`, `features/scheduled-messages/service.ts:26`) and fires by creating a real USER message (`finalizeSendInTx` → `EventService.createMessage` with `AuthorTypes.USER`, `service.ts:518`); a persona must never author as the user, and a synthetic user message would pollute the timeline. Instead: a dedicated tracking table (INV-57) whose firing enqueues a `PERSONA_AGENT` job directly — the queue's `processAfter` is the reusable primitive, not the scheduled-messages table.
 
 ### 1.1 `agent_follow_ups` table + service + firing worker
 
@@ -373,7 +373,7 @@ Completes GAM into the two-tier private/shared shape (Collaborative Memory, arXi
 
 **Goal:** explicit "remember this."
 
-**Shape:** tool per the checklist; input `{ title, abstract, keyPoints, tags, knowledgeType, sourceMessageIds }`. Writes through `MemoService` (reuse dedup + embedding pipeline — INV-35, no parallel write path), `memoType: 'agent'`, provenance = creating session id. Same-transaction `memos:captured` broadcast event — the INV-62 rule applies to agent writes identically. Structural boost: agent memos get a multiplier below conversation-sourced ones (`MEMO_KNOWLEDGE_TYPE_BOOST` sibling constant in `memos/config.ts`) to damp self-reinforcement.
+**Shape:** tool per the checklist; input `{ title, abstract, keyPoints, tags, knowledgeType, sourceMessageIds }`. Writes through `MemoService` (reuse dedup + embedding pipeline — INV-35, no parallel write path). Provenance needs a migration, NOT a `memo_type` value: `memo_type` is `message|conversation` (`packages/types/src/constants.ts:349`) with the `memo_type_source` CHECK tying it to `source_message_id`/`source_conversation_id` (`20251226203429_memos.sql:44-47`), so `memo_type: 'agent'` would violate the constraint. Add `authored_by_kind` TEXT default `'pipeline'` (`pipeline|agent`) + nullable `source_session_id`; `save_memo` keeps `memo_type` semantics from its `sourceMessageIds` and sets `authored_by_kind: 'agent'`. Same-transaction `memos:captured` broadcast event — the INV-62 rule applies to agent writes identically. Structural boost: agent memos get a multiplier below conversation-sourced ones (`MEMO_KNOWLEDGE_TYPE_BOOST` sibling constant in `memos/config.ts`) to damp self-reinforcement.
 
 **Files:** types, tool file + test, `tool-set.ts`, `built-in-agents.ts`, `memos/{service,config}.ts`.
 
@@ -385,7 +385,7 @@ Completes GAM into the two-tier private/shared shape (Collaborative Memory, arXi
 
 **Goal:** research work products stop evaporating with turn digests.
 
-**Shape:** post-completion job (alongside 3.1's summary job): run the existing `MemoClassifier` over the session's tool-work digest + final reply; if above `MEMO_GEM_CONFIDENCE_FLOOR`, extract ≤2 memos via the existing `Memorizer` path with `memoType: 'agent'` and session provenance. No new models, no new prompts beyond a digest-shaped input adapter — this is a second _caller_ of the pipeline, not a second pipeline (INV-35).
+**Shape:** post-completion job (alongside 3.1's summary job): run the existing `MemoClassifier` over the session's tool-work digest + final reply; if above `MEMO_GEM_CONFIDENCE_FLOOR`, extract ≤2 memos via the existing `Memorizer` path with `authored_by_kind: 'agent'` and `source_session_id` provenance (columns from 6.2). Reflective memos may lack a message/conversation source, so the 6.2 migration also extends the `memo_type_source` CHECK with a session-sourced alternative (new migration — append-only, INV-17). No new models, no new prompts beyond a digest-shaped input adapter — this is a second _caller_ of the pipeline, not a second pipeline (INV-35).
 
 **Files:** `companion/session.ts` enqueue, small adapter in `memos/`, config cap.
 
@@ -480,6 +480,13 @@ Depends on Phase 1 (follow-up plumbing) and Phase 4 (the brief gives ambient wor
 **Done when:** the eval baseline is recorded and the classifier meets the silence gate.
 
 ---
+
+## Backlog (proposed in the exploration doc, not yet scheduled)
+
+Small items from `docs/ariadne-vs-claude-tag-exploration.md` deliberately left out of the 29 steps — listed here so they're deferred, not lost:
+
+- **`create_thread` / `create_scratchpad` tools [S]** (exploration §4.2) — pure Threa writes, high collaborator feel. Deferred until the Phase 1 durable-write pattern has landed; they then follow the same checklist as a one-step addition (slot as 1.5 or alongside Phase 4).
+- **BYO-bots vs delegation positioning paragraph [docs/S]** (exploration §4.5.5) — one paragraph in `docs/features/public/` distinguishing persistent workspace bots from one-shot delegation to a personal agent. Write it when Phase 5 ships user-visible delegation (5.3), when the distinction becomes real.
 
 ## Deliberately out of scope
 

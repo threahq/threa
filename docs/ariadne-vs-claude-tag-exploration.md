@@ -49,10 +49,10 @@ Threa already has 1 (one session per stream, trace card, new-message reconsidera
 Full map in `docs/features/architecture/agent-runtime.md`. The load-bearing facts for the proposals:
 
 - Persona record (`persona_system_ariadne`) on a host-agnostic runtime (`packages/agent-runtime`); outbox-triggered, three-phase sessions whose AI phase holds no DB connection (INV-41), ≤20-iteration tool loop, one running session per stream (partial unique index), in-flight `NewMessageAwareness` folds follow-ups, supersede reruns on edits.
-- ~20 tools, **all read-only**, three-layer gating (persona `enabledTools` → integration deps → `stream_policies`).
+- ~20 tools, all read-only except in-product participation (`send_message`, `react_to_message`), three-layer gating (persona `enabledTools` → integration deps → `stream_policies`). No tool creates durable state beyond the reply itself.
 - GAM is passive: background extraction (gpt-5.4-mini classifier + memorizer), hybrid pgvector+FTS retrieval with RRF + structural boost + nano reranker. Ariadne reads GAM via `workspace_research`/`describe_memo`; she never writes it.
 - Short-term memory = rolling conversation summary + turn digests + context bag, rebuilt per turn. No durable per-stream or per-user agent memory.
-- **Purely reactive** — acts only on a triggering message. No self-scheduling, no ambient awareness, no write actions.
+- **Purely reactive** — acts only on a triggering message. No self-scheduling, no ambient awareness, no durable write actions.
 - External bot runtime (WebSocket, `ExternalTurnDriver`, public API, trust tiers) already exists and shares the turn-driver seam; `extensions/claude-code-remote/`, `pi-remote/`, `harness-daemon/` already exist.
 
 ## 4. Improvement proposals
@@ -73,7 +73,7 @@ Ordered by axis, each tagged **[S]**mall / **[M]**edium / **[L]**arge.
 
 ### 4.2 Tools
 
-All current tools are read-only. The step-change is a small set of **write tools inside Threa** (not external side effects), each visible in-timeline:
+Current tools are read-only apart from in-product participation (`send_message`, `react_to_message` — immediate, ephemeral side effects). The step-change is a small set of **durable write tools inside Threa** (not external side effects), each visible in-timeline:
 
 - **`save_memo` [M]** — agent-authored memos. See §4.3a.
 - **`schedule_follow_up` [S]** — §4.1a.
@@ -88,7 +88,7 @@ Also **[S]**: extend cooperative cancellation (`toolSignalProvider`) beyond the 
 
 GAM is episodic→semantic extraction: passive, conversation-sourced, workspace-shared (access-scoped). Three complementary stores are missing, and the Collaborative Memory paper's private/shared split maps cleanly onto them. All three should reuse the existing access substrate (`computeAgentAccessSpec`, INV-62) and the memory-capture-visible rule (INV-62 capture events) — agent memory writes are never silent.
 
-**(a) Agent-authored memos [M].** Two write paths into the existing `memos` table: explicit ("Ariadne, remember this") and reflective (at session completion, if the turn's research produced durable knowledge — the turn-digest step already condenses tool work; today that value evaporates when the digest ages out). Mark provenance (`memoType: 'agent'`, source session id), same embedding/dedup pipeline, same `memos:captured` timeline event. Guard against self-reinforcement: agent memos rank below conversation-sourced memos in the structural boost, and the reflective path uses the classifier's confidence floor.
+**(a) Agent-authored memos [M].** Two write paths into the existing `memos` table: explicit ("Ariadne, remember this") and reflective (at session completion, if the turn's research produced durable knowledge — the turn-digest step already condenses tool work; today that value evaporates when the digest ages out). Mark provenance (a new `authored_by_kind: 'agent'` column plus `source_session_id` — the existing `memo_type` is `message|conversation` with a CHECK tying it to source columns, so authorship needs its own field), same embedding/dedup pipeline, same `memos:captured` timeline event. Guard against self-reinforcement: agent memos rank below conversation-sourced memos in the structural boost, and the reflective path uses the classifier's confidence floor.
 
 **(b) Durable stream brief [M — the big one].** Tag's channel memory and Claude Code's CLAUDE.md are the same object: a persistent, human-auditable working document per scope. Add a per-stream brief Ariadne maintains — goals, open questions, decisions in force, preferences, glossary. Unlike the rolling summary (ephemeral, rebuilt per turn), the brief is durable, versioned, and **user-editable**: rendered in stream settings next to the existing custom instructions, injected into the system prompt each turn. Correctability is the trust mechanism both vendors converged on ("admins can audit, edit, delete"; "guided and corrected in conversation") — "that's wrong, we chose Postgres" → she edits the brief, and the edit is a visible timeline event. This directly attacks re-explaining context, the top companion friction.
 
