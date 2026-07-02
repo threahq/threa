@@ -11,6 +11,7 @@ const IS_DEV = import.meta.env.DEV
 
 export const WAITING_WORKER_TIMEOUT_MS = 1500
 export const RELOAD_FALLBACK_TIMEOUT_MS = 3000
+export const CLICK_UPDATE_TIMEOUT_MS = 5000
 
 // The build version baked into this bundle at build time (vite `define`). The
 // running app otherwise has no idea which build it is, so it can't tell whether a
@@ -109,7 +110,11 @@ async function findWaitingWorker(registration: ServiceWorkerRegistration): Promi
   if (registration.waiting || alreadyInstalling) return registration.waiting ?? alreadyInstalling
 
   try {
-    await registration.update()
+    // update() has no timeout of its own; on a stalled mobile network the
+    // awaited click would look dead for as long as the browser waits. Bound it
+    // and fall through — a plain reload is offline-safe, and reconcilePostReload
+    // catches a reload that landed stale.
+    await Promise.race([registration.update(), new Promise((resolve) => setTimeout(resolve, CLICK_UPDATE_TIMEOUT_MS))])
   } catch {
     return null
   }
@@ -199,15 +204,7 @@ export function shouldAnnounceWaiting(
   return Boolean(waiting) && waiting !== announced
 }
 
-/**
- * Surface the update toast for a build that has finished downloading and is
- * parked in `registration.waiting`. Gated by `shouldAnnounceWaiting`, so Reload
- * is always a one-click, already-local activation.
- */
-function announceIfWaiting(registration: ServiceWorkerRegistration): void {
-  const waiting = registration.waiting
-  if (!shouldAnnounceWaiting(waiting, announcedWaiting)) return
-  announcedWaiting = waiting
+function showUpdateToast(): void {
   if (isE2eBuild()) return
   toast("A new version of Threa is available", {
     id: TOAST_ID,
@@ -217,6 +214,86 @@ function announceIfWaiting(registration: ServiceWorkerRegistration): void {
       onClick: () => void reloadForUpdate(),
     },
   })
+}
+
+/**
+ * Surface the update toast for a build that has finished downloading and is
+ * parked in `registration.waiting`. Gated by `shouldAnnounceWaiting`, so Reload
+ * is always a one-click, already-local activation.
+ */
+function announceIfWaiting(registration: ServiceWorkerRegistration): void {
+  const waiting = registration.waiting
+  if (!shouldAnnounceWaiting(waiting, announcedWaiting)) return
+  announcedWaiting = waiting
+  showUpdateToast()
+}
+
+/**
+ * Whether a controllerchange event means another client activated a new build
+ * under this page, which should be announced. Not announced:
+ * - `hadController` false: the first-ever install claiming the page — the page
+ *   already runs the build that worker serves.
+ * - `hasController` false: the SW was unregistered (recovery) — a reload follows.
+ * - `reloadPending`: this tab's own Reload click; reloadForUpdate is about to
+ *   reload onto the new build already.
+ */
+export function shouldAnnounceControllerSwap(opts: {
+  hadController: boolean
+  hasController: boolean
+  reloadPending: boolean
+}): boolean {
+  return opts.hadController && opts.hasController && !opts.reloadPending
+}
+
+// The server build version we've already shown the stale-page toast for, so a
+// persistent skew doesn't re-toast a dismissed announce on every poll. Module
+// state for the same lifetime reasons as announcedWaiting.
+let announcedStaleVersion: string | null = null
+
+/**
+ * Whether to announce that this page itself is the stale artifact: both
+ * versions known and different, and not already announced for this target.
+ */
+export function shouldAnnounceStalePage(
+  current: string | null,
+  latest: string | null,
+  announced: string | null
+): boolean {
+  return Boolean(current && latest && current !== latest && latest !== announced)
+}
+
+/**
+ * Announce when the running page is the stale artifact — the complement of the
+ * parked-worker announce. After another client activates a new build (its
+ * Reload ran skipWaiting), clients.claim() re-points this page at the new
+ * worker but the JS heap keeps running the old build, and no worker will ever
+ * park in `waiting` again — update() finds the server's sw.js already active.
+ * Without this, such a page stays silently stale until a lazy chunk 404s into
+ * the cache-wipe recovery. The controllerchange listener announces this
+ * instantly when the event is delivered; this check is the safety net for the
+ * platforms that drop it (iOS standalone) and for pages frozen through the swap.
+ *
+ * Only runs when nothing is installing or waiting: a genuinely newer server
+ * build announces through the parked-worker path once downloaded. That gate is
+ * what separates this from the premature version.json-delta toast this codebase
+ * removed — here the new build's precache is already the active one, so Reload
+ * is still an instant local activation (plain reload, nothing parked).
+ */
+async function announceIfPageStale(registration: ServiceWorkerRegistration): Promise<void> {
+  if (registration.waiting || registration.installing) return
+  // Only while a controller is serving this page: the announce's premise is
+  // that Reload is an instant local activation onto the already-active
+  // precache. An uncontrolled page has no precache to land on — its version
+  // mismatch is a stale server response, not an SW update, and a toast here
+  // would route a later (possibly offline) click into reloadOrRecover's
+  // no-controller branch: a cache wipe not proven online at wipe time.
+  if (!navigator.serviceWorker?.controller) return
+  const latest = await fetchLatestVersion()
+  if (!shouldAnnounceStalePage(currentAppVersion(), latest, announcedStaleVersion)) return
+  // A worker that started installing during the fetch owns the announce.
+  if (registration.waiting || registration.installing) return
+  announcedStaleVersion = latest
+  showUpdateToast()
 }
 
 /** This bundle's build version, or null if the `define` wasn't applied (e.g. some test envs). */
@@ -321,6 +398,7 @@ export function useAppUpdate(): void {
     // escalates to recovery instead of re-announcing the same build.
     if (await reconcileOnce()) return
     announceIfWaiting(registration)
+    await announceIfPageStale(registration)
   }, [reconcileOnce])
 
   // Announce a build that finishes installing between checks: the browser may
@@ -328,9 +406,29 @@ export function useAppUpdate(): void {
   // completing), so listen for the install rather than only polling.
   useEffect(() => {
     if (IS_DEV) return
+    const sw = navigator.serviceWorker
+    if (!sw) return
     let disposed = false
     let cleanup: (() => void) | null = null
-    void navigator.serviceWorker?.getRegistration().then(async (registration) => {
+    // A controller swap this tab didn't request means another client (a second
+    // tab, or the installed PWA next to a browser tab) activated a new build
+    // under us. This page keeps running its old JS, and since the new build is
+    // already active no worker will ever park in `waiting` for it again — so
+    // announce here, the only signal this page gets. Reload then takes the
+    // plain-reload path (controller exists, nothing parked) and lands the
+    // already-active build, offline included.
+    let hadController = Boolean(sw.controller)
+    const onControllerChange = () => {
+      const announce = shouldAnnounceControllerSwap({
+        hadController,
+        hasController: Boolean(sw.controller),
+        reloadPending: reloadRecentlyAttempted(),
+      })
+      hadController = Boolean(sw.controller)
+      if (announce) showUpdateToast()
+    }
+    sw.addEventListener("controllerchange", onControllerChange)
+    void sw.getRegistration().then(async (registration) => {
       if (!registration || disposed) return
       // A prior Reload click that didn't swap in new code escalates to recovery
       // here; a reload follows, so don't announce on top of it.
@@ -367,6 +465,7 @@ export function useAppUpdate(): void {
     })
     return () => {
       disposed = true
+      sw.removeEventListener("controllerchange", onControllerChange)
       cleanup?.()
     }
   }, [reconcileOnce])

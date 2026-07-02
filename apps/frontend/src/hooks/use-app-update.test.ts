@@ -4,8 +4,11 @@ import {
   isE2eBuild,
   reconcilePostReload,
   reloadForUpdate,
+  shouldAnnounceControllerSwap,
+  shouldAnnounceStalePage,
   shouldAnnounceWaiting,
   shouldRecoverForVersion,
+  CLICK_UPDATE_TIMEOUT_MS,
   RELOAD_FALLBACK_TIMEOUT_MS,
 } from "./use-app-update"
 import * as swRecovery from "@/lib/sw-recovery"
@@ -54,6 +57,46 @@ describe("shouldAnnounceWaiting", () => {
 
   it("announces again only for a genuinely newer build (a new waiting worker)", () => {
     expect(shouldAnnounceWaiting(workerB, workerA)).toBe(true)
+  })
+})
+
+describe("shouldAnnounceControllerSwap", () => {
+  it("announces when another client swapped the controller under this page", () => {
+    expect(shouldAnnounceControllerSwap({ hadController: true, hasController: true, reloadPending: false })).toBe(true)
+  })
+
+  it("stays silent on the first-ever install claiming the page", () => {
+    expect(shouldAnnounceControllerSwap({ hadController: false, hasController: true, reloadPending: false })).toBe(
+      false
+    )
+  })
+
+  it("stays silent when the SW was unregistered (recovery) — a reload follows", () => {
+    expect(shouldAnnounceControllerSwap({ hadController: true, hasController: false, reloadPending: false })).toBe(
+      false
+    )
+  })
+
+  it("stays silent for this tab's own Reload click — reloadForUpdate reloads already", () => {
+    expect(shouldAnnounceControllerSwap({ hadController: true, hasController: true, reloadPending: true })).toBe(false)
+  })
+})
+
+describe("shouldAnnounceStalePage", () => {
+  it("announces only on two known, differing versions not yet announced", () => {
+    expect(shouldAnnounceStalePage("a", "b", null)).toBe(true)
+    expect(shouldAnnounceStalePage("a", "a", null)).toBe(false)
+    expect(shouldAnnounceStalePage("a", null, null)).toBe(false)
+    expect(shouldAnnounceStalePage(null, "b", null)).toBe(false)
+    expect(shouldAnnounceStalePage(null, null, null)).toBe(false)
+  })
+
+  it("stays silent for a target version already announced this session", () => {
+    expect(shouldAnnounceStalePage("a", "b", "b")).toBe(false)
+  })
+
+  it("re-announces when an even newer version supersedes the announced one", () => {
+    expect(shouldAnnounceStalePage("a", "c", "b")).toBe(true)
   })
 })
 
@@ -230,6 +273,23 @@ describe("reloadForUpdate", () => {
     expect(recoverySpy).not.toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(RELOAD_FALLBACK_TIMEOUT_MS)
+    expect(reloadSpy).toHaveBeenCalledOnce()
+    expect(recoverySpy).not.toHaveBeenCalled()
+  })
+
+  it("plain-reloads when the click-path update check hangs (stalled mobile network)", async () => {
+    // registration.update() has no timeout of its own — unbounded, a stalled
+    // network would leave the click looking dead. The bounded race must fall
+    // through to the offline-safe plain reload.
+    vi.useFakeTimers()
+    const registration = makeRegistration()
+    registration.update = vi.fn(() => new Promise(() => {})) as FakeRegistration["update"]
+    setServiceWorker(registration, { controller: {} })
+
+    const promise = reloadForUpdate()
+    await vi.advanceTimersByTimeAsync(CLICK_UPDATE_TIMEOUT_MS)
+    await promise
+
     expect(reloadSpy).toHaveBeenCalledOnce()
     expect(recoverySpy).not.toHaveBeenCalled()
   })
