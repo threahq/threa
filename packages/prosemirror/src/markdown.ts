@@ -909,16 +909,15 @@ function parseActorPointer(
 ): JSONContent | null {
   const pointer = parseMentionPointerHref(url)
   if (!pointer) return null
+  // An all-sigil label (`[@](user:usr_x)`) strips to an empty slug; reject it
+  // so an empty-slug node — which serializes to nothing — never persists.
   if (pointer.kind === "channel") {
-    return allowChannels
-      ? { type: "channelLink", attrs: { id: pointer.id, slug: stripMentionSigil(label, "#") } }
-      : null
+    const slug = stripMentionSigil(label, "#")
+    return allowChannels && slug ? { type: "channelLink", attrs: { id: pointer.id, slug } } : null
   }
-  return allowMentions
-    ? {
-        type: "mention",
-        attrs: { id: pointer.id, slug: stripMentionSigil(label, "@"), mentionType: pointer.mentionType },
-      }
+  const slug = stripMentionSigil(label, "@")
+  return allowMentions && slug
+    ? { type: "mention", attrs: { id: pointer.id, slug, mentionType: pointer.mentionType } }
     : null
 }
 
