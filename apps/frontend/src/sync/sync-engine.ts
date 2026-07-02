@@ -945,7 +945,9 @@ export class SyncEngine {
    * board open across dozens of unsynced streams doesn't saturate the network on
    * a spotty connection. Reuses refreshStreamAfterNavigation — the same
    * cursor-before-join → bootstrap → applyStreamBootstrap path opening a stream
-   * runs — which dedupes in-flight refreshes and no-ops while offline.
+   * runs — which dedupes in-flight refreshes and, while the socket is down,
+   * degrades to the display-only HTTP warm fetch (delta-only, so cards with no
+   * persisted window skip instead of fetching).
    */
   private async syncBoardStreams(streamIds: string[]): Promise<void> {
     let cursor = 0
