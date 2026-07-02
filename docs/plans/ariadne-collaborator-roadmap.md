@@ -35,7 +35,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | Step | Deliverable                                          | Status | PR    |
 | ---- | ---------------------------------------------------- | ------ | ----- |
 | 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      | #1138 |
-| 1.2  | Follow-up turn invocation (context + prompt)         | ☑      | #TBD  |
+| 1.2  | Follow-up turn invocation (context + prompt)         | ☑      | #1142 |
 | 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
 | 2.1  | Generalized session abort                            | ☐      |       |
