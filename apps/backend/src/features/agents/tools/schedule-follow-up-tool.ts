@@ -74,6 +74,12 @@ function formatLocalTime(date: Date, timeZone: string | undefined): string {
  */
 export function createScheduleFollowUpTool(deps: FollowUpToolDeps, opts?: { timezone?: string; currentTime?: string }) {
   const parsedNow = opts?.currentTime ? Date.parse(opts.currentTime) : NaN
+  if (opts?.currentTime && Number.isNaN(parsedNow)) {
+    // Loud on malformed injected time (INV-11): we still fall back to wall-clock
+    // so scheduling keeps working, but a bad temporal.currentTime shouldn't
+    // silently defeat deterministic validation in evals.
+    logger.warn({ currentTime: opts.currentTime }, "schedule_follow_up: unparseable currentTime; using wall-clock")
+  }
   const nowMs = Number.isNaN(parsedNow) ? undefined : parsedNow
   return defineAgentTool({
     name: AgentToolNames.SCHEDULE_FOLLOW_UP,
