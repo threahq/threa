@@ -166,5 +166,3 @@ async function processChunk(
 export function registerMentionBackfill(): void {
   registerBackfill<MentionBackfillChunk>({ name: MENTION_BACKFILL_NAME, plan, processChunk })
 }
-
-registerMentionBackfill()

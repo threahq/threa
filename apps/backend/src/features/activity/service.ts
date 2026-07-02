@@ -110,12 +110,12 @@ export class ActivityService {
       const contentPreview = contentMarkdown.slice(0, 200)
       const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
 
-      const mentionedUserIds = [...userIds]
-      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, mentionedUserIds)
+      const recipientIds = [...userIds]
+      const readUserIds = await this.resolveAlreadyReadRecipients(client, streamId, messageId, recipientIds)
 
       return ActivityRepository.insertBatch(client, {
         workspaceId,
-        userIds: mentionedUserIds,
+        userIds: recipientIds,
         activityType: ActivityTypes.MENTION,
         streamId,
         messageId,

@@ -32,12 +32,6 @@ export interface MentionResolutionMaps {
   channelSlugToStreamId: Map<string, string>
 }
 
-const mentionTypeForActorType: Record<MentionActorType, "user" | "persona" | "bot"> = {
-  user: "user",
-  persona: "persona",
-  bot: "bot",
-}
-
 /**
  * Pure: rewrite unresolved mention/channelLink ids using prebuilt maps. Shared
  * by ingestion and backfill (DRY). Also normalizes broadcast slugs
@@ -72,9 +66,9 @@ export function applyMentionResolution(
       }
       const actor = maps.mentionSlugToActor.get(lower)
       if (!actor) return undefined
-      if (id === actor.id && attrs.mentionType === mentionTypeForActorType[actor.actorType]) return undefined
+      if (id === actor.id && attrs.mentionType === actor.actorType) return undefined
       changed = true
-      return { ...attrs, id: actor.id, mentionType: mentionTypeForActorType[actor.actorType] }
+      return { ...attrs, id: actor.id, mentionType: actor.actorType }
     }
 
     // channelLink
@@ -165,9 +159,7 @@ export async function resolveMentionContent(
   // Broadcast nodes (`@here`/`@channel`) carry a bare slug from the markdown
   // path but are excluded from the slug collectors (no DB lookup); they still
   // need normalizing to the sentinel id, so check for them explicitly.
-  const needsBroadcastNormalization =
-    mentionSlugs.length === 0 && channelSlugs.length === 0 && hasUnnormalizedBroadcast(contentJson)
-  if (mentionSlugs.length === 0 && channelSlugs.length === 0 && !needsBroadcastNormalization) {
+  if (mentionSlugs.length === 0 && channelSlugs.length === 0 && !hasUnnormalizedBroadcast(contentJson)) {
     return { contentJson, changed: false }
   }
 
