@@ -4,8 +4,8 @@ Working plan for the improvements proposed in `docs/ariadne-vs-claude-tag-explor
 
 ## How to use this doc
 
-- **One step = one PR.** Each step is a small deliverable that compiles, passes tests, and can be reviewed on its own. Steps within a phase are ordered by dependency; phases are mostly independent (dependencies called out per phase).
-- **Workflow per step:** branch from main → implement → run the step's test list → `/create-pr` referencing this doc and the step id (e.g. `feat: schedule_follow_up tool (roadmap 1.2)`) → check the box here with the PR number in the same PR.
+- **One step = one PR, and each step is a logical unit.** A step must deliver an observable behavior change or a complete user-facing surface — a bare table or endpoint with no consumer is not a step. A tool ships together with its underlying infra (schema, service, worker) in one PR; administrative surfaces (config knobs, settings UI) are their own step. Steps within a phase are ordered by dependency; phases are mostly independent (dependencies called out per phase).
+- **Workflow per step:** branch from main → implement → run the step's test list → `/create-pr` referencing this doc and the step id (e.g. `feat: schedule_follow_up tool (roadmap 1.1)`) → check the box here with the PR number in the same PR.
 - **Keep this doc honest.** If implementation diverges from a step's Shape, edit the step in the same PR and note the deviation. A stale plan is worse than none.
 - File references are `path:line` as of the commit this doc landed in; expect drift, trust symbols over line numbers.
 
@@ -22,39 +22,46 @@ These recur across every step; the step descriptions assume them rather than res
 
 **Product invariant introduced by this roadmap (proposed INV-64):** companion sessions are minutes-bounded. Threa does not host long-horizon autonomous work; anything longer than a session becomes a scheduled follow-up (Phase 1) or a delegation to the user's local agent (Phase 5). Codified in CLAUDE.md in step 5.1.
 
+## Adjacent systems this roadmap must respect
+
+Two concurrent efforts share primitives with this work; steps below reference them:
+
+- **Conversations** are AI-clustered topic projections over a stream's messages (`conversations` table; `features/conversations/boundary-extraction-service.ts`; membership moving to `conversation_message_assignments` per `docs/plans/conversation-multi-membership-and-reassignment.md`). The companion already resolves a turn's "Current Topic" via the trigger message's primary conversation (`companion/conversation-highlight.ts`) — new durable agent rows (follow-ups, delegations) should carry an optional `source_conversation_id` anchored the same way. "Settlement" is not a flag: it's the per-stream debounce in `memos/batch-worker.ts` (`StreamStateRepository.findStreamsReadyToProcess`, 5-min cap / 30-s quiet), gated on the stream's `memory_mode`.
+- **The board view** (`docs/board-view-design.md`; live behind the `board-view` flag, `pages/board.tsx`) surfaces **conversations** as posts on the sync-engine rails. The roadmap's new cards (follow-ups 1.3, delegations 5.2, ambient 8.2) are deliberately **timeline-event-shaped, not board posts** — do not invent a second board data plane. The bridge, when board lenses land, is `source_conversation_id`: a delegation status change bumps its owning conversation's `last_activity_at` and rides the existing `conversation:*` sync path; an ambient `flag_unanswered` can set conversation `status='stalled'` (fodder for the planned "Needs resolution" lens) instead of minting a new card type.
+- **Limits config** has one idiomatic layering: code default in the feature's `config.ts` → per-workspace override in `workspace_setting_overrides` (sparse key/value over `DEFAULT_WORKSPACE_SETTINGS`, `packages/types/src/workspace-settings.ts` + `features/workspace-settings/service.ts`) → per-stream column on `streams` only when product demands it, resolved `stream ?? workspace ?? default`. Feature flags are for rollout, never for numeric limits.
+
 ## Status
 
-| Step | Deliverable                                         | Status | PR  |
-| ---- | --------------------------------------------------- | ------ | --- |
-| 1.1  | `agent_follow_ups` table + service + firing worker  | ☐      |     |
-| 1.2  | `schedule_follow_up` tool                           | ☐      |     |
-| 1.3  | Follow-up turn invocation (context + prompt)        | ☐      |     |
-| 1.4  | Follow-up visibility: timeline card + cancel        | ☐      |     |
-| 2.1  | Generalized session abort                           | ☐      |     |
-| 2.2  | Stop/Redirect affordances on the activity card      | ☐      |     |
-| 2.3  | Per-turn model resolution + first escalation rule   | ☐      |     |
-| 3.1  | Persisted episode summaries                         | ☐      |     |
-| 3.2  | Per-thread session concurrency                      | ☐      |     |
-| 4.1  | `stream_briefs` schema + endpoints                  | ☐      |     |
-| 4.2  | Brief prompt injection + `update_stream_brief` tool | ☐      |     |
-| 4.3  | Brief UI: settings editor + timeline event          | ☐      |     |
-| 4.4  | Brief correction eval                               | ☐      |     |
-| 5.1  | `delegated_tasks` table + service + INV-64          | ☐      |     |
-| 5.2  | `delegate_task` tool                                | ☐      |     |
-| 5.3  | Delegation card UI                                  | ☐      |     |
-| 5.4  | Delegation public API (claim/status/complete)       | ☐      |     |
-| 5.5  | claude-code-remote delegation support               | ☐      |     |
-| 5.6  | `@threa/mcp` server                                 | ☐      |     |
-| 6.1  | Memo edit/archive endpoints + explorer UI           | ☐      |     |
-| 6.2  | `save_memo` tool                                    | ☐      |     |
-| 6.3  | Reflective capture at session completion            | ☐      |     |
-| 6.4  | `memoScope` (user/stream/workspace)                 | ☐      |     |
-| 6.5  | Retrieval feedback decay                            | ☐      |     |
-| 7.1  | Workspace persona CRUD API                          | ☐      |     |
-| 7.2  | Persona picker UI                                   | ☐      |     |
-| 8.1  | Ambient classifier on settled conversations         | ☐      |     |
-| 8.2  | "Ariadne noticed" card + budget + toggle            | ☐      |     |
-| 8.3  | Ambient precision eval                              | ☐      |     |
+| Step | Deliverable                                          | Status | PR  |
+| ---- | ---------------------------------------------------- | ------ | --- |
+| 1.1  | `schedule_follow_up` tool + follow-up infra          | ☐      |     |
+| 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |     |
+| 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |     |
+| 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |     |
+| 2.1  | Generalized session abort                            | ☐      |     |
+| 2.2  | Stop/Redirect affordances on the activity card       | ☐      |     |
+| 2.3  | Per-turn model resolution + first escalation rule    | ☐      |     |
+| 3.1  | Persisted episode summaries                          | ☐      |     |
+| 3.2  | Per-thread session concurrency                       | ☐      |     |
+| 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |     |
+| 4.2  | `update_stream_brief` tool + timeline event          | ☐      |     |
+| 4.3  | Brief UI: settings editor + timeline event           | ☐      |     |
+| 4.4  | Brief correction eval                                | ☐      |     |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-64 | ☐      |     |
+| 5.2  | Delegation card UI                                   | ☐      |     |
+| 5.3  | Delegation public API (claim/status/complete)        | ☐      |     |
+| 5.4  | claude-code-remote delegation support                | ☐      |     |
+| 5.5  | `@threa/mcp` server                                  | ☐      |     |
+| 6.1  | Memo edit/archive endpoints + explorer UI            | ☐      |     |
+| 6.2  | `save_memo` tool                                     | ☐      |     |
+| 6.3  | Reflective capture at session completion             | ☐      |     |
+| 6.4  | `memoScope` (user/stream/workspace)                  | ☐      |     |
+| 6.5  | Retrieval feedback decay                             | ☐      |     |
+| 7.1  | Workspace persona CRUD API                           | ☐      |     |
+| 7.2  | Persona picker UI                                    | ☐      |     |
+| 8.1  | Ambient classifier on settled conversations          | ☐      |     |
+| 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |     |
+| 8.3  | Ambient precision eval                               | ☐      |     |
 
 Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1 and 4).
 
@@ -64,42 +71,25 @@ Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and
 
 The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinder for every later durable-write tool: it exercises the full add-a-tool checklist plus a new invocation path. (Ariadne already has ephemeral in-product writes — `send_message`, `react_to_message` — but no tool that creates durable state; that's the new territory, so give the write path its own review of access gating and abuse limits rather than assuming the react template covers it.) **Design decision:** follow-ups are NOT scheduled messages. `scheduled_messages` is user-authored by construction (`ScheduleParams.userId`, `features/scheduled-messages/service.ts:26`) and fires by creating a real USER message (`finalizeSendInTx` → `EventService.createMessage` with `AuthorTypes.USER`, `service.ts:518`); a persona must never author as the user, and a synthetic user message would pollute the timeline. Instead: a dedicated tracking table (INV-57) whose firing enqueues a `PERSONA_AGENT` job directly — the queue's `processAfter` is the reusable primitive, not the scheduled-messages table.
 
-### 1.1 `agent_follow_ups` table + service + firing worker
+### 1.1 `schedule_follow_up` tool + follow-up infra
 
-**Goal:** durable follow-up rows that fire a companion turn at the scheduled time. No tool yet — service-level only.
+**Goal:** Ariadne can create follow-ups from a turn — the tool and its entire substrate (table, service, firing worker) in one logical unit. After this PR, "remind me to revisit this tomorrow" produces a durable, cancellable row that fires a `PERSONA_AGENT` job at the scheduled time (the turn it fires is 1.2).
 
 **Shape:**
 
-- Migration (`/add-migration`): `agent_follow_ups` — `id` (`agfu_` ULID), `workspace_id`, `stream_id`, `persona_id`, `session_id` (creating session), `note` (TEXT — what Ariadne intends to do), `scheduled_for`, `status` TEXT (`pending|fired|cancelled|failed`), `queue_message_id`, timestamps. Partial index on `(stream_id) WHERE status = 'pending'` for the cap check.
-- New files in `features/agents/`: `follow-up-repository.ts`, `follow-up-service.ts`, `follow-up-worker.ts`. Mirror the scheduled-messages worker pattern: enqueue with `processAfter = scheduledFor`; on fire, CAS `pending → fired` (INV-20 — the worker and a concurrent cancel must not race), then `jobQueue.send(JobQueues.PERSONA_AGENT, …)` with a `trigger: { kind: 'follow_up', followUpId }` payload variant.
-- Cap enforced in service: max 3 pending per stream (constant in `agents/config.ts`), checked with the same insert-or-skip discipline as `insertRunningOrSkip`.
-- Cancel path: CAS `pending → cancelled`; the fired job re-checks status and no-ops if cancelled (queue delivery can't be revoked).
+- Migration (`/add-migration`): `agent_follow_ups` — `id` (`agfu_` ULID), `workspace_id`, `stream_id`, `persona_id`, `session_id` (creating session), `source_conversation_id` (nullable — the trigger message's primary conversation via the `conversation-highlight.ts` resolver; anchors the follow-up to a topic for later board-lens visibility), `note` (TEXT — what Ariadne intends to do), `scheduled_for`, `status` TEXT (`pending|fired|cancelled|failed`), `queue_message_id`, timestamps. Partial index on `(stream_id) WHERE status = 'pending'` for the cap check.
+- New files in `features/agents/`: `follow-up-{repository,service,worker}.ts`. Mirror the scheduled-messages worker pattern: enqueue with `processAfter = scheduledFor`; on fire, CAS `pending → fired` (INV-20 — the worker and a concurrent cancel must not race), then `jobQueue.send(JobQueues.PERSONA_AGENT, …)` with a `trigger: { kind: 'follow_up', followUpId }` payload variant. Cancel path: CAS `pending → cancelled`; the fired job re-checks status and no-ops if cancelled (queue delivery can't be revoked).
+- Pending cap enforced in service with insert-or-skip discipline (like `insertRunningOrSkip`). This step reads only the code default — `DEFAULT_MAX_PENDING_FOLLOW_UPS = 10` in `agents/config.ts` — but resolves it through a small `resolveFollowUpLimit()` seam so 1.4's workspace/stream overrides slot in without touching the check.
+- Tool per the `react_to_message` template end-to-end: `packages/types/src/constants.ts:384` add to `AGENT_TOOL_NAMES` + `AgentToolNames`; `tool-privacy.ts:45` categorize (`["messaging"]` — the `satisfies` clause won't compile until you do); `features/agents/tools/schedule-follow-up-tool.ts` (`defineAgentTool`, Zod input `{ note, scheduledFor }`, future-dated, ≤30 days out); deps in `tools/tool-deps.ts`; barrel export; wire in `companion/tool-set.ts` behind `isToolEnabled`; add to Ariadne's `enabledTools` in `built-in-agents.ts`.
+- `promptBlock` (the field on `AgentToolConfig`, `packages/agent-runtime/src/runtime/agent-tool.ts:49`): when to use it, that a pending cap exists (tool result carries the resolved limit + current count so the model self-regulates), and that the user sees and can cancel every follow-up.
 
-**Files:** new migration; `features/agents/follow-up-{repository,service,worker}.ts`; `agents/config.ts` (cap constant); worker registration alongside `persona-agent-worker.ts`.
+**Files:** new migration; `features/agents/follow-up-{repository,service,worker}.ts`; `agents/config.ts`; worker registration alongside `persona-agent-worker.ts`; `packages/types/src/{constants,tool-privacy}.ts` (+ privacy test); new tool file + test; `tool-deps.ts`; `tools/index.ts`; `companion/tool-set.ts`; `built-in-agents.ts`.
 
-**Tests:** repository CRUD + CAS races (two concurrent fires; fire-vs-cancel); service cap; worker no-ops on cancelled row.
+**Tests:** repository CAS races (two concurrent fires; fire-vs-cancel); service cap; worker no-ops on cancelled row; tool test (creates row, respects cap, rejects past dates); `tool-privacy.test.ts` update.
 
-**Done when:** a row inserted via service fires a `PERSONA_AGENT` job at `scheduled_for` (observable in test via stubbed queue), cancel wins races cleanly.
+**Done when:** in a companion stream, "remind me to revisit this tomorrow" produces a pending `agent_follow_ups` row that fires a `PERSONA_AGENT` job at `scheduled_for` (stubbed queue in tests; manual `/verify`), and cancel wins races cleanly.
 
-### 1.2 `schedule_follow_up` tool
-
-**Goal:** Ariadne can create follow-ups from a turn.
-
-**Shape:** follow the `react_to_message` template end-to-end:
-
-- `packages/types/src/constants.ts:384` add to `AGENT_TOOL_NAMES` + `AgentToolNames`; `tool-privacy.ts:45` categorize (`["messaging"]` — the `satisfies` clause won't compile until you do).
-- `features/agents/tools/schedule-follow-up-tool.ts`: `defineAgentTool` with Zod input `{ note, scheduledFor }` (ISO string; validate future-dated, ≤30 days out), deps typed in `tools/tool-deps.ts`, export via `tools/index.ts` barrel.
-- Wire in `companion/tool-set.ts` behind `isToolEnabled`; add to Ariadne's `enabledTools` in `built-in-agents.ts`.
-- `promptBlock` (the field on `AgentToolConfig`, `packages/agent-runtime/src/runtime/agent-tool.ts:49`): when to use it, the 3-pending cap, and that the user sees and can cancel every follow-up.
-- Tool result includes current pending count so the model self-regulates.
-
-**Files:** `packages/types/src/{constants,tool-privacy}.ts` (+ privacy test), new tool file + test, `tool-deps.ts`, `tools/index.ts`, `companion/tool-set.ts`, `built-in-agents.ts`.
-
-**Tests:** tool test (creates row, respects cap, rejects past dates); `tool-privacy.test.ts` update.
-
-**Done when:** in a companion stream, "remind me to revisit this tomorrow" produces a pending `agent_follow_ups` row (manual verify via `/verify` + unit tests).
-
-### 1.3 Follow-up turn invocation
+### 1.2 Follow-up turn invocation
 
 **Goal:** the fired job runs a real companion turn that knows _why_ it woke up.
 
@@ -116,7 +106,7 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 
 **Done when:** a fired follow-up posts a contextual message referencing the original conversation — or completes silently — with a normal trace.
 
-### 1.4 Follow-up visibility: timeline card + cancel
+### 1.3 Follow-up visibility: timeline card + cancel
 
 **Goal:** follow-ups are never invisible state (the Tag lesson: visible agent work is the trust surface).
 
@@ -130,6 +120,18 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 **Tests:** frontend component test (renders, cancel calls API, card reflects cancelled); backend test asserting event presence in the insert transaction (INV-23: presence, not counts).
 
 **Done when:** scheduling and cancelling are both visible in-timeline for every member; contiguity (INV-61) covered by the broadcast slot.
+
+### 1.4 Configurable follow-up limits (administrative)
+
+**Goal:** the pending cap becomes workspace-tunable (and per-stream when someone actually asks), instead of a hardcoded global.
+
+**Shape:** the idiomatic limits layering (see Adjacent systems): keep `DEFAULT_MAX_PENDING_FOLLOW_UPS` in `agents/config.ts` as the code default; add `maxPendingFollowUps` to `WorkspaceSettings` + `DEFAULT_WORKSPACE_SETTINGS` (`packages/types/src/workspace-settings.ts`) and the `flattenUpdates` allowlist in `features/workspace-settings/service.ts` — sparse override in `workspace_setting_overrides`, broadcast on change. `resolveFollowUpLimit()` from 1.1 resolves `workspace setting ?? code default`. Surface the field in the existing workspace settings UI. A per-stream column on `streams` (resolved `stream ?? workspace ?? default`) is deliberately deferred until a real need shows up (INV-36) — the resolver seam makes it a small follow-up.
+
+**Files:** `packages/types/src/workspace-settings.ts`, `features/workspace-settings/service.ts` (+ test), `agents/follow-up-service.ts` resolver, workspace settings UI section.
+
+**Tests:** resolution precedence (override set vs absent); settings round-trip incl. reset-to-default deletes the override row.
+
+**Done when:** a workspace admin can raise the follow-up cap from settings and the tool's self-reported limit reflects it.
 
 ---
 
@@ -189,7 +191,9 @@ Independent; interleave anytime.
 
 **Shape:** at session completion (third phase of `withCompanionSession`, `companion/session.ts`), enqueue a summary job (do NOT summarize inline — INV-41 keeps the completion txn short): haiku-4.5 condenses the session (trigger, what was researched, what was concluded) into ~2-3 sentences stored on `agent_sessions.episode_summary` (migration: nullable TEXT column — post-completion metadata of the session row itself, not workflow state, so a column not a tracking table). Read path: `buildAgentContext` includes the last N episode summaries for the stream (N from `companion/config.ts`) in a "Previous sessions" prompt section when they aren't already covered by the rolling summary; `workspace_research` can also query them (extend the researcher's stream-context source, not a new tool).
 
-**Files:** migration, `companion/session.ts` (enqueue), new small worker or fold into existing summary worker (`conversation-summary-service.ts` precedent), `companion/context.ts`, `companion/prompt/system-prompt.ts`, `companion/config.ts` (model + N).
+Not a duplicate of the two existing summaries: `conversations.topic_summary` names a clustered topic, and the rolling `agent_conversation_summaries` fold is per-(stream, persona) context-window management — neither captures "what Ariadne did and concluded in a session," which can span multiple conversations. Reuse the `conversation-summary-service.ts` worker pattern rather than adding a parallel summarizer.
+
+**Files:** migration, `companion/session.ts` (enqueue), fold into the existing summary worker (`conversation-summary-service.ts` precedent), `companion/context.ts`, `companion/prompt/system-prompt.ts`, `companion/config.ts` (model + N).
 
 **Tests:** summary written post-completion (stubbed AI); context assembly includes summaries; INV-19 telemetry on the summarizer call.
 
@@ -213,36 +217,36 @@ Independent; interleave anytime.
 
 Tag's channel memory / Claude Code's CLAUDE.md: a persistent, human-auditable, correctable working document per stream. Unlike the rolling summary (ephemeral, rebuilt per turn), the brief is durable, versioned, and user-editable. This most directly attacks re-explaining context.
 
-### 4.1 `stream_briefs` schema + endpoints
+### 4.1 `stream_briefs` storage + endpoints + prompt injection
 
-**Goal:** the storage and HTTP surface, human-editable first (agent writes come in 4.2).
+**Goal:** the brief exists and already shapes every companion turn — the first PR changes observable behavior, not just schema. Human-editable via API; agent writes come in 4.2, UI in 4.3.
 
 **Shape:**
 
 - Migration: `stream_briefs` — `id` (`sbrf_`), `workspace_id`, `stream_id` (unique per stream), `content` TEXT (markdown; hard cap ~4,000 chars enforced in service — it's a prompt insert, not a document store), `version` INT, `updated_by_kind` TEXT (`user|persona`), `updated_by_id`, timestamps. Revisions table `stream_brief_revisions` (`sbrv_`): brief id, version, content, author, created_at — the audit trail Tag's "admins can audit/edit/delete memory" converged on.
 - Repo + service in `features/streams/` (the brief is a property of the stream surface, not the agent) with optimistic-concurrency update (`WHERE version = $expected` — INV-20; reject on mismatch with 409).
 - Endpoints: `GET/PUT /api/workspaces/:wid/streams/:sid/brief` (Zod-validated, INV-55), access via `checkStreamAccess`; PUT requires membership.
+- Injection: `buildSystemPrompt` (`companion/prompt/system-prompt.ts:19`) gains a "Stream brief" section early in the layered order (stable content — good for prompt caching; keep temporal context last as today). Threads inherit the root stream's brief (same rule as companion mode).
 
-**Files:** migration, `features/streams/brief-{repository,service}.ts` (or fold into stream service if small — follow INV-27 composability), `routes.ts`, handler.
+**Files:** migration, `features/streams/brief-{repository,service}.ts` (or fold into stream service if small — follow INV-27 composability), `routes.ts`, handler, `companion/context.ts`, `companion/prompt/system-prompt.ts`.
 
-**Tests:** version-conflict rejection; access gating (non-member 403; thread inherits root access per INV-62); size cap.
+**Tests:** version-conflict rejection; access gating (non-member 403; thread inherits root access per INV-62); size cap; prompt assembly includes the brief; thread turn carries the root's brief.
 
-**Done when:** briefs round-trip over HTTP with versioned concurrency safety.
+**Done when:** a brief PUT via API observably changes the next companion turn's behavior in that stream.
 
-### 4.2 Brief prompt injection + `update_stream_brief` tool
+### 4.2 `update_stream_brief` tool + timeline event
 
-**Goal:** the brief shapes every turn, and Ariadne maintains it.
+**Goal:** Ariadne maintains the brief, visibly.
 
 **Shape:**
 
-- Injection: `buildSystemPrompt` (`companion/prompt/system-prompt.ts:19`) gains a "Stream brief" section early in the layered order (it's stable content — good for prompt caching; keep temporal context last as today). Threads inherit the root stream's brief (same rule as companion mode).
-- Tool per the 1.2 checklist: `update_stream_brief` takes `{ content, reason }` (full replacement — patches invite merge bugs; the 4k cap keeps replacement cheap), writes through the 4.1 service with the version the turn read at context time (a concurrent human edit → 409 → tool returns the conflict and the fresh brief so the model can retry once).
+- Tool per the 1.1 checklist: `update_stream_brief` takes `{ content, reason }` (full replacement — patches invite merge bugs; the 4k cap keeps replacement cheap), writes through the 4.1 service with the version the turn read at context time (a concurrent human edit → 409 → tool returns the conflict and the fresh brief so the model can retry once).
 - Broadcast event `stream:brief_updated` (constants + payload + append in the same txn as the write): who, version, `reason`, and a short diff summary — brief changes are never silent (INV-62 spirit).
 - promptBlock: maintain the brief when durable facts change (decisions, goals, preferences); never store secrets; prefer editing over appending.
 
-**Files:** types constants/domain, tool file + deps + barrel + `tool-set.ts` + `built-in-agents.ts`, `system-prompt.ts`, `brief-service.ts` event append.
+**Files:** types constants/domain, tool file + deps + barrel + `tool-set.ts` + `built-in-agents.ts`, `brief-service.ts` event append.
 
-**Tests:** tool happy path + version-conflict retry; prompt assembly includes brief; event presence in txn.
+**Tests:** tool happy path + version-conflict retry; event presence in txn.
 
 **Done when:** "actually, we decided X" leads to a brief update visible as a timeline row, and the next turn's prompt carries the new content.
 
@@ -272,38 +276,26 @@ Tag's channel memory / Claude Code's CLAUDE.md: a persistent, human-auditable, c
 
 ## Phase 5 — Local agent delegation (big rock 2)
 
-The strategic bet: Threa is the shared-memory/coordination plane; the user's local agent is the execution plane. Depends on nothing earlier (the tool checklist from 1.2 helps). Template throughout: the bot-invocations claim pattern (`public-api/handlers.ts`, routes `routes.ts:714-833`, state machine queued → claimed (token) → steps → completed/failed, tests `sealed-claim.test.ts` et al.).
+The strategic bet: Threa is the shared-memory/coordination plane; the user's local agent is the execution plane. Depends on nothing earlier (the tool checklist from 1.1 helps). Template throughout: the bot-invocations claim pattern (`public-api/handlers.ts`, routes `routes.ts:714-833`, state machine queued → claimed (token) → steps → completed/failed, tests `sealed-claim.test.ts` et al.).
 
-### 5.1 `delegated_tasks` table + service + INV-64
+### 5.1 `delegate_task` tool + delegation substrate + INV-64
 
-**Goal:** the tracking substrate, plus codifying the product invariant.
+**Goal:** Ariadne compiles a hand-off into a durable, lifecycle-tracked delegation — tool and substrate in one logical unit, plus codifying the product invariant. This is the half where _Threa_ has better context than the local agent: she does the workspace research; the local agent does the execution.
 
 **Shape:**
 
-- Migration: `delegated_tasks` — `id` (`dlg_`), `workspace_id`, `stream_id`, `session_id` (creating session, nullable — users can delegate manually later), `created_by_kind/id`, `title`, `brief` TEXT (the compiled hand-off prompt, markdown), `context_refs` JSONB (pointer URLs: `shared-message:`, `memo:`, `attachment:` — the syntax Ariadne already uses), `status` TEXT (`open|claimed|running|completed|failed|cancelled|expired`), `claim_token_hash`, `claim_expires_at`, `claimed_by_label` (free text: "Kris's MacBook / Claude Code"), `result_message_id`, timestamps. Status transitions CAS-guarded (INV-20).
-- Service in new `features/delegations/` (INV-51 colocation): create/cancel/claim/heartbeat/complete/fail + expiry sweep (orphan-cleanup precedent: `orphan-session-cleanup.ts`).
-- Broadcast events `delegation:created|claimed|completed|cancelled` (one payload type, status-carrying) appended in-txn.
+- Migration: `delegated_tasks` — `id` (`dlg_`), `workspace_id`, `stream_id`, `session_id` (creating session, nullable — users can delegate manually later), `source_conversation_id` (nullable — trigger message's primary conversation, same anchor as follow-ups; the later board-lens bridge: a status change bumps the owning conversation's `last_activity_at` so delegations ride the existing `conversation:*` sync path once board lenses land), `created_by_kind/id`, `title`, `brief` TEXT (the compiled hand-off prompt, markdown), `context_refs` JSONB (pointer URLs: `shared-message:`, `memo:`, `attachment:` — the syntax Ariadne already uses), `status` TEXT (`open|claimed|running|completed|failed|cancelled|expired`), `claim_token_hash`, `claim_expires_at`, `claimed_by_label` (free text: "Kris's MacBook / Claude Code"), `result_message_id`, timestamps. Status transitions CAS-guarded (INV-20).
+- Service in new `features/delegations/` (INV-51 colocation): create/cancel/claim/heartbeat/complete/fail + expiry sweep (orphan-cleanup precedent: `orphan-session-cleanup.ts`). Broadcast events `delegation:created|claimed|completed|cancelled` (one payload type, status-carrying) appended in-txn.
+- Tool per the 1.1 checklist: `delegate_task`, input `{ title, brief, contextRefs }`. promptBlock guidance: the brief must be self-contained (assume the executor has repo access but zero Threa context); include acceptance criteria; link sources as pointer URLs rather than inlining walls of text; suggest delegation when the user describes work that is long-horizon, code-heavy, or local-filesystem-shaped — do not attempt such work in-session (INV-64). Tool is available in the live companion turn only (not inside the researcher sub-loop).
 - CLAUDE.md: add INV-64 (sessions minutes-bounded; long-horizon work delegates) with pointer here.
 
-**Files:** migration, `features/delegations/{repository,service,index}.ts`, types constants/domain, CLAUDE.md.
+**Files:** migration, `features/delegations/{repository,service,index}.ts`, types constants/domain, tool file + test, `tool-deps.ts`, barrel, `tool-set.ts`, `built-in-agents.ts`, CLAUDE.md.
 
-**Tests:** state-machine transitions incl. claim-vs-cancel race, expiry sweep; event presence.
+**Tests:** state-machine transitions incl. claim-vs-cancel race, expiry sweep; event presence; tool creates row + event; tool refused when stream policy denies the category.
 
-**Done when:** delegations move through their lifecycle race-safely at the service level.
+**Done when:** "can you get someone to actually build this?" yields a lifecycle-tracked delegation row with a coherent, self-contained brief and a visible `delegation:created` event.
 
-### 5.2 `delegate_task` tool
-
-**Goal:** Ariadne compiles the hand-off. This is the half where _Threa_ has better context than the local agent — she does the workspace research; the local agent does the execution.
-
-**Shape:** tool per the 1.2 checklist. Input `{ title, brief, contextRefs }`. promptBlock guidance: the brief must be self-contained (assume the executor has repo access but zero Threa context); include acceptance criteria; link sources as pointer URLs rather than inlining walls of text; suggest delegation when the user describes work that is long-horizon, code-heavy, or local-filesystem-shaped — do not attempt such work in-session (INV-64). Tool is available in the live companion turn only (not inside the researcher sub-loop).
-
-**Files:** types, tool file + test, `tool-deps.ts`, barrel, `tool-set.ts`, `built-in-agents.ts`.
-
-**Tests:** tool creates the row + event; refuses when stream policy denies the category.
-
-**Done when:** "can you get someone to actually build this?" yields a delegation card with a coherent, self-contained brief.
-
-### 5.3 Delegation card UI
+### 5.2 Delegation card UI
 
 **Goal:** the multiplayer-visible surface: everyone sees the task, who claimed it, and its state.
 
@@ -315,7 +307,7 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 
 **Done when:** the copy-prompt path works end-to-end with zero local tooling installed — the day-one delegation story.
 
-### 5.4 Delegation public API (claim/status/complete)
+### 5.3 Delegation public API (claim/status/complete)
 
 **Goal:** local agents close the loop programmatically.
 
@@ -327,7 +319,7 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 
 **Done when:** a curl script can claim, report progress, and complete a delegation, with each transition visible on the card.
 
-### 5.5 claude-code-remote delegation support
+### 5.4 claude-code-remote delegation support
 
 **Goal:** one-command hand-off for Claude Code users.
 
@@ -339,7 +331,7 @@ The strategic bet: Threa is the shared-memory/coordination plane; the user's loc
 
 **Done when:** `threa-remote delegate <id>` (or equivalent) executes a delegation locally and the card shows claimed → completed with the result linked.
 
-### 5.6 `@threa/mcp` server
+### 5.5 `@threa/mcp` server
 
 **Goal:** every local agent — not just ours — can pull Threa context and close delegations. One integration on our side instead of integrating everywhere.
 
@@ -455,7 +447,7 @@ Depends on Phase 1 (follow-up plumbing) and Phase 4 (the brief gives ambient wor
 
 **Goal:** a cheap ambient pass that decides if anything is worth surfacing.
 
-**Shape:** piggyback the memo batch settlement signal (the accumulator/batch worker already fires per settled conversation — same debounce, zero new plumbing). For companion-on streams with ambient enabled: haiku-class classifier (INV-54 — model decision, no keyword heuristics) over the settled conversation + current brief, output one of `none | update_brief | surface_memo | flag_unanswered` with confidence. High floor (start 0.85). `update_brief` routes through the 4.2 tool path in a lightweight session; `surface_memo`/`flag_unanswered` produce 8.2 cards. All decisions traced + telemetry (INV-19).
+**Shape:** piggyback the exact settlement signal the memo pipeline uses: `StreamStateRepository.findStreamsReadyToProcess` (5-min cap / 30-s quiet, `memos/batch-worker.ts`) → `MEMO_BATCH_PROCESS`, with per-conversation granularity from the drained `PendingItem` rows. Note the coupling this inherits: the signal only fires for streams with `memory_mode` on, so ambient requires memory automation on — document that in the settings copy rather than building a second debounce. For companion-on streams with ambient enabled: haiku-class classifier (INV-54 — model decision, no keyword heuristics) over the settled conversation + current brief, output one of `none | update_brief | surface_memo | flag_unanswered` with confidence. High floor (start 0.85). `update_brief` routes through the 4.2 tool path in a lightweight session; `surface_memo`/`flag_unanswered` produce 8.2 cards. All decisions traced + telemetry (INV-19).
 
 **Files:** `features/agents/ambient/{classifier,config,handler}.ts` colocated (INV-51), hook into memo batch completion, `companion/config.ts`.
 
@@ -465,7 +457,7 @@ Depends on Phase 1 (follow-up plumbing) and Phase 4 (the brief gives ambient wor
 
 **Goal:** the surfacing itself, strictly rationed.
 
-**Shape:** budget: max 1 proactive card per stream per day (tracking table `ambient_budget` or a count query on the event table — prefer the query if cheap; INV-36 no speculative config). New broadcast event + dismissible timeline card (dismiss is per-card, persisted). Settings: ambient toggle in `companion-tab.tsx`, default on for scratchpads, off elsewhere. Card copy states why it surfaced ("this question has been open for a day") with the action inline (open memo / jump to message / see brief change).
+**Shape:** budget: max 1 proactive card per stream per day (tracking table `ambient_budget` or a count query on the event table — prefer the query if cheap; INV-36 no speculative config). New broadcast event + dismissible timeline card (dismiss is per-card, persisted). Settings: ambient toggle in `companion-tab.tsx`, default on for scratchpads, off elsewhere. Card copy states why it surfaced ("this question has been open for a day") with the action inline (open memo / jump to message / see brief change). If the board's lenses have shipped by then, `flag_unanswered` should additionally set the conversation's `status='stalled'` (it feeds the planned "Needs resolution" lens through the existing sync path) — the card and the board surface the same fact, no new data plane.
 
 **Files:** types events, timeline component, `companion-tab.tsx`, budget check in ambient handler.
 
@@ -483,10 +475,12 @@ Depends on Phase 1 (follow-up plumbing) and Phase 4 (the brief gives ambient wor
 
 ## Backlog (proposed in the exploration doc, not yet scheduled)
 
-Small items from `docs/ariadne-vs-claude-tag-exploration.md` deliberately left out of the 29 steps — listed here so they're deferred, not lost:
+Small items from `docs/ariadne-vs-claude-tag-exploration.md` deliberately left out of the scheduled steps — listed here so they're deferred, not lost:
 
 - **`create_thread` / `create_scratchpad` tools [S]** (exploration §4.2) — pure Threa writes, high collaborator feel. Deferred until the Phase 1 durable-write pattern has landed; they then follow the same checklist as a one-step addition (slot as 1.5 or alongside Phase 4).
-- **BYO-bots vs delegation positioning paragraph [docs/S]** (exploration §4.5.5) — one paragraph in `docs/features/public/` distinguishing persistent workspace bots from one-shot delegation to a personal agent. Write it when Phase 5 ships user-visible delegation (5.3), when the distinction becomes real.
+- **BYO-bots vs delegation positioning paragraph [docs/S]** (exploration §4.5.5) — one paragraph in `docs/features/public/` distinguishing persistent workspace bots from one-shot delegation to a personal agent. Write it when Phase 5 ships user-visible delegation (5.2), when the distinction becomes real.
+- **Board-lens integration for delegations/ambient flags** — when the board's structural/personal lenses land (they're planned, not built — `docs/board-view-design.md`), surface open delegations via `source_conversation_id` and stalled-conversation flags in the appropriate lenses. Deliberately not a step here: the lenses don't exist yet, and the anchor columns (1.1, 5.1) are the only forward investment needed.
+- **Per-stream follow-up limit column** — deferred from 1.4 until a real need (INV-36); the `resolveFollowUpLimit()` seam makes it small.
 
 ## Deliberately out of scope
 
