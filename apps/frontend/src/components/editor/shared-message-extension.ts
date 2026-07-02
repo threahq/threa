@@ -13,6 +13,14 @@ export interface SharedMessageAttrs {
   authorId: string
   /** The actor type of the source author, cached for the same reason */
   actorType: string
+  /**
+   * The conversation this message was shared from, set only when the share
+   * originated on a conversation surface (board card / conversation panel). When
+   * present the rendered pointer card's back-link reopens the source in that
+   * conversation's side panel instead of its home-stream permalink; in-stream
+   * shares leave it undefined and the card links to the stream permalink.
+   */
+  conversationId?: string
 }
 
 /**
@@ -55,6 +63,13 @@ export const SharedMessageExtension = Node.create({
         default: "user",
         parseHTML: (element) => element.getAttribute("data-actor-type"),
         renderHTML: (attrs) => ({ "data-actor-type": attrs.actorType }),
+      },
+      conversationId: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-conversation-id"),
+        // Omit the attribute entirely when there's no conversation origin so an
+        // in-stream share's HTML/markdown stays the legacy two-segment shape.
+        renderHTML: (attrs) => (attrs.conversationId ? { "data-conversation-id": attrs.conversationId } : {}),
       },
     }
   },

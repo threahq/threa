@@ -353,6 +353,41 @@ describe("@threa/prosemirror quote reply round-trip", () => {
     expect(parsed.content?.[1]?.type).toBe("paragraph")
   })
 
+  it("round-trips a conversation-origin sharedMessage node with the third segment", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "sharedMessage",
+          attrs: {
+            messageId: "msg_01ABC",
+            streamId: "stream_01XYZ",
+            authorName: "Ariadne",
+            conversationId: "conv_01DEF",
+            authorId: "",
+            actorType: "user",
+          },
+        },
+      ],
+    }
+
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("Shared a message from [Ariadne](shared-message:stream_01XYZ/msg_01ABC/conv_01DEF)")
+
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]).toEqual({
+      type: "sharedMessage",
+      attrs: {
+        messageId: "msg_01ABC",
+        streamId: "stream_01XYZ",
+        authorName: "Ariadne",
+        conversationId: "conv_01DEF",
+        authorId: "",
+        actorType: "user",
+      },
+    })
+  })
+
   it("does not match shared-message line when prefix or trailing text differs", () => {
     const onlyParagraph = parseMarkdown("Hi! [Ariadne](shared-message:stream_01XYZ/msg_01ABC)")
     expect(onlyParagraph.content?.[0]?.type).toBe("paragraph")

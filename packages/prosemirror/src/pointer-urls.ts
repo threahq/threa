@@ -7,8 +7,13 @@
  *     link inside a `quoteReply` block. `authorId`/`actorType` are
  *     optional for backward compat with messages serialized before
  *     denormalised author metadata was added.
- *   - `shared-message:streamId/messageId` — the inline pointer link a
- *     `sharedMessage` block serialises to. Two segments only.
+ *   - `shared-message:streamId/messageId[/conversationId]` — the inline
+ *     pointer link a `sharedMessage` block serialises to. The optional third
+ *     segment is the conversation the message was shared from; when present the
+ *     card's back-link reopens the source in that conversation's side panel
+ *     instead of its home-stream permalink. Omitted for in-stream shares (and
+ *     for pointers serialized before conversation-awareness landed), so a
+ *     two-segment link stays valid.
  *   - `attachment:attachmentId` — the inline reference an
  *     `attachmentReference` node serialises to (metadata rides on the
  *     link title; see `attachment-markdown.ts`).
@@ -62,17 +67,30 @@ export function parseQuoteHref(href: string): QuoteHref | null {
 export interface SharedMessageHref {
   streamId: string
   messageId: string
+  /**
+   * The conversation the message was shared from, when the share originated on
+   * a conversation surface (board card / conversation panel). Drives the card's
+   * conversation-panel back-link; absent for in-stream shares and legacy
+   * two-segment pointers.
+   */
+  conversationId?: string
 }
 
 export function buildSharedMessageHref(params: SharedMessageHref): string {
-  return `shared-message:${params.streamId}/${params.messageId}`
+  // Emit the legacy two-segment form when there's no conversation origin so
+  // older readers keep parsing it and the wire form stays stable for the common
+  // in-stream case; append the third segment only when it carries information.
+  if (!params.conversationId) {
+    return `shared-message:${params.streamId}/${params.messageId}`
+  }
+  return `shared-message:${params.streamId}/${params.messageId}/${params.conversationId}`
 }
 
 export function parseSharedMessageHref(href: string): SharedMessageHref | null {
   if (!href.startsWith("shared-message:")) return null
   const parts = href.slice("shared-message:".length).split("/")
   if (parts.length < 2) return null
-  return { streamId: parts[0], messageId: parts[1] }
+  return { streamId: parts[0], messageId: parts[1], conversationId: parts[2] || undefined }
 }
 
 export interface MemoHref {

@@ -61,10 +61,15 @@ function matchAnchorParagraph<T>(
  */
 function findSharedMessageInChildren(
   children: ReactNode
-): { streamId: string; messageId: string; authorName: string } | null {
+): { streamId: string; messageId: string; authorName: string; conversationId?: string } | null {
   const match = matchAnchorParagraph(children, SHARED_MESSAGE_PREFIX, parseSharedMessageHref)
   if (!match) return null
-  return { streamId: match.streamId, messageId: match.messageId, authorName: match.linkText }
+  return {
+    streamId: match.streamId,
+    messageId: match.messageId,
+    authorName: match.linkText,
+    conversationId: match.conversationId,
+  }
 }
 
 /**
@@ -307,6 +312,7 @@ export const markdownComponents: Components = {
           streamId={share.streamId}
           messageId={share.messageId}
           authorName={share.authorName}
+          conversationId={share.conversationId}
         />
       )
     }

@@ -99,6 +99,24 @@ describe("MarkdownContent — sharedMessage paragraph swap", () => {
     })
   })
 
+  it("links a two-segment (in-stream) pointer back to the source stream permalink", () => {
+    renderMarkdown("Shared a message from [Ariadne](shared-message:stream_src/msg_abc)")
+    const anchor = document.querySelector('[data-type="shared-message"]')?.closest("a")
+    expect(anchor?.getAttribute("href")).toBe("/w/ws_1/s/stream_src?m=msg_abc")
+  })
+
+  it("links a conversation-origin pointer back to the conversation panel (deep-linked to the message)", () => {
+    renderMarkdown("Shared a message from [Ariadne](shared-message:stream_src/msg_abc/conv_xyz)")
+    const anchor = document.querySelector('[data-type="shared-message"]')?.closest("a")
+    const href = anchor?.getAttribute("href") ?? ""
+    // Opens the board's conversation panel for conv_xyz rather than the stream
+    // permalink, still deep-linked to the shared message via `?m=`.
+    expect(href).toContain("/w/ws_1/board?")
+    expect(href).toContain("conv_xyz")
+    expect(href).toContain("m=msg_abc")
+    expect(href).not.toContain("/s/stream_src")
+  })
+
   it("leaves plain paragraphs without shared-message anchors untouched", () => {
     renderMarkdown("Just a regular paragraph")
     expect(screen.getByText("Just a regular paragraph").tagName).toBe("P")
