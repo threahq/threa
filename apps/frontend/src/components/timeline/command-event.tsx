@@ -3,6 +3,7 @@ import type { StreamEvent, CommandDispatchedPayload, CommandCompletedPayload, Co
 import { Loader2, CheckCircle, XCircle, ChevronRight } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useFormattedDate } from "@/hooks"
+import { stripMarkdownToInline } from "@/lib/markdown"
 
 interface CommandEventProps {
   /** All events for this command, grouped by commandId */
@@ -97,7 +98,7 @@ function TimelineEntry({ event, formatTime }: { event: StreamEvent; formatTime: 
           <span>
             Command dispatched:{" "}
             <code className="font-mono bg-muted text-primary font-bold px-1 rounded">/{p.name}</code>
-            {p.args && <span className="text-muted-foreground/70"> {p.args}</span>}
+            {p.args && <span className="text-muted-foreground/70"> {stripMarkdownToInline(p.args)}</span>}
           </span>
         </div>
       )
@@ -129,9 +130,12 @@ function TimelineEntry({ event, formatTime }: { event: StreamEvent; formatTime: 
   }
 }
 
+// Args are command markdown — a picked mention arrives as a pointer link
+// (`[@bot](bot:bot_x)`, INV-64) that must strip to `@bot` for display (INV-60).
 function truncateArgs(args: string, maxLength = 50): string {
-  if (args.length <= maxLength) return args
-  return args.slice(0, maxLength) + "..."
+  const inline = stripMarkdownToInline(args)
+  if (inline.length <= maxLength) return inline
+  return inline.slice(0, maxLength) + "..."
 }
 
 function formatResult(result: unknown): string {
