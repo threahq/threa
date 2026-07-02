@@ -7,6 +7,8 @@ import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@th
 import { ConversationPanel } from "./conversation-panel"
 import { ServicesProvider, SidebarProvider, PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { spyOnExport } from "@/test/spy"
+import * as editorModule from "@/components/editor"
 import * as boardStoreModule from "@/stores/board-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -203,5 +205,51 @@ describe("ConversationPanel", () => {
       },
     })
     expect(await screen.findByText("Couldn't open this conversation")).toBeTruthy()
+  })
+
+  it("lets the author edit their own row in place, swapping the body for the editor", async () => {
+    // The shared row hosts the timeline's MessageEditForm; stub the real
+    // tiptap editor to a textarea (name = ariaLabel) so we assert the wiring,
+    // not the editor internals.
+    spyOnExport(editorModule, "RichEditor").mockReturnValue((({
+      ariaLabel,
+      placeholder,
+    }: {
+      ariaLabel: string
+      placeholder?: string
+    }) => <textarea aria-label={ariaLabel} placeholder={placeholder} />) as unknown as typeof editorModule.RichEditor)
+    vi.spyOn(editorModule, "DocumentEditorModal").mockImplementation(
+      (() => null) as unknown as typeof editorModule.DocumentEditorModal
+    )
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Edit message"))
+
+    // The inline editor takes over the row; the rendered body is gone.
+    expect(screen.getByRole("textbox", { name: "Edit message" })).toBeTruthy()
+    expect(screen.queryByText("Opening message body.")).toBeNull()
+  })
+
+  it("hides Edit on a row authored by someone else", async () => {
+    const user = userEvent.setup()
+    const post = makePost()
+    post.openingMessage = makeMessage({ id: "msg_1", authorId: "usr_other" })
+    mountPanel({ cached: asCached(post) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+
+    await screen.findByRole("menu")
+    expect(screen.queryByText("Edit message")).toBeNull()
   })
 })
