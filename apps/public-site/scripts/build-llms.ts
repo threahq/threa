@@ -61,6 +61,14 @@ const PAGES: Page[] = [
     blurb: "Every endpoint with parameters, request/response shapes, scopes, and a curl example.",
   },
   {
+    route: "/developers/markdown",
+    html: "developers/markdown/index.html",
+    md: "developers/markdown.md",
+    title: "Markdown",
+    blurb:
+      "The message content format: standard markdown plus the user:/channel:/attachment:/memo: link schemes for mentions, channels, files, and memos.",
+  },
+  {
     route: "/developers/operations",
     html: "developers/operations/index.html",
     md: "developers/operations.md",
