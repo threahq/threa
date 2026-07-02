@@ -36,6 +36,7 @@ export function MessageContextBadge({ workspaceId, streamId }: MessageContextBad
     <div className="mt-2 flex flex-wrap gap-2">
       {refs.map((ref: StreamContextRef) => {
         const label = formatContextRefLabel({
+          kind: ref.kind,
           slug: ref.source.slug,
           displayName: ref.source.displayName,
           streamType: ref.source.type,
@@ -46,16 +47,18 @@ export function MessageContextBadge({ workspaceId, streamId }: MessageContextBad
         const href = buildContextRefSourceHref({
           workspaceId,
           sourceStreamId: ref.streamId,
+          conversationId: ref.conversationId,
           originMessageId: ref.originMessageId,
         })
+        const isConversation = ref.kind === "conversation"
         return (
           <AttachmentPill
-            key={`${ref.kind}|${ref.streamId}|${ref.fromMessageId ?? ""}|${ref.toMessageId ?? ""}`}
+            key={`${ref.kind}|${ref.streamId}|${ref.conversationId ?? ""}|${ref.fromMessageId ?? ""}|${ref.toMessageId ?? ""}`}
             icon={MessageSquareReply}
             label={label}
             labelMaxWidth="max-w-[220px]"
             href={href}
-            tooltip="Click to open the source thread"
+            tooltip={isConversation ? "Click to open the source conversation" : "Click to open the source thread"}
           />
         )
       })}

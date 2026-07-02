@@ -9,6 +9,7 @@ function makeRef(overrides: Partial<DraftContextRef> = {}): DraftContextRef {
   return {
     refKind: ContextRefKinds.THREAD,
     streamId: "stream_src",
+    conversationId: null,
     fromMessageId: null,
     toMessageId: null,
     originMessageId: null,

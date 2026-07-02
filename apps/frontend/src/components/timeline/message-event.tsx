@@ -1061,7 +1061,11 @@ function SentMessageEvent({
     // failure out of the unhandled-rejection log — the user already saw
     // the toast. INV-11: failing loud means the toast, not the console.
     () => {
-      void startDiscussWithAriadne({ sourceStreamId: streamId, sourceMessageId: payload.messageId }).catch(() => {
+      void startDiscussWithAriadne({
+        kind: "thread",
+        sourceStreamId: streamId,
+        sourceMessageId: payload.messageId,
+      }).catch(() => {
         /* toast already surfaced inside the hook */
       })
     },

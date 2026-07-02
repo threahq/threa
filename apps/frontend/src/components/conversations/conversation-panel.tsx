@@ -289,6 +289,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
             currentUserId={currentUserId}
             continuation={i > 0 && isContinuation(all[i - 1], message)}
             conversationId={conversation.id}
+            conversationRootStreamId={conversation.streamId}
             isHighlighted={message.id === highlightMessageId}
             surfaceClassName="bg-background"
           />

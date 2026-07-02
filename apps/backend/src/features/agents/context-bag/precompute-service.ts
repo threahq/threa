@@ -4,7 +4,7 @@ import type { AI, CostContext } from "@threa/agent-runtime"
 import type { ContextIntent, ContextRef, ContextRefKind } from "@threa/types"
 import { HttpError } from "../../../lib/errors"
 import { logger } from "../../../lib/logger"
-import { getIntentConfig, getResolver } from "./registry"
+import { assertRefAccess, canonicalRefKey, fetchRef, getIntentConfig } from "./registry"
 import { loadOrCreateSummary } from "./resolve"
 import type { ResolvedRef } from "./types"
 
@@ -74,9 +74,8 @@ export async function precomputeRefSummaries(
           code: "CONTEXT_INTENT_KIND_MISMATCH",
         })
       }
-      const resolver = getResolver(ref.kind)
-      await resolver.assertAccess(db, ref, userId, workspaceId)
-      const part = await resolver.fetch(db, ref, { intent })
+      await assertRefAccess(db, ref, userId, workspaceId)
+      const part = await fetchRef(db, ref, { intent })
       out.push({ ref, ...part })
     }
     return out
@@ -93,8 +92,7 @@ export async function precomputeRefSummaries(
   const costContext: CostContext = { workspaceId, userId, origin: "user" }
 
   for (const resolved of resolveds) {
-    const resolver = getResolver(resolved.ref.kind)
-    const refKey = resolver.canonicalKey(resolved.ref)
+    const refKey = canonicalRefKey(resolved.ref)
     const inlineChars = resolved.items.reduce((acc, m) => acc + m.contentMarkdown.length, 0)
     const needsSummary = inlineChars > config.inlineCharThreshold && resolved.items.length > 0
 

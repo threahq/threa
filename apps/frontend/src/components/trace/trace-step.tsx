@@ -273,7 +273,10 @@ interface RerunContextInfo {
  * timeline does, not less.
  */
 interface AttachedContextRefInfo {
+  /** Ref kind — older trace steps predate this field, so treat it as optional. */
+  kind?: string
   streamId: string
+  conversationId?: string | null
   fromMessageId: string | null
   toMessageId: string | null
   /** Cosmetic deep-link anchor; the focal message the discussion was started from. */
@@ -1146,7 +1149,7 @@ function AttachedContextSection({
       <div className="space-y-2">
         {attachedContext.refs.map((contextRef) => (
           <AttachedContextRef
-            key={`${contextRef.streamId}|${contextRef.fromMessageId ?? ""}|${contextRef.toMessageId ?? ""}`}
+            key={`${contextRef.streamId}|${contextRef.conversationId ?? ""}|${contextRef.fromMessageId ?? ""}|${contextRef.toMessageId ?? ""}`}
             contextRef={contextRef}
             workspaceId={workspaceId}
           />
@@ -1158,6 +1161,7 @@ function AttachedContextSection({
 
 function AttachedContextRef({ contextRef, workspaceId }: { contextRef: AttachedContextRefInfo; workspaceId: string }) {
   const label = formatContextRefLabel({
+    kind: contextRef.kind,
     slug: contextRef.source.slug,
     displayName: contextRef.source.displayName,
     streamType: contextRef.source.type,
@@ -1168,8 +1172,10 @@ function AttachedContextRef({ contextRef, workspaceId }: { contextRef: AttachedC
   const href = buildContextRefSourceHref({
     workspaceId,
     sourceStreamId: contextRef.streamId,
+    conversationId: contextRef.conversationId,
     originMessageId: contextRef.originMessageId,
   })
+  const isConversation = contextRef.kind === "conversation"
   const messageCount = contextRef.messages.length
 
   return (
@@ -1180,7 +1186,7 @@ function AttachedContextRef({ contextRef, workspaceId }: { contextRef: AttachedC
           label={label}
           labelMaxWidth="max-w-[260px]"
           href={href}
-          tooltip="Click to open the source thread"
+          tooltip={isConversation ? "Click to open the source conversation" : "Click to open the source thread"}
         />
       </div>
       {messageCount > 0 && (

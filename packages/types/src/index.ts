@@ -829,6 +829,8 @@ export {
   type ContextIntent,
   type ContextRefKind,
   type ContextRef,
+  type ThreadContextRef,
+  type ConversationContextRef,
   type ContextBag,
 } from "./context-bag"
 

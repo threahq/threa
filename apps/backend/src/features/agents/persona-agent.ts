@@ -353,7 +353,9 @@ export class PersonaAgent {
           const attachedContext = resolvedBag
             ? {
                 refs: resolvedBag.refs.map((ref) => ({
+                  kind: ref.kind,
                   streamId: ref.streamId,
+                  conversationId: ref.conversationId,
                   fromMessageId: ref.fromMessageId,
                   toMessageId: ref.toMessageId,
                   originMessageId: ref.originMessageId,

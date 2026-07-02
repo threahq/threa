@@ -19,7 +19,7 @@ import type {
   KnowledgeType,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
-import type { ContextBag, ContextIntent } from "./context-bag"
+import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
 import type { UserId } from "./ids"
 import type { JSONContent } from "./prosemirror"
 import type {
@@ -133,8 +133,14 @@ export interface StreamContextRefSource {
 }
 
 export interface StreamContextRef {
-  kind: "thread"
+  kind: ContextRefKind
   streamId: string
+  /**
+   * The conversation this ref points at, for `kind: "conversation"`. Null for
+   * thread refs. Carried so the composer chip can key/label a conversation ref
+   * distinctly from a thread ref on the same root stream.
+   */
+  conversationId: string | null
   fromMessageId: string | null
   toMessageId: string | null
   /** Cosmetic deep-link anchor; resolver ignores it. See `ContextRef.originMessageId`. */

@@ -515,7 +515,7 @@ function MessageInputComponent({
         // error here — that would render the same failure twice.
         if (clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) {
           try {
-            await startDiscussWithAriadne({ sourceStreamId: streamId })
+            await startDiscussWithAriadne({ kind: "thread", sourceStreamId: streamId })
           } catch {
             /* hook already toasted; composer stays clean */
           } finally {

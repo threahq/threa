@@ -38,10 +38,11 @@ function refKey(r: {
   refKind?: string
   kind?: string
   streamId: string
+  conversationId?: string | null
   fromMessageId?: string | null
   toMessageId?: string | null
 }): string {
-  return `${r.refKind ?? r.kind}|${r.streamId}|${r.fromMessageId ?? ""}|${r.toMessageId ?? ""}`
+  return `${r.refKind ?? r.kind}|${r.streamId}|${r.conversationId ?? ""}|${r.fromMessageId ?? ""}|${r.toMessageId ?? ""}`
 }
 
 /**
@@ -70,6 +71,7 @@ export function ContextRefStrip({ workspaceId, streamId, draftRefs }: ContextRef
       {draftRefs.map((ref) => {
         const server = serverByKey.get(refKey(ref))
         const label = formatContextRefLabel({
+          kind: ref.refKind,
           slug: server?.source.slug ?? null,
           displayName: server?.source.displayName ?? null,
           streamType: server?.source.type ?? null,
@@ -92,6 +94,7 @@ export function ContextRefStrip({ workspaceId, streamId, draftRefs }: ContextRef
                 : buildContextRefSourceHref({
                     workspaceId,
                     sourceStreamId: ref.streamId,
+                    conversationId: ref.conversationId,
                     originMessageId: ref.originMessageId,
                   })
             }

@@ -20,6 +20,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
+import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const WORKSPACE_ID = "ws_1"
@@ -306,6 +307,30 @@ describe("ConversationPanel", () => {
     // Confirm dialog, then delete routes to the message service.
     await user.click(await screen.findByRole("button", { name: "Delete" }))
     await waitFor(() => expect(deleteMessage).toHaveBeenCalledWith(WORKSPACE_ID, "msg_1"))
+  })
+
+  it("offers Discuss with Ariadne seeded with the whole conversation's span, not one stream", async () => {
+    // The conversation surface must start the discussion with a conversation-
+    // scoped target (root + its threads), never a single-stream thread ref —
+    // that's the whole point of #2. The hook itself is unit-tested; here we pin
+    // the wiring: the row passes the conversation id + its root + the focal.
+    const startDiscuss = vi.fn().mockResolvedValue(undefined)
+    vi.spyOn(discussModule, "useDiscussWithAriadne").mockReturnValue(startDiscuss)
+
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Discuss with Ariadne"))
+
+    expect(startDiscuss).toHaveBeenCalledWith({
+      kind: "conversation",
+      conversationId: CONVERSATION_ID,
+      rootStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+    })
   })
 
   it("shows an (edited) indicator and a See revisions action on an edited row", async () => {

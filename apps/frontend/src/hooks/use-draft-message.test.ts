@@ -214,6 +214,7 @@ describe("useDraftMessage", () => {
         {
           refKind: ContextRefKinds.THREAD,
           streamId: "stream_src",
+          conversationId: null,
           fromMessageId: null,
           toMessageId: null,
           originMessageId: null,
@@ -244,6 +245,7 @@ describe("useDraftMessage", () => {
         {
           refKind: ContextRefKinds.THREAD,
           streamId: "stream_src",
+          conversationId: null,
           fromMessageId: null,
           toMessageId: null,
           originMessageId: null,

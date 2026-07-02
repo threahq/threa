@@ -1,12 +1,14 @@
 import type { Querier } from "../../../db"
-import { ContextIntents, ContextRefKinds, type ContextIntent } from "@threa/types"
+import { ContextIntents, ContextRefKinds, type ContextIntent, type ContextRefKind } from "@threa/types"
 import { HttpError } from "../../../lib/errors"
 import { StreamRepository, checkStreamAccess } from "../../streams"
 import { MessageRepository } from "../../messaging"
+import { ConversationRepository } from "../../conversations"
 import { logger } from "../../../lib/logger"
 import { ContextBagRepository } from "./repository"
-import { getResolver } from "./registry"
+import { assertRefAccess } from "./registry"
 import { DISCUSS_WINDOW_TOTAL } from "./resolvers/thread-resolver"
+import { CONVERSATION_WINDOW_TOTAL } from "./resolvers/conversation-resolver"
 
 export interface ContextRefSource {
   streamId: string
@@ -17,8 +19,10 @@ export interface ContextRefSource {
 }
 
 export interface EnrichedContextRef {
-  kind: typeof ContextRefKinds.THREAD
+  kind: ContextRefKind
   streamId: string
+  /** The conversation for `kind: "conversation"` refs; null for thread refs. */
+  conversationId: string | null
   fromMessageId: string | null
   toMessageId: string | null
   /** Cosmetic deep-link anchor; resolver ignores it. */
@@ -97,9 +101,8 @@ export async function fetchStreamBag(
   const visibleRefs = (
     await Promise.all(
       bag.refs.map(async (ref) => {
-        const resolver = getResolver(ref.kind)
         try {
-          await resolver.assertAccess(db, ref, userId, workspaceId)
+          await assertRefAccess(db, ref, userId, workspaceId)
           return ref
         } catch (err) {
           if (err instanceof HttpError && err.status === 403) {
@@ -125,11 +128,21 @@ export async function fetchStreamBag(
   ])
   const streamById = new Map(sourceStreams.map((s) => [s.id, s]))
 
+  // A conversation ref's displayed count is its own member count (not the root
+  // stream's total), so batch-load the referenced conversations up front.
+  const conversationIds = [
+    ...new Set(visibleRefs.flatMap((r) => (r.kind === ContextRefKinds.CONVERSATION ? [r.conversationId] : []))),
+  ]
+  const conversations = conversationIds.length
+    ? await ConversationRepository.findByIds(db, workspaceId, conversationIds)
+    : []
+  const conversationById = new Map(conversations.map((c) => [c.id, c]))
+
   // For DISCUSS_THREAD, the resolver only sends ~DISCUSS_WINDOW_TOTAL messages
-  // to the model regardless of how big the source stream is. Surfacing the
-  // raw stream total in the context pill ("487 messages in #intro") is
-  // misleading because the AI never sees more than the window — clamp the
-  // displayed count to what's actually shared so the chip matches reality.
+  // to the model regardless of how big the source is. Surfacing the raw total
+  // in the context pill ("487 messages in #intro") is misleading because the AI
+  // never sees more than the window — clamp the displayed count to what's
+  // actually shared so the chip matches reality.
   const isWindowedIntent = bag.intent === ContextIntents.DISCUSS_THREAD
 
   const enriched: EnrichedContextRef[] = []
@@ -137,14 +150,23 @@ export async function fetchStreamBag(
     const sourceStream = streamById.get(ref.streamId)
     if (!sourceStream) continue
 
-    const totalCount = itemCounts.get(ref.streamId) ?? 0
-    const itemCount = isWindowedIntent ? Math.min(totalCount, DISCUSS_WINDOW_TOTAL) : totalCount
+    let itemCount: number
+    let conversationId: string | null = null
+    if (ref.kind === ContextRefKinds.CONVERSATION) {
+      conversationId = ref.conversationId
+      const memberCount = conversationById.get(ref.conversationId)?.messageIds.length ?? 0
+      itemCount = isWindowedIntent ? Math.min(memberCount, CONVERSATION_WINDOW_TOTAL) : memberCount
+    } else {
+      const totalCount = itemCounts.get(ref.streamId) ?? 0
+      itemCount = isWindowedIntent ? Math.min(totalCount, DISCUSS_WINDOW_TOTAL) : totalCount
+    }
 
     enriched.push({
-      kind: ContextRefKinds.THREAD,
+      kind: ref.kind,
       streamId: ref.streamId,
-      fromMessageId: ref.fromMessageId ?? null,
-      toMessageId: ref.toMessageId ?? null,
+      conversationId,
+      fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
+      toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,
       originMessageId: ref.originMessageId ?? null,
       source: {
         streamId: sourceStream.id,

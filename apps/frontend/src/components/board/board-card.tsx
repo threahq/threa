@@ -121,6 +121,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
       currentUserId={currentUserId}
       continuation={continuation}
       conversationId={conversation.id}
+      conversationRootStreamId={conversation.streamId}
       surfaceClassName="bg-card"
     />
   )

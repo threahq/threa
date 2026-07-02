@@ -185,6 +185,7 @@ describe("createContextBagHandlers.getStreamBag", () => {
         {
           kind: ContextRefKinds.THREAD,
           streamId: "stream_src",
+          conversationId: null,
           fromMessageId: null,
           toMessageId: null,
           originMessageId: null,
