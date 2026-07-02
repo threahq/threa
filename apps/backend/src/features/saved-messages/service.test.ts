@@ -227,6 +227,40 @@ describe("SavedMessagesService.save", () => {
     expect(capturedConversationId).toBe("conv_1")
   })
 
+  it("persists a thread-anchored conversation sharing the message's effective root", async () => {
+    const service = setupService()
+    // Message lives in a thread; its access root is the top-level channel.
+    spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage({ streamId: "thread_1" }))
+    const streamsById: Record<string, Stream> = {
+      thread_1: fakeStream({ id: "thread_1", rootStreamId: "root_1", parentStreamId: "root_1" }),
+      root_1: fakeStream({ id: "root_1" }),
+    }
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => streamsById[id] ?? null)
+    // The conversation was minted inside the thread, so its streamId is the
+    // thread id — a raw-id compare would wrongly drop it; effective roots match.
+    spyOn(ConversationRepository, "findByIds").mockResolvedValue([{ id: "conv_1", streamId: "thread_1" } as any])
+    let capturedConversationId: string | null = "unset"
+    spyOn(SavedMessagesRepository, "upsert").mockImplementation(async (_db: any, params: any) => {
+      capturedConversationId = params.conversationId
+      return {
+        saved: fakeSaved({ conversationId: params.conversationId }),
+        inserted: true,
+        previousReminderQueueMessageId: null,
+      }
+    })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.save({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      messageId: MESSAGE_ID,
+      conversationId: "conv_1",
+      remindAt: null,
+    })
+
+    expect(capturedConversationId).toBe("conv_1")
+  })
+
   it("drops a conversation origin whose root does not match the message's access root", async () => {
     const service = setupService()
     spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage())

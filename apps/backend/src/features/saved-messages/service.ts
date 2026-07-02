@@ -427,10 +427,17 @@ async function enqueueReminder(
 
 /**
  * Resolve the client-supplied conversation origin to a value safe to persist.
- * Returns the id only when it names a workspace conversation whose root stream
- * is the message's access root; otherwise null. Never throws — a stale or
+ * Returns the id only when it names a workspace conversation sharing the
+ * message's effective root; otherwise null. Never throws — a stale or
  * mismatched hint must not block the save, it just falls back to the stream
  * deep-link.
+ *
+ * A conversation's `streamId` can itself be a thread — it's minted in the
+ * message's own stream (`conversation-assigner.mintConversationForMessage`),
+ * which may be a thread — so the guard compares EFFECTIVE roots, not raw ids
+ * (INV-62), mirroring the assigner's own `effectiveRootId` equality check.
+ * `accessStreamId` is already the message's effective root
+ * (`stream.rootStreamId ?? stream.id`); resolve the conversation's the same way.
  */
 async function resolveConversationOrigin(
   client: import("pg").PoolClient,
@@ -438,7 +445,10 @@ async function resolveConversationOrigin(
 ): Promise<string | null> {
   if (!params.conversationId) return null
   const [conversation] = await ConversationRepository.findByIds(client, params.workspaceId, [params.conversationId])
-  if (!conversation || conversation.streamId !== params.accessStreamId) return null
+  if (!conversation) return null
+  const conversationStream = await StreamRepository.findById(client, conversation.streamId)
+  const conversationRoot = conversationStream?.rootStreamId ?? conversation.streamId
+  if (conversationRoot !== params.accessStreamId) return null
   return conversation.id
 }
 
