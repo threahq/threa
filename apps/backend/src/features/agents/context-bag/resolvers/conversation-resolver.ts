@@ -71,11 +71,22 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
       })
     }
 
+    // `message_ids` can grow unbounded on a long-lived conversation, but only
+    // CONVERSATION_WINDOW_TOTAL are ever rendered. Pre-slice by id BEFORE the DB
+    // fetch so we don't pull (and discard) the whole history on every resolve:
+    // prefixed ULID ids sort lexicographically by creation time (shared prefix),
+    // so this is ~the chronological window. The 2x slack absorbs soft-deleted
+    // rows that drop out after the fetch; the authoritative createdAt sort +
+    // re-window below still fix exact order and size.
+    const orderedIds = [...conversation.messageIds].sort()
+    const focalIdIdx = ref.originMessageId ? orderedIds.indexOf(ref.originMessageId) : -1
+    const candidateIds = windowAround(orderedIds, focalIdIdx, CONVERSATION_WINDOW_TOTAL * 2)
+
     // Member messages can span the root + its threads. Fetch them workspace-
     // scoped (derive the workspace from the loaded row — `fetch` has no
     // workspaceId), drop soft-deleted rows, and order by wall-clock time since
     // per-stream `sequence` is not comparable across streams.
-    const byId = await MessageRepository.findByIdsInWorkspace(db, conversation.workspaceId, conversation.messageIds)
+    const byId = await MessageRepository.findByIdsInWorkspace(db, conversation.workspaceId, candidateIds)
     const ordered = [...byId.values()]
       .filter((m) => m.deletedAt === null)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
@@ -136,6 +147,10 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
       fingerprint,
       tailMessageId: tail?.messageId ?? null,
       focalMessageId,
+      // Enrich the chip from the conversation's OWN root, never the client-
+      // supplied `ref.streamId` (which access-checks nothing) — otherwise an
+      // arbitrary/cross-workspace stream's metadata would leak (INV-8).
+      sourceStreamId: conversation.streamId,
     }
   },
 }

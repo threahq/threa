@@ -79,8 +79,9 @@ export function ContextRefStrip({ workspaceId, streamId, draftRefs }: ContextRef
           fromMessageId: ref.fromMessageId,
           toMessageId: ref.toMessageId,
         })
-        const tooltip =
-          ref.errorMessage ?? (ref.status === "pending" ? "Preparing context…" : "Click to open the source thread")
+        const openHint =
+          ref.refKind === "conversation" ? "Click to open the source conversation" : "Click to open the source thread"
+        const tooltip = ref.errorMessage ?? (ref.status === "pending" ? "Preparing context…" : openHint)
         return (
           <AttachmentPill
             key={refKey(ref)}

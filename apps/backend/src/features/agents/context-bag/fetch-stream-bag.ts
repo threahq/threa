@@ -118,18 +118,10 @@ export async function fetchStreamBag(
     )
   ).filter((r): r is (typeof bag.refs)[number] => r !== null)
 
-  // Batch the source-stream lookups + per-stream message counts. The v1 max is
-  // 10 refs but the old per-ref loop hit 2N+1 round-trips; one query per
-  // dimension is the right ceiling regardless of N. INV-56.
-  const refStreamIds = [...new Set(visibleRefs.map((r) => r.streamId))]
-  const [sourceStreams, itemCounts] = await Promise.all([
-    StreamRepository.findByIds(db, refStreamIds),
-    MessageRepository.countByStreams(db, refStreamIds),
-  ])
-  const streamById = new Map(sourceStreams.map((s) => [s.id, s]))
-
-  // A conversation ref's displayed count is its own member count (not the root
-  // stream's total), so batch-load the referenced conversations up front.
+  // Load referenced conversations up front. A conversation ref's trusted source
+  // stream is the conversation's OWN root, never the client-supplied
+  // `ref.streamId` (which access-checks nothing for a conversation ref) — and a
+  // conversation ref's displayed count is its member count, not the root total.
   const conversationIds = [
     ...new Set(visibleRefs.flatMap((r) => (r.kind === ContextRefKinds.CONVERSATION ? [r.conversationId] : []))),
   ]
@@ -137,6 +129,26 @@ export async function fetchStreamBag(
     ? await ConversationRepository.findByIds(db, workspaceId, conversationIds)
     : []
   const conversationById = new Map(conversations.map((c) => [c.id, c]))
+
+  // The trusted stream to enrich a ref's chip from: the conversation's own root
+  // for a conversation ref, the (access-checked) source stream for a thread ref.
+  // Feeding the raw `ref.streamId` of a conversation ref into the
+  // workspace-unscoped `StreamRepository.findByIds` would leak another
+  // workspace's stream metadata (INV-8), since it's never access-checked.
+  const effectiveStreamId = (ref: (typeof visibleRefs)[number]): string | null =>
+    ref.kind === ContextRefKinds.CONVERSATION
+      ? (conversationById.get(ref.conversationId)?.streamId ?? null)
+      : ref.streamId
+
+  // Batch the source-stream lookups + per-stream message counts. The v1 max is
+  // 10 refs but the old per-ref loop hit 2N+1 round-trips; one query per
+  // dimension is the right ceiling regardless of N. INV-56.
+  const refStreamIds = [...new Set(visibleRefs.map(effectiveStreamId).filter((id): id is string => id !== null))]
+  const [sourceStreams, itemCounts] = await Promise.all([
+    StreamRepository.findByIds(db, refStreamIds),
+    MessageRepository.countByStreams(db, refStreamIds),
+  ])
+  const streamById = new Map(sourceStreams.map((s) => [s.id, s]))
 
   // For DISCUSS_THREAD, the resolver only sends ~DISCUSS_WINDOW_TOTAL messages
   // to the model regardless of how big the source is. Surfacing the raw total
@@ -147,7 +159,9 @@ export async function fetchStreamBag(
 
   const enriched: EnrichedContextRef[] = []
   for (const ref of visibleRefs) {
-    const sourceStream = streamById.get(ref.streamId)
+    const srcId = effectiveStreamId(ref)
+    if (!srcId) continue
+    const sourceStream = streamById.get(srcId)
     if (!sourceStream) continue
 
     let itemCount: number
@@ -157,13 +171,14 @@ export async function fetchStreamBag(
       const memberCount = conversationById.get(ref.conversationId)?.messageIds.length ?? 0
       itemCount = isWindowedIntent ? Math.min(memberCount, CONVERSATION_WINDOW_TOTAL) : memberCount
     } else {
-      const totalCount = itemCounts.get(ref.streamId) ?? 0
+      const totalCount = itemCounts.get(srcId) ?? 0
       itemCount = isWindowedIntent ? Math.min(totalCount, DISCUSS_WINDOW_TOTAL) : totalCount
     }
 
     enriched.push({
       kind: ref.kind,
-      streamId: ref.streamId,
+      // The trusted source stream, not the client `ref.streamId` (INV-8).
+      streamId: sourceStream.id,
       conversationId,
       fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
       toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,

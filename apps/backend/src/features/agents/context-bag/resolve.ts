@@ -129,7 +129,11 @@ export async function resolveBagForStream(
     // Mirrors `fetchStreamBag` so the agent-session trace renders the same
     // label as the inline message badge — INV-35: don't fork the formatting
     // logic, share the data shape via `formatContextRefLabel` on the FE.
-    const refStreamIds = [...new Set(resolveds.map((r) => r.ref.streamId))]
+    // Enrich from each resolver's authoritative `sourceStreamId`, never the
+    // client-supplied `ref.streamId` — `StreamRepository.findByIds` is not
+    // workspace-scoped, so a conversation ref's unvalidated `ref.streamId`
+    // would leak another workspace's stream metadata into the trace (INV-8).
+    const refStreamIds = [...new Set(resolveds.map((r) => r.sourceStreamId))]
     const [sourceStreams, itemCounts] = refStreamIds.length
       ? await Promise.all([
           StreamRepository.findByIds(db, refStreamIds),
@@ -199,12 +203,12 @@ export async function resolveBagForStream(
     nextItems.push(...resolved.inputs)
     if (resolved.tailMessageId) nextTail = resolved.tailMessageId
 
-    const sourceStream = streamById.get(resolved.ref.streamId)
-    const totalCount = itemCounts.get(resolved.ref.streamId) ?? 0
+    const sourceStream = streamById.get(resolved.sourceStreamId)
+    const totalCount = itemCounts.get(resolved.sourceStreamId) ?? 0
     const ref = resolved.ref
     groupedRefs.push({
       kind: ref.kind,
-      streamId: ref.streamId,
+      streamId: resolved.sourceStreamId,
       conversationId: ref.kind === ContextRefKinds.CONVERSATION ? ref.conversationId : null,
       fromMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.fromMessageId ?? null) : null,
       toMessageId: ref.kind === ContextRefKinds.THREAD ? (ref.toMessageId ?? null) : null,

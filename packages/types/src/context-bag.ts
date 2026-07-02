@@ -53,9 +53,11 @@ export type ThreadContextRef = {
  * member messages across streams, so Ariadne sees the topic and nothing else
  * from the surrounding channel.
  *
- * `streamId` is the conversation's root stream, carried for access display and
- * source enrichment. The resolver re-derives the authoritative root from the
- * conversation record, so a stale/wrong `streamId` here can never widen access.
+ * `streamId` is the conversation's root stream as the client believes it — a
+ * display hint only (chip identity / optimistic draft root). The server never
+ * trusts it: access AND source-stream enrichment both re-derive the
+ * authoritative root from the conversation record, so a stale/wrong value here
+ * can neither widen access nor leak another stream's metadata (INV-8).
  */
 export type ConversationContextRef = {
   kind: typeof ContextRefKinds.CONVERSATION
