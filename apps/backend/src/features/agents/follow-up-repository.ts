@@ -74,12 +74,19 @@ function mapRow(row: AgentFollowUpRow): AgentFollowUp {
 
 export const AgentFollowUpRepository = {
   /**
+   * Take a transaction-scoped advisory lock keyed on (workspace, stream) so the
+   * count-guarded insert below runs serially per stream. The caller holds this
+   * for the whole create transaction; it releases on commit/rollback.
+   */
+  async acquireStreamCapLock(db: Querier, workspaceId: string, streamId: string): Promise<void> {
+    await db.query(sql`SELECT pg_advisory_xact_lock(hashtext(${workspaceId}), hashtext(${streamId}))`)
+  },
+
+  /**
    * Insert a pending follow-up only while the stream is below its pending cap.
-   * The `WHERE (SELECT count …) < limit` guard makes the cap a single
-   * statement rather than check-then-act (INV-20). Concurrent creates for the
-   * same stream can't actually race — one persona session runs per stream at a
-   * time and the tool executes inside that single session — but the guarded
-   * insert keeps the invariant honest regardless.
+   * The `WHERE (SELECT count …) < limit` guard keeps the cap a single statement
+   * (INV-20), and `acquireStreamCapLock` serializes concurrent creates for the
+   * stream so the count is exact rather than a lost-update race.
    *
    * Returns the inserted row, or `null` when the cap is already met (no row
    * written).
@@ -129,15 +136,6 @@ export const AgentFollowUpRepository = {
         updated_at = NOW()
       WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
-  },
-
-  /** Read a row scoped to (workspace, id) per INV-8. */
-  async findByIdScoped(db: Querier, workspaceId: string, id: string): Promise<AgentFollowUp | null> {
-    const result = await db.query<AgentFollowUpRow>(sql`
-      SELECT ${sql.raw(COLUMNS)} FROM agent_follow_ups
-      WHERE id = ${id} AND workspace_id = ${workspaceId}
-    `)
-    return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
   /**

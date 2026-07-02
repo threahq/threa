@@ -27,12 +27,11 @@ const HORIZON_MS = MAX_FOLLOW_UP_HORIZON_DAYS * 24 * 60 * 60 * 1000
 
 const PROMPT_BLOCK = `## Scheduling follow-ups
 
-Use \`schedule_follow_up\` when something genuinely needs revisiting later — "check tomorrow whether the deploy landed", "revisit this decision next week" — instead of trying to do long-horizon work in the current turn. It creates a durable, visible reminder that wakes you up at the chosen time to run a fresh turn in this stream.
+Use \`schedule_follow_up\` when something genuinely needs revisiting later — "check tomorrow whether the deploy landed", "revisit this decision next week" — instead of trying to do long-horizon work in the current turn. It creates a durable reminder that wakes you up at the chosen time to take another look at this stream.
 
 - \`note\` is written to your future self and is the only context that survives, so make it self-contained.
 - \`scheduledFor\` must be in the future and within ${MAX_FOLLOW_UP_HORIZON_DAYS} days.
-- There is a cap on how many follow-ups a stream can have pending at once; the tool result reports the current count and the limit, so don't stack up near-duplicates. Prefer one good follow-up over several.
-- Every follow-up is visible to the people in this stream and can be cancelled by them — never use it to hide work.`
+- There is a cap on how many follow-ups a stream can have pending at once; the tool result reports the current count and the limit, so don't stack up near-duplicates. Prefer one good follow-up over several.`
 
 /**
  * Schedule a follow-up: a durable, cancellable reminder that wakes the running
@@ -48,9 +47,9 @@ export function createScheduleFollowUpTool(deps: FollowUpToolDeps) {
   return defineAgentTool({
     name: AgentToolNames.SCHEDULE_FOLLOW_UP,
     categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SCHEDULE_FOLLOW_UP],
-    description: `Schedule a follow-up — a reminder that wakes you up at a chosen future time to revisit this stream and run a fresh turn.
+    description: `Schedule a follow-up — a reminder that wakes you up at a chosen future time to take another look at this stream.
 
-Use this instead of attempting long-horizon work in one turn: "check back tomorrow on X", "revisit next week". It produces a durable, cancellable row everyone in the stream can see. Pass a self-contained \`note\` (the only context that survives) and \`scheduledFor\` (ISO 8601, future, within ${MAX_FOLLOW_UP_HORIZON_DAYS} days). A per-stream cap limits how many can be pending; the result reports the count and limit.`,
+Use this instead of attempting long-horizon work in one turn: "check back tomorrow on X", "revisit next week". It produces a durable reminder. Pass a self-contained \`note\` (the only context that survives) and \`scheduledFor\` (ISO 8601, future, within ${MAX_FOLLOW_UP_HORIZON_DAYS} days). A per-stream cap limits how many can be pending; the result reports the count and limit.`,
     inputSchema: ScheduleFollowUpSchema,
     promptBlock: PROMPT_BLOCK,
 

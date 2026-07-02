@@ -98,6 +98,7 @@ import {
   createOrphanSessionCleanup,
   createPersonaAgentWorker,
   AgentFollowUpService,
+  AgentFollowUpRepository,
   createAgentFollowUpFireWorker,
   WorkspaceAgent,
   GeneralResearcher,
@@ -171,6 +172,7 @@ import {
   type ExcelProcessJobData,
   type VideoTranscodeSubmitJobData,
   type VideoTranscodeCheckJobData,
+  type AgentFollowUpFireJobData,
 } from "./lib/queue"
 import { ProcessingStatuses, resolveNotificationPause } from "@threa/types"
 import { AttachmentRepository } from "./features/attachments"
@@ -734,7 +736,7 @@ export async function startServer(): Promise<ServerInstance> {
     modelId: COMPANION_SUMMARY_MODEL_ID,
     temperature: COMPANION_SUMMARY_TEMPERATURE,
   })
-  const agentFollowUpService = new AgentFollowUpService({ pool, jobQueue })
+  const agentFollowUpService = new AgentFollowUpService({ pool })
 
   const personaAgent = new PersonaAgent({
     pool,
@@ -1070,9 +1072,16 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   // Agent follow-up fire worker — CASes a due follow-up `pending → fired` and
-  // enqueues the persona turn (roadmap 1.1).
+  // enqueues the persona turn (roadmap 1.1). A fire job that never commits the
+  // CAS (e.g. repeated enqueue failures) leaves the row `pending` and retries;
+  // once it exhausts retries the DLQ hook marks it `failed` so it stops looking
+  // schedulable.
   const agentFollowUpFireWorker = createAgentFollowUpFireWorker({ agentFollowUpService })
+  const agentFollowUpOnDLQ: OnDLQHook<AgentFollowUpFireJobData> = async (querier, job, error) => {
+    await AgentFollowUpRepository.markFailed(querier, job.data.workspaceId, job.data.followUpId, error.message)
+  }
   jobQueue.registerHandler(JobQueues.AGENT_FOLLOW_UP_FIRE, agentFollowUpFireWorker, {
+    hooks: { onDLQ: agentFollowUpOnDLQ },
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })

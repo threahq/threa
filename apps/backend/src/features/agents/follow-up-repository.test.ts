@@ -132,16 +132,16 @@ describe("AgentFollowUpRepository CAS transitions", () => {
   })
 })
 
-describe("AgentFollowUpRepository.findByIdScoped", () => {
+describe("AgentFollowUpRepository.acquireStreamCapLock", () => {
   afterEach(() => mock.restore())
 
-  it("scopes the primary-key read to workspace_id (INV-8)", async () => {
+  it("takes a transaction-scoped advisory lock keyed on workspace + stream", async () => {
     const captured: Captured = { text: null, values: null }
-    const db = createQuerier(captured)
+    const db = createQuerier(captured, [])
 
-    await AgentFollowUpRepository.findByIdScoped(db, "ws_1", "agfu_01")
+    await AgentFollowUpRepository.acquireStreamCapLock(db, "ws_1", "stream_1")
 
-    expect(captured.text).toContain("WHERE id =")
-    expect(captured.text).toContain("workspace_id =")
+    expect(captured.text).toContain("pg_advisory_xact_lock")
+    expect(captured.values).toEqual(["ws_1", "stream_1"])
   })
 })

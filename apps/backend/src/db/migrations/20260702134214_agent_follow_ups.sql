@@ -39,9 +39,3 @@ CREATE TABLE IF NOT EXISTS agent_follow_ups (
 CREATE INDEX IF NOT EXISTS idx_agent_follow_ups_stream_pending
   ON agent_follow_ups (workspace_id, stream_id, scheduled_for ASC)
   WHERE status = 'pending';
-
--- Queue-row pointer lookup for cancel paths (workspace-scoped per INV-8 even
--- when the queue id is unique on its own).
-CREATE INDEX IF NOT EXISTS idx_agent_follow_ups_queue_ref
-  ON agent_follow_ups (workspace_id, queue_message_id)
-  WHERE queue_message_id IS NOT NULL;

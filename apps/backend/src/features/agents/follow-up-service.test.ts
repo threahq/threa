@@ -30,9 +30,8 @@ function fakeFollowUp(overrides: Partial<AgentFollowUp> = {}): AgentFollowUp {
   }
 }
 
-const jobQueueStub = {} as never
 function makeService() {
-  return new AgentFollowUpService({ pool: {} as Pool, jobQueue: jobQueueStub })
+  return new AgentFollowUpService({ pool: {} as Pool })
 }
 
 const scheduleParams = {
@@ -50,6 +49,7 @@ describe("AgentFollowUpService.schedule", () => {
 
   it("inserts under the cap, enqueues a fire job, and reports the cap + count", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
     spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
     spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
     spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
@@ -71,6 +71,7 @@ describe("AgentFollowUpService.schedule", () => {
 
   it("returns cap_reached without enqueuing when the guarded insert writes nothing", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
     spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(null)
     spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(DEFAULT_MAX_PENDING_FOLLOW_UPS)
     const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)

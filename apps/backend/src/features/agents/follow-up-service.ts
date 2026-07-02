@@ -1,20 +1,13 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
 import { agentFollowUpId, agentFollowUpQueueId, queueId } from "../../lib/id"
-import {
-  JobQueues,
-  QueueRepository,
-  enqueueQueuedJob,
-  type QueueManager,
-  type PersonaAgentJobData,
-} from "../../lib/queue"
+import { JobQueues, QueueRepository, enqueueQueuedJob, type PersonaAgentJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
 interface AgentFollowUpServiceDeps {
   pool: Pool
-  jobQueue: QueueManager
 }
 
 export interface ScheduleFollowUpParams {
@@ -46,11 +39,9 @@ export type ScheduleFollowUpResult =
  */
 export class AgentFollowUpService {
   private readonly pool: Pool
-  private readonly jobQueue: QueueManager
 
   constructor(deps: AgentFollowUpServiceDeps) {
     this.pool = deps.pool
-    this.jobQueue = deps.jobQueue
   }
 
   /**
@@ -72,6 +63,13 @@ export class AgentFollowUpService {
     const limit = await this.resolveFollowUpLimit(params.workspaceId)
 
     return withTransaction(this.pool, async (client) => {
+      // Serialize concurrent creates for the same stream so the count-guarded
+      // insert sees an exact pending count (INV-20). Distinct personas can run
+      // sessions in one stream at the same time, so without this two near-cap
+      // schedules could each read the pre-insert count and both land. The lock
+      // is transaction-scoped and released on commit/rollback.
+      await AgentFollowUpRepository.acquireStreamCapLock(client, params.workspaceId, params.streamId)
+
       const inserted = await AgentFollowUpRepository.insertIfUnderCap(
         client,
         {
