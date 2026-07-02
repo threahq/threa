@@ -16,7 +16,7 @@ import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { StreamPoliciesRepository, StreamRepository } from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
-import { ConversationRepository } from "../conversations"
+import { resolveEligibleConversation } from "./companion/conversation-highlight"
 import { PersonaRepository } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { StreamEventRepository } from "../streams"
@@ -534,22 +534,25 @@ export class PersonaAgent {
         }
 
         // Follow-up scheduling for the schedule_follow_up tool, bound to this
-        // persona/session/stream. The source-conversation anchor is resolved
-        // best-effort at call time (only when the tool actually fires) from the
-        // trigger message's primary conversation — null when the segmenter
-        // hasn't classified it yet, same anchoring rule as the Current Topic
-        // highlight (INV-62's provenance intent, best-effort per §2.8 Q8).
+        // persona/session/stream. The source-conversation anchor reuses the
+        // canonical resolver (INV-35): prefer the trigger's own conversation,
+        // else the most recently active one overlapping the context window —
+        // the fallback matters because the trigger is usually not classified on
+        // the turn it fires (extraction lags), so prefer-only would resolve to
+        // null in the common case. Best-effort per §2.8 Q8; null when nothing
+        // overlaps (e.g. E2E streams the segmenter skips).
         const followUpDeps: import("./tools/tool-deps").FollowUpToolDeps | undefined = scheduleFollowUp
           ? {
               scheduleFollowUp: async ({ note, scheduledFor }) => {
                 let sourceConversationId: string | null = null
                 if (agentContext.triggerMessage) {
-                  const primary = await ConversationRepository.findPrimaryByMessageId(
-                    db,
+                  const anchor = await resolveEligibleConversation(db, {
                     workspaceId,
-                    agentContext.triggerMessage.id
-                  )
-                  sourceConversationId = primary?.id ?? null
+                    preferMessageId: agentContext.triggerMessage.id,
+                    windowMessageIds: contextMessageIds,
+                    isEligible: () => true,
+                  })
+                  sourceConversationId = anchor?.id ?? null
                 }
                 return scheduleFollowUp({
                   workspaceId,
