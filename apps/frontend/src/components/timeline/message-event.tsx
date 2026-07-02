@@ -34,7 +34,7 @@ import {
   focusAtEnd,
   type MessageAgentActivity,
 } from "@/hooks"
-import { Quote, MessageSquareReply, Check, CornerDownRight } from "lucide-react"
+import { Quote, MessageSquareReply, Check, Layers } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -269,10 +269,15 @@ function MessageLinkPreviews({
  * On-message topic-provenance chip (board-view-design.md mechanism A). Rendered
  * above a message that revives a scattered conversation — its previous member
  * row is not the one directly above — so a late "Pizza" reads as
- * "↪ continues Pizza · 3h ago" instead of a non-sequitur. Tapping opens the
+ * "continues Pizza · 3h ago" instead of a non-sequitur. Tapping opens the
  * conversation's side panel (`conv:<id>`); a `<Link>` keeps it URL-driven
- * (INV-40, INV-59). Static footprint — no hover-driven resize (INV-21). The
- * topic label mirrors the overlay's `topicSummary || fallback` rendering.
+ * (INV-40, INV-59). Static footprint — no hover-driven resize (INV-21).
+ *
+ * Uses the `Layers` glyph (the conversation identity across the overlay) rather
+ * than the move indicator's `CornerDownRight`, and stays neutral/muted rather
+ * than the thread affordance's gold — a conversation is a quiet "soft thread",
+ * not Ariadne's structural gold line. The topic label mirrors the overlay's
+ * `topicSummary || fallback` rendering and separator (`·` + terse time).
  */
 function ConversationProvenanceChip({ revival }: { revival: ConversationRevival }) {
   const { getPanelUrl } = usePanel()
@@ -283,13 +288,13 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
       to={href}
       aria-label={`Continues ${topic} — open conversation`}
       className={cn(
-        "group/prov mb-1 inline-flex max-w-full items-center gap-1 text-xs",
-        "text-muted-foreground/80 transition-colors hover:text-foreground"
+        "group/prov mb-1 inline-flex max-w-full items-center gap-1.5 text-xs",
+        "text-muted-foreground transition-colors hover:text-foreground"
       )}
     >
-      <CornerDownRight className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover/prov:text-foreground/70" />
+      <Layers className="h-3 w-3 shrink-0 text-muted-foreground/60 transition-colors group-hover/prov:text-foreground/70" />
       <span className="min-w-0 truncate">
-        continues <span className="font-medium text-foreground/75 group-hover/prov:underline">{topic}</span>
+        continues <span className="font-medium text-foreground/80 group-hover/prov:underline">{topic}</span>
       </span>
       <span aria-hidden className="text-muted-foreground/40">
         ·
