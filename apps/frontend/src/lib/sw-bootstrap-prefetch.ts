@@ -253,6 +253,9 @@ export function parsePersistedSyncTarget(raw: unknown): BootstrapSyncTarget | nu
   if (typeof raw !== "object" || raw === null) return null
   const t = raw as Partial<BootstrapSyncTarget>
   if (typeof t.workspaceId !== "string") return null
+  if (t.streamId != null && typeof t.streamId !== "string") return null
+  if (t.messageId != null && typeof t.messageId !== "string") return null
+  if (t.workosUserId != null && typeof t.workosUserId !== "string") return null
   return {
     workspaceId: t.workspaceId,
     streamId: t.streamId ?? null,

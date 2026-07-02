@@ -1869,11 +1869,14 @@ export function StreamContent({
     hasEvents: events.length > 0,
   })
 
+  // Keyed on the target too: a second ?m= navigation arriving while the first
+  // hold is still up must get its own full window, not the remainder of the
+  // previous target's.
   useEffect(() => {
-    if (!holdForDeepLink) return
+    if (!holdForDeepLink || !highlightMessageId) return
     const timer = setTimeout(() => setDeepLinkHoldExpired(true), DEEP_LINK_HOLD_MAX_MS)
     return () => clearTimeout(timer)
-  }, [holdForDeepLink])
+  }, [holdForDeepLink, highlightMessageId])
 
   const prevHoldForDeepLinkRef = useRef(holdForDeepLink)
   if (prevHoldForDeepLinkRef.current !== holdForDeepLink) {

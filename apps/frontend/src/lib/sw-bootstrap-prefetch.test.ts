@@ -157,4 +157,10 @@ describe("parsePersistedSyncTarget", () => {
     expect(parsePersistedSyncTarget(null)).toBeNull()
     expect(parsePersistedSyncTarget("junk")).toBeNull()
   })
+
+  it("rejects entries whose optional fields are not strings", () => {
+    expect(parsePersistedSyncTarget({ workspaceId: "ws_1", streamId: 42 })).toBeNull()
+    expect(parsePersistedSyncTarget({ workspaceId: "ws_1", messageId: {} })).toBeNull()
+    expect(parsePersistedSyncTarget({ workspaceId: "ws_1", workosUserId: ["user_1"] })).toBeNull()
+  })
 })
