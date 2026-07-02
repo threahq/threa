@@ -16,6 +16,7 @@ import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { StreamPoliciesRepository, StreamRepository } from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
+import { resolveEligibleConversation } from "./companion/conversation-highlight"
 import { PersonaRepository } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { StreamEventRepository } from "../streams"
@@ -133,6 +134,21 @@ export interface PersonaAgentDeps {
     parentMessageId: string
     createdBy: string
   }) => Promise<{ id: string }>
+  /**
+   * Schedule a follow-up (durable "check back later" work). Bound to the
+   * `AgentFollowUpService` in server.ts; the turn supplies the stream/persona/
+   * session identity and the best-effort source-conversation anchor. Absent when
+   * follow-ups aren't wired (e.g. some test harnesses), which disables the tool.
+   */
+  scheduleFollowUp?: (params: {
+    workspaceId: string
+    streamId: string
+    personaId: string
+    sessionId: string
+    sourceConversationId: string | null
+    note: string
+    scheduledFor: Date
+  }) => Promise<import("./tools/tool-deps").ScheduleFollowUpToolResult>
 }
 
 export interface PersonaAgentInput {
@@ -200,6 +216,7 @@ export class PersonaAgent {
       addReaction,
       removeReaction,
       createThread,
+      scheduleFollowUp,
     } = this.deps
     const {
       workspaceId,
@@ -518,6 +535,40 @@ export class PersonaAgent {
             }),
         }
 
+        // Follow-up scheduling for the schedule_follow_up tool, bound to this
+        // persona/session/stream. The source-conversation anchor reuses the
+        // canonical resolver (INV-35): prefer the trigger's own conversation,
+        // else the most recently active one overlapping the context window —
+        // the fallback matters because the trigger is usually not classified on
+        // the turn it fires (extraction lags), so prefer-only would resolve to
+        // null in the common case. Best-effort per §2.8 Q8; null when nothing
+        // overlaps (e.g. E2E streams the segmenter skips).
+        const followUpDeps: import("./tools/tool-deps").FollowUpToolDeps | undefined = scheduleFollowUp
+          ? {
+              scheduleFollowUp: async ({ note, scheduledFor }) => {
+                let sourceConversationId: string | null = null
+                if (agentContext.triggerMessage) {
+                  const anchor = await resolveEligibleConversation(db, {
+                    workspaceId,
+                    preferMessageId: agentContext.triggerMessage.id,
+                    windowMessageIds: contextMessageIds,
+                    isEligible: () => true,
+                  })
+                  sourceConversationId = anchor?.id ?? null
+                }
+                return scheduleFollowUp({
+                  workspaceId,
+                  streamId: session.streamId,
+                  personaId: persona.id,
+                  sessionId: session.id,
+                  sourceConversationId,
+                  note,
+                  scheduledFor,
+                })
+              },
+            }
+          : undefined
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -595,6 +646,7 @@ export class PersonaAgent {
             runGeneralResearch,
             workspace: workspaceDeps,
             reactions: reactionDeps,
+            followUps: followUpDeps,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(persona.model),

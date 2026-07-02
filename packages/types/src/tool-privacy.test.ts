@@ -28,6 +28,10 @@ describe("TOOL_CATEGORIES_BY_NAME", () => {
     // send_message (reply) and react_to_message (in-product participation) both
     // ride the always-allowed messaging class; neither is a privacy-gated read.
     expect(messaging).toContain("send_message")
+    // schedule_follow_up creates durable state but is in-product participation
+    // (the agent planning its own return), not a privacy-gated read — its abuse
+    // bound is the per-stream pending cap, so it rides messaging.
+    expect(messaging).toContain("schedule_follow_up")
     for (const name of messaging) expect(categoriesOf(name)).toEqual(["messaging"])
   })
 

@@ -32,37 +32,37 @@ Two concurrent efforts share primitives with this work; steps below reference th
 
 ## Status
 
-| Step | Deliverable                                          | Status | PR  |
-| ---- | ---------------------------------------------------- | ------ | --- |
-| 1.1  | `schedule_follow_up` tool + follow-up infra          | ☐      |     |
-| 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |     |
-| 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |     |
-| 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |     |
-| 2.1  | Generalized session abort                            | ☐      |     |
-| 2.2  | Stop/Redirect affordances on the activity card       | ☐      |     |
-| 2.3  | Per-turn model resolution + first escalation rule    | ☐      |     |
-| 3.1  | Persisted episode summaries                          | ☐      |     |
-| 3.2  | Per-thread session concurrency                       | ☐      |     |
-| 3.3  | Conversation-anchored agent replies                  | ☐      |     |
-| 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |     |
-| 4.2  | `update_stream_brief` tool + timeline event          | ☐      |     |
-| 4.3  | Brief UI: settings editor + timeline event           | ☐      |     |
-| 4.4  | Brief correction eval                                | ☐      |     |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-64 | ☐      |     |
-| 5.2  | Delegation card UI                                   | ☐      |     |
-| 5.3  | Delegation public API (claim/status/complete)        | ☐      |     |
-| 5.4  | claude-code-remote delegation support                | ☐      |     |
-| 5.5  | `@threa/mcp` server                                  | ☐      |     |
-| 6.1  | Memo edit/archive endpoints + explorer UI            | ☐      |     |
-| 6.2  | `save_memo` tool                                     | ☐      |     |
-| 6.3  | Reflective capture at session completion             | ☐      |     |
-| 6.4  | `memoScope` (user/stream/workspace)                  | ☐      |     |
-| 6.5  | Retrieval feedback decay                             | ☐      |     |
-| 7.1  | Workspace persona CRUD API                           | ☐      |     |
-| 7.2  | Persona picker UI                                    | ☐      |     |
-| 8.1  | Ambient classifier on settled conversations          | ☐      |     |
-| 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |     |
-| 8.3  | Ambient precision eval                               | ☐      |     |
+| Step | Deliverable                                          | Status | PR    |
+| ---- | ---------------------------------------------------- | ------ | ----- |
+| 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      | #1138 |
+| 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |       |
+| 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
+| 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
+| 2.1  | Generalized session abort                            | ☐      |       |
+| 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
+| 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
+| 3.1  | Persisted episode summaries                          | ☐      |       |
+| 3.2  | Per-thread session concurrency                       | ☐      |       |
+| 3.3  | Conversation-anchored agent replies                  | ☐      |       |
+| 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
+| 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
+| 4.3  | Brief UI: settings editor + timeline event           | ☐      |       |
+| 4.4  | Brief correction eval                                | ☐      |       |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-64 | ☐      |       |
+| 5.2  | Delegation card UI                                   | ☐      |       |
+| 5.3  | Delegation public API (claim/status/complete)        | ☐      |       |
+| 5.4  | claude-code-remote delegation support                | ☐      |       |
+| 5.5  | `@threa/mcp` server                                  | ☐      |       |
+| 6.1  | Memo edit/archive endpoints + explorer UI            | ☐      |       |
+| 6.2  | `save_memo` tool                                     | ☐      |       |
+| 6.3  | Reflective capture at session completion             | ☐      |       |
+| 6.4  | `memoScope` (user/stream/workspace)                  | ☐      |       |
+| 6.5  | Retrieval feedback decay                             | ☐      |       |
+| 7.1  | Workspace persona CRUD API                           | ☐      |       |
+| 7.2  | Persona picker UI                                    | ☐      |       |
+| 8.1  | Ambient classifier on settled conversations          | ☐      |       |
+| 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |       |
+| 8.3  | Ambient precision eval                               | ☐      |       |
 
 Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1 and 4).
 
@@ -79,7 +79,7 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 **Shape:**
 
 - Migration (`/add-migration`): `agent_follow_ups` — `id` (`agfu_` ULID), `workspace_id`, `stream_id`, `persona_id`, `session_id` (creating session), `source_conversation_id` (nullable — the trigger message's primary conversation via the `conversation-highlight.ts` resolver; anchors the follow-up to a topic for later board-lens visibility), `note` (TEXT — what Ariadne intends to do), `scheduled_for`, `status` TEXT (`pending|fired|cancelled|failed`), `queue_message_id`, timestamps. Partial index on `(stream_id) WHERE status = 'pending'` for the cap check.
-- New files in `features/agents/`: `follow-up-{repository,service,worker}.ts`. Mirror the scheduled-messages worker pattern: enqueue with `processAfter = scheduledFor`; on fire, CAS `pending → fired` (INV-20 — the worker and a concurrent cancel must not race), then `jobQueue.send(JobQueues.PERSONA_AGENT, …)` with a `trigger: { kind: 'follow_up', followUpId }` payload variant. Cancel path: CAS `pending → cancelled`; the fired job re-checks status and no-ops if cancelled (queue delivery can't be revoked).
+- New files in `features/agents/`: `follow-up-{repository,service,worker}.ts`. Mirror the scheduled-messages worker pattern: enqueue with `processAfter = scheduledFor`; on fire, CAS `pending → fired` (INV-20 — the worker and a concurrent cancel must not race), then enqueue a `PERSONA_AGENT` job. Cancel path: CAS `pending → cancelled`; the fired job re-checks status and no-ops if cancelled (queue delivery can't be revoked). **Deviation (shipped):** the `PERSONA_AGENT` enqueue happens inside the same transaction as the CAS via `enqueueQueuedJob` (INV-7 atomicity) rather than a post-commit `jobQueue.send`, and the persona identity is carried as an additive optional `followUpId` field on `PersonaAgentJobData` (not a `trigger: { kind }` union — the union would touch every existing `trigger === MENTION` reader). Until 1.2 reads `followUpId`, a fired follow-up runs as a companion-mode catch-up turn (synthetic `messageId`, the already-supported path from `checkForUnseenMessages`). The pending cap is made exact with a per-(workspace, stream) `pg_advisory_xact_lock` around the count-guarded insert (multiple personas can run sessions in one stream, so the guard alone could race). A DLQ hook marks a follow-up `failed` if its fire job exhausts retries.
 - Pending cap enforced in service with insert-or-skip discipline (like `insertRunningOrSkip`). This step reads only the code default — `DEFAULT_MAX_PENDING_FOLLOW_UPS = 10` in `agents/config.ts` — but resolves it through a small `resolveFollowUpLimit()` seam so 1.4's workspace/stream overrides slot in without touching the check.
 - Tool per the `react_to_message` template end-to-end: `packages/types/src/constants.ts:384` add to `AGENT_TOOL_NAMES` + `AgentToolNames`; `tool-privacy.ts:45` categorize (`["messaging"]` — the `satisfies` clause won't compile until you do); `features/agents/tools/schedule-follow-up-tool.ts` (`defineAgentTool`, Zod input `{ note, scheduledFor }`, future-dated, ≤30 days out); deps in `tools/tool-deps.ts`; barrel export; wire in `companion/tool-set.ts` behind `isToolEnabled`; add to Ariadne's `enabledTools` in `built-in-agents.ts`.
 - `promptBlock` (the field on `AgentToolConfig`, `packages/agent-runtime/src/runtime/agent-tool.ts:49`): when to use it, that a pending cap exists (tool result carries the resolved limit + current count so the model self-regulates), and that the user sees and can cancel every follow-up.
@@ -494,6 +494,7 @@ Small items from `docs/ariadne-vs-claude-tag-exploration.md` deliberately left o
 - **BYO-bots vs delegation positioning paragraph [docs/S]** (exploration §4.5.5) — one paragraph in `docs/features/public/` distinguishing persistent workspace bots from one-shot delegation to a personal agent. Write it when Phase 5 ships user-visible delegation (5.2), when the distinction becomes real.
 - **Board-lens integration for delegations/ambient flags** — when the board's structural/personal lenses land (they're planned, not built — `docs/board-view-design.md`), surface open delegations via `source_conversation_id` and stalled-conversation flags in the appropriate lenses. Deliberately not a step here: the lenses don't exist yet, and the anchor columns (1.1, 5.1) are the only forward investment needed.
 - **Per-stream follow-up limit column** — deferred from 1.4 until a real need (INV-36); the `resolveFollowUpLimit()` seam makes it small.
+- **Enclave/E2E parity for `schedule_follow_up`** — 1.1 wires the tool into the plaintext companion toolset only; the enclave's `buildEnclaveTools` (`apps/enclave/src/agent/tools.ts`) deliberately omits it, so E2E scratchpads silently don't offer it (clean degrade, no leak). Full parity needs two pieces: (a) the `note` is E2E-derived plaintext, so `agent_follow_ups.note` would have to be **sealed** (encrypted to the stream key, decrypted only inside the enclave at fire time) instead of stored plaintext; (b) firing must dispatch to the **enclave** (sealed dispatch) rather than enqueuing a plaintext `PERSONA_AGENT` job that holds no stream key. A per-tool follow-up under the general "E2E/enclave parity for new tools" item below.
 
 ## Deliberately out of scope
 

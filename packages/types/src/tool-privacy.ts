@@ -48,6 +48,11 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // egress, so it rides the always-allowed `messaging` class rather than a
   // privacy grant.
   react_to_message: ["messaging"],
+  // Scheduling a follow-up is the agent planning its own future participation
+  // in this stream — an in-product action like replying, not data egress or a
+  // workspace read. It rides the always-allowed `messaging` class; its abuse
+  // bound is the per-stream pending cap, not a privacy grant.
+  schedule_follow_up: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],
