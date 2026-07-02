@@ -32,37 +32,37 @@ Two concurrent efforts share primitives with this work; steps below reference th
 
 ## Status
 
-| Step | Deliverable                                          | Status | PR  |
-| ---- | ---------------------------------------------------- | ------ | --- |
-| 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      |     |
-| 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |     |
-| 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |     |
-| 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |     |
-| 2.1  | Generalized session abort                            | ☐      |     |
-| 2.2  | Stop/Redirect affordances on the activity card       | ☐      |     |
-| 2.3  | Per-turn model resolution + first escalation rule    | ☐      |     |
-| 3.1  | Persisted episode summaries                          | ☐      |     |
-| 3.2  | Per-thread session concurrency                       | ☐      |     |
-| 3.3  | Conversation-anchored agent replies                  | ☐      |     |
-| 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |     |
-| 4.2  | `update_stream_brief` tool + timeline event          | ☐      |     |
-| 4.3  | Brief UI: settings editor + timeline event           | ☐      |     |
-| 4.4  | Brief correction eval                                | ☐      |     |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-64 | ☐      |     |
-| 5.2  | Delegation card UI                                   | ☐      |     |
-| 5.3  | Delegation public API (claim/status/complete)        | ☐      |     |
-| 5.4  | claude-code-remote delegation support                | ☐      |     |
-| 5.5  | `@threa/mcp` server                                  | ☐      |     |
-| 6.1  | Memo edit/archive endpoints + explorer UI            | ☐      |     |
-| 6.2  | `save_memo` tool                                     | ☐      |     |
-| 6.3  | Reflective capture at session completion             | ☐      |     |
-| 6.4  | `memoScope` (user/stream/workspace)                  | ☐      |     |
-| 6.5  | Retrieval feedback decay                             | ☐      |     |
-| 7.1  | Workspace persona CRUD API                           | ☐      |     |
-| 7.2  | Persona picker UI                                    | ☐      |     |
-| 8.1  | Ambient classifier on settled conversations          | ☐      |     |
-| 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |     |
-| 8.3  | Ambient precision eval                               | ☐      |     |
+| Step | Deliverable                                          | Status | PR    |
+| ---- | ---------------------------------------------------- | ------ | ----- |
+| 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      | #1138 |
+| 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |       |
+| 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
+| 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
+| 2.1  | Generalized session abort                            | ☐      |       |
+| 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
+| 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
+| 3.1  | Persisted episode summaries                          | ☐      |       |
+| 3.2  | Per-thread session concurrency                       | ☐      |       |
+| 3.3  | Conversation-anchored agent replies                  | ☐      |       |
+| 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
+| 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
+| 4.3  | Brief UI: settings editor + timeline event           | ☐      |       |
+| 4.4  | Brief correction eval                                | ☐      |       |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-64 | ☐      |       |
+| 5.2  | Delegation card UI                                   | ☐      |       |
+| 5.3  | Delegation public API (claim/status/complete)        | ☐      |       |
+| 5.4  | claude-code-remote delegation support                | ☐      |       |
+| 5.5  | `@threa/mcp` server                                  | ☐      |       |
+| 6.1  | Memo edit/archive endpoints + explorer UI            | ☐      |       |
+| 6.2  | `save_memo` tool                                     | ☐      |       |
+| 6.3  | Reflective capture at session completion             | ☐      |       |
+| 6.4  | `memoScope` (user/stream/workspace)                  | ☐      |       |
+| 6.5  | Retrieval feedback decay                             | ☐      |       |
+| 7.1  | Workspace persona CRUD API                           | ☐      |       |
+| 7.2  | Persona picker UI                                    | ☐      |       |
+| 8.1  | Ambient classifier on settled conversations          | ☐      |       |
+| 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |       |
+| 8.3  | Ambient precision eval                               | ☐      |       |
 
 Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1 and 4).
 
