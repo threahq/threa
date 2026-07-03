@@ -165,36 +165,38 @@ export class AgentFollowUpService {
     scheduledFor?: Date
   }): Promise<UpdateFollowUpResult> {
     return withTransaction(this.pool, async (client) => {
-      const existing = await AgentFollowUpRepository.findById(client, params.workspaceId, params.id)
-      // `stream_id` is immutable, so this read-then-CAS is race-safe: a row in
-      // another stream is `not_found` to this turn (INV-8 stream scoping); the
-      // `updatePending` CAS below still guards status atomically.
-      if (!existing || existing.streamId !== params.streamId) return { ok: false, reason: "not_found" }
-      if (existing.status !== FollowUpStatuses.PENDING) return { ok: false, reason: "not_pending" }
-
-      const note = params.note ?? existing.note
-      const scheduledFor = params.scheduledFor ?? existing.scheduledFor
-      const scheduledForChanged = scheduledFor.getTime() !== existing.scheduledFor.getTime()
-
+      // Single atomic CAS — no service-side read-then-set (INV-20). `COALESCE`
+      // applies only the fields the caller changed; the returned row carries the
+      // queue id as of the row lock, so the reschedule below cancels the live
+      // fire job (never a pre-lock stale id that could orphan a queue row).
       const updated = await AgentFollowUpRepository.updatePending(client, {
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         id: params.id,
-        note,
-        scheduledFor,
+        note: params.note ?? null,
+        scheduledFor: params.scheduledFor ?? null,
       })
-      // Lost the race to fire/cancel between the read and the CAS.
-      if (!updated) return { ok: false, reason: "not_pending" }
+      if (!updated) {
+        // Failure-path read only classifies the error (the row didn't mutate):
+        // another stream / unknown id → not_found; else already fired/cancelled.
+        const existing = await AgentFollowUpRepository.findById(client, params.workspaceId, params.id)
+        if (!existing || existing.streamId !== params.streamId) return { ok: false, reason: "not_found" }
+        return { ok: false, reason: "not_pending" }
+      }
 
-      if (scheduledForChanged) {
-        if (existing.queueMessageId) {
-          await QueueRepository.cancelById(client, existing.queueMessageId)
+      // Reschedule whenever a new time was supplied: tombstone the old fire job
+      // (the CAS-fresh id from `updated`) and enqueue a fresh one at the new time
+      // in the same tx (INV-7). Re-enqueuing at an unchanged time is a harmless
+      // no-op churn, so we don't need the pre-image to detect "changed".
+      if (params.scheduledFor !== undefined) {
+        if (updated.queueMessageId) {
+          await QueueRepository.cancelById(client, updated.queueMessageId)
         }
         const queueMessageId = await enqueueQueuedJob(client, {
           queueName: JobQueues.AGENT_FOLLOW_UP_FIRE,
           workspaceId: params.workspaceId,
           payload: { workspaceId: params.workspaceId, followUpId: params.id },
-          processAfter: scheduledFor,
+          processAfter: updated.scheduledFor,
           generateId: agentFollowUpQueueId,
         })
         await AgentFollowUpRepository.setQueueMessageId(client, params.workspaceId, params.id, queueMessageId)

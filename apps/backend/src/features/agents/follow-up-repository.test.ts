@@ -226,7 +226,7 @@ describe("AgentFollowUpRepository stream-scoped admin reads/writes", () => {
     expect(result[0]).toMatchObject({ id: "agfu_01", scheduledFor: SCHEDULED_FOR })
   })
 
-  it("updatePending CASes note + time on a pending row scoped to workspace + stream + id", async () => {
+  it("updatePending CASes via COALESCE on a pending row scoped to workspace + stream + id", async () => {
     const captured: Captured = { text: null, values: null }
     const newTime = new Date("2026-07-10T09:00:00.000Z")
     const db = createQuerier(captured, [{ ...ROW, note: "new note", scheduled_for: newTime }])
@@ -241,12 +241,29 @@ describe("AgentFollowUpRepository stream-scoped admin reads/writes", () => {
 
     expect(captured.text).toContain("UPDATE agent_follow_ups")
     expect(captured.text).toContain("stream_id =")
+    // COALESCE applies each field atomically (INV-20 — no service-side stale read).
+    expect(captured.text).toContain("COALESCE")
     // Status is unchanged, so status_changed_at is not re-stamped in SET
     // (it still appears in the RETURNING column list).
     expect(captured.text).not.toContain("status_changed_at = NOW()")
     expect(captured.values).toContain(FollowUpStatuses.PENDING)
     expect(captured.values).toContain("new note")
     expect(result).toMatchObject({ note: "new note", scheduledFor: newTime })
+  })
+
+  it("updatePending passes null for an untouched field so COALESCE keeps it", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [ROW])
+
+    await AgentFollowUpRepository.updatePending(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      id: "agfu_01",
+      note: null,
+      scheduledFor: null,
+    })
+
+    expect(captured.values).toContain(null)
   })
 
   it("markFired guards on scheduled_for <= NOW() so a rescheduled-to-later row can't fire early", async () => {

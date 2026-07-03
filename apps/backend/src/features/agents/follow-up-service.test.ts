@@ -146,11 +146,11 @@ describe("AgentFollowUpService.update", () => {
 
   const NEW_TIME = new Date("2026-07-10T09:00:00.000Z")
 
-  it("reschedules: tombstones the old fire job and enqueues a fresh one at the new time", async () => {
+  it("reschedules: tombstones the CAS-fresh fire job and enqueues a fresh one at the new time", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ queueMessageId: "agfuq_old" }))
+    // The cancel target comes from the CAS result (updatePending), not a pre-read.
     spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(
-      fakeFollowUp({ note: "new note", scheduledFor: NEW_TIME })
+      fakeFollowUp({ note: "new note", scheduledFor: NEW_TIME, queueMessageId: "agfuq_old" })
     )
     spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
     const queueCancel = spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
@@ -172,10 +172,12 @@ describe("AgentFollowUpService.update", () => {
     expect((fireEnqueue?.[1] as { processAfter: Date }).processAfter).toEqual(NEW_TIME)
   })
 
-  it("note-only update leaves the fire job alone (no reschedule)", async () => {
+  it("note-only update leaves the fire job alone (no reschedule) and never reads first", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ queueMessageId: "agfuq_old" }))
-    spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(fakeFollowUp({ note: "new note" }))
+    const findById = spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(
+      fakeFollowUp({ note: "new note", queueMessageId: "agfuq_old" })
+    )
     const queueCancel = spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
     const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
 
@@ -189,45 +191,44 @@ describe("AgentFollowUpService.update", () => {
     expect(result).toEqual({ ok: true, followUp: expect.objectContaining({ note: "new note" }) })
     expect(queueCancel).not.toHaveBeenCalled()
     expect(queueInsert).not.toHaveBeenCalled()
+    // Happy path is a single CAS — no select-then-set (INV-20).
+    expect(findById).not.toHaveBeenCalled()
   })
 
-  it("returns not_found for an unknown id without touching the row", async () => {
+  it("passes only the changed field to the CAS (null for the untouched column)", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(null)
+    const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(fakeFollowUp())
+
+    await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "just the note" })
+
+    expect(updatePending.mock.calls[0]?.[1]).toMatchObject({ note: "just the note", scheduledFor: null })
+  })
+
+  it("returns not_found for an unknown id (classified by the failure-path read)", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
     const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(null)
 
     const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_x", note: "n" })
 
     expect(result).toEqual({ ok: false, reason: "not_found" })
-    expect(updatePending).not.toHaveBeenCalled()
+    expect(updatePending).toHaveBeenCalled()
   })
 
   it("returns not_found for a follow-up that belongs to a different stream", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
     spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ streamId: "stream_other" }))
-    const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
 
     const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
 
     expect(result).toEqual({ ok: false, reason: "not_found" })
-    expect(updatePending).not.toHaveBeenCalled()
   })
 
   it("returns not_pending when the follow-up already fired", async () => {
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ status: FollowUpStatuses.FIRED }))
-    const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
-
-    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
-
-    expect(result).toEqual({ ok: false, reason: "not_pending" })
-    expect(updatePending).not.toHaveBeenCalled()
-  })
-
-  it("returns not_pending when the CAS loses the race after the read", async () => {
-    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
-    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp())
     spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ status: FollowUpStatuses.FIRED }))
 
     const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
 

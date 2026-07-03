@@ -234,21 +234,23 @@ export const AgentFollowUpRepository = {
   },
 
   /**
-   * CAS-update a pending follow-up's note + scheduled time, stream-scoped (the
-   * agent-admin `update_follow_up` path). Sets both columns unconditionally — the
-   * service coalesces unspecified fields to the existing values first — so this
-   * stays a single statement. `status_changed_at` is left untouched (the status
-   * doesn't change). Returns `null` when the row is no longer pending (lost the
-   * race to fire/cancel) or isn't in this stream.
+   * CAS-update a pending follow-up's note and/or scheduled time, stream-scoped
+   * (the agent-admin `update_follow_up` path). `COALESCE` applies each field in
+   * the same statement that guards `status = pending`, so a `null` arg leaves the
+   * column as-is and two concurrent updates that change *different* fields don't
+   * clobber each other from a stale read (INV-20 — no service-side read-then-set).
+   * `status_changed_at` is left untouched (the status doesn't change). Returns the
+   * updated row (with the current `queue_message_id`), or `null` when the row is
+   * no longer pending (lost the race to fire/cancel) or isn't in this stream.
    */
   async updatePending(
     db: Querier,
-    params: { workspaceId: string; streamId: string; id: string; note: string; scheduledFor: Date }
+    params: { workspaceId: string; streamId: string; id: string; note: string | null; scheduledFor: Date | null }
   ): Promise<AgentFollowUp | null> {
     const result = await db.query<AgentFollowUpRow>(sql`
       UPDATE agent_follow_ups SET
-        note = ${params.note},
-        scheduled_for = ${params.scheduledFor},
+        note = COALESCE(${params.note}::text, note),
+        scheduled_for = COALESCE(${params.scheduledFor}::timestamptz, scheduled_for),
         updated_at = NOW()
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
