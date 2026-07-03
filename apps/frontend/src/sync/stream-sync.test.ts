@@ -14,6 +14,7 @@ import {
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { streamKeys } from "@/hooks/use-streams"
+import { commandsApi } from "@/api"
 import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { BotRuntimePresenceSummary, LinkPreviewSummary, StreamBootstrap, StreamEvent } from "@threa/types"
 
@@ -952,6 +953,112 @@ describe("registerStreamSocketHandlers — bot_runtime:presence cache patching",
     expect(after).toBe(before)
 
     cleanup()
+  })
+
+  // The stream's command set is computed server-side at bootstrap time, so a
+  // runtime liveness edge (coming online / going away / instance swap) must
+  // refetch it — otherwise a scratchpad opened before its agent connected keeps
+  // an empty slash menu until the next full bootstrap. Available↔busy flips
+  // happen on every turn and must NOT refetch.
+  describe("command-set refresh on liveness edges", () => {
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+    it("refetches and patches commands when a runtime comes online", async () => {
+      const queryClient = new QueryClient()
+      const streamId = "stream_cmd_online"
+      seedBootstrap(queryClient, streamId, { bot_1: null })
+      const steer = { name: "steer", description: "Steer the linked session" }
+      const listForStream = vi.spyOn(commandsApi, "listForStream").mockResolvedValue([steer])
+
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+      emit("bot_runtime:presence", {
+        workspaceId: "ws_1",
+        streamId,
+        botId: "bot_1",
+        presence: makePresence({ status: "available", acceptingInvocations: true }),
+      })
+      await flush()
+
+      expect(listForStream).toHaveBeenCalledWith("ws_1", streamId)
+      const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+      expect(after?.commands).toEqual([steer])
+
+      listForStream.mockRestore()
+      cleanup()
+    })
+
+    it("refetches when a runtime goes offline (commands drop)", async () => {
+      const queryClient = new QueryClient()
+      const streamId = "stream_cmd_offline"
+      seedBootstrap(queryClient, streamId, { bot_1: makePresence({ status: "available" }) })
+      const listForStream = vi.spyOn(commandsApi, "listForStream").mockResolvedValue([])
+
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+      emit("bot_runtime:presence", {
+        workspaceId: "ws_1",
+        streamId,
+        botId: "bot_1",
+        presence: makePresence({ status: "offline", acceptingInvocations: false }),
+      })
+      await flush()
+
+      expect(listForStream).toHaveBeenCalledTimes(1)
+      const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+      expect(after?.commands).toEqual([])
+
+      listForStream.mockRestore()
+      cleanup()
+    })
+
+    it("does not refetch on an available↔busy flip of the same instance", async () => {
+      const queryClient = new QueryClient()
+      const streamId = "stream_cmd_busy"
+      seedBootstrap(queryClient, streamId, { bot_1: makePresence({ status: "available" }) })
+      const listForStream = vi.spyOn(commandsApi, "listForStream").mockResolvedValue([])
+
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+      emit("bot_runtime:presence", {
+        workspaceId: "ws_1",
+        streamId,
+        botId: "bot_1",
+        presence: makePresence({ status: "busy", statusText: "Working in Claude Code…" }),
+      })
+      await flush()
+
+      expect(listForStream).not.toHaveBeenCalled()
+
+      listForStream.mockRestore()
+      cleanup()
+    })
+
+    it("refetches when the serving instance is swapped out", async () => {
+      const queryClient = new QueryClient()
+      const streamId = "stream_cmd_swap"
+      seedBootstrap(queryClient, streamId, { bot_1: makePresence({ status: "available", instanceId: "inst_1" }) })
+      const listForStream = vi.spyOn(commandsApi, "listForStream").mockResolvedValue([])
+
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+      emit("bot_runtime:presence", {
+        workspaceId: "ws_1",
+        streamId,
+        botId: "bot_1",
+        presence: makePresence({ status: "available", instanceId: "inst_2" }),
+      })
+      await flush()
+
+      expect(listForStream).toHaveBeenCalledTimes(1)
+
+      listForStream.mockRestore()
+      cleanup()
+    })
   })
 })
 

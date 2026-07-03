@@ -15,4 +15,12 @@ export const commandsApi = {
     const res = await api.get<{ commands: CommandInfo[] }>(`/api/workspaces/${workspaceId}/commands`)
     return res.commands
   },
+
+  /** Stream-effective commands (workspace set + whatever session-control the stream's linked runtime advertises right now). */
+  async listForStream(workspaceId: string, streamId: string): Promise<CommandInfo[]> {
+    const res = await api.get<{ commands: CommandInfo[] }>(
+      `/api/workspaces/${workspaceId}/streams/${streamId}/commands`
+    )
+    return res.commands
+  },
 }

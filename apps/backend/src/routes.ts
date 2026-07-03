@@ -503,6 +503,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   app.post("/api/workspaces/:workspaceId/commands/dispatch", ...authed, rateLimits.commandDispatch, command.dispatch)
   app.get("/api/workspaces/:workspaceId/commands", ...authed, command.list)
+  app.get("/api/workspaces/:workspaceId/streams/:streamId/commands", ...authed, command.listForStream)
 
   // Invitations and member management — gated on members:write
   const requireMembersWrite = requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
