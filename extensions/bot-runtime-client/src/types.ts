@@ -53,6 +53,8 @@ export interface BotRuntimeTransportCallbacks {
   onActiveActorChanged?: (payload: unknown) => void
   /** The server asked the runtime to re-announce itself; the transport re-sends hello automatically and also fires this. */
   onResync?: () => void
+  /** The scratchpad this runtime session is linked to was archived; the link is ended server-side. Wind down. */
+  onSessionArchived?: (payload: unknown) => void
   /** The `bot:hello` ack landed; carries the bootstrap snapshot. */
   onBootstrap?: (bootstrap: BotHelloBootstrap) => void
 }

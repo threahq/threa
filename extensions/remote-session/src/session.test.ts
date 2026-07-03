@@ -355,6 +355,45 @@ describe("RemoteSession.onReplyTimeout", () => {
   })
 })
 
+describe("RemoteSession session-archived handling", () => {
+  test("goes offline, fails in-flight turns, and hands the connector the final word", async () => {
+    const failed: string[] = []
+    const client = {
+      fail: async (id: string) => {
+        failed.push(id)
+      },
+    } as unknown as ThreaClient
+    const { transport, presence } = makeFakeTransport()
+    const archived: Array<{ rootStreamId: string }> = []
+    const session = makeSession(client, transport, { onArchived: (payload) => void archived.push(payload) })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+
+    await (session as unknown as { handleSessionArchived: (p: unknown) => Promise<void> }).handleSessionArchived({
+      runtimeSessionId: "rts-test",
+      rootStreamId: "stream_root",
+    })
+
+    expect(presence.at(-1)?.status).toBe("offline")
+    expect(failed).toEqual(["binv_running"])
+    expect(archived).toEqual([{ rootStreamId: "stream_root" }])
+  })
+
+  test("ignores an event for a different runtime session (stale re-registration)", async () => {
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const archived: unknown[] = []
+    const session = makeSession(client, transport, { onArchived: (payload) => void archived.push(payload) })
+
+    await (session as unknown as { handleSessionArchived: (p: unknown) => Promise<void> }).handleSessionArchived({
+      runtimeSessionId: "rts-someone-else",
+      rootStreamId: "stream_root",
+    })
+
+    expect(archived).toEqual([])
+    expect(presence).toEqual([])
+  })
+})
+
 describe("RemoteSession.shutdown", () => {
   test("marks presence offline and fails every in-flight claim", async () => {
     const failed: Array<{ id: string; body: Record<string, unknown> }> = []

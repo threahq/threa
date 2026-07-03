@@ -96,6 +96,7 @@ export type OutboxEventType =
   | "bot_invocation:claimed"
   | "bot:active_actor_changed"
   | "bot:resync"
+  | "bot:session_archived"
   | "label:created"
   | "label:updated"
   | "label:deleted"
@@ -732,6 +733,18 @@ export interface BotResyncOutboxPayload extends WorkspaceScopedPayload {
   reason: string
 }
 
+/**
+ * The scratchpad a runtime session was linked to has been archived; the link is
+ * already `ended` server-side. The runtime should wind itself down (the Claude
+ * channel pushes its branch and kills its own tmux window on receipt).
+ */
+export interface BotSessionArchivedOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  instanceId: string
+  runtimeSessionId: string
+  rootStreamId: string
+}
+
 // Label event payloads. Labels are owner-scoped, so `targetUserId` is always the
 // owning actor and the broadcast handler delivers to that actor's user room only.
 export interface LabelUpsertedOutboxPayload extends WorkspaceScopedPayload {
@@ -854,6 +867,7 @@ export interface OutboxEventPayloadMap {
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload
   "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
   "bot:resync": BotResyncOutboxPayload
+  "bot:session_archived": BotSessionArchivedOutboxPayload
   "label:created": LabelUpsertedOutboxPayload
   "label:updated": LabelUpsertedOutboxPayload
   "label:deleted": LabelDeletedOutboxPayload
@@ -999,12 +1013,14 @@ export type BotScopedEventType =
   | "bot_invocation:claimed"
   | "bot:active_actor_changed"
   | "bot:resync"
+  | "bot:session_archived"
 
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
   "bot_invocation:claimed",
   "bot:active_actor_changed",
   "bot:resync",
+  "bot:session_archived",
 ]
 
 /**

@@ -413,6 +413,36 @@ export class BotRuntimeService {
     })
   }
 
+  /**
+   * A scratchpad was archived: end every active runtime link rooted at it and
+   * tell each linked runtime over the /bot socket so it can wind itself down
+   * (the Claude channel pushes its branch and kills its own tmux window). Link
+   * ending and the notify events commit together (INV-4/INV-7); the set-based
+   * UPDATE makes consumer retries idempotent — already-ended links return no
+   * rows, so nothing re-notifies.
+   */
+  async endSessionsForArchivedStream(params: { workspaceId: string; rootStreamId: string }): Promise<number> {
+    return withTransaction(this.pool, async (db) => {
+      const ended = await BotRuntimeSessionLinkRepository.endActiveByRootStream(db, params)
+      for (const link of ended) {
+        await OutboxRepository.insert(db, "bot:session_archived", {
+          workspaceId: params.workspaceId,
+          botId: link.botId,
+          instanceId: link.instanceId,
+          runtimeSessionId: link.runtimeSessionId,
+          rootStreamId: params.rootStreamId,
+        })
+      }
+      if (ended.length > 0) {
+        logger.info(
+          { workspaceId: params.workspaceId, rootStreamId: params.rootStreamId, endedLinks: ended.length },
+          "Ended runtime session links for archived stream"
+        )
+      }
+      return ended.length
+    })
+  }
+
   async createInvocation(params: {
     workspaceId: string
     rootStreamId: string
