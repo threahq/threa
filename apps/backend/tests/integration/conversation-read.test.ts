@@ -9,6 +9,7 @@ import {
 } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { ConversationService } from "../../src/features/conversations"
+import { ActivityRepository } from "../../src/features/activity"
 import { streamId, userId, workspaceId, conversationId } from "../../src/lib/id"
 
 describe("ConversationService read/unread", () => {
@@ -30,6 +31,7 @@ describe("ConversationService read/unread", () => {
 
   beforeEach(async () => {
     await pool.query("DELETE FROM stream_member_message_reads")
+    await pool.query("DELETE FROM user_activity")
     await pool.query("DELETE FROM conversations")
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
@@ -129,6 +131,7 @@ describe("ConversationService read/unread", () => {
       lastReadEventId: rootEvents.get(msg2)!.id,
       lastReadSequence: rootEvents.get(msg2)!.sequence.toString(),
       lastReadOrdinal: 2,
+      markedMessageIds: [msg1, msg2],
     })
 
     // Thread: non-member leg → overlay-only, only tmsg1 (tmsg2 excluded by cutoff).
@@ -136,6 +139,59 @@ describe("ConversationService read/unread", () => {
     expect(threadSnap.lastReadEventId).toBeNull()
     expect(threadSnap.readMessageIds).toEqual([tmsg1])
     expect(await StreamMemberRepository.findByStreamAndMember(pool, thread, reader)).toBeNull()
+  })
+
+  test("markRead clears activity for exactly the marked messages, never the stream's other topics", async () => {
+    const wid = workspaceId()
+    const root = streamId()
+    const author = userId()
+    const reader = userId()
+    await withTransaction(pool, async (client) => {
+      await client.query(
+        `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
+        [root, wid, author]
+      )
+      await StreamMemberRepository.insert(client, root, reader)
+    })
+    const msg1 = await send(wid, root, author, "topic A opener")
+    const msg2 = await send(wid, root, author, "topic B — stays unread")
+    await setCreatedAt(msg1, 1000)
+    await setCreatedAt(msg2, 2000)
+    const convId = await insertConversation(wid, root, [msg1])
+
+    // A mention badge on each message; only the marked conversation's clears.
+    for (const messageId of [msg1, msg2]) {
+      await ActivityRepository.insert(pool, {
+        workspaceId: wid,
+        userId: reader,
+        activityType: "mention",
+        streamId: root,
+        messageId,
+        actorId: author,
+        actorType: "user",
+        context: {},
+      })
+    }
+
+    const { streams } = await conversationService.markRead({
+      workspaceId: wid,
+      conversationId: convId,
+      throughMessageId: msg1,
+      userId: reader,
+    })
+
+    expect(streams[0]?.markedMessageIds).toEqual([msg1])
+    const rows = await pool.query(
+      `SELECT message_id, (read_at IS NOT NULL) AS is_read FROM user_activity
+       WHERE workspace_id = $1 AND user_id = $2 ORDER BY message_id`,
+      [wid, reader]
+    )
+    expect(new Map(rows.rows.map((r) => [r.message_id, r.is_read]))).toEqual(
+      new Map([
+        [msg1, true],
+        [msg2, false],
+      ])
+    )
   })
 
   test("markUnread regresses the watermark on the affected stream and drops overlay-only thread reads", async () => {

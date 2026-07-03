@@ -31,6 +31,24 @@ async function seedUnreadState() {
   })
 }
 
+function makeActivity(id: string, messageId: string) {
+  return {
+    id,
+    workspaceId: "ws_1",
+    userId: "usr_1",
+    activityType: "mention",
+    streamId: "stream_1",
+    messageId,
+    actorId: "usr_2",
+    actorType: "user" as const,
+    context: {},
+    isSelf: false,
+    readAt: null,
+    emoji: null,
+    createdAt: new Date().toISOString(),
+  }
+}
+
 async function seedMembership() {
   await db.streamMemberships.put({
     id: "ws_1:stream_1",
@@ -48,6 +66,29 @@ async function seedMembership() {
 describe("applyReadStateSnapshotsIdb", () => {
   beforeEach(async () => {
     await Promise.all([db.unreadState.clear(), db.streamMemberships.clear(), db.streams.clear()])
+  })
+
+  it("drops held activity for exactly the marked messages (message-granular badge coupling)", async () => {
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 6 },
+      mentionCounts: { stream_1: 2 },
+      activityCounts: { stream_1: 2 },
+      unreadActivityCount: 2,
+      unreadActivities: [makeActivity("act_1", "msg_5"), makeActivity("act_2", "msg_9")],
+      latestOrdinals: { stream_1: 10 },
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+    await seedMembership()
+
+    // msg_5 was marked read; msg_9 belongs to another topic and keeps its badge.
+    await applyReadStateSnapshotsIdb("ws_1", [snapshot({ markedMessageIds: ["msg_5"] })])
+
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_2"])
+    expect(state?.unreadActivityCount).toBe(1)
   })
 
   it("SETs the overlay, recomputes unread by the invariant, and mirrors the watermark", async () => {

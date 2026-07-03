@@ -510,6 +510,9 @@ export interface StreamReadMessagesOutboxPayload extends WorkspaceScopedPayload 
   /** The watermark's per-stream sequence (bigint as string; "0" when no watermark). */
   lastReadSequence: string
   lastReadOrdinal: number
+  /** The ids this write marked read (pre-compaction) — drives the client's
+   * message-granular activity drop. Absent on unread/regress writes. */
+  markedMessageIds?: string[]
 }
 
 /**

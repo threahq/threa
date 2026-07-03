@@ -3,7 +3,7 @@ import type { StreamBootstrap, WorkspaceBootstrap } from "@threa/types"
 import { db } from "@/db"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
-import { applyStreamReadMessages } from "./unread-counters"
+import { applyStreamReadMessages, dropMessageActivities } from "./unread-counters"
 import { putCountersIdb, type CounterMutator } from "./catch-up-batch"
 
 /**
@@ -19,16 +19,25 @@ export interface ReadStateSnapshot {
   lastReadEventId: string | null
   lastReadSequence: string
   lastReadOrdinal: number
+  /** The ids this write marked read (pre-compaction) — set on the read path
+   * only. Their held activity rows (mention/reply badges) drop on apply:
+   * message-granular, so the stream's other topics keep their badges. */
+  markedMessageIds?: string[]
 }
 
 /** The pure counter fold for one snapshot — the single math authority both the
  *  socket echo and the optimistic apply route through. */
 export function snapshotCounterMutator(snapshot: ReadStateSnapshot): CounterMutator {
-  return (state) =>
-    applyStreamReadMessages(state, snapshot.streamId, {
+  return (state) => {
+    let next = applyStreamReadMessages(state, snapshot.streamId, {
       readMessageIds: snapshot.readMessageIds,
       lastReadOrdinal: snapshot.lastReadOrdinal,
     })
+    for (const messageId of snapshot.markedMessageIds ?? []) {
+      next = dropMessageActivities(next, messageId)
+    }
+    return next
+  }
 }
 
 /** Mirror a snapshot's watermark fields into the query cache (workspace +

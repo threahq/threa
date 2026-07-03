@@ -142,6 +142,7 @@ interface StreamReadMessagesPayload {
   lastReadEventId: string | null
   lastReadSequence: string
   lastReadOrdinal: number
+  markedMessageIds?: string[]
 }
 
 interface StreamsReadAllPayload {
@@ -996,6 +997,7 @@ export function registerWorkspaceSocketHandlers(
         lastReadEventId: payload.lastReadEventId,
         lastReadSequence: payload.lastReadSequence,
         lastReadOrdinal: payload.lastReadOrdinal,
+        markedMessageIds: payload.markedMessageIds,
       },
       commitCounter
     )

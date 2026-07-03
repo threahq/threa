@@ -4,6 +4,7 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSnapshot } from "../streams"
+import { ActivityRepository } from "../activity"
 import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
@@ -455,6 +456,15 @@ export class ConversationService {
           })
         )
       }
+      // Message-granular activity coupling: reading these messages clears their
+      // activity rows (mention/reply badges) — and only theirs, so the stream's
+      // other topics keep their badges. One batched update across all streams.
+      await ActivityRepository.markMessagesAsRead(
+        client,
+        params.workspaceId,
+        params.userId,
+        groups.flatMap(([, messageIds]) => messageIds)
+      )
       return { streams }
     })
   }

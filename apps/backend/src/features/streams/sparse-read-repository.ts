@@ -139,12 +139,16 @@ export const SparseReadRepository = {
         SELECT
           e.id AS event_id,
           e.sequence,
-          (r.message_id IS NOT NULL) AS covered
+          -- Covered = individually read OR soft-deleted: a deleted message can
+          -- never be read by anyone, so it must not hold the watermark down.
+          (r.message_id IS NOT NULL OR m.deleted_at IS NOT NULL) AS covered
         FROM stream_events e
         LEFT JOIN stream_member_message_reads r
           ON r.stream_id = e.stream_id
          AND r.member_id = ${memberId}
          AND r.message_id = e.payload->>'messageId'
+        LEFT JOIN messages m
+          ON m.id = e.payload->>'messageId'
         WHERE e.stream_id = ${streamId}
           AND e.event_type = 'message_created'
           AND e.sequence > ${watermarkSeq.toString()}
@@ -161,6 +165,38 @@ export const SparseReadRepository = {
       SELECT event_id, sequence FROM runs
       WHERE contiguous
       ORDER BY sequence DESC
+      LIMIT 1
+    `)
+    const row = result.rows[0]
+    return row ? { eventId: row.event_id, sequence: BigInt(row.sequence) } : null
+  },
+
+  /**
+   * The end of the contiguous run of soft-deleted messages immediately above
+   * `afterSeq`, or null when the first message above it is alive (or none
+   * exists). The compaction window is bounded by the overlay's max sequence, so
+   * a deleted run ABOVE the last overlay row escapes it — this probe lets the
+   * watermark absorb that trailing dead water too. A missing `messages` row
+   * counts as alive (conservative: stops the run).
+   */
+  async findTrailingDeletedRunEnd(db: Querier, streamId: string, afterSeq: bigint): Promise<CompactionTarget | null> {
+    const result = await db.query<{ event_id: string; sequence: string }>(sql`
+      WITH first_alive AS (
+        SELECT MIN(e.sequence) AS seq
+        FROM stream_events e
+        LEFT JOIN messages m ON m.id = e.payload->>'messageId'
+        WHERE e.stream_id = ${streamId}
+          AND e.event_type = 'message_created'
+          AND e.sequence > ${afterSeq.toString()}
+          AND m.deleted_at IS NULL
+      )
+      SELECT e.id AS event_id, e.sequence
+      FROM stream_events e
+      WHERE e.stream_id = ${streamId}
+        AND e.event_type = 'message_created'
+        AND e.sequence > ${afterSeq.toString()}
+        AND e.sequence < COALESCE((SELECT seq FROM first_alive), 9223372036854775807)
+      ORDER BY e.sequence DESC
       LIMIT 1
     `)
     const row = result.rows[0]

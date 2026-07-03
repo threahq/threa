@@ -15,6 +15,12 @@ export interface ReadStateSnapshot {
   lastReadEventId: string | null
   lastReadSequence: string
   lastReadOrdinal: number
+  /**
+   * The message ids this write marked read (pre-compaction, this stream's
+   * slice) — set on the read path only. Drives the client's message-granular
+   * activity drop; absent on unread/regress snapshots.
+   */
+  markedMessageIds?: string[]
 }
 
 export interface ApplySparseReadParams {
@@ -69,10 +75,21 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
   if (membership) {
     const target = await SparseReadRepository.findCompactionTarget(db, streamId, memberId, watermarkSeq)
     if (target) {
-      await StreamMemberRepository.update(db, streamId, memberId, { lastReadEventId: target.eventId })
-      await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, target.sequence)
       watermarkEventId = target.eventId
       watermarkSeq = target.sequence
+    }
+    // The tide also rises over sunken rocks: a trailing run of DELETED messages
+    // just above the (possibly compacted) watermark can never be read by anyone,
+    // so absorb it too — otherwise agent-deleted transients above the watermark
+    // stall it forever and the stream can never fully read from the board.
+    const deletedRun = await SparseReadRepository.findTrailingDeletedRunEnd(db, streamId, watermarkSeq)
+    if (deletedRun) {
+      watermarkEventId = deletedRun.eventId
+      watermarkSeq = deletedRun.sequence
+    }
+    if (watermarkEventId !== (membership.lastReadEventId ?? null)) {
+      await StreamMemberRepository.update(db, streamId, memberId, { lastReadEventId: watermarkEventId })
+      await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
     }
   }
 
@@ -85,6 +102,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     lastReadEventId: watermarkEventId,
     lastReadSequence: watermarkSeq.toString(),
     lastReadOrdinal,
+    markedMessageIds: params.messageIds,
   }
 
   await OutboxRepository.insert(db, "stream:read_messages", {
@@ -95,6 +113,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     lastReadEventId: watermarkEventId,
     lastReadSequence: watermarkSeq.toString(),
     lastReadOrdinal,
+    markedMessageIds: params.messageIds,
   })
 
   return snapshot

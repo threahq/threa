@@ -101,6 +101,7 @@ describe("Sparse read overlay", () => {
       lastReadEventId: null,
       lastReadSequence: "0",
       lastReadOrdinal: 0,
+      markedMessageIds: [msg3],
     })
     expect(await effectiveUnread(sid, reader)).toBe(2)
 
@@ -114,6 +115,7 @@ describe("Sparse read overlay", () => {
         lastReadEventId: null,
         lastReadSequence: "0",
         lastReadOrdinal: 0,
+        markedMessageIds: [msg3],
       },
     ])
   })
@@ -141,6 +143,7 @@ describe("Sparse read overlay", () => {
       lastReadEventId: eventByMsg.get(msg3)!.id,
       lastReadSequence: eventByMsg.get(msg3)!.sequence.toString(),
       lastReadOrdinal: 3,
+      markedMessageIds: [msg1, msg2],
     })
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     expect(await effectiveUnread(sid, reader)).toBe(0)
@@ -248,6 +251,48 @@ describe("Sparse read overlay", () => {
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     // msg2, msg3 unread again.
     expect(await effectiveUnread(sid, reader)).toBe(2)
+  })
+
+  test("a deleted message inside the run counts as covered — the tide rises over sunken rocks", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // msg2 deleted: nobody can ever read it, so it must not hold the watermark
+    // down. Reading msg1 + msg3 compacts the whole run.
+    await eventService.deleteMessage({ workspaceId: wid, streamId: sid, messageId: msg2, actorId: authorId })
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1, msg3] })
+    )
+
+    expect(snapshot.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
+    expect(snapshot.readMessageIds).toEqual([])
+    expect(await effectiveUnread(sid, reader)).toBe(0)
+  })
+
+  test("a trailing deleted run above the last read is absorbed into the watermark", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // msg2 and msg3 deleted AFTER msg1 is the only live content: reading msg1
+    // must lift the watermark over the dead tail to msg3, or the stream can
+    // never fully read from the board (the compaction window is bounded by the
+    // overlay's max sequence, which sits below the deleted run).
+    await eventService.deleteMessage({ workspaceId: wid, streamId: sid, messageId: msg2, actorId: authorId })
+    await eventService.deleteMessage({ workspaceId: wid, streamId: sid, messageId: msg3, actorId: authorId })
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1] })
+    )
+
+    expect(snapshot.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
+    expect(snapshot.readMessageIds).toEqual([])
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await effectiveUnread(sid, reader)).toBe(0)
   })
 
   test("members at/below the watermark never survive in the overlay (no double-subtract)", async () => {
