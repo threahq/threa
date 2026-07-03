@@ -1,5 +1,6 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import { Navigate, useParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { Bell, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -12,6 +13,8 @@ import { ActivityItem } from "@/components/activity/activity-item"
 import { ActivityEmpty } from "@/components/activity/activity-empty"
 import { ActivitySkeleton } from "@/components/activity/activity-skeleton"
 import { PageHeaderTabs } from "@/components/layout"
+import { commitCounterMutation } from "@/sync/catch-up-batch"
+import { reconcileActivities } from "@/sync/unread-counters"
 import type { AuthorType, Activity } from "@threa/types"
 
 type ActivityFilter = "all" | "unread" | "me"
@@ -54,6 +57,7 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
   })
   const markRead = useMarkActivityRead(workspaceId)
   const markAllRead = useMarkAllActivityRead(workspaceId)
+  const queryClient = useQueryClient()
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const idbStreams = useWorkspaceStreams(workspaceId)
@@ -62,6 +66,16 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
   const streamById = useMemo(() => {
     return new Map(idbStreams.map((s) => [s.id, s]))
   }, [idbStreams])
+
+  // Fix A4 backstop (docs/sparse-read-overlay-design.md): when the unread feed
+  // resolves, reconcile the held activity set to exactly the rows the server
+  // shows unread, so the badge can never disagree with the open feed (mops up
+  // residual drift like a move-rehomed row under an unvisited root). Folds
+  // through commitCounter so a live row spliced mid-fetch applies on top.
+  useEffect(() => {
+    if (filter !== "unread" || isLoading || !activities) return
+    commitCounterMutation(queryClient, workspaceId, (s) => reconcileActivities(s, activities))
+  }, [filter, isLoading, activities, queryClient, workspaceId])
 
   // Filter tabs are links, not buttons (INV-40). The Tabs primitive is still
   // used for the visual "active" styling — controlled via `value` — but each

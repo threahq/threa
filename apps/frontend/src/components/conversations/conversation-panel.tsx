@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
+import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
@@ -240,6 +241,15 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
   const { conversation } = post
+  // Per-row read state + the mark-read/unread actions for this conversation's
+  // rows (docs/sparse-read-overlay-design.md). The panel has no unread dot, so
+  // only the provider value is used.
+  const { value: conversationReadValue } = useConversationReadController(
+    workspaceId,
+    conversation.id,
+    conversation.streamId,
+    currentUserId
+  )
   // Deep-link target from `?m=` — the row to scroll to + flash. Shared with the
   // host page's `m` param, but only the conversation panel reads it here (the
   // board page, the panel's host for a conversation link, ignores it), so a
@@ -298,48 +308,50 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
 
   return (
     // Quote reply from a row routes into this conversation's reply composer.
-    <QuoteReplyProvider>
-      {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
-      <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&>*:first-child]:mt-0">
-        {all.map((message, i) => (
-          <MessageItem
-            key={message.id}
+    <ConversationReadProvider value={conversationReadValue}>
+      <QuoteReplyProvider>
+        {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
+        <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&>*:first-child]:mt-0">
+          {all.map((message, i) => (
+            <MessageItem
+              key={message.id}
+              workspaceId={workspaceId}
+              // Each row renders against its own stream so reactions and the
+              // permalink target where the message actually lives (one root, many
+              // streams); fall back to the anchor.
+              streamId={message.streamId ?? conversation.streamId}
+              message={message}
+              authorName={getActorName(message.authorId, message.authorType)}
+              currentUserId={currentUserId}
+              continuation={i > 0 && isContinuation(all[i - 1], message)}
+              conversationId={conversation.id}
+              conversationRootStreamId={conversation.streamId}
+              isHighlighted={message.id === highlightMessageId}
+              surfaceClassName="bg-background"
+            />
+          ))}
+          {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
+          {backfillFailed && (
+            <button
+              type="button"
+              onClick={() => void refetchMessages()}
+              className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+            >
+              Couldn't load the full conversation. Retry.
+            </button>
+          )}
+        </div>
+        <div className="border-t px-4 py-3">
+          <BoardReplyComposer
             workspaceId={workspaceId}
-            // Each row renders against its own stream so reactions and the
-            // permalink target where the message actually lives (one root, many
-            // streams); fall back to the anchor.
-            streamId={message.streamId ?? conversation.streamId}
-            message={message}
-            authorName={getActorName(message.authorId, message.authorType)}
-            currentUserId={currentUserId}
-            continuation={i > 0 && isContinuation(all[i - 1], message)}
-            conversationId={conversation.id}
-            conversationRootStreamId={conversation.streamId}
-            isHighlighted={message.id === highlightMessageId}
-            surfaceClassName="bg-background"
+            post={post}
+            hostStreamType={hostStreamType}
+            lastActiveStreamId={lastActiveStreamId}
+            openReplySignal={openReplySignal}
           />
-        ))}
-        {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
-        {backfillFailed && (
-          <button
-            type="button"
-            onClick={() => void refetchMessages()}
-            className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-          >
-            Couldn't load the full conversation. Retry.
-          </button>
-        )}
-      </div>
-      <div className="border-t px-4 py-3">
-        <BoardReplyComposer
-          workspaceId={workspaceId}
-          post={post}
-          hostStreamType={hostStreamType}
-          lastActiveStreamId={lastActiveStreamId}
-          openReplySignal={openReplySignal}
-        />
-      </div>
-    </QuoteReplyProvider>
+        </div>
+      </QuoteReplyProvider>
+    </ConversationReadProvider>
   )
 }

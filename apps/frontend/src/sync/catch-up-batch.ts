@@ -54,7 +54,7 @@ function applyPreviewsToCache(
 
 /** Fold the counter mutations onto the IDB unread-state singleton. Must run
  *  inside an open `rw` transaction that includes `db.unreadState`. */
-async function putCountersIdb(workspaceId: string, mutators: CounterMutator[]): Promise<void> {
+export async function putCountersIdb(workspaceId: string, mutators: CounterMutator[]): Promise<void> {
   if (mutators.length === 0) return
   const state = await db.unreadState.get(workspaceId)
   if (!state) return

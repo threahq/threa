@@ -500,6 +500,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     conversation.reassignMessage
   )
+  app.post("/api/workspaces/:workspaceId/conversations/:conversationId/read", ...authed, conversation.markRead)
+  app.post("/api/workspaces/:workspaceId/conversations/:conversationId/unread", ...authed, conversation.markUnread)
 
   app.post("/api/workspaces/:workspaceId/commands/dispatch", ...authed, rateLimits.commandDispatch, command.dispatch)
   app.get("/api/workspaces/:workspaceId/commands", ...authed, command.list)

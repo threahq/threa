@@ -29,6 +29,13 @@ interface UseUnreadDividerOptions {
    * affirmatively say the read position is resolved before any divider latches.
    */
   readStateResolved?: boolean
+  /**
+   * Message ids read individually above the watermark (the sparse read overlay).
+   * The divider anchors on the first *effectively* unread event — one whose
+   * message id isn't in this set — so a row already read from a conversation
+   * surface is skipped. See docs/sparse-read-overlay-design.md.
+   */
+  overlayReadIds?: ReadonlySet<string>
 }
 
 interface UseUnreadDividerResult {
@@ -80,6 +87,7 @@ export function useUnreadDivider({
   highlightMessageId,
   isLoading = false,
   readStateResolved = false,
+  overlayReadIds,
 }: UseUnreadDividerOptions): UseUnreadDividerResult {
   const firstUnreadEventId = useMemo(() => {
     if (events.length === 0 || !readStateResolved) return undefined
@@ -91,16 +99,20 @@ export function useUnreadDivider({
       return undefined
     }
 
-    // Find first visible event from another user after the last read position.
-    // Skip event types that don't render as timeline items (e.g. reactions).
+    // Find the first *effectively* unread visible event from another user after
+    // the last read position. Skip event types that don't render as timeline
+    // items (e.g. reactions) and rows already in the overlay (individually read
+    // from a conversation surface).
     for (let i = startIndex; i < events.length; i++) {
-      if (events[i].actorId !== currentUserId && !INVISIBLE_EVENT_TYPES.has(events[i].eventType)) {
-        return events[i].id
-      }
+      const event = events[i]
+      if (event.actorId === currentUserId || INVISIBLE_EVENT_TYPES.has(event.eventType)) continue
+      const messageId = (event.payload as { messageId?: string } | null)?.messageId
+      if (messageId && overlayReadIds?.has(messageId)) continue
+      return event.id
     }
 
     return undefined
-  }, [events, lastReadEventId, currentUserId, readStateResolved])
+  }, [events, lastReadEventId, currentUserId, readStateResolved, overlayReadIds])
 
   // Latch the first unread position for this stream and hold it for the whole
   // reading session. Done in render (not an effect) so it's immune to effect

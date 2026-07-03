@@ -19,7 +19,12 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import type { QueryClient } from "@tanstack/react-query"
 import { commitCounterMutation } from "./catch-up-batch"
-import { dropReactionActivity, rehomeActivities } from "./unread-counters"
+import {
+  applyMovedSourceOrdinal,
+  dropMessageActivities,
+  dropReactionActivity,
+  rehomeActivities,
+} from "./unread-counters"
 
 // ============================================================================
 // Bootstrap application — writes stream bootstrap data to IndexedDB
@@ -398,6 +403,11 @@ interface MessagesMovedPayload {
   parentReplyCount: number
   /** Recomputed thread summary for the drop-target — same shape as `message:updated` ships. */
   parentThreadSummary: ThreadSummary | null
+  /** Source stream's post-move `message_created` count. Fix A1: SET onto the
+   *  source `latestOrdinals` so the count that dropped when rows relocated heals
+   *  (max-merge alone never corrects it). Optional during rollout → absent keeps
+   *  today's behavior. See docs/sparse-read-overlay-design.md. */
+  sourceMessageOrdinal?: number
 }
 
 interface ReactionPayload {
@@ -805,6 +815,10 @@ export function registerStreamSocketHandlers(
       ...p,
       deletedAt: payload.deletedAt,
     }))
+
+    // Fix A2: the delete transaction marks the message's activity rows read
+    // server-side with no counter event, so drop the held rows here to match.
+    commitCounterMutation(queryClient, workspaceId, (s) => dropMessageActivities(s, payload.messageId))
   }
 
   const handleMessagesMoved = async (payload: MessagesMovedPayload) => {
@@ -876,11 +890,19 @@ export function registerStreamSocketHandlers(
     // Re-home held activity rows from the source stream to the destination (D4):
     // the server UPDATEs user_activity.stream_id on a move with no counter event.
     // This handler fires once per subscribed stream (source AND destination), so
-    // gate on the source to apply the workspace-wide rehome exactly once.
+    // gate on the source to apply the workspace-wide rehome exactly once. Fix A1:
+    // the same gate SETs the source's latest ordinal to its post-move count so
+    // the phantom unread from vacated `message_created` rows heals.
     if (payload.sourceStreamId === streamId) {
       commitCounterMutation(queryClient, workspaceId, (s) =>
         rehomeActivities(s, payload.sourceStreamId, payload.destinationStreamId, payload.movedMessageIds)
       )
+      if (payload.sourceMessageOrdinal !== undefined) {
+        const sourceOrdinal = payload.sourceMessageOrdinal
+        commitCounterMutation(queryClient, workspaceId, (s) =>
+          applyMovedSourceOrdinal(s, payload.sourceStreamId, sourceOrdinal)
+        )
+      }
     }
   }
 

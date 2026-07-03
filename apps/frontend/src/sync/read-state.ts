@@ -1,0 +1,119 @@
+import type { QueryClient } from "@tanstack/react-query"
+import type { StreamBootstrap, WorkspaceBootstrap } from "@threa/types"
+import { db } from "@/db"
+import { workspaceKeys } from "@/hooks/use-workspaces"
+import { streamKeys } from "@/hooks/use-streams"
+import { applyStreamReadMessages } from "./unread-counters"
+import { putCountersIdb, type CounterMutator } from "./catch-up-batch"
+
+/**
+ * The absolute post-write read state for one stream produced by a sparse-read
+ * write (`stream:read_messages` socket echo, or a conversation-surface optimistic
+ * apply). `readMessageIds` is the ENTIRE overlay for that (stream, member) after
+ * the write (post-compaction) — absolute, not a delta — so application is
+ * idempotent and order-convergent. See docs/sparse-read-overlay-design.md.
+ */
+export interface ReadStateSnapshot {
+  streamId: string
+  readMessageIds: string[]
+  lastReadEventId: string | null
+  lastReadSequence: string
+  lastReadOrdinal: number
+}
+
+/** The pure counter fold for one snapshot — the single math authority both the
+ *  socket echo and the optimistic apply route through. */
+export function snapshotCounterMutator(snapshot: ReadStateSnapshot): CounterMutator {
+  return (state) =>
+    applyStreamReadMessages(state, snapshot.streamId, {
+      readMessageIds: snapshot.readMessageIds,
+      lastReadOrdinal: snapshot.lastReadOrdinal,
+    })
+}
+
+/** Mirror a snapshot's watermark fields into the query cache (workspace +
+ *  stream bootstrap membership rows) so the unread divider tracks immediately. */
+function mirrorSnapshotToCache(queryClient: QueryClient, workspaceId: string, snapshot: ReadStateSnapshot): void {
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old) return old
+    return {
+      ...old,
+      streamMemberships: old.streamMemberships.map((membership) =>
+        membership.streamId === snapshot.streamId
+          ? { ...membership, lastReadEventId: snapshot.lastReadEventId, lastReadSequence: snapshot.lastReadSequence }
+          : membership
+      ),
+    }
+  })
+
+  queryClient.setQueryData<StreamBootstrap | undefined>(streamKeys.bootstrap(workspaceId, snapshot.streamId), (old) => {
+    if (!old?.membership) return old
+    return {
+      ...old,
+      membership: {
+        ...old.membership,
+        lastReadEventId: snapshot.lastReadEventId,
+        lastReadSequence: snapshot.lastReadSequence,
+      },
+    }
+  })
+}
+
+/** Write a snapshot's watermark mirrors to IDB. Must run inside an open `rw`
+ *  transaction that includes `db.streams` and `db.streamMemberships`. */
+async function writeSnapshotWatermarkIdb(workspaceId: string, snapshot: ReadStateSnapshot): Promise<void> {
+  const now = Date.now()
+  await db.streams.update(snapshot.streamId, { lastReadEventId: snapshot.lastReadEventId, _cachedAt: now })
+
+  const membershipId = `${workspaceId}:${snapshot.streamId}`
+  const membership = await db.streamMemberships.get(membershipId)
+  if (membership) {
+    await db.streamMemberships.put({
+      ...membership,
+      lastReadEventId: snapshot.lastReadEventId,
+      lastReadSequence: snapshot.lastReadSequence,
+      id: membershipId,
+      workspaceId,
+      _cachedAt: now,
+    })
+  }
+}
+
+/**
+ * THE single apply path for a sparse-read snapshot on the socket side: mirror
+ * the watermark into the query cache, fold the counter through the caller's
+ * commit (batch-aware during catch-up, immediate live), and persist the
+ * watermark mirrors to IDB. The counter's own IDB write (`db.unreadState`) is
+ * owned by `commitCounter`; the watermark mirror is a separate transaction, as
+ * with the other read handlers.
+ */
+export function commitReadStateSnapshot(
+  queryClient: QueryClient,
+  workspaceId: string,
+  snapshot: ReadStateSnapshot,
+  commitCounter: (mutate: CounterMutator) => void
+): void {
+  mirrorSnapshotToCache(queryClient, workspaceId, snapshot)
+  commitCounter(snapshotCounterMutator(snapshot))
+  void db.transaction("rw", [db.streams, db.streamMemberships], () => writeSnapshotWatermarkIdb(workspaceId, snapshot))
+}
+
+/**
+ * Optimistic apply of one or more snapshots straight to IDB (no query cache):
+ * the badge (`db.unreadState`), the timeline overlay, and the board card read
+ * state all read IDB via `useLiveQuery`, so this drives the live UI instantly.
+ * The authoritative `stream:read_messages` echo reconciles the query cache
+ * through `commitReadStateSnapshot`. Counter math + watermark persistence share
+ * the same helpers as the socket path (`snapshotCounterMutator`,
+ * `writeSnapshotWatermarkIdb`), so there is one apply path per surface (INV-35).
+ */
+export async function applyReadStateSnapshotsIdb(workspaceId: string, snapshots: ReadStateSnapshot[]): Promise<void> {
+  if (snapshots.length === 0) return
+  const mutators = snapshots.map(snapshotCounterMutator)
+  await db.transaction("rw", [db.unreadState, db.streams, db.streamMemberships], async () => {
+    await putCountersIdb(workspaceId, mutators)
+    for (const snapshot of snapshots) {
+      await writeSnapshotWatermarkIdb(workspaceId, snapshot)
+    }
+  })
+}

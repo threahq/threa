@@ -11,6 +11,7 @@ import {
 } from "./repository"
 import { StreamMemberRepository, StreamMember } from "./member-repository"
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
+import { SparseReadRepository } from "./sparse-read-repository"
 import { MessageRepository } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { streamId, eventId } from "../../lib/id"
@@ -1827,6 +1828,12 @@ export class StreamService {
 
       const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId: eventId })
       if (membership) {
+        // Overlay invariant: every overlay row sits strictly above the watermark.
+        // Advancing the watermark absorbs the run at/below it, so prune those rows
+        // in the same transaction; the remaining overlay is the absolute set the
+        // client keeps.
+        await SparseReadRepository.pruneAtOrBelow(client, streamId, memberId, position.sequence)
+        const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
         // Absolute read position (sync phase 2c): clients derive unread as
         // latestOrdinal - lastReadOrdinal, so the event carries where this read
         // lands in message-ordinal space.
@@ -1837,6 +1844,7 @@ export class StreamService {
           lastReadEventId: eventId,
           lastReadSequence: position.sequence.toString(),
           lastReadOrdinal: position.messageOrdinal,
+          readMessageIds,
         })
       }
       return membership
@@ -1871,6 +1879,12 @@ export class StreamService {
 
       const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId })
       if (membership) {
+        // Mark-unread means "this message and everything after it is unread", so
+        // overlay rows at/above the target contradict the intent — drop them. The
+        // watermark already regressed below the target; the remaining overlay is
+        // the holes still above it.
+        await SparseReadRepository.deleteAtOrAbove(client, streamId, memberId, messageEvent.sequence)
+        const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
         await OutboxRepository.insert(client, "stream:read_set", {
           workspaceId,
           authorId: memberId,
@@ -1878,6 +1892,7 @@ export class StreamService {
           lastReadEventId,
           lastReadSequence: (previous?.sequence ?? 0n).toString(),
           lastReadOrdinal,
+          readMessageIds,
         })
       }
       return membership
@@ -1913,6 +1928,10 @@ export class StreamService {
       const updatedStreamIds = Array.from(updatesToApply.keys())
 
       if (updatedStreamIds.length > 0) {
+        // Read-all pins each membership to its stream's latest event, so nothing
+        // can remain above the watermark — wipe every absorbed overlay row (the
+        // client clears each read stream's set on `stream:read_all`).
+        await SparseReadRepository.deleteAllForStreams(client, memberId, updatedStreamIds)
         // Read-all sets each membership to its stream's latest event, so the
         // absolute read position per stream is the stream's total message
         // count (sync phase 2c).
@@ -1933,14 +1952,24 @@ export class StreamService {
   }
 
   async getUnreadCounts(
-    memberships: Array<{ streamId: string; lastReadEventId: string | null }>
+    memberships: Array<{ streamId: string; memberId: string; lastReadEventId: string | null }>
   ): Promise<Map<string, { unreadCount: number; totalCount: number }>> {
     return StreamEventRepository.countUnreadByStreamBatch(this.pool, memberships)
   }
 
-  async getUnreadCount(streamId: string, lastReadEventId: string | null): Promise<number> {
-    const unreadCounts = await this.getUnreadCounts([{ streamId, lastReadEventId }])
+  async getUnreadCount(streamId: string, memberId: string, lastReadEventId: string | null): Promise<number> {
+    const unreadCounts = await this.getUnreadCounts([{ streamId, memberId, lastReadEventId }])
     return unreadCounts.get(streamId)?.unreadCount ?? 0
+  }
+
+  /** The member's sparse read overlay across `streamIds`, keyed by stream id (bootstrap). */
+  async getReadOverlayForMember(memberId: string, streamIds: string[]): Promise<Map<string, string[]>> {
+    return SparseReadRepository.listOverlayIdsForMember(this.pool, memberId, streamIds)
+  }
+
+  /** Resolve watermark event ids to per-stream sequences (bootstrap membership `lastReadSequence`). */
+  async getSequencesByEventIds(eventIds: string[]): Promise<Map<string, string>> {
+    return StreamEventRepository.getSequencesByEventIds(this.pool, eventIds)
   }
 
   async getThreadsForMessages(streamId: string): Promise<Map<string, string>> {

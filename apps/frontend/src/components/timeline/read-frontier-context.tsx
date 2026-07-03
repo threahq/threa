@@ -1,28 +1,45 @@
 import { createContext, useContext } from "react"
 
-/**
- * The read pointer's per-stream `sequence` (bigint-as-string), or `null` when
- * the read state isn't resolved or the pointer sits outside the loaded window.
- * Provided by `stream-content`; message rows read it to gate their read-state
- * actions ("Mark as read" on unread rows, "Mark as unread" on read
- * rows). `null` means "don't gate" — both actions stay visible — so a surface
- * with no provider (e.g. a context with no resolved read state) is unchanged.
- */
-export const ReadFrontierContext = createContext<string | null>(null)
+const EMPTY_OVERLAY: ReadonlySet<string> = new Set()
 
-export function useReadFrontier(): string | null {
+/**
+ * Per-stream read frontier for the open timeline: the read pointer's `sequence`
+ * (bigint-as-string, or `null` when the read state isn't resolved or the pointer
+ * sits outside the loaded window) plus the sparse read overlay — message ids read
+ * individually *above* the watermark (docs/sparse-read-overlay-design.md). A row
+ * is *effectively* read when its id is in the overlay even if its sequence sits
+ * past the frontier. Provided by `stream-content`; message rows read it to gate
+ * their read-state actions. The default (`{ sequence: null, overlay: ∅ }`) means
+ * "don't gate" — both actions stay visible — so a surface with no provider is
+ * unchanged.
+ */
+export interface ReadFrontier {
+  sequence: string | null
+  overlay: ReadonlySet<string>
+}
+
+export const ReadFrontierContext = createContext<ReadFrontier>({ sequence: null, overlay: EMPTY_OVERLAY })
+
+export function useReadFrontier(): ReadFrontier {
   return useContext(ReadFrontierContext)
 }
 
 export type RowReadState = "read" | "unread" | "ungated"
 
 /**
- * Where a row sits relative to the read pointer. A row is `unread` when its
- * sequence is strictly past the frontier; the row AT the frontier (the last
- * read message) counts as `read`. `ungated` when there's no usable frontier or
- * the row has no sequence yet (optimistic send) — callers show both actions.
+ * Where a row sits relative to the *effective* read state. A row is `read` when
+ * its id is in the overlay (individually read above the watermark) or its
+ * sequence is at/before the frontier; `unread` only when its sequence is
+ * strictly past the frontier AND it isn't in the overlay; `ungated` when there's
+ * no usable frontier or the row has no sequence yet (optimistic send) and isn't
+ * overlay-read — callers show both actions.
  */
-export function rowReadState(eventSequence: string | null | undefined, readFrontier: string | null): RowReadState {
-  if (readFrontier === null || eventSequence == null) return "ungated"
-  return BigInt(eventSequence) > BigInt(readFrontier) ? "unread" : "read"
+export function rowReadState(
+  eventSequence: string | null | undefined,
+  messageId: string | null | undefined,
+  frontier: ReadFrontier
+): RowReadState {
+  if (messageId != null && frontier.overlay.has(messageId)) return "read"
+  if (frontier.sequence === null || eventSequence == null) return "ungated"
+  return BigInt(eventSequence) > BigInt(frontier.sequence) ? "unread" : "read"
 }

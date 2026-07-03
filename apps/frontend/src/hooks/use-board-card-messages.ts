@@ -29,6 +29,7 @@ function eventToRenderable(event: CachedEvent): RenderableMessage | null {
   return {
     id: p.messageId,
     streamId: event.streamId,
+    sequence: event.sequence,
     authorId: event.actorId ?? "",
     authorType: (event.actorType ?? "user") as AuthorType,
     contentMarkdown: p.contentMarkdown ?? "",

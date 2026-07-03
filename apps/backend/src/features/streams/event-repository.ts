@@ -384,6 +384,25 @@ export const StreamEventRepository = {
   },
 
   /**
+   * The lowest-sequence `message_created` event among `messageIds` in a stream —
+   * the earliest affected message for a conversation mark-unread regress. Null
+   * when none of the ids resolve to a message event in the stream.
+   */
+  async findEarliestMessageEvent(db: Querier, streamId: string, messageIds: string[]): Promise<StreamEvent | null> {
+    if (messageIds.length === 0) return null
+    const result = await db.query<StreamEventRow>(sql`
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
+      FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type = 'message_created'
+        AND payload->>'messageId' = ANY(${messageIds}::text[])
+      ORDER BY sequence ASC
+      LIMIT 1
+    `)
+    return result.rows[0] ? mapRowToEvent(result.rows[0]) : null
+  },
+
+  /**
    * The message_created event immediately before `sequence` in viewer order.
    * Used as the read pointer for "mark unread" — set the membership here so the
    * message at `sequence` and everything after it count as unread. Returns null
@@ -688,33 +707,46 @@ export const StreamEventRepository = {
    */
   async countUnreadByStreamBatch(
     db: Querier,
-    memberships: Array<{ streamId: string; lastReadEventId: string | null }>
+    memberships: Array<{ streamId: string; memberId: string; lastReadEventId: string | null }>
   ): Promise<Map<string, { unreadCount: number; totalCount: number }>> {
     if (memberships.length === 0) return new Map()
 
     const streamIds = memberships.map((m) => m.streamId)
+    const memberIds = memberships.map((m) => m.memberId)
     const lastReadEventIds = memberships.map((m) => m.lastReadEventId)
 
+    // Effective unread = messages above the watermark − the sparse overlay count
+    // (individually-read messages above the watermark). The overlay invariant
+    // keeps those rows strictly above the watermark, so the two sets are disjoint
+    // and the subtraction can't go negative; GREATEST guards a torn read anyway.
     const result = await db.query<{ stream_id: string; unread_count: string; total_count: string }>(
       `
       WITH memberships AS (
         SELECT
           m.stream_id,
+          m.member_id,
           COALESCE(se.sequence, 0) as last_read_seq
         FROM (
-          SELECT unnest($1::text[]) as stream_id, unnest($2::text[]) as last_read_event_id
+          SELECT unnest($1::text[]) as stream_id, unnest($2::text[]) as member_id, unnest($3::text[]) as last_read_event_id
         ) m
         LEFT JOIN stream_events se ON se.id = m.last_read_event_id
       )
       SELECT
         m.stream_id,
-        COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq)::text as unread_count,
+        GREATEST(
+          COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq)
+          - COALESCE((
+              SELECT COUNT(*) FROM stream_member_message_reads r
+              WHERE r.stream_id = m.stream_id AND r.member_id = m.member_id
+            ), 0),
+          0
+        )::text as unread_count,
         COUNT(e.id)::text as total_count
       FROM memberships m
       LEFT JOIN stream_events e ON e.stream_id = m.stream_id AND e.event_type = 'message_created'
-      GROUP BY m.stream_id
+      GROUP BY m.stream_id, m.member_id
     `,
-      [streamIds, lastReadEventIds]
+      [streamIds, memberIds, lastReadEventIds]
     )
 
     const map = new Map<string, { unreadCount: number; totalCount: number }>()
@@ -772,6 +804,23 @@ export const StreamEventRepository = {
     const row = result.rows[0]
     if (!row) return null
     return { sequence: BigInt(row.sequence), messageOrdinal: parseInt(row.message_ordinal, 10) }
+  },
+
+  /**
+   * Resolve a batch of event ids to their per-stream `sequence` (bigint as
+   * string). Missing ids are absent from the map. Backs the bootstrap membership
+   * `lastReadSequence` — the client needs the watermark's sequence to place its
+   * read frontier against the sparse overlay.
+   */
+  async getSequencesByEventIds(db: Querier, eventIds: string[]): Promise<Map<string, string>> {
+    if (eventIds.length === 0) return new Map()
+    const result = await db.query<{ id: string; sequence: string }>(sql`
+      SELECT id, sequence FROM stream_events
+      WHERE id = ANY(${eventIds}::text[])
+    `)
+    const map = new Map<string, string>()
+    for (const row of result.rows) map.set(row.id, row.sequence)
+    return map
   },
 
   /**

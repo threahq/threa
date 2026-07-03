@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type LucideIcon } from "lucide-react"
@@ -6,6 +6,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
+import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
@@ -66,6 +67,24 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
 
   const streamId = conversation.streamId
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
+
+  // Conversation read state: per-row gating + actions for the message rows, plus
+  // the card's effectively-unread signal for the header dot. Both derive live
+  // from the overlay + per-stream watermarks, so the dot clears the moment a
+  // read lands (docs/sparse-read-overlay-design.md).
+  const { value: conversationReadValue, hasUnread } = useConversationReadController(
+    workspaceId,
+    conversation.id,
+    streamId,
+    currentUserId
+  )
+  // Over the card's known local messages (opening + the full local reply rail);
+  // own-authored rows are excluded inside `hasUnread`.
+  const knownMessages = useMemo(
+    () => (openingMessage ? [openingMessage, ...railReplies] : railReplies),
+    [openingMessage, railReplies]
+  )
+  const cardHasUnread = hasUnread(knownMessages)
 
   // The rail carries every locally-synced reply; older ones (or a wholly unsynced
   // stream — `source === "projection"`) may be missing, so on expand we backfill
@@ -129,90 +148,103 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   return (
     // Scope quote reply to this card: a message row's "Quote reply" routes into
     // this card's own reply composer, not another card's.
-    <QuoteReplyProvider>
-      {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
-      <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
-      <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          {/* The stream the post lives in — a real link back into it (INV-40). */}
-          <Link
-            to={`/w/${workspaceId}/s/${streamId}`}
-            className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
-          >
-            <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate font-medium">{contextLabel}</span>
-          </Link>
-          <RelativeTime date={conversation.lastActivityAt} terse className="ml-auto shrink-0" />
-          {/* Open the whole conversation in the side panel (Mechanism B) — reads it
+    <ConversationReadProvider value={conversationReadValue}>
+      <QuoteReplyProvider>
+        {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
+        <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
+        <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {/* The stream the post lives in — a real link back into it (INV-40). */}
+            <Link
+              to={`/w/${workspaceId}/s/${streamId}`}
+              className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
+            >
+              <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate font-medium">{contextLabel}</span>
+            </Link>
+            {/* Quiet unread dot: the conversation holds an effectively-unread member
+              message. Reserved fixed footprint (no layout shift, INV-21); clears
+              live as read state changes. */}
+            <span
+              className="ml-auto flex h-2 w-2 shrink-0 items-center justify-center"
+              aria-label={cardHasUnread ? "Unread" : undefined}
+            >
+              {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
+            </span>
+            <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
+            {/* Open the whole conversation in the side panel (Mechanism B) — reads it
             coherently and replies scoped to it, peer to a thread. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                aria-label="Open conversation"
-                onClick={() => openPanel(createConversationPanelId(conversation.id))}
-              >
-                <PanelRight className="h-3.5 w-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Open conversation</TooltipContent>
-          </Tooltip>
-        </div>
-
-        <div className="mt-3 [&>*:first-child]:mt-0">
-          {contiguous ? (
-            (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).map((message, i, all) =>
-              renderMessage(message, i > 0 && isContinuation(all[i - 1], message))
-            )
-          ) : (
-            <>
-              {openingMessage && renderMessage(openingMessage, false)}
-              {!expanded && hiddenCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setExpanded(true)}
-                  className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label="Open conversation"
+                  onClick={() => openPanel(createConversationPanelId(conversation.id))}
                 >
-                  <ChevronDown className="h-3.5 w-3.5" />
-                  {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
-                </button>
-              )}
-              {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>}
-              {/* The backfill loads the older/full window; the recent replies the
+                  <PanelRight className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Open conversation</TooltipContent>
+            </Tooltip>
+          </div>
+
+          <div className="mt-3 [&>*:first-child]:mt-0">
+            {contiguous ? (
+              (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).map((message, i, all) =>
+                renderMessage(message, i > 0 && isContinuation(all[i - 1], message))
+              )
+            ) : (
+              <>
+                {openingMessage && renderMessage(openingMessage, false)}
+                {!expanded && hiddenCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(true)}
+                    className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5" />
+                    {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
+                  </button>
+                )}
+                {loadingMore && (
+                  <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
+                )}
+                {/* The backfill loads the older/full window; the recent replies the
                 rail carried are already shown above, so the error names "older"
                 rather than contradicting visible content. */}
-              {expanded && expandFailed && (
-                <button
-                  type="button"
-                  onClick={() => void refetchMessages()}
-                  className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-                >
-                  Couldn't load older messages. Retry.
-                </button>
-              )}
-              {displayedReplies.map((message, i) =>
-                renderMessage(message, i > 0 && isContinuation(displayedReplies[i - 1], message))
-              )}
-            </>
-          )}
-        </div>
+                {expanded && expandFailed && (
+                  <button
+                    type="button"
+                    onClick={() => void refetchMessages()}
+                    className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+                  >
+                    Couldn't load older messages. Retry.
+                  </button>
+                )}
+                {displayedReplies.map((message, i) =>
+                  renderMessage(message, i > 0 && isContinuation(displayedReplies[i - 1], message))
+                )}
+              </>
+            )}
+          </div>
 
-        <BoardReplyComposer
-          workspaceId={workspaceId}
-          post={post}
-          hostStreamType={streamType}
-          // The conversation's most-recently-active stream — the latest displayed
-          // reply's own stream (a thread under the root), INCLUDING the viewer's own
-          // pending reply and any expand-backfilled rows, so a continuation follows
-          // the conversation into the thread it moved to instead of re-interleaving
-          // the channel. `displayedReplies` is chronological; its last entry is the
-          // freshest activity. Falls back to the conversation's own stream — NOT the
-          // opening message's, which for a thread post is the parent-stream message.
-          lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
-        />
-      </div>
-    </QuoteReplyProvider>
+          <BoardReplyComposer
+            workspaceId={workspaceId}
+            post={post}
+            hostStreamType={streamType}
+            // The conversation's most-recently-active stream — the latest displayed
+            // reply's own stream (a thread under the root), INCLUDING the viewer's own
+            // pending reply and any expand-backfilled rows, so a continuation follows
+            // the conversation into the thread it moved to instead of re-interleaving
+            // the channel. `displayedReplies` is chronological; its last entry is the
+            // freshest activity. Falls back to the conversation's own stream — NOT the
+            // opening message's, which for a thread post is the parent-stream message.
+            lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
+          />
+        </div>
+      </QuoteReplyProvider>
+    </ConversationReadProvider>
   )
 }

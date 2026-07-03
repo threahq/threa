@@ -1,9 +1,9 @@
 import { Pool } from "pg"
-import { withClient, withTransaction } from "../../db"
+import { withClient, withTransaction, type Querier } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
-import { StreamRepository } from "../streams"
+import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSnapshot } from "../streams"
 import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
@@ -419,6 +419,132 @@ export class ConversationService {
         previousConversation: updatedPrevious ? addStalenessFields(updatedPrevious) : null,
       }
     })
+  }
+
+  /**
+   * Mark a conversation read through `throughMessageId` (inclusive). Read truth is
+   * message-granular and stream-anchored (docs/sparse-read-overlay-design.md):
+   * the conversation's member messages are snapshotted to concrete ids at write
+   * time (immune to later re-clustering), grouped by each message's own stream (a
+   * conversation spans root + threads), and applied as a sparse-read overlay per
+   * stream — compacting into the watermark where contiguous. One transaction
+   * (INV-6), one `stream:read_messages` per touched stream (INV-4/7).
+   */
+  async markRead(params: {
+    workspaceId: string
+    conversationId: string
+    throughMessageId: string
+    userId: string
+  }): Promise<{ streams: ReadStateSnapshot[] }> {
+    return withTransaction(this.pool, async (client) => {
+      const groups = await this.resolveConversationReadTargets(
+        client,
+        params.workspaceId,
+        params.conversationId,
+        params.throughMessageId,
+        "read"
+      )
+      const streams: ReadStateSnapshot[] = []
+      for (const [streamId, messageIds] of groups) {
+        streams.push(
+          await applySparseRead(client, {
+            workspaceId: params.workspaceId,
+            streamId,
+            memberId: params.userId,
+            messageIds,
+          })
+        )
+      }
+      return { streams }
+    })
+  }
+
+  /**
+   * Mark a conversation unread from `fromMessageId` (inclusive). Per spanned
+   * stream: drop the affected member ids from the overlay and regress the
+   * watermark to just before the earliest affected message when it sits at/past
+   * it (existing `stream:read_set` semantics, accepting collateral un-reading).
+   */
+  async markUnread(params: {
+    workspaceId: string
+    conversationId: string
+    fromMessageId: string
+    userId: string
+  }): Promise<{ streams: ReadStateSnapshot[] }> {
+    return withTransaction(this.pool, async (client) => {
+      const groups = await this.resolveConversationReadTargets(
+        client,
+        params.workspaceId,
+        params.conversationId,
+        params.fromMessageId,
+        "unread"
+      )
+      const streams: ReadStateSnapshot[] = []
+      for (const [streamId, messageIds] of groups) {
+        streams.push(
+          await applySparseUnread(client, {
+            workspaceId: params.workspaceId,
+            streamId,
+            memberId: params.userId,
+            messageIds,
+          })
+        )
+      }
+      return { streams }
+    })
+  }
+
+  /**
+   * Resolve a conversation's member messages to the concrete ids to apply per
+   * stream: `message_ids ∪ secondary_message_ids` plus the thread-anchored
+   * opening's parent message, filtered by the target message's `createdAt`
+   * (timestamps are the card's cross-stream merge key — sequences aren't
+   * comparable across streams). Returns `[streamId, messageIds]` entries in
+   * sorted stream-id order so two concurrent conversation-reads take the same
+   * per-stream lock order and can't deadlock.
+   */
+  private async resolveConversationReadTargets(
+    client: Querier,
+    workspaceId: string,
+    conversationId: string,
+    targetMessageId: string,
+    direction: "read" | "unread"
+  ): Promise<Array<[string, string[]]>> {
+    const conversation = await ConversationRepository.findById(client, conversationId)
+    if (!conversation || conversation.workspaceId !== workspaceId) {
+      throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+    }
+
+    const memberSet = new Set<string>([...conversation.messageIds, ...conversation.secondaryMessageIds])
+    const stream = await StreamRepository.findById(client, conversation.streamId)
+    if (stream?.type === StreamTypes.THREAD && stream.parentMessageId) {
+      memberSet.add(stream.parentMessageId)
+    }
+
+    const fetchIds = new Set(memberSet)
+    fetchIds.add(targetMessageId)
+    const messagesMap = await MessageRepository.findByIds(client, [...fetchIds])
+
+    const target = messagesMap.get(targetMessageId)
+    if (!target) {
+      throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+    }
+    const cutoff = target.createdAt.getTime()
+
+    const groups = new Map<string, string[]>()
+    for (const id of memberSet) {
+      const message = messagesMap.get(id)
+      if (!message) continue
+      const at = message.createdAt.getTime()
+      const include = direction === "read" ? at <= cutoff : at >= cutoff
+      if (!include) continue
+      const list = groups.get(message.streamId)
+      if (list) list.push(id)
+      else groups.set(message.streamId, [id])
+    }
+
+    // Map keys are unique, so a strict less-than comparator totally orders them.
+    return [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
   }
 }
 

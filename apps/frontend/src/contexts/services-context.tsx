@@ -69,6 +69,8 @@ export interface ConversationService {
   getMessages: typeof conversationsApi.getMessages
   getBoardMessages: typeof conversationsApi.getBoardMessages
   getBoardPost: typeof conversationsApi.getBoardPost
+  markRead: typeof conversationsApi.markRead
+  markUnread: typeof conversationsApi.markUnread
   reassignMessage: typeof conversationsApi.reassignMessage
 }
 

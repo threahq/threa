@@ -1820,3 +1820,96 @@ describe("preserveBakedInAppData", () => {
     expect(merged).toBe(incoming)
   })
 })
+
+describe("registerStreamSocketHandlers — read-state counter wiring", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      emit(event: string, payload: unknown) {
+        handlers.get(event)?.forEach((handler) => handler(payload))
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    await Promise.all([db.unreadState.clear(), db.events.clear()])
+  })
+
+  it("drops the deleted message's held activity rows on message_deleted (fix A2)", async () => {
+    const streamId = "stream_del"
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [
+        {
+          id: "act_del",
+          workspaceId: "ws_1",
+          userId: "usr_1",
+          activityType: "mention",
+          streamId,
+          messageId: "msg_del",
+          actorId: "usr_2",
+          actorType: "user",
+          context: {},
+          readAt: null,
+          createdAt: new Date().toISOString(),
+          isSelf: false,
+          emoji: null,
+        },
+        {
+          id: "act_keep",
+          workspaceId: "ws_1",
+          userId: "usr_1",
+          activityType: "mention",
+          streamId,
+          messageId: "msg_keep",
+          actorId: "usr_2",
+          actorType: "user",
+          context: {},
+          readAt: null,
+          createdAt: new Date().toISOString(),
+          isSelf: false,
+          emoji: null,
+        },
+      ],
+      latestOrdinals: {},
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    emit("message:deleted", {
+      workspaceId: "ws_1",
+      streamId,
+      messageId: "msg_del",
+      deletedAt: new Date().toISOString(),
+    })
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_keep"])
+    })
+
+    cleanup()
+  })
+})

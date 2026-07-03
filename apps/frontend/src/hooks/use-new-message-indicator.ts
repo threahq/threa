@@ -19,7 +19,8 @@ export function useNewMessageIndicator(
   events: StreamEvent[],
   currentUserId: string | undefined,
   streamId: string,
-  lastReadEventId?: string | null
+  lastReadEventId?: string | null,
+  overlayReadIds?: ReadonlySet<string>
 ): Set<string> {
   const [newIds, setNewIds] = useState<Set<string>>(new Set())
   /** Event IDs present when the stream was opened. With the eventCache removed,
@@ -61,11 +62,13 @@ export function useNewMessageIndicator(
       const event = events[i]
       if (lastReadIndex >= 0 && i <= lastReadIndex) break
       if (knownEventIdsRef.current.has(event.id)) break
+      const messageId = (event.payload as { messageId?: string } | null)?.messageId
       if (
         !trackedIdsRef.current.has(event.id) &&
         event.actorId !== currentUserId &&
         event.actorType === "user" &&
-        (event.eventType === "message_created" || event.eventType === "companion_response")
+        (event.eventType === "message_created" || event.eventType === "companion_response") &&
+        !(messageId && overlayReadIds?.has(messageId))
       ) {
         freshIds.push(event.id)
       }
@@ -93,7 +96,7 @@ export function useNewMessageIndicator(
       })
     }, 2000)
     timersRef.current.add(timer)
-  }, [events, currentUserId, lastReadEventId])
+  }, [events, currentUserId, lastReadEventId, overlayReadIds])
 
   return newIds
 }

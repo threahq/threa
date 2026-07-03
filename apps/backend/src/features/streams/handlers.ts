@@ -961,7 +961,9 @@ export function createStreamHandlers({
         })
       )
 
-      const unreadCount = membership ? await streamService.getUnreadCount(streamId, membership.lastReadEventId) : 0
+      const unreadCount = membership
+        ? await streamService.getUnreadCount(streamId, userId, membership.lastReadEventId)
+        : 0
 
       let events = await eventService.listEvents(streamId, {
         limit: afterSequence !== undefined ? EVENTS_DEFAULT_LIMIT + 1 : EVENTS_DEFAULT_LIMIT,

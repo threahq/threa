@@ -201,7 +201,7 @@ export function createWorkspaceHandlers({
 
       const [unreadCountsMap, activityCounts, unreadActivities] = await Promise.all([
         streamService.getUnreadCounts(
-          streamMemberships.map((m) => ({ streamId: m.streamId, lastReadEventId: m.lastReadEventId }))
+          streamMemberships.map((m) => ({ streamId: m.streamId, memberId: userId, lastReadEventId: m.lastReadEventId }))
         ),
         activityService?.getUnreadCounts(userId, workspaceId),
         activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
@@ -212,6 +212,27 @@ export function createWorkspaceHandlers({
         unreadCounts[streamId] = counts.unreadCount
         messageCounts[streamId] = counts.totalCount
       }
+
+      // Sparse read overlay (docs/sparse-read-overlay-design.md): the per-stream
+      // set of individually-read messages above each watermark. `unreadCounts`
+      // above is already net of the overlay; the client also needs the raw ids
+      // (to render row read state) and each watermark's sequence (to place the
+      // read frontier against the overlay).
+      const membershipStreamIds = streamMemberships.map((m) => m.streamId)
+      const [readOverlayMap, watermarkSequences] = await Promise.all([
+        streamService.getReadOverlayForMember(userId, membershipStreamIds),
+        streamService.getSequencesByEventIds(
+          streamMemberships.map((m) => m.lastReadEventId).filter((id): id is string => Boolean(id))
+        ),
+      ])
+      const readMessageIds: Record<string, string[]> = {}
+      for (const [streamId, ids] of readOverlayMap) {
+        if (ids.length > 0) readMessageIds[streamId] = ids
+      }
+      const serializedMemberships = streamMemberships.map((m) => ({
+        ...m,
+        lastReadSequence: m.lastReadEventId ? (watermarkSequences.get(m.lastReadEventId) ?? null) : null,
+      }))
 
       const mentionCounts: Record<string, number> = {}
       const activityCountsPerStream: Record<string, number> = {}
@@ -256,7 +277,8 @@ export function createWorkspaceHandlers({
           workspace,
           users,
           streams: resolvedStreams,
-          streamMemberships,
+          streamMemberships: serializedMemberships,
+          readMessageIds,
           personas,
           bots: bots.map(serializeBot),
           emojis: getEmojiList(),

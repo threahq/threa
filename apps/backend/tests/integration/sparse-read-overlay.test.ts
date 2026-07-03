@@ -1,0 +1,277 @@
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
+import { Pool } from "pg"
+import { withTransaction, setupTestDatabase, testMessageContent } from "./setup"
+import {
+  StreamService,
+  StreamEventRepository,
+  StreamMemberRepository,
+  SparseReadRepository,
+  applySparseRead,
+  applySparseUnread,
+} from "../../src/features/streams"
+import { EventService } from "../../src/features/messaging"
+import { streamId, userId, workspaceId } from "../../src/lib/id"
+
+describe("Sparse read overlay", () => {
+  let pool: Pool
+  let streamService: StreamService
+  let eventService: EventService
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+    streamService = new StreamService(pool)
+    eventService = new EventService(pool)
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  beforeEach(async () => {
+    await pool.query("DELETE FROM stream_member_message_reads")
+    await pool.query("DELETE FROM messages")
+    await pool.query("DELETE FROM stream_events")
+    await pool.query("DELETE FROM stream_sequences")
+    await pool.query("DELETE FROM stream_members")
+    await pool.query("DELETE FROM streams")
+    await pool.query(
+      "DELETE FROM outbox WHERE id > (SELECT COALESCE(MAX(last_processed_id), 0) FROM outbox_listeners WHERE listener_id = 'broadcast')"
+    )
+  })
+
+  async function seedChannel(memberIds: string[]): Promise<{ wid: string; sid: string; authorId: string }> {
+    const wid = workspaceId()
+    const sid = streamId()
+    const authorId = userId()
+    await withTransaction(pool, async (client) => {
+      await client.query(
+        `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
+        [sid, wid, authorId]
+      )
+      for (const m of memberIds) await StreamMemberRepository.insert(client, sid, m)
+    })
+    return { wid, sid, authorId }
+  }
+
+  async function sendMessages(wid: string, sid: string, authorId: string, count: number): Promise<string[]> {
+    const ids: string[] = []
+    for (let i = 1; i <= count; i++) {
+      const m = await eventService.createMessage({
+        workspaceId: wid,
+        streamId: sid,
+        authorId,
+        authorType: "user",
+        ...testMessageContent(`Message ${i}`),
+      })
+      ids.push(m.id)
+    }
+    return ids
+  }
+
+  async function outboxFor(eventType: string, sid: string): Promise<Array<Record<string, unknown>>> {
+    const result = await pool.query(
+      `SELECT payload FROM outbox WHERE event_type = $1 AND payload->>'streamId' = $2 ORDER BY id`,
+      [eventType, sid]
+    )
+    return result.rows.map((r) => r.payload)
+  }
+
+  async function effectiveUnread(sid: string, memberId: string): Promise<number> {
+    const membership = await streamService.getMembership(sid, memberId)
+    const counts = await streamService.getUnreadCounts([
+      { streamId: sid, memberId, lastReadEventId: membership?.lastReadEventId ?? null },
+    ])
+    return counts.get(sid)?.unreadCount ?? 0
+  }
+
+  test("a non-contiguous overlay read drops effective unread without advancing the watermark", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [, , msg3] = await sendMessages(wid, sid, authorId, 3)
+
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+
+    // msg1 above the (null) watermark isn't covered, so no compaction: the
+    // watermark stays put and the overlay holds the single hole.
+    expect(snapshot).toEqual({
+      streamId: sid,
+      readMessageIds: [msg3],
+      lastReadEventId: null,
+      lastReadSequence: "0",
+      lastReadOrdinal: 0,
+    })
+    expect(await effectiveUnread(sid, reader)).toBe(2)
+
+    const emitted = await outboxFor("stream:read_messages", sid)
+    expect(emitted).toEqual([
+      {
+        workspaceId: wid,
+        authorId: reader,
+        streamId: sid,
+        readMessageIds: [msg3],
+        lastReadEventId: null,
+        lastReadSequence: "0",
+        lastReadOrdinal: 0,
+      },
+    ])
+  })
+
+  test("compaction absorbs the contiguous run into the watermark and prunes the overlay", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // Read the hole first (msg3), then the run below it (msg1, msg2): the whole
+    // 1..3 run is now contiguous from the watermark, so compaction advances to
+    // msg3 and prunes every absorbed row.
+    await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1, msg2] })
+    )
+
+    expect(snapshot).toEqual({
+      streamId: sid,
+      readMessageIds: [],
+      lastReadEventId: eventByMsg.get(msg3)!.id,
+      lastReadSequence: eventByMsg.get(msg3)!.sequence.toString(),
+      lastReadOrdinal: 3,
+    })
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await effectiveUnread(sid, reader)).toBe(0)
+  })
+
+  test("a non-member thread leg is overlay-only — no membership row, no watermark", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [parentMsg] = await sendMessages(wid, sid, authorId, 1)
+
+    // A thread under the channel root; reader has access via the root but no
+    // thread membership row.
+    const threadId = streamId()
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_message_id, root_stream_id)
+       VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
+      [threadId, wid, authorId, sid, parentMsg]
+    )
+    const threadMsgs = await sendMessages(wid, threadId, authorId, 2)
+
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: threadId, memberId: reader, messageIds: threadMsgs })
+    )
+
+    expect(snapshot.lastReadEventId).toBeNull()
+    expect(snapshot.lastReadSequence).toBe("0")
+    expect(snapshot.readMessageIds.sort()).toEqual([...threadMsgs].sort())
+    // Overlay-only: no membership row was upserted (membership ≠ access, INV-62).
+    expect(await StreamMemberRepository.findByStreamAndMember(pool, threadId, reader)).toBeNull()
+    expect(await SparseReadRepository.countOverlay(pool, threadId, reader)).toBe(2)
+  })
+
+  test("double-applying the same read is idempotent (ON CONFLICT) and order-convergent", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [, , msg3] = await sendMessages(wid, sid, authorId, 3)
+
+    const first = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+    const second = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+
+    expect(second).toEqual(first)
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(1)
+  })
+
+  test("overlay rows are workspace-tagged and member-scoped (INV-8)", async () => {
+    const reader = userId()
+    const other = userId()
+    const { wid, sid, authorId } = await seedChannel([reader, other])
+    const [, , msg3] = await sendMessages(wid, sid, authorId, 3)
+
+    await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+
+    const row = await pool.query(
+      `SELECT workspace_id, member_id FROM stream_member_message_reads WHERE stream_id = $1 AND message_id = $2`,
+      [sid, msg3]
+    )
+    expect(row.rows).toEqual([{ workspace_id: wid, member_id: reader }])
+    // The other member's count is untouched by reader's overlay.
+    expect(await effectiveUnread(sid, other)).toBe(3)
+    expect(await effectiveUnread(sid, reader)).toBe(2)
+  })
+
+  test("markAsRead advancing past a hole prunes it and reports the empty overlay", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [, , msg3] = await sendMessages(wid, sid, authorId, 3)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+    // Timeline mark-as-read up to the latest event absorbs the hole.
+    await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg3)!.id)
+
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    const readPayloads = await outboxFor("stream:read", sid)
+    expect(readPayloads.at(-1)?.readMessageIds).toEqual([])
+    expect(await effectiveUnread(sid, reader)).toBe(0)
+  })
+
+  test("mark-unread from a message regresses the watermark and clears overlay at/above it", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // Read everything, then a conversation-style unread from msg2 via the stream
+    // watermark path: overlay above msg2 is dropped and the pointer regresses.
+    await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg3)!.id)
+    await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+    await streamService.markUnread(wid, sid, reader, msg2)
+
+    const membership = await streamService.getMembership(sid, reader)
+    expect(membership?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    // msg2, msg3 unread again.
+    expect(await effectiveUnread(sid, reader)).toBe(2)
+  })
+
+  test("applySparseUnread drops the affected ids and regresses when the watermark is past them", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg3)!.id)
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseUnread(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg2, msg3] })
+    )
+
+    // Earliest affected is msg2; the watermark regresses to just before it (msg1).
+    expect(snapshot).toEqual({
+      streamId: sid,
+      readMessageIds: [],
+      lastReadEventId: eventByMsg.get(msg1)!.id,
+      lastReadSequence: eventByMsg.get(msg1)!.sequence.toString(),
+      lastReadOrdinal: 1,
+    })
+    const setPayloads = await outboxFor("stream:read_set", sid)
+    expect(setPayloads.at(-1)?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
+    expect(await effectiveUnread(sid, reader)).toBe(2)
+  })
+})

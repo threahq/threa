@@ -98,7 +98,8 @@ import { stripMarkdownToInline } from "@/lib/markdown"
 import { localStartOfDayMs } from "@/lib/dates"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
-import { ReadFrontierContext } from "./read-frontier-context"
+import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
+import { useReadMessageIds } from "@/hooks/use-unread-counts"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -1684,8 +1685,20 @@ export function StreamContent({
   const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)
   const unreadCount = getUnreadCount(streamId)
 
+  // The stream's sparse read overlay — message ids read individually above the
+  // watermark (from a conversation-surface read). Threads through the read
+  // frontier so the divider, the "new" flash, and per-row gating all treat an
+  // overlay-read row as effectively read (docs/sparse-read-overlay-design.md).
+  const readOverlay = useReadMessageIds(workspaceId, streamId)
+
   // Track live-arriving messages from other users for brief "new" indicator.
-  const newMessageIds = useNewMessageIndicator(events, currentWorkspaceUserId ?? undefined, streamId, lastReadEventId)
+  const newMessageIds = useNewMessageIndicator(
+    events,
+    currentWorkspaceUserId ?? undefined,
+    streamId,
+    lastReadEventId,
+    readOverlay
+  )
 
   // Unread divider state — a bookmark line at the first unread message. The
   // stream opens at the bottom (no auto-scroll to unread); the viewer reaches
@@ -1706,6 +1719,9 @@ export function StreamContent({
     // session). `idbStream` alone isn't enough — its denormalized copy can be a
     // stale null while the authoritative membership value is still loading.
     readStateResolved: lastReadEventId !== undefined,
+    // Skip overlay-read events so the divider anchors on the first *effectively*
+    // unread row, not one already read from a conversation surface.
+    overlayReadIds: readOverlay,
   })
 
   // The divider is red while unread still sits at/after it, and turns muted-gray
@@ -1953,6 +1969,11 @@ export function StreamContent({
     return events.find((event) => event.id === lastReadEventId)?.sequence ?? null
   }, [events, lastReadEventId])
 
+  const readFrontier = useMemo<ReadFrontier>(
+    () => ({ sequence: readFrontierSequence, overlay: readOverlay }),
+    [readFrontierSequence, readOverlay]
+  )
+
   // Hard load error with nothing cached to fall back on. Placed after every
   // hook so the hook order stays stable: `error`/`idbStream` can toggle (a
   // failed fetch that later succeeds, or IDB resolving a beat after first
@@ -1969,7 +1990,7 @@ export function StreamContent({
   }
 
   return (
-    <ReadFrontierContext.Provider value={readFrontierSequence}>
+    <ReadFrontierContext.Provider value={readFrontier}>
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
         <QuoteReplyProvider>
           <ConversationReplyProvider>

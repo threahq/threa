@@ -1,8 +1,8 @@
 import type { Pool, PoolClient } from "pg"
-import { withTransaction, withClient } from "../../db"
+import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
 import { StreamRepository } from "../streams"
-import { StreamMemberRepository } from "../streams"
+import { StreamMemberRepository, SparseReadRepository } from "../streams"
 import { checkStreamAccess, resolveEffectiveAccessStream } from "../streams"
 import { MessageRepository, type Message, type MoveMessageSequenceUpdate } from "./repository"
 import { ShareService, type ResolveEffectiveStream } from "./sharing"
@@ -958,6 +958,18 @@ export class EventService {
 
       const message = await MessageRepository.softDelete(client, params.messageId)
 
+      // A2 (sparse-read design): a deleted message's unread activity rows would
+      // otherwise survive forever unless the user opens that exact stream, keeping
+      // a phantom badge. Mark them read in the delete transaction; clients drop
+      // held rows for the id on the `message_deleted` stream event.
+      await client.query(sql`
+        UPDATE user_activity
+        SET read_at = NOW()
+        WHERE workspace_id = ${params.workspaceId}
+          AND message_id = ${params.messageId}
+          AND read_at IS NULL
+      `)
+
       if (message) {
         await OutboxRepository.insert(client, "message:deleted", {
           workspaceId: params.workspaceId,
@@ -1195,6 +1207,24 @@ export class EventService {
       })
       await MessageRepository.moveToStream(client, destinationThread.id, updates)
 
+      // Sparse-read follow-through (docs/sparse-read-overlay-design.md), run AFTER
+      // the events are relocated so the destination sequences are readable:
+      //  - rehome every member's overlay rows for the moved messages to the
+      //    destination (stream_id/event_id/sequence refreshed), and
+      //  - A3: repoint any SOURCE membership whose watermark was one of the moved
+      //    events to the nearest surviving prior source event — otherwise it counts
+      //    unread against a foreign thread-space sequence (survives reload).
+      await SparseReadRepository.rehomeReads(client, {
+        sourceStreamId: params.sourceStreamId,
+        destinationStreamId: destinationThread.id,
+        messageIds: uniqueMessageIds,
+      })
+      await StreamMemberRepository.repointWatermarksForMovedEvents(
+        client,
+        params.sourceStreamId,
+        movableEvents.map((entry) => ({ eventId: entry.event.id, sequence: entry.event.sequence }))
+      )
+
       // Thread re-pointing: the target message just became a thread, so any reply
       // draft composed against it (scope `thread:{targetMessageId}`) follows the
       // message into the new thread stream (`stream:{destinationThread.id}`).
@@ -1348,6 +1378,14 @@ export class EventService {
       const removedEventIds = [...movedEvents, ...movedAgentSessionEvents].map((event) => event.id)
       const serializedSourceTombstone = serializeBigInt(sourceTombstone) as unknown as WireStreamEvent
 
+      // A1 (sparse-read design): the move dropped the source's true message count.
+      // Ship the post-move source ordinal so the client SETs `latestOrdinals` down
+      // (no applier corrects it downward otherwise → sticky phantom unread).
+      const sourceMessageCounts = await StreamEventRepository.countMessagesByStreamBatch(client, [
+        params.sourceStreamId,
+      ])
+      const sourceMessageOrdinal = sourceMessageCounts.get(params.sourceStreamId) ?? 0
+
       await OutboxRepository.insert(client, "messages:moved", {
         workspaceId: params.workspaceId,
         streamId: params.sourceStreamId,
@@ -1361,6 +1399,7 @@ export class EventService {
         sourceTombstoneEvent: serializedSourceTombstone,
         parentReplyCount,
         parentThreadSummary,
+        sourceMessageOrdinal,
       })
 
       return {
