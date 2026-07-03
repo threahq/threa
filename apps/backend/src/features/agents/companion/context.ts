@@ -16,6 +16,7 @@ import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
 import { buildSystemPrompt } from "./prompt/system-prompt"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
+import { loadEpisodeSummaryPromptBlock } from "./episode-summaries"
 import { loadConversationHighlight } from "./conversation-highlight"
 import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStitch } from "./cross-surface-stitch"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
@@ -173,6 +174,17 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamId: stream.id,
     personaId: persona.id,
     keptMessages: streamScopedMessages,
+  })
+
+  // "Previous sessions" — the persona's own recent completed-session episode
+  // summaries in this stream (roadmap 3.1). Distinct from the rolling summary
+  // (which folds dropped *messages*): this carries what earlier sessions *did and
+  // concluded*, so "as we discussed last week" survives the window scrolling
+  // past. Single pooled read (INV-30); the in-flight session has no summary yet
+  // so it's excluded by construction.
+  const previousSessionsBlock = await loadEpisodeSummaryPromptBlock(db, {
+    streamId: stream.id,
+    personaId: persona.id,
   })
 
   // Best-effort "Current Topic" highlight (§2.8 Q8): the topic the segmenter has
@@ -389,7 +401,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       tools,
       conversationTopic,
       spawnedFromContext,
-      followUp
+      followUp,
+      previousSessionsBlock
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`

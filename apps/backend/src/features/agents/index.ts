@@ -103,6 +103,9 @@ export type { ScheduleFollowUpParams, ScheduleFollowUpResult } from "./follow-up
 export { createAgentFollowUpFireWorker } from "./follow-up-worker"
 export { AgentFollowUpRepository } from "./follow-up-repository"
 export type { AgentFollowUp } from "./follow-up-repository"
+export { EpisodeSummaryService } from "./episode-summary-service"
+export type { EpisodeSummaryServiceDeps } from "./episode-summary-service"
+export { createEpisodeSummarizeWorker } from "./episode-summary-worker"
 export { createOrphanSessionCleanup, failSessionWithLifecycle } from "./orphan-session-cleanup"
 export type { OrphanSessionCleanup } from "./orphan-session-cleanup"
 
@@ -207,6 +210,12 @@ export type {
 // Config (exported for static-config-resolver)
 export { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "./companion/config"
 export { COMPANION_SUMMARY_MODEL_ID, COMPANION_SUMMARY_TEMPERATURE } from "./companion/config"
+export {
+  EPISODE_SUMMARY_MODEL_ID,
+  EPISODE_SUMMARY_TEMPERATURE,
+  EPISODE_SUMMARY_MAX_TOKENS,
+  EPISODE_SUMMARY_INJECT_COUNT,
+} from "./companion/config"
 export { SUMMARIZER_MAX_TOKENS, SUMMARIZER_MODEL_ID, SUMMARIZER_TEMPERATURE } from "./context-bag/config"
 export { SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS, SUPERSEDE_RESPONSE_VALIDATOR_TEMPERATURE } from "./config"
 export { SUPERSEDE_RESPONSE_VALIDATOR_MODEL_ID } from "./config"

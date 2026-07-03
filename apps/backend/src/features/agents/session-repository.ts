@@ -31,6 +31,7 @@ interface SessionRow {
   last_seen_sequence: string | null
   sent_message_ids: string[] | null
   context_message_ids: string[] | null
+  episode_summary: string | null
   created_at: Date
   completed_at: Date | null
 }
@@ -93,6 +94,13 @@ export interface AgentSession {
   lastSeenSequence: bigint | null
   sentMessageIds: string[]
   contextMessageIds: string[]
+  /**
+   * Post-completion condensation of what the persona did and concluded this
+   * session (~2-3 sentences), written by the episode-summary job (roadmap 3.1).
+   * NULL until that job runs, and for sessions that produced no output. Read
+   * back into later turns as the "Previous sessions" prompt section.
+   */
+  episodeSummary: string | null
   createdAt: Date
   completedAt: Date | null
 }
@@ -123,6 +131,13 @@ export interface AgentSessionProgressSnapshot {
 /** One `turn_digest` step joined with its session's timing (C-1 injection input). */
 export interface RecentDigestStep {
   step: AgentSessionStep
+  sessionCreatedAt: Date
+  sessionCompletedAt: Date | null
+}
+
+/** One completed session's episode summary with its timing (roadmap 3.1 injection input). */
+export interface RecentEpisodeSummary {
+  summary: string
   sessionCreatedAt: Date
   sessionCompletedAt: Date | null
 }
@@ -198,6 +213,7 @@ function mapRowToSession(row: SessionRow): AgentSession {
     lastSeenSequence: row.last_seen_sequence ? BigInt(row.last_seen_sequence) : null,
     sentMessageIds: row.sent_message_ids ?? [],
     contextMessageIds: row.context_message_ids ?? [],
+    episodeSummary: row.episode_summary,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   }
@@ -224,7 +240,7 @@ const SESSION_SELECT_FIELDS = `
   id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   abort_requested_at, response_message_id, error, last_seen_sequence,
-  sent_message_ids, context_message_ids, created_at, completed_at
+  sent_message_ids, context_message_ids, episode_summary, created_at, completed_at
 `
 
 const STEP_SELECT_FIELDS = `
@@ -596,6 +612,23 @@ export const AgentSessionRepository = {
   },
 
   /**
+   * Persist a session's episode summary (roadmap 3.1). CAS on `IS NULL` so a
+   * re-delivered summary job (or two racing summarizers) can't clobber an
+   * already-written summary — the first write wins, later ones no-op (INV-20).
+   * Returns whether this call wrote the summary.
+   */
+  async setEpisodeSummary(db: Querier, id: string, summary: string): Promise<boolean> {
+    const result = await db.query(
+      sql`
+        UPDATE agent_sessions
+        SET episode_summary = ${summary}
+        WHERE id = ${id} AND episode_summary IS NULL
+      `
+    )
+    return (result.rowCount ?? 0) > 0
+  },
+
+  /**
    * Update the last seen sequence for a session.
    * Called during agent loop when new messages are processed.
    */
@@ -862,6 +895,38 @@ export const AgentSessionRepository = {
       step: mapRowToStep(row),
       sessionCreatedAt: row.session_created_at,
       sessionCompletedAt: row.session_completed_at,
+    }))
+  },
+
+  /**
+   * The episode summaries of a stream's most recent COMPLETED sessions for a
+   * persona, newest session first (roadmap 3.1 "Previous sessions" injection —
+   * callers reverse to oldest-first for the prompt). Only rows whose summary job
+   * has landed are returned (`episode_summary IS NOT NULL`), so the in-flight
+   * session building its own context (no summary yet) is excluded by
+   * construction. Scoped to (stream, persona) like the turn-digest read — a
+   * persona loads only its own episodes, never another persona's.
+   */
+  async findRecentEpisodeSummariesByStream(
+    db: Querier,
+    params: { streamId: string; personaId: string; limit: number }
+  ): Promise<RecentEpisodeSummary[]> {
+    const result = await db.query<{ summary: string; created_at: Date; completed_at: Date | null }>(
+      sql`
+        SELECT episode_summary AS summary, created_at, completed_at
+        FROM agent_sessions
+        WHERE stream_id = ${params.streamId}
+          AND persona_id = ${params.personaId}
+          AND status = ${SessionStatuses.COMPLETED}
+          AND episode_summary IS NOT NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${params.limit}
+      `
+    )
+    return result.rows.map((row) => ({
+      summary: row.summary,
+      sessionCreatedAt: row.created_at,
+      sessionCompletedAt: row.completed_at,
     }))
   },
 

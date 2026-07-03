@@ -43,7 +43,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 2.1  | Generalized session abort                            | ☐      |       |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
-| 3.1  | Persisted episode summaries                          | ☐      |       |
+| 3.1  | Persisted episode summaries                          | ☑      | #TBD  |
 | 3.2  | Per-thread session concurrency                       | ☐      |       |
 | 3.3  | Conversation-anchored agent replies                  | ☐      |       |
 | 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
@@ -247,6 +247,14 @@ Not a duplicate of the two existing summaries: `conversations.topic_summary` nam
 **Files:** migration, `companion/session.ts` (enqueue), fold into the existing summary worker (`conversation-summary-service.ts` precedent), `companion/context.ts`, `companion/prompt/system-prompt.ts`, `companion/config.ts` (model + N).
 
 **Tests:** summary written post-completion (stubbed AI); context assembly includes summaries; INV-19 telemetry on the summarizer call.
+
+**Deviations (shipped):**
+
+- **Enqueue lives in the persona-agent worker, not literally inside `withCompanionSession` Phase 3.** After a turn completes, `persona-agent-worker.ts` enqueues `AGENT_EPISODE_SUMMARIZE {workspaceId, sessionId}` — the same post-completion spot as the existing `checkForUnseenMessages` nudge, so both post-completion dispatches sit together. Best-effort (a lost enqueue just drops one session from later context); INV-41 is satisfied identically (no summarizer AI runs inline). Gated on `messagesSent > 0`: a silent/no-op turn has nothing to condense, and research-without-reply capture is 6.3's job, not this one.
+- **New `episode-summary-{service,worker}.ts` rather than folding into `conversation-summary-service.ts`.** The rolling summarizer folds _dropped messages_ via `foldRollingSummary` (a rolling batch fold); an episode summary is a one-shot condensation of a _whole session_ (trigger + turn-digest findings + reply). It reuses the _pattern_ (cheap haiku, low temperature, INV-19 telemetry, service+worker split) but not the fold, which doesn't fit. Column stored via `setEpisodeSummary` CAS on `IS NULL`, so a redelivered job or concurrent summarizer is safe (INV-20).
+- **Episode summaries are scoped per (stream, persona), like the turn-digest read** (`findRecentDigestStepsByStream`), not stream-wide — a persona loads only its own episodes, never another persona's. The fired-follow-up case (§1.2) is covered by construction: the creating session is in the same stream, so its summary rides the stream read; no separate `followUpId → session_id → summary` lookup was needed. `EPISODE_SUMMARY_INJECT_COUNT = 3`.
+- **"Not already covered by the rolling summary" ships as a distinct section, not overlap-detection.** The rolling summary carries dropped-message content; the "Previous sessions" block carries session conclusions — different framing, low redundancy — so precise dedup is deferred (INV-36).
+- **`workspace_research` querying episode summaries is deferred** (tracked below). The researcher is a search loop with no single stream-context preamble to extend cleanly, and the "Done when" is fully met by the `buildAgentContext` read path. A focused follow-up.
 
 **Done when:** a fresh session in a stream with prior sessions carries their episode summaries in its context.
 
@@ -544,6 +552,7 @@ Small items from `docs/ariadne-vs-claude-tag-exploration.md` deliberately left o
 - **BYO-bots vs delegation positioning paragraph [docs/S]** (exploration §4.5.5) — one paragraph in `docs/features/public/` distinguishing persistent workspace bots from one-shot delegation to a personal agent. Write it when Phase 5 ships user-visible delegation (5.2), when the distinction becomes real.
 - **Board-lens integration for delegations/ambient flags** — when the board's structural/personal lenses land (they're planned, not built — `docs/board-view-design.md`), surface open delegations via `source_conversation_id` and stalled-conversation flags in the appropriate lenses. Deliberately not a step here: the lenses don't exist yet, and the anchor columns (1.1, 5.1) are the only forward investment needed.
 - **Per-stream follow-up limit column** — deferred from 1.4 until a real need (INV-36); the `resolveFollowUpLimit()` seam makes it small.
+- **`workspace_research` querying episode summaries** — deferred from 3.1. The researcher (`features/agents/researcher/researcher.ts`) is a retrieval loop with no single stream-context preamble to extend cleanly, so surfacing a stream's `episode_summary` rows as a research source is its own small step (add them to the researcher's stream-context assembly next to the recent-messages fetch). The companion read path (3.1) already carries them into normal turns.
 - **Enclave/E2E parity for `schedule_follow_up`** — 1.1 wires the tool into the plaintext companion toolset only; the enclave's `buildEnclaveTools` (`apps/enclave/src/agent/tools.ts`) deliberately omits it, so E2E scratchpads silently don't offer it (clean degrade, no leak). Full parity needs two pieces: (a) the `note` is E2E-derived plaintext, so `agent_follow_ups.note` would have to be **sealed** (encrypted to the stream key, decrypted only inside the enclave at fire time) instead of stored plaintext; (b) firing must dispatch to the **enclave** (sealed dispatch) rather than enqueuing a plaintext `PERSONA_AGENT` job that holds no stream key. A per-tool follow-up under the general "E2E/enclave parity for new tools" item below.
 
 ## Deliberately out of scope
