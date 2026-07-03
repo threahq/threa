@@ -82,7 +82,7 @@ function createEmitSpy() {
   return { io, emitted }
 }
 
-function arrange(sessionOverride?: Partial<AgentSession>) {
+function arrange(sessionOverride?: Partial<AgentSession>, deps?: { eventService?: PublicApiDeps["eventService"] }) {
   spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...session, ...sessionOverride } as never)
   spyOn(StreamRepository, "findById").mockResolvedValue({
     id: "stream_thread",
@@ -92,10 +92,11 @@ function arrange(sessionOverride?: Partial<AgentSession>) {
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
     fn({})) as never)
   spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined as never)
+  const heartbeat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined as never)
 
   const { io, emitted } = createEmitSpy()
   const handlers = createPublicApiHandlers({
-    eventService: {} as PublicApiDeps["eventService"],
+    eventService: deps?.eventService ?? ({} as PublicApiDeps["eventService"]),
     streamService: {} as PublicApiDeps["streamService"],
     searchService: {} as PublicApiDeps["searchService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
@@ -107,7 +108,7 @@ function arrange(sessionOverride?: Partial<AgentSession>) {
     pool: {} as PublicApiDeps["pool"],
     io,
   })
-  return { handlers, emitted }
+  return { handlers, emitted, heartbeat }
 }
 
 function req(
@@ -259,5 +260,88 @@ describe("recordBotInvocationSealedStep", () => {
     expect(emitted.map((e) => e.event)).toEqual(
       expect.arrayContaining(["agent_session:progress", "agent_session:step:completed"])
     )
+  })
+
+  it("bumps the session heartbeat (sealed steps are the turn's liveness signal)", async () => {
+    const { handlers, heartbeat } = arrange()
+    spyOn(AgentSessionRepository, "updateStep").mockResolvedValue(
+      stepRow({ completedAt: new Date("2026-06-12T09:00:05.000Z") }) as never
+    )
+    const { res } = createResponse()
+
+    await handlers.recordBotInvocationSealedStep(
+      req({ stepId: "step_1", stepType: "thinking", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE }),
+      res
+    )
+
+    expect(heartbeat).toHaveBeenCalledWith(expect.anything(), "binv_1")
+  })
+})
+
+describe("sendBotInvocationSealedMessage", () => {
+  afterEach(() => mock.restore())
+
+  const sealedBody = { messageId: "msg_interim", ciphertext: "c2VhbGVk", envelope: REPLY_ENVELOPE }
+
+  function arrangeWithEventService() {
+    const createMessage = mock(async (params: Record<string, unknown>) => ({ id: params.id }) as never)
+    const { handlers } = arrange(undefined, {
+      eventService: { createMessage } as unknown as PublicApiDeps["eventService"],
+    })
+    return { handlers, createMessage }
+  }
+
+  it("persists one sealed interim message scoped to the claim's stream", async () => {
+    const { handlers, createMessage } = arrangeWithEventService()
+    const { res, payloads } = createResponse()
+
+    await handlers.sendBotInvocationSealedMessage(req(sealedBody), res)
+
+    const params = createMessage.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    expect(params).toMatchObject({
+      id: "msg_interim",
+      workspaceId: "ws_1",
+      streamId: "stream_thread",
+      sessionId: "binv_1",
+      authorId: "bot_1",
+      envelope: REPLY_ENVELOPE,
+      e2eVersion: 2,
+      accessibleStreamIds: ["stream_thread"],
+      // The client-minted id doubles as the idempotency key: a retried post dedupes.
+      clientMessageId: "msg_interim",
+    })
+    expect(Buffer.isBuffer(params.ciphertext)).toBe(true)
+    expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_interim")
+  })
+
+  it("rejects a missing callback token (403) before any write", async () => {
+    const { handlers, createMessage } = arrangeWithEventService()
+    const { res } = createResponse()
+    await expect(handlers.sendBotInvocationSealedMessage(req(sealedBody, {}), res)).rejects.toMatchObject({
+      status: 403,
+      code: "CALLBACK_TOKEN_MISSING",
+    })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a seal under the wrong key generation (400)", async () => {
+    const { handlers, createMessage } = arrangeWithEventService()
+    const { res } = createResponse()
+    await expect(
+      handlers.sendBotInvocationSealedMessage(
+        req({ ...sealedBody, envelope: { ...REPLY_ENVELOPE, keyGeneration: 4 } }),
+        res
+      )
+    ).rejects.toMatchObject({ status: 400, code: "E2E_WRONG_KEY_GENERATION" })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a non-running session (409)", async () => {
+    const { handlers } = arrange({ status: "completed" })
+    const { res } = createResponse()
+    await expect(handlers.sendBotInvocationSealedMessage(req(sealedBody), res)).rejects.toMatchObject({
+      status: 409,
+      code: "SESSION_NOT_RUNNING",
+    })
   })
 })

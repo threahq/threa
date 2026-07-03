@@ -29,4 +29,7 @@ export type {
   RecordStepsParams,
   RecordStepResult,
   RecordStepsResult,
+  RecordSealedStepFrame,
+  RecordSealedStepsParams,
+  RecordSealedStepsResult,
 } from "./runtime-write-ops"

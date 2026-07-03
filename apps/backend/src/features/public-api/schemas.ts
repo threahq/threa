@@ -263,6 +263,17 @@ export const startSealedInvocationStepSchema = z.object({
   envelope: sealedStreamEnvelopeSchema.optional(),
 })
 
+// One sealed *interim* message posted by an in-flight sealed turn (the external
+// sibling of the enclave streaming replies to its session `/messages` callback).
+// `messageId` is client-minted — it binds the seal AAD and doubles as the
+// idempotency key — while the content is ciphertext the server can't read
+// (INV-E7). Auth is the bot API key + the neutral callback token header.
+export const sendSealedInvocationMessageSchema = z.object({
+  messageId: z.string().min(1).max(128),
+  ciphertext: z.base64().min(1),
+  envelope: sealedStreamEnvelopeSchema,
+})
+
 // The sealed variant of `completeInvocationSchema` (the external sibling of the
 // enclave's `/complete`). Carries the turn's final sealed reply — `messageId` is
 // clear (it keys the row and binds the seal AAD) while the content is ciphertext

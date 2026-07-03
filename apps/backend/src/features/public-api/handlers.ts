@@ -87,6 +87,7 @@ import {
   type AgentSessionStep,
 } from "../agents"
 import { buildSealedTurnContext } from "./sealed-turn-context"
+import { authorizeSealedCallback, emitBotSealedProgress } from "./sealed-callbacks"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { serializeTraceStep, synthesizeReplyOnlyBotTrace } from "./trace-steps"
 import { createBotRuntimeWriteOps } from "./runtime-write-ops"
@@ -131,6 +132,7 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
   createLabelSchema,
   updateLabelSchema,
@@ -691,52 +693,20 @@ export function createPublicApiHandlers({
   }
 
   /**
-   * Resolve and authorize a sealed bot session callback — shared by the sealed
-   * `/steps`, `/steps/started`, and `/sealed-complete` handlers (the external
-   * siblings of the enclave's session-callback guards). Bot invocations reuse the
-   * invocation id as the agent session id, so the path's `invocationId` is the
-   * session id. The neutral callback token (model A — the claim token, delivered
-   * only inside the winning sealed claim) is the binding; the workspace + persona
-   * checks are defense-in-depth isolation (INV-8) on top of it. Mirrors the
-   * enclave's `assertRunning`/`assertCallbackBound` + stream resolution.
+   * Resolve and authorize a sealed bot session callback — the HTTP adapter over
+   * the transport-neutral `authorizeSealedCallback` core (shared with the
+   * `bot:invocation:sealed-steps` WS frame via `recordSealedSteps`). The verified
+   * token IS the per-claim claim token (model A); it is returned so the
+   * `/sealed-complete` claim flip scopes by it without re-reading the header,
+   * keeping that security dependency explicit rather than an implicit `!`.
    */
   async function authorizeSealedInvocationCallback(req: Request) {
     if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-    const session = await AgentSessionRepository.findById(pool, req.params.invocationId)
-    assertSessionRunning(session)
-    // The verified token IS the per-claim claim token (model A); return it so the
-    // `/sealed-complete` claim flip scopes by it without re-reading the header,
-    // keeping that security dependency explicit rather than an implicit `!`.
-    const callbackToken = req.header(THREA_CALLBACK_TOKEN_HEADER)
-    verifyCallbackToken(session, callbackToken)
-    const stream = await StreamRepository.findById(pool, session.streamId)
-    if (!stream || stream.workspaceId !== req.workspaceId) {
-      throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-    }
-    const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
-    if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-    if (session.personaId !== bot.id) {
-      throw new HttpError("Session does not belong to this bot", { status: 403, code: "FORBIDDEN" })
-    }
-    return { session, stream, bot, callbackToken: callbackToken! }
-  }
-
-  /**
-   * Drive the inline stream-view indicator at a sealed step boundary — the same
-   * `agent_session:progress` payload the plaintext sink emits, step type only
-   * (never sealed content). Emitted at step start (and on the finalize fallback
-   * when the start was dropped) so "<bot> is …" tracks the live step.
-   */
-  function emitBotSealedProgress(stream: Stream, session: AgentSession, bot: Bot, step: AgentSessionStep): void {
-    io.to(`ws:${stream.workspaceId}:stream:${session.streamId}`).emit("agent_session:progress", {
-      workspaceId: stream.workspaceId,
-      streamId: session.streamId,
-      sessionId: session.id,
-      triggerMessageId: session.triggerMessageId,
-      personaName: bot.name,
-      stepCount: step.stepNumber,
-      messageCount: 0,
-      currentStepType: step.stepType,
+    return authorizeSealedCallback(pool, {
+      workspaceId: req.workspaceId!,
+      botId: req.botApiKey.botId,
+      invocationId: req.params.invocationId,
+      callbackToken: req.header(THREA_CALLBACK_TOKEN_HEADER),
     })
   }
 
@@ -1168,63 +1138,70 @@ export function createPublicApiHandlers({
         sessionId: session.id,
         step: serializeTraceStep(persisted),
       })
-      emitBotSealedProgress(stream, session, bot, persisted)
+      emitBotSealedProgress(io, { stream, session, bot }, persisted)
 
       res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
     },
 
     /**
-     * Finalize one sealed trace step in place when it completes — set the sealed
-     * content + completed_at on the row opened at sealed `/steps/started`, keeping
-     * its original started_at so the duration is real. The content is ciphertext
-     * only; the owner's browser decrypts it (INV-E7). If the start POST was
-     * dropped, fall back to a race-safe completed insert so the trace still lands.
-     * The external sibling of the enclave's `/steps`.
+     * Finalize one sealed trace step in place when it completes — the HTTP
+     * adapter over the shared `recordSealedSteps` write-op (the WS
+     * `bot:invocation:sealed-steps` frame drives the same op, so the two
+     * transports can never diverge). The external sibling of the enclave's
+     * `/steps`.
      */
     async recordBotInvocationSealedStep(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(recordSealedInvocationStepSchema, req.body)
+      const result = await botRuntimeWriteOps.recordSealedSteps({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        callbackToken: req.header(THREA_CALLBACK_TOKEN_HEADER) ?? "",
+        steps: [data],
+      })
+      res.json({
+        data: { invocationId: result.invocationId, sessionId: result.sessionId, stepId: result.steps[0].stepId },
+      })
+    },
+
+    /**
+     * Post one sealed *interim* message from an in-flight sealed turn — the
+     * external sibling of the enclave streaming replies to its session
+     * `/messages` callback, and the sealed counterpart of a plaintext bot's
+     * mid-turn `POST /streams/:id/messages`. A channel-style harness (Claude
+     * Code's `send` tool, the permission-prompt relay) posts progress messages
+     * before its final reply; on an E2E stream those must be ciphertext, so the
+     * plaintext message API correctly rejects them and this route carries them
+     * instead. Auth is the per-claim callback token; the sealed grant scopes the
+     * write to the claim's own stream. `messageId` is client-minted (it binds
+     * the seal AAD) and doubles as the idempotency key, so a retried post can't
+     * double-insert. Dark until `externalSealedDelivery` flips.
+     */
+    async sendBotInvocationSealedMessage(req: Request, res: Response) {
+      const data = validateRequest(sendSealedInvocationMessageSchema, req.body)
       const { session, stream, bot } = await authorizeSealedInvocationCallback(req)
       assertReplyKeyGeneration(session, data.envelope)
 
-      const completedAt = new Date()
-      // Scope the finalize to this session: data.stepId is caller-supplied, so an
-      // unscoped update would let a bot overwrite another session's step row.
-      let persisted = await AgentSessionRepository.updateStep(pool, data.stepId, {
+      const message = await eventService.createMessage({
+        id: data.messageId,
+        workspaceId: stream.workspaceId,
+        streamId: session.streamId,
         sessionId: session.id,
-        contentCiphertext: data.ciphertext,
-        contentEnvelope: data.envelope,
-        messageId: data.messageId,
-        completedAt,
+        authorId: bot.id,
+        authorType: AuthorTypes.BOT,
+        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+        ciphertext: Buffer.from(data.ciphertext, "base64"),
+        envelope: data.envelope,
+        e2eVersion: 2,
+        // Restrict the bot's reach to this scratchpad, mirroring the sealed
+        // completion reply; the client-minted id dedupes a redelivered post.
+        accessibleStreamIds: [session.streamId],
+        clientMessageId: data.messageId,
       })
 
-      // Fallback: the start POST never landed (dropped/raced), so there's no row
-      // to finalize. Insert a completed row + advance current_step_type (INV-6,
-      // INV-20) so the trace and inline indicator still reflect this step.
-      if (!persisted) {
-        const startedAt = new Date(completedAt.getTime() - (data.durationMs ?? 0))
-        persisted = await withTransaction(pool, async (tx) => {
-          const created = await AgentSessionRepository.appendStep(tx, {
-            id: data.stepId,
-            sessionId: session.id,
-            stepType: data.stepType,
-            messageId: data.messageId,
-            contentCiphertext: data.ciphertext,
-            contentEnvelope: data.envelope,
-            startedAt,
-            completedAt,
-          })
-          await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
-          return created
-        })
-        emitBotSealedProgress(stream, session, bot, persisted)
-      }
-
-      io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:step:completed", {
-        sessionId: session.id,
-        step: serializeTraceStep(persisted),
-      })
-
-      res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
+      res.json({ data: { messageId: message.id } })
     },
 
     /**

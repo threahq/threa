@@ -2082,6 +2082,131 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-messages": {
+      "post": {
+        "operationId": "sendBotInvocationSealedMessage",
+        "summary": "Post a sealed interim message from an in-flight sealed bot invocation",
+        "tags": ["Bot invocations"],
+        "description": "Sealed variant of a mid-turn bot message, for an owner-granted E2E bot harness: posts one sealed interim message (ciphertext the server never decrypts) into the claim's stream before the turn completes — progress notes, permission prompts, early acks. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "invocationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Invocation ID"
+          },
+          {
+            "name": "X-Threa-Callback-Token",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Per-claim callback token from the sealed claim response (binds the caller to the assigned session)."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "messageId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "ciphertext": {
+                    "type": "string",
+                    "minLength": 1,
+                    "format": "base64",
+                    "contentEncoding": "base64",
+                    "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                  },
+                  "envelope": {
+                    "type": "object",
+                    "properties": {
+                      "v": { "type": "number" },
+                      "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                      "iv": {
+                        "type": "string",
+                        "minLength": 1,
+                        "format": "base64",
+                        "contentEncoding": "base64",
+                        "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                      },
+                      "aad": {
+                        "type": "string",
+                        "minLength": 1,
+                        "format": "base64",
+                        "contentEncoding": "base64",
+                        "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                      }
+                    },
+                    "required": ["v", "keyGeneration", "iv", "aad"],
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["messageId", "ciphertext", "envelope"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": { "messageId": { "type": "string" } },
+                      "required": ["messageId"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-complete": {
       "post": {
         "operationId": "completeBotInvocationSealed",

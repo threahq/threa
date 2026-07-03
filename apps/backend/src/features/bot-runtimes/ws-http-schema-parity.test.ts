@@ -1,6 +1,16 @@
 import { describe, expect, it } from "bun:test"
-import { presenceUpdateSchema, invocationRenewSchema, invocationStepFrameSchema } from "./socket-handler"
-import { upsertPresenceSchema, renewInvocationClaimSchema, recordInvocationStepSchema } from "../public-api/schemas"
+import {
+  presenceUpdateSchema,
+  invocationRenewSchema,
+  invocationStepFrameSchema,
+  sealedStepFrameSchema,
+} from "./socket-handler"
+import {
+  upsertPresenceSchema,
+  renewInvocationClaimSchema,
+  recordInvocationStepSchema,
+  recordSealedInvocationStepSchema,
+} from "../public-api/schemas"
 
 // The `/bot` WebSocket frame schemas deliberately duplicate the HTTP body schemas
 // (importing the HTTP ones into bot-runtimes would create a value cycle back into
@@ -57,6 +67,32 @@ describe("WS ↔ HTTP schema parity", () => {
     it("enforces the same 15..300 bounds on both", () => {
       parity(wsRenew({ claimTtlSeconds: 14 }).success, httpRenew({ claimTtlSeconds: 14 }).success, false)
       parity(wsRenew({ claimTtlSeconds: 301 }).success, httpRenew({ claimTtlSeconds: 301 }).success, false)
+    })
+  })
+
+  describe("sealed step: stepId / ciphertext / envelope / durationMs", () => {
+    const validEnvelope = { v: 2, keyGeneration: 1, iv: "AA==", aad: "AA==" }
+    const base = { stepId: "step_1", stepType: "tool_call", ciphertext: "AA==", envelope: validEnvelope }
+    const wsSealed = (over: Record<string, unknown>) => sealedStepFrameSchema.safeParse({ ...base, ...over })
+    const httpSealed = (over: Record<string, unknown>) =>
+      recordSealedInvocationStepSchema.safeParse({ ...base, ...over })
+
+    it("accepts the full frame identically (with and without optionals)", () => {
+      parity(wsSealed({}).success, httpSealed({}).success, true)
+      parity(
+        wsSealed({ messageId: "msg_1", durationMs: 12 }).success,
+        httpSealed({ messageId: "msg_1", durationMs: 12 }).success,
+        true
+      )
+    })
+
+    it("rejects non-base64 ciphertext, malformed envelope, and negative duration identically", () => {
+      parity(wsSealed({ ciphertext: "not base64!" }).success, httpSealed({ ciphertext: "not base64!" }).success, false)
+      const badEnvelope = { ...validEnvelope, keyGeneration: -1 }
+      parity(wsSealed({ envelope: badEnvelope }).success, httpSealed({ envelope: badEnvelope }).success, false)
+      parity(wsSealed({ durationMs: -1 }).success, httpSealed({ durationMs: -1 }).success, false)
+      const tooLong = "x".repeat(129)
+      parity(wsSealed({ stepId: tooLong }).success, httpSealed({ stepId: tooLong }).success, false)
     })
   })
 

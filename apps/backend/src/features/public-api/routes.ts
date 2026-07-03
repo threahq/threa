@@ -49,6 +49,7 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
   createLabelSchema,
   updateLabelSchema,
@@ -463,6 +464,7 @@ const sealedCompletedInvocationSchema = z.object({
   sessionId: z.string(),
   messageId: z.string().nullable(),
 })
+const sealedInterimMessageSchema = z.object({ messageId: z.string() })
 
 const errorSchema = z.object({
   error: z.string(),
@@ -789,6 +791,25 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: recordSealedInvocationStepSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(invocationStepSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-messages",
+    operationId: "sendBotInvocationSealedMessage",
+    summary: "Post a sealed interim message from an in-flight sealed bot invocation",
+    description:
+      "Sealed variant of a mid-turn bot message, for an owner-granted E2E bot harness: posts one sealed interim message (ciphertext the server never decrypts) into the claim's stream before the turn completes — progress notes, permission prompts, early acks. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+      callbackTokenHeaderParam,
+    ],
+    requestSchema: sendSealedInvocationMessageSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(sealedInterimMessageSchema),
     canReturn404: true,
   },
   {

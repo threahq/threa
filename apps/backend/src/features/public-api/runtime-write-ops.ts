@@ -14,7 +14,10 @@ import {
   type RecordStepsParams,
   type RecordStepsResult,
   type RecordStepResult,
+  type RecordSealedStepsParams,
+  type RecordSealedStepsResult,
 } from "../bot-runtimes"
+import { authorizeSealedCallback, finalizeSealedStep } from "./sealed-callbacks"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { AgentSessionRepository } from "../agents"
 import { BotRepository } from "./bot-repository"
@@ -239,5 +242,26 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
     return { invocationId: claim.id, sessionId: claim.id, steps: recorded }
   }
 
-  return { applyPresence, touchPresence, renewClaim, recordSteps }
+  async function recordSealedSteps(params: RecordSealedStepsParams): Promise<RecordSealedStepsResult> {
+    const ctx = await authorizeSealedCallback(pool, {
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      invocationId: params.invocationId,
+      callbackToken: params.callbackToken,
+    })
+    const recorded: RecordStepResult[] = []
+    for (const frame of params.steps) {
+      const step = await finalizeSealedStep({ pool, io }, ctx, frame)
+      recorded.push({ stepId: step.id, stepNumber: step.stepNumber })
+    }
+    // Sealed steps are the turn's liveness signal between claim renewals, the
+    // same as the enclave's step callbacks — bump the session heartbeat so a
+    // long chatty turn is never falsely orphan-failed. No presence touch: the
+    // header-auth model carries no instanceId to key a presence row by, and the
+    // harness's own presence loop covers it.
+    await AgentSessionRepository.updateHeartbeat(pool, ctx.session.id)
+    return { invocationId: ctx.session.id, sessionId: ctx.session.id, steps: recorded }
+  }
+
+  return { applyPresence, touchPresence, renewClaim, recordSteps, recordSealedSteps }
 }

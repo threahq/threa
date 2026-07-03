@@ -883,6 +883,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.recordBotInvocationSealedStep
   )
   app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-messages",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.sendBotInvocationSealedMessage
+  )
+  app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-complete",
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
