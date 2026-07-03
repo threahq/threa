@@ -753,6 +753,10 @@ export class RemoteSession {
       await this.transport
         .recordSteps(invocationId, entry.invocation.claimToken, chunk, statusText ?? this.runtime.busyStatusText)
         .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
+      // The turn can close during an awaited send (reply, /stop, idle timeout)
+      // — exactly the long multi-chunk replays this loop exists for. Recheck so
+      // the returned boolean stays an honest stop signal for the tailer.
+      if (!this.inflight.has(invocationId)) return false
     }
     return true
   }

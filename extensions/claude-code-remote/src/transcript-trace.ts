@@ -393,6 +393,10 @@ export class TranscriptTracer {
   /** Start (or re-window) tailing for a delivered turn. Call BEFORE the turn content is pushed to the runtime. */
   beginTurn(invocationId: string): void {
     this.stopTimer()
+    // Orphaned tool_use ids (a call whose result never streamed before the
+    // turn ended) must not accumulate across a long-lived session; pairing is
+    // per-turn, so a fresh turn starts with an empty map.
+    this.toolHeadlines.clear()
     this.turn = { invocationId, emitted: 0, truncationNoted: false, bindDeadline: Date.now() + this.bindTimeoutMs }
     if (this.bound) {
       const fresh = this.snapshotCandidate(this.bound.path)
