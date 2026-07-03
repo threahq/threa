@@ -45,7 +45,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
-| 3.3  | Conversation-anchored agent replies                  | ☐      |       |
+| 3.3  | Conversation-anchored agent replies                  | ☑      | #1170 |
 | 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
 | 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
 | 4.3  | Brief UI: settings editor + timeline event           | ☐      |       |
@@ -290,6 +290,14 @@ So a channel/scratchpad and a thread beneath it already run concurrently, and tw
 **Tests:** the interleaved-topics case — two active conversations in one channel, trigger in the older one, reply lands in the trigger's conversation; fallback when no primary resolves; board card shows the reply under the right post.
 
 **Done when:** in a channel with two live topics, Ariadne's reply is assigned to the trigger's conversation, synchronously, without the extractor.
+
+**Deviations (shipped):**
+
+- **Wire shape: the existing `conversation` directive, not a new param (INV-35).** `doSendMessage` (`persona-agent.ts`) passes `conversation: { intent: 'existing', conversationId }` into `createMessage` → `EventService.createMessage`, whose injected `conversationAssigner` attaches the reply in the send transaction and stamps `conversation_intent` on the row. Boundary extraction then short-circuits on `message.conversationIntent !== null` (`declaredSkip`, `boundary-extraction-service.ts:74`) — it never reaches `assignAgentReply`'s most-recently-active fallback. No anchor resolves → the directive is omitted → today's `assignAgentReply` behavior. No new send path, no direct conversation-id param.
+- **Anchor reuses `resolveEligibleConversation` (INV-35).** The reply's declared conversation is the trigger's own topic via a memoized `resolveTriggerConversationId` in the turn: prefer the trigger's PRIMARY conversation, else the most recently active over the context window. The follow-up `source_conversation_id` resolution (§1.1) now shares this exact memoized closure — a reply and any follow-up it schedules anchor to the same topic, and the resolver runs at most once per turn.
+- **Cross-root safety is structural, not a catch.** The anchor is always the trigger's own conversation, which shares the reply's access root by construction (trigger + reply sit in the same stream, or a channel and a thread beneath it), so the assigner's `CONVERSATION_NOT_IN_ROOT` guard never fires on this path — no send-failing 400 to defend against.
+- **Not on the supersede EDIT path.** A supersede rerun edits an existing message; an edit keeps the conversation the original send already declared, so the directive is only set on the `createMessage` (new-message) branch.
+- **Test coverage: the anchor resolver, previously untested.** `resolveEligibleConversation` embodies the whole 3.3 contract (prefer the trigger's conversation over most-recently-active) and had no test; `companion/conversation-highlight.test.ts` now covers the interleaved-topics case (trigger classified into the older topic → resolver returns it, not the last-active one), the extraction-lag fallback, eligibility skipping, and the null cases. Fake-`Querier` + scoped `spyOn` (INV-48), consistent with the assigner and per-stream-concurrency tests. The declared→attach path itself is already covered by `conversation-assigner.test.ts` (existing same-root guard).
 
 ---
 

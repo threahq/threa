@@ -5,9 +5,11 @@ import {
   AgentStepTypes,
   AgentToolNames,
   AuthorTypes,
+  ConversationIntents,
   StreamTypes,
   type AgentSessionRerunContext,
   type AuthorType,
+  type ConversationDirective,
   type SourceItem,
 } from "@threa/types"
 import type { UserPreferencesService } from "../user-preferences"
@@ -98,6 +100,13 @@ export interface PersonaAgentDeps {
      * a privilege escalation.
      */
     accessibleStreamIds?: string[]
+    /**
+     * Declared conversation for this reply (roadmap 3.3): an agent reply joins
+     * the conversation it's participating in, resolved from the trigger's own
+     * topic. Omit to let boundary extraction infer (today's most-recently-active
+     * fallback). Only `existing` is used here — the anchor is an extant topic.
+     */
+    conversation?: ConversationDirective
   }) => Promise<{ id: string }>
   editMessage: (params: {
     workspaceId: string
@@ -503,6 +512,33 @@ export class PersonaAgent {
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
+        // The turn's conversation anchor (roadmap 3.3): the trigger message's own
+        // topic, resolved via the canonical resolver (INV-35) — prefer the
+        // trigger's PRIMARY conversation, else the most recently active one
+        // overlapping the context window (the fallback carries the common case,
+        // since the trigger is usually not classified on the turn it fires —
+        // extraction lags). Best-effort per §2.8 Q8; null when nothing overlaps
+        // (e.g. E2E streams the segmenter skips, or a follow-up turn with no
+        // trigger message). Memoized so every write this turn — the reply's
+        // declared conversation AND a scheduled follow-up's source anchor — lands
+        // on the same topic, and so it resolves at most once.
+        let triggerConversationResolved = false
+        let triggerConversationId: string | null = null
+        const resolveTriggerConversationId = async (): Promise<string | null> => {
+          if (triggerConversationResolved) return triggerConversationId
+          triggerConversationResolved = true
+          if (agentContext.triggerMessage) {
+            const anchor = await resolveEligibleConversation(db, {
+              workspaceId,
+              preferMessageId: agentContext.triggerMessage.id,
+              windowMessageIds: contextMessageIds,
+              isEligible: () => true,
+            })
+            triggerConversationId = anchor?.id ?? null
+          }
+          return triggerConversationId
+        }
+
         // `sources` is required on the commit payload (empty array = none) so a
         // caller can't silently drop citations — see TurnCommit.
         const doSendMessage = async (msgInput: { content: string; sources: SourceItem[] }) => {
@@ -542,6 +578,17 @@ export class PersonaAgent {
             }
           }
 
+          // Declare the reply's conversation (roadmap 3.3) so it's assigned
+          // synchronously to the trigger's topic in the send txn and boundary
+          // extraction skips its most-recently-active fallback — this is the fix
+          // for busy channels where the last-touched topic isn't the one being
+          // replied to. The anchor is the trigger's own conversation, which
+          // always shares the reply's access root (trigger + reply sit in the
+          // same stream, or a channel and a thread beneath it), so the assigner's
+          // cross-root guard never rejects it. Null anchor → omit → today's
+          // behavior. Not on the supersede EDIT path above: an edit keeps the
+          // conversation the original send already declared.
+          const declaredConversationId = await resolveTriggerConversationId()
           const message = await createMessage({
             workspaceId,
             streamId: targetStreamId,
@@ -550,6 +597,9 @@ export class PersonaAgent {
             content: msgInput.content,
             sources: msgInput.sources,
             sessionId: session.id,
+            ...(declaredConversationId && {
+              conversation: { intent: ConversationIntents.EXISTING, conversationId: declaredConversationId },
+            }),
             // Personas have no `stream_members` rows; pass the agent's
             // scope-restricted `AgentAccessSpec` reach so inline-attachment
             // and share gates run against the same set the workspace tools
@@ -602,37 +652,22 @@ export class PersonaAgent {
         }
 
         // Follow-up scheduling for the schedule_follow_up tool, bound to this
-        // persona/session/stream. The source-conversation anchor reuses the
-        // canonical resolver (INV-35): prefer the trigger's own conversation,
-        // else the most recently active one overlapping the context window —
-        // the fallback matters because the trigger is usually not classified on
-        // the turn it fires (extraction lags), so prefer-only would resolve to
-        // null in the common case. Best-effort per §2.8 Q8; null when nothing
-        // overlaps (e.g. E2E streams the segmenter skips).
+        // persona/session/stream. The source-conversation anchor shares the
+        // reply's anchor (`resolveTriggerConversationId`, INV-35) so a follow-up
+        // and the reply that scheduled it point at the same topic.
         const followUpDeps: import("./tools/tool-deps").FollowUpToolDeps | undefined =
           scheduleFollowUp && listFollowUps && cancelFollowUp && updateFollowUp
             ? {
-                scheduleFollowUp: async ({ note, scheduledFor }) => {
-                  let sourceConversationId: string | null = null
-                  if (agentContext.triggerMessage) {
-                    const anchor = await resolveEligibleConversation(db, {
-                      workspaceId,
-                      preferMessageId: agentContext.triggerMessage.id,
-                      windowMessageIds: contextMessageIds,
-                      isEligible: () => true,
-                    })
-                    sourceConversationId = anchor?.id ?? null
-                  }
-                  return scheduleFollowUp({
+                scheduleFollowUp: async ({ note, scheduledFor }) =>
+                  scheduleFollowUp({
                     workspaceId,
                     streamId: session.streamId,
                     personaId: persona.id,
                     sessionId: session.id,
-                    sourceConversationId,
+                    sourceConversationId: await resolveTriggerConversationId(),
                     note,
                     scheduledFor,
-                  })
-                },
+                  }),
                 listFollowUps: () => listFollowUps({ workspaceId, streamId: session.streamId }),
                 cancelFollowUp: ({ followUpId }) =>
                   cancelFollowUp({ workspaceId, streamId: session.streamId, followUpId }),
