@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { defaultDisplayName, deriveStableId, loadConfig, sanitizeId } from "./config"
+import { defaultDisplayName, deriveStableId, loadConfig, sanitizeId, type ConnectorIdentity } from "./identity"
+
+const IDENTITY: ConnectorIdentity = {
+  idPrefix: "cc",
+  sessionIdPrefix: "ccs",
+  displayNamePrefix: "Claude Code",
+  configPathHint: "~/.claude/threa-channel/config.json",
+}
 
 const ID_CHARSET = /^[A-Za-z0-9_-]+$/
 
@@ -32,14 +39,14 @@ describe("sanitizeId", () => {
 
 describe("defaultDisplayName", () => {
   test("appends the project dir to a default prefix", () => {
-    expect(defaultDisplayName("/Users/kris/dev/threa")).toBe("Claude Code - threa")
+    expect(defaultDisplayName("/Users/kris/dev/threa", "Claude Code")).toBe("Claude Code - threa")
   })
   test("uses a configured override as the prefix", () => {
-    expect(defaultDisplayName("/Users/kris/dev/threa", "Work")).toBe("Work - threa")
+    expect(defaultDisplayName("/Users/kris/dev/threa", "Claude Code", "Work")).toBe("Work - threa")
   })
   test("ignores a trailing slash and clamps to 100 chars", () => {
-    expect(defaultDisplayName("/Users/kris/dev/threa/")).toBe("Claude Code - threa")
-    expect(defaultDisplayName("/a", "x".repeat(200)).length).toBe(100)
+    expect(defaultDisplayName("/Users/kris/dev/threa/", "Claude Code")).toBe("Claude Code - threa")
+    expect(defaultDisplayName("/a", "Claude Code", "x".repeat(200)).length).toBe(100)
   })
 })
 
@@ -47,7 +54,7 @@ describe("loadConfig", () => {
   const base = { cwd: "/Users/kris/dev/threa", hostname: "host" }
 
   test("errors when required credentials are missing", () => {
-    const result = loadConfig({ ...base, env: {} })
+    const result = loadConfig({ ...base, env: {} }, IDENTITY)
     expect("error" in result).toBe(true)
     if ("error" in result) {
       expect(result.error).toContain("THREA_WORKSPACE_ID")
@@ -56,10 +63,13 @@ describe("loadConfig", () => {
   })
 
   test("resolves from env and derives stable ids", () => {
-    const result = loadConfig({
-      ...base,
-      env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" },
-    })
+    const result = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" },
+      },
+      IDENTITY
+    )
     expect("config" in result).toBe(true)
     if ("config" in result) {
       expect(result.config.workspaceId).toBe("ws_1")
@@ -69,27 +79,33 @@ describe("loadConfig", () => {
       expect(result.config.runtimeSessionId).toMatch(ID_CHARSET)
       expect(result.config.permissionRelay).toBe(true)
       // Same host+cwd resolves to the same scratchpad on the next launch.
-      const again = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } })
+      const again = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
       if ("config" in again) expect(again.config.instanceId).toBe(result.config.instanceId)
     }
   })
 
   test("appends the project dir to the display name (default prefix and override)", () => {
-    const def = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } })
+    const def = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
     if ("config" in def) expect(def.config.displayName).toBe("Claude Code - threa")
-    const override = loadConfig({
-      ...base,
-      env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_DISPLAY_NAME: "Work" },
-    })
+    const override = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_DISPLAY_NAME: "Work" },
+      },
+      IDENTITY
+    )
     if ("config" in override) expect(override.config.displayName).toBe("Work - threa")
   })
 
   test("env overrides file values", () => {
-    const result = loadConfig({
-      ...base,
-      env: { THREA_WORKSPACE_ID: "ws_env", THREA_API_KEY: "threa_bk_env" },
-      file: { workspaceId: "ws_file", apiKey: "threa_bk_file", baseUrl: "https://staging.threa.io" },
-    })
+    const result = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_env", THREA_API_KEY: "threa_bk_env" },
+        file: { workspaceId: "ws_file", apiKey: "threa_bk_file", baseUrl: "https://staging.threa.io" },
+      },
+      IDENTITY
+    )
     if ("config" in result) {
       expect(result.config.workspaceId).toBe("ws_env")
       expect(result.config.baseUrl).toBe("https://staging.threa.io")
@@ -97,34 +113,43 @@ describe("loadConfig", () => {
   })
 
   test("resolves defaultLabel from env (winning over file) and is undefined when unset", () => {
-    const unset = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } })
+    const unset = loadConfig({ ...base, env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" } }, IDENTITY)
     if ("config" in unset) expect(unset.config.defaultLabel).toBeUndefined()
 
-    const fromFile = loadConfig({
-      ...base,
-      env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" },
-      file: { defaultLabel: "coding" },
-    })
+    const fromFile = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x" },
+        file: { defaultLabel: "coding" },
+      },
+      IDENTITY
+    )
     if ("config" in fromFile) expect(fromFile.config.defaultLabel).toBe("coding")
 
-    const envWins = loadConfig({
-      ...base,
-      env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_DEFAULT_LABEL: " review " },
-      file: { defaultLabel: "coding" },
-    })
+    const envWins = loadConfig(
+      {
+        ...base,
+        env: { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_x", THREA_DEFAULT_LABEL: " review " },
+        file: { defaultLabel: "coding" },
+      },
+      IDENTITY
+    )
     if ("config" in envWins) expect(envWins.config.defaultLabel).toBe("review")
   })
 
   test("parses permissionRelay off and clamps pollMs", () => {
-    const result = loadConfig({
-      ...base,
-      env: {
-        THREA_WORKSPACE_ID: "ws_1",
-        THREA_API_KEY: "threa_bk_x",
-        THREA_PERMISSION_RELAY: "0",
-        THREA_POLL_MS: "10",
+    const result = loadConfig(
+      {
+        ...base,
+        env: {
+          THREA_WORKSPACE_ID: "ws_1",
+          THREA_API_KEY: "threa_bk_x",
+          THREA_PERMISSION_RELAY: "0",
+          THREA_POLL_MS: "10",
+        },
       },
-    })
+      IDENTITY
+    )
     if ("config" in result) {
       expect(result.config.permissionRelay).toBe(false)
       expect(result.config.pollMs).toBe(1000)
@@ -132,15 +157,18 @@ describe("loadConfig", () => {
   })
 
   test("honors explicit instanceId / runtimeSessionId overrides", () => {
-    const result = loadConfig({
-      ...base,
-      env: {
-        THREA_WORKSPACE_ID: "ws_1",
-        THREA_API_KEY: "threa_bk_x",
-        THREA_INSTANCE_ID: "my.instance",
-        THREA_RUNTIME_SESSION_ID: "my.session",
+    const result = loadConfig(
+      {
+        ...base,
+        env: {
+          THREA_WORKSPACE_ID: "ws_1",
+          THREA_API_KEY: "threa_bk_x",
+          THREA_INSTANCE_ID: "my.instance",
+          THREA_RUNTIME_SESSION_ID: "my.session",
+        },
       },
-    })
+      IDENTITY
+    )
     if ("config" in result) {
       expect(result.config.instanceId).toBe("my-instance")
       expect(result.config.runtimeSessionId).toBe("my-session")

@@ -13,7 +13,7 @@ import {
   uploadReplyAttachments,
   type DownloadedAttachment,
 } from "./attachments"
-import type { AttachmentSummary, StreamMessageSummary } from "./threa-client"
+import type { AttachmentSummary, StreamMessageSummary } from "./client"
 
 function summary(partial: Partial<AttachmentSummary> & { id: string }): AttachmentSummary {
   return { filename: "f.txt", mimeType: "text/plain", sizeBytes: 1, ...partial }

@@ -1,151 +1,20 @@
-import { createHash } from "node:crypto"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { loadConfig, type ConnectorIdentity, type LoadConfigInput, type LoadConfigResult } from "@threa/remote-session"
 
 export const CONFIG_DIR = join(homedir(), ".claude", "threa-channel")
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json")
 
-export interface ThreaChannelConfig {
-  baseUrl: string
-  workspaceId: string
-  apiKey: string
-  /** Scratchpad display name: the configured prefix (default "Claude Code") with the project directory appended. */
-  displayName: string
-  /** Sent as `labelName` on session create; the backend applies it only to a newly created scratchpad. Unset = no label. */
-  defaultLabel?: string
-  /** `^[A-Za-z0-9_-]+$`, ≤64 — must satisfy the `/bot` hello schema. */
-  instanceId: string
-  runtimeSessionId: string
-  /** Relay Claude Code permission prompts into the scratchpad for remote approval. */
-  permissionRelay: boolean
-  /** Backstop claim-poll cadence; the `/bot` socket pushes work faster than this. */
-  pollMs: number
-  /**
-   * Safety net for a wedged turn: an in-flight invocation is force-closed after
-   * this much *inactivity*. Every `send` (and tool-approval activity) resets it,
-   * so an actively-working turn never trips it — only one that went silent
-   * without a `reply`. Must exceed the longest single tool call Claude makes
-   * (e.g. a long test run), since Claude can't `send` a heartbeat while blocked
-   * on a tool.
-   */
-  idleTimeoutMs: number
+/** cc/ccs stable-id prefixes: the same project directory always maps back to the same Claude Code scratchpad. */
+export const CLAUDE_CONNECTOR_IDENTITY: ConnectorIdentity = {
+  idPrefix: "cc",
+  sessionIdPrefix: "ccs",
+  displayNamePrefix: "Claude Code",
+  configPathHint: CONFIG_PATH,
 }
 
-const UNSAFE_ID_CHARS = /[^A-Za-z0-9_-]+/g
-
-export function sanitizeId(raw: string): string {
-  return raw.replace(UNSAFE_ID_CHARS, "-").replace(/^-+|-+$/g, "")
+export function loadChannelConfig(input: LoadConfigInput): LoadConfigResult {
+  return loadConfig(input, CLAUDE_CONNECTOR_IDENTITY)
 }
 
-/**
- * Deterministic id from a seed (host + cwd), so the same project directory
- * always maps back to the same Threa scratchpad across Claude Code restarts —
- * no on-disk session state to keep in sync.
- */
-export function deriveStableId(prefix: string, seed: string): string {
-  const hash = createHash("sha256").update(seed).digest("hex").slice(0, 16)
-  return `${prefix}-${hash}`.slice(0, 64)
-}
-
-export function defaultDisplayName(cwd: string, override?: string): string {
-  const prefix = override?.trim() ? override.trim() : "Claude Code"
-  const dir = cwd.split("/").filter(Boolean).pop() ?? "session"
-  const name = `${prefix} - ${dir}`
-  // upsertPresenceSchema caps displayName at 100 chars.
-  return name.length > 100 ? name.slice(0, 100) : name
-}
-
-export interface RawConfig {
-  baseUrl?: unknown
-  workspaceId?: unknown
-  apiKey?: unknown
-  displayName?: unknown
-  defaultLabel?: unknown
-  permissionRelay?: unknown
-  pollMs?: unknown
-  idleTimeoutMs?: unknown
-  instanceId?: unknown
-  runtimeSessionId?: unknown
-}
-
-export function parseConfigFile(text: string): RawConfig {
-  const parsed = JSON.parse(text) as unknown
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("config file must be a JSON object")
-  }
-  return parsed as RawConfig
-}
-
-function str(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
-}
-
-function parseBool(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") return value
-  const s = str(value)?.toLowerCase()
-  if (s === undefined) return fallback
-  if (["0", "false", "no", "off"].includes(s)) return false
-  if (["1", "true", "yes", "on"].includes(s)) return true
-  return fallback
-}
-
-function parseNum(value: unknown, fallback: number, min: number): number {
-  const n = typeof value === "number" ? value : Number(str(value))
-  return Number.isFinite(n) ? Math.max(min, Math.floor(n)) : fallback
-}
-
-export interface LoadConfigInput {
-  env: Record<string, string | undefined>
-  cwd: string
-  hostname: string
-  file?: RawConfig
-}
-
-export type LoadConfigResult = { config: ThreaChannelConfig } | { error: string }
-
-/**
- * Pure config resolver: file values are the base, environment variables win.
- * Kept side-effect-free so it can be unit-tested without touching disk/env.
- */
-export function loadConfig(input: LoadConfigInput): LoadConfigResult {
-  const { env, cwd, hostname, file = {} } = input
-
-  const baseUrl = str(env.THREA_BASE_URL) ?? str(file.baseUrl) ?? "https://app.threa.io"
-  const workspaceId = str(env.THREA_WORKSPACE_ID) ?? str(file.workspaceId)
-  const apiKey = str(env.THREA_API_KEY) ?? str(file.apiKey)
-
-  const missing = [!workspaceId && "THREA_WORKSPACE_ID", !apiKey && "THREA_API_KEY"].filter(Boolean)
-  if (missing.length > 0) {
-    return { error: `Missing required config: ${missing.join(", ")}. Set env vars or ${CONFIG_PATH}.` }
-  }
-
-  const displayName = defaultDisplayName(cwd, str(env.THREA_DISPLAY_NAME) ?? str(file.displayName))
-  const defaultLabel = str(env.THREA_DEFAULT_LABEL) ?? str(file.defaultLabel)
-  const seed = `${hostname}:${cwd}`
-  const instanceId = sanitizeId(str(env.THREA_INSTANCE_ID) ?? str(file.instanceId) ?? deriveStableId("cc", seed)).slice(
-    0,
-    64
-  )
-  const runtimeSessionId = sanitizeId(
-    str(env.THREA_RUNTIME_SESSION_ID) ?? str(file.runtimeSessionId) ?? deriveStableId("ccs", seed)
-  ).slice(0, 64)
-
-  if (!instanceId || !runtimeSessionId) {
-    return { error: "Could not derive a valid instanceId/runtimeSessionId (empty after sanitization)." }
-  }
-
-  return {
-    config: {
-      baseUrl: baseUrl.replace(/\/$/, ""),
-      workspaceId: workspaceId!,
-      apiKey: apiKey!,
-      displayName,
-      defaultLabel,
-      instanceId,
-      runtimeSessionId,
-      permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),
-      pollMs: parseNum(env.THREA_POLL_MS ?? file.pollMs, 3000, 1000),
-      idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
-    },
-  }
-}
+export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threa/remote-session"

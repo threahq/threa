@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { type LifecycleProcess, wireLifecycle } from "./index"
+import { type LifecycleProcess, wireLifecycle } from "./lifecycle"
 
 /** A fake `process` that records exits and lets a test emit signals / stdin events. */
 function makeHost() {
@@ -91,7 +91,7 @@ describe("wireLifecycle", () => {
   test("exits even if shutdown hangs past the guard window", async () => {
     const h = makeHost()
     // shutdown that never resolves — the bounded guard must still force the exit.
-    wireLifecycle({ shutdown: () => new Promise<void>(() => {}) }, h.host, 20)
+    wireLifecycle({ shutdown: () => new Promise<void>(() => {}) }, h.host, { exitGuardMs: 20 })
 
     h.emit("SIGTERM")
     await h.exited
