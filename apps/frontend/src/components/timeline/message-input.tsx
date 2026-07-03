@@ -29,9 +29,11 @@ import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
+import { usePanel, createConversationPanelId } from "@/contexts"
 import { Layers, X } from "lucide-react"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
+import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent, type CommandInfo } from "@threa/types"
@@ -297,6 +299,7 @@ function MessageInputComponent({
   // reload would silently misfile whatever is typed next, so it resets with the
   // session and with the stream.
   const conversationReplyCtx = useConversationReply()
+  const { openPanel } = usePanel()
   const [conversationReply, setConversationReply] = useState<ConversationReplyData | null>(null)
   useEffect(() => {
     if (!conversationReplyCtx) return
@@ -308,12 +311,35 @@ function MessageInputComponent({
   useEffect(() => {
     setConversationReply(null)
   }, [streamId])
-  // Topic label for the strip — cached board card or a one-shot by-id fetch.
+  // Topic label for the strip — cached board card or a one-shot by-id fetch. The
+  // same projection carries the conversation's most-recently-active stream: the
+  // latest reply's own stream (a thread under the root), falling back to the
+  // conversation's anchor.
   const { post: conversationReplyPost } = useConversationBoardPost(
     workspaceId,
     conversationReply?.conversationId ?? null
   )
   const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
+  const conversationReplyLastActiveStreamId = conversationReplyPost
+    ? (conversationReplyPost.recentMessages.at(-1)?.streamId ?? conversationReplyPost.conversation.streamId)
+    : null
+
+  // Thread-follow: when the armed conversation is currently live in a thread (its
+  // most-recently-active stream isn't this one), a flat send here would
+  // re-interleave the channel — the mess recency-biased continuation avoids
+  // (board-view-design.md). Hand off to the conversation panel instead: it renders
+  // the conversation across its root + threads and its composer routes the reply
+  // into the live thread. A same-stream conversation keeps the inline strip/send
+  // below. Fires once — disarming makes `conversationReply` null so the guard holds.
+  useEffect(() => {
+    if (!conversationReply) return
+    const target = conversationReplyLastActiveStreamId
+    if (!target || target === streamId) return
+    const { conversationId } = conversationReply
+    requestConversationReplyOpen(conversationId)
+    openPanel(createConversationPanelId(conversationId))
+    setConversationReply(null)
+  }, [conversationReply, conversationReplyLastActiveStreamId, streamId, openPanel])
 
   // Consume any pending share handoff for this stream, pre-inserting the
   // shared-message pointer into the composer and leaving the cursor after it.

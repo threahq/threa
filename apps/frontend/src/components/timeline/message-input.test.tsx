@@ -11,6 +11,10 @@ import * as authModule from "@/auth"
 import * as quoteReplyModule from "./quote-reply-context"
 import * as conversationReplyModule from "./conversation-reply-context"
 import * as useConversationsModule from "@/hooks/use-conversations"
+import {
+  consumeConversationReplyOpen,
+  resetConversationReplyOpenStoreCache,
+} from "@/stores/conversation-reply-open-store"
 import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
@@ -56,6 +60,7 @@ const mockNavigate = vi.fn()
 let mockMessageSendMode: "enter" | "cmdEnter" = "enter"
 
 const mockSendMessage = vi.fn()
+const mockOpenPanel = vi.fn()
 const mockClearDraft = vi.fn()
 const mockResolveDraft = vi.fn()
 const mockClearAttachments = vi.fn()
@@ -103,6 +108,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockSendMessage.mockReset()
   mockSendMessage.mockResolvedValue({})
+  mockOpenPanel.mockReset()
+  resetConversationReplyOpenStoreCache()
   mockNavigate.mockReset()
   mockMessageSendMode = "enter"
   mockComposerState = {
@@ -180,15 +187,27 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof conversationReplyModule.useConversationReply>)
   // The armed-reply strip resolves its topic label via the board-post hook,
   // which needs the services context + query client; stub it with a fixed topic.
+  // `recentMessages`/`conversation.streamId` default the conversation's last-active
+  // stream to the rendered stream ("stream_456"), so the inline strip stays put —
+  // the thread-follow redirect only fires when they point elsewhere (own test).
   vi.spyOn(useConversationsModule, "useConversationBoardPost").mockImplementation(
     (_workspaceId: string, conversationId: string | null) =>
       ({
-        post: conversationId ? { conversation: { id: conversationId, topicSummary: "Pizza plans" } } : null,
+        post: conversationId
+          ? {
+              conversation: { id: conversationId, streamId: "stream_456", topicSummary: "Pizza plans" },
+              recentMessages: [],
+            }
+          : null,
         isLoading: false,
         notFound: false,
         refetch: vi.fn(),
       }) as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>
   )
+
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+    openPanel: mockOpenPanel,
+  } as unknown as ReturnType<typeof contextsModule.usePanel>)
 
   vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
     sendMessage: mockSendMessage,
@@ -603,6 +622,35 @@ describe("MessageInput", () => {
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
       expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ conversation: undefined }))
+    })
+
+    it("hands off to the conversation panel when the conversation is live in a thread (thread-follow)", () => {
+      // The conversation's most-recently-active stream is a thread (`thread_789`),
+      // not the rendered channel (`stream_456`) — a flat send here would
+      // re-interleave the channel, so the composer redirects to the conversation
+      // panel and asks it to open its reply composer instead of arming inline.
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockImplementation(
+        (_workspaceId: string, conversationId: string | null) =>
+          ({
+            post: conversationId
+              ? {
+                  conversation: { id: conversationId, streamId, topicSummary: "Pizza plans" },
+                  recentMessages: [{ streamId: "thread_789" }],
+                }
+              : null,
+            isLoading: false,
+            notFound: false,
+            refetch: vi.fn(),
+          }) as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>
+      )
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
+      // The panel's composer is asked to open, and no inline strip is left behind.
+      expect(consumeConversationReplyOpen("conv_1")).toBe(true)
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
     })
   })
 

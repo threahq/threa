@@ -40,6 +40,14 @@ interface BoardReplyComposerProps {
   /** The conversation's most-recently-active stream, for recency-biased
    *  continuation (a reply follows the conversation into its thread). */
   lastActiveStreamId: string | null
+  /**
+   * When it turns true, expand the resting affordance into the live composer and
+   * focus it — the conversation panel raises this after being opened via "Reply
+   * in conversation" so the user lands straight in the reply editor. Left false
+   * on board cards (they open on tap). One-shot: a manual collapse afterwards is
+   * respected because the flag doesn't change again.
+   */
+  autoOpenReply?: boolean
 }
 
 /**
@@ -62,6 +70,15 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const [open, setOpen] = useState(false)
   const [resting, setResting] = useState<RestingState>("idle")
   const buttonRef = useRef<HTMLButtonElement>(null)
+
+  // "Reply in conversation" opened the panel and asked it to land in the editor.
+  // Deps on the flag alone, so a later manual collapse isn't reopened.
+  const { autoOpenReply } = props
+  useEffect(() => {
+    if (!autoOpenReply) return
+    setResting("idle")
+    setOpen(true)
+  }, [autoOpenReply])
 
   // Quote reply from a message row in this conversation lands here. The resting
   // affordance leaves the form unmounted while collapsed, so this always-mounted

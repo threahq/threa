@@ -22,6 +22,11 @@ import * as contextsModule from "@/contexts"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as shareHandoffModule from "@/stores/share-handoff-store"
+import * as boardReplyComposerModule from "@/components/board/board-reply-composer"
+import {
+  requestConversationReplyOpen,
+  resetConversationReplyOpenStoreCache,
+} from "@/stores/conversation-reply-open-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const WORKSPACE_ID = "ws_1"
@@ -140,7 +145,10 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  resetConversationReplyOpenStoreCache()
+  vi.restoreAllMocks()
+})
 
 describe("ConversationPanel", () => {
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {
@@ -155,6 +163,31 @@ describe("ConversationPanel", () => {
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
     expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
+  })
+
+  it("raises autoOpenReply on the composer when opened via 'Reply in conversation' (queued request)", async () => {
+    // The message-row action queues this before opening the panel; the panel picks
+    // it up on mount and asks its composer to expand instead of resting collapsed.
+    let capturedAutoOpen: boolean | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      capturedAutoOpen = props.autoOpenReply
+      return <></>
+    })
+    requestConversationReplyOpen(CONVERSATION_ID)
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    await waitFor(() => expect(capturedAutoOpen).toBe(true))
+  })
+
+  it("leaves the composer collapsed on a plain open (no queued request)", async () => {
+    let capturedAutoOpen: boolean | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      capturedAutoOpen = props.autoOpenReply
+      return <></>
+    })
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    expect(capturedAutoOpen).toBe(false)
   })
 
   it("fetches the post by id when the store has no row (deep-link / in-stream list)", async () => {
