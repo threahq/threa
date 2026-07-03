@@ -40,6 +40,7 @@ import {
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
   createRuntimeSessionSchema,
+  provisionSessionKeyWrapsSchema,
   renameRuntimeSessionSchema,
   rebindRuntimeSessionSchema,
   claimInvocationSchema,
@@ -451,7 +452,12 @@ const runtimeSessionLinkSchema = z.object({
   activeStreamId: z.string(),
   runtimeSessionId: z.string(),
   streamUrlPath: z.string(),
+  // The linked scratchpad's encryption state — set on create (echoes the e2e
+  // request) and on resume (the existing stream's actual state).
+  e2eEnabled: z.boolean().optional(),
 })
+const ownerE2eKeySchema = z.object({ keyId: z.string(), publicKey: z.string() })
+const provisionedWrapsSchema = z.object({ stored: z.number().int() })
 
 const renamedRuntimeSessionLinkSchema = runtimeSessionLinkSchema.extend({ displayName: z.string() })
 
@@ -684,6 +690,37 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: createRuntimeSessionSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(runtimeSessionLinkSchema),
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/owner-e2e-key",
+    operationId: "getBotOwnerE2eKey",
+    summary: "Get the bot owner's active encryption public key",
+    description:
+      "The bot owner's active UIK (key id + base64 X25519 public key). A sealed harness fetches this before creating an end-to-end-encrypted session so it can wrap the generation-0 stream key to the owner. 404 when the owner has not set up encryption.",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    responseSchema: dataEnvelope(ownerE2eKeySchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/e2e/key-wraps",
+    operationId: "provisionStreamE2eKeyWraps",
+    summary: "Provision the generation-0 key wraps for a harness-created encrypted scratchpad",
+    description:
+      "Phase two of harness-created E2E scratchpads: stores the stream-key wraps (owner UIK + the harness's own BIK) minted against the stream id returned by session create. Bot-actor-only, current generation only, and only while the generation has no wraps — slots are immutable, so a replay cannot splice keys.",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "streamId", in: "path", required: true, schema: { type: "string" }, description: "Stream ID" },
+    ],
+    requestSchema: provisionSessionKeyWrapsSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(provisionedWrapsSchema),
+    canReturn404: true,
   },
   {
     method: "post",

@@ -27,6 +27,7 @@ import {
 } from "./repository"
 import type { LabelAssignmentService } from "../labels"
 import type { Stream, StreamService } from "../streams"
+import { E2eStreamActorsRepository } from "../e2e-streams"
 
 interface BotRuntimeServiceDeps {
   pool: Pool
@@ -257,6 +258,14 @@ export class BotRuntimeService {
     /** Markdown description set on the new scratchpad (e.g. a handover note). */
     description?: string
     traits: readonly BotTrait[]
+    /**
+     * Create the scratchpad end-to-end encrypted. The flag + owner key land in
+     * the create transaction (INV-E1) together with the bot's own actor grant,
+     * so the very first invocation resolves a `sealed` delivery verdict; the
+     * harness provisions the generation-0 SSK wraps in a follow-up call (the
+     * wrap AAD binds to the stream id minted here).
+     */
+    e2e?: { ownerKeyId: string }
   }): Promise<{ link: BotRuntimeSessionLink; stream: Stream }> {
     const { streamService, labelAssignmentService } = this
     if (!streamService || !labelAssignmentService) {
@@ -271,9 +280,20 @@ export class BotRuntimeService {
         // Attribute the at-creation description note to the bot so the timeline
         // row reads "<bot> set the description".
         descriptionActor: params.description ? { id: params.botId, type: AuthorTypes.BOT } : undefined,
-        memoryMode: params.memoryMode ?? MemoryModes.OFF,
+        // GAM extraction short-circuits on E2E streams (INV-E2), so an
+        // encrypted scratchpad's memory mode is OFF regardless of the request.
+        memoryMode: params.e2e ? MemoryModes.OFF : (params.memoryMode ?? MemoryModes.OFF),
         createdBy: params.ownerUserId,
+        ...(params.e2e ? { e2e: { ownerKeyId: params.e2e.ownerKeyId } } : {}),
       })
+      if (params.e2e) {
+        // The creating harness is the scratchpad's sealed runner — grant it in
+        // the same transaction so the first message's delivery verdict already
+        // sees the actor row (a grant, not liveness: the claim predicate still
+        // requires BIK wrap coverage before handing it a sealed turn).
+        await E2eStreamActorsRepository.add(client, params.workspaceId, stream.id, "bot", params.botId, null)
+        stream.e2eActors = [{ kind: "bot", actorId: params.botId, keyId: null }]
+      }
       await streamService.addBotToStreamOn(client, stream.id, params.botId, params.workspaceId, params.ownerUserId)
 
       if (params.labelName) {

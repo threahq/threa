@@ -156,6 +156,30 @@ export const createRuntimeSessionSchema = z.object({
   // a "set the description" timeline row and in the agent's prompt context. Only
   // applied when the session creates a fresh scratchpad, not on resume.
   description: z.string().max(STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH).optional(),
+  // Create the linked scratchpad end-to-end encrypted (INV-E1: the flag lands in
+  // the create transaction). `ownerKeyId` must be the bot OWNER's active UIK —
+  // the harness wraps the generation-0 stream key to it (plus its own BIK) in a
+  // follow-up provisioning call, because the wrap AAD binds to the server-minted
+  // stream id. Personal bots only (a shared bot has no owner to wrap to).
+  e2e: z.object({ ownerKeyId: z.string().min(1).max(128) }).optional(),
+})
+
+// Generation-0 SSK wraps a sealed harness provisions right after creating its
+// E2E scratchpad: one wrap for the stream owner's UIK and one for its own BIK.
+// Wrap bytes are opaque HPKE ciphertext; slots are insert-only server-side.
+export const provisionSessionKeyWrapsSchema = z.object({
+  keyGeneration: z.number().int().min(0),
+  wraps: z
+    .array(
+      z.object({
+        recipientKind: z.enum(["user", "bot"]),
+        recipientKeyId: z.string().min(1).max(128),
+        wrapEnc: z.base64().min(1),
+        wrapCt: z.base64().min(1),
+      })
+    )
+    .min(1)
+    .max(4),
 })
 
 export const renameRuntimeSessionSchema = z.object({

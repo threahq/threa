@@ -1045,7 +1045,13 @@
                   "localCwd": { "type": "string", "maxLength": 1000 },
                   "memoryMode": { "type": "string", "enum": ["auto", "off"] },
                   "labelName": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "\\S" },
-                  "description": { "type": "string", "maxLength": 10000 }
+                  "description": { "type": "string", "maxLength": 10000 },
+                  "e2e": {
+                    "type": "object",
+                    "properties": { "ownerKeyId": { "type": "string", "minLength": 1, "maxLength": 128 } },
+                    "required": ["ownerKeyId"],
+                    "additionalProperties": false
+                  }
                 },
                 "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
                 "additionalProperties": false
@@ -1069,7 +1075,8 @@
                         "rootStreamId": { "type": "string" },
                         "activeStreamId": { "type": "string" },
                         "runtimeSessionId": { "type": "string" },
-                        "streamUrlPath": { "type": "string" }
+                        "streamUrlPath": { "type": "string" },
+                        "e2eEnabled": { "type": "boolean" }
                       },
                       "required": ["linkId", "rootStreamId", "activeStreamId", "runtimeSessionId", "streamUrlPath"],
                       "additionalProperties": false
@@ -1104,6 +1111,189 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/bot-runtime/owner-e2e-key": {
+      "get": {
+        "operationId": "getBotOwnerE2eKey",
+        "summary": "Get the bot owner's active encryption public key",
+        "tags": ["Bot runtimes"],
+        "description": "The bot owner's active UIK (key id + base64 X25519 public key). A sealed harness fetches this before creating an end-to-end-encrypted session so it can wrap the generation-0 stream key to the owner. 404 when the owner has not set up encryption.",
+        "security": [{ "apiKey": ["bot-runtime:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": { "keyId": { "type": "string" }, "publicKey": { "type": "string" } },
+                      "required": ["keyId", "publicKey"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/streams/{streamId}/e2e/key-wraps": {
+      "post": {
+        "operationId": "provisionStreamE2eKeyWraps",
+        "summary": "Provision the generation-0 key wraps for a harness-created encrypted scratchpad",
+        "tags": ["Bot runtimes"],
+        "description": "Phase two of harness-created E2E scratchpads: stores the stream-key wraps (owner UIK + the harness's own BIK) minted against the stream id returned by session create. Bot-actor-only, current generation only, and only while the generation has no wraps — slots are immutable, so a replay cannot splice keys.",
+        "security": [{ "apiKey": ["bot-runtime:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "streamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Stream ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                  "wraps": {
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "recipientKind": { "type": "string", "enum": ["user", "bot"] },
+                        "recipientKeyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                        "wrapEnc": {
+                          "type": "string",
+                          "minLength": 1,
+                          "format": "base64",
+                          "contentEncoding": "base64",
+                          "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                        },
+                        "wrapCt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "format": "base64",
+                          "contentEncoding": "base64",
+                          "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                        }
+                      },
+                      "required": ["recipientKind", "recipientKeyId", "wrapEnc", "wrapCt"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["keyGeneration", "wraps"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "stored": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+                      },
+                      "required": ["stored"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
         }
       }
     },
@@ -1157,6 +1347,7 @@
                         "activeStreamId": { "type": "string" },
                         "runtimeSessionId": { "type": "string" },
                         "streamUrlPath": { "type": "string" },
+                        "e2eEnabled": { "type": "boolean" },
                         "displayName": { "type": "string" }
                       },
                       "required": [
@@ -1253,7 +1444,8 @@
                         "rootStreamId": { "type": "string" },
                         "activeStreamId": { "type": "string" },
                         "runtimeSessionId": { "type": "string" },
-                        "streamUrlPath": { "type": "string" }
+                        "streamUrlPath": { "type": "string" },
+                        "e2eEnabled": { "type": "boolean" }
                       },
                       "required": ["linkId", "rootStreamId", "activeStreamId", "runtimeSessionId", "streamUrlPath"],
                       "additionalProperties": false

@@ -22,7 +22,13 @@ import {
   type StreamService,
 } from "../streams"
 import { UserRepository } from "../workspaces"
-import { E2eStreamsRepository, StreamE2eKeyWrapsRepository, resolveSealingContext } from "../e2e-streams"
+import {
+  E2eStreamActorsRepository,
+  E2eStreamsRepository,
+  StreamE2eKeyWrapsRepository,
+  resolveSealingContext,
+} from "../e2e-streams"
+import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -134,6 +140,7 @@ import {
   startSealedInvocationStepSchema,
   sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
+  provisionSessionKeyWrapsSchema,
   createLabelSchema,
   updateLabelSchema,
   assignLabelByNameSchema,
@@ -849,6 +856,18 @@ export function createPublicApiHandlers({
           code: "PERSONAL_BOT_REQUIRED",
         })
       }
+      // An E2E session wraps the stream key to the bot OWNER's identity key, so
+      // the declared key must be the owner's CURRENT one — wrapping to a stale
+      // or foreign key would create a scratchpad the owner can never open.
+      if (data.e2e) {
+        const ownerKey = await UserE2eKeysRepository.getActiveByUser(pool, req.workspaceId!, bot.ownerUserId)
+        if (!ownerKey || ownerKey.keyId !== data.e2e.ownerKeyId) {
+          throw new HttpError("ownerKeyId does not match the bot owner's active encryption key", {
+            status: 400,
+            code: "E2E_OWNER_KEY_MISMATCH",
+          })
+        }
+      }
 
       const requiredRuntimeTraits = ["active-scratchpad"] as const
 
@@ -874,6 +893,9 @@ export function createPublicApiHandlers({
             activeStreamId: existingLink.activeStreamId,
             runtimeSessionId: existingLink.runtimeSessionId,
             streamUrlPath: `/w/${req.workspaceId!}/s/${existingLink.activeStreamId}`,
+            // The resumed scratchpad's actual encryption state — a harness that
+            // asked for e2e can detect a plaintext resume (and vice versa).
+            e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, existingLink.rootStreamId),
           },
         })
       }
@@ -891,6 +913,7 @@ export function createPublicApiHandlers({
         labelName: data.labelName,
         description: data.description,
         traits: requiredRuntimeTraits,
+        ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
       })
 
       res.json({
@@ -900,8 +923,91 @@ export function createPublicApiHandlers({
           activeStreamId: link.activeStreamId,
           runtimeSessionId: link.runtimeSessionId,
           streamUrlPath: `/w/${req.workspaceId!}/s/${stream.id}`,
+          e2eEnabled: stream.e2eEnabled === true,
         },
       })
+    },
+
+    /**
+     * The bot OWNER's active encryption key (public half + key id). A sealed
+     * harness fetches this before creating an E2E session so it can declare the
+     * owner key at create time and wrap the generation-0 stream key to it.
+     * Public-key material only — never secret. 404 tells the harness the owner
+     * has not set up encryption yet (the actionable next step for the user).
+     */
+    async getBotOwnerE2eKey(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      if (bot.type !== "personal") {
+        throw new HttpError("Only a personal bot has an owner key", { status: 400, code: "PERSONAL_BOT_REQUIRED" })
+      }
+      const key = await UserE2eKeysRepository.getActiveByUser(pool, req.workspaceId!, bot.ownerUserId)
+      if (!key) {
+        throw new HttpError("The bot owner has not set up encryption", {
+          status: 404,
+          code: "E2E_OWNER_KEY_NOT_FOUND",
+        })
+      }
+      res.json({ data: { keyId: key.keyId, publicKey: key.publicKey.toString("base64") } })
+    },
+
+    /**
+     * Store the generation-0 SSK wraps for a harness-created E2E scratchpad —
+     * phase two of the two-phase creation (the wrap AAD binds to the stream id
+     * minted in phase one). Only the stream's own bot actor may provision, only
+     * at the current generation, and only while the generation has NO wraps:
+     * slots are immutable (INV-20 upsert semantics), so a partial or replayed
+     * provision can never splice wraps of two different keys together — the
+     * whole batch lands in one transaction or the state stays empty.
+     */
+    async provisionStreamE2eKeyWraps(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(provisionSessionKeyWrapsSchema, req.body)
+      const workspaceId = req.workspaceId!
+      const streamId = req.params.streamId
+      const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, streamId)
+      if (!e2e) throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
+      if (!actors.some((actor) => actor.kind === "bot" && actor.actorId === req.botApiKey!.botId)) {
+        throw new HttpError("Bot is not an actor on this stream", { status: 403, code: "NOT_STREAM_ACTOR" })
+      }
+      if (data.keyGeneration !== e2e.currentKeyGeneration) {
+        throw new HttpError(
+          `Wraps target generation ${data.keyGeneration}; the stream is at ${e2e.currentKeyGeneration}`,
+          { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
+        )
+      }
+      // The user slot is pinned to the declared owner key: a wrap for any other
+      // user key would plant an unopenable owner slot.
+      for (const wrap of data.wraps) {
+        if (wrap.recipientKind === "user" && wrap.recipientKeyId !== e2e.ownerUserKeyId) {
+          throw new HttpError("A user wrap must target the stream owner's key", {
+            status: 400,
+            code: "E2E_OWNER_KEY_MISMATCH",
+          })
+        }
+      }
+      await withTransaction(pool, async (client) => {
+        const existing = await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId)
+        if (existing.some((wrap) => wrap.keyGeneration === data.keyGeneration)) {
+          // A replay after success lands here; the harness treats it as done.
+          throw new HttpError("This generation already has wraps", { status: 409, code: "E2E_ALREADY_PROVISIONED" })
+        }
+        await StreamE2eKeyWrapsRepository.insertMany(
+          client,
+          data.wraps.map((wrap) => ({
+            workspaceId,
+            streamId,
+            keyGeneration: data.keyGeneration,
+            recipientKeyId: wrap.recipientKeyId,
+            recipientKind: wrap.recipientKind,
+            wrapEnc: wrap.wrapEnc,
+            wrapCt: wrap.wrapCt,
+          }))
+        )
+      })
+      res.json({ data: { stored: data.wraps.length } })
     },
 
     async renameBotRuntimeSession(req: Request, res: Response) {

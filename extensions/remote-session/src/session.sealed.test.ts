@@ -306,3 +306,114 @@ describe("sealed output paths", () => {
     expect(await openSealed(body.reply as SealedReplyBody)).toContain("without sending a reply")
   })
 })
+
+describe("harness-created E2E scratchpad (two-phase create)", () => {
+  function makeE2eCreateSession(opts: { e2eEnabledOnCreate: boolean; provisionFailures?: number }) {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-create-"))
+    tempDirs.push(dir)
+    const calls = {
+      createBodies: [] as Array<Record<string, unknown>>,
+      provisioned: [] as Array<{ streamId: string; body: { keyGeneration: number; wraps: unknown[] } }>,
+      ownerKeyFetches: 0,
+    }
+    let remainingFailures = opts.provisionFailures ?? 0
+    const client = {
+      createSession: async (body: Record<string, unknown>) => {
+        calls.createBodies.push(body)
+        return {
+          linkId: "link_1",
+          rootStreamId: ROOT_STREAM,
+          activeStreamId: ROOT_STREAM,
+          runtimeSessionId: "rts-test",
+          streamUrlPath: `/w/ws_1/s/${ROOT_STREAM}`,
+          e2eEnabled: opts.e2eEnabledOnCreate,
+        }
+      },
+      getOwnerE2eKey: async () => {
+        calls.ownerKeyFetches++
+        return { keyId: "uik_owner", publicKey: OWNER_PUBLIC_KEY_B64 }
+      },
+      provisionStreamKeyWraps: async (streamId: string, body: { keyGeneration: number; wraps: unknown[] }) => {
+        if (remainingFailures > 0) {
+          remainingFailures--
+          throw new Error("transient")
+        }
+        calls.provisioned.push({ streamId, body })
+      },
+      claim: async () => null,
+    }
+    const transport = {
+      connect: async () => {},
+      disconnect: () => {},
+      socketConnected: false,
+      updatePresence: async () => {},
+      recordSteps: async () => {},
+      recordSealedSteps: async () => {},
+      renewClaim: async () => ({ notFound: false }),
+    }
+    const session = new RemoteSession({
+      config: { ...makeConfig(join(dir, "bik.json")), e2e: true },
+      client: client as unknown as ThreaClient,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport: transport as unknown as BotRuntimeTransport,
+    })
+    return { session, calls }
+  }
+
+  let OWNER_PUBLIC_KEY_B64 = ""
+  async function ownerKeyPair() {
+    const pair = await ownerSuite.kem.generateKeyPair()
+    OWNER_PUBLIC_KEY_B64 = bytesToBase64(new Uint8Array(await ownerSuite.kem.serializePublicKey(pair.publicKey)))
+    return pair
+  }
+
+  test("creates with the owner key and provisions owner+BIK wraps the owner can open", async () => {
+    const owner = await ownerKeyPair()
+    const { session, calls } = makeE2eCreateSession({ e2eEnabledOnCreate: true })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (session as any).ensureLink()
+
+    expect(calls.createBodies[0]?.e2e).toEqual({ ownerKeyId: "uik_owner" })
+    expect(calls.provisioned).toHaveLength(1)
+    const { streamId, body } = calls.provisioned[0]!
+    expect(streamId).toBe(ROOT_STREAM)
+    expect(body.keyGeneration).toBe(0)
+    const wraps = body.wraps as Array<{
+      recipientKind: string
+      recipientKeyId: string
+      wrapEnc: string
+      wrapCt: string
+    }>
+    expect(wraps.map((w) => w.recipientKind).sort()).toEqual(["bot", "user"])
+    // The owner's private key opens the user-slot wrap — the ceremony is real.
+    const ownerWrap = wraps.find((w) => w.recipientKind === "user")!
+    const opened = await ownerSuite.open(
+      { recipientKey: owner.privateKey, enc: base64ToBytes(ownerWrap.wrapEnc) },
+      base64ToBytes(ownerWrap.wrapCt),
+      buildWrapAad({ streamId: ROOT_STREAM, keyGeneration: 0, recipientKeyId: "uik_owner" })
+    )
+    expect(new Uint8Array(opened)).toHaveLength(32)
+  })
+
+  test("retries a transiently-failing provisioning with the SAME wraps", async () => {
+    await ownerKeyPair()
+    const { session, calls } = makeE2eCreateSession({ e2eEnabledOnCreate: true, provisionFailures: 2 })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (session as any).ensureLink()
+
+    expect(calls.provisioned).toHaveLength(1)
+  })
+
+  test("a plaintext resume warns instead of provisioning", async () => {
+    await ownerKeyPair()
+    const { session, calls } = makeE2eCreateSession({ e2eEnabledOnCreate: false })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (session as any).ensureLink()
+
+    expect(calls.provisioned).toHaveLength(0)
+  })
+})

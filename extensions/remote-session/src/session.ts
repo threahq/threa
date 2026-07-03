@@ -3,6 +3,7 @@ import { join } from "node:path"
 import {
   BikKeystore,
   BotRuntimeTransport,
+  mintStreamKeyWraps,
   openSealedTurnContext,
   parseSealedTurnContext,
   scrubSealedError,
@@ -394,14 +395,87 @@ export class RemoteSession {
   }
 
   private async createSession(): Promise<RuntimeSessionLink> {
-    return this.client.createSession({
+    const e2e = this.config.e2e ? await this.resolveE2eCreateBlock() : undefined
+    const link = await this.client.createSession({
       runtimeKind: this.runtime.kind,
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
       localCwd: process.cwd(),
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
+      ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })
+    if (this.config.e2e && link.e2eEnabled !== true) {
+      // A resume of a pre-existing PLAINTEXT scratchpad — nothing to provision,
+      // but the user asked for encryption, so say why they aren't getting it.
+      this.log(
+        `WARNING: e2e is enabled but the resumed scratchpad ${link.rootStreamId} is plaintext ` +
+          "(it predates the setting). Archive it to get a fresh encrypted scratchpad on the next start."
+      )
+      return link
+    }
+    if (e2e && link.e2eEnabled === true) {
+      await this.provisionE2eStreamKey(link, e2e)
+    }
+    return link
+  }
+
+  /**
+   * Resolve the owner-key half of an E2E create. Throws with an actionable
+   * message when the owner has no encryption key or this install has no BIK —
+   * ensureLink logs it and retries each poll tick, so the session self-heals
+   * the moment the owner sets up encryption.
+   */
+  private async resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
+    const bik = await this.bik.ensure()
+    if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see earlier log)")
+    let ownerKey: { keyId: string; publicKey: string }
+    try {
+      ownerKey = await this.client.getOwnerE2eKey()
+    } catch (error) {
+      if (error instanceof ThreaApiError && error.status === 404) {
+        throw new Error(
+          "e2e is enabled but the bot owner has not set up encryption in Threa yet — " +
+            "set an encryption passphrase in the app, then this session will link encrypted."
+        )
+      }
+      throw error
+    }
+    return { ownerKeyId: ownerKey.keyId, ownerPublicKey: ownerKey.publicKey }
+  }
+
+  /**
+   * Phase two of the encrypted create: mint the generation-0 stream key, wrap
+   * it to the owner's UIK + this install's BIK, and store the wraps. Until this
+   * lands nobody can seal into the scratchpad (INV-E1 keeps plaintext out), so
+   * a failure retries in place; a 409 means an earlier attempt landed.
+   */
+  private async provisionE2eStreamKey(
+    link: RuntimeSessionLink,
+    e2e: { ownerKeyId: string; ownerPublicKey: string }
+  ): Promise<void> {
+    const bik = this.bik.current
+    if (!bik) throw new Error("BIK disappeared mid-provisioning")
+    const { wraps } = await mintStreamKeyWraps({
+      streamId: link.rootStreamId,
+      keyGeneration: 0,
+      recipients: [
+        { recipientKind: "user", recipientKeyId: e2e.ownerKeyId, publicKeyBase64: e2e.ownerPublicKey },
+        { recipientKind: "bot", recipientKeyId: bik.publicKeyId, publicKeyBase64: bik.publicKeyBase64 },
+      ],
+    })
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.client.provisionStreamKeyWraps(link.rootStreamId, { keyGeneration: 0, wraps })
+        this.log(`provisioned encrypted scratchpad ${link.rootStreamId} (gen 0, owner + BIK wraps)`)
+        return
+      } catch (error) {
+        // 409: a previous attempt (this process or a crashed predecessor) landed.
+        if (error instanceof ThreaApiError && error.status === 409) return
+        if (attempt >= 3) throw error
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1_000))
+      }
+    }
   }
 
   // --- Claiming -------------------------------------------------------------

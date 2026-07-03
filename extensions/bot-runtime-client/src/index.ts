@@ -11,6 +11,7 @@ export type {
 export {
   BikKeystore,
   THREA_CALLBACK_TOKEN_HEADER,
+  mintStreamKeyWraps,
   openSealedTurnContext,
   parseSealedTurnContext,
   scrubSealedError,
@@ -21,6 +22,8 @@ export type {
   BotIdentityKey,
   DecryptedHistoryItem,
   OpenedSealedTurn,
+  ProvisionRecipient,
+  ProvisionedWrap,
   SealedMessageWire,
   SealedReplyBody,
   SealedSskWrap,

@@ -17,6 +17,7 @@ import {
   BikKeystore,
   BotRuntimeTransport,
   THREA_CALLBACK_TOKEN_HEADER,
+  mintStreamKeyWraps,
   openSealedTurnContext,
   parseSealedTurnContext,
   scrubSealedError,
@@ -112,6 +113,14 @@ type Config = {
    * redacted too.
    */
   sealedFullTrace?: boolean
+  /**
+   * Create new linked scratchpads end-to-end encrypted: the harness mints the
+   * stream key and wraps it to the bot owner's UIK + its own BIK, so the
+   * server only ever stores ciphertext. Requires the owner to have set up
+   * encryption in Threa. Off by default (an encrypted scratchpad opts out of
+   * GAM memory extraction).
+   */
+  e2e?: boolean
   /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
@@ -125,6 +134,8 @@ type RuntimeSessionLink = {
   activeStreamId: string
   runtimeSessionId: string
   streamUrlPath: string
+  /** The linked scratchpad's encryption state (create echoes the request; resume reports reality). */
+  e2eEnabled?: boolean
   instanceId?: string
   enabled?: boolean
   debugPolling?: boolean
@@ -147,6 +158,7 @@ type ConfigPatch = Pick<
   | "preferredModels"
   | "defaultLabel"
   | "sealedFullTrace"
+  | "e2e"
 >
 
 type ClaimedInvocation = {
@@ -1104,11 +1116,72 @@ function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string
   return `${prefix} - ${dir}`
 }
 
+/**
+ * The owner-key half of an E2E session create. Throws with an actionable
+ * message when the owner has no encryption key or this install has no BIK —
+ * the /remote-control command surfaces it directly to the user.
+ */
+async function resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const bik = await bikKeystore.ensure()
+  if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see stderr)")
+  try {
+    const body = await request<{ data: { keyId: string; publicKey: string } }>(
+      `/api/v1/workspaces/${config.workspaceId}/bot-runtime/owner-e2e-key`
+    )
+    return { ownerKeyId: body.data.keyId, ownerPublicKey: body.data.publicKey }
+  } catch (error) {
+    if (String(error).includes("404")) {
+      throw new Error(
+        "e2e is enabled but the bot owner has not set up encryption in Threa yet — set an encryption passphrase in the app first."
+      )
+    }
+    throw error
+  }
+}
+
+/**
+ * Phase two of an encrypted create: mint the generation-0 stream key, wrap it
+ * to the owner's UIK + this install's BIK, and store the wraps. Until this
+ * lands nobody can seal into the scratchpad; a 409 means an earlier attempt
+ * already provisioned it.
+ */
+async function provisionE2eStreamKey(
+  rootStreamId: string,
+  e2e: { ownerKeyId: string; ownerPublicKey: string }
+): Promise<void> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const bik = await bikKeystore.ensure()
+  if (!bik) throw new Error("BIK unavailable for provisioning")
+  const { wraps } = await mintStreamKeyWraps({
+    streamId: rootStreamId,
+    keyGeneration: 0,
+    recipients: [
+      { recipientKind: "user", recipientKeyId: e2e.ownerKeyId, publicKeyBase64: e2e.ownerPublicKey },
+      { recipientKind: "bot", recipientKeyId: bik.publicKeyId, publicKeyBase64: bik.publicKeyBase64 },
+    ],
+  })
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await request(`/api/v1/workspaces/${config.workspaceId}/streams/${rootStreamId}/e2e/key-wraps`, {
+        method: "POST",
+        body: JSON.stringify({ keyGeneration: 0, wraps }),
+      })
+      return
+    } catch (error) {
+      if (String(error).includes("409")) return
+      if (attempt >= 3) throw error
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1_000))
+    }
+  }
+}
+
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
   const runtimeSessionId = getRuntimeSessionId(ctx)
   const instanceId = createInstanceId()
   const displayName = args.trim() || defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName)
+  const e2e = config.e2e ? await resolveE2eCreateBlock() : undefined
 
   const body = await request<{ data: RuntimeSessionLink }>(
     `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
@@ -1121,9 +1194,19 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
         displayName,
         localCwd: ctx.cwd,
         ...(config.defaultLabel && { labelName: config.defaultLabel }),
+        ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
       }),
     }
   )
+
+  if (e2e && body.data.e2eEnabled === true) {
+    await provisionE2eStreamKey(body.data.rootStreamId, e2e)
+  } else if (e2e) {
+    ctx.ui.notify(
+      "This session resumed an existing plaintext scratchpad; archive it to get an encrypted one on the next link.",
+      "warning"
+    )
+  }
 
   const existing = config.linkedSessions?.[runtimeSessionId]
   const legacyCursor =
@@ -1282,6 +1365,9 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       // Full tool args/output in the trace on end-to-end-encrypted turns only
       // (the server sees ciphertext). Plaintext turns always stay redacted.
       sealedFullTrace: existing?.sealedFullTrace ?? true,
+      // Create new linked scratchpads end-to-end encrypted (requires the bot
+      // owner to have set up encryption in Threa).
+      e2e: existing?.e2e ?? false,
     },
     null,
     2
@@ -1317,6 +1403,9 @@ function parseConfigPatch(text: string): ConfigPatch {
   if (candidate.sealedFullTrace !== undefined && typeof candidate.sealedFullTrace !== "boolean") {
     throw new Error("sealedFullTrace must be a boolean")
   }
+  if (candidate.e2e !== undefined && typeof candidate.e2e !== "boolean") {
+    throw new Error("e2e must be a boolean")
+  }
   const { baseUrl, workspaceId, apiKey } = candidate as ConfigPatch
   return {
     baseUrl: baseUrl.trim(),
@@ -1327,6 +1416,7 @@ function parseConfigPatch(text: string): ConfigPatch {
     defaultLabel: candidate.defaultLabel?.trim() || undefined,
     preferredModels: candidate.preferredModels?.map((value) => value.trim()).filter((value) => value.length > 0),
     sealedFullTrace: candidate.sealedFullTrace,
+    e2e: candidate.e2e,
   }
 }
 

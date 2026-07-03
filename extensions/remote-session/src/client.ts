@@ -1,4 +1,9 @@
-import { THREA_CALLBACK_TOKEN_HEADER, type SealedReplyBody, type SealingState } from "@threa/bot-runtime-client"
+import {
+  THREA_CALLBACK_TOKEN_HEADER,
+  type ProvisionedWrap,
+  type SealedReplyBody,
+  type SealingState,
+} from "@threa/bot-runtime-client"
 
 const FETCH_TIMEOUT_MS = 30_000
 
@@ -8,6 +13,8 @@ export interface RuntimeSessionLink {
   activeStreamId: string
   runtimeSessionId: string
   streamUrlPath: string
+  /** The linked scratchpad's encryption state (create echoes the request; resume reports the actual state). */
+  e2eEnabled?: boolean
 }
 
 export interface ExternalHistoryMessage {
@@ -160,6 +167,25 @@ export class ThreaClient {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-messages`), {
       method: "POST",
       headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
+      body: JSON.stringify(body),
+    })
+  }
+
+  /** The bot owner's active encryption key (public half). 404 = the owner has not set up encryption. */
+  async getOwnerE2eKey(): Promise<{ keyId: string; publicKey: string }> {
+    const body = await this.request<{ data: { keyId: string; publicKey: string } }>(
+      this.workspacePath("/bot-runtime/owner-e2e-key")
+    )
+    return body.data
+  }
+
+  /** Phase two of harness-created E2E scratchpads: store the generation-0 stream-key wraps. */
+  async provisionStreamKeyWraps(
+    streamId: string,
+    body: { keyGeneration: number; wraps: ProvisionedWrap[] }
+  ): Promise<void> {
+    await this.request(this.workspacePath(`/streams/${streamId}/e2e/key-wraps`), {
+      method: "POST",
       body: JSON.stringify(body),
     })
   }

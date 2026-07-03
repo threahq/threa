@@ -30,6 +30,14 @@ export interface RemoteSessionConfig {
    * the bot after it registers a fresh key.
    */
   bikPath?: string
+  /**
+   * Create this connector's linked scratchpad end-to-end encrypted: the harness
+   * mints the stream key and wraps it to the bot owner's UIK + its own BIK, so
+   * the server only ever stores ciphertext. Requires the owner to have set up
+   * encryption in Threa (their UIK is fetched at session create). Off by
+   * default — an encrypted scratchpad opts out of GAM memory extraction.
+   */
+  e2e?: boolean
 }
 
 /**
@@ -84,6 +92,7 @@ export interface RawConfig {
   instanceId?: unknown
   runtimeSessionId?: unknown
   bikPath?: unknown
+  e2e?: unknown
 }
 
 export function parseConfigFile(text: string): RawConfig {
@@ -169,6 +178,7 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       pollMs: parseNum(env.THREA_POLL_MS ?? file.pollMs, 3000, 1000),
       idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
       bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
+      e2e: parseBool(env.THREA_E2E ?? file.e2e, false),
     },
   }
 }

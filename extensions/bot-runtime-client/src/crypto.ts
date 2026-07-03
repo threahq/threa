@@ -99,6 +99,11 @@ export async function exportPrivateKey(key: CryptoKey): Promise<Uint8Array<Array
   return new Uint8Array(await getSuite().kem.serializePrivateKey(key))
 }
 
+export async function importRecipientPublicKey(raw: Uint8Array | ArrayBuffer): Promise<CryptoKey> {
+  const buf = raw instanceof Uint8Array ? raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) : raw
+  return getSuite().kem.deserializePublicKey(buf)
+}
+
 /**
  * Decrypt an HPKE-sealed payload. Throws if `aad` does not match what the
  * sender used (the GCM tag fails verification).
@@ -115,6 +120,16 @@ async function hpkeOpen(params: {
     params.aad
   )
   return new Uint8Array(buf)
+}
+
+/** HPKE-seal a payload to a recipient public key (the wrap direction of `hpkeOpen`). */
+async function hpkeSeal(params: {
+  recipientPublicKey: CryptoKey
+  payload: Uint8Array
+  aad?: Uint8Array
+}): Promise<{ enc: Uint8Array<ArrayBuffer>; ct: Uint8Array<ArrayBuffer> }> {
+  const sealed = await getSuite().seal({ recipientPublicKey: params.recipientPublicKey }, params.payload, params.aad)
+  return { enc: new Uint8Array(sealed.enc), ct: new Uint8Array(sealed.ct) }
 }
 
 // ── per-stream symmetric key (SSK) ───────────────────────────────────────────
@@ -235,6 +250,37 @@ export interface UnwrapStreamKeyInput {
   recipientPrivateKey: CryptoKey
   /** Must match the `aad` used at wrap time (see `buildWrapAad`). */
   aad: Uint8Array
+}
+
+export interface WrapStreamKeyInput {
+  /** The 32-byte SSK to wrap. */
+  key: Uint8Array
+  /** The recipient's HPKE public key (imported via `importRecipientPublicKey`). */
+  recipientPublicKey: CryptoKey
+  /** Slot binding — use `buildWrapAad`. Required. */
+  aad: Uint8Array
+}
+
+/**
+ * HPKE-wrap an SSK to a recipient — used when a harness PROVISIONS a fresh
+ * stream key for its own E2E scratchpad (wrapping to the owner's UIK and its
+ * own BIK). Wire-identical to `@threa/crypto`'s `wrapStreamKey`; the parity
+ * test asserts a vendored wrap opens with the vendored unwrap under the same
+ * AAD binding.
+ */
+export async function wrapStreamKey(input: WrapStreamKeyInput): Promise<{ enc: Uint8Array; ct: Uint8Array }> {
+  assertBoundAad("wrapStreamKey", input.aad)
+  if (input.key.length !== SSK_LENGTH) {
+    throw new Error(`wrapStreamKey: SSK must be ${SSK_LENGTH} bytes, got ${input.key.length}`)
+  }
+  return hpkeSeal({ recipientPublicKey: input.recipientPublicKey, payload: new Uint8Array(input.key), aad: input.aad })
+}
+
+/** A fresh random 32-byte SSK (AES-256). */
+export function generateStreamKey(): Uint8Array<ArrayBuffer> {
+  const key = new Uint8Array(SSK_LENGTH)
+  crypto.getRandomValues(key)
+  return key
 }
 
 /** Recover the SSK from a wrap. Throws if the key doesn't match or AAD is forged. */

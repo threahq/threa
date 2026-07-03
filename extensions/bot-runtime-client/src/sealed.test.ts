@@ -296,3 +296,45 @@ describe("scrubSealedError", () => {
     expect(scrubSealedError("raw string")).toBe("Error")
   })
 })
+
+describe("mintStreamKeyWraps (harness-created E2E scratchpads)", () => {
+  test("each recipient's wrap unwraps to the same key under its own slot AAD", async () => {
+    const owner = await ownerSuite.kem.generateKeyPair()
+    const ownerPublicKey = bytesToBase64(new Uint8Array(await ownerSuite.kem.serializePublicKey(owner.publicKey)))
+    const bikStore = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
+    const bik = (await bikStore.ensure())!
+
+    const { mintStreamKeyWraps } = await import("./sealed")
+    const { unwrapStreamKey } = await import("./crypto")
+    const { wraps } = await mintStreamKeyWraps({
+      streamId: STREAM_ID,
+      keyGeneration: 0,
+      recipients: [
+        { recipientKind: "user", recipientKeyId: "uik_owner", publicKeyBase64: ownerPublicKey },
+        { recipientKind: "bot", recipientKeyId: bik.publicKeyId, publicKeyBase64: bik.publicKeyBase64 },
+      ],
+    })
+
+    expect(wraps.map((w) => [w.recipientKind, w.recipientKeyId])).toEqual([
+      ["user", "uik_owner"],
+      ["bot", bik.publicKeyId],
+    ])
+
+    // The BIK slot opens with the BIK private key…
+    const botWrap = wraps[1]!
+    const recoveredByBot = await unwrapStreamKey({
+      enc: base64ToBytes(botWrap.wrapEnc),
+      ct: base64ToBytes(botWrap.wrapCt),
+      recipientPrivateKey: bik.privateKey,
+      aad: buildWrapAad({ streamId: STREAM_ID, keyGeneration: 0, recipientKeyId: bik.publicKeyId }),
+    })
+    // …and the owner slot opens with the owner key to the SAME stream key.
+    const ownerWrap = wraps[0]!
+    const openedByOwner = await ownerSuite.open(
+      { recipientKey: owner.privateKey, enc: base64ToBytes(ownerWrap.wrapEnc) },
+      base64ToBytes(ownerWrap.wrapCt),
+      buildWrapAad({ streamId: STREAM_ID, keyGeneration: 0, recipientKeyId: "uik_owner" })
+    )
+    expect(bytesToBase64(new Uint8Array(openedByOwner))).toBe(bytesToBase64(recoveredByBot))
+  })
+})

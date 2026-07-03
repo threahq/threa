@@ -25,12 +25,15 @@ import {
   exportPrivateKey,
   exportPublicKey,
   generateKeyPair,
+  generateStreamKey,
   importRecipientPrivateKey,
+  importRecipientPublicKey,
   openMessageAsString,
   parseSealedPayload,
   sealMessage,
   serializeSealedPayload,
   unwrapStreamKey,
+  wrapStreamKey,
   type SealedPayloadExtras,
   type StreamEnvelope,
 } from "./crypto"
@@ -464,4 +467,57 @@ export async function sealStep(
 /** Error text for a sealed `/fail`: class name only, never the message — it could echo decrypted content. */
 export function scrubSealedError(error: unknown): string {
   return error instanceof Error ? error.name || "Error" : "Error"
+}
+
+// ── stream-key provisioning (harness-created E2E scratchpads) ─────────────────
+
+/** One recipient a freshly-minted stream key is wrapped to. */
+export interface ProvisionRecipient {
+  recipientKind: "user" | "bot"
+  /** UIK/BIK key id — the AAD binds the wrap to this slot. */
+  recipientKeyId: string
+  /** Base64 raw X25519 public key. */
+  publicKeyBase64: string
+}
+
+export interface ProvisionedWrap {
+  recipientKind: "user" | "bot"
+  recipientKeyId: string
+  wrapEnc: string
+  wrapCt: string
+}
+
+/**
+ * Mint a fresh generation-0 stream key for a harness-created E2E scratchpad and
+ * wrap it to each recipient (the owner's UIK + this install's BIK) — the wire
+ * body of the phase-two provisioning POST. The SSK itself is returned only so
+ * the caller can drop it deliberately: future turns recover it from the claim's
+ * wraps, so nothing needs (or should) persist it locally.
+ */
+export async function mintStreamKeyWraps(params: {
+  streamId: string
+  keyGeneration: number
+  recipients: ProvisionRecipient[]
+}): Promise<{ wraps: ProvisionedWrap[] }> {
+  const ssk = generateStreamKey()
+  const wraps: ProvisionedWrap[] = []
+  for (const recipient of params.recipients) {
+    const publicKey = await importRecipientPublicKey(base64ToBytes(recipient.publicKeyBase64))
+    const wrapped = await wrapStreamKey({
+      key: ssk,
+      recipientPublicKey: publicKey,
+      aad: buildWrapAad({
+        streamId: params.streamId,
+        keyGeneration: params.keyGeneration,
+        recipientKeyId: recipient.recipientKeyId,
+      }),
+    })
+    wraps.push({
+      recipientKind: recipient.recipientKind,
+      recipientKeyId: recipient.recipientKeyId,
+      wrapEnc: bytesToBase64(wrapped.enc),
+      wrapCt: bytesToBase64(wrapped.ct),
+    })
+  }
+  return { wraps }
 }
