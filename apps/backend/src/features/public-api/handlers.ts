@@ -989,6 +989,14 @@ export function createPublicApiHandlers({
         }
       }
       await withTransaction(pool, async (client) => {
+        // Serialize concurrent provisions on the stream's e2e row (INV-20):
+        // without the lock, two racers could each see zero wraps and interleave
+        // wraps of two DIFFERENT keys into the immutable slots — an unopenable
+        // splice. With it, the loser re-reads after commit and 409s cleanly.
+        await client.query(`SELECT 1 FROM e2e_streams WHERE workspace_id = $1 AND stream_id = $2 FOR UPDATE`, [
+          workspaceId,
+          streamId,
+        ])
         const existing = await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId)
         if (existing.some((wrap) => wrap.keyGeneration === data.keyGeneration)) {
           // A replay after success lands here; the harness treats it as done.

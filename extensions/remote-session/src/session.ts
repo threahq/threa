@@ -10,6 +10,7 @@ import {
   sealReply,
   sealStep,
   type BotRuntimeHello,
+  type SealedReplyBody,
   type StepFrame,
 } from "@threa/bot-runtime-client"
 import {
@@ -235,6 +236,10 @@ interface Inflight {
   // The reply after attachment uploads, cached when a complete() fails so the
   // retry reuses the same uploads instead of orphaning a fresh copy each time.
   prepared?: { markdown: string; attachmentIds: string[] }
+  // A sealed interim whose POST failed, cached so the retry re-sends the SAME
+  // sealed body (same message id) and the server's idempotency key dedupes it —
+  // a fresh seal per attempt would double-post on retry.
+  pendingSealedInterim?: { seq: number; body: SealedReplyBody }
 }
 
 export interface RemoteSessionOptions {
@@ -878,12 +883,18 @@ export class RemoteSession {
         // Sealed turn: seal the interim under the stream key and post it via
         // the claim-bound sealed-messages callback. No attachment uploads —
         // directives are stripped with a note (plaintext bytes must not leave
-        // the E2E boundary).
-        const sealedBody = await sealReply(
-          entry.invocation.sealing,
-          this.stripSealedAttachmentDirectives(text.trim() || "(empty message)")
-        )
+        // the E2E boundary). A retry after a failed POST reuses the cached
+        // sealed body so the same message id dedupes server-side.
+        const sealedBody =
+          entry.pendingSealedInterim?.seq === seq
+            ? entry.pendingSealedInterim.body
+            : await sealReply(
+                entry.invocation.sealing,
+                this.stripSealedAttachmentDirectives(text.trim() || "(empty message)")
+              )
+        entry.pendingSealedInterim = { seq, body: sealedBody }
         await this.client.sendSealedMessage(invocationId, entry.invocation.sealing.callbackToken, sealedBody)
+        entry.pendingSealedInterim = undefined
       } else {
         const { markdown } = await uploadReplyAttachments(this.client, text, process.cwd())
         await this.client.sendMessage(entry.invocation.responseStreamId, {
