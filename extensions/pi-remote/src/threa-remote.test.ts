@@ -394,8 +394,10 @@ describe("Pi remote trace safety", () => {
     expect(migrated.linkedSessions?.session_1.wsCursor).toBe("2026-05-27T12:34:56.000Z")
   })
 
-  test("WS_BACKSTOP_POLL_MS is the 30s safety cadence described in the plan", () => {
-    expect(__testing.WS_BACKSTOP_POLL_MS).toBe(30_000)
+  test("WS_BACKSTOP_POLL_MS is the 15-minute edge-billed safety cadence", () => {
+    // Every backstop tick is an HTTP claim through the billed edge Worker; the
+    // socket push is the real delivery path. See the constant's comment.
+    expect(__testing.WS_BACKSTOP_POLL_MS).toBe(15 * 60 * 1000)
   })
 })
 

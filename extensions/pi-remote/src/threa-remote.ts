@@ -30,8 +30,12 @@ const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
 // Cadence the safety-backstop poll runs at while a `/bot` WebSocket is up.
 // Pushes deliver new invocations within a frame; the poll is only there to
-// catch the rare missed-emit / mid-flight-disconnect case (plan §5).
-const WS_BACKSTOP_POLL_MS = 30_000
+// catch the rare missed-emit / mid-flight-disconnect case (plan §5). Every
+// tick is an HTTP claim through the billed edge Worker, so it runs at 15 min
+// — an idle fleet at the old 30s cadence burned thousands of edge requests a
+// day doing nothing; reconnects still drain immediately via the hello
+// bootstrap, so only a silently dropped push waits this long.
+const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
