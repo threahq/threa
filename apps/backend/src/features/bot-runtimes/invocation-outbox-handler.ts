@@ -3,7 +3,12 @@ import { AuthorTypes, StreamTypes, botHasCapability } from "@threa/types"
 import { resolveDeliveryVerdict, TrustTiers, TurnDeliveries } from "@threa/agent-runtime"
 import { collectMentionActorRefs, parseMarkdown, type JSONContent } from "@threa/prosemirror"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
-import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../lib/outbox"
+import {
+  OutboxRepository,
+  parseMessagePayload,
+  type OutboxHandler,
+  type StreamArchivedOutboxPayload,
+} from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { StreamRepository } from "../streams"
 import { resolveSealingContext } from "../e2e-streams"
@@ -95,10 +100,25 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       for (const event of events) {
         if (event.eventType === "message:created") {
           await this.processMessageCreated(event.payload)
+        } else if (event.eventType === "stream:archived") {
+          await this.processStreamArchived(event.payload as StreamArchivedOutboxPayload)
         }
         seen.push(event.id)
       }
       return { status: "processed", processedIds: seen }
+    })
+  }
+
+  /**
+   * Archiving a scratchpad ends its runtime session links and notifies each
+   * linked runtime so it can shut itself down. The service call is idempotent
+   * (set-based end of still-active links), so a retried batch is a no-op.
+   */
+  private async processStreamArchived(payload: StreamArchivedOutboxPayload): Promise<void> {
+    if (!payload?.workspaceId || !payload?.streamId) return
+    await this.service.endSessionsForArchivedStream({
+      workspaceId: payload.workspaceId,
+      rootStreamId: payload.streamId,
     })
   }
 

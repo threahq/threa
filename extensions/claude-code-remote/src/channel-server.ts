@@ -13,7 +13,8 @@ import {
 } from "@threa/remote-session"
 import { z } from "zod"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
-import { interrupt, submitLine, tmuxAvailable } from "./tmux-control"
+import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
+import { interrupt, killOwnWindow, submitLine, tmuxAvailable } from "./tmux-control"
 
 const RUNTIME_KIND = "claude-code-channel"
 export const CHANNEL_SOURCE = "threa"
@@ -191,6 +192,7 @@ export class ChannelServer {
       delegate: {
         deliverTurn: (turn) => this.deliverToClaude(turn),
         sessionControl: createClaudeSessionControl(),
+        onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
           ? { interceptClaimed: (invocation: ClaimedInvocation) => this.interceptVerdict(invocation) }
           : {}),
@@ -212,6 +214,23 @@ export class ChannelServer {
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
     await this.session.shutdown()
+  }
+
+  /**
+   * The scratchpad was archived (SDK is already offline). Preserve the work on
+   * the remote, then take the whole tmux window down — Claude Code, this
+   * channel, and the shell die together; a detached helper removes the
+   * worktree afterwards. Recovery is `git fetch` + the pushed branch, never a
+   * local revival. Outside tmux there is nothing to kill but ourselves.
+   */
+  private windDownForArchive(): void {
+    log("scratchpad archived — preserving work and shutting down")
+    const report = pushBranchAndScheduleRemoval(process.cwd(), log)
+    log(
+      `archive cleanup: committed=${report.committed} pushed=${report.pushed} removal=${report.removalScheduled}` +
+        (report.reason ? ` (${report.reason})` : "")
+    )
+    if (!killOwnWindow()) process.exit(0)
   }
 
   // --- Turn delivery ----------------------------------------------------------

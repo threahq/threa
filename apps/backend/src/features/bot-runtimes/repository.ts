@@ -480,6 +480,24 @@ export const BotRuntimeSessionLinkRepository = {
     return mapSessionLink(result.rows[0]!)
   },
 
+  /**
+   * End every active link rooted at a stream (its scratchpad was archived) and
+   * return the ended rows so the caller can notify each runtime. One set-based
+   * UPDATE … RETURNING so concurrent archive/consumer retries can't double-end
+   * or race a link back to life (INV-20, INV-56).
+   */
+  async endActiveByRootStream(
+    db: Querier,
+    params: { workspaceId: string; rootStreamId: string }
+  ): Promise<BotRuntimeSessionLink[]> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`UPDATE bot_runtime_session_links SET status = 'ended', updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId} AND root_stream_id = ${params.rootStreamId} AND status = 'active'
+      RETURNING *`
+    )
+    return result.rows.map(mapSessionLink)
+  },
+
   async findActiveByStream(
     db: Querier,
     params: { workspaceId: string; botId: string; rootStreamId: string; activeStreamId: string }

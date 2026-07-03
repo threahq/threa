@@ -80,6 +80,13 @@ export interface RemoteSessionDelegate {
   interceptClaimed?(invocation: ClaimedInvocation): Promise<boolean>
   /** Present iff the connector can drive the runtime. Gates advertising session control (fail-safe). */
   sessionControl?: SessionControlActuator
+  /**
+   * The linked scratchpad was archived (the server already ended the session
+   * link). Called after the SDK has gone offline and failed its in-flight
+   * turns; the connector finishes the wind-down — the Claude channel pushes
+   * its branch and kills its own tmux window, so this hook may never return.
+   */
+  onArchived?: (payload: { rootStreamId: string }) => Promise<void> | void
 }
 
 /** The connector's runtime identity and user-facing wording. */
@@ -265,6 +272,7 @@ export class RemoteSession {
           onBootstrap: (bootstrap) => {
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
           },
+          onSessionArchived: (payload) => void this.handleSessionArchived(payload),
         },
         log: this.log,
       })
@@ -779,6 +787,27 @@ export class RemoteSession {
     if (!entry) return
     clearTimeout(entry.deadline)
     entry.deadline = this.scheduleIdleTimeout(invocationId)
+  }
+
+  /**
+   * The linked scratchpad was archived. The server has already ended the
+   * session link, so no more work can arrive; go offline (shutdown also fails
+   * any in-flight turn) and hand the connector the final word. Scoped to this
+   * session: the event is room-targeted, but a runtime that re-registered
+   * under a new session id must not die to a stale event for the old one.
+   */
+  private async handleSessionArchived(payload: unknown): Promise<void> {
+    const data = (payload ?? {}) as { runtimeSessionId?: unknown; rootStreamId?: unknown }
+    if (typeof data.runtimeSessionId === "string" && data.runtimeSessionId !== this.config.runtimeSessionId) return
+    if (this.stopped) return
+    const rootStreamId = typeof data.rootStreamId === "string" ? data.rootStreamId : (this.link?.rootStreamId ?? "")
+    this.log(`scratchpad ${rootStreamId} archived — winding down`)
+    await this.shutdown()
+    try {
+      await this.delegate.onArchived?.({ rootStreamId })
+    } catch (error) {
+      this.log(`onArchived hook failed: ${this.summarize(error)}`)
+    }
   }
 
   // --- Timers ---------------------------------------------------------------

@@ -8,6 +8,7 @@ import {
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
+  type BotSessionArchivedOutboxPayload,
 } from "./repository"
 import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
@@ -266,6 +267,17 @@ export class BroadcastHandler implements OutboxHandler {
       } else {
         botNs.to(`bot:${workspaceId}`).emit(event.eventType, payload)
       }
+      return
+    }
+
+    if (isOutboxEventType(event, "bot:session_archived")) {
+      const payload = event.payload as BotSessionArchivedOutboxPayload
+      // Narrow session room first (the link identifies one session); instance
+      // room as fallback for runtimes that registered without a session id.
+      botNs
+        .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
+        .to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`)
+        .emit(event.eventType, payload)
       return
     }
 

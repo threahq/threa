@@ -62,5 +62,20 @@ export async function submitLine(text: string, opts: { settleMs?: number } = {})
   return sendKeys(["Enter"])
 }
 
+/**
+ * Kill the tmux window this channel (and its Claude Code parent) lives in —
+ * deliberate self-termination for the archived-scratchpad wind-down. The
+ * channel dies with the window; callers do any last writes first.
+ */
+export function killOwnWindow(): boolean {
+  const target = paneTarget()
+  if (!target) return false
+  try {
+    return Bun.spawnSync(["tmux", "kill-window", "-t", target], { stdout: "pipe", stderr: "pipe" }).exitCode === 0
+  } catch {
+    return false
+  }
+}
+
 /** Milliseconds to wait after an interrupt before delivering the steer turn, so Claude has returned to idle. */
 export const STEER_SETTLE_MS = 250
