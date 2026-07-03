@@ -229,6 +229,60 @@ describe("DraftsRepository.softDelete", () => {
   })
 })
 
+describe("DraftsRepository.mergeTombstoneSupersededWriteIds", () => {
+  afterEach(() => mock.restore())
+
+  it("locks the tombstone, merges + dedupes the lineage, and writes the union", async () => {
+    const queries: Captured[] = []
+    const db: Querier = {
+      query: mock(async (q) => {
+        const config = q as QueryConfig
+        queries.push({ text: config.text ?? null, values: config.values ?? [] })
+        // First query is the FOR UPDATE read; second is the UPDATE.
+        if (queries.length === 1) {
+          return { rows: [{ superseded_write_ids: ["write_a"] }], rowCount: 1 } as QueryResult
+        }
+        return { rows: [], rowCount: 1 } as unknown as QueryResult
+      }),
+    }
+
+    await DraftsRepository.mergeTombstoneSupersededWriteIds(db, {
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      id: "draft_01",
+      supersededWriteIds: ["write_b", "write_a"],
+    })
+
+    expect(queries[0]?.text).toContain("FOR UPDATE")
+    expect(queries[0]?.text).toContain("deleted_at IS NOT NULL")
+    expect(queries[1]?.text).toContain("UPDATE drafts SET superseded_write_ids")
+    expect(queries[1]?.values).toContain(JSON.stringify(["write_a", "write_b"]))
+  })
+
+  it("no-ops on a live or absent row, and when there is nothing to merge", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [])
+
+    await DraftsRepository.mergeTombstoneSupersededWriteIds(db, {
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      id: "draft_01",
+      supersededWriteIds: [],
+    })
+    // Empty input never touches the database.
+    expect(captured.text).toBeNull()
+
+    await DraftsRepository.mergeTombstoneSupersededWriteIds(db, {
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      id: "draft_01",
+      supersededWriteIds: ["write_x"],
+    })
+    // Live/absent row: the FOR UPDATE read finds nothing and no UPDATE runs.
+    expect(captured.text).toContain("FOR UPDATE")
+  })
+})
+
 describe("DraftsRepository.rescopeByScope", () => {
   afterEach(() => mock.restore())
 

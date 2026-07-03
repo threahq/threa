@@ -224,6 +224,11 @@ function operationId(): string {
 }
 
 function writeId(): string {
+  // The write id gates in-place overwrites server-side (lineage CAS), so a
+  // cross-device collision must be out of the question — use real entropy.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `write_${crypto.randomUUID()}`
+  }
   return `write_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
 
@@ -269,15 +274,23 @@ export async function pendingDraftResolveVersion(draftId: string): Promise<numbe
   return version
 }
 
-async function hasPendingSupersededWriteId(writeId: string): Promise<boolean> {
-  // Intentionally scan all pending resolves, not only the inbound draft id: a
-  // server-side split echo arrives under a fresh draft id, but carries the
-  // original resolve op's superseded write id.
-  const ops = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
-  return ops.some(
-    (op) =>
-      Array.isArray(op.payload.supersededWriteIds) && op.payload.supersededWriteIds.some((value) => value === writeId)
-  )
+/**
+ * Which kind of queued cleanup superseded this write id, if any. A "resolve"
+ * match means the write belongs to a draft this device sent; a "delete" match
+ * means the user discarded it. Scans all pending resolve/delete ops, not only
+ * the inbound draft id: a server-side split echo arrives under a fresh draft
+ * id, but carries the original op's superseded write id.
+ */
+async function pendingSupersededWriteKind(writeId: string): Promise<"resolve" | "delete" | null> {
+  const [resolves, deletes] = await Promise.all([
+    db.pendingOperations.where("type").equals("resolve_draft").toArray(),
+    db.pendingOperations.where("type").equals("delete_draft").toArray(),
+  ])
+  const carries = (op: PendingOperation) =>
+    Array.isArray(op.payload.supersededWriteIds) && op.payload.supersededWriteIds.some((value) => value === writeId)
+  if (resolves.some(carries)) return "resolve"
+  if (deletes.some(carries)) return "delete"
+  return null
 }
 
 /**
@@ -493,7 +506,8 @@ export async function applyDraftUpserted(
   pendingUpsertIds?: ReadonlySet<string>,
   pendingDeleteIds?: ReadonlySet<string>,
   pendingResolveVersions?: ReadonlyMap<string, number>,
-  pendingSupersededWriteIds?: ReadonlySet<string>
+  pendingResolveSupersededWriteIds?: ReadonlySet<string>,
+  pendingDeleteSupersededWriteIds?: ReadonlySet<string>
 ): Promise<void> {
   const { draft } = payload
   if (draft.workspaceId !== expectedWorkspaceId) return
@@ -514,14 +528,26 @@ export async function applyDraftUpserted(
   if (pendingResolveVersion !== undefined && draft.version <= pendingResolveVersion) return
 
   // A version-newer row with one of our superseded write ids is not another
-  // device's drift; it is this device's sent draft write landing late (possibly
-  // under a split id). CAS-resolve it at the version we observed.
+  // device's drift; it is this device's own write landing late (possibly under
+  // a split id). A resolve-superseded write is a SENT draft: CAS-resolve it at
+  // the version we observed. A delete-superseded write is DISCARDED content:
+  // remove it unconditionally rather than stash-zombie it.
   const lastWriteId = draft.lastClientWriteId ?? null
-  const ownSentWrite = lastWriteId
-    ? (pendingSupersededWriteIds?.has(lastWriteId) ?? (await hasPendingSupersededWriteId(lastWriteId)))
-    : false
-  if (ownSentWrite) {
+  let ownWriteKind: "resolve" | "delete" | null = null
+  if (lastWriteId) {
+    if (pendingResolveSupersededWriteIds || pendingDeleteSupersededWriteIds) {
+      if (pendingResolveSupersededWriteIds?.has(lastWriteId)) ownWriteKind = "resolve"
+      else if (pendingDeleteSupersededWriteIds?.has(lastWriteId)) ownWriteKind = "delete"
+    } else {
+      ownWriteKind = await pendingSupersededWriteKind(lastWriteId)
+    }
+  }
+  if (ownWriteKind === "resolve") {
     await enqueueDraftResolve(expectedWorkspaceId, draft.id, draft.version)
+    return
+  }
+  if (ownWriteKind === "delete") {
+    await enqueueDraftDelete(expectedWorkspaceId, draft.id)
     return
   }
 
@@ -571,20 +597,25 @@ export async function applyDraftUpserted(
 export async function applyDraftDeleted(payload: DraftDeletedPayload, expectedWorkspaceId: string): Promise<void> {
   if (payload.workspaceId !== expectedWorkspaceId) return
 
-  if (await hasPendingDraftUpsert(payload.draftId)) {
+  // The check-preserve-re-enqueue sequence runs in ONE transaction: done as
+  // separate steps, the gap after the cancel leaves the row clean (no dirty
+  // bit), so an interleaved newer-version echo would be accepted over the very
+  // edits this branch exists to preserve.
+  const preserved = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+    if (!(await hasPendingDraftUpsert(payload.draftId))) return false
     const current = await db.drafts.get(payload.draftId)
-    if (current) {
-      const replacementId = generateLocalDraftId()
-      await cancelPendingDraftUpsert(payload.draftId)
-      await migrateLocalDraftId(payload.workspaceId, payload.draftId, {
-        ...current,
-        id: replacementId,
-        baseVersion: 0,
-      })
-      await enqueueDraftUpsert(payload.workspaceId, replacementId)
-      return
-    }
-  }
+    if (!current) return false
+    const replacementId = generateLocalDraftId()
+    await cancelPendingDraftUpsert(payload.draftId)
+    await migrateLocalDraftId(payload.workspaceId, payload.draftId, {
+      ...current,
+      id: replacementId,
+      baseVersion: 0,
+    })
+    await enqueueDraftUpsert(payload.workspaceId, replacementId)
+    return true
+  })
+  if (preserved) return
 
   await cancelPendingDraftUpsert(payload.draftId)
   await deleteLocalDraft(payload.workspaceId, payload.draftId)
@@ -613,19 +644,23 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
   const pendingUpsertIds = new Set(upsertOps.map((op) => op.payload.draftId as string))
   const pendingDeleteIds = new Set(deleteOps.map((op) => op.payload.draftId as string))
   const pendingResolveVersions = new Map<string, number>()
-  const pendingSupersededWriteIds = new Set<string>()
+  const collectSuperseded = (op: PendingOperation, into: Set<string>) => {
+    if (!Array.isArray(op.payload.supersededWriteIds)) return
+    for (const value of op.payload.supersededWriteIds) {
+      if (typeof value === "string") into.add(value)
+    }
+  }
+  const pendingResolveSupersededWriteIds = new Set<string>()
+  const pendingDeleteSupersededWriteIds = new Set<string>()
   for (const op of resolveOps) {
     const draftId = op.payload.draftId as string
     const expectedVersion = Number(op.payload.expectedVersion)
     if (Number.isFinite(expectedVersion)) {
       pendingResolveVersions.set(draftId, Math.max(pendingResolveVersions.get(draftId) ?? 0, expectedVersion))
     }
-    if (Array.isArray(op.payload.supersededWriteIds)) {
-      for (const value of op.payload.supersededWriteIds) {
-        if (typeof value === "string") pendingSupersededWriteIds.add(value)
-      }
-    }
+    collectSuperseded(op, pendingResolveSupersededWriteIds)
   }
+  for (const op of deleteOps) collectSuperseded(op, pendingDeleteSupersededWriteIds)
   for (const draft of drafts) {
     await applyDraftUpserted(
       { workspaceId: draft.workspaceId, targetUserId: draft.userId, draft },
@@ -633,7 +668,8 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
       pendingUpsertIds,
       pendingDeleteIds,
       pendingResolveVersions,
-      pendingSupersededWriteIds
+      pendingResolveSupersededWriteIds,
+      pendingDeleteSupersededWriteIds
     )
   }
 
@@ -808,6 +844,10 @@ export async function executeDraftUpsert(
       } else {
         await enqueueDraftDelete(workspaceId, res.draft.id)
       }
+      // This push's own op row is still in the table while we run (the queue
+      // deletes it only after we return), and it would trip the kept-row seed's
+      // dirty guard — it is terminal here, so drop it before seeding.
+      await cancelPendingDraftUpsert(draftId)
       await seedKeptDraft(res, workspaceId)
       return
     }

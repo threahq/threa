@@ -135,24 +135,31 @@ export class DraftsService {
       const existing = await DraftsRepository.findByIdForUpdate(client, params.workspaceId, params.userId, params.id)
 
       if (existing?.deletedAt) {
-        // (b) A never-confirmed draft's first push landing after resolve/discard
-        // planted a negative tombstone: the content was already sent or thrown
-        // away — drop the late insert rather than splitting it into a live zombie.
-        if (params.expectedVersion === 0) {
-          return { draft: toDraftView(existing), split: false }
-        }
-        // (b) A write from a lineage this tombstone superseded: the resolve or
-        // discard that tombstoned the row recorded the device's in-flight write
-        // ids, and the tombstone's own last accepted write counts too. Either
-        // way this push carries content the user already sent/discarded — drop
-        // it. Only a lineage the tombstone does NOT know (another device's
-        // unpushed edits) falls through to the no-loss split.
+        // (b) Drop the push — no split, no zombie — only when the tombstone can
+        // PROVE the content was already sent or discarded:
+        //  - an exact `writeId` retry of the tombstone's last accepted write. A
+        //    retry reuses its op's writeId, and any typing since replaces the op
+        //    with a fresh writeId, so an exact match implies identical content.
+        //  - a lineage intersecting the PERSISTED `superseded_write_ids` — the
+        //    resolving/discarding device asserted those writes' content was
+        //    covered by the send/discard.
+        // A priors-only match against `last_client_write_id` proves only that a
+        // PREFIX of the caller's lineage landed; the push may carry a newer tail
+        // typed after that write (offline edit racing another device's send), so
+        // it falls through to the no-loss split — a duplicate is acceptable,
+        // destroying the tail is not.
+        const exactRetry = existing.lastClientWriteId !== null && existing.lastClientWriteId === params.writeId
         const superseded = new Set(existing.supersededWriteIds ?? [])
-        if (existing.lastClientWriteId) superseded.add(existing.lastClientWriteId)
-        if (ownWriteIds.some((id) => superseded.has(id))) {
+        if (exactRetry || ownWriteIds.some((id) => superseded.has(id))) {
           return { draft: toDraftView(existing), split: false }
         }
       } else if (existing) {
+        // (c0) Exact lost-ack retry: the row's last accepted write IS this push
+        // (same writeId ⇒ identical content, see above) — return it unchanged.
+        // True idempotency: no version churn, no redundant outbox echo.
+        if (existing.lastClientWriteId === params.writeId) {
+          return { draft: toDraftView(existing), split: false }
+        }
         // (c) In-place update: version match, or a lost-ack write lineage match
         // (both checked race-safely inside the UPDATE, INV-20). Applying the
         // incoming content on a lineage match matters: a retry can carry NEWER
@@ -206,15 +213,25 @@ export class DraftsService {
    */
   async resolve(params: ResolveDraftParams): Promise<{ resolved: boolean }> {
     return withTransaction(this.pool, async (client) => {
+      const supersededWriteIds = params.supersededWriteIds ?? []
       const deleted = await DraftsRepository.softDeleteCas(client, {
         workspaceId: params.workspaceId,
         userId: params.userId,
         id: params.id,
         expectedVersion: params.expectedVersion,
-        supersededWriteIds: params.supersededWriteIds ?? [],
+        supersededWriteIds,
       })
       if (!deleted) {
-        // Either drifted (version moved on) or already gone — keep the row.
+        // Drifted (version moved on — keep the live row) or already tombstoned.
+        // In the tombstoned case this resolve's lineage must still be recorded:
+        // its device's late-landing push would otherwise carry write ids the
+        // tombstone doesn't know and split into a zombie.
+        await DraftsRepository.mergeTombstoneSupersededWriteIds(client, {
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          id: params.id,
+          supersededWriteIds,
+        })
         return { resolved: false }
       }
       await this.publishDelete(client, params.workspaceId, params.userId, params.id)
@@ -231,15 +248,25 @@ export class DraftsService {
    */
   async delete(params: DeleteDraftParams): Promise<void> {
     return withTransaction(this.pool, async (client) => {
+      const supersededWriteIds = params.supersededWriteIds ?? []
       const deleted = await DraftsRepository.softDelete(
         client,
         params.workspaceId,
         params.userId,
         params.id,
-        params.supersededWriteIds ?? []
+        supersededWriteIds
       )
       if (deleted) {
         await this.publishDelete(client, params.workspaceId, params.userId, params.id)
+      } else {
+        // Already tombstoned by another device — still merge this device's
+        // lineage so its own late-landing push is dropped, not zombie-split.
+        await DraftsRepository.mergeTombstoneSupersededWriteIds(client, {
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          id: params.id,
+          supersededWriteIds,
+        })
       }
     })
   }

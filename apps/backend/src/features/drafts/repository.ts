@@ -276,6 +276,43 @@ export const DraftsRepository = {
   },
 
   /**
+   * Merge write ids into an EXISTING tombstone's `superseded_write_ids`. Covers
+   * the second-tombstoner: when a resolve/discard loses the race (the row is
+   * already tombstoned, so `softDelete` / `softDeleteCas` no-op), its superseded
+   * lineage must still land on the tombstone — otherwise that device's own
+   * late-landing push has a lineage the tombstone doesn't know and splits into
+   * a zombie. Locks the row, merges + dedupes in code (INV-20: read is under
+   * FOR UPDATE), caps the stored set. No-op on live/absent rows.
+   */
+  async mergeTombstoneSupersededWriteIds(
+    db: Querier,
+    params: { workspaceId: string; userId: string; id: string; supersededWriteIds: string[] }
+  ): Promise<void> {
+    if (params.supersededWriteIds.length === 0) return
+    const result = await db.query<{ superseded_write_ids: string[] | null }>(sql`
+      SELECT superseded_write_ids
+      FROM drafts
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND user_id = ${params.userId}
+        AND deleted_at IS NOT NULL
+      FOR UPDATE
+    `)
+    const row = result.rows[0]
+    if (!row) return
+    const existing = Array.isArray(row.superseded_write_ids) ? row.superseded_write_ids : []
+    const merged = [...new Set([...existing, ...params.supersededWriteIds])].slice(0, 128)
+    if (merged.length === existing.length) return
+    await db.query(sql`
+      UPDATE drafts SET superseded_write_ids = ${JSON.stringify(merged)}::jsonb
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND user_id = ${params.userId}
+        AND deleted_at IS NOT NULL
+    `)
+  },
+
+  /**
    * Re-scope every live draft from `fromScope` to `toScope` (thread re-pointing).
    * When a not-yet-threaded message is converted to a thread, its reply drafts
    * must follow the message into the new thread stream so they keep roaming.

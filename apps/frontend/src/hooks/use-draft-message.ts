@@ -104,8 +104,8 @@ export async function upsertLoadedDraft(
   // stale identity would resurrect the pre-split id as a duplicate row — one
   // that re-pushes, re-splits, and breeds copies — so on a mismatch we retry
   // against the new identity instead. Two retries bound the loop; a save that
-  // still conflicts is dropped (the content stands in the editor and the
-  // staging buffer, and the next keystroke re-saves).
+  // still conflicts is dropped — the content stands in the editor (and, for
+  // plaintext scopes, the staging buffer) until the next keystroke re-saves.
   let row!: CachedDraft
   for (let attempt = 0; attempt < 3; attempt++) {
     const loadedId = await getLoadedDraftId(scope)
@@ -421,10 +421,14 @@ export async function rescopeScopeDrafts(workspaceId: string, fromScope: string,
   const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
   for (const row of rows) {
     // Move + enqueue in one txn so the re-scoped row is never visible without
-    // its dirty bit (an inbound echo in that gap could overwrite the move).
+    // its dirty bit (an inbound echo in that gap could overwrite the move). The
+    // row is re-read inside the txn — writing the pre-read copy would drop a
+    // save that committed in between.
     await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-      await migrateLocalDraftScope(workspaceId, fromScope, { ...row, scope: toScope })
-      await enqueueDraftUpsert(workspaceId, row.id)
+      const live = await db.drafts.get(row.id)
+      if (!live || live.scope !== fromScope) return
+      await migrateLocalDraftScope(workspaceId, fromScope, { ...live, scope: toScope })
+      await enqueueDraftUpsert(workspaceId, live.id)
     })
   }
 }

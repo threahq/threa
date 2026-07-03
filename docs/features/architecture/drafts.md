@@ -88,18 +88,23 @@ never observed (see below).
 1. `insertIfAbsent` (`ON CONFLICT (id) DO NOTHING`). A brand-new id lands at version 1.
    Done.
 2. Otherwise lock the existing row. A **tombstoned** row drops the push (no split, no
-   zombie) when the push is a never-confirmed first insert (`expectedVersion` 0), or
-   when the tombstone's `last_client_write_id` / persisted `superseded_write_ids`
-   intersect the incoming lineage — that content was already sent or discarded, and a
-   late-landing copy of it must not resurrect. Only a lineage the tombstone does not
-   know (another device's unpushed edits) falls through to the split.
-3. Otherwise compare-and-swap: `version = expectedVersion` **or**
-   `last_client_write_id ∈ lineage`. The version match is the happy path; the lineage
-   match is the lost-ack path — the last accepted write was this same device's, no one
-   else wrote in between, so applying the incoming content in place IS "update the one
-   that is live". Both bump the version. The lineage match applies the content rather
-   than acking-and-discarding it, because a retry can carry newer keystrokes than the
-   write whose ack was lost.
+   zombie) only when the tombstone can _prove_ the content was already sent or
+   discarded: an **exact `writeId` retry** of the tombstone's last accepted write (an
+   exact match implies identical content — typing since the attempt would have replaced
+   the op with a fresh writeId), or a lineage intersecting the **persisted**
+   `superseded_write_ids` (the resolving/discarding device asserted those writes were
+   covered by the send/discard). A priors-only match against `last_client_write_id`
+   proves only that a _prefix_ of the lineage landed — the push may carry a newer tail
+   typed after that write — so it falls through to the no-loss split, as does any
+   lineage the tombstone does not know.
+3. Otherwise, for a live row: an exact `writeId` match returns the row unchanged (true
+   idempotency — no version churn, no redundant echo). Else compare-and-swap:
+   `version = expectedVersion` **or** `last_client_write_id ∈ lineage`. The version
+   match is the happy path; the lineage match is the lost-ack path — the last accepted
+   write was this same device's, no one else wrote in between, so applying the incoming
+   content in place IS "update the one that is live". Both bump the version. The
+   lineage match applies the content rather than acking-and-discarding it, because a
+   coalesced successor push carries newer keystrokes than the write whose ack was lost.
 4. Otherwise (genuine drift: another device wrote since, or an unrelated tombstone) it
    **splits**: the existing row is left untouched and the incoming content is inserted
    under a freshly minted `draft_` id at version 1. The response carries
@@ -107,6 +112,10 @@ never observed (see below).
    plus `keptDraft` (the untouched row, when live) so the pushing device — which ignored
    that row's socket echo while it was dirty — can seed the other copy as a stash entry
    immediately instead of waiting for the next bootstrap.
+
+A resolve or delete that arrives after the row is already tombstoned still **merges**
+its `supersededWriteIds` onto the tombstone (`mergeTombstoneSupersededWriteIds`), so
+the second device's own late-landing push is recognized too.
 
 Every state-changing branch writes a `draft:upserted` outbox row in the same transaction
 (INV-4/7), targeted at the owner's user id. There is no 409 and no merge UI: drift always
@@ -232,8 +241,10 @@ carries the same `supersededWriteIds` (collected from the upsert ops it cancels)
 same reason. Never-confirmed drafts (`baseVersion = 0`) also use `delete`: there is no
 server version to CAS against. To make delete-before-insert ordering safe,
 `DraftsRepository.softDelete` plants a negative tombstone even when the row is absent; a
-late first upsert (`expectedVersion = 0`) that collides with that tombstone is dropped
-rather than split into a live zombie.
+late first upsert that collides with that tombstone is dropped when its writeId is in
+the tombstone's persisted lineage (the delete collected it from the ops it canceled) —
+and preserved via the split when it isn't, because an unproven drop could destroy a
+tail typed after a lost first ack.
 
 ### The resolution guard stops a sent draft from coming back
 

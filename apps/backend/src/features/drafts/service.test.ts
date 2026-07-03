@@ -83,30 +83,25 @@ describe("DraftsService.upsert", () => {
     )
   })
 
-  it("applies a lost-ack retry in place through the write-lineage CAS (no split, content not discarded)", async () => {
-    // The row's last accepted write is the incoming writeId (our own push whose
-    // ack was lost). The retry may carry NEWER content (the queue re-reads at
-    // drain), so it must flow through the CAS update — keyed on the lineage,
-    // not the stale expectedVersion — rather than being acked-and-discarded.
+  it("returns the row unchanged on an EXACT lost-ack retry (same writeId) — true idempotency, no version churn", async () => {
+    // An exact writeId match implies identical content: a retry reuses its op's
+    // writeId, and any typing since the attempt replaces the op with a fresh
+    // one. So the accepted write can be acked as-is — no re-apply, no bump, no
+    // redundant outbox echo.
     const service = setupService()
     spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValue(null)
     spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
       fakeDraft({ version: 4, lastClientWriteId: "write_retry" })
     )
-    const casUpdate = spyOn(DraftsRepository, "casUpdate").mockResolvedValue(
-      fakeDraft({ version: 5, lastClientWriteId: "write_retry" })
-    )
+    const casUpdate = spyOn(DraftsRepository, "casUpdate")
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     const result = await service.upsert({ ...baseUpsertParams(), writeId: "write_retry", expectedVersion: 3 })
 
     expect(result.split).toBe(false)
-    expect(result.draft.version).toBe(5)
-    expect(casUpdate).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ expectedVersion: 3, ownWriteIds: ["write_retry"] })
-    )
-    expect(outbox).toHaveBeenCalledWith(expect.anything(), "draft:upserted", expect.objectContaining({}))
+    expect(result.draft.version).toBe(4)
+    expect(casUpdate).not.toHaveBeenCalled()
+    expect(outbox).not.toHaveBeenCalled()
   })
 
   it("passes the full write lineage (writeId + priorWriteIds) into the CAS", async () => {
@@ -171,11 +166,13 @@ describe("DraftsService.upsert", () => {
     expect(result.keptDraft).toMatchObject({ id: DRAFT_ID, version: 5 })
   })
 
-  it("drops a fresh insert landing on a tombstone without splitting", async () => {
+  it("drops a late first insert whose lineage the negative tombstone superseded (discard raced the insert)", async () => {
+    // The discard's `enqueueDraftDelete` collected the pending push's writeId
+    // into the tombstone, so the late insert is provably discarded content.
     const service = setupService()
     const insertIfAbsent = spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValue(null)
     spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
-      fakeDraft({ version: 1, lastClientWriteId: null, deletedAt: NOW })
+      fakeDraft({ version: 1, lastClientWriteId: null, supersededWriteIds: ["write_late"], deletedAt: NOW })
     )
     const casUpdate = spyOn(DraftsRepository, "casUpdate")
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
@@ -188,6 +185,51 @@ describe("DraftsService.upsert", () => {
     expect(insertIfAbsent).toHaveBeenCalledTimes(1)
     expect(casUpdate).not.toHaveBeenCalled()
     expect(outbox).not.toHaveBeenCalled()
+  })
+
+  it("SPLITS a version-0 push onto a tombstone with no lineage evidence (no-loss default)", async () => {
+    // Without an exact-retry or persisted-lineage match the tombstone cannot
+    // prove the content was sent or discarded — dropping it here was the old
+    // behavior and could destroy a tail typed after a lost first ack.
+    const service = setupService()
+    const splitRow = fakeDraft({ id: "draft_split", version: 1 })
+    spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValueOnce(null).mockResolvedValueOnce(splitRow)
+    spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
+      fakeDraft({ version: 2, lastClientWriteId: "write_other", supersededWriteIds: null, deletedAt: NOW })
+    )
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.upsert({ ...baseUpsertParams(), writeId: "write_late", expectedVersion: 0 })
+
+    expect(result.split).toBe(true)
+    expect(result.originalId).toBe(DRAFT_ID)
+    expect(result.draft.id).toBe("draft_split")
+  })
+
+  it("SPLITS when only a PRIOR write id matches the tombstone's last accepted write (unsent tail survives)", async () => {
+    // Device A: push W1 lands, ack lost; A types a tail offline (op replaced,
+    // priors [W1]). Device B sends the draft (version CAS, empty superseded
+    // list) — the tombstone's last accepted write is W1, but B's send contained
+    // only W1's content. A's push carries the tail B never saw: a prefix-only
+    // lineage match must NOT drop it. Split preserves the tail as a new draft.
+    const service = setupService()
+    const splitRow = fakeDraft({ id: "draft_split", version: 1 })
+    spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValueOnce(null).mockResolvedValueOnce(splitRow)
+    spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
+      fakeDraft({ version: 3, lastClientWriteId: "write_1", supersededWriteIds: [], deletedAt: NOW })
+    )
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.upsert({
+      ...baseUpsertParams(),
+      writeId: "write_2",
+      priorWriteIds: ["write_1"],
+      expectedVersion: 1,
+    })
+
+    expect(result.split).toBe(true)
+    expect(result.originalId).toBe(DRAFT_ID)
+    expect(result.draft.id).toBe("draft_split")
   })
 
   it("drops a lost-ack retry landing on its own tombstone (resolve raced the write) — no zombie split", async () => {
@@ -289,9 +331,10 @@ describe("DraftsService.resolve", () => {
     )
   })
 
-  it("declines on version drift — the drifted copy survives and nothing is published", async () => {
+  it("declines on version drift — the drifted copy survives, nothing published, lineage still merged onto a tombstone", async () => {
     const service = setupService()
     spyOn(DraftsRepository, "softDeleteCas").mockResolvedValue(null)
+    const merge = spyOn(DraftsRepository, "mergeTombstoneSupersededWriteIds").mockResolvedValue()
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     const result = await service.resolve({
@@ -299,10 +342,18 @@ describe("DraftsService.resolve", () => {
       userId: USER_ID,
       id: DRAFT_ID,
       expectedVersion: 1,
+      supersededWriteIds: ["write_sent"],
     })
 
     expect(result.resolved).toBe(false)
     expect(outbox).not.toHaveBeenCalled()
+    // If the decline was "already tombstoned" (second resolver), this device's
+    // lineage must still land on the tombstone so its late push can't zombie.
+    // The merge no-ops on a live row, so calling it unconditionally is safe.
+    expect(merge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: DRAFT_ID, supersededWriteIds: ["write_sent"] })
+    )
   })
 })
 
@@ -331,13 +382,23 @@ describe("DraftsService.delete", () => {
     )
   })
 
-  it("does not publish when the row was already tombstoned", async () => {
+  it("does not publish when already tombstoned, but merges this device's lineage onto the tombstone", async () => {
     const service = setupService()
     spyOn(DraftsRepository, "softDelete").mockResolvedValue(null)
+    const merge = spyOn(DraftsRepository, "mergeTombstoneSupersededWriteIds").mockResolvedValue()
     const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    await service.delete({ workspaceId: WORKSPACE_ID, userId: USER_ID, id: DRAFT_ID })
+    await service.delete({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      id: DRAFT_ID,
+      supersededWriteIds: ["write_inflight"],
+    })
 
     expect(outbox).not.toHaveBeenCalled()
+    expect(merge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ id: DRAFT_ID, supersededWriteIds: ["write_inflight"] })
+    )
   })
 })

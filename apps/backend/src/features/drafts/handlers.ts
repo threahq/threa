@@ -18,15 +18,19 @@ const commandSchema = z.object({
 // client has never seen a server confirmation). `writeId` is the per-push
 // idempotency key. Exactly one content shape: plaintext (`contentJson`) or the
 // E2E `ciphertext` triple — never both, which would be ambiguous.
+// Write ids are client-minted (`write_{ts}_{rand}`, ~30 chars); the length cap
+// keeps arbitrary payloads out of the tombstone's persisted JSONB.
+const writeIdSchema = z.string().min(1).max(128)
+
 const upsertSchema = z
   .object({
     scope: z.string().min(1),
     rootStreamId: z.string().min(1).nullable().optional(),
     expectedVersion: z.number().int().min(0),
-    writeId: z.string().min(1),
+    writeId: writeIdSchema,
     // The device's superseded write lineage (bounded — the client caps the
     // chain; the schema bound is a defensive backstop, not a protocol limit).
-    priorWriteIds: z.array(z.string().min(1)).max(64).optional(),
+    priorWriteIds: z.array(writeIdSchema).max(64).optional(),
     clientUpdatedAt: z.string().datetime(),
     contentJson: contentJsonSchema.nullable().optional(),
     attachmentIds: z.array(z.string()).optional(),
@@ -42,13 +46,13 @@ const upsertSchema = z
 
 const resolveSchema = z.object({
   expectedVersion: z.number().int().min(1),
-  supersededWriteIds: z.array(z.string().min(1)).max(64).optional(),
+  supersededWriteIds: z.array(writeIdSchema).max(64).optional(),
 })
 
 // DELETE body is optional (legacy clients send none); when present it carries
 // the discarding device's in-flight write ids for the tombstone.
 const deleteSchema = z.object({
-  supersededWriteIds: z.array(z.string().min(1)).max(64).optional(),
+  supersededWriteIds: z.array(writeIdSchema).max(64).optional(),
 })
 
 interface Dependencies {

@@ -564,6 +564,29 @@ describe("executeDraftUpsert", () => {
     expect(await db.composerLoaded.get(scope)).toBeUndefined()
   })
 
+  it("seeds a drifted kept row even while this push's own op row is still in the table (sent mid-push)", async () => {
+    // In production the executing op is deleted by the QUEUE only after
+    // executeDraftUpsert returns — it must not trip the seed's dirty guard.
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2 }))
+    await enqueueDraftUpsert(workspaceId, "draft_x") // the op being executed
+    await enqueueDraftResolve(workspaceId, "draft_x", 3) // the send
+    const upsert = vi.fn(async (_w: string, id: string): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      return {
+        draft: wireDraft({ id: "draft_new", version: 1 }),
+        split: true,
+        originalId: id,
+        // Strictly newer than the pending resolve (3) — genuine foreign drift.
+        keptDraft: wireDraft({ id: "draft_x", version: 4, contentJson: makeDoc("their newer edits") }),
+      }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    const kept = await db.drafts.get("draft_x")
+    expect(kept).toMatchObject({ baseVersion: 4, contentJson: makeDoc("their newer edits") })
+  })
+
   it("does not seed a kept row this device just resolved (send raced the split)", async () => {
     await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2 }))
     await enqueueDraftResolve(workspaceId, "draft_x", 3)
@@ -847,6 +870,40 @@ describe("resolve-on-send is authoritative against inbound echoes (no resurrecti
     expect(
       resolves.filter((op) => op.payload.draftId === "draft_split" && op.payload.expectedVersion === 1)
     ).toHaveLength(1)
+  })
+
+  it("deletes a split echo whose write id belongs to a DISCARDED draft (no stash zombie)", async () => {
+    // The user discarded the draft while its push was in flight; the push split
+    // server-side and its echo arrives under a fresh id carrying our writeId.
+    // That's the discarded body — remove it, don't stash it.
+    await enqueueDraftUpsert(workspaceId, "draft_server1")
+    const upserts = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const writeId = upserts.find((o) => o.payload.draftId === "draft_server1")?.payload.writeId as string
+    await enqueueDraftDelete(workspaceId, "draft_server1") // collects the lineage
+
+    await applyDraftUpserted(
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ id: "draft_split", version: 1, lastClientWriteId: writeId }),
+      },
+      workspaceId
+    )
+
+    expect(await db.drafts.get("draft_split")).toBeUndefined()
+    const deletes = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(deletes.filter((op) => op.payload.draftId === "draft_split")).toHaveLength(1)
+  })
+
+  it("bootstrap does not resurrect a split row from a discarded draft's lineage", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_server1")
+    const upserts = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const writeId = upserts.find((o) => o.payload.draftId === "draft_server1")?.payload.writeId as string
+    await enqueueDraftDelete(workspaceId, "draft_server1")
+
+    await applyDraftsBootstrap(workspaceId, [wireDraft({ id: "draft_split", version: 1, lastClientWriteId: writeId })])
+
+    expect(await db.drafts.get("draft_split")).toBeUndefined()
   })
 })
 
