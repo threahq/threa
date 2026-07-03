@@ -66,6 +66,14 @@ describe("getVisibleActions", () => {
     expect(ids).toEqual(["copy-as-markdown", "copy-as-plain-text"])
   })
 
+  it("should include reply-in-conversation only when the surface supplies its handler", () => {
+    const without = getVisibleActions(createContext()).map((a) => a.id)
+    expect(without).not.toContain("reply-in-conversation")
+
+    const withHandler = getVisibleActions(createContext({ onReplyInConversation: vi.fn() })).map((a) => a.id)
+    expect(withHandler).toContain("reply-in-conversation")
+  })
+
   it("should include copy-link when permalink fields are present", () => {
     const actions = getVisibleActions(createContext({ messageId: "msg_1", workspaceId: "ws_1", streamId: "stream_1" }))
     expect(actions.map((a) => a.id)).toContain("copy-link")

@@ -27,6 +27,9 @@ import { extractCommandNode, extractCommandFromRawText } from "@/lib/commands"
 import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
+import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
+import { useConversationBoardPost } from "@/hooks/use-conversations"
+import { Layers, X } from "lucide-react"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
@@ -287,6 +290,30 @@ function MessageInputComponent({
       composerFocusRef.current?.focusAfterQuoteReply()
     })
   }, [quoteReplyCtx])
+
+  // "Reply in conversation" (Mechanism C): the armed conversation rides the send
+  // as an `existing` directive — nothing is inserted into the body. Held as
+  // in-memory state (not part of the durable draft): a stale filing surviving a
+  // reload would silently misfile whatever is typed next, so it resets with the
+  // session and with the stream.
+  const conversationReplyCtx = useConversationReply()
+  const [conversationReply, setConversationReply] = useState<ConversationReplyData | null>(null)
+  useEffect(() => {
+    if (!conversationReplyCtx) return
+    return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
+      setConversationReply(data)
+      composerFocusRef.current?.focus()
+    })
+  }, [conversationReplyCtx])
+  useEffect(() => {
+    setConversationReply(null)
+  }, [streamId])
+  // Topic label for the strip — cached board card or a one-shot by-id fetch.
+  const { post: conversationReplyPost } = useConversationBoardPost(
+    workspaceId,
+    conversationReply?.conversationId ?? null
+  )
+  const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
 
   // Consume any pending share handoff for this stream, pre-inserting the
   // shared-message pointer into the composer and leaving the cursor after it.
@@ -554,8 +581,15 @@ function MessageInputComponent({
           contentJson: normalizedContent,
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
+          // Armed by "Reply in conversation": file this send into the
+          // conversation synchronously (Mechanism C). Cleared only on success —
+          // a failed send keeps the filing armed alongside the restored content.
+          conversation: conversationReply
+            ? { intent: "existing", conversationId: conversationReply.conversationId }
+            : undefined,
         })
 
+        setConversationReply(null)
         composer.setContent(EMPTY_DOC)
         composer.resolveDraft()
         composer.clearAttachments()
@@ -580,6 +614,7 @@ function MessageInputComponent({
       startDiscussWithAriadne,
       queueCommand,
       availableCommandByName,
+      conversationReply,
     ]
   )
 
@@ -739,14 +774,40 @@ function MessageInputComponent({
     ),
   } as const
 
+  // Armed "Reply in conversation" strip — the send's only signal that it will
+  // file into a conversation, so it renders wherever the composer does (inline
+  // and expanded). Dismissible: X disarms without touching the typed content.
+  const conversationReplyStrip = conversationReply ? (
+    <div
+      data-testid="conversation-reply-strip"
+      className="mb-1.5 flex items-center gap-1.5 rounded-md border border-border/60 bg-muted/50 px-2 py-1 text-xs text-muted-foreground"
+    >
+      <Layers className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">
+        Replying in <span className="font-medium">{conversationReplyTopic ?? "conversation"}</span>
+      </span>
+      <button
+        type="button"
+        aria-label="Cancel reply in conversation"
+        onClick={() => setConversationReply(null)}
+        className="ml-auto shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  ) : null
+
   return (
     <>
       {/* Expanded overlay — portaled into the stream view area */}
       {expanded &&
         portalTargetRef.current &&
         createPortal(
-          <div ref={expandedRef} className="absolute inset-0 z-30 bg-background">
-            <MessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
+          <div ref={expandedRef} className="absolute inset-0 z-30 flex flex-col bg-background">
+            {conversationReplyStrip}
+            <div className="min-h-0 flex-1">
+              <MessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
+            </div>
           </div>,
           portalTargetRef.current
         )}
@@ -755,6 +816,7 @@ function MessageInputComponent({
           composer via the body-level inline-edit presence attribute. */}
       <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
+        {!expanded && conversationReplyStrip}
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>

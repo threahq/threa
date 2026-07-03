@@ -89,12 +89,13 @@ export function useQueueDraftMessage(workspaceId: string) {
           // would flash the opaque placeholder for its own author.
           contentJson: input.contentJson,
           // Tag the optimistic reply with its target conversation so a board card
-          // surfaces it under the right card before the server echo (which carries
-          // the real id in the conversation aggregate) lands. Read-side only; the
-          // timeline ignores it, and the row is swapped for the real event on echo.
-          // `existing` names the conversation directly; `threadFromMessage` (a
-          // lone post converting to a thread) joins its source conversation, so the
-          // reply renders in place under the same card — no card swap
+          // surfaces it under the right card before the server echo lands, and so
+          // the sender's own flat-timeline provenance chip is stable across the
+          // swap (see conversationTag — `existing` also carries the chip key the
+          // server puts on the real payload). The row is swapped for the real event
+          // on echo. `existing` names the conversation directly; `threadFromMessage`
+          // (a lone post converting to a thread) joins its source conversation, so
+          // the reply renders in place under the same card — no card swap
           // (board-view-design.md "Convert-to-thread, corrected").
           ...conversationTag(params.conversation),
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
@@ -238,11 +239,19 @@ export function useQueueDraftMessage(workspaceId: string) {
 
 /** The conversation a board reply's optimistic event is tagged with, so the card
  *  surfaces it in place before the server echo. `existing` carries the id; a
- *  `threadFromMessage` convert joins its source conversation. */
-function conversationTag(
-  directive: ConversationDirective | undefined
-): { conversationId: string } | Record<string, never> {
-  if (directive?.intent === "existing") return { conversationId: directive.conversationId }
+ *  `threadFromMessage` convert joins its source conversation.
+ *
+ *  `existing` also stamps `declaredConversationId` — the same key the server puts
+ *  on the real `message_created` payload — so the sender's own flat-timeline
+ *  provenance chip (Mechanism C) renders on the optimistic row and stays put when
+ *  the echo swaps in. A `threadFromMessage` reply is an opener the timeline chip
+ *  ignores, so it tags the board card (`conversationId`) only. */
+export function conversationTag(directive: ConversationDirective | undefined): {
+  conversationId?: string
+  declaredConversationId?: string
+} {
+  if (directive?.intent === "existing")
+    return { conversationId: directive.conversationId, declaredConversationId: directive.conversationId }
   if (directive?.intent === "threadFromMessage") return { conversationId: directive.sourceConversationId }
   return {}
 }

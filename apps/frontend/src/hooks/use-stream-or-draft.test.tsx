@@ -70,7 +70,8 @@ describe("useStreamOrDraft real stream send", () => {
     await clearAllCachedData()
   })
 
-  it("queues the optimistic event in IndexedDB without mutating an empty bootstrap window", async () => {
+  /** Seed the workspace cache + bootstrap for a plain channel and mount the hook on it. */
+  async function mountRealStreamSend() {
     const createdAt = "2026-03-31T10:00:00Z"
     const stream = {
       id: "stream_socket_seen",
@@ -192,6 +193,12 @@ describe("useStreamOrDraft real stream send", () => {
       expect(result.current.stream?.id).toBe("stream_socket_seen")
     })
 
+    return { result, queryClient }
+  }
+
+  it("queues the optimistic event in IndexedDB without mutating an empty bootstrap window", async () => {
+    const { result, queryClient } = await mountRealStreamSend()
+
     await act(async () => {
       await result.current.sendMessage({
         contentJson: {
@@ -221,6 +228,34 @@ describe("useStreamOrDraft real stream send", () => {
       actorId: "member_1",
       eventType: "message_created",
       _status: "pending",
+    })
+  })
+
+  it("forwards a conversation directive to the pending row and tags the optimistic payload (reply in conversation)", async () => {
+    const { result } = await mountRealStreamSend()
+
+    await act(async () => {
+      await result.current.sendMessage({
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "late pizza take" }] }],
+        },
+        conversation: { intent: "existing", conversationId: "conv_1" },
+      })
+    })
+
+    // The queue drain forwards `conversation` from the pending row to the API,
+    // and the optimistic payload carries the same keys the server stamps on the
+    // real event, so the sender's provenance chip survives the echo swap.
+    // `pendingMessages` is the durable send outbox (not cached data), so rows
+    // from earlier tests survive clearAllCachedData — assert on this send's row.
+    const pendingMessage = (await db.pendingMessages.toArray()).find((m) => m.content === "late pizza take")
+    expect(pendingMessage?.conversation).toEqual({ intent: "existing", conversationId: "conv_1" })
+
+    const queuedEvent = (await db.events.toArray()).find((e) => e._clientId === pendingMessage?.clientId)
+    expect(queuedEvent?.payload).toMatchObject({
+      conversationId: "conv_1",
+      declaredConversationId: "conv_1",
     })
   })
 })

@@ -244,7 +244,9 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * is a fresh topic, not a revival, so it carries no chip.
  *
  * `membership` is the always-on `messageId → conversationId` map
- * (`buildMessageConversationMap`), including cross-stream secondary members.
+ * (`buildMessageConversationMap`), including cross-stream secondary members. A
+ * message that declared its conversation at send time overrides it from its own
+ * payload (`declaredConversationId`) so its membership needs no list round-trip.
  * Non-message items (session/command cards) and unassigned message rows don't
  * break a run — only a different real conversation does. This diverges from
  * `annotateConversationRows` (which resets its run on an unassigned row for
@@ -262,9 +264,17 @@ export function annotateConversationRevivals(
   let previousConversationId: string | null = null
   return items.map((item) => {
     if (item.type !== "event" || !isGroupableMessage(item.event)) return item
-    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
+    const messageId = payload?.messageId
     if (!messageId) return item
-    const conversationId = membership.get(messageId) ?? null
+    // A message that DECLARED its conversation at send time carries the id on its
+    // payload (board-view-design.md Mechanism C) — prefer it so the chip renders
+    // the instant the message lands, without waiting for the async membership
+    // list. Falls back to the async `membership` map for classifier-assigned
+    // messages (Mechanism A). The topic label still resolves from
+    // `conversationsById` (loaded per-stream); a declared-but-not-yet-listed
+    // conversation shows the generic label until the list catches up.
+    const conversationId = payload.declaredConversationId ?? membership.get(messageId) ?? null
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId

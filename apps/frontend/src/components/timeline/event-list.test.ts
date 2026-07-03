@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest"
-import type { StreamEvent } from "@threa/types"
+import type { ConversationWithStaleness, StreamEvent } from "@threa/types"
 import {
   annotateAuthorGroups,
+  annotateConversationRevivals,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -350,6 +351,85 @@ describe("findFirstMessageId", () => {
 
   it("returns undefined for an empty timeline so the badge stays in the composer strip", () => {
     expect(findFirstMessageId([])).toBeUndefined()
+  })
+})
+
+describe("annotateConversationRevivals", () => {
+  function messageItem(
+    id: string,
+    messageId: string,
+    createdAt: string,
+    declaredConversationId?: string
+  ): TimelineItem {
+    return {
+      type: "event",
+      event: {
+        ...createEvent({
+          id,
+          sequence: id,
+          eventType: "message_created",
+          payload: { messageId, ...(declaredConversationId ? { declaredConversationId } : {}) },
+        }),
+        createdAt,
+      },
+    }
+  }
+
+  const topics = (entries: Record<string, string>): ReadonlyMap<string, ConversationWithStaleness> =>
+    new Map(Object.entries(entries).map(([id, topicSummary]) => [id, { topicSummary } as ConversationWithStaleness]))
+
+  const revivalOf = (item: TimelineItem) => (item.type === "event" ? item.revival : undefined)
+
+  // A → conv_x, B → conv_y, C → conv_x: the intervening conv_y makes C revive a
+  // scattered conv_x, so C carries the chip anchored on A's activity.
+  const scattered = (declared: boolean): TimelineItem[] => [
+    messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", declared ? "conv_x" : undefined),
+    messageItem("evt_b", "msg_b", "2026-02-19T01:00:00.000Z", declared ? "conv_y" : undefined),
+    messageItem("evt_c", "msg_c", "2026-02-19T02:00:00.000Z", declared ? "conv_x" : undefined),
+  ]
+
+  it("derives the revival from declared conversation ids with no async membership map (flicker-free)", () => {
+    const items = annotateConversationRevivals(scattered(true), new Map(), new Map())
+
+    expect(revivalOf(items[2])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: null,
+      previousActivityAt: "2026-02-19T00:00:00.000Z",
+    })
+    expect(revivalOf(items[0])).toBeUndefined()
+    expect(revivalOf(items[1])).toBeUndefined()
+  })
+
+  it("resolves the topic label from the conversation list when it has loaded", () => {
+    const items = annotateConversationRevivals(scattered(true), new Map(), topics({ conv_x: "Pizza" }))
+
+    expect(revivalOf(items[2])?.topicSummary).toBe("Pizza")
+  })
+
+  it("prefers a declared id over a stale async membership entry", () => {
+    const membership = new Map([
+      ["msg_a", "conv_stale"],
+      ["msg_b", "conv_y"],
+      ["msg_c", "conv_stale"],
+    ])
+    const items = annotateConversationRevivals(scattered(true), membership, new Map())
+
+    expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
+  })
+
+  it("still derives the revival from the async membership map for classifier-assigned messages", () => {
+    const membership = new Map([
+      ["msg_a", "conv_x"],
+      ["msg_b", "conv_y"],
+      ["msg_c", "conv_x"],
+    ])
+    const items = annotateConversationRevivals(scattered(false), membership, topics({ conv_x: "Pizza" }))
+
+    expect(revivalOf(items[2])).toEqual({
+      conversationId: "conv_x",
+      topicSummary: "Pizza",
+      previousActivityAt: "2026-02-19T00:00:00.000Z",
+    })
   })
 })
 
