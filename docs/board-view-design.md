@@ -1,10 +1,10 @@
 # Exploration: The Board — a second way to interact with a stream
 
-Status: exploration / design, v3. Sibling to
+Status: design of record, v4 — the board is largely **shipped** (flag-gated
+`board-view`); this doc tracks the settled model, resolved decisions, and the
+active plan. Sibling to
 [`nonlinear-stream-views-exploration.md`](./nonlinear-stream-views-exploration.md),
-which argues a stream is a container and the timeline is one projection. This
-doc designs the **board** as a co-equal interaction mode and as the home for
-"find what matters." No code yet.
+which argues a stream is a container and the timeline is one projection.
 
 > **v3 (after Kris's "turn it on its head"):** the board's "post" is a
 > **conversation**, but conversations are now seeded **two ways** — _authored_
@@ -13,6 +13,13 @@ doc designs the **board** as a co-equal interaction mode and as the home for
 > retires the maturity caveats. Headline surface stays a **workspace-wide board
 > as your entrypoint**, per-stream a scoped filter. v1's thread-as-post framing
 > is the de-risking appendix.
+
+> **v4 (2026-07-03, shipped-state pass):** the original Phasing is replaced by
+> "Where we are + what's next"; the soft-thread open decisions are resolved by
+> #1146 (filing is a hidden message field, **not** a content node — reversing
+> the earlier lean); new sections: **Agents on the board** (traces visible in
+> conversation surfaces, never bumping) and **Hide & mute** (per-viewer
+> exclusions, two grains).
 
 ## The thesis
 
@@ -202,8 +209,9 @@ Q3, it mostly resolves:
   components already exist; the board is a new page that reuses them in a
   cross-stream layout. **Liveness and optimism ride the sync engine (IDB +
   `SocketEventGate`), NOT React-Query — see "Realtime / sync model" below.**
-  Slice 1's React-Query `use-conversations` board hook is a deliberate stopgap
-  (it refetch-on-opens and feels junky), scheduled for migration onto the rails.
+  (Done since the realtime slice, #1100: board reads are IDB-reactive; TanStack
+  Query remains the bootstrap/pagination fetcher that seeds the store — what
+  changed is that the query result is no longer treated as the live store.)
 - **INV-61 untouched:** the board is a separate projection; the contiguous
   timeline keeps its `sequence`/`broadcastSequence` order. Resurfacing is
   forbidden in the timeline and free in the board precisely because they're
@@ -528,25 +536,32 @@ forcing-function loop), **the classifier only has to be good for the genuinely
 ambient case** — free-form messages nobody filed. #1 stays "simple but hard," but
 stops being load-bearing for the surfaces people actually drive.
 
-### Open decisions
+### Open decisions — all resolved (2026-07-03)
 
-1. **Indicator trigger** — loud `↪ continues X` only on revivals (old/non-adjacent
-   prior message), subtle tick at most on ordinary switches? _Lean: yes._
-2. **Attached context: content node vs. envelope field.** Attachments/quote-reply are
-   content nodes, and the backend already extracts content references, so consistency
-   says `conversationReference` is a content node — counter-argument: filing-into-a-
-   topic is arguably a message property, not body. _Resolved (#1146): envelope field._
-   The counter-argument won — a `conversation` `ConversationDirective` rides the send
-   input (`CreateMessageInputJson.conversation`), assigned synchronously in the
-   message's transaction, never a node in `contentJson`.
-3. **Chip source** — render the provenance chip from the attached reference
-   (authoritative, no flicker) rather than from async membership? _Lean: from the
-   reference._
-4. **Panel routing** — conversations as a peer panel kind `?panel=conv:<id>` rendering
-   a projection, alongside `?panel=streamId` for threads? _Lean: yes._
-5. **Filing tag vs. context anchor** — is an attached conversation a compact pill, or
-   an expandable "re: Pizza, this morning" card that makes a revived reply self-
-   contained for someone (or GAM) who wasn't there? _Same node, more rendering._
+1. **Indicator trigger** — loud `↪ continues X` only on revivals. **Shipped that
+   way (#1140).**
+2. **Attached context: content node vs. envelope field.** **Resolved the
+   _opposite_ of the earlier lean (#1146): a hidden field, not a
+   `conversationReference` content node.** The counter-argument won — a
+   `conversation` `ConversationDirective` rides the send input
+   (`CreateMessageInputJson.conversation`), assigned synchronously in the
+   message's transaction, and the payload carries `declaredConversationId`;
+   never a node in `contentJson`. The content-node cut was built first and
+   rejected: it duplicated the footer provenance chip with an in-body chip, and
+   it baked a routing pointer into user-authored body content (plus a markdown
+   round-trip) when filing is message _metadata_, not content. Nothing renders
+   in the body.
+3. **Chip source** — **resolved (#1146): declared id first, async membership map
+   as fallback.** One follow-up rule so the two sources can't drift: when a
+   declared id no longer resolves (the conversation was merged/retired by a
+   later extraction pass), fall back to the async map instead of pointing at a
+   dead shell.
+4. **Panel routing** — **shipped (#1119)** as `?panel=conv:<id>` rendering a
+   projection, peer to `?panel=streamId` for threads.
+5. **Filing tag vs. context anchor** — **moot under the field resolution**:
+   nothing renders in the body, the footer chip is the only surface. Revisit
+   only if a self-contained "re: Pizza, this morning" anchor card is wanted
+   later.
 
 ## Conversations span streams within one root — the model, made precise (2026-06-30)
 
@@ -630,7 +645,127 @@ synchronous `existing` guard from same-**stream** to same-**root**, and reject c
    (board list, expand, rails). Do **not** add per-message-stream gating — it's redundant
    under the invariant and only invites drift.
 
-## Phasing
+## Agents on the board — traces visible, never bumping (2026-07-03)
+
+How agent activity meets conversations today:
+
+- **Agent replies are already conversation members.** Every persona/bot reply is
+  assigned deterministically — no LLM — to the conversation it replies within,
+  minting one if needed (`agent_reply`, stream-locked against double-mint;
+  `boundary-extraction-service.ts:587`), and #1170 anchors them to the
+  _trigger's_ conversation. Agent conversations are ordinary board cards. (This
+  is also why the scope filter is load-bearing: the floor data's 454-of-485 DM
+  concentration is one AI-persona DM.)
+- **Traces are not conversations, by construction — and stay that way.** Trace
+  steps live in `agent_session_steps`, stream to the session room, and render
+  via `components/trace/`; the timeline's working indicator is the
+  `agent_session:started/completed/failed` stream events rendered by
+  `AgentSessionEvent` (`timeline/agent-session-event.tsx`) with live step counts
+  from the session socket. None of this passes through `message:created`, so
+  none of it feeds extraction or bumps `last_activity_at` — only the agent's
+  final reply message does. **Invariant to keep: session/step events never bump
+  a conversation.**
+
+**The gap (Kris, dogfooding): trigger an agent from the board and it looks
+dead.** The board card and the conversation panel render member _messages_ only
+(`MessageItem` rows in `board-card.tsx` / `conversation-panel.tsx`), so
+`agent_session:*` events never draw there — between the invoking message and
+the final reply there is no sign the agent is working. The timeline shows the
+running card; the board shows nothing.
+
+**Fix shape (build item):** conversation surfaces interleave the
+`agent_session:*` events of sessions **whose invoking message is a conversation
+member**, at their chronological slot, reusing `AgentSessionEvent` + the
+live-activity hook as-is. The events already ride the stream rails the card
+subscribes to (they're ordinary stream events in IDB), so this is a
+projection/filter change — include them alongside member messages — not new
+delivery. Rendering only: no assignment, no bump, no read-state effect.
+
+**Scratchpad-linked agents:** an agent working a linked scratchpad writes real
+messages, and scratchpad = one conversation — so a long-running agent is one
+board card that bumps on every message it sends. Coherent ("what is my agent up
+to?"), but ambient churn on the Active lens. The mitigation is the per-viewer
+stream mute below — not special-casing agent messages out of the bump.
+
+## Hide & mute — per-viewer exclusions (2026-07-03)
+
+Nothing exists yet. Two grains, deliberately separate:
+
+- **Mute a stream on the board** — "never board-surface my Ariadne DM / that
+  agent scratchpad." A per-viewer scope exclusion; ships as part of the scope
+  filter (next-up item 2 below). The higher-value grain, given the floor data's
+  one-DM concentration and agent-scratchpad churn.
+- **Hide a card** — per-conversation. Read-state shipped as a _message_-granular
+  sparse overlay (#1165, `stream_member_message_reads` — read iff below the
+  watermark or in the overlay), so there is no per-(user, conversation) row for
+  hide to piggyback: it gets its own small table (`hidden_at` /
+  `snoozed_until`), one extra left-join on the board query. Decide hide-forever
+  vs snooze-until-activity at build time (lean: snooze — a hidden topic that
+  genuinely revives is exactly what the board exists to resurface).
+
+Dismissals are signal (quiet-collector precedent): hiding a derived card is a
+soft "this topic wasn't worth surfacing" label for the eval loop.
+
+## Where we are + what's next (2026-07-03; replaces the original Phasing)
+
+Shipped, all flag-gated behind `board-view`:
+
+- **The board** — workspace-wide feed at `/w/:ws/board`, message-led cards
+  grouped by recency, authored posts via the board composer.
+- **Sync data plane** — conversations in IDB, `conversation:*` through
+  `SocketEventGate`, synchronous determinable assign + bump
+  (#1100/#1106/#1109/#1111).
+- **Stable view v1** — committed snapshot + "N new" pill + top scroll-anchor
+  (2026-06-28, section above).
+- **One-root cross-stream model** — the assigner enforces same-root attach
+  (section above).
+- **Soft threads** — conversation panel `?panel=conv:<id>` (#1119); provenance
+  chip on revivals (#1140); declared filing via hidden field + "Reply in
+  conversation" (#1146), with thread-follow routing for the directive (#1161),
+  carried through scheduled sends (#1168) with a drift signal when a scheduled
+  reply files into a conversation that moved (#1171), and agent replies
+  anchored to the trigger's conversation (#1170).
+- **Read-state (#1165)** — sparse read overlay: `stream_member_message_reads`
+  holds individually-read messages above the member's watermark (read iff below
+  watermark or in overlay); conversation-aware read state on board/panel +
+  phantom-unread fixes. The "rising baseline + exceptions" shape, shipped at
+  message grain.
+- **Board row actions** — reply, quote-reply, quote-selection, react,
+  copy-link, edit, delete (#1124–#1136); conversation-aware save (#1141) and
+  share back-link (#1143).
+- **Extraction quality** — time-grounded boundaries + memo dedup (#1131); the
+  topic-title prompt tightening the floor measurement asked for is in
+  (`boundary-extraction/config.ts` now enforces ≤5 words, no framing).
+
+Next, in order (re-sequenced 2026-07-03):
+
+1. **Scope filter + structural lenses** (+ stream-level board mute, above).
+   _This — not AI quality — is the promotion blocker:_ the floor data's worst
+   defect is flooding, and flooding is a WHERE clause. Active /
+   Needs-resolution / Decisions lenses are all existing signals; INV-59 route
+   segments.
+2. **Agent sessions visible in conversation surfaces** (section above) — small
+   projection change, big perceived-liveness win when driving agents from the
+   board.
+3. **Declared-id fallback rule** (resolved decision 3 above) — small; keeps the
+   chip honest when a declared conversation is later merged/retired.
+4. **Per-card hide** (above) — its own per-(user, conversation) table now that
+   read-state shipped at message grain.
+5. **Mine lens** (Saved later, per the 2026-06-22 decisions).
+6. **Retitle + mark-resolved** on cards. Merge/split UI drops to backlog —
+   declared filing has replaced corrections as the primary eval fuel, and
+   merge/split is the expensive end of the correction set.
+7. **Promotion gate, with numbers** — re-run the floor query post-scope-filter;
+   watch declared share of new assignments (up) and correction rate per active
+   conversation (down); one dogfood week with the scoped Active lens as the
+   actual landing page. Land Q4 as a **per-user default-landing setting**, not
+   a global flip — reversible, and solo-first anyway.
+
+Deferred, unchanged: `virtua` for the board and the backend stable-paging key
+(revisit at ~2–3× the current ~430-card floor), intersection-observer "seen",
+the per-card "updated" dot.
+
+## Phasing (superseded 2026-07-03 — kept for the record)
 
 The inversion changes the order. Two candidate entry points:
 
@@ -685,6 +820,11 @@ The feedback loop is already half-built:
   evals call production entry points). Like the quiet collector learning from
   dismissals, conversations improve the more the board is used.
 
+_Update (2026-07-03):_ declared filing (#1146, plus the reply-in-conversation
+follow-up) now yields a clean label on every filed reply, so corrections are no
+longer the primary eval fuel. Retitle and mark-resolved stay on the plan (user
+value in themselves); merge/split UI drops to backlog.
+
 ### Sequencing to de-risk (the one caution)
 
 The inversion above softens this a lot: an **authored**-first board is clean
@@ -714,8 +854,9 @@ distribution, so "is it mature enough?" gets a number instead of a guess.
 4. **Mutability UX** → **skip** surfacing "merged/retitled" notices for now
    (such notes get ignored anyway).
 
-With these, the design is settled. Step **(0)** — measure the floor — is now
-done (below); what remains is **(1b)** build the authored board.
+With these, the design is settled. Step **(0)** — measure the floor — is done
+(below), and **(1b)** — the authored board — has shipped; the live plan is
+"Where we are + what's next" above.
 
 ## Floor measurement — real prod data (2026-06-22)
 
