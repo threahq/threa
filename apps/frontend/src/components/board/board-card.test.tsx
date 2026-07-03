@@ -105,6 +105,7 @@ describe("BoardCard unread dot", () => {
     vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
       value: readValue,
       hasUnread: () => true,
+      markReadSilently: () => Promise.resolve(),
     })
     mountCard()
     expect(await screen.findByLabelText("Unread")).toBeTruthy()
@@ -114,6 +115,7 @@ describe("BoardCard unread dot", () => {
     vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
       value: readValue,
       hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
     })
     mountCard()
     await screen.findByText("Opening body.")

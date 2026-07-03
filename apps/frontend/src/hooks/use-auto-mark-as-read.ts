@@ -18,6 +18,28 @@ interface UseAutoMarkAsReadOptions {
 }
 
 /**
+ * Whether the viewer's attention is plausibly on this page — the shared gate for
+ * every auto-read surface (stream timeline here, conversation surfaces via
+ * `useConversationAutoRead`). Focus tells you which of several overlapping
+ * windows the user is working in — a fine-pointer, multi-window (desktop)
+ * signal. On a phone-like device (coarse pointer AND a phone-width viewport)
+ * `document.hasFocus()` is an unreliable proxy for attention: mobile browsers
+ * and installed PWAs routinely report no focus while the page is the
+ * foreground, and the resume `focus` event often never fires — so there a
+ * visible page is "active". A coarse-but-wide device (tablet, iPad split view)
+ * keeps the focus gate, so working in the adjacent pane does not auto-read this
+ * one. This relaxation is deliberately local to auto-read;
+ * `usePageActivity().isActive` stays the strict visible-and-focused signal its
+ * other consumers (socket, connection status, app-update) rely on.
+ */
+export function useAutoReadAttention(): boolean {
+  const { isVisible, isFocused } = usePageActivity()
+  const isMobile = useIsMobile()
+  const isCoarsePointer = useIsCoarsePointer()
+  return isVisible && (isFocused || (isMobile && isCoarsePointer))
+}
+
+/**
  * Hook that automatically marks a stream as read when viewing it.
  * Debounces the mark-as-read call to avoid excessive API calls when rapidly switching streams.
  *
@@ -38,20 +60,7 @@ export function useAutoMarkAsRead(
   const { enabled = true, debounceMs = 500, partial = false } = options
   const { markAsRead, getUnreadCount } = useUnreadCounts(workspaceId)
   const { getActivityCount } = useActivityCounts(workspaceId)
-  const { isVisible, isFocused } = usePageActivity()
-  const isMobile = useIsMobile()
-  const isCoarsePointer = useIsCoarsePointer()
-  // Focus tells you which of several overlapping windows the user is working in —
-  // a fine-pointer, multi-window (desktop) signal. On a phone-like device (coarse
-  // pointer AND a phone-width viewport) `document.hasFocus()` is an unreliable
-  // proxy for attention: mobile browsers and installed PWAs routinely report no
-  // focus while the page is the foreground, and the resume `focus` event often
-  // never fires — so there a visible page is "active". A coarse-but-wide device
-  // (tablet, iPad split view) keeps the focus gate, so working in the adjacent
-  // pane does not auto-read this one. This relaxation is deliberately local to
-  // auto-read; `usePageActivity().isActive` stays the strict visible-and-focused
-  // signal its other consumers (socket, connection status, app-update) rely on.
-  const canAutoRead = isVisible && (isFocused || (isMobile && isCoarsePointer))
+  const canAutoRead = useAutoReadAttention()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastMarkedRef = useRef<string | null>(null)
   // Track the partial-ness of the last mark so a partial→full transition at the

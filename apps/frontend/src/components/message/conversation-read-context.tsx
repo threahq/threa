@@ -96,7 +96,14 @@ export function useConversationReadController(
   conversationId: string,
   rootStreamId: string,
   currentUserId: string | null
-): { value: ConversationRowRead; hasUnread: (messages: RenderableMessage[]) => boolean } {
+): {
+  value: ConversationRowRead
+  hasUnread: (messages: RenderableMessage[]) => boolean
+  /** The mark-read mutation without the failure toast — for viewport auto-read,
+   * where a background action failing must stay silent (the next dwell retries);
+   * the toast is reserved for the user-initiated menu action. */
+  markReadSilently: (messageId: string) => Promise<void>
+} {
   const conversationService = useConversationService()
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const overlay = unreadState?.readMessageIds
@@ -117,14 +124,19 @@ export function useConversationReadController(
     [overlay, unreadCounts, frontierByStream, rootStreamId]
   )
 
-  const markReadUpToHere = useCallback(
-    (messageId: string) => {
+  const markReadSilently = useCallback(
+    (messageId: string) =>
       conversationService
         .markRead(workspaceId, conversationId, messageId)
-        .then((res) => applyReadStateSnapshots(workspaceId, res.streams))
-        .catch(() => toast.error("Couldn't mark as read"))
-    },
+        .then((res) => applyReadStateSnapshots(workspaceId, res.streams)),
     [conversationService, workspaceId, conversationId]
+  )
+
+  const markReadUpToHere = useCallback(
+    (messageId: string) => {
+      markReadSilently(messageId).catch(() => toast.error("Couldn't mark as read"))
+    },
+    [markReadSilently]
   )
 
   const markUnread = useCallback(
@@ -151,5 +163,5 @@ export function useConversationReadController(
     [state, currentUserId, rootStreamId]
   )
 
-  return { value, hasUnread }
+  return { value, hasUnread, markReadSilently }
 }

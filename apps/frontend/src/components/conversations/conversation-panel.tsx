@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
+import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
@@ -244,7 +245,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // Per-row read state + the mark-read/unread actions for this conversation's
   // rows (docs/sparse-read-overlay-design.md). The panel has no unread dot, so
   // only the provider value is used.
-  const { value: conversationReadValue } = useConversationReadController(
+  const { value: conversationReadValue, markReadSilently } = useConversationReadController(
     workspaceId,
     conversation.id,
     conversation.streamId,
@@ -305,6 +306,23 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
 
   // Scopes text-selection quoting to this panel's message list.
   const listRef = useRef<HTMLDivElement>(null)
+
+  // Viewport auto-read: the panel always renders the full conversation, so once
+  // the rail/backfill is complete every row is eligible. While older replies are
+  // still loading the rendered run has a hidden gap after the opening, so only
+  // the opening can mark (a cutoff through a later row would read the unseen
+  // middle) — mirrors the board card's collapsed-gap rule.
+  const complete = !incompleteLocally || !!allMessages
+  let autoReadRows: RenderableMessage[]
+  if (complete) autoReadRows = all
+  else autoReadRows = openingMessage ? [openingMessage] : []
+  useConversationAutoRead({
+    containerRef: listRef,
+    messages: autoReadRows,
+    rootStreamId: conversation.streamId,
+    rowState: conversationReadValue.state,
+    markRead: markReadSilently,
+  })
 
   return (
     // Quote reply from a row routes into this conversation's reply composer.
