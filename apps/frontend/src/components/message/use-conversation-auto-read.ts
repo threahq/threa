@@ -4,6 +4,18 @@ import type { RowReadState } from "@/components/timeline/read-frontier-context"
 import type { ConversationRowRead } from "@/components/message/conversation-read-context"
 import type { RenderableMessage } from "@/components/message/message-item"
 
+/**
+ * Flag-gated tracer (`window.__threaAutoReadDebug = true`, then reload) — the
+ * whole pipeline is invisible timers and observer callbacks, so a staging "it
+ * didn't mark" report is undiagnosable without seeing which stage stopped
+ * (armed → seen → evaluate → fire). Mirrors `deepLinkDebug` in stream-content.
+ */
+function autoReadDebug(...args: unknown[]) {
+  if (typeof window !== "undefined" && (window as { __threaAutoReadDebug?: boolean }).__threaAutoReadDebug) {
+    console.debug("[auto-read]", ...args)
+  }
+}
+
 /** A row is "seen" once any part of it has stayed in the viewport this long
  * while the viewer's attention is on the page. */
 const DWELL_MS = 1_000
@@ -114,13 +126,19 @@ export function useConversationAutoRead({
     debounceRef.current = null
     // An active pin blocks firing entirely (not just for the pinned rows): the
     // cutoff means marking through ANY newer row would undo the explicit unread.
-    if (suppressedRef.current.size > 0) return
+    if (suppressedRef.current.size > 0) {
+      autoReadDebug("evaluate: pinned", { suppressed: [...suppressedRef.current] })
+      return
+    }
     const rows = eligibleRef.current
     let targetIdx = -1
     for (let i = 0; i < rows.length; i++) {
       if (seenRef.current.has(rows[i].id)) targetIdx = i
     }
-    if (targetIdx < 0) return
+    if (targetIdx < 0) {
+      autoReadDebug("evaluate: nothing seen", { eligible: rows.map((m) => m.id) })
+      return
+    }
     const target = rows[targetIdx]
     if (lastMarkedRef.current === target.id) return
     // Fire only when the cutoff would actually read something: any row at/below
@@ -130,9 +148,17 @@ export function useConversationAutoRead({
     for (let i = 0; i <= targetIdx && !anyUnread; i++) {
       if (stateOf(rows[i]) === "unread") anyUnread = true
     }
-    if (!anyUnread) return
+    if (!anyUnread) {
+      autoReadDebug("evaluate: nothing unread at/below target", {
+        target: target.id,
+        states: rows.slice(0, targetIdx + 1).map((m) => `${m.id}=${stateOf(m)}`),
+      })
+      return
+    }
+    autoReadDebug("evaluate: firing markRead", { target: target.id })
     lastMarkedRef.current = target.id
-    markReadRef.current(target.id).catch(() => {
+    markReadRef.current(target.id).catch((err) => {
+      autoReadDebug("markRead failed", err)
       // Background action: fail silently; releasing the dedup lets the next
       // evaluation retry.
       if (lastMarkedRef.current === target.id) lastMarkedRef.current = null
@@ -148,6 +174,7 @@ export function useConversationAutoRead({
    * the dedup (after the pin lifts, re-reading may legitimately re-target the
    * same newest row), and suppress every eligible row. */
   const pin = useCallback(() => {
+    autoReadDebug("pin engaged")
     seenRef.current.clear()
     for (const timer of dwellTimersRef.current.values()) clearTimeout(timer)
     dwellTimersRef.current.clear()
@@ -180,7 +207,10 @@ export function useConversationAutoRead({
   // the rebuild's initial entries restart dwells for rows still on screen.
   // Already-seen rows stay seen across rebuilds — they were legitimately read.
   useEffect(() => {
-    if (!canAutoRead || eligibleIdsKey === "") return
+    if (!canAutoRead || eligibleIdsKey === "") {
+      autoReadDebug("observer: off", { canAutoRead, eligible: eligibleIdsKey })
+      return
+    }
     // jsdom (and any environment without IO) — auto-read simply stays off, the
     // same soft degradation as useLastSeenEvent's ResizeObserver guard.
     if (typeof IntersectionObserver === "undefined") return
@@ -199,6 +229,7 @@ export function useConversationAutoRead({
             setTimeout(() => {
               dwellTimersRef.current.delete(id)
               seenRef.current.add(id)
+              autoReadDebug("seen", { id })
               scheduleEvaluate()
             }, DWELL_MS)
           )
@@ -211,10 +242,15 @@ export function useConversationAutoRead({
         }
       }
     })
+    let observed = 0
     for (const el of container.querySelectorAll<HTMLElement>("[data-message-row]")) {
       const id = el.dataset.messageId
-      if (id && eligibleIds.has(id)) io.observe(el)
+      if (id && eligibleIds.has(id)) {
+        io.observe(el)
+        observed++
+      }
     }
+    autoReadDebug("observer: armed", { eligible: [...eligibleIds], observed })
     return () => {
       io.disconnect()
       for (const timer of dwellTimersRef.current.values()) clearTimeout(timer)
