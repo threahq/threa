@@ -111,6 +111,8 @@ export const EVENT_TYPES = [
   "agent_session:deleted",
   "messages:moved",
   "memos:captured",
+  "agent:follow_up_scheduled",
+  "agent:follow_up_cancelled",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -150,6 +152,8 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   "agent_session:deleted",
   "messages:moved",
   "memos:captured",
+  "agent:follow_up_scheduled",
+  "agent:follow_up_cancelled",
 ] as const
 export type TimelineBroadcastEventType = (typeof TIMELINE_BROADCAST_EVENT_TYPES)[number]
 

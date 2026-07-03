@@ -36,7 +36,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | ---- | ---------------------------------------------------- | ------ | ----- |
 | 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      | #1138 |
 | 1.2  | Follow-up turn invocation (context + prompt)         | ☑      | #1142 |
-| 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
+| 1.3  | Follow-up visibility: timeline card + cancel         | ☑      | #TBD  |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
 | 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
@@ -130,6 +130,13 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 **Tests:** frontend component test (renders, cancel calls API, card reflects cancelled); backend test asserting event presence in the insert transaction (INV-23: presence, not counts).
 
 **Done when:** scheduling and cancelling are both visible in-timeline for every member; contiguity (INV-61) covered by the broadcast slot.
+
+**Deviations (shipped):**
+
+- Payload types live in `packages/types/src/api.ts` (`AgentFollowUpScheduledEventPayload` / `AgentFollowUpCancelledEventPayload`), not `domain.ts` — that's where the sibling `MemosCapturedEventPayload` / `DescriptionSetEventPayload` capture payloads already sit. Renderer is dispatched from `event-item.tsx`'s `switch` (where `memos:captured` / `description_set` dispatch), not `event-list.tsx`.
+- **Both** events render their own visible timeline row (both in `TIMELINE_BROADCAST_EVENT_TYPES`): a `scheduled` card (note + fire time + Cancel) and, on cancel, a standalone `cancelled` row. The cancelled row is a real row (not a patch/correlation onto the scheduled card) so the cancellation stays visible even when the scheduling card has scrolled out of the loaded window — the out-of-window case a correlation-only flip can't cover. The clicking member's own card flips to a muted "Cancelled" via local component state (INV-63, no success toast); other members see the cancelled row. No sibling-event correlation Set was needed.
+- Full live-delivery wiring the Files list implied but didn't enumerate: two outbox event types `stream:agent_follow_up_{scheduled,cancelled}` (+ `StreamScoped` payloads, `STREAM_SCOPED_EVENTS` registration) route via the generic `isStreamScopedEvent` path (no bespoke dispatcher entry, like memos/description); frontend `stream-sync.ts` subscribes both to `handleAppendEvent`.
+- A **new first-party HTTP endpoint** backs the card's Cancel button (the Files list omitted it — there was no follow-up HTTP surface): `POST /api/workspaces/:workspaceId/agent-follow-ups/:id/cancel` (`features/agents/follow-up-handlers.ts`, `routes.ts`), access-gated via `checkStreamAccess` (any member who can see the stream can cancel; 404 hides existence from non-members), plus `apps/frontend/src/api/agent-follow-ups.ts`. `AgentFollowUpService.cancel` gained an optional `cancelledBy` so the cancelled row attributes to the user (card) or the persona (`cancel_follow_up` tool). The append lives in the service (`schedule` / `cancel` transactions), so the persona's own tool paths emit the rows too — one append site, INV-35.
 
 ### 1.4 Configurable follow-up limits (administrative)
 

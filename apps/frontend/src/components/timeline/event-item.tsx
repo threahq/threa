@@ -6,6 +6,7 @@ import { MessageEvent } from "./message-event"
 import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
+import { FollowUpScheduledEvent, FollowUpCancelledEvent } from "./follow-up-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
 
@@ -144,6 +145,20 @@ export function EventItem({
       return (
         <div data-event-id={event.id}>
           <MemoCapturedEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
+
+    case "agent:follow_up_scheduled":
+      return (
+        <div data-event-id={event.id}>
+          <FollowUpScheduledEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
+
+    case "agent:follow_up_cancelled":
+      return (
+        <div data-event-id={event.id}>
+          <FollowUpCancelledEvent event={event} workspaceId={workspaceId} />
         </div>
       )
 

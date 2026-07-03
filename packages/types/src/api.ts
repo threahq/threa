@@ -1163,6 +1163,36 @@ export interface MemosCapturedEventPayload {
 }
 
 /**
+ * Payload for `agent:follow_up_scheduled` timeline events (roadmap 1.3):
+ * appended to a stream when a persona schedules a follow-up, in the same
+ * transaction as the `agent_follow_ups` row insert (INV-4/7). The card renders
+ * the note + fire time and offers a Cancel action without fetching the row, so
+ * scheduled agent work is never invisible state. `scheduledFor` is the ISO
+ * instant the follow-up fires; the UI renders it in the viewer's local time.
+ */
+export interface AgentFollowUpScheduledEventPayload {
+  followUpId: string
+  note: string
+  scheduledFor: string
+  /** The topic the follow-up is anchored to, when the trigger had one. */
+  sourceConversationId: string | null
+}
+
+/**
+ * Payload for `agent:follow_up_cancelled` timeline events (roadmap 1.3):
+ * appended when a pending follow-up is cancelled — by the persona via
+ * `cancel_follow_up`, or by a stream member via the card's Cancel button — in
+ * the same transaction as the CAS. Carries the note + original fire time so the
+ * row renders standalone even when the scheduling card has scrolled out of the
+ * loaded window. The event's `actorId`/`actorType` attribute who cancelled.
+ */
+export interface AgentFollowUpCancelledEventPayload {
+  followUpId: string
+  note: string
+  scheduledFor: string
+}
+
+/**
  * Payload for `description_set` timeline events: appended to a stream when an
  * actor sets, changes, or clears its description, in the same transaction as the
  * description write. Carries the markdown snapshot at the time it was set so the

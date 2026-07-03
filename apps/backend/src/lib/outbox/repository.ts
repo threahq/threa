@@ -72,6 +72,8 @@ export type OutboxEventType =
   | "stream:member_removed"
   | "stream:memos_captured"
   | "stream:description_set"
+  | "stream:agent_follow_up_scheduled"
+  | "stream:agent_follow_up_cancelled"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -121,6 +123,8 @@ export type StreamScopedEventType =
   | "stream:member_removed"
   | "stream:memos_captured"
   | "stream:description_set"
+  | "stream:agent_follow_up_scheduled"
+  | "stream:agent_follow_up_cancelled"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -278,6 +282,20 @@ export interface StreamMemosCapturedOutboxPayload extends StreamScopedPayload {
  * clients append it without a fetch.
  */
 export interface StreamDescriptionSetOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries an `agent:follow_up_scheduled` / `agent:follow_up_cancelled` timeline
+ * event (roadmap 1.3) to the stream's room. Same envelope shape as the
+ * memos/description events: the full stream event rides along so clients append
+ * it without a fetch.
+ */
+export interface StreamAgentFollowUpScheduledOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamAgentFollowUpCancelledOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -855,6 +873,8 @@ export interface OutboxEventPayloadMap {
   "stream:member_removed": StreamMemberRemovedOutboxPayload
   "stream:memos_captured": StreamMemosCapturedOutboxPayload
   "stream:description_set": StreamDescriptionSetOutboxPayload
+  "stream:agent_follow_up_scheduled": StreamAgentFollowUpScheduledOutboxPayload
+  "stream:agent_follow_up_cancelled": StreamAgentFollowUpCancelledOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -961,6 +981,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:member_removed",
   "stream:memos_captured",
   "stream:description_set",
+  "stream:agent_follow_up_scheduled",
+  "stream:agent_follow_up_cancelled",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

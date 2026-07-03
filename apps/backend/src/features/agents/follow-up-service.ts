@@ -1,9 +1,17 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
-import { agentFollowUpId, agentFollowUpQueueId, queueId } from "../../lib/id"
+import { agentFollowUpId, agentFollowUpQueueId, queueId, eventId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type PersonaAgentJobData } from "../../lib/queue"
+import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { FollowUpStatuses } from "@threa/types"
+import {
+  AuthorTypes,
+  FollowUpStatuses,
+  type AuthorType,
+  type AgentFollowUpScheduledEventPayload,
+  type AgentFollowUpCancelledEventPayload,
+} from "@threa/types"
+import { StreamEventRepository } from "../streams"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
@@ -104,6 +112,25 @@ export class AgentFollowUpService {
       })
       await AgentFollowUpRepository.setQueueMessageId(client, params.workspaceId, inserted.id, queueMessageId)
 
+      // Scheduled agent work is never invisible state (roadmap 1.3): append the
+      // capture-style broadcast row in the same transaction as the insert
+      // (INV-4/7) so every stream member sees the follow-up and can cancel it.
+      // The persona is the actor — it scheduled the row.
+      await this.appendFollowUpEvent(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        eventType: "agent:follow_up_scheduled",
+        outboxEventType: "stream:agent_follow_up_scheduled",
+        payload: {
+          followUpId: inserted.id,
+          note: inserted.note,
+          scheduledFor: inserted.scheduledFor.toISOString(),
+          sourceConversationId: inserted.sourceConversationId,
+        },
+        actorId: params.personaId,
+        actorType: AuthorTypes.PERSONA,
+      })
+
       const pendingCount = await AgentFollowUpRepository.countPending(client, params.workspaceId, params.streamId)
       return { ok: true, followUp: { ...inserted, queueMessageId }, pendingCount, limit }
     })
@@ -134,7 +161,12 @@ export class AgentFollowUpService {
    * `streamId` (the agent-admin tools do) to also require the row belong to that
    * stream, so a turn can only cancel its own stream's follow-ups.
    */
-  async cancel(params: { workspaceId: string; id: string; streamId?: string }): Promise<AgentFollowUp | null> {
+  async cancel(params: {
+    workspaceId: string
+    id: string
+    streamId?: string
+    cancelledBy?: { actorId: string; actorType: AuthorType }
+  }): Promise<AgentFollowUp | null> {
     return withTransaction(this.pool, async (client) => {
       const cancelled = params.streamId
         ? await AgentFollowUpRepository.markCancelledInStream(client, params.workspaceId, params.streamId, params.id)
@@ -143,7 +175,59 @@ export class AgentFollowUpService {
       if (cancelled.queueMessageId) {
         await QueueRepository.cancelById(client, cancelled.queueMessageId)
       }
+
+      // Mirror the scheduled row: the cancellation is a visible broadcast row in
+      // the same transaction as the CAS (roadmap 1.3, INV-4/7). Attribute to the
+      // caller when known (a stream member via the card), else to the persona
+      // that owns the follow-up (a `cancel_follow_up` turn).
+      const actor = params.cancelledBy ?? { actorId: cancelled.personaId, actorType: AuthorTypes.PERSONA }
+      await this.appendFollowUpEvent(client, {
+        workspaceId: params.workspaceId,
+        streamId: cancelled.streamId,
+        eventType: "agent:follow_up_cancelled",
+        outboxEventType: "stream:agent_follow_up_cancelled",
+        payload: {
+          followUpId: cancelled.id,
+          note: cancelled.note,
+          scheduledFor: cancelled.scheduledFor.toISOString(),
+        },
+        actorId: actor.actorId,
+        actorType: actor.actorType,
+      })
       return cancelled
+    })
+  }
+
+  /**
+   * Append a follow-up timeline broadcast row (+ its outbox row) inside the
+   * caller's transaction. Both event types ride the same envelope as the
+   * memos/description capture events: the full stream event is carried on the
+   * outbox payload so clients append it without a fetch.
+   */
+  private async appendFollowUpEvent(
+    client: PoolClient,
+    params: {
+      workspaceId: string
+      streamId: string
+      eventType: "agent:follow_up_scheduled" | "agent:follow_up_cancelled"
+      outboxEventType: "stream:agent_follow_up_scheduled" | "stream:agent_follow_up_cancelled"
+      payload: AgentFollowUpScheduledEventPayload | AgentFollowUpCancelledEventPayload
+      actorId: string
+      actorType: AuthorType
+    }
+  ): Promise<void> {
+    const event = await StreamEventRepository.insert(client, {
+      id: eventId(),
+      streamId: params.streamId,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+    })
+    await OutboxRepository.insert(client, params.outboxEventType, {
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      event,
     })
   }
 
