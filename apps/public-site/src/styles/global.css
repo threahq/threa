@@ -292,6 +292,41 @@ body::after {
   color: hsl(var(--muted));
 }
 
+/* Login — the app's own primary button, dropped into the marketing nav so the
+   door into the app looks like the app. Mirrors the Shadcn `Button` default
+   variant in apps/frontend/src/components/ui/button.tsx: solid --primary fill
+   with --primary-foreground text, Space Grotesk medium at text-sm, and the
+   app's 10px button radius. --gold === app --primary and --paper ===
+   --primary-foreground, so it tracks light/dark exactly. Hover shifts instantly
+   (no transition): a var-based color transition freezes on this static site's
+   theme toggle, and the app's real buttons transition-colors only because React
+   re-renders force the restyle a static page never gets. */
+.nav-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 18px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  color: hsl(var(--paper));
+  background: hsl(var(--gold));
+  border: none;
+  border-radius: 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.nav-login:hover {
+  background: hsl(var(--gold-soft));
+}
+.nav-login:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px hsl(var(--paper)),
+    0 0 0 4px hsl(var(--gold) / 0.6);
+}
+
 /* ---------- OPEN TIMELINE ----------
      Anchored to the real chat view in apps/frontend/src/components/timeline:
      - Rows render at full opacity from frame 1; "new" is signalled by
@@ -2266,6 +2301,10 @@ body::after {
     font-size: 10px;
     letter-spacing: 0.1em;
   }
+  .nav-row .nav-login {
+    padding: 8px 15px;
+    font-size: 13px;
+  }
 
   /* The chat demo's composer mirrors the real one with a full action row. At
      phone width nine icons plus send overflow the card, so we keep the
@@ -2321,13 +2360,35 @@ body::after {
 [data-theme="dark"] .theme-toggle .tt-moon {
   display: none;
 }
-/* Marketing nav-row gains a third child; keep the links hugging the toggle
-   on the right instead of letting space-between spread all three apart. */
+/* Marketing nav-row gains extra children; keep the links, the login button,
+   and the toggle hugging together on the right instead of letting
+   space-between spread them apart. */
 .nav-row .nav-links {
   margin-left: auto;
 }
+.nav-row .nav-login {
+  margin-left: 22px;
+}
 .nav-row .theme-toggle {
   margin-left: 20px;
+}
+/* Phone width can't fit brand + links + login + toggle on one line. Wrap the
+   nav: brand keeps the left, login + toggle hug the right, and the links drop
+   to their own full-width second line. (Placed after the margin rules above so
+   the cascade resolves in its favor at equal specificity.) */
+@media (max-width: 560px) {
+  .nav-row {
+    flex-wrap: wrap;
+  }
+  .nav-row .nav-links {
+    order: 1;
+    flex-basis: 100%;
+    margin-left: 0;
+    margin-top: 18px;
+  }
+  .nav-row .nav-login {
+    margin-left: auto;
+  }
 }
 
 /* ---------- DARK MODE OVERRIDES ----------
