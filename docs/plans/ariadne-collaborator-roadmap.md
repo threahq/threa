@@ -44,7 +44,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
-| 3.2  | Per-thread session concurrency                       | ☑      | #TBD  |
+| 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                  | ☐      |       |
 | 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
 | 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
