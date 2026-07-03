@@ -102,12 +102,29 @@ describe("capability selection", () => {
   it("only publishes session-control command capabilities when control is available", () => {
     const enabled = runtimeCapabilitiesFor("ccs_1", true)
     expect(enabled.supportsSessionControlCommands).toBe(true)
-    expect(enabled.sessionControlCommands).toEqual(["stop", "steer", "model", "compact", "run", "reload"])
+    expect(enabled.sessionControlCommands).toEqual(["stop", "steer", "model", "thinking", "compact", "run", "reload"])
     expect(enabled.runtimeSessionId).toBe("ccs_1")
 
     const disabled = runtimeCapabilitiesFor("ccs_1", false)
     expect(disabled.supportsSessionControlCommands).toBeUndefined()
     expect(disabled.sessionControlCommands).toBeUndefined()
     expect(disabled.runtimeSessionId).toBe("ccs_1")
+  })
+
+  it("advertises effort levels and display-labelled model suggestions with control enabled", () => {
+    const enabled = runtimeCapabilitiesFor("ccs_1", true)
+    expect(enabled.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"])
+    const suggestions = enabled.modelSuggestions as Array<{ value: string; label?: string }>
+    expect(suggestions.map((suggestion) => suggestion.value)).toContain("opus")
+    expect(suggestions.every((suggestion) => suggestion.label)).toBe(true)
+
+    const disabled = runtimeCapabilitiesFor("ccs_1", false)
+    expect(disabled.thinkingLevels).toBeUndefined()
+    expect(disabled.modelSuggestions).toBeUndefined()
+  })
+
+  it("parses /thinking with a level argument", () => {
+    const inv = invocation({ trigger: "session-control", promptMarkdown: "/thinking xhigh", metadata: {} })
+    expect(parseSessionControlCommand(inv)).toEqual({ name: "thinking", args: "xhigh" })
   })
 })

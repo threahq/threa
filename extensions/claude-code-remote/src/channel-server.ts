@@ -6,6 +6,7 @@ import { z } from "zod"
 import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
 import type { ThreaChannelConfig } from "./config"
 import { ThreaClient, type ClaimedInvocation, type RuntimeSessionLink } from "./threa-client"
+import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
 import { interrupt, STEER_SETTLE_MS, submitLine, tmuxAvailable } from "./tmux-control"
 
 const RUNTIME_KIND = "claude-code-channel"
@@ -15,10 +16,13 @@ const SESSION_CONTROL_CAPABILITY = "session-control"
 // advertised when running inside tmux. `run` types an arbitrary slash command
 // (e.g. /remote-control); `compact` is sugar for `run /compact`; `reload` maps
 // to Claude Code's `/reload-skills` (pick up skills + custom commands added on
-// disk this session — `/reload-plugins` is reachable via `run` for the plugin case).
-const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "compact", "run", "reload"] as const
-// Claude Code `/model` aliases offered as autocomplete in the composer's arg picker.
-const MODEL_SUGGESTIONS = [{ value: "default" }, { value: "sonnet" }, { value: "opus" }, { value: "opusplan" }]
+// disk this session — `/reload-plugins` is reachable via `run` for the plugin
+// case); Threa's canonical `thinking` maps to Claude Code's `/effort`.
+const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "thinking", "compact", "run", "reload"] as const
+// Model options for the composer's arg picker: built-in /model aliases plus
+// whatever the local client's own picker cache discovers (see model-catalog).
+// Resolved once at startup — new models arrive with the next spawned session.
+const MODEL_SUGGESTIONS = modelSuggestions()
 // Mirror Pi's STEER_DRAIN_LIMIT: how many queued messages a single /steer folds
 // into one combined turn before stopping (a backstop, not an expected count).
 const STEER_DRAIN_LIMIT = 10
@@ -165,6 +169,7 @@ export function runtimeCapabilitiesFor(
           supportsSessionControlCommands: true,
           sessionControlCommands: [...SESSION_CONTROL_COMMANDS],
           modelSuggestions: MODEL_SUGGESTIONS,
+          thinkingLevels: [...THINKING_LEVELS],
         }
       : {}),
   }
@@ -502,6 +507,8 @@ export class ChannelServer {
           return await this.runSteer(invocation, command.args)
         case "model":
           return await this.runModelCommand(invocation, command.args)
+        case "thinking":
+          return await this.runThinkingCommand(invocation, command.args)
         case "compact":
           return await this.runSlashCommand(invocation, command.args ? `/compact ${command.args}` : "/compact")
         case "reload":
@@ -550,7 +557,15 @@ export class ChannelServer {
       return
     }
     await Bun.sleep(STEER_SETTLE_MS)
-    await this.completeInterruptedTurns("Superseded by /steer.")
+    // Always leave a visible marker carrying the steer text: a bare
+    // "Superseded by /steer." followed by working silence reads as "the steer
+    // was lost", which is exactly how it got reported. The note doubles as the
+    // delivery acknowledgement.
+    const preview = text.length > 120 ? `${text.slice(0, 120)}…` : text
+    await this.completeInterruptedTurns(
+      preview ? `Superseded by /steer — now handling: “${preview}”` : "Superseded by /steer.",
+      { alwaysNote: true }
+    )
 
     const parts: string[] = []
     const swept: ClaimedInvocation[] = []
@@ -585,15 +600,33 @@ export class ChannelServer {
   private async runModelCommand(invocation: ClaimedInvocation, args: string): Promise<void> {
     const alias = args.trim()
     if (!alias) {
-      await this.completeAck(invocation, "Usage: `/model <name>` (e.g. sonnet, opus, default).")
+      await this.completeAck(invocation, "Usage: `/model <name>` (e.g. fable, opus, sonnet, haiku, default).")
       return
     }
-    // `confirm`: a mid-session model switch pops a "Switch model?" dialog (default
-    // "Yes") — the second Enter accepts it; harmless no-op when no dialog appears.
-    const ok = await submitLine(`/model ${alias}`, { confirm: true })
+    // `/model <name>` sets directly in current Claude Code (v2.1.199 dropped the
+    // old "Switch model?" confirm dialog), so a plain submit is the whole action.
+    const ok = await submitLine(`/model ${alias}`)
     await this.completeAck(
       invocation,
       ok ? `Set Claude Code model to \`${alias}\`.` : "Could not send /model (no tmux control)."
+    )
+  }
+
+  /**
+   * Threa's canonical `/thinking <level>` actuated as Claude Code's `/effort`.
+   * Levels are validated against the advertised set so a typo gets usage help
+   * instead of an Enter submitted into the TUI's effort slider.
+   */
+  private async runThinkingCommand(invocation: ClaimedInvocation, args: string): Promise<void> {
+    const level = args.trim().toLowerCase()
+    if (!(THINKING_LEVELS as readonly string[]).includes(level)) {
+      await this.completeAck(invocation, `Usage: \`/thinking <level>\` — one of ${THINKING_LEVELS.join(", ")}.`)
+      return
+    }
+    const ok = await submitLine(`/effort ${level}`)
+    await this.completeAck(
+      invocation,
+      ok ? `Set Claude Code effort to \`${level}\`.` : "Could not send /effort (no tmux control)."
     )
   }
 
@@ -646,8 +679,13 @@ export class ChannelServer {
       .catch((error) => log(`session-control fail failed: ${this.summarize(error)}`))
   }
 
-  /** Close every in-flight turn that an interrupt just aborted, so none idle-hangs for an hour. */
-  private async completeInterruptedTurns(note: string): Promise<void> {
+  /**
+   * Close every in-flight turn that an interrupt just aborted, so none
+   * idle-hangs for an hour. By default a turn that already posted interim
+   * messages closes silently (the user has heard from it); `alwaysNote` posts
+   * the note regardless — steers use it so delivery is always visible.
+   */
+  private async completeInterruptedTurns(note: string, opts: { alwaysNote?: boolean } = {}): Promise<void> {
     // Clear every entry's timer and drop it from the map BEFORE the first await.
     // If we cleared-and-completed one at a time, a sibling's idle-timeout could
     // fire at a `complete()` yield point, find itself still in the map, and
@@ -659,7 +697,8 @@ export class ChannelServer {
     }
     await Promise.all(
       entries.map(([id, entry]) => {
-        const body = entry.sentCount > 0 ? { noResponse: true } : { finalMessageMarkdown: `_${note}_` }
+        const body =
+          entry.sentCount > 0 && !opts.alwaysNote ? { noResponse: true } : { finalMessageMarkdown: `_${note}_` }
         return this.client
           .complete(id, {
             instanceId: this.config.instanceId,

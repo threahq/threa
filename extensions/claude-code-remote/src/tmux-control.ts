@@ -45,39 +45,22 @@ export function interrupt(): boolean {
  * Clears the input line first (Ctrl-U): an Esc-interrupt restores the interrupted
  * message back into Claude Code's input box, so a stale line would concatenate
  * with the command and get submitted as a plain prompt (the command silently
- * doesn't run). Verified live against Claude Code v2.1.193.
+ * doesn't run).
  *
  * `-l` sends the text verbatim so `/`, spaces, and punctuation aren't parsed as
  * tmux key names. A short settle between the text and Enter lets the slash-command
  * autocomplete resolve, so `/model sonnet` submits instead of the menu eating the
- * Enter.
- *
- * With `confirm`, a second Enter is sent after a longer settle to accept a modal
- * Claude Code may raise — `/model <x>` mid-session pops a "Switch model?" dialog
- * whose default option is "Yes"; without the confirm the session wedges at the
- * dialog. The trailing Enter is a harmless empty submit when no modal appears.
+ * Enter. Commands with an argument set directly in current Claude Code (v2.1.199
+ * dropped the old mid-session "Switch model?" confirm dialog), so one submit is
+ * the whole actuation.
  */
-export async function submitLine(text: string, opts: { settleMs?: number; confirm?: boolean } = {}): Promise<boolean> {
+export async function submitLine(text: string, opts: { settleMs?: number } = {}): Promise<boolean> {
   const settleMs = opts.settleMs ?? 150
   if (!sendKeys(["C-u"])) return false
   if (!sendKeys(["-l", text])) return false
   if (settleMs > 0) await Bun.sleep(settleMs)
-  if (!sendKeys(["Enter"])) return false
-  if (opts.confirm) {
-    // A modal Claude Code raises (e.g. "/model" mid-session pops "Switch model?")
-    // may render slightly after the first Enter. Send two guarded, spaced Enters
-    // so a late-rendering modal is still confirmed; an Enter on an empty prompt is
-    // a harmless no-op. Guarded (unlike a fire-and-forget Enter) so a pane that
-    // vanished mid-confirm reports failure instead of acking a false success.
-    await Bun.sleep(CONFIRM_SETTLE_MS)
-    if (!sendKeys(["Enter"])) return false
-    await Bun.sleep(CONFIRM_SETTLE_MS)
-    if (!sendKeys(["Enter"])) return false
-  }
-  return true
+  return sendKeys(["Enter"])
 }
 
 /** Milliseconds to wait after an interrupt before delivering the steer turn, so Claude has returned to idle. */
 export const STEER_SETTLE_MS = 250
-/** Wait for a modal (e.g. "Switch model?") to render before sending the confirming Enter. */
-const CONFIRM_SETTLE_MS = 350
