@@ -129,13 +129,13 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const contiguous = (expanded && (!incompleteLocally || !!allMessages)) || (!expanded && hiddenCount === 0)
 
   // Viewport auto-read: rows that dwell on screen mark themselves read (the menu
-  // actions are the override). Eligibility is the contiguous-from-the-start run
-  // only — with an "N more" gap the cutoff could otherwise read the hidden middle
-  // the viewer never saw, so a collapsed card auto-reads no further than its
-  // opening and the trailing preview stays unread until expanded.
-  let autoReadRows: RenderableMessage[]
-  if (contiguous) autoReadRows = openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies
-  else autoReadRows = openingMessage ? [openingMessage] : []
+  // actions are the override). Every rendered row is eligible — on a collapsed
+  // card the cutoff through a trailing-preview row also covers the hidden "N
+  // more" middle, deliberately: the card IS the conversation surface, so reading
+  // its visible tail reads the conversation up to there, exactly like invoking
+  // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
+  // having the conversation open is enough to mark it).
+  const autoReadRows = openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies
   useConversationAutoRead({
     containerRef: cardRef,
     messages: autoReadRows,

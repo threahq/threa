@@ -306,15 +306,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // Scopes text-selection quoting to this panel's message list.
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Viewport auto-read: the panel always renders the full conversation, so once
-  // the rail/backfill is complete every row is eligible. While older replies are
-  // still loading the rendered run has a hidden gap after the opening, so only
-  // the opening can mark (a cutoff through a later row would read the unseen
-  // middle) — mirrors the board card's collapsed-gap rule.
-  const complete = !incompleteLocally || !!allMessages
-  let autoReadRows: RenderableMessage[]
-  if (complete) autoReadRows = all
-  else autoReadRows = openingMessage ? [openingMessage] : []
+  // Viewport auto-read: every rendered row is eligible. While older replies are
+  // still backfilling, the cutoff through a rendered row also covers the not-
+  // yet-fetched middle — deliberate, same as the board card: reading the
+  // conversation's visible tail reads it up to there.
+  const autoReadRows = all
   useConversationAutoRead({
     containerRef: listRef,
     messages: autoReadRows,

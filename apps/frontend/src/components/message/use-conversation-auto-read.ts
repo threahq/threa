@@ -32,12 +32,13 @@ interface UseConversationAutoReadOptions {
    * a quoted message "dwell" beside the cursor and mark rows never on screen. */
   containerRef: React.RefObject<HTMLElement | null>
   /**
-   * The rows eligible for auto-read, chronological: the contiguous-from-the-start
-   * run of the conversation the surface is actually showing. A collapsed board
-   * card with an "N more" gap passes only the opening — marking is a `createdAt`
-   * cutoff (ConversationService.markRead), so marking through a row past the gap
-   * would silently read the hidden middle the viewer never saw. The array need
-   * not be referentially stable; effects key on the id set.
+   * The rows eligible for auto-read: the surface's rendered rows, chronological.
+   * Marking is a `createdAt` cutoff (ConversationService.markRead), so a mark
+   * through a rendered row also covers older rows the surface is hiding (a
+   * collapsed card's "N more" middle, a panel's still-backfilling older
+   * replies) — deliberate: reading a conversation's visible tail reads it up to
+   * there, the same contract as the menu's "Mark as read up to here" on that
+   * row. The array need not be referentially stable; effects key on the id set.
    */
   messages: RenderableMessage[]
   /** Fallback stream for rows without their own `streamId` — the same fallback

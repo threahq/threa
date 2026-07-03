@@ -286,12 +286,14 @@ same conversation mark-read cutoff API:
 newestSeenRow)` per conversation; the gate re-checks effective unread at
   fire time, so it is idempotent against the overlay and never fires on a
   read conversation.
-- Eligibility is the **contiguous-from-the-start rendered run** only: a
-  collapsed card with an "N more" gap (or a panel still backfilling older
-  replies) auto-reads no further than its opening, because the `createdAt`
-  cutoff would otherwise silently read the hidden middle. The collapsed
-  trailing preview therefore stays unread until expanded — the card dot is
-  honest about the unseen middle.
+- Every **rendered row** is eligible. On a collapsed card the cutoff through
+  a trailing-preview row also covers the hidden "N more" middle —
+  deliberate: the card IS the conversation surface, so reading its visible
+  tail reads the conversation up to there, exactly like invoking "Mark as
+  read up to here" on that row. (v1 protected the hidden middle by making
+  gapped cards opening-only; dogfooding showed that renders the feature
+  inert on any active conversation — Kris's ruling: having the conversation
+  open is enough to mark it.)
 - Mark-as-unread **pins**: the menu action signals the hook synchronously
   BEFORE its request departs (the controller's `setExplicitUnreadListener`),
   and a read → unread regression on any eligible row catches the cross-device
