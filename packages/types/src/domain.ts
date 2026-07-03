@@ -331,6 +331,15 @@ export interface StreamMember {
   memberId: string
   notificationLevel: NotificationLevel | null
   lastReadEventId: string | null
+  /**
+   * The watermark event's sequence in its stream (stringified bigint), resolved
+   * server-side where memberships are fetched. Lets clients compare a row's
+   * sequence against the read frontier without holding the watermark event
+   * itself (board-card unread derivation — see
+   * docs/sparse-read-overlay-design.md). Null when the watermark is unset or
+   * dangling; optional during rollout.
+   */
+  lastReadSequence?: string | null
   lastReadAt: string | null
   joinedAt: string
 }
