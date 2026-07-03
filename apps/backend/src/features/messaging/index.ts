@@ -48,6 +48,7 @@ export {
   addReactionSchema,
   moveMessagesToThreadSchema,
   validateMoveMessagesToThreadSchema,
+  conversationDirectiveSchema,
 } from "./handlers"
 
 export {

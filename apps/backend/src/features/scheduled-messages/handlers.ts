@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import { HttpError } from "../../lib/errors"
-import { deriveContentMarkdown } from "../messaging"
+import { deriveContentMarkdown, conversationDirectiveSchema } from "../messaging"
 import type { ScheduledMessagesService } from "./service"
 
 const contentJsonSchema = z.object({
@@ -17,6 +17,7 @@ const scheduleSchema = z.object({
   metadata: z.record(z.string(), z.string()).optional(),
   scheduledFor: z.string().datetime(),
   clientMessageId: z.string().min(1).optional(),
+  conversation: conversationDirectiveSchema.optional(),
 })
 
 // PATCH allows any subset of editable fields plus a required
@@ -73,6 +74,7 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
         metadata: data.metadata ?? null,
         scheduledFor: new Date(data.scheduledFor),
         clientMessageId: data.clientMessageId ?? null,
+        conversationDirective: data.conversation ?? null,
       })
 
       res.status(201).json({ scheduled })

@@ -52,6 +52,7 @@ function fakeScheduled(overrides: Partial<ScheduledMessage> = {}): ScheduledMess
     contentMarkdown: "hello",
     attachmentIds: [],
     metadata: null,
+    conversationDirective: null,
     scheduledFor: FUTURE,
     status: ScheduledMessageStatuses.PENDING,
     sentMessageId: null,
@@ -112,6 +113,7 @@ describe("ScheduledMessagesService.schedule", () => {
         contentMarkdown: "x",
         attachmentIds: [],
         metadata: null,
+        conversationDirective: null,
         scheduledFor: FUTURE,
         clientMessageId: null,
       })
@@ -133,6 +135,7 @@ describe("ScheduledMessagesService.schedule", () => {
         contentMarkdown: "x",
         attachmentIds: [],
         metadata: null,
+        conversationDirective: null,
         scheduledFor: FUTURE,
         clientMessageId: null,
       })
@@ -155,6 +158,7 @@ describe("ScheduledMessagesService.schedule", () => {
         contentMarkdown: "x",
         attachmentIds: [],
         metadata: null,
+        conversationDirective: null,
         scheduledFor: FUTURE,
         clientMessageId: null,
       })
@@ -177,6 +181,7 @@ describe("ScheduledMessagesService.schedule", () => {
       contentMarkdown: "x",
       attachmentIds: [],
       metadata: null,
+      conversationDirective: null,
       scheduledFor: FUTURE,
       clientMessageId: "cli_1",
     })
@@ -205,6 +210,7 @@ describe("ScheduledMessagesService.schedule", () => {
       contentMarkdown: "hello",
       attachmentIds: [],
       metadata: null,
+      conversationDirective: null,
       scheduledFor: FUTURE,
       clientMessageId: null,
     })
@@ -548,5 +554,47 @@ describe("ScheduledMessagesService.fire (worker entry)", () => {
     const call = (createMessage as any).mock.calls[0][0]
     expect(call.clientMessageId).toBe(`scheduled:${SCHEDULED_ID}`)
     expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "scheduled_message:sent", expect.any(Object))
+  })
+
+  it("forwards a stored conversation directive to createMessage so a scheduled reply files into its conversation", async () => {
+    const createMessage = mock(async () => ({
+      id: "msg_42",
+      streamId: STREAM_ID,
+      sequence: 1n,
+      authorId: USER_ID,
+      authorType: "user" as const,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      replyCount: 0,
+      clientMessageId: null,
+      sentVia: null,
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: NOW,
+    }))
+    const service = setupService({ createMessage } as unknown as EventService)
+    const due = new Date(Date.now() - 1_000)
+    const row = fakeScheduled({
+      scheduledFor: due,
+      conversationDirective: { intent: "existing", conversationId: "conv_99" },
+    })
+    spyOn(ScheduledMessagesRepository, "findByIdScoped").mockResolvedValue(row)
+    spyOn(ScheduledMessagesRepository, "tryStartSend").mockResolvedValue({
+      ...row,
+      status: ScheduledMessageStatuses.SENDING,
+    })
+    spyOn(ScheduledMessagesRepository, "markSent").mockResolvedValue({
+      ...row,
+      status: ScheduledMessageStatuses.SENT,
+      sentMessageId: "msg_42",
+    })
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.fire({ workspaceId: WORKSPACE_ID, scheduledMessageId: SCHEDULED_ID })
+
+    const call = (createMessage as any).mock.calls[0][0]
+    expect(call.conversation).toEqual({ intent: "existing", conversationId: "conv_99" })
   })
 })

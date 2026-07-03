@@ -1,6 +1,11 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { ScheduledMessageStatuses, type ScheduledMessageStatus, type JSONContent } from "@threa/types"
+import {
+  ScheduledMessageStatuses,
+  type ScheduledMessageStatus,
+  type JSONContent,
+  type ConversationDirective,
+} from "@threa/types"
 
 interface ScheduledMessageRow {
   id: string
@@ -12,6 +17,7 @@ interface ScheduledMessageRow {
   content_markdown: string
   attachment_ids: string[]
   metadata: Record<string, string> | null
+  conversation_directive: ConversationDirective | null
   scheduled_for: Date
   status: string
   sent_message_id: string | null
@@ -36,6 +42,13 @@ export interface ScheduledMessage {
   contentMarkdown: string
   attachmentIds: string[]
   metadata: Record<string, string> | null
+  /**
+   * Declared conversation for the delivered message ("Reply in conversation"
+   * armed at schedule time), forwarded to `EventService.createMessage` at fire
+   * time. Null → the async extractor infers the conversation, same as a live
+   * send with no directive.
+   */
+  conversationDirective: ConversationDirective | null
   scheduledFor: Date
   status: ScheduledMessageStatus
   sentMessageId: string | null
@@ -74,6 +87,7 @@ export interface InsertScheduledMessageParams {
   contentMarkdown: string
   attachmentIds: string[]
   metadata: Record<string, string> | null
+  conversationDirective: ConversationDirective | null
   scheduledFor: Date
   clientMessageId: string | null
 }
@@ -86,7 +100,7 @@ export interface ListScheduledOpts {
 }
 
 const COLUMNS =
-  "id, workspace_id, user_id, stream_id, parent_message_id, content_json, content_markdown, attachment_ids, metadata, scheduled_for, status, sent_message_id, last_error, queue_message_id, edit_active_until, client_message_id, retry_count, version, created_at, updated_at, status_changed_at"
+  "id, workspace_id, user_id, stream_id, parent_message_id, content_json, content_markdown, attachment_ids, metadata, conversation_directive, scheduled_for, status, sent_message_id, last_error, queue_message_id, edit_active_until, client_message_id, retry_count, version, created_at, updated_at, status_changed_at"
 
 function mapRow(row: ScheduledMessageRow): ScheduledMessage {
   return {
@@ -99,6 +113,7 @@ function mapRow(row: ScheduledMessageRow): ScheduledMessage {
     contentMarkdown: row.content_markdown,
     attachmentIds: Array.isArray(row.attachment_ids) ? row.attachment_ids : [],
     metadata: row.metadata,
+    conversationDirective: row.conversation_directive,
     scheduledFor: row.scheduled_for,
     status: row.status as ScheduledMessageStatus,
     sentMessageId: row.sent_message_id,
@@ -127,7 +142,7 @@ export const ScheduledMessagesRepository = {
       INSERT INTO scheduled_messages (
         id, workspace_id, user_id, stream_id, parent_message_id,
         content_json, content_markdown, attachment_ids, metadata,
-        scheduled_for, status, client_message_id
+        conversation_directive, scheduled_for, status, client_message_id
       )
       VALUES (
         ${params.id},
@@ -139,6 +154,7 @@ export const ScheduledMessagesRepository = {
         ${params.contentMarkdown},
         ${JSON.stringify(params.attachmentIds)}::jsonb,
         ${params.metadata ? JSON.stringify(params.metadata) : null}::jsonb,
+        ${params.conversationDirective ? JSON.stringify(params.conversationDirective) : null}::jsonb,
         ${params.scheduledFor},
         ${ScheduledMessageStatuses.PENDING},
         ${params.clientMessageId}
