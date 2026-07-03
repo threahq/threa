@@ -89,7 +89,11 @@ export function buildSharedMessageHref(params: SharedMessageHref): string {
 export function parseSharedMessageHref(href: string): SharedMessageHref | null {
   if (!href.startsWith("shared-message:")) return null
   const parts = href.slice("shared-message:".length).split("/")
-  if (parts.length < 2) return null
+  // Exactly the 2-segment (legacy / in-stream) or 3-segment (conversation
+  // origin) shapes `buildSharedMessageHref` emits — reject anything longer so a
+  // malformed href can't silently drop trailing data, matching the strictness
+  // of the regex-anchored `parseSharedMessageLine` in markdown.ts.
+  if (parts.length < 2 || parts.length > 3) return null
   return { streamId: parts[0], messageId: parts[1], conversationId: parts[2] || undefined }
 }
 

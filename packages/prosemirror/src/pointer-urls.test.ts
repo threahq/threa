@@ -85,9 +85,12 @@ describe("shared-message href", () => {
     })
   })
 
-  it("returns null for a non-shared-message href or a single segment", () => {
+  it("returns null for a non-shared-message href, a single segment, or too many segments", () => {
     expect(parseSharedMessageHref("memo:memo_1")).toBeNull()
     expect(parseSharedMessageHref("shared-message:stream_1")).toBeNull()
+    // A malformed 4-segment href is rejected outright rather than silently
+    // dropping the trailing data (parser-strictness parity with markdown.ts).
+    expect(parseSharedMessageHref("shared-message:stream_1/msg_1/conv_1/extra")).toBeNull()
   })
 })
 
