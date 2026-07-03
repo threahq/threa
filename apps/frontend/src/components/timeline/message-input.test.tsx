@@ -638,6 +638,51 @@ describe("MessageInput", () => {
         })
       )
       expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      // Same-stream (default mock): the scheduled reply files where the strip
+      // promised, so no divergence signal — success stays silent (INV-63).
+      expect(infoToastSpy).not.toHaveBeenCalled()
+    })
+
+    it("signals the deferred outcome when scheduling an armed reply whose conversation drifted into a thread", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("schedule this drifted reply")
+
+      const { rerender } = render(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      // Arm same-stream: inline strip, route latched, no redirect.
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      // A background update moves the conversation into a thread. The latch keeps
+      // the strip inline (no eviction), but the last-active stream is now the thread.
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
+        post: {
+          conversation: { id: "conv_1", streamId, topicSummary: "Pizza plans" },
+          recentMessages: [{ streamId: "thread_789" }],
+        },
+        isLoading: false,
+        notFound: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>)
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+
+      await act(async () => {
+        await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
+      })
+
+      // Directive still forwarded (files into the conversation by id)...
+      expect(mockScheduleMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ conversation: { intent: "existing", conversationId: "conv_1" } })
+      )
+      // ...but the divergence from the live send (which redirects to the panel) is
+      // signalled — the scheduled reply lands flat here, not in the live thread.
+      expect(infoToastSpy).toHaveBeenCalled()
     })
 
     it("schedules with no directive when the composer isn't armed", async () => {

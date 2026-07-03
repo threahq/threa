@@ -715,6 +715,16 @@ function MessageInputComponent({
       const attachments = extractUploadedAttachments(normalizedContent)
       const attachmentIds = attachments.map((a) => a.id)
 
+      // A scheduled reply whose conversation isn't confirmed live in THIS stream
+      // (thread-live, or the projection hasn't resolved) behaves differently from
+      // the same arm on the live send: `handleSubmit` redirects that case into the
+      // conversation panel (thread-follow), but a deferred send can't follow a live
+      // thread, so it always attaches by id and lands flat in this stream. Same
+      // guard boundary as handleSubmit (line ~635); used only to signal the
+      // divergence below so the strip's "Replying in <topic>" doesn't silently mean
+      // something different once scheduled.
+      const filesFlatIntoConversation = conversationReply !== null && conversationReplyLastActiveStreamId !== streamId
+
       try {
         composer.setContent(EMPTY_DOC)
         setExpanded(false)
@@ -736,6 +746,14 @@ function MessageInputComponent({
         setConversationReply(null)
         composer.resolveDraft()
         composer.clearAttachments()
+        // Signal the deferred, non-obvious outcome: the reply is filed into its
+        // conversation but lands in this stream rather than following the live
+        // thread (INV-63 deferred-action carve-out — not a happy-path success
+        // toast; the same-stream case stays silent, the Scheduled page is the
+        // visible result there).
+        if (filesFlatIntoConversation) {
+          toast.info("Scheduled — this reply will file into the conversation when it sends.")
+        }
       } catch (err) {
         composer.setContent(liveContent)
         const message = err instanceof Error ? err.message : "Could not schedule message"
@@ -744,7 +762,7 @@ function MessageInputComponent({
         composer.setIsSending(false)
       }
     },
-    [composer, scheduleMessageMutation, streamId, conversationReply]
+    [composer, scheduleMessageMutation, streamId, conversationReply, conversationReplyLastActiveStreamId]
   )
 
   if (disabled && disabledReason) {
