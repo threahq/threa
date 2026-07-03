@@ -18,6 +18,7 @@ import {
   type RecordSealedStepsResult,
 } from "../bot-runtimes"
 import { authorizeSealedCallback, finalizeSealedStep } from "./sealed-callbacks"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { AgentSessionRepository } from "../agents"
 import { BotRepository } from "./bot-repository"
@@ -179,6 +180,17 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
       claim.responseStreamId
     )
     if (!accessible) throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
+    // INV-E1/INV-E7 at the plaintext step sink: a plaintext trace step must
+    // never land in an E2E stream (`agent_session_steps.content` would store
+    // cleartext). Sealed turns use `/sealed-steps`; the only caller that reaches
+    // here on an E2E stream is a session-control invocation, which carries no
+    // sealed context — its steps are best-effort, so a rejection drops cleanly.
+    if (await E2eStreamsRepository.isE2eStream(pool, params.workspaceId, claim.responseStreamId)) {
+      throw new HttpError("Stream is end-to-end encrypted; use the sealed-steps endpoint", {
+        status: 400,
+        code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      })
+    }
     const [bot, runtimePresence] = await Promise.all([
       BotRepository.findById(pool, params.workspaceId, params.botId),
       botRuntimeService.findPresenceByInstance({

@@ -138,6 +138,37 @@ describe("public API E2E-stream plaintext gate", () => {
     expect(createMessageInTransaction).not.toHaveBeenCalled()
   })
 
+  it("rejects a plaintext trace step targeting an E2E stream with 400 (INV-E7 step sink)", async () => {
+    const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const findById = spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    const botRuntimeService = {
+      findActiveClaim: mock(() =>
+        Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", sourceMessageId: "msg_t" })
+      ),
+    } as unknown as PublicApiDeps["botRuntimeService"]
+    const botChannelService = {
+      isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
+    } as unknown as PublicApiDeps["botChannelService"]
+    const handlers = createHandlers({ botRuntimeService, botChannelService })
+
+    const req = {
+      workspaceId: "ws_1",
+      params: { invocationId: "inv_1" },
+      botApiKey: { botId: "bot_1" },
+      body: { instanceId: "inst_1", claimToken: "tok_1", stepType: "tool_call", content: "$ echo leaked" },
+    } as unknown as Request
+
+    await expect(handlers.recordBotInvocationStep(req, createResponse())).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+    })
+    expect(isE2e).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1")
+    // The gate fires before the trace projector / appendStep runs, so no
+    // plaintext step content lands in the E2E stream (BotRepository.findById is
+    // only reached after the gate — never called here).
+    expect(findById).not.toHaveBeenCalled()
+  })
+
   it("lets a plaintext sendMessage into a non-E2E stream through to createMessage", async () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const createMessage = mock(() =>

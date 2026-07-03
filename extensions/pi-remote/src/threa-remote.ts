@@ -1738,19 +1738,42 @@ async function completeInvocationWithMarkdown(
 ): Promise<void> {
   if (!config) return
   await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: getInvocationInstanceId(invocation),
-      claimToken: invocation.claimToken,
-      finalMessageMarkdown,
-      metadata: {
-        "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": getInvocationInstanceId(invocation),
-        "pi.remote.sessionControl": "true",
-      },
-    }),
-  })
+  const instanceId = getInvocationInstanceId(invocation)
+  try {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        finalMessageMarkdown,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+        },
+      }),
+    })
+  } catch (error) {
+    // A session-control ack is plaintext; an E2E scratchpad rejects it (the ack
+    // has no sealed wire yet). Close the invocation with noResponse so the
+    // command doesn't show as failed — it already ran locally, and the
+    // command:completed event still lands. Sealed acks are follow-up work.
+    if (!String(error).includes("E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        noResponse: true,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+          "pi.remote.noResponse": "true",
+        },
+      }),
+    }).catch(() => undefined)
+  }
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
