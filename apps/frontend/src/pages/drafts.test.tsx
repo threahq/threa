@@ -1,6 +1,7 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { render, screen, userEvent, within } from "@/test"
+import { toast } from "sonner"
+import { render, screen, userEvent, within, waitFor } from "@/test"
 import { DraftsPage } from "./drafts"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -47,7 +48,8 @@ function renderPage() {
 describe("DraftsPage batch delete", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    deleteDraft.mockClear()
+    deleteDraft.mockReset()
+    deleteDraft.mockResolvedValue(undefined)
     mockDrafts([
       draft({ id: "a", displayName: "Alpha" }),
       draft({ id: "b", displayName: "Bravo" }),
@@ -140,6 +142,25 @@ describe("DraftsPage batch delete", () => {
     expect(deleteDraft.mock.calls.map((c) => c[0]).sort()).toEqual(["a", "b", "c"])
     // Batch mode exits after the delete — the Select control returns.
     expect(await screen.findByRole("button", { name: "Select drafts" })).toBeInTheDocument()
+  })
+
+  it("reports the count of drafts that failed to delete", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockImplementation(() => "err")
+    deleteDraft.mockImplementation(async (id: string) => {
+      if (id === "b") throw new Error("boom")
+    })
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
+    await userEvent.click(screen.getByRole("button", { name: "Select all" }))
+    await userEvent.click(screen.getByRole("button", { name: "Delete selected drafts" }))
+    const dialog = await screen.findByRole("alertdialog")
+    await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }))
+
+    // Every draft is still attempted (allSettled); the toast reports the real
+    // failed count, not a generic message.
+    expect(deleteDraft).toHaveBeenCalledTimes(3)
+    await waitFor(() => expect(errorToast).toHaveBeenCalledWith("Failed to delete 1 of 3 drafts"))
   })
 
   it("leaves batch mode via Cancel without deleting anything", async () => {
