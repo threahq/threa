@@ -24,6 +24,9 @@ const RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 // bootstrap callback.
 const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 const MAX_CLAIMS_PER_DRAIN = 20
+// Server-side cap on frames per bot:invocation:steps call (`stepsFrameSchema`
+// in apps/backend/src/features/bot-runtimes/socket-handler.ts).
+const MAX_STEP_FRAMES_PER_CALL = 50
 const MAX_CONTEXT_MESSAGES = 12
 const MAX_MESSAGE_CHARS = 2_000
 // Recent messages to scan for inbound attachments. The trigger message is always
@@ -743,9 +746,12 @@ export class RemoteSession {
   async recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean> {
     const entry = this.inflight.get(invocationId)
     if (!entry) return false
-    if (frames.length > 0) {
+    // The server rejects >50 frames per bot:invocation:steps call, so a large
+    // batch (e.g. a transcript replay after late binding) ships in chunks.
+    for (let start = 0; start < frames.length; start += MAX_STEP_FRAMES_PER_CALL) {
+      const chunk = frames.slice(start, start + MAX_STEP_FRAMES_PER_CALL)
       await this.transport
-        .recordSteps(invocationId, entry.invocation.claimToken, frames, statusText ?? this.runtime.busyStatusText)
+        .recordSteps(invocationId, entry.invocation.claimToken, chunk, statusText ?? this.runtime.busyStatusText)
         .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
     }
     return true
