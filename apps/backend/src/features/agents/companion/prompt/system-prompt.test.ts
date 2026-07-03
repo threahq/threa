@@ -159,7 +159,7 @@ describe("buildSystemPrompt", () => {
         },
       },
       null,
-      undefined,
+      { kind: "follow_up", followUpId: "agfu_01" },
       undefined,
       null,
       [],
@@ -195,6 +195,45 @@ describe("buildSystemPrompt", () => {
 
     expect(provided).not.toContain("## Scheduled follow-up firing now")
     expect(explicitNull).not.toContain("## Scheduled follow-up firing now")
+  })
+
+  test("injects the mention invocation section, naming the mentioner, for a mention turn", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, { kind: "mention" }, "Kris")
+
+    expect(prompt).toContain("## Invocation Context")
+    expect(prompt).toContain("You were explicitly @mentioned by **Kris**")
+  })
+
+  test("omits the mention invocation section for a catch-up turn", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, { kind: "catch_up" })
+
+    expect(prompt).not.toContain("## Invocation Context")
+  })
+
+  test("injects the supersede reconciliation section last for a supersede rerun", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, {
+      kind: "supersede_rerun",
+      supersedesSessionId: "agsess_prev",
+      rerunContext: {
+        cause: "invoking_message_edited",
+        editedMessageId: "msg_edited",
+        editedMessageBefore: "book me a flight",
+        editedMessageAfter: "book me a train",
+      },
+    })
+
+    expect(prompt).toContain("## Superseded Session Reconciliation")
+    expect(prompt).toContain("Edited message ID: msg_edited")
+    expect(prompt).toContain('After edit: "book me a train"')
+    expect(prompt).toContain("exactly one of `keep_response` or `send_message`")
+    // Reconciliation lands last so its final-decision directive is most salient.
+    expect(prompt.indexOf("## Superseded Session Reconciliation")).toBeGreaterThan(prompt.indexOf("## Response Style"))
+  })
+
+  test("omits the supersede reconciliation section for a catch-up turn", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, { kind: "catch_up" })
+
+    expect(prompt).not.toContain("## Superseded Session Reconciliation")
   })
 
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {

@@ -4,6 +4,7 @@ import { JobQueues } from "../../lib/queue"
 import { AgentTriggers } from "@threa/types"
 import type { QueueManager } from "../../lib/queue"
 import type { PersonaAgentInput, PersonaAgentResult } from "./persona-agent"
+import { resolveTurnPurpose } from "./turn-purpose"
 import { StreamEventRepository } from "../streams"
 import { logger } from "../../lib/logger"
 
@@ -35,21 +36,19 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
   const { agent, serverId, pool, jobQueue } = deps
 
   return async (job) => {
-    const { workspaceId, streamId, messageId, personaId, trigger, supersedesSessionId, rerunContext, followUpId } =
-      job.data
+    const { workspaceId, streamId, messageId, personaId, trigger, followUpId } = job.data
 
     logger.info({ jobId: job.id, streamId, messageId, personaId, trigger, followUpId }, "Processing persona agent job")
 
+    // Map the in-flight wire payload to the turn's purpose at the boundary — the
+    // job fields stay as-is so already-enqueued rows still decode (roadmap 1.5).
     const result = await agent.run({
       workspaceId,
       streamId,
       messageId,
       personaId,
       serverId,
-      trigger,
-      supersedesSessionId,
-      rerunContext,
-      followUpId,
+      purpose: resolveTurnPurpose(job.data),
     })
 
     if (result.status === "failed") {

@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { ModelMessage } from "ai"
 import type { AgentTool } from "@threa/agent-runtime"
 import type { UserPreferences } from "@threa/types"
-import { AgentTriggers, AuthorTypes, StreamTypes } from "@threa/types"
+import { AuthorTypes, StreamTypes } from "@threa/types"
 import type { UserPreferencesService } from "../../user-preferences"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository } from "../../workspaces"
@@ -21,6 +21,7 @@ import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStit
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
 import { computeAgentAccessSpec } from "../researcher/access-spec"
+import type { TurnPurpose } from "../turn-purpose"
 import { SearchRepository } from "../../search"
 import { logger } from "../../../lib/logger"
 import { escapeXmlAttr } from "../../../lib/xml"
@@ -37,7 +38,8 @@ export interface ContextParams {
   stream: Stream
   messageId: string
   persona: Persona
-  trigger?: typeof AgentTriggers.MENTION
+  /** Why this turn is running (roadmap 1.5) — drives mentionerName resolution here. */
+  purpose: TurnPurpose
   /**
    * Per-turn hydration policy, resolved at the dispatch (`Hydrate`) seam by
    * `resolveContextWindowPolicy`. Fixes the window budget and whether prior
@@ -62,8 +64,13 @@ export interface AgentContext {
    * access, integrations, researcher callbacks — come from this context), and
    * the prompt's tool sections must reflect exactly what was wired, never a
    * parallel enabled-tools list (INV-44-adjacent: one source of truth).
+   *
+   * Takes the *effective* purpose at call time — a supersede rerun whose target
+   * session vanished, or a follow-up whose row failed to load, is passed as
+   * `catch_up` so its prompt section (and derived flags) match the behavior the
+   * turn actually takes. The plan/row aren't known until after context build.
    */
-  composeSystemPrompt: (tools: AgentTool[]) => string
+  composeSystemPrompt: (tools: AgentTool[], purpose: TurnPurpose) => string
   messages: ModelMessage[]
   triggerMessage: Message | null
   invokingUserId: string | undefined
@@ -109,7 +116,7 @@ async function resolveScratchpadCustomPrompt(
  */
 export async function buildAgentContext(deps: ContextDeps, params: ContextParams): Promise<AgentContext> {
   const { db, userPreferencesService, conversationSummaryService } = deps
-  const { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime, followUp } = params
+  const { workspaceId, streamId, stream, messageId, persona, purpose, policy, currentTime, followUp } = params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
   const invokingUserId = triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : undefined
@@ -233,7 +240,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   for (const [id, name] of resolvedNames) authorNames.set(id, name)
 
   let mentionerName: string | undefined
-  if (trigger === AgentTriggers.MENTION && triggerMessage?.authorType === AuthorTypes.USER) {
+  if (purpose.kind === "mention" && triggerMessage?.authorType === AuthorTypes.USER) {
     const mentioner = await UserRepository.findById(db, workspaceId, triggerMessage.authorId)
     mentionerName = mentioner?.name ?? undefined
   }
@@ -371,12 +378,12 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       ? formatSpawnedFromContext(crossSurfaceStitch, authorNames, streamContext.temporal)
       : null
 
-  const composeSystemPrompt = (tools: AgentTool[]): string => {
+  const composeSystemPrompt = (tools: AgentTool[], effectivePurpose: TurnPurpose): string => {
     let systemPrompt = buildSystemPrompt(
       persona,
       streamContext,
       scratchpadCustomPrompt,
-      trigger,
+      effectivePurpose,
       mentionerName,
       rollingConversationSummary,
       tools,

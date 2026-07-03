@@ -427,7 +427,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       messageId,
       personaId,
       serverId: `eval-server-${ulid()}`,
-      trigger: undefined, // Companion mode
+      purpose: { kind: "catch_up" }, // Companion mode
     }
 
     // Run the agent!
