@@ -262,7 +262,11 @@ export function DraftsPage() {
         <main
           className="flex-1 overflow-hidden"
           onKeyDown={(e) => {
-            if (drafts.length === 0) return
+            // Batch mode is driven entirely by row focus — each option is
+            // focusable and handles Enter/Space itself, so the highlight is
+            // always the focused row. The page-level arrow/Enter nav below is
+            // the browse-and-open model, active only when not selecting.
+            if (drafts.length === 0 || batchMode) return
 
             const isMod = e.metaKey || e.ctrlKey
 
@@ -278,12 +282,7 @@ export function DraftsPage() {
               case "Enter": {
                 e.preventDefault()
                 const item = items[selectedIndex]
-                if (!item) break
-                if (batchMode) {
-                  toggleSelect(item.id)
-                } else {
-                  handleSelectItem(item, isMod)
-                }
+                if (item) handleSelectItem(item, isMod)
                 break
               }
             }

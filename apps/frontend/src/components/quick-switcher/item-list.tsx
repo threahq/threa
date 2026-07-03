@@ -192,7 +192,11 @@ export function ItemList({
               selectionEnabled ? "cursor-pointer" : "cursor-default",
               // ring-inset keeps the checked outline from nudging neighbours (INV-21).
               isChecked && "bg-primary/[0.07] ring-1 ring-primary/45 ring-inset",
-              !isChecked && (isHighlighted ? "bg-muted" : "hover:bg-muted")
+              // In selection mode the highlight tracks real DOM focus, so a
+              // keyboard user sees which focusable row Enter/Space will toggle,
+              // and it can never desync from a separate index-based highlight.
+              !isChecked && selectionEnabled && "hover:bg-muted focus:bg-muted",
+              !isChecked && !selectionEnabled && (isHighlighted ? "bg-muted" : "hover:bg-muted")
             )
 
             // In batch mode a row never navigates, so it renders as a toggle
@@ -231,9 +235,8 @@ export function ItemList({
                     ? (e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault()
-                          // Stop the row's Enter from also reaching a container
-                          // keydown handler (e.g. the drafts page's) and toggling
-                          // the highlighted index — that would double-fire.
+                          // Keep the toggle from bubbling to an ancestor keydown
+                          // handler that might act on the same key.
                           e.stopPropagation()
                           selection?.onToggle(item.id)
                         }
