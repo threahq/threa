@@ -178,5 +178,19 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
     list(_req: Request, res: Response) {
       res.json({ commands: commandAvailabilityService.listWorkspaceCommands() })
     },
+
+    /**
+     * List the commands available in a specific stream — the workspace set plus
+     * any session-control commands the stream's linked runtime advertises. This
+     * is what the composer's slash menu renders.
+     */
+    async listForStream(req: Request, res: Response) {
+      const commands = await commandAvailabilityService.listStreamCommands({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        streamId: req.params.streamId!,
+      })
+      res.json({ commands })
+    },
   }
 }

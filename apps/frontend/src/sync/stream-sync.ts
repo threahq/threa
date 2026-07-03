@@ -14,6 +14,7 @@ import {
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import type { SyncEventSource } from "./socket-event-gate"
+import { commandsApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import type { QueryClient } from "@tanstack/react-query"
@@ -26,6 +27,11 @@ import { dropReactionActivity, rehomeActivities } from "./unread-counters"
 
 export interface CachedStreamBootstrap extends StreamBootstrap {
   windowVersion: number
+}
+
+/** True when a runtime in this state contributes session-control commands to the stream's command set (mirrors the backend's available/busy gate). */
+function commandsLive(presence: BotRuntimePresenceSummary | null | undefined): boolean {
+  return presence?.status === "available" || presence?.status === "busy"
 }
 
 function preserveDmDisplayName(nextStream: Stream, previousStream?: Stream): Stream {
@@ -1035,6 +1041,14 @@ export function registerStreamSocketHandlers(
     presence: BotRuntimePresenceSummary | null
   }) => {
     if (payload.streamId !== streamId) return
+    // The stream's effective command set follows runtime liveness: a runtime
+    // coming online adds its session-control commands (/steer, /stop, /model…),
+    // one going away removes them. `commands` was computed server-side at
+    // bootstrap time, so on a liveness edge refresh it — otherwise a scratchpad
+    // opened before its agent connected keeps an empty slash menu until the
+    // next full bootstrap. Available↔busy flips (every turn) don't change the
+    // set and must not trigger refetches.
+    let commandsAffected = false
     queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
       if (!old) return old
       const current = old.botRuntimePresence ?? {}
@@ -1050,11 +1064,24 @@ export function registerStreamSocketHandlers(
       ) {
         return old
       }
+      commandsAffected = commandsLive(previous) !== commandsLive(next) || previous?.instanceId !== next?.instanceId
       return {
         ...old,
         botRuntimePresence: { ...current, [payload.botId]: next },
       }
     })
+    if (commandsAffected) void refreshStreamCommands()
+  }
+
+  const refreshStreamCommands = async () => {
+    try {
+      const commands = await commandsApi.listForStream(workspaceId, streamId)
+      queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) =>
+        old ? { ...old, commands } : old
+      )
+    } catch {
+      // Best-effort freshness — the next bootstrap converges the command set.
+    }
   }
 
   socket.on("message:created", handleMessageCreated)
