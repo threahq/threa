@@ -4,8 +4,8 @@ import { die } from "./errors"
 import { findAgent, inventoryPath, readInventory, upsertAgent } from "./inventory"
 import { commandExists, commandPath, output } from "./shell"
 import { ClaudeRuntimeSpawner, PiRuntimeSpawner } from "./spawners"
-import { sendKeys } from "./tmux"
-import type { SpawnOptions } from "./types"
+import { attachedTmuxSession, sendKeys } from "./tmux"
+import type { ManagedAgent, SpawnOptions } from "./types"
 
 function spawnCommand(options: SpawnOptions): string[] {
   const command = ["threa-harnessd", "spawn", options.runtime, "--name", options.name]
@@ -47,6 +47,7 @@ export async function spawnAgent(options: SpawnOptions): Promise<void> {
       branch: result.branch,
       tmuxSession: result.tmuxSession,
       tmuxWindow: result.tmuxWindow,
+      tmuxWindowId: result.tmuxWindowId,
       scratchpadUrl: result.scratchpadUrl,
       status: "online",
       updatedAt: now(),
@@ -74,54 +75,54 @@ export function listAgents(): void {
 
 export function stopAgent(ref: string): void {
   const agent = findAgent(ref)
-  if (!agent.tmuxSession || !agent.tmuxWindow) die(`${agent.name} has no tmux target recorded`)
-  const target = `${agent.tmuxSession}:${agent.tmuxWindow}`
+  const target = tmuxTarget(agent)
   const result = output(["tmux", "kill-window", "-t", target], { allowFailure: true })
   if (result.exitCode !== 0) die(result.stderr.trim() || `tmux kill-window failed for ${target}`)
   upsertAgent({ ...agent, status: "stopped", updatedAt: now() })
   console.log(`harnessd: stopped ${agent.name} (${target})`)
 }
 
-function tmuxTarget(ref: string): { session: string; window: string } {
-  const agent = findAgent(ref)
-  if (!agent.tmuxSession || !agent.tmuxWindow) die(`${agent.name} has no tmux target recorded`)
-  return { session: agent.tmuxSession, window: agent.tmuxWindow }
+/** Window id when recorded (durable across renames/collisions), else the legacy session:name target. */
+function tmuxTarget(agent: ManagedAgent): string {
+  if (agent.tmuxWindowId) return agent.tmuxWindowId
+  if (agent.tmuxSession && agent.tmuxWindow) return `${agent.tmuxSession}:${agent.tmuxWindow}`
+  return die(`${agent.name} has no tmux target recorded`)
 }
 
 /** Send Esc to interrupt the agent's current turn (Claude Code / Pi) without killing the window. */
 export function interruptAgent(ref: string): void {
-  const { session, window } = tmuxTarget(ref)
-  sendKeys(session, window, ["Escape"])
-  console.log(`harnessd: interrupted ${session}:${window}`)
+  const target = tmuxTarget(findAgent(ref))
+  sendKeys(target, ["Escape"])
+  console.log(`harnessd: interrupted ${target}`)
 }
 
 /** Interrupt the current turn, then (if given) type a follow-up and submit it. */
 export function steerAgent(ref: string, text: string): void {
-  const { session, window } = tmuxTarget(ref)
-  sendKeys(session, window, ["Escape"])
+  const target = tmuxTarget(findAgent(ref))
+  sendKeys(target, ["Escape"])
   if (text) {
     // Esc restores the interrupted message into the input box; clear it (Ctrl-U)
     // before typing so the follow-up doesn't concatenate with that residue and
     // submit as a plain prompt.
-    sendKeys(session, window, ["C-u"])
-    sendKeys(session, window, ["-l", text])
-    sendKeys(session, window, ["Enter"])
+    sendKeys(target, ["C-u"])
+    sendKeys(target, ["-l", text])
+    sendKeys(target, ["Enter"])
   }
-  console.log(`harnessd: steered ${session}:${window}`)
+  console.log(`harnessd: steered ${target}`)
 }
 
 /** Raw `tmux send-keys` passthrough to the agent's window (tokens follow tmux rules). */
 export function sendKeysToAgent(ref: string, keys: string[]): void {
   if (keys.length === 0) die("keys requires at least one key or token")
-  const { session, window } = tmuxTarget(ref)
-  sendKeys(session, window, keys)
-  console.log(`harnessd: sent keys to ${session}:${window}`)
+  const target = tmuxTarget(findAgent(ref))
+  sendKeys(target, keys)
+  console.log(`harnessd: sent keys to ${target}`)
 }
 
 export function attachAgent(ref: string): void {
   const agent = findAgent(ref)
-  if (!agent.tmuxSession || !agent.tmuxWindow) die(`${agent.name} has no tmux target recorded`)
-  const target = `${agent.tmuxSession}:${agent.tmuxWindow}`
+  if (!agent.tmuxSession) die(`${agent.name} has no tmux session recorded`)
+  const target = tmuxTarget(agent)
   if (process.env.TMUX) {
     const result = Bun.spawnSync(["tmux", "switch-client", "-t", target], { stdout: "inherit", stderr: "pipe" })
     if (result.exitCode !== 0) die(result.stderr.toString().trim() || `tmux switch-client failed for ${target}`)
@@ -148,9 +149,16 @@ export function doctor(): void {
     ["pi", Boolean(process.env.THREA_HARNESSD_PI_BIN || commandPath("pi")), "needed for Pi agents"],
     ["claude", Boolean(process.env.THREA_HARNESSD_CLAUDE_BIN || commandPath("claude")), "needed for Claude agents"],
     [
-      "tmux session 0",
+      "tmux attached session",
+      Boolean(attachedTmuxSession()),
+      attachedTmuxSession()
+        ? `windows spawn into '${attachedTmuxSession()}'`
+        : "no attached session; falls back to session '0'",
+    ],
+    [
+      "tmux session 0 (fallback)",
       output(["tmux", "has-session", "-t", "0"], { allowFailure: true }).exitCode === 0,
-      "default target",
+      "used when nothing is attached",
     ],
   ]
   for (const [name, ok, note] of checks) {

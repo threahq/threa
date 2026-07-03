@@ -16,6 +16,7 @@ interface ManagedAgentRow {
   branch: string | null
   tmux_session: string | null
   tmux_window: string | null
+  tmux_window_id: string | null
   scratchpad_url: string | null
   command_json: string
   created_at: string
@@ -48,6 +49,12 @@ function openInventory(): Database {
       last_output TEXT
     )
   `)
+  // Inventories predating the window-id column: CREATE TABLE IF NOT EXISTS
+  // won't extend an existing table, so add the column in place.
+  const columns = db.query("PRAGMA table_info(managed_agents)").all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === "tmux_window_id")) {
+    db.exec("ALTER TABLE managed_agents ADD COLUMN tmux_window_id TEXT")
+  }
   return db
 }
 
@@ -61,6 +68,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     branch: row.branch ?? undefined,
     tmuxSession: row.tmux_session ?? undefined,
     tmuxWindow: row.tmux_window ?? undefined,
+    tmuxWindowId: row.tmux_window_id ?? undefined,
     scratchpadUrl: row.scratchpad_url ?? undefined,
     command: JSON.parse(row.command_json) as string[],
     createdAt: row.created_at,
@@ -86,8 +94,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       `
       INSERT INTO managed_agents (
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
-        scratchpad_url, command_json, created_at, updated_at, last_output
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tmux_window_id, scratchpad_url, command_json, created_at, updated_at, last_output
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -96,6 +104,7 @@ export function upsertAgent(agent: ManagedAgent): void {
         branch = excluded.branch,
         tmux_session = excluded.tmux_session,
         tmux_window = excluded.tmux_window,
+        tmux_window_id = excluded.tmux_window_id,
         scratchpad_url = excluded.scratchpad_url,
         command_json = excluded.command_json,
         updated_at = excluded.updated_at,
@@ -110,6 +119,7 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.branch ?? null,
       agent.tmuxSession ?? null,
       agent.tmuxWindow ?? null,
+      agent.tmuxWindowId ?? null,
       agent.scratchpadUrl ?? null,
       JSON.stringify(agent.command),
       agent.createdAt,
