@@ -79,6 +79,14 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
 
     console.log("harnessd: installing Claude channel dependencies")
     run(["bun", "install"], { cwd: channelDir })
+    // The channel's `file:` dep on the remote-session SDK links the folder but
+    // does NOT install the SDK's own deps — bun resolves the SDK's imports from
+    // its real path, so it needs its own node_modules. Guarded for worktrees
+    // predating the SDK split.
+    const sdkDir = join(worktree, "extensions", "remote-session")
+    if (existsSync(join(sdkDir, "package.json"))) {
+      run(["bun", "install"], { cwd: sdkDir })
+    }
 
     const scratchpadUrl = await this.prelinkScratchpad(worktree)
     if (scratchpadUrl) console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
