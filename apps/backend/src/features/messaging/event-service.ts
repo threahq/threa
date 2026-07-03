@@ -28,6 +28,7 @@ import { deriveContentMarkdown } from "./content"
 import {
   AuthorTypes,
   CompanionModes,
+  ConversationIntents,
   StreamTypes,
   Visibilities,
   draftStreamScope,
@@ -75,6 +76,19 @@ export interface MessageCreatedPayload {
   sentVia?: string
   /** External references attached by the sender (string->string). Omitted when empty. */
   metadata?: Record<string, string>
+  /**
+   * The conversation this message declared at send time via an `existing`
+   * directive (a board/panel reply, or a future "reply in conversation" action)
+   * — board-view-design.md §"Conversations as soft threads", Mechanism C. Lets
+   * the flat-timeline provenance chip render membership the instant the message
+   * arrives, without waiting for the async conversation list to load. Only the
+   * id is carried (messaging stays decoupled from conversation internals — no
+   * topic read here); the frontend resolves the topic label from the same-root
+   * conversation list the timeline already loads. Absent for `new`/thread-from-
+   * message declarations (a fresh topic is chip-less) and for messages the async
+   * extractor classifies later (Mechanism A's membership map still covers those).
+   */
+  declaredConversationId?: string
   /**
    * Populated at bootstrap enrichment time when this message has at least one
    * non-deleted reply. Not present on initial `message_created` emission (the
@@ -546,6 +560,16 @@ export class EventService {
     // Non-empty metadata only — keep payloads and projections clean of `{}`.
     const metadata = params.metadata && Object.keys(params.metadata).length > 0 ? params.metadata : undefined
 
+    // A message that declares an EXISTING conversation carries that id on its
+    // event payload so the flat-timeline provenance chip renders membership the
+    // instant the message lands (board-view-design.md Mechanism C), instead of
+    // waiting for the async conversation list. The id is known here without any
+    // conversation read; the assigner below still row-locks + validates it (a
+    // cross-root/stale id rolls back the whole send). `new`/thread-from-message
+    // declarations are chip-less openers, so only `existing` is stamped.
+    const declaredConversationId =
+      params.conversation?.intent === ConversationIntents.EXISTING ? params.conversation.conversationId : undefined
+
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
       streamId: params.streamId,
@@ -559,6 +583,7 @@ export class EventService {
         ...(params.sessionId && { sessionId: params.sessionId }),
         ...(params.clientMessageId && { clientMessageId: params.clientMessageId }),
         ...(params.sentVia && { sentVia: params.sentVia }),
+        ...(declaredConversationId && { declaredConversationId }),
         ...(metadata && { metadata }),
         ...(params.ciphertext && { ciphertext: params.ciphertext.toString("base64") }),
         ...(params.envelope !== undefined && { envelope: params.envelope }),

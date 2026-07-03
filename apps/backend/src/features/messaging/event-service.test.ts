@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
+import { AttachmentSafetyStatuses, ConversationIntents, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 import { EventService } from "./event-service"
 import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
@@ -760,6 +760,106 @@ describe("EventService.createMessage metadata propagation", () => {
 
     const insertParams = (MessageRepository.insert as any).mock.calls[0][1]
     expect(insertParams.metadata).toBeUndefined()
+  })
+})
+
+describe("EventService.createMessage conversation declaration (Mechanism C)", () => {
+  const baseParams = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    authorId: "usr_1",
+    authorType: "user" as const,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "hello",
+  }
+
+  const assignInTransaction = mock(async () => {})
+  const conversationAssigner = { assignInTransaction }
+
+  beforeEach(() => {
+    assignInTransaction.mockClear()
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", type: "scratchpad" } as any)
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: "evt_1",
+      streamId: params.streamId,
+      sequence: 1n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: params.clientMessageId ?? null,
+      sentVia: params.sentVia ?? null,
+      reactions: {},
+      metadata: params.metadata ?? {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "findById").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("stamps declaredConversationId on the payload for an existing-conversation directive and runs the assigner", async () => {
+    const service = new EventService({} as any, conversationAssigner)
+
+    await service.createMessage({
+      ...baseParams,
+      conversation: { intent: ConversationIntents.EXISTING, conversationId: "conv_abc" },
+    })
+
+    expect(StreamEventRepository.insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "message_created",
+        payload: expect.objectContaining({ declaredConversationId: "conv_abc" }),
+      })
+    )
+    expect(assignInTransaction).toHaveBeenCalled()
+  })
+
+  it("omits declaredConversationId for a new-conversation directive — a fresh topic is a chip-less opener", async () => {
+    const service = new EventService({} as any, conversationAssigner)
+
+    await service.createMessage({ ...baseParams, conversation: { intent: ConversationIntents.NEW } })
+
+    const eventPayload = (StreamEventRepository.insert as any).mock.calls[0][1].payload
+    expect(eventPayload).not.toHaveProperty("declaredConversationId")
+    expect(assignInTransaction).toHaveBeenCalled()
+  })
+
+  it("omits declaredConversationId and skips the assigner when the send declares no conversation", async () => {
+    const service = new EventService({} as any, conversationAssigner)
+
+    await service.createMessage({ ...baseParams })
+
+    const eventPayload = (StreamEventRepository.insert as any).mock.calls[0][1].payload
+    expect(eventPayload).not.toHaveProperty("declaredConversationId")
+    expect(assignInTransaction).not.toHaveBeenCalled()
   })
 })
 
