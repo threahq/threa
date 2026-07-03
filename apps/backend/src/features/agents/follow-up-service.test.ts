@@ -145,3 +145,25 @@ describe("AgentFollowUpService.fire", () => {
     expect(queueInsert).not.toHaveBeenCalled()
   })
 })
+
+describe("AgentFollowUpService.getById", () => {
+  afterEach(() => mock.restore())
+
+  it("reads the row workspace-scoped via the pool (roadmap 1.2 context load)", async () => {
+    const row = fakeFollowUp()
+    const findById = spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(row)
+
+    const result = await makeService().getById({ workspaceId: "ws_1", followUpId: "agfu_01" })
+
+    expect(result).toEqual(row)
+    expect(findById.mock.calls[0]?.slice(1)).toEqual(["ws_1", "agfu_01"])
+  })
+
+  it("returns null when the row is gone", async () => {
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(null)
+
+    const result = await makeService().getById({ workspaceId: "ws_1", followUpId: "agfu_missing" })
+
+    expect(result).toBeNull()
+  })
+})

@@ -35,7 +35,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | Step | Deliverable                                          | Status | PR    |
 | ---- | ---------------------------------------------------- | ------ | ----- |
 | 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      | #1138 |
-| 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |       |
+| 1.2  | Follow-up turn invocation (context + prompt)         | ☑      | #1142 |
 | 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☐      |       |
@@ -104,7 +104,14 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 
 **Files:** `persona-agent.ts`, `companion/context.ts`, `companion/prompt/system-prompt.ts`, `companion/session.ts`, possibly a migration for nullable trigger.
 
-**Tests:** integration-style test of the fired job → session created with follow-up context; silent-completion path (model stub returns keep-quiet) produces no message.
+**Deviations (shipped):**
+
+- No `follow_up` trigger enum. The variant is signalled by the additive `followUpId` on the job/`PersonaAgentInput` (same decision as 1.1 — a `trigger` union would touch every `trigger === MENTION` reader). The agent loads the row through a `loadFollowUp` seam (`AgentFollowUpService.getById` → `AgentFollowUpRepository.findById`), bound in `server.ts` like `scheduleFollowUp`.
+- No migration. The synthetic `followup_<id>` `messageId` already serves as `trigger_message_id` (a non-null synthetic string), so `withCompanionSession`'s `findByTriggerMessage` dedup is keyed on it unchanged — nullable trigger wasn't needed.
+- Silent completion reuses the supersede machinery: the follow-up turn sets `allowNoMessageOutput` so `keep_response` is exposed and a "nothing to add" turn returns gracefully instead of the runtime auto-committing filler. The prompt section instructs `send_message` for the check-in or `keep_response` to stay silent.
+- The prompt section ("## Scheduled follow-up firing now") is the fix for the two live staging bugs: it states the turn IS the reminder firing (kills the "I'll ping you then" decline) and forbids re-scheduling the same note (kills the every-cycle re-schedule loop), while still allowing a follow-up for genuinely new future work.
+
+**Tests:** `buildSystemPrompt` follow-up section (present with note + local time + both bug guards; absent otherwise); `AgentFollowUpService.getById` / `AgentFollowUpRepository.findById`; worker threads `followUpId` into `agent.run`. (Full fired-job → live turn is exercised on staging — the DB+queue+AI stack the two bugs were observed in.)
 
 **Done when:** a fired follow-up posts a contextual message referencing the original conversation — or completes silently — with a normal trace.
 

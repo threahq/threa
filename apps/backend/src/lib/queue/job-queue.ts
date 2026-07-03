@@ -48,11 +48,10 @@ export interface PersonaAgentJobData {
   supersedesSessionId?: string
   rerunContext?: AgentSessionRerunContext
   /**
-   * Set when this job was enqueued by a fired follow-up. The turn handling that
-   * reads it (context assembly + "why you woke up" prompt) lands in roadmap 1.2;
-   * 1.1 only emits it so the fire path is identifiable. When present, `messageId`
-   * is synthetic (no real trigger message) and the job runs as a companion-mode
-   * catch-up turn until 1.2 wires the dedicated context.
+   * Set when this job was enqueued by a fired follow-up. `messageId` is synthetic
+   * (no real trigger message); the persona agent loads this follow-up's row and
+   * injects a "why you woke up" prompt section so the turn knows it IS the
+   * scheduled check-in firing (roadmap 1.2).
    */
   followUpId?: string
 }
