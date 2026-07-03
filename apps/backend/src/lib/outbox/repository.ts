@@ -42,6 +42,7 @@ export type OutboxEventType =
   | "stream:read"
   | "stream:read_set"
   | "stream:read_all"
+  | "stream:read_messages"
   | "stream:notification_level_updated"
   | "stream:activity"
   | "attachment:uploaded"
@@ -203,6 +204,15 @@ export interface MessagesMovedOutboxPayload extends StreamScopedPayload {
    * land alongside the move without waiting for a second event.
    */
   parentThreadSummary: import("@threa/types").ThreadSummary | null
+  /**
+   * The SOURCE stream's `message_created` count AFTER the move relocated rows
+   * out of it. The move drops the source's true message ordinal, but no client
+   * applier ever corrects `latestOrdinals` downward (max-merge only), so stale
+   * inflated unread sticks for the session. The client SETs
+   * `latestOrdinals[source]` to this value and recomputes unread — the one
+   * sanctioned non-monotonic latest write (fix A1, sparse-read design).
+   */
+  sourceMessageOrdinal: number
 }
 
 export interface MessageUpdatedOutboxPayload extends StreamScopedPayload {
@@ -478,6 +488,31 @@ export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
    * unread as latestOrdinal - lastReadOrdinal.
    */
   lastReadOrdinal: number
+  /**
+   * The member's ENTIRE sparse read overlay for this stream after the watermark
+   * advance + prune (usually empty — the advance absorbs the run below it). The
+   * client SETs its overlay to this absolute snapshot. See the sparse-read design.
+   */
+  readMessageIds: string[]
+}
+
+/**
+ * The absolute post-write read-state snapshot for one stream, emitted by every
+ * sparse-read overlay write (conversation read/unread). `readMessageIds` is the
+ * ENTIRE overlay after the write (post-compaction) — absolute state, not a delta,
+ * so application is idempotent under the sync log's total order. Author-scoped.
+ */
+export interface StreamReadMessagesOutboxPayload extends WorkspaceScopedPayload {
+  authorId: string
+  streamId: string
+  readMessageIds: string[]
+  lastReadEventId: string | null
+  /** The watermark's per-stream sequence (bigint as string; "0" when no watermark). */
+  lastReadSequence: string
+  lastReadOrdinal: number
+  /** The ids this write marked read (pre-compaction) — drives the client's
+   * message-granular activity drop. Absent on unread/regress writes. */
+  markedMessageIds?: string[]
 }
 
 /**
@@ -495,6 +530,11 @@ export interface StreamReadSetOutboxPayload extends WorkspaceScopedPayload {
   lastReadSequence: string
   /** Message ordinal of the read pointer; clients derive unread as latestOrdinal - lastReadOrdinal. */
   lastReadOrdinal: number
+  /**
+   * The member's ENTIRE sparse read overlay for this stream after the pointer
+   * SET + overlay delete. The client SETs its overlay to this absolute snapshot.
+   */
+  readMessageIds: string[]
 }
 
 // Notification-level event payload (author-scoped — the mute/notify choice is
@@ -818,6 +858,7 @@ export interface OutboxEventPayloadMap {
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
+  "stream:read_messages": StreamReadMessagesOutboxPayload
   "stream:notification_level_updated": StreamNotificationLevelUpdatedOutboxPayload
   "stream:activity": StreamActivityOutboxPayload
   "attachment:uploaded": AttachmentUploadedOutboxPayload
@@ -947,6 +988,7 @@ export type AuthorScopedEventType =
   | "stream:read"
   | "stream:read_set"
   | "stream:read_all"
+  | "stream:read_messages"
   | "stream:notification_level_updated"
   | "user_preferences:updated"
   | "sidebar_config:updated"
@@ -956,6 +998,7 @@ const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
   "stream:read",
   "stream:read_set",
   "stream:read_all",
+  "stream:read_messages",
   "stream:notification_level_updated",
   "link_preview:dismissed",
   "user_preferences:updated",

@@ -28,6 +28,7 @@ import { MessageHistoryDialog } from "@/components/timeline/message-history-dial
 import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
 import { ShareMessageModal } from "@/components/share/share-message-modal"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
+import { useConversationRowRead } from "@/components/message/conversation-read-context"
 import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
 import { LabelStack } from "@/components/labels/label-stack"
@@ -70,6 +71,12 @@ export interface RenderableMessage {
    * threads (one root), so a card renders each row against its own stream — the
    * caller passes `message.streamId ?? <card stream>` to {@link MessageItem}. */
   streamId?: string
+  /** This message's per-stream event `sequence` (bigint-as-string), when the row
+   * comes from the live events rail. Gates conversation-surface read state
+   * (a row is unread iff its sequence sits past its stream's read frontier and
+   * it isn't in the overlay). Absent on projection/backfill rows, which fall
+   * back to a timestamp comparison. See docs/sparse-read-overlay-design.md. */
+  sequence?: string
   authorId: string
   authorType: AuthorType
   contentMarkdown: string
@@ -182,6 +189,17 @@ export function MessageItem({
   // label page (no provider, no composer) → `onQuoteReply` stays undefined and the
   // action hides, the same field-one-side-sets gate as `conversationId`.
   const quoteReplyCtx = useQuoteReply()
+
+  // Conversation-surface read state (board card / panel). Absent on the label
+  // page (no provider) → both mark-read actions hide, the same field-one-side-
+  // sets gate as `conversationId`. Gate each action by where the row sits
+  // relative to the effective read frontier, mirroring the in-stream row
+  // (message-event): hide "Mark as read" on read rows, "Mark as unread" on
+  // unread rows; an ungated row (no resolvable frontier) shows both.
+  const conversationRead = useConversationRowRead()
+  const rowRead = conversationRead
+    ? conversationRead.state(streamId, message.id, message.sequence, message.createdAt)
+    : "ungated"
 
   // Own-message edit reuses the timeline's `MessageEditForm` (same save/offline
   // path). The row can host it wherever a message shows — the form only needs
@@ -376,6 +394,9 @@ export function MessageItem({
       label: viewInStreamLabel(rowStream?.type),
     },
     onLabelMessage: () => setLabelPickerOpen(true),
+    onMarkReadUpToHere:
+      conversationRead && rowRead !== "read" ? () => conversationRead.markReadUpToHere(message.id) : undefined,
+    onMarkUnread: conversationRead && rowRead !== "unread" ? () => conversationRead.markUnread(message.id) : undefined,
   }
 
   // Desktop/keyboard only via the shared input-mode reveal model: the row is the

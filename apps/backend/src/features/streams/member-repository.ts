@@ -47,6 +47,24 @@ export const StreamMemberRepository = {
     return result.rows[0] ? mapRowToMember(result.rows[0]) : null
   },
 
+  /**
+   * Locked read of one membership row (`FOR UPDATE`). Returns null when the
+   * member has no row on the stream — the sparse-read core relies on this to tell
+   * a member stream (watermark + compaction) apart from a non-member thread leg
+   * (overlay-only, no row to lock). Serializes concurrent read/unread writes for
+   * the same (stream, member) behind the lock (INV-20).
+   */
+  async findByStreamAndMemberForUpdate(db: Querier, streamId: string, memberId: string): Promise<StreamMember | null> {
+    const result = await db.query<StreamMemberRow>(sql`
+      SELECT stream_id, member_id, notification_level,
+             last_read_event_id, last_read_at, joined_at
+      FROM stream_members
+      WHERE stream_id = ${streamId} AND member_id = ${memberId}
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRowToMember(result.rows[0]) : null
+  },
+
   async findByStreamsAndMember(db: Querier, streamIds: string[], memberId: string): Promise<StreamMember[]> {
     if (streamIds.length === 0) return []
 
@@ -225,12 +243,7 @@ export const StreamMemberRepository = {
    * whose source message the recipient has already read — closing the race where
    * the read-time activity clear runs before the async activity row is written.
    */
-  async membersReadThrough(
-    db: Querier,
-    streamId: string,
-    memberIds: string[],
-    sequence: bigint
-  ): Promise<Set<string>> {
+  async membersReadThrough(db: Querier, streamId: string, memberIds: string[], sequence: bigint): Promise<Set<string>> {
     if (memberIds.length === 0) return new Set()
     const result = await db.query<{ member_id: string }>(sql`
       SELECT sm.member_id
@@ -241,6 +254,50 @@ export const StreamMemberRepository = {
         AND se.sequence >= ${sequence.toString()}
     `)
     return new Set(result.rows.map((row) => row.member_id))
+  },
+
+  /**
+   * A3 fix (sparse-read design): after a move relocates events out of a source
+   * stream, any source membership whose `last_read_event_id` is one of those
+   * moved events now counts unread against a foreign thread-space sequence. Repoint
+   * each such watermark to the nearest surviving prior event in the source stream
+   * (greatest sequence strictly below the moved event's original source sequence),
+   * or null when nothing prior survives. Set-based (INV-56); MUST run AFTER the
+   * move so the moved rows are already gone from the source and can't be chosen as
+   * their own predecessor. `last_read_at` is deliberately left untouched: this is
+   * an automated correction, not a read, and the timestamp feeds the conversation
+   * card's time fallback — bumping it to NOW() would falsely mark every older
+   * sequenceless/non-member-thread row as read.
+   */
+  async repointWatermarksForMovedEvents(
+    db: Querier,
+    sourceStreamId: string,
+    movedEvents: Array<{ eventId: string; sequence: bigint }>
+  ): Promise<void> {
+    if (movedEvents.length === 0) return
+    const eventIds = movedEvents.map((e) => e.eventId)
+    const sequences = movedEvents.map((e) => e.sequence.toString())
+    await db.query(
+      `
+      WITH moved AS (
+        SELECT unnest($2::text[]) AS event_id, unnest($3::bigint[]) AS src_seq
+      ),
+      repoint AS (
+        SELECT sm.member_id,
+          (SELECT e.id FROM stream_events e
+             WHERE e.stream_id = $1 AND e.sequence < moved.src_seq
+             ORDER BY e.sequence DESC LIMIT 1) AS new_event_id
+        FROM stream_members sm
+        JOIN moved ON moved.event_id = sm.last_read_event_id
+        WHERE sm.stream_id = $1
+      )
+      UPDATE stream_members sm
+      SET last_read_event_id = repoint.new_event_id
+      FROM repoint
+      WHERE sm.stream_id = $1 AND sm.member_id = repoint.member_id
+      `,
+      [sourceStreamId, eventIds, sequences]
+    )
   },
 
   async delete(db: Querier, streamId: string, memberId: string): Promise<boolean> {

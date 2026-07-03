@@ -4,6 +4,7 @@ import { StreamService } from "./service"
 import { StreamRepository } from "./repository"
 import { StreamMemberRepository, type StreamMember } from "./member-repository"
 import { StreamEventRepository } from "./event-repository"
+import { SparseReadRepository } from "./sparse-read-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { MessageRepository } from "../messaging"
@@ -27,6 +28,12 @@ const mockInsertStream = spyOn(StreamRepository, "insert")
 const mockMarkStreamE2e = spyOn(E2eStreamsRepository, "markStreamE2e")
 const mockUpdate = spyOn(StreamRepository, "update")
 const mockUpdateSealedName = spyOn(E2eStreamsRepository, "updateSealedName")
+// Sparse read overlay pruning/listing runs inside the watermark write paths;
+// stub against the fake `{}` client so unit tests never touch a real DB.
+const mockPruneAtOrBelow = spyOn(SparseReadRepository, "pruneAtOrBelow").mockResolvedValue(undefined)
+const mockDeleteAtOrAbove = spyOn(SparseReadRepository, "deleteAtOrAbove").mockResolvedValue(undefined)
+const mockDeleteAllForStreams = spyOn(SparseReadRepository, "deleteAllForStreams").mockResolvedValue(undefined)
+const mockListOverlayIds = spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue([])
 
 spyOn(idModule, "eventId").mockReturnValue("evt_1")
 spyOn(idModule, "streamId").mockReturnValue("stream_new")
@@ -1290,6 +1297,7 @@ describe("StreamService.markAsRead", () => {
       lastReadEventId: "evt_9",
       lastReadSequence: "42",
       lastReadOrdinal: 7,
+      readMessageIds: [],
     })
   })
 
@@ -1355,7 +1363,9 @@ describe("StreamService.markUnread", () => {
       lastReadEventId: "evt_4",
       lastReadSequence: "40",
       lastReadOrdinal: 4,
+      readMessageIds: [],
     })
+    expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
   })
 
   test("clears the read pointer when the target is the first message", async () => {
@@ -1442,6 +1452,7 @@ describe("StreamService.markAllAsRead", () => {
     const updated = await service.markAllAsRead("ws_1", "usr_1")
 
     expect(updated).toEqual(["stream_1", "stream_2"])
+    expect(mockDeleteAllForStreams).toHaveBeenCalledWith({}, "usr_1", ["stream_1", "stream_2"])
     expect(mockCountMessages).toHaveBeenCalledWith({}, ["stream_1", "stream_2"])
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_all", {
       workspaceId: "ws_1",

@@ -6,8 +6,56 @@ import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db } from "@/db"
 import { deriveActivityCounts } from "@/sync/unread-counters"
+import { applyReadStateSnapshotsIdb, type ReadStateSnapshot } from "@/sync/read-state"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import type { WorkspaceBootstrap } from "@threa/types"
+
+export type { ReadStateSnapshot }
+
+const EMPTY_READ_SET: ReadonlySet<string> = new Set()
+
+/** Drop one stream's entry from a sparse-overlay map, returning the same
+ *  reference when there is nothing to remove. */
+function withoutOverlay(
+  map: Record<string, string[]> | undefined,
+  streamId: string
+): Record<string, string[]> | undefined {
+  if (!map || !(streamId in map)) return map
+  const next = { ...map }
+  delete next[streamId]
+  return next
+}
+
+/**
+ * The sparse read overlay for one stream as a referentially-stable set: the
+ * message ids read individually above the stream's watermark
+ * (docs/sparse-read-overlay-design.md). Reads IDB via `useLiveQuery`; the
+ * returned set keeps its identity while the overlay's contents are unchanged, so
+ * consumers can use it as a stable dependency.
+ */
+export function useReadMessageIds(workspaceId: string, streamId: string): ReadonlySet<string> {
+  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const ids = unreadState?.readMessageIds?.[streamId]
+  // `useLiveQuery` structured-clones a fresh array on every IDB write, so key on
+  // the overlay's CONTENT (not the array reference) to keep the returned set
+  // referentially stable while the stream's overlay is unchanged.
+  const key = ids && ids.length ? ids.join(" ") : ""
+  const stable = useRef<{ key: string; set: ReadonlySet<string> }>({ key: "", set: EMPTY_READ_SET })
+  if (stable.current.key !== key) {
+    stable.current = { key, set: key === "" ? EMPTY_READ_SET : new Set(ids) }
+  }
+  return stable.current.set
+}
+
+/**
+ * Optimistically apply sparse-read snapshots (from a conversation-surface read)
+ * straight to IDB so the timeline overlay, board card, and badge update at once;
+ * the authoritative `stream:read_messages` socket echo reconciles the query
+ * cache. One apply path with the socket handler (`sync/read-state.ts`).
+ */
+export function applyReadStateSnapshots(workspaceId: string, snapshots: ReadStateSnapshot[]): Promise<void> {
+  return applyReadStateSnapshotsIdb(workspaceId, snapshots)
+}
 
 export function useUnreadCounts(workspaceId: string) {
   const queryClient = useQueryClient()
@@ -52,7 +100,15 @@ export function useUnreadCounts(workspaceId: string) {
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const rows = (old.unreadActivities ?? []).filter((a) => a.streamId !== streamId)
-        const messageCounters = partial ? {} : { unreadCounts: { ...old.unreadCounts, [streamId]: 0 } }
+        // A full read advances the watermark to latest, so every overlay message
+        // for this stream is now below it and pruned server-side — clear the set
+        // optimistically to keep the invariant (the server echo re-SETs it).
+        const messageCounters = partial
+          ? {}
+          : {
+              unreadCounts: { ...old.unreadCounts, [streamId]: 0 },
+              readMessageIds: withoutOverlay(old.readMessageIds, streamId),
+            }
         return {
           ...old,
           unreadActivities: rows,
@@ -85,7 +141,12 @@ export function useUnreadCounts(workspaceId: string) {
             ...state,
             unreadActivities: rows,
             ...deriveActivityCounts(rows),
-            ...(partial ? {} : { unreadCounts: { ...state.unreadCounts, [streamId]: 0 } }),
+            ...(partial
+              ? {}
+              : {
+                  unreadCounts: { ...state.unreadCounts, [streamId]: 0 },
+                  readMessageIds: withoutOverlay(state.readMessageIds, streamId),
+                }),
             _cachedAt: now,
           })
         }
@@ -179,12 +240,15 @@ export function useUnreadCounts(workspaceId: string) {
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         const newUnread = { ...old.unreadCounts }
+        const newReadMessageIds = { ...old.readMessageIds }
         for (const streamId of updatedStreamIds) {
           newUnread[streamId] = 0
+          delete newReadMessageIds[streamId]
         }
         return {
           ...old,
           unreadCounts: newUnread,
+          readMessageIds: newReadMessageIds,
           unreadActivities: [],
           ...deriveActivityCounts([]),
         }
@@ -194,12 +258,15 @@ export function useUnreadCounts(workspaceId: string) {
         const state = await db.unreadState.get(workspaceId)
         if (!state) return
         const newUnread = { ...state.unreadCounts }
+        const newReadMessageIds = { ...state.readMessageIds }
         for (const streamId of updatedStreamIds) {
           newUnread[streamId] = 0
+          delete newReadMessageIds[streamId]
         }
         await db.unreadState.put({
           ...state,
           unreadCounts: newUnread,
+          readMessageIds: newReadMessageIds,
           unreadActivities: [],
           ...deriveActivityCounts([]),
           _cachedAt: Date.now(),

@@ -1328,6 +1328,17 @@ export interface WorkspaceBootstrap {
    * Optional during rollout: snapshots cached before the field shipped lack it.
    */
   messageCounts?: Record<string, number>
+  /**
+   * Per-stream sparse read overlay at snapshot time: message ids the viewer
+   * read individually (via a conversation surface) ABOVE that stream's
+   * watermark. `unreadCounts` is already effective (watermark + overlay
+   * subtracted); this set lets the client keep the invariant
+   * `unread = latest − read − |overlay|` as live events fold in, and lets the
+   * timeline render overlay-read rows as read. Streams with an empty overlay
+   * are omitted. Optional: snapshots cached before the field shipped lack it
+   * (absent reads as empty). See docs/sparse-read-overlay-design.md.
+   */
+  readMessageIds?: Record<string, string[]>
   mentionCounts: Record<string, number>
   activityCounts: Record<string, number>
   unreadActivityCount: number

@@ -61,5 +61,11 @@ export type { MemoStreamState, StreamReadyToProcess } from "./state-repository"
 
 export { StreamPoliciesRepository } from "./policy-repository"
 
+export { SparseReadRepository } from "./sparse-read-repository"
+export type { CompactionTarget } from "./sparse-read-repository"
+
+export { applySparseRead, applySparseUnread } from "./sparse-read"
+export type { ReadStateSnapshot, ApplySparseReadParams } from "./sparse-read"
+
 export { getEffectiveDisplayName, formatParticipantNames, needsAutoNaming } from "./display-name"
 export type { DisplayNameSource, DisplayNameContext, EffectiveDisplayName } from "./display-name"

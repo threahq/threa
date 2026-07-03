@@ -138,6 +138,14 @@ export interface CachedStreamMembership {
   memberId: string
   notificationLevel: NotificationLevel | null
   lastReadEventId: string | null
+  /**
+   * The watermark event's per-stream sequence (stringified bigint), mirrored
+   * from the membership row / read events. Lets board-card unread derivation
+   * compare a row's sequence against the read frontier without holding the
+   * watermark event. Optional during rollout / for rows cached before it
+   * shipped. See docs/sparse-read-overlay-design.md.
+   */
+  lastReadSequence?: string | null
   lastReadAt: string | null
   joinedAt: string
   _cachedAt: number
@@ -477,6 +485,14 @@ export interface CachedUnreadState {
    * rows cached before the field shipped; see sync/unread-counters.ts.
    */
   latestOrdinals?: Record<string, number>
+  /**
+   * Sparse read overlay per stream (docs/sparse-read-overlay-design.md): message
+   * ids read individually above each stream's watermark. Rides this singleton
+   * row (no index). Effective unread stays `latestOrdinals[s] − read(s) −
+   * |readMessageIds[s]|`. Absent for rows cached before the field shipped;
+   * readers normalize with `?.`. See sync/unread-counters.ts.
+   */
+  readMessageIds?: Record<string, string[]>
   mutedStreamIds: string[]
   _cachedAt: number
 }
@@ -1236,6 +1252,12 @@ export class ThreaDatabase extends Dexie {
     this.version(36).stores({
       conversations: "id, workspaceId, [workspaceId+_lastActivityMs], _cachedAt",
     })
+
+    // v37: sparse read overlay (docs/sparse-read-overlay-design.md). The overlay
+    // (`unreadState.readMessageIds`) and the membership watermark sequence
+    // (`streamMemberships.lastReadSequence`) are unindexed value fields on
+    // existing rows, so the bump only guards the added shape — no schema delta.
+    this.version(37).stores({})
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }

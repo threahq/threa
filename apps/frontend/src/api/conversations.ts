@@ -1,5 +1,6 @@
 import { api } from "./client"
 import type { ConversationWithStaleness, ConversationStatus, Message, BoardPost, BoardPostMessage } from "@threa/types"
+import type { ReadStateSnapshot } from "@/sync/read-state"
 
 export interface ListConversationsParams {
   status?: ConversationStatus
@@ -89,6 +90,35 @@ export const conversationsApi = {
       `/api/workspaces/${workspaceId}/conversations/${conversationId}/board-post`
     )
     return res.post
+  },
+
+  /**
+   * Mark the conversation read through `throughMessageId` (inclusive). The
+   * server expands the cutoff to concrete member-message ids per spanned stream
+   * (snapshot semantics — immune to re-clustering) and returns the absolute
+   * post-write read state for each touched stream. See
+   * docs/sparse-read-overlay-design.md.
+   */
+  async markRead(
+    workspaceId: string,
+    conversationId: string,
+    throughMessageId: string
+  ): Promise<{ streams: ReadStateSnapshot[] }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/read`, { throughMessageId })
+  },
+
+  /**
+   * Mark the conversation unread from `fromMessageId` (inclusive) onward — the
+   * asymmetric inverse of {@link markRead}. Above the watermark this deletes
+   * overlay rows; below it the server regresses the watermark. Returns the
+   * absolute post-write read state per touched stream.
+   */
+  async markUnread(
+    workspaceId: string,
+    conversationId: string,
+    fromMessageId: string
+  ): Promise<{ streams: ReadStateSnapshot[] }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/unread`, { fromMessageId })
   },
 
   /**

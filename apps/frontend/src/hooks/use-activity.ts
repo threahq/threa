@@ -12,6 +12,14 @@ export const activityKeys = {
     ["activity", workspaceId, filters] as const,
 }
 
+/**
+ * One page of the activity feed. Exported because the unread-tab reconcile
+ * backstop must know whether a fetched page is the COMPLETE unread set
+ * (rows < limit) — reconciling the held badge set against a truncated page
+ * would clamp the count to the page size.
+ */
+export const ACTIVITY_FEED_PAGE_LIMIT = 50
+
 export function useActivityFeed(
   workspaceId: string,
   opts?: { unreadOnly?: boolean; mineOnly?: boolean; othersOnly?: boolean }
@@ -23,7 +31,8 @@ export function useActivityFeed(
 
   return useQuery({
     queryKey: activityKeys.listFiltered(workspaceId, { unreadOnly, mineOnly, othersOnly }),
-    queryFn: () => activityService.list(workspaceId, { limit: 50, unreadOnly, mineOnly, othersOnly }),
+    queryFn: () =>
+      activityService.list(workspaceId, { limit: ACTIVITY_FEED_PAGE_LIMIT, unreadOnly, mineOnly, othersOnly }),
     // Subscribe-then-bootstrap: socket events invalidate; refetchOnMount picks up
     // the invalidation, staleTime: Infinity suppresses other auto-refetches.
     staleTime: Infinity,

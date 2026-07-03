@@ -263,6 +263,40 @@ describe("useUnreadDivider", () => {
 
     expect(enabledCalls[enabledCalls.length - 1]).toBe(true)
   })
+
+  it("skips an overlay-read event and anchors the divider on the first effectively-unread row", () => {
+    const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadEventId: null,
+        currentUserId: "me",
+        streamId: "stream_1",
+        readStateResolved: true,
+        // event_1 was read individually above the watermark (a conversation-
+        // surface read) → the divider skips it and lands on event_2.
+        overlayReadIds: new Set(["msg_event_1"]),
+      })
+    )
+
+    expect(result.current.dividerEventId).toBe("event_2")
+  })
+
+  it("shows no divider when every candidate unread row is overlay-read", () => {
+    const events = [makeMessageEvent("event_1", "other"), makeMessageEvent("event_2", "other")]
+    const { result } = renderHook(() =>
+      useUnreadDivider({
+        events,
+        lastReadEventId: null,
+        currentUserId: "me",
+        streamId: "stream_1",
+        readStateResolved: true,
+        overlayReadIds: new Set(["msg_event_1", "msg_event_2"]),
+      })
+    )
+
+    expect(result.current.dividerEventId).toBeUndefined()
+  })
 })
 
 describe("isDividerReadPast", () => {

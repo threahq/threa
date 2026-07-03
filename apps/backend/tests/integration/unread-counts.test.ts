@@ -65,7 +65,9 @@ describe("Unread Counts", () => {
       const lastEventId = events[0].id
 
       // Count unreads with lastReadEventId = latest event
-      const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: lastEventId }])
+      const counts = await streamService.getUnreadCounts([
+        { streamId: testStreamId, memberId: testUserId, lastReadEventId: lastEventId },
+      ])
 
       expect(counts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
     })
@@ -113,7 +115,9 @@ describe("Unread Counts", () => {
       const firstEventId = events[0].id
 
       // Should have 2 unread (messages 2 and 3)
-      const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: firstEventId }])
+      const counts = await streamService.getUnreadCounts([
+        { streamId: testStreamId, memberId: testUserId, lastReadEventId: firstEventId },
+      ])
 
       expect(counts.get(testStreamId)).toEqual({ unreadCount: 2, totalCount: 3 })
     })
@@ -143,7 +147,9 @@ describe("Unread Counts", () => {
       }
 
       // Count with null lastReadEventId (never read)
-      const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: null }])
+      const counts = await streamService.getUnreadCounts([
+        { streamId: testStreamId, memberId: testUserId, lastReadEventId: null },
+      ])
 
       expect(counts.get(testStreamId)).toEqual({ unreadCount: 3, totalCount: 3 })
     })
@@ -179,7 +185,7 @@ describe("Unread Counts", () => {
 
       // Author should have 0 unread
       const authorCounts = await streamService.getUnreadCounts([
-        { streamId: testStreamId, lastReadEventId: authorMembership!.lastReadEventId },
+        { streamId: testStreamId, memberId: authorId, lastReadEventId: authorMembership!.lastReadEventId },
       ])
       expect(authorCounts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
 
@@ -188,7 +194,7 @@ describe("Unread Counts", () => {
       expect(otherMembership?.lastReadEventId).toBeNull()
 
       const otherCounts = await streamService.getUnreadCounts([
-        { streamId: testStreamId, lastReadEventId: otherMembership!.lastReadEventId },
+        { streamId: testStreamId, memberId: otherUserId, lastReadEventId: otherMembership!.lastReadEventId },
       ])
       expect(otherCounts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 1 })
     })
@@ -244,8 +250,8 @@ describe("Unread Counts", () => {
       const events2 = await StreamEventRepository.list(pool, stream2)
 
       const counts = await streamService.getUnreadCounts([
-        { streamId: stream1, lastReadEventId: events1[0].id }, // Read 1, unread 1
-        { streamId: stream2, lastReadEventId: events2[2].id }, // Read all 3, unread 0
+        { streamId: stream1, memberId: testUserId, lastReadEventId: events1[0].id }, // Read 1, unread 1
+        { streamId: stream2, memberId: testUserId, lastReadEventId: events2[2].id }, // Read all 3, unread 0
       ])
 
       expect(counts.get(stream1)).toEqual({ unreadCount: 1, totalCount: 2 })
@@ -308,8 +314,8 @@ describe("Unread Counts", () => {
 
       // Verify unread counts are now 0
       const counts = await streamService.getUnreadCounts([
-        { streamId: stream1, lastReadEventId: membership1!.lastReadEventId },
-        { streamId: stream2, lastReadEventId: membership2!.lastReadEventId },
+        { streamId: stream1, memberId: testUserId, lastReadEventId: membership1!.lastReadEventId },
+        { streamId: stream2, memberId: testUserId, lastReadEventId: membership2!.lastReadEventId },
       ])
 
       expect(counts.get(stream1)).toEqual({ unreadCount: 0, totalCount: 1 })
@@ -544,10 +550,13 @@ describe("Unread Counts", () => {
         lastReadEventId: events[1].id,
         lastReadSequence: events[1].sequence.toString(),
         lastReadOrdinal: 2,
+        readMessageIds: [],
       })
 
       // The derived unread matches the authoritative count: 3 - 2 = 1.
-      const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: events[1].id }])
+      const counts = await streamService.getUnreadCounts([
+        { streamId: testStreamId, memberId: readerId, lastReadEventId: events[1].id },
+      ])
       expect(counts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 3 })
     })
 

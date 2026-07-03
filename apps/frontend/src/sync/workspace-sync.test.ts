@@ -421,6 +421,7 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           memberId: "user_1",
           notificationLevel: null,
           lastReadEventId: "evt_cached",
+          lastReadSequence: "77",
           lastReadAt: null,
           joinedAt: new Date().toISOString(),
           _cachedAt: Date.now(),
@@ -440,9 +441,10 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     })
 
     expect(merged.streams.map((stream) => stream.id)).toContain("stream_failed")
-    expect(
-      merged.streamMemberships.find((membership) => membership.streamId === "stream_failed")?.lastReadEventId
-    ).toBe("evt_cached")
+    const failedMembership = merged.streamMemberships.find((membership) => membership.streamId === "stream_failed")
+    // The board-card sequence frontier must survive the cached→bootstrap
+    // conversion — dropping it silently degrades card rows to the time fallback.
+    expect(failedMembership).toMatchObject({ lastReadEventId: "evt_cached", lastReadSequence: "77" })
     expect(merged.unreadCounts.stream_failed).toBe(3)
     expect(merged.mutedStreamIds).toContain("stream_failed")
   })
@@ -684,6 +686,92 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: savedKeys.all })
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
+    cleanup()
+  })
+
+  it("applies a stream:read_messages snapshot to the overlay, counter, and watermark", async () => {
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 6 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_1: 10 },
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+    await db.streamMemberships.put({
+      id: "ws_1:stream_1",
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "member_1",
+      notificationLevel: null,
+      lastReadEventId: "evt_0",
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+      _cachedAt: Date.now(),
+    })
+
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:read_messages", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      readMessageIds: ["msg_5", "msg_7"],
+      lastReadEventId: "evt_4",
+      lastReadSequence: "40",
+      lastReadOrdinal: 4,
+    })
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.readMessageIds?.stream_1).toEqual(["msg_5", "msg_7"])
+      expect(state?.unreadCounts.stream_1).toBe(4) // 10 - 4 - 2
+      const membership = await db.streamMemberships.get("ws_1:stream_1")
+      expect(membership?.lastReadSequence).toBe("40")
+      expect(membership?.lastReadEventId).toBe("evt_4")
+    })
+
+    cleanup()
+  })
+
+  it("ignores a stream:read_messages for another workspace", async () => {
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 6 },
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_1: 10 },
+      mutedStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:read_messages", {
+      workspaceId: "ws_other",
+      authorId: "member_1",
+      streamId: "stream_1",
+      readMessageIds: ["msg_5"],
+      lastReadEventId: "evt_4",
+      lastReadSequence: "40",
+      lastReadOrdinal: 4,
+    })
+
+    await new Promise((r) => setTimeout(r, 20))
+    const state = await db.unreadState.get("ws_1")
+    expect(state?.readMessageIds?.stream_1).toBeUndefined()
+    expect(state?.unreadCounts.stream_1).toBe(6)
     cleanup()
   })
 

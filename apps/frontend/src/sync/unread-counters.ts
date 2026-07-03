@@ -37,6 +37,39 @@ export interface UnreadCounterState {
    * from the first absolute event they see.
    */
   latestOrdinals?: Record<string, number>
+  /**
+   * Sparse read overlay per stream (docs/sparse-read-overlay-design.md): the
+   * message ids read individually ABOVE that stream's watermark via a
+   * conversation surface. The effective unread invariant everywhere is
+   * `unreadCounts[s] = max(0, latestOrdinals[s] − read(s) − |overlay(s)|)`, with
+   * the watermark reconstructed as `read = latest − unread − |overlay|`. An
+   * absent entry means an empty overlay. `stream:read_messages` and the
+   * `readMessageIds`-carrying read events SET the set absolutely (idempotent
+   * under sync-log order); a `stream:read_all` clears it.
+   */
+  readMessageIds?: Record<string, string[]>
+}
+
+/** Size of a stream's sparse read overlay (0 when absent). */
+function overlaySize(state: UnreadCounterState, streamId: string): number {
+  return state.readMessageIds?.[streamId]?.length ?? 0
+}
+
+/**
+ * SET a stream's overlay to an absolute snapshot. An empty snapshot drops the
+ * key (empty overlays are omitted); a no-op returns the same reference so
+ * unrelated appliers stay referentially stable.
+ */
+function setOverlay(state: UnreadCounterState, streamId: string, ids: string[]): UnreadCounterState {
+  const current = state.readMessageIds?.[streamId]
+  if (ids.length === 0) {
+    if (current === undefined) return state
+    const next = { ...state.readMessageIds }
+    delete next[streamId]
+    return { ...state, readMessageIds: next }
+  }
+  if (current === ids) return state
+  return { ...state, readMessageIds: { ...state.readMessageIds, [streamId]: ids } }
 }
 
 /** Per-stream activity + mention counts (and total) derived from the held unread rows. */
@@ -142,14 +175,16 @@ export function applyStreamActivityOrdinal(
   messageOrdinal: number,
   opts: { isOwnMessage: boolean; isViewing: boolean }
 ): UnreadCounterState {
+  const ov = overlaySize(state, streamId)
   const prevLatest = state.latestOrdinals?.[streamId]
   let latest: number
   let read: number
   if (prevLatest === undefined) {
     latest = messageOrdinal
-    read = opts.isOwnMessage || opts.isViewing ? latest : Math.max(0, latest - (state.unreadCounts[streamId] ?? 0) - 1)
+    read =
+      opts.isOwnMessage || opts.isViewing ? latest : Math.max(0, latest - (state.unreadCounts[streamId] ?? 0) - 1 - ov)
   } else {
-    const prevRead = Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0))
+    const prevRead = Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0) - ov)
     latest = Math.max(prevLatest, messageOrdinal)
     read = opts.isOwnMessage ? Math.max(prevRead, messageOrdinal) : prevRead
     if (opts.isViewing) read = latest
@@ -157,7 +192,7 @@ export function applyStreamActivityOrdinal(
   return {
     ...state,
     latestOrdinals: { ...state.latestOrdinals, [streamId]: latest },
-    unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, latest - read) },
+    unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, latest - read - ov) },
   }
 }
 
@@ -172,23 +207,29 @@ export function applyStreamActivityOrdinal(
 export function applyStreamReadOrdinal(
   state: UnreadCounterState,
   streamId: string,
-  lastReadOrdinal: number
+  lastReadOrdinal: number,
+  readMessageIds?: string[]
 ): UnreadCounterState {
+  // Reconstruct the OLD watermark against the OLD overlay before the SET below,
+  // since the stored unread was computed with the old overlay size.
+  const prevOv = overlaySize(state, streamId)
   const prevLatest = state.latestOrdinals?.[streamId]
   const latest = Math.max(prevLatest ?? 0, lastReadOrdinal)
   const prevRead =
-    prevLatest === undefined ? lastReadOrdinal : Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0))
+    prevLatest === undefined ? lastReadOrdinal : Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0) - prevOv)
   const read = Math.max(prevRead, lastReadOrdinal)
+  const withOverlay = readMessageIds !== undefined ? setOverlay(state, streamId, readMessageIds) : state
+  const ov = overlaySize(withOverlay, streamId)
   // Coupling (D2): drop the stream's held activity on a read that is at or ahead
   // of the current position — this includes the caught-up D5 heal, where the read
   // does not advance (lastReadOrdinal === prevRead). A strictly stale/out-of-order
   // read (lastReadOrdinal < prevRead) must NOT wipe activity that arrived after
   // the real read.
-  const next = lastReadOrdinal >= prevRead ? dropActivitiesForStream(state, streamId) : state
+  const next = lastReadOrdinal >= prevRead ? dropActivitiesForStream(withOverlay, streamId) : withOverlay
   return {
     ...next,
     latestOrdinals: { ...next.latestOrdinals, [streamId]: latest },
-    unreadCounts: { ...next.unreadCounts, [streamId]: Math.max(0, latest - read) },
+    unreadCounts: { ...next.unreadCounts, [streamId]: Math.max(0, latest - read - ov) },
   }
 }
 
@@ -203,26 +244,122 @@ export function applyStreamReadOrdinal(
 export function applyStreamReadSet(
   state: UnreadCounterState,
   streamId: string,
-  lastReadOrdinal: number
+  lastReadOrdinal: number,
+  readMessageIds?: string[]
 ): UnreadCounterState {
-  const latest = Math.max(state.latestOrdinals?.[streamId] ?? 0, lastReadOrdinal)
+  const withOverlay = readMessageIds !== undefined ? setOverlay(state, streamId, readMessageIds) : state
+  const ov = overlaySize(withOverlay, streamId)
+  const latest = Math.max(withOverlay.latestOrdinals?.[streamId] ?? 0, lastReadOrdinal)
   return {
-    ...state,
-    latestOrdinals: { ...state.latestOrdinals, [streamId]: latest },
-    unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, latest - lastReadOrdinal) },
+    ...withOverlay,
+    latestOrdinals: { ...withOverlay.latestOrdinals, [streamId]: latest },
+    unreadCounts: { ...withOverlay.unreadCounts, [streamId]: Math.max(0, latest - lastReadOrdinal - ov) },
   }
 }
 
-/** Apply a `stream:read_all` reads array — per-stream `applyStreamReadOrdinal`. */
+/**
+ * Apply a `stream:read_all` reads array — per-stream `applyStreamReadOrdinal`.
+ * The server wipes overlay rows for every updated stream, so each read clears
+ * that stream's overlay set (passing `[]`).
+ */
 export function applyStreamsReadAllOrdinals(
   state: UnreadCounterState,
   reads: Array<{ streamId: string; lastReadOrdinal: number }>
 ): UnreadCounterState {
   let next = state
   for (const read of reads) {
-    next = applyStreamReadOrdinal(next, read.streamId, read.lastReadOrdinal)
+    next = applyStreamReadOrdinal(next, read.streamId, read.lastReadOrdinal, [])
   }
   return next
+}
+
+/**
+ * Apply a `stream:read_messages` snapshot — the absolute post-write read state
+ * for one stream from a conversation-surface read. SETs the overlay to the
+ * snapshot (idempotent under sync-log order), max-merges the watermark ordinal
+ * (a conversation read only advances it), and recomputes effective unread by
+ * the invariant. Held activity is left untouched: a conversation read is a
+ * partial stream read, so it must not wipe other conversations' activity rows —
+ * the activity feed reconcile (`reconcileActivities`) is the badge backstop.
+ */
+export function applyStreamReadMessages(
+  state: UnreadCounterState,
+  streamId: string,
+  snapshot: { readMessageIds: string[]; lastReadOrdinal: number }
+): UnreadCounterState {
+  const prevOv = overlaySize(state, streamId)
+  const prevLatest = state.latestOrdinals?.[streamId]
+  const latest = Math.max(prevLatest ?? 0, snapshot.lastReadOrdinal)
+  const prevRead =
+    prevLatest === undefined
+      ? snapshot.lastReadOrdinal
+      : Math.max(0, prevLatest - (state.unreadCounts[streamId] ?? 0) - prevOv)
+  const read = Math.max(prevRead, snapshot.lastReadOrdinal)
+  const withOverlay = setOverlay(state, streamId, snapshot.readMessageIds)
+  const ov = snapshot.readMessageIds.length
+  return {
+    ...withOverlay,
+    latestOrdinals: { ...withOverlay.latestOrdinals, [streamId]: latest },
+    unreadCounts: { ...withOverlay.unreadCounts, [streamId]: Math.max(0, latest - read - ov) },
+  }
+}
+
+/**
+ * SET `latestOrdinals[streamId]` from a `messages:moved` source count (fix A1).
+ * A move relocates `message_created` rows out of the source, so the source's
+ * true latest ordinal DROPS — the one sanctioned non-monotonic latest write
+ * (precedent: `applyStreamReadSet`). The reconstructed watermark stays put and
+ * unread clamps at ≥ 0, so a phantom unread that stuck on max-merge-only
+ * `latestOrdinals` heals immediately.
+ */
+export function applyMovedSourceOrdinal(
+  state: UnreadCounterState,
+  streamId: string,
+  sourceMessageOrdinal: number,
+  movedMessageIds: readonly string[] = []
+): UnreadCounterState {
+  // Reconstruct the read position with the PRE-move overlay, then drop the moved
+  // ids from the source set before recomputing — the server rehomed their rows
+  // to the destination, so a stale entry here keeps subtracting for a message
+  // the shrunk latest no longer counts, silently hiding genuine unread. One
+  // fold for both writes so no reader sees the ordinal without the drop.
+  // (Destination overlay is deliberately NOT topped up: destination `latest`
+  // isn't bumped on move either, so omitting both keeps its arithmetic
+  // consistent-stale until the next snapshot/bootstrap heals it.)
+  const ovBefore = overlaySize(state, streamId)
+  const prevUnread = state.unreadCounts[streamId] ?? 0
+  const base = state.latestOrdinals?.[streamId] ?? sourceMessageOrdinal
+  const read = Math.max(0, base - prevUnread - ovBefore)
+
+  const moved = new Set(movedMessageIds)
+  const remaining = (state.readMessageIds?.[streamId] ?? []).filter((id) => !moved.has(id))
+  const next = setOverlay(state, streamId, remaining)
+  const ovAfter = overlaySize(next, streamId)
+
+  return {
+    ...next,
+    latestOrdinals: { ...next.latestOrdinals, [streamId]: sourceMessageOrdinal },
+    unreadCounts: { ...next.unreadCounts, [streamId]: Math.max(0, sourceMessageOrdinal - read - ovAfter) },
+  }
+}
+
+/** Drop every held row for a deleted message (fix A2), mirroring `dropReactionActivity`. */
+export function dropMessageActivities(state: UnreadCounterState, messageId: string): UnreadCounterState {
+  const rows = state.unreadActivities.filter((a) => a.messageId !== messageId)
+  if (rows.length === state.unreadActivities.length) return state
+  return withActivities(state, rows)
+}
+
+/**
+ * Wholesale-replace the held activity set with the server's authoritative rows
+ * (fix A4 backstop): opening the unread activity feed reconciles the badge to
+ * exactly what the feed shows. Self rows are dropped to match `upsertActivity`.
+ */
+export function reconcileActivities(state: UnreadCounterState, serverRows: Activity[]): UnreadCounterState {
+  return withActivities(
+    state,
+    serverRows.filter((a) => !a.isSelf)
+  )
 }
 
 /**
@@ -253,6 +390,7 @@ export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterStat
     unreadActivities: rows,
     ...deriveActivityCounts(rows),
     latestOrdinals: bootstrap.messageCounts,
+    readMessageIds: bootstrap.readMessageIds,
   }
 }
 
@@ -266,5 +404,6 @@ export function withCounterState(bootstrap: WorkspaceBootstrap, state: UnreadCou
     activityCounts: state.activityCounts,
     unreadActivityCount: state.unreadActivityCount,
     messageCounts: state.latestOrdinals,
+    readMessageIds: state.readMessageIds,
   }
 }

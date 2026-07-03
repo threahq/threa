@@ -36,6 +36,14 @@ const reassignMessageParamsSchema = z.object({
   messageId: z.string().min(1),
 })
 
+const markReadSchema = z.object({
+  throughMessageId: z.string().min(1),
+})
+
+const markUnreadSchema = z.object({
+  fromMessageId: z.string().min(1),
+})
+
 interface Dependencies {
   conversationService: ConversationService
   streamService: StreamService
@@ -196,6 +204,47 @@ export function createConversationHandlers({ conversationService, streamService,
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const result = await conversationService.reassignMessage({ workspaceId, conversationId, messageId, userId })
+      res.json(result)
+    },
+
+    /**
+     * Mark a conversation read through a message (inclusive). Applies a sparse
+     * read overlay across every stream the conversation spans; returns the
+     * per-stream absolute read-state snapshots. Access via the conversation's root
+     * stream (INV-62), matching the other conversation reads.
+     */
+    async markRead(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId } = req.params
+
+      const { throughMessageId } = validateRequest(markReadSchema, req.body)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.markRead({ workspaceId, conversationId, throughMessageId, userId })
+      res.json(result)
+    },
+
+    /** Mark a conversation unread from a message (inclusive). Inverse of {@link markRead}. */
+    async markUnread(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId } = req.params
+
+      const { fromMessageId } = validateRequest(markUnreadSchema, req.body)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.markUnread({ workspaceId, conversationId, fromMessageId, userId })
       res.json(result)
     },
   }

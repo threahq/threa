@@ -351,6 +351,25 @@ export const ActivityRepository = {
     `)
   },
 
+  /**
+   * Mark a user's unread activity rows read for specific messages — the
+   * message-granular coupling for conversation reads: marking a conversation
+   * read clears exactly its messages' activity, never the stream's other
+   * topics (contrast `markStreamAsRead`, the whole-stream open coupling).
+   */
+  async markMessagesAsRead(db: Querier, workspaceId: string, userId: string, messageIds: string[]): Promise<number> {
+    if (messageIds.length === 0) return 0
+    const result = await db.query(sql`
+      UPDATE user_activity
+      SET read_at = NOW()
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
+        AND message_id = ANY(${messageIds}::text[])
+        AND read_at IS NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
   async markStreamAsRead(db: Querier, userId: string, streamId: string): Promise<number> {
     const result = await db.query(sql`
       UPDATE user_activity

@@ -4,11 +4,15 @@ import {
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamReadSet,
+  applyStreamReadMessages,
   applyStreamsReadAllOrdinals,
+  applyMovedSourceOrdinal,
   deriveActivityCounts,
   upsertActivity,
   dropActivitiesForStream,
+  dropMessageActivities,
   dropReactionActivity,
+  reconcileActivities,
   rehomeActivities,
   clearActivities,
   type UnreadCounterState,
@@ -321,6 +325,265 @@ describe("clearActivities", () => {
     const next = clearActivities(state)
     expect(next.unreadActivities).toEqual([])
     expect(next.activityCounts).toEqual({})
+    expect(next.unreadActivityCount).toBe(0)
+  })
+})
+
+describe("sparse read overlay invariant", () => {
+  describe("applyStreamActivityOrdinal (overlay-aware)", () => {
+    it("subtracts the overlay when reconstructing the read position", () => {
+      // latest 5, unread 1, overlay of 2 above the watermark → watermark = 5-1-2 = 2.
+      const seeded = makeState({
+        unreadCounts: { s1: 1 },
+        latestOrdinals: { s1: 5 },
+        readMessageIds: { s1: ["m8", "m9"] },
+      })
+      // A new other-message arrives: unread rises by one, overlay unchanged.
+      const next = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false })
+      expect(next.unreadCounts.s1).toBe(2)
+      expect(next.latestOrdinals?.s1).toBe(6)
+      expect(next.readMessageIds?.s1).toEqual(["m8", "m9"])
+    })
+
+    it("converges on duplicate apply with an overlay present", () => {
+      const seeded = makeState({
+        unreadCounts: { s1: 1 },
+        latestOrdinals: { s1: 5 },
+        readMessageIds: { s1: ["m9"] },
+      })
+      const once = applyStreamActivityOrdinal(seeded, "s1", 6, { isOwnMessage: false, isViewing: false })
+      const twice = applyStreamActivityOrdinal(once, "s1", 6, { isOwnMessage: false, isViewing: false })
+      expect(twice).toEqual(once)
+    })
+  })
+
+  describe("applyStreamReadMessages", () => {
+    it("SETs the overlay, max-merges the watermark, and recomputes unread", () => {
+      // latest 10, watermark at 4 (unread 6), no overlay yet.
+      const seeded = makeState({ unreadCounts: { s1: 6 }, latestOrdinals: { s1: 10 } })
+      // A conversation read covers 3 messages above the watermark; watermark unmoved.
+      const next = applyStreamReadMessages(seeded, "s1", { readMessageIds: ["m5", "m7", "m9"], lastReadOrdinal: 4 })
+      expect(next.readMessageIds?.s1).toEqual(["m5", "m7", "m9"])
+      expect(next.unreadCounts.s1).toBe(3) // 10 - 4 - 3
+      expect(next.latestOrdinals?.s1).toBe(10)
+    })
+
+    it("is idempotent on duplicate apply (absolute snapshot)", () => {
+      const seeded = makeState({ unreadCounts: { s1: 6 }, latestOrdinals: { s1: 10 } })
+      const once = applyStreamReadMessages(seeded, "s1", { readMessageIds: ["m5", "m7"], lastReadOrdinal: 4 })
+      const twice = applyStreamReadMessages(once, "s1", { readMessageIds: ["m5", "m7"], lastReadOrdinal: 4 })
+      expect(twice.unreadCounts.s1).toBe(once.unreadCounts.s1)
+      expect(twice.readMessageIds?.s1).toEqual(["m5", "m7"])
+    })
+
+    it("converges under out-of-order snapshots (later snapshot wins the set)", () => {
+      const seeded = makeState({ unreadCounts: { s1: 6 }, latestOrdinals: { s1: 10 } })
+      // Snapshot B (watermark 4, overlay 2) then stale snapshot A (watermark 2, overlay 1):
+      // the overlay SETs to A's set but the watermark max-merges, so it stays at 4.
+      const b = applyStreamReadMessages(seeded, "s1", { readMessageIds: ["m6", "m8"], lastReadOrdinal: 4 })
+      const then = applyStreamReadMessages(b, "s1", { readMessageIds: ["m6"], lastReadOrdinal: 2 })
+      expect(then.latestOrdinals?.s1).toBe(10)
+      expect(then.readMessageIds?.s1).toEqual(["m6"])
+      expect(then.unreadCounts.s1).toBe(5) // 10 - 4 - 1 (watermark held at 4)
+    })
+
+    it("seeds from no baseline (overlay + watermark, unread derived)", () => {
+      const noBaseline = makeState({ unreadCounts: { s1: 3 }, latestOrdinals: undefined })
+      const next = applyStreamReadMessages(noBaseline, "s1", { readMessageIds: ["m5"], lastReadOrdinal: 4 })
+      expect(next.latestOrdinals?.s1).toBe(4)
+      expect(next.readMessageIds?.s1).toEqual(["m5"])
+      expect(next.unreadCounts.s1).toBe(0)
+    })
+
+    it("drops the overlay key when the snapshot is empty", () => {
+      const seeded = makeState({
+        unreadCounts: { s1: 3 },
+        latestOrdinals: { s1: 10 },
+        readMessageIds: { s1: ["m5", "m7"] },
+      })
+      const next = applyStreamReadMessages(seeded, "s1", { readMessageIds: [], lastReadOrdinal: 5 })
+      expect(next.readMessageIds?.s1).toBeUndefined()
+      expect(next.unreadCounts.s1).toBe(5) // 10 - 5 - 0
+    })
+  })
+
+  describe("applyStreamReadOrdinal readMessageIds param", () => {
+    it("SETs the overlay when carried and folds it into unread", () => {
+      const seeded = makeState({ unreadCounts: { s1: 6 }, latestOrdinals: { s1: 10 } })
+      const next = applyStreamReadOrdinal(seeded, "s1", 5, ["m8"])
+      expect(next.readMessageIds?.s1).toEqual(["m8"])
+      expect(next.unreadCounts.s1).toBe(4) // 10 - 5 - 1
+    })
+
+    it("leaves the overlay untouched when the field is absent (rollout compat)", () => {
+      const seeded = makeState({
+        unreadCounts: { s1: 4 },
+        latestOrdinals: { s1: 10 },
+        readMessageIds: { s1: ["m8", "m9"] },
+      })
+      const next = applyStreamReadOrdinal(seeded, "s1", 6)
+      expect(next.readMessageIds?.s1).toEqual(["m8", "m9"])
+      expect(next.unreadCounts.s1).toBe(2) // 10 - 6 - 2
+    })
+
+    it("preserves the D2 activity-drop coupling overlay-aware", () => {
+      // watermark = latest - unread - overlay = 10 - 4 - 2 = 4. A read AT the
+      // reconstructed watermark still clears held activity (D5 heal); a strictly
+      // stale read below it does not.
+      const seeded = makeState({
+        unreadCounts: { s1: 4 },
+        latestOrdinals: { s1: 10 },
+        readMessageIds: { s1: ["m8", "m9"] },
+        unreadActivities: [act("a1", "s1", "mention")],
+      })
+      expect(applyStreamReadOrdinal(seeded, "s1", 4, ["m8", "m9"]).unreadActivityCount).toBe(0)
+      expect(applyStreamReadOrdinal(seeded, "s1", 3, ["m8", "m9"]).unreadActivityCount).toBe(1)
+    })
+  })
+
+  describe("applyStreamReadSet readMessageIds param", () => {
+    it("SETs the overlay (including empty) alongside the backward pointer", () => {
+      const seeded = makeState({
+        unreadCounts: { s1: 0 },
+        latestOrdinals: { s1: 10 },
+        readMessageIds: { s1: ["m8"] },
+      })
+      // Mark-unread regresses the watermark to 5 and deletes overlay ids above it.
+      const next = applyStreamReadSet(seeded, "s1", 5, [])
+      expect(next.readMessageIds?.s1).toBeUndefined()
+      expect(next.unreadCounts.s1).toBe(5) // 10 - 5 - 0
+    })
+
+    it("leaves the overlay untouched when the field is absent", () => {
+      const seeded = makeState({
+        unreadCounts: { s1: 0 },
+        latestOrdinals: { s1: 10 },
+        readMessageIds: { s1: ["m8"] },
+      })
+      const next = applyStreamReadSet(seeded, "s1", 5)
+      expect(next.readMessageIds?.s1).toEqual(["m8"])
+      expect(next.unreadCounts.s1).toBe(4) // 10 - 5 - 1
+    })
+  })
+
+  describe("applyStreamsReadAllOrdinals clears overlays", () => {
+    it("wipes each read stream's overlay set", () => {
+      const state = makeState({
+        unreadCounts: { s1: 2, s2: 5 },
+        latestOrdinals: { s1: 4, s2: 10 },
+        readMessageIds: { s1: ["m3"], s2: ["m9", "m10"] },
+      })
+      const next = applyStreamsReadAllOrdinals(state, [
+        { streamId: "s1", lastReadOrdinal: 4 },
+        { streamId: "s2", lastReadOrdinal: 10 },
+      ])
+      expect(next.readMessageIds).toEqual({})
+      expect(next.unreadCounts).toEqual({ s1: 0, s2: 0 })
+    })
+  })
+})
+
+describe("applyMovedSourceOrdinal", () => {
+  it("SETs the source latest ordinal downward and keeps the read position stable", () => {
+    // latest 5, unread 2 → watermark 3. Move drops the source count to 4.
+    const state = makeState({ unreadCounts: { s1: 2 }, latestOrdinals: { s1: 5 } })
+    const next = applyMovedSourceOrdinal(state, "s1", 4)
+    expect(next.latestOrdinals?.s1).toBe(4)
+    expect(next.unreadCounts.s1).toBe(1) // 4 - 3
+  })
+
+  it("clamps unread at zero when the drop lands at or below the read position", () => {
+    const state = makeState({ unreadCounts: { s1: 2 }, latestOrdinals: { s1: 5 } })
+    const next = applyMovedSourceOrdinal(state, "s1", 3)
+    expect(next.latestOrdinals?.s1).toBe(3)
+    expect(next.unreadCounts.s1).toBe(0) // 3 - 3, clamped
+  })
+
+  it("heals the phantom-unread move sequence (activity 2 → move to 1 → read 1 → 0)", () => {
+    let state = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 1 } })
+    state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false, isViewing: false })
+    expect(state.unreadCounts.s1).toBe(2)
+    state = applyMovedSourceOrdinal(state, "s1", 1)
+    expect(state.latestOrdinals?.s1).toBe(1)
+    state = applyStreamReadOrdinal(state, "s1", 1)
+    expect(state.unreadCounts.s1).toBe(0)
+  })
+
+  it("drops moved ids from the source overlay so a stale entry can't hide genuine unread", () => {
+    // Messages 1..5, watermark at 1, m2 overlay-read → unread 3 ({m3,m4,m5}).
+    // m2 (overlay-read) + m3 (unread) move to a thread → source count 3.
+    // True post-move state: watermark 1, overlay empty, unread 2 ({m4,m5}).
+    // With a stale m2 entry the math yields 1 — hiding a genuinely unread row.
+    const state = makeState({
+      unreadCounts: { s1: 3 },
+      latestOrdinals: { s1: 5 },
+      readMessageIds: { s1: ["m2"] },
+    })
+    const next = applyMovedSourceOrdinal(state, "s1", 3, ["m2", "m3"])
+    expect(next.readMessageIds).toEqual({})
+    expect(next.unreadCounts.s1).toBe(2)
+  })
+
+  it("leaves the overlay untouched when no moved id is in it", () => {
+    const state = makeState({
+      unreadCounts: { s1: 2 },
+      latestOrdinals: { s1: 5 },
+      readMessageIds: { s1: ["m4"] },
+    })
+    const next = applyMovedSourceOrdinal(state, "s1", 4, ["m2"])
+    expect(next.readMessageIds).toEqual({ s1: ["m4"] })
+    expect(next.unreadCounts.s1).toBe(1)
+  })
+
+  it("without the source-ordinal fix the read cannot clear the phantom (regression guard)", () => {
+    let state = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 1 } })
+    state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false, isViewing: false })
+    // Skip applyMovedSourceOrdinal: latest stays inflated at 2 (max-merge only).
+    const read = applyStreamReadOrdinal(state, "s1", 1)
+    expect(read.unreadCounts.s1).toBe(1) // stuck — the exact bug the fix removes
+  })
+})
+
+describe("dropMessageActivities", () => {
+  const state = makeState({
+    unreadActivities: [
+      act("a1", "s1", "reaction", { messageId: "m1" }),
+      act("a2", "s1", "mention", { messageId: "m2" }),
+    ],
+  })
+
+  it("drops every held row for the deleted message", () => {
+    const next = dropMessageActivities(state, "m1")
+    expect(next.unreadActivities.map((a) => a.id)).toEqual(["a2"])
+    expect(next.unreadActivityCount).toBe(1)
+  })
+
+  it("is a no-op (same reference) when no row matches", () => {
+    expect(dropMessageActivities(state, "m_absent")).toBe(state)
+  })
+})
+
+describe("reconcileActivities", () => {
+  it("replaces the held set wholesale with the server rows", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1"), act("a2", "s2")] })
+    const next = reconcileActivities(state, [act("a2", "s2"), act("a3", "s3", "mention")])
+    expect(next.unreadActivities.map((a) => a.id)).toEqual(["a2", "a3"])
+    expect(next.activityCounts).toEqual({ s2: 1, s3: 1 })
+    expect(next.mentionCounts).toEqual({ s3: 1 })
+    expect(next.unreadActivityCount).toBe(2)
+  })
+
+  it("drops self rows from the server set", () => {
+    const state = makeState()
+    const next = reconcileActivities(state, [act("a1", "s1"), act("a2", "s1", "message", { isSelf: true })])
+    expect(next.unreadActivities.map((a) => a.id)).toEqual(["a1"])
+    expect(next.unreadActivityCount).toBe(1)
+  })
+
+  it("empties the held set when the server shows nothing unread", () => {
+    const state = makeState({ unreadActivities: [act("a1", "s1")] })
+    const next = reconcileActivities(state, [])
+    expect(next.unreadActivities).toEqual([])
     expect(next.unreadActivityCount).toBe(0)
   })
 })

@@ -62,6 +62,7 @@ import {
   upsertActivity,
 } from "./unread-counters"
 import { commitCounterMutation, commitStreamPreview, type CatchUpBatch, type CounterMutator } from "./catch-up-batch"
+import { commitReadStateSnapshot } from "./read-state"
 
 /** Workspace user shape from backend user repository. */
 interface WorkspaceUserPayload {
@@ -124,6 +125,24 @@ interface StreamReadPayload {
   lastReadSequence?: string
   /** Message ordinal of the read position. */
   lastReadOrdinal: number
+  /** Post-write sparse overlay for this stream (usually shrunk by compaction).
+   *  Absent = not carried (rollout) → leave the client set unchanged; `[]` =
+   *  overlay now empty. See docs/sparse-read-overlay-design.md. */
+  readMessageIds?: string[]
+}
+
+// The absolute post-write read-state snapshot for one stream from a
+// conversation-surface read (docs/sparse-read-overlay-design.md). readMessageIds
+// is the ENTIRE overlay after the write (post-compaction), applied as a SET.
+interface StreamReadMessagesPayload {
+  workspaceId: string
+  authorId: string
+  streamId: string
+  readMessageIds: string[]
+  lastReadEventId: string | null
+  lastReadSequence: string
+  lastReadOrdinal: number
+  markedMessageIds?: string[]
 }
 
 interface StreamsReadAllPayload {
@@ -145,6 +164,9 @@ interface StreamReadSetPayload {
   lastReadEventId: string | null
   lastReadSequence?: string
   lastReadOrdinal: number
+  /** Post-write sparse overlay for this stream (deleted ids above the pointer
+   *  on a re-unread). Absent = not carried; `[]` = overlay now empty. */
+  readMessageIds?: string[]
 }
 
 // Author-scoped: the user's own mute/notify choice for one stream, mirrored to
@@ -268,6 +290,7 @@ function toWorkspaceBootstrapMembership(membership: CachedStreamMembership): Str
     memberId: membership.memberId,
     notificationLevel: membership.notificationLevel,
     lastReadEventId: membership.lastReadEventId,
+    lastReadSequence: membership.lastReadSequence,
     lastReadAt: membership.lastReadAt,
     joinedAt: membership.joinedAt,
   }
@@ -338,6 +361,11 @@ export function mergeReconnectWorkspaceBootstrap({
   // local unread state wins but that have no local ordinal lose their
   // baseline (handlers re-seed from the next absolute event).
   const messageCounts = { ...workspaceBootstrap.messageCounts }
+  // The sparse read overlay (docs/sparse-read-overlay-design.md) is the third
+  // leg of the per-stream triple: effective unread = latest − read − |overlay|,
+  // so a stream's overlay must stay paired with whichever unread/ordinal source
+  // wins for it, exactly as messageCounts does.
+  const readMessageIds = { ...workspaceBootstrap.readMessageIds }
   const mutedStreamIds = new Set(workspaceBootstrap.mutedStreamIds)
   const localStreamById = new Map(localStreams.map((stream) => [stream.id, stream]))
   const localMembershipByStreamId = new Map(localMemberships.map((membership) => [membership.streamId, membership]))
@@ -365,6 +393,12 @@ export function mergeReconnectWorkspaceBootstrap({
         } else {
           delete messageCounts[streamId]
         }
+        const localOverlay = localUnreadState.readMessageIds?.[streamId]
+        if (localOverlay !== undefined) {
+          readMessageIds[streamId] = localOverlay
+        } else {
+          delete readMessageIds[streamId]
+        }
       }
       for (const streamId of localUnreadState.mutedStreamIds) {
         if (successfulStreamIds.has(streamId)) continue
@@ -391,6 +425,12 @@ export function mergeReconnectWorkspaceBootstrap({
         messageCounts[streamId] = localOrdinal
       } else {
         delete messageCounts[streamId]
+      }
+      const localOverlay = localUnreadState.readMessageIds?.[streamId]
+      if (localOverlay !== undefined) {
+        readMessageIds[streamId] = localOverlay
+      } else {
+        delete readMessageIds[streamId]
       }
       if (localUnreadState.mutedStreamIds.includes(streamId)) {
         mutedStreamIds.add(streamId)
@@ -426,6 +466,7 @@ export function mergeReconnectWorkspaceBootstrap({
     membershipsByStreamId.delete(streamId)
     delete unreadCounts[streamId]
     delete messageCounts[streamId]
+    delete readMessageIds[streamId]
     mutedStreamIds.delete(streamId)
   }
 
@@ -439,6 +480,7 @@ export function mergeReconnectWorkspaceBootstrap({
     // fields derive from it.
     ...bootstrapActivityCacheFields(workspaceBootstrap),
     messageCounts,
+    readMessageIds,
     mutedStreamIds: Array.from(mutedStreamIds),
   }
 }
@@ -821,13 +863,19 @@ export function registerWorkspaceSocketHandlers(
         ...old,
         streamMemberships: old.streamMemberships.map((membership) =>
           membership.streamId === payload.streamId
-            ? { ...membership, lastReadEventId: payload.lastReadEventId }
+            ? {
+                ...membership,
+                lastReadEventId: payload.lastReadEventId,
+                ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
+              }
             : membership
         ),
       }
     })
 
-    commitCounter((state) => applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal))
+    commitCounter((state) =>
+      applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal, payload.readMessageIds)
+    )
 
     queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
       streamKeys.bootstrap(workspaceId, payload.streamId),
@@ -835,7 +883,11 @@ export function registerWorkspaceSocketHandlers(
         if (!old?.membership) return old
         return {
           ...old,
-          membership: { ...old.membership, lastReadEventId: payload.lastReadEventId },
+          membership: {
+            ...old.membership,
+            lastReadEventId: payload.lastReadEventId,
+            ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
+          },
         }
       }
     )
@@ -852,6 +904,7 @@ export function registerWorkspaceSocketHandlers(
         await db.streamMemberships.put({
           ...membership,
           lastReadEventId: payload.lastReadEventId,
+          ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
           id: membershipId,
           workspaceId,
           _cachedAt: now,
@@ -880,13 +933,19 @@ export function registerWorkspaceSocketHandlers(
         ...old,
         streamMemberships: old.streamMemberships.map((membership) =>
           membership.streamId === payload.streamId
-            ? { ...membership, lastReadEventId: payload.lastReadEventId }
+            ? {
+                ...membership,
+                lastReadEventId: payload.lastReadEventId,
+                ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
+              }
             : membership
         ),
       }
     })
 
-    commitCounter((state) => applyStreamReadSet(state, payload.streamId, payload.lastReadOrdinal))
+    commitCounter((state) =>
+      applyStreamReadSet(state, payload.streamId, payload.lastReadOrdinal, payload.readMessageIds)
+    )
 
     queryClient.setQueryData<import("@threa/types").StreamBootstrap | undefined>(
       streamKeys.bootstrap(workspaceId, payload.streamId),
@@ -894,7 +953,11 @@ export function registerWorkspaceSocketHandlers(
         if (!old?.membership) return old
         return {
           ...old,
-          membership: { ...old.membership, lastReadEventId: payload.lastReadEventId },
+          membership: {
+            ...old.membership,
+            lastReadEventId: payload.lastReadEventId,
+            ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
+          },
         }
       }
     )
@@ -909,11 +972,39 @@ export function registerWorkspaceSocketHandlers(
         await db.streamMemberships.put({
           ...membership,
           lastReadEventId: payload.lastReadEventId,
+          ...(payload.lastReadSequence !== undefined ? { lastReadSequence: payload.lastReadSequence } : {}),
           id: membershipId,
           workspaceId,
           _cachedAt: now,
         })
       }
+    })
+  }
+
+  // Handle a sparse-read snapshot (`stream:read_messages`) from a conversation
+  // surface — this or another session of the same user. Mirrors the read
+  // watermark, SETs the overlay to the absolute post-write snapshot, and
+  // dismisses this stream's push notification (the user read here).
+  const handleStreamReadMessages = (payload: StreamReadMessagesPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    commitReadStateSnapshot(
+      queryClient,
+      workspaceId,
+      {
+        streamId: payload.streamId,
+        readMessageIds: payload.readMessageIds,
+        lastReadEventId: payload.lastReadEventId,
+        lastReadSequence: payload.lastReadSequence,
+        lastReadOrdinal: payload.lastReadOrdinal,
+        markedMessageIds: payload.markedMessageIds,
+      },
+      commitCounter
+    )
+
+    navigator.serviceWorker?.controller?.postMessage({
+      type: SW_MSG_CLEAR_NOTIFICATIONS,
+      streamId: payload.streamId,
     })
   }
 
@@ -1705,6 +1796,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("workspace_user:updated", handleWorkspaceUserUpdated)
   socket.on("stream:read", handleStreamRead)
   socket.on("stream:read_set", handleStreamReadSet)
+  socket.on("stream:read_messages", handleStreamReadMessages)
   socket.on("stream:read_all", handleStreamReadAll)
   socket.on("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
   socket.on("stream:activity", handleStreamActivity)
@@ -1757,6 +1849,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("workspace_user:updated", handleWorkspaceUserUpdated)
     socket.off("stream:read", handleStreamRead)
     socket.off("stream:read_set", handleStreamReadSet)
+    socket.off("stream:read_messages", handleStreamReadMessages)
     socket.off("stream:read_all", handleStreamReadAll)
     socket.off("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
     socket.off("stream:activity", handleStreamActivity)
@@ -1919,6 +2012,7 @@ export async function applyWorkspaceBootstrap(
           unreadCounts: bootstrap.unreadCounts,
           ...bootstrapActivityCacheFields(bootstrap),
           latestOrdinals: bootstrap.messageCounts,
+          readMessageIds: bootstrap.readMessageIds,
           mutedStreamIds: bootstrap.mutedStreamIds,
           _cachedAt: now,
         })
@@ -1994,6 +2088,7 @@ export async function applyWorkspaceBootstrap(
       unreadCounts: bootstrap.unreadCounts,
       ...bootstrapActivityCacheFields(bootstrap),
       latestOrdinals: bootstrap.messageCounts,
+      readMessageIds: bootstrap.readMessageIds,
       mutedStreamIds: bootstrap.mutedStreamIds,
       _cachedAt: now,
     },
@@ -2124,6 +2219,7 @@ export async function applyReconnectBootstrapBatch(
           unreadCounts: finalBootstrap.unreadCounts,
           ...bootstrapActivityCacheFields(finalBootstrap),
           latestOrdinals: finalBootstrap.messageCounts,
+          readMessageIds: finalBootstrap.readMessageIds,
           mutedStreamIds: finalBootstrap.mutedStreamIds,
           _cachedAt: now,
         }),
@@ -2208,6 +2304,7 @@ export async function applyReconnectBootstrapBatch(
       unreadCounts: finalBootstrap.unreadCounts,
       ...bootstrapActivityCacheFields(finalBootstrap),
       latestOrdinals: finalBootstrap.messageCounts,
+      readMessageIds: finalBootstrap.readMessageIds,
       mutedStreamIds: finalBootstrap.mutedStreamIds,
       _cachedAt: now,
     },
