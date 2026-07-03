@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import type { ReactNode } from "react"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { Router } from "react-router-dom"
 import { useState } from "react"
@@ -9,6 +9,8 @@ import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as authModule from "@/auth"
 import * as quoteReplyModule from "./quote-reply-context"
+import * as conversationReplyModule from "./conversation-reply-context"
+import * as useConversationsModule from "@/hooks/use-conversations"
 import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
@@ -75,6 +77,7 @@ let registeredQuoteReplyHandler:
       snippet: string
     }) => void)
   | null = null
+let registeredConversationReplyHandler: ((data: { conversationId: string }) => void) | null = null
 
 // Composer state that tests can modify
 let mockComposerState = {
@@ -114,6 +117,7 @@ beforeEach(() => {
   }
   mockSubmitContentOverride = undefined
   registeredQuoteReplyHandler = null
+  registeredConversationReplyHandler = null
   mockComposerFocus.mockReset()
   mockComposerFocusAfterQuoteReply.mockReset()
 
@@ -162,6 +166,29 @@ beforeEach(() => {
       }
     },
   } as unknown as ReturnType<typeof quoteReplyModule.useQuoteReply>)
+
+  vi.spyOn(conversationReplyModule, "useConversationReply").mockReturnValue({
+    triggerReplyInConversation: vi.fn(),
+    registerHandler: (handler: (data: { conversationId: string }) => void) => {
+      registeredConversationReplyHandler = handler
+      return () => {
+        if (registeredConversationReplyHandler === handler) {
+          registeredConversationReplyHandler = null
+        }
+      }
+    },
+  } as unknown as ReturnType<typeof conversationReplyModule.useConversationReply>)
+  // The armed-reply strip resolves its topic label via the board-post hook,
+  // which needs the services context + query client; stub it with a fixed topic.
+  vi.spyOn(useConversationsModule, "useConversationBoardPost").mockImplementation(
+    (_workspaceId: string, conversationId: string | null) =>
+      ({
+        post: conversationId ? { conversation: { id: conversationId, topicSummary: "Pizza plans" } } : null,
+        isLoading: false,
+        notFound: false,
+        refetch: vi.fn(),
+      }) as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>
+  )
 
   vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
     sendMessage: mockSendMessage,
@@ -516,6 +543,66 @@ describe("MessageInput", () => {
       })
       expect(mockComposerFocusAfterQuoteReply).toHaveBeenCalledTimes(1)
       expect(mockComposerFocus).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("reply in conversation", () => {
+    it("arms the composer with a dismissible strip showing the conversation topic and focuses the editor", () => {
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+
+      expect(registeredConversationReplyHandler).not.toBeNull()
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      const strip = screen.getByTestId("conversation-reply-strip")
+      expect(strip).toHaveTextContent("Replying in Pizza plans")
+      expect(mockComposerFocus).toHaveBeenCalledTimes(1)
+    })
+
+    it("files the send into the armed conversation and clears the strip on success", async () => {
+      const helloContent = makeDoc("late pizza take")
+      mockComposerState.canSend = true
+      mockComposerState.content = helloContent
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockSendMessage).toHaveBeenCalledWith({
+        contentJson: helloContent,
+        attachmentIds: undefined,
+        attachments: undefined,
+        conversation: { intent: "existing", conversationId: "conv_1" },
+      })
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+    })
+
+    it("keeps the filing armed when the send fails, so a retry still files", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("doomed")
+      mockSendMessage.mockRejectedValue(new Error("stream creation failed"))
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument()
+    })
+
+    it("dismissing the strip disarms the filing — the next send carries no directive", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("just a normal message")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ conversation: undefined }))
     })
   })
 

@@ -246,7 +246,7 @@ export function useQueueDraftMessage(workspaceId: string) {
  *  provenance chip (Mechanism C) renders on the optimistic row and stays put when
  *  the echo swaps in. A `threadFromMessage` reply is an opener the timeline chip
  *  ignores, so it tags the board card (`conversationId`) only. */
-function conversationTag(directive: ConversationDirective | undefined): {
+export function conversationTag(directive: ConversationDirective | undefined): {
   conversationId?: string
   declaredConversationId?: string
 } {

@@ -83,6 +83,13 @@ export interface MessageActionContext {
   /** Callback to insert a partial quote reply with a user-selected snippet */
   onQuoteReplyWithSnippet?: (snippet: string) => void
   /**
+   * Arm the stream composer to file its next send into this message's
+   * conversation (an `existing` directive — Mechanism C). Set on in-stream
+   * message rows whose primary conversation is locally known; the reply lands
+   * in the flat timeline with an instant provenance chip.
+   */
+  onReplyInConversation?: () => void
+  /**
    * Share-to-root fast path: queue a pointer share into the top-level non-thread
    * ancestor (channel/dm/scratchpad) and navigate there. Always preferred over
    * share-to-parent for nested-thread cases — the root is by far the more
@@ -321,6 +328,17 @@ export const messageActions: MessageAction[] = [
     groupId: "reply",
     when: (ctx) => !!ctx.onQuoteReply,
     action: (ctx) => ctx.onQuoteReply?.(),
+  },
+  {
+    // Files the next composer send into this message's conversation (the soft-
+    // thread analog of quote reply). Only present when the conversation is
+    // locally known.
+    id: "reply-in-conversation",
+    label: "Reply in conversation",
+    icon: Layers,
+    groupId: "reply",
+    when: (ctx) => !!ctx.onReplyInConversation,
+    action: (ctx) => ctx.onReplyInConversation?.(),
   },
   {
     // In-stream → conversation panel (the mirror of "View in channel"). Only

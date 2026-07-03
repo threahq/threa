@@ -11,7 +11,7 @@ import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
-import { useQueueDraftMessage } from "./use-queue-draft-message"
+import { useQueueDraftMessage, conversationTag } from "./use-queue-draft-message"
 import { useWorkspaceUsers, useWorkspaceStreams, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { hasSeededDraftCache } from "@/stores/draft-store"
@@ -25,6 +25,7 @@ import type {
   StreamMember,
   StreamType,
   CompanionMode,
+  ConversationDirective,
   StreamEvent,
   JSONContent,
   WorkspaceBootstrap,
@@ -138,6 +139,12 @@ export interface SendMessageInput {
   attachmentIds?: string[]
   /** Full attachment info for optimistic UI - required when attachmentIds is provided */
   attachments?: AttachmentSummary[]
+  /**
+   * Files the send into a conversation synchronously ("Reply in conversation",
+   * Mechanism C). Only meaningful on real streams — draft paths ignore it, since
+   * a stream that doesn't exist yet has no conversations to reply into.
+   */
+  conversation?: ConversationDirective
 }
 
 export interface UseStreamOrDraftReturn {
@@ -589,6 +596,10 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           messageId: clientId,
           contentMarkdown,
           contentJson: input.contentJson,
+          // Same conversation keys the server stamps on the real payload, so the
+          // sender's provenance chip renders on the optimistic row and survives
+          // the echo swap (see conversationTag).
+          ...conversationTag(input.conversation),
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         },
         actorId: currentUserId,
@@ -656,6 +667,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         contentFormat: "markdown",
         contentJson: input.contentJson,
         attachmentIds: input.attachmentIds,
+        conversation: input.conversation,
         createdAt: Date.now(),
         retryCount: 0,
         ...(e2eFields ?? {}),

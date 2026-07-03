@@ -71,6 +71,7 @@ import { MessageHistoryDialog } from "./message-history-dialog"
 import { MessageReactions } from "./message-reactions"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
 import { useQuoteReply } from "./quote-reply-context"
+import { useConversationReply } from "./conversation-reply-context"
 import { useSwipeAction } from "@/hooks/use-swipe-action"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { queueShareHandoff } from "@/stores/share-handoff-store"
@@ -1116,6 +1117,16 @@ function SentMessageEvent({
     [messageConversationId, openPanel]
   )
 
+  // "Reply in conversation" — arm the stream composer to file its next send
+  // into this message's conversation (Mechanism C). Same membership gate as
+  // "Show in conversation"; also needs a composer registered via the context.
+  const conversationReplyCtx = useConversationReply()
+  const handleReplyInConversation = useCallback(() => {
+    if (messageConversationId) {
+      conversationReplyCtx?.triggerReplyInConversation({ conversationId: messageConversationId })
+    }
+  }, [messageConversationId, conversationReplyCtx])
+
   const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const handleDiscussWithAriadne = useCallback(
     // `useDiscussWithAriadne` rethrows after toasting so the surrounding
@@ -1240,6 +1251,10 @@ function SentMessageEvent({
       onShowMoveDetails: movedTombstoneEvent ? () => setTimeout(() => setMoveDetailsOpen(true), 0) : undefined,
       onReassignConversation: conversationOverlayRow && !batch?.enabled ? handleRequestConversationPicker : undefined,
       onShowInConversation: messageConversationId ? handleShowInConversation : undefined,
+      // Gated off E2E streams like Edit: the E2E create wire format carries no
+      // conversation directive, so the send would silently drop the filing.
+      onReplyInConversation:
+        messageConversationId && conversationReplyCtx && !e2eEnabled ? handleReplyInConversation : undefined,
       onMarkReadUpToHere: rowRead !== "read" ? () => dispatchMarkReadUpToHere(streamId, event.id) : undefined,
       onMarkUnread: rowRead !== "unread" ? () => dispatchMarkUnread(streamId, payload.messageId) : undefined,
     }),
@@ -1285,6 +1300,8 @@ function SentMessageEvent({
       handleRequestConversationPicker,
       messageConversationId,
       handleShowInConversation,
+      conversationReplyCtx,
+      handleReplyInConversation,
     ]
   )
 
