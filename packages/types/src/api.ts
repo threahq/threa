@@ -1849,6 +1849,12 @@ export interface ScheduleMessageInput {
   scheduledFor: string
   /** Idempotency key for optimistic create retries (mirrors message create). */
   clientMessageId?: string
+  /**
+   * Declare the delivered message's conversation (see {@link ConversationDirective}),
+   * stored on the row and forwarded to the send at fire time. Set by the composer's
+   * "Reply in conversation" arm; omit to let the extractor infer at fire time.
+   */
+  conversation?: ConversationDirective
 }
 
 /**

@@ -85,6 +85,10 @@ let registeredQuoteReplyHandler:
     }) => void)
   | null = null
 let registeredConversationReplyHandler: ((data: { conversationId: string }) => void) | null = null
+const mockScheduleMutateAsync = vi.fn()
+// Captured from the mocked ScheduledMessagesPicker so a test can drive the
+// schedule flow (which lands on `handleSchedule`) without the real picker UI.
+let capturedOnSchedule: ((when: Date) => void | Promise<void>) | null = null
 
 // Composer state that tests can modify
 let mockComposerState = {
@@ -110,6 +114,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockSendMessage.mockReset()
   mockSendMessage.mockResolvedValue({})
+  mockScheduleMutateAsync.mockReset()
+  mockScheduleMutateAsync.mockResolvedValue({})
+  capturedOnSchedule = null
   mockOpenPanel.mockReset()
   infoToastSpy = vi.spyOn(toast, "info").mockImplementation(() => "toast-id")
   resetConversationReplyOpenStoreCache()
@@ -261,10 +268,21 @@ beforeEach(() => {
   // ServicesProvider; tests run without that wrapper, so stub the hook to a
   // no-op mutation. The schedule path itself is exercised by the page tests.
   vi.spyOn(hooksModule, "useScheduleMessage").mockReturnValue({
-    mutateAsync: vi.fn().mockResolvedValue({}),
+    mutateAsync: mockScheduleMutateAsync,
     mutate: vi.fn(),
     isPending: false,
   } as unknown as ReturnType<typeof hooksModule.useScheduleMessage>)
+  // Capture the picker's onSchedule (bound to `handleSchedule`) so a test can
+  // drive the schedule path directly; the real picker's date UI is exercised by
+  // page tests.
+  vi.spyOn(composerModule, "ScheduledMessagesPicker").mockImplementation((({
+    onSchedule,
+  }: {
+    onSchedule: (when: Date) => void | Promise<void>
+  }) => {
+    capturedOnSchedule = onSchedule
+    return <div data-testid="scheduled-messages-picker" />
+  }) as unknown as typeof composerModule.ScheduledMessagesPicker)
   // Stash previews decrypt via the shared cache, which reads auth/session; these
   // tests render without an AuthProvider, so stub the batch hook to an empty map.
   vi.spyOn(hooksModule, "useDecryptedDraftPreviews").mockReturnValue(new Map())
@@ -283,6 +301,7 @@ beforeEach(() => {
     hasFailed,
     pendingAttachments,
     composerRef,
+    scheduledMessagesTrigger,
   }: {
     content: JSONContent
     onContentChange: (v: JSONContent) => void
@@ -292,6 +311,7 @@ beforeEach(() => {
     hasFailed: boolean
     pendingAttachments: Array<{ id: string; filename: string; sizeBytes: number; status: string }>
     composerRef?: { current: { focus: () => void; focusAfterQuoteReply: () => void } | null }
+    scheduledMessagesTrigger?: ReactNode
   }) => {
     if (composerRef) {
       composerRef.current = {
@@ -313,6 +333,7 @@ beforeEach(() => {
         <button onClick={() => onSubmit(mockSubmitContentOverride)} disabled={!canSubmit || hasFailed}>
           {isSubmitting ? "Sending..." : "Send"}
         </button>
+        {scheduledMessagesTrigger}
       </div>
     )
   }) as unknown as typeof composerModule.MessageComposer)
@@ -597,6 +618,39 @@ describe("MessageInput", () => {
         conversation: { intent: "existing", conversationId: "conv_1" },
       })
       expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+    })
+
+    it("carries the armed directive onto a scheduled send and clears the strip", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("send this later, in the conversation")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await act(async () => {
+        await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
+      })
+
+      expect(mockScheduleMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          streamId,
+          conversation: { intent: "existing", conversationId: "conv_1" },
+        })
+      )
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+    })
+
+    it("schedules with no directive when the composer isn't armed", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("just a normal scheduled message")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+
+      await act(async () => {
+        await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
+      })
+
+      expect(mockScheduleMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ conversation: undefined }))
     })
 
     it("keeps the filing armed when the send fails, so a retry still files", async () => {

@@ -17,6 +17,7 @@ const SCHEDULED_ROW = {
   content_markdown: "hello",
   attachment_ids: [],
   metadata: null,
+  conversation_directive: null,
   scheduled_for: SCHEDULED_FOR,
   status: ScheduledMessageStatuses.PENDING,
   sent_message_id: null,
@@ -64,13 +65,37 @@ describe("ScheduledMessagesRepository.insert", () => {
       contentMarkdown: "hello",
       attachmentIds: [],
       metadata: null,
+      conversationDirective: null,
       scheduledFor: SCHEDULED_FOR,
       clientMessageId: "cli_1",
     })
 
     expect(captured.text).toContain("INSERT INTO scheduled_messages")
+    expect(captured.text).toContain("conversation_directive")
     expect(captured.text).toContain("RETURNING")
     expect(captured.values).toContain("cli_1")
+  })
+
+  it("serializes the conversation directive into the row when armed for 'Reply in conversation'", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured)
+
+    await ScheduledMessagesRepository.insert(db, {
+      id: "sched_02",
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      streamId: "stream_1",
+      parentMessageId: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      attachmentIds: [],
+      metadata: null,
+      conversationDirective: { intent: "existing", conversationId: "conv_7" },
+      scheduledFor: SCHEDULED_FOR,
+      clientMessageId: null,
+    })
+
+    expect(captured.values).toContain(JSON.stringify({ intent: "existing", conversationId: "conv_7" }))
   })
 })
 

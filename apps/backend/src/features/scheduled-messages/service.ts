@@ -1,5 +1,11 @@
 import type { Pool, PoolClient } from "pg"
-import { AuthorTypes, ScheduledMessageStatuses, type ScheduledMessageView, type JSONContent } from "@threa/types"
+import {
+  AuthorTypes,
+  ScheduledMessageStatuses,
+  type ScheduledMessageView,
+  type JSONContent,
+  type ConversationDirective,
+} from "@threa/types"
 import { withTransaction } from "../../db"
 import { HttpError, isUniqueViolation } from "../../lib/errors"
 // Side-effect import: matches the load-order workaround used by other features
@@ -31,6 +37,7 @@ export interface ScheduleParams {
   contentMarkdown: string
   attachmentIds: string[]
   metadata: Record<string, string> | null
+  conversationDirective: ConversationDirective | null
   scheduledFor: Date
   clientMessageId: string | null
 }
@@ -146,6 +153,7 @@ export class ScheduledMessagesService {
           contentMarkdown: params.contentMarkdown,
           attachmentIds: params.attachmentIds,
           metadata: params.metadata,
+          conversationDirective: params.conversationDirective,
           scheduledFor: clamped,
           clientMessageId: params.clientMessageId,
         })
@@ -524,6 +532,14 @@ export class ScheduledMessagesService {
       contentMarkdown: row.contentMarkdown,
       attachmentIds: row.attachmentIds.length > 0 ? row.attachmentIds : undefined,
       metadata: row.metadata ?? undefined,
+      // Forward the armed "Reply in conversation" directive so the delivered
+      // message files into its conversation synchronously, exactly as a live
+      // send would. Null → let the async extractor infer (INV-62). The assigner
+      // re-validates access/root at fire time (cross-stream within one root is
+      // allowed); a since-deleted or cross-root conversation throws, and fire()'s
+      // catch marks the row `failed` and upserts it so the user sees it, rather
+      // than silently dropping into the wrong place.
+      conversation: row.conversationDirective ?? undefined,
       // Use the scheduled message id as the idempotency key. If the same
       // scheduled row gets re-fired after an interrupted finalize (process
       // restart between createMessage and markSent), the second attempt

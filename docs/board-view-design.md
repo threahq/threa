@@ -535,7 +535,10 @@ stops being load-bearing for the surfaces people actually drive.
 2. **Attached context: content node vs. envelope field.** Attachments/quote-reply are
    content nodes, and the backend already extracts content references, so consistency
    says `conversationReference` is a content node — counter-argument: filing-into-a-
-   topic is arguably a message property, not body. _Lean: content node._
+   topic is arguably a message property, not body. _Resolved (#1146): envelope field._
+   The counter-argument won — a `conversation` `ConversationDirective` rides the send
+   input (`CreateMessageInputJson.conversation`), assigned synchronously in the
+   message's transaction, never a node in `contentJson`.
 3. **Chip source** — render the provenance chip from the attached reference
    (authoritative, no flicker) rather than from async membership? _Lean: from the
    reference._

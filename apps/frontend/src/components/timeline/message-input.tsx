@@ -723,7 +723,17 @@ function MessageInputComponent({
           contentJson: normalizedContent,
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           scheduledFor: when.toISOString(),
+          // Armed by "Reply in conversation": the directive rides the scheduled
+          // row and is forwarded to the send at fire time, so a scheduled reply
+          // files into its conversation exactly as an immediate send would.
+          // Unlike the live send there's no thread-follow routing — the fired
+          // message posts into this stream and the assigner attaches it to the
+          // conversation by id (cross-stream within one root is allowed).
+          conversation: conversationReply
+            ? { intent: "existing", conversationId: conversationReply.conversationId }
+            : undefined,
         })
+        setConversationReply(null)
         composer.resolveDraft()
         composer.clearAttachments()
       } catch (err) {
@@ -734,7 +744,7 @@ function MessageInputComponent({
         composer.setIsSending(false)
       }
     },
-    [composer, scheduleMessageMutation, streamId]
+    [composer, scheduleMessageMutation, streamId, conversationReply]
   )
 
   if (disabled && disabledReason) {

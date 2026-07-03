@@ -31,7 +31,7 @@ import { messageMetadataSchema } from "./metadata-schema"
 // Optional conversation directive: declare the message's conversation instead
 // of leaving the extractor to infer it. The id is a sibling of the discriminant,
 // so `existing` without a non-empty id is a validation error, distinct from `new`.
-const conversationDirectiveSchema = z.discriminatedUnion("intent", [
+export const conversationDirectiveSchema = z.discriminatedUnion("intent", [
   z.object({ intent: z.literal("new") }),
   z.object({ intent: z.literal("existing"), conversationId: z.string().min(1) }),
   z.object({ intent: z.literal("threadFromMessage"), sourceConversationId: z.string().min(1) }),
