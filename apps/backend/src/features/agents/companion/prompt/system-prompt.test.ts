@@ -197,6 +197,56 @@ describe("buildSystemPrompt", () => {
     expect(explicitNull).not.toContain("## Scheduled follow-up firing now")
   })
 
+  test("injects the Previous sessions block when episode summaries are provided", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null,
+      "## Previous sessions\n\nSummaries of your earlier work sessions in this stream, oldest first.\n\n- [2026-06-10T10:00:02.000Z] Concluded deploys happen Fridays only."
+    )
+
+    expect(prompt).toContain("## Previous sessions")
+    expect(prompt).toContain("Concluded deploys happen Fridays only.")
+  })
+
+  test("omits the Previous sessions block when none are provided", () => {
+    const provided = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null
+    )
+    const blank = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      null,
+      "   "
+    )
+
+    expect(provided).not.toContain("## Previous sessions")
+    expect(blank).not.toContain("## Previous sessions")
+  })
+
   test("injects the mention invocation section, naming the mentioner, for a mention turn", () => {
     const prompt = buildSystemPrompt(persona, scratchpadContext, null, { kind: "mention" }, "Kris")
 

@@ -36,6 +36,7 @@ export {
   type SavedReminderFireJobData,
   type ScheduledMessageSendJobData,
   type AgentFollowUpFireJobData,
+  type AgentEpisodeSummarizeJobData,
   type ContextBagPrecomputeJobData,
   type BackfillPlanJobData,
   type BackfillChunkJobData,

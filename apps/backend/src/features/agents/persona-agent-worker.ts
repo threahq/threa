@@ -58,6 +58,15 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
 
     logger.info({ jobId: job.id, ...result }, "Persona agent job completed")
 
+    // Summarize the finished session into an episode summary for later turns
+    // (roadmap 3.1). Deferred to its own job so no summarizer AI call runs inline
+    // here (INV-41). Only sessions that actually replied are worth remembering —
+    // a silent no-op turn has nothing to condense. Best-effort: a lost enqueue
+    // just means one session is absent from "Previous sessions" context.
+    if (result.status === "completed" && result.sessionId && result.messagesSent > 0) {
+      await jobQueue.send(JobQueues.AGENT_EPISODE_SUMMARIZE, { workspaceId, sessionId: result.sessionId })
+    }
+
     // Check for unseen messages that arrived while the session was running.
     // The companion listener skips dispatching jobs for messages when a session
     // is already active (RUNNING/PENDING), so we need to catch up here.

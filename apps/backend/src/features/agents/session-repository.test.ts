@@ -195,3 +195,86 @@ describe("AgentSessionRepository.findRecentDigestStepsByStream", () => {
     ])
   })
 })
+
+describe("AgentSessionRepository.setEpisodeSummary", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("guards the write on episode_summary IS NULL (CAS) and reports whether it wrote", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db: Querier = {
+      query: mock(async (queryTextOrConfig) => {
+        const config = queryTextOrConfig as QueryConfig
+        captured.text = config.text
+        captured.values = config.values ?? []
+        return { rows: [], rowCount: 1 } as unknown as QueryResult
+      }),
+    }
+
+    const wrote = await AgentSessionRepository.setEpisodeSummary(db, "session_1", "did X, concluded Y")
+
+    expect(captured.text).toContain("SET episode_summary =")
+    expect(captured.text).toContain("WHERE id = $")
+    expect(captured.text).toContain("AND episode_summary IS NULL")
+    expect(captured.values).toEqual(["did X, concluded Y", "session_1"])
+    expect(wrote).toBe(true)
+  })
+
+  it("reports no write when the CAS matched nothing (already summarized)", async () => {
+    const db: Querier = {
+      query: mock(async () => ({ rows: [], rowCount: 0 }) as unknown as QueryResult),
+    }
+    const wrote = await AgentSessionRepository.setEpisodeSummary(db, "session_1", "s")
+    expect(wrote).toBe(false)
+  })
+})
+
+describe("AgentSessionRepository.findRecentEpisodeSummariesByStream", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("selects non-null summaries of the stream's COMPLETED sessions for the persona, newest first", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db: Querier = {
+      query: mock(async (queryTextOrConfig) => {
+        const config = queryTextOrConfig as QueryConfig
+        captured.text = config.text
+        captured.values = config.values ?? []
+        return {
+          rows: [
+            {
+              summary: "looked into the deploy cadence; concluded Fridays only",
+              created_at: new Date("2026-06-10T09:59:00.000Z"),
+              completed_at: new Date("2026-06-10T10:00:02.000Z"),
+            },
+          ],
+          rowCount: 1,
+        } as QueryResult
+      }),
+    }
+
+    const rows = await AgentSessionRepository.findRecentEpisodeSummariesByStream(db, {
+      streamId: "stream_1",
+      personaId: "persona_1",
+      limit: 3,
+    })
+
+    expect(captured.text).toContain("episode_summary AS summary")
+    expect(captured.text).toContain("stream_id =")
+    expect(captured.text).toContain("persona_id =")
+    expect(captured.text).toContain("status =")
+    expect(captured.text).toContain("episode_summary IS NOT NULL")
+    expect(captured.text).toContain("ORDER BY created_at DESC, id DESC")
+    expect(captured.values).toEqual(["stream_1", "persona_1", SessionStatuses.COMPLETED, 3])
+
+    expect(rows).toEqual([
+      {
+        summary: "looked into the deploy cadence; concluded Fridays only",
+        sessionCreatedAt: new Date("2026-06-10T09:59:00.000Z"),
+        sessionCompletedAt: new Date("2026-06-10T10:00:02.000Z"),
+      },
+    ])
+  })
+})

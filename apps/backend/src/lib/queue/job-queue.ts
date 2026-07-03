@@ -30,6 +30,7 @@ export const JobQueues = {
   SAVED_REMINDER_FIRE: "saved.reminder_fire",
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
   AGENT_FOLLOW_UP_FIRE: "agent.follow_up_fire",
+  AGENT_EPISODE_SUMMARIZE: "agent.episode_summarize",
   CONTEXT_BAG_PRECOMPUTE: "context_bag.precompute",
   BACKFILL_PLAN: "backfill.plan",
   BACKFILL_CHUNK: "backfill.chunk",
@@ -65,6 +66,19 @@ export interface PersonaAgentJobData {
 export interface AgentFollowUpFireJobData {
   workspaceId: string
   followUpId: string
+}
+
+/**
+ * Agent episode-summary job (roadmap 3.1). Enqueued after a companion session
+ * completes (persona-agent-worker), it condenses the finished session into a
+ * ~2-3 sentence `episode_summary` on the `agent_sessions` row via a cheap model.
+ * Deferred to a job — never inline — so the completion transaction stays short
+ * and holds no connection across the summarizer AI call (INV-41). Idempotent:
+ * re-delivery no-ops once the row already carries a summary.
+ */
+export interface AgentEpisodeSummarizeJobData {
+  workspaceId: string
+  sessionId: string
 }
 
 export interface NamingJobData {
@@ -302,6 +316,7 @@ export interface JobDataMap {
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
   [JobQueues.SCHEDULED_MESSAGE_SEND]: ScheduledMessageSendJobData
   [JobQueues.AGENT_FOLLOW_UP_FIRE]: AgentFollowUpFireJobData
+  [JobQueues.AGENT_EPISODE_SUMMARIZE]: AgentEpisodeSummarizeJobData
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
   [JobQueues.BACKFILL_PLAN]: BackfillPlanJobData
   [JobQueues.BACKFILL_CHUNK]: BackfillChunkJobData

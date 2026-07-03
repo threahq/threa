@@ -36,6 +36,7 @@ const session: AgentSession = {
   lastSeenSequence: 0n,
   sentMessageIds: [],
   contextMessageIds: [],
+  episodeSummary: null,
   createdAt: new Date("2026-06-12T09:00:00.000Z"),
   completedAt: null,
 }

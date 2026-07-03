@@ -28,7 +28,8 @@ export function buildSystemPrompt(
   tools: AgentTool[] = [],
   conversationTopic?: string | null,
   spawnedFromContext?: string | null,
-  followUp?: { note: string; scheduledFor: Date } | null
+  followUp?: { note: string; scheduledFor: Date } | null,
+  previousSessions?: string | null
 ): string {
   if (!persona.systemPrompt) {
     throw new Error(`Persona "${persona.name}" (${persona.id}) has no system prompt configured`)
@@ -79,6 +80,13 @@ ${spawnedFromContext.trim()}`
   const conversationMemory = formatConversationMemoryForPrompt(rollingConversationSummary)
   if (conversationMemory) {
     prompt += `\n\n${conversationMemory}`
+  }
+
+  // Prior completed sessions' episode summaries (roadmap 3.1) — durable episodic
+  // memory that outlives the rolling window. Placed with the other prior-context
+  // blocks, before the response-behavior instructions.
+  if (previousSessions?.trim()) {
+    prompt += `\n\n${previousSessions.trim()}`
   }
 
   prompt += `

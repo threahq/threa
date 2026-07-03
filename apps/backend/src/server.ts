@@ -100,6 +100,8 @@ import {
   AgentFollowUpService,
   AgentFollowUpRepository,
   createAgentFollowUpFireWorker,
+  EpisodeSummaryService,
+  createEpisodeSummarizeWorker,
   WorkspaceAgent,
   GeneralResearcher,
   PersonaAgent,
@@ -109,6 +111,9 @@ import {
   ConversationSummaryService,
   COMPANION_SUMMARY_MODEL_ID,
   COMPANION_SUMMARY_TEMPERATURE,
+  EPISODE_SUMMARY_MODEL_ID,
+  EPISODE_SUMMARY_TEMPERATURE,
+  EPISODE_SUMMARY_MAX_TOKENS,
   stripInaccessibleAgentRefs,
 } from "./features/agents"
 import { EmojiUsageHandler } from "./features/emoji"
@@ -738,6 +743,13 @@ export async function startServer(): Promise<ServerInstance> {
     temperature: COMPANION_SUMMARY_TEMPERATURE,
   })
   const agentFollowUpService = new AgentFollowUpService({ pool })
+  const episodeSummaryService = new EpisodeSummaryService({
+    pool,
+    ai,
+    modelId: EPISODE_SUMMARY_MODEL_ID,
+    temperature: EPISODE_SUMMARY_TEMPERATURE,
+    maxTokens: EPISODE_SUMMARY_MAX_TOKENS,
+  })
 
   const personaAgent = new PersonaAgent({
     pool,
@@ -1103,6 +1115,16 @@ export async function startServer(): Promise<ServerInstance> {
   }
   jobQueue.registerHandler(JobQueues.AGENT_FOLLOW_UP_FIRE, agentFollowUpFireWorker, {
     hooks: { onDLQ: agentFollowUpOnDLQ },
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
+  // Episode-summary worker — condenses a completed companion session into its
+  // `episode_summary` for later "Previous sessions" context (roadmap 3.1). Cheap
+  // background LLM work, so it rides the light tier; a redelivered job no-ops via
+  // the `setEpisodeSummary` CAS.
+  const episodeSummarizeWorker = createEpisodeSummarizeWorker({ episodeSummaryService })
+  jobQueue.registerHandler(JobQueues.AGENT_EPISODE_SUMMARIZE, episodeSummarizeWorker, {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })
