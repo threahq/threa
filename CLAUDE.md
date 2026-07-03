@@ -21,7 +21,14 @@ Default implementation mode for routine tasks: **minimal patch**. Do not refacto
 
 ## Working Style
 
-Be extremely concise, sacrifice grammar for sake of concision.
+**Cut words, keep facts.** This is a binding constraint on every reply and every PR description, not a nicety. Keep all the substance — what changed, why, the file names, the tradeoffs. Cut the filler around it: preamble ("Great question", "Let me help you"), restating the request back, hedging, throat-clearing transitions ("It's worth noting that", "In order to"), and self-narration ("Now I'll…", "I've gone ahead and…"). Density is the goal, wordiness is the enemy — they are not the same thing. A reply packed with file names and reasons in ten words is good; the same ten facts wrapped in forty words of connective prose is what to avoid.
+
+- Lead with the answer or result. No windup.
+- One fact per clause. If a sentence survives deleting half its words, delete them.
+- Prefer a short list of concrete points over a flowing paragraph.
+- Verbose: "I went ahead and updated the handler so that it now validates the input using the Zod schema, which should resolve the issue you were seeing." Tight: "Updated the handler to validate input via the Zod schema — fixes the bug."
+
+The same rule governs PR descriptions: state what changed and why, name real symbols and files, drop the connective padding. Dense ≠ long.
 
 Read this before asking the user anything.
 

@@ -155,6 +155,8 @@ Small PRs collapse this: a docs-only or one-file change uses **Problem / Solutio
 
 The description should read high-level but stay dense and detail-oriented — a reviewer skims the prose to size up the change, then trusts it enough not to re-derive the diff. The benchmark is the recently merged feature PRs in this repo; open a couple before writing if you're unsure of the register.
 
+**Dense means fact-per-word, not word-count.** Keep every real fact — symbols, files, tradeoffs — and cut the connective padding around them (see "Cut words, keep facts" in CLAUDE.md). A section that says the same thing in half the words is strictly better; length is not evidence of thoroughness. If a sentence survives deleting half its words, delete them.
+
 **Lead with altitude, immediately land in specifics.** State the shape in one sentence ("a generic, URL-driven multi-panel layout in the spirit of VS Code editor groups"), then the very next clause is concrete — the real function, the real file, the real mechanism.
 
 **Name real things.** `streamAccessPredicateSql`, `20260613064500_sync_log_retention.sql`, `resolveActorRecipients`, `?panel=`. Never "the relevant helper", "a config value", "some logic". If you can't name it, you haven't verified it.
