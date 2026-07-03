@@ -2,11 +2,7 @@
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
-
-// Where the waitlist form POSTs. The marketing site is a separate origin from
-// the API, so this is a cross-origin call to the workspace-router, which proxies
-// /api/waitlist to the control-plane. Overridable at build via PUBLIC_API_BASE.
-const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://app.threa.io"
+import { apiBase, loginUrl } from "../lib/config"
 
 // URLs derive from astro.config.mjs's site so the @id cross-reference always
 // matches the Organization entity BaseHead emits.
@@ -41,7 +37,7 @@ const schema = [
         <nav class="nav-links">
           <a href="/" aria-current="page">Product</a><a href="/developers">Developer</a><a href="/about">About</a>
         </nav>
-        <a class="nav-login" href="https://app.threa.io/login">Log in</a>
+        <a class="nav-login" href={loginUrl}>Log in</a>
         <ThemeToggle />
       </div>
       <div class="hero-stage">
