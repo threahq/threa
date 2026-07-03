@@ -30,9 +30,12 @@ export type {
 } from "./sealed"
 export {
   base64ToBytes,
+  buildMessageAad,
+  buildWrapAad,
   bytesToBase64,
   openMessageAsString,
   parseSealedPayload,
+  sealMessage,
   serializeSealedPayload,
   type AttachmentRef,
   type SealedPayloadExtras,

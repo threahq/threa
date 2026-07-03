@@ -26,7 +26,7 @@ const VENDORED = [
   {
     dep: "@threa/bot-runtime-client",
     src: resolve(here, "../bot-runtime-client"),
-    files: ["index.ts", "transport.ts", "types.ts", "ws-hint.ts"],
+    files: ["index.ts", "transport.ts", "types.ts", "ws-hint.ts", "crypto.ts", "sealed.ts"],
     dir: "bot-runtime-client",
   },
   {
@@ -90,13 +90,22 @@ if (rewrites === 0) {
   throw new Error("import rewrite failed: no vendored dep specifiers found under src/")
 }
 
-// 5. Drop the now-vendored deps from the copied package.json.
+// 5. Drop the now-vendored deps from the copied package.json, and inherit the
+//    vendored packages' own runtime deps (@hpke/*, ulid for the sealed path) so
+//    the standalone install resolves them without the workspace.
 const pkgPath = join(dest, "package.json")
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
-for (const vendored of VENDORED) delete pkg.dependencies?.[vendored.dep]
+for (const vendored of VENDORED) {
+  delete pkg.dependencies?.[vendored.dep]
+  const vendoredPkg = JSON.parse(readFileSync(join(vendored.src, "package.json"), "utf8"))
+  for (const [dep, version] of Object.entries(vendoredPkg.dependencies ?? {})) {
+    if (VENDORED.some((entry) => entry.dep === dep)) continue
+    pkg.dependencies[dep] ??= version
+  }
+}
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 
-// 6. Install the remaining deps (@modelcontextprotocol/sdk, socket.io-client, zod).
+// 6. Install the remaining deps (@modelcontextprotocol/sdk, socket.io-client, zod, @hpke/*, ulid).
 const result = spawnSync("bun", ["install"], { cwd: dest, stdio: "inherit" })
 if (result.status !== 0) process.exit(result.status ?? 1)
 

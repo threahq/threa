@@ -23,6 +23,13 @@ export interface RemoteSessionConfig {
    * makes, since it can't heartbeat while blocked on a tool.
    */
   idleTimeoutMs: number
+  /**
+   * Where this install's BIK (Bot Identity Key, for sealed/E2EE scratchpads)
+   * is persisted. Unset = a per-runtime-kind default under `~/.threa/`.
+   * Deleting the file orphans the owner's key wraps — the owner must re-invite
+   * the bot after it registers a fresh key.
+   */
+  bikPath?: string
 }
 
 /**
@@ -76,6 +83,7 @@ export interface RawConfig {
   idleTimeoutMs?: unknown
   instanceId?: unknown
   runtimeSessionId?: unknown
+  bikPath?: unknown
 }
 
 export function parseConfigFile(text: string): RawConfig {
@@ -160,6 +168,7 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),
       pollMs: parseNum(env.THREA_POLL_MS ?? file.pollMs, 3000, 1000),
       idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
+      bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
     },
   }
 }

@@ -1,3 +1,5 @@
+import { THREA_CALLBACK_TOKEN_HEADER, type SealedReplyBody, type SealingState } from "@threa/bot-runtime-client"
+
 const FETCH_TIMEOUT_MS = 30_000
 
 export interface RuntimeSessionLink {
@@ -49,6 +51,10 @@ export interface ClaimedInvocation {
   runtimeSessionId: string | null
   metadata: Record<string, unknown>
   context?: { kind: "inline"; messages: ExternalHistoryMessage[] }
+  /** Present on a sealed (E2E) claim as delivered by the server; consumed and cleared by hydration. */
+  sealedContext?: unknown
+  /** Derived from `sealedContext` at claim time; carries the stream key + binding for sealing replies/steps. */
+  sealing?: SealingState
 }
 
 export class ThreaApiError extends Error {
@@ -145,6 +151,28 @@ export class ThreaClient {
   async sendMessage(streamId: string, body: Record<string, unknown>): Promise<void> {
     await this.request(this.workspacePath(`/streams/${streamId}/messages`), {
       method: "POST",
+      body: JSON.stringify(body),
+    })
+  }
+
+  /** Post one sealed interim message from an in-flight sealed claim (callback-token auth). */
+  async sendSealedMessage(invocationId: string, callbackToken: string, body: SealedReplyBody): Promise<void> {
+    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-messages`), {
+      method: "POST",
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
+      body: JSON.stringify(body),
+    })
+  }
+
+  /** Complete a sealed turn with its final sealed reply — or silently (`noResponse`). Callback-token auth. */
+  async completeSealed(
+    invocationId: string,
+    callbackToken: string,
+    body: { reply: SealedReplyBody } | { noResponse: true }
+  ): Promise<void> {
+    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-complete`), {
+      method: "POST",
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
       body: JSON.stringify(body),
     })
   }

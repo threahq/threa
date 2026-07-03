@@ -168,6 +168,12 @@ Claude has two output tools. `send` posts a progress or intermediate message int
 
 Each `send` (and each tool-approval prompt) also counts as a sign of life that resets the idle timeout, so an actively-working turn is never force-closed.
 
+## End-to-end encrypted scratchpads
+
+The channel serves sealed (E2EE) turns via `@threa/remote-session` + `@threa/bot-runtime-client`. On first start it mints a BIK (Bot Identity Key, an X25519 keypair persisted `0600` at `~/.claude/threa-channel/bik.json`, overridable via `THREA_BIK_PATH`) and registers the public half on every hello/presence write. Once the scratchpad owner invites this bot into an encrypted scratchpad (wrapping the stream key to the BIK), turns arrive sealed: the channel decrypts the trigger + history locally, and everything it posts back — interim `send`s, the final `reply`, permission prompts, trace notes — is sealed under the stream key before it leaves the machine. The server only ever stores ciphertext.
+
+Sealed-turn differences: `THREA_ATTACH:` directives are stripped with a note (attachments aren't supported on the sealed path yet), and session-control acks (`/model` etc.) close silently — the command still runs; only the ack text is withheld. Deleting the BIK file orphans the owner's key wraps; re-invite the bot after it registers a fresh key.
+
 ## Limitations
 
 - A channel only sees the inbound message and Claude's `send`/`reply` calls, not its individual tool calls, so the Threa trace card shows a single "working" step rather than the per-tool trace a Pi session produces.
