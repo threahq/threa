@@ -8,8 +8,9 @@ import type { PushService } from "./features/push"
 import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
-import { UserRepository } from "./features/workspaces"
+import { UserRepository, type WorkspaceService } from "./features/workspaces"
 import { groupToRoom, permissionGroupsForRole } from "./lib/outbox"
+import { isValidIanaTimezone } from "./lib/temporal"
 import { HttpError } from "./lib/errors"
 import { logger } from "./lib/logger"
 import { wsConnectionsActive, wsConnectionDuration, wsMessagesTotal } from "./lib/observability"
@@ -49,6 +50,7 @@ interface Dependencies {
   authService: AuthService
   streamService: StreamService
   pushService: PushService
+  workspaceService: WorkspaceService
   userSocketRegistry: UserSocketRegistry
   /** Registry for graceful tool cancellation (e.g. workspace_research) — in-process sessions. */
   sessionAbortRegistry: SessionAbortRegistry
@@ -65,7 +67,8 @@ function deriveDeviceKey(userAgent: string | undefined): string {
 }
 
 export function registerSocketHandlers(io: Server, deps: Dependencies) {
-  const { pool, authService, streamService, pushService, userSocketRegistry, sessionAbortRegistry } = deps
+  const { pool, authService, streamService, pushService, workspaceService, userSocketRegistry, sessionAbortRegistry } =
+    deps
 
   // Auth middleware is shared with the voice namespace — see lib/socket-auth
   io.use(createSocketAuthMiddleware(authService))
@@ -81,7 +84,27 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     }
 
     // Track user + permission rooms per workspace for auto-leave on workspace leave
-    const userRooms = new Map<string, { userId: string; userRoom: string; permissionRooms: string[] }>()
+    const userRooms = new Map<
+      string,
+      { userId: string; userRoom: string; permissionRooms: string[]; appliedTimezone: string | null }
+    >()
+
+    // Latest valid device timezone reported by this connection's heartbeats.
+    // Kept fresh so users.timezone always reflects where the user actually is —
+    // async agent runs read it to ground "now" in the user's local time.
+    let deviceTimezone: string | null = null
+
+    // appliedTimezone tracks what this connection already wrote per workspace so
+    // steady-state heartbeats never touch the DB; the conditional UPDATE in the
+    // service makes a redundant write from a racing connection a no-op anyway.
+    const syncDeviceTimezone = (wsId: string, entry: { userId: string; appliedTimezone: string | null }) => {
+      const timezone = deviceTimezone
+      if (!timezone || entry.appliedTimezone === timezone) return
+      entry.appliedTimezone = timezone
+      workspaceService.refreshUserTimezone(entry.userId, wsId, timezone).catch((err) => {
+        logger.warn({ err, wsId, userId: entry.userId }, "Failed to refresh device timezone")
+      })
+    }
 
     socket.on("join", async (room: string, callback?: (result: { ok: boolean; error?: string }) => void) => {
       const workspaceId = extractWorkspaceId(room)
@@ -126,7 +149,9 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         for (const permissionRoom of permissionRooms) {
           socket.join(permissionRoom)
         }
-        userRooms.set(wsId, { userId: workspaceUser.id, userRoom, permissionRooms })
+        const roomEntry = { userId: workspaceUser.id, userRoom, permissionRooms, appliedTimezone: null }
+        userRooms.set(wsId, roomEntry)
+        syncDeviceTimezone(wsId, roomEntry)
 
         // Upsert session for push notification suppression (only when push is enabled).
         // Don't set focused — the first heartbeat (emitted immediately on connect)
@@ -352,7 +377,19 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     // Interaction-driven heartbeats bypass the throttle: the client only emits
     // them on the first interaction after a quiet stretch, and we want the
     // backend to learn about renewed activity within seconds, not up to 30s.
-    socket.on("heartbeat", (payload?: { focused?: boolean; interacted?: boolean }) => {
+    socket.on("heartbeat", (payload?: { focused?: boolean; interacted?: boolean; timezone?: string }) => {
+      // Device-timezone refresh runs before the push gate — it must work even
+      // when push is disabled. Validate only on change; steady-state heartbeats
+      // repeat the same string.
+      if (
+        typeof payload?.timezone === "string" &&
+        payload.timezone !== deviceTimezone &&
+        isValidIanaTimezone(payload.timezone)
+      ) {
+        deviceTimezone = payload.timezone
+        for (const [wsId, entry] of userRooms) syncDeviceTimezone(wsId, entry)
+      }
+
       if (!pushService.isEnabled()) return
       const interacted = payload?.interacted === true
       const now = Date.now()

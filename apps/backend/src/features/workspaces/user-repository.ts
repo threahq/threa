@@ -483,6 +483,31 @@ export const UserRepository = {
     return result.rows[0] ? mapRowToUser(result.rows[0]) : null
   },
 
+  /**
+   * Refresh the user's device timezone, writing only when the value actually
+   * changed. Single conditional statement (INV-20) so concurrent reporters
+   * (multiple tabs/devices) can't interleave a read-then-write; last write wins.
+   * Returns the updated row, or null when the stored timezone already matched.
+   */
+  async updateTimezoneIfChanged(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    timezone: string
+  ): Promise<User | null> {
+    const result = await db.query<UserRow>(sql`
+      WITH updated AS (
+        UPDATE users SET timezone = ${timezone}
+        WHERE workspace_id = ${workspaceId} AND id = ${userId}
+          AND timezone IS DISTINCT FROM ${timezone}
+        RETURNING ${sql.raw(SELECT_FIELDS)}
+      )
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM updated u ${sql.raw(JOIN_AUTHZ_MIRROR)}
+    `)
+    return result.rows[0] ? mapRowToUser(result.rows[0]) : null
+  },
+
   async updateAvatarIfLatestUpload(
     db: Querier,
     workspaceId: string,

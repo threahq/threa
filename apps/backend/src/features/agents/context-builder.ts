@@ -136,6 +136,14 @@ export interface BuildStreamContextOptions {
   /** User preferences (used for temporal context) */
   preferences?: UserPreferences
   /**
+   * The invoking user's device timezone (`users.timezone`, kept fresh by socket
+   * heartbeats). Takes precedence over `preferences.timezone` for temporal
+   * grounding so the agent reasons in the user's actual local time — the stored
+   * preference is a manually-set "home timezone" that can drift from where the
+   * user really is.
+   */
+  deviceTimezone?: string
+  /**
    * Newest-first message budget for the conversation window. Resolved once at
    * the dispatch (`Hydrate`) seam by `resolveContextWindowPolicy` and handed in;
    * defaults to `DEFAULT_CONTEXT_WINDOW_MESSAGES` for callers that build context
@@ -216,7 +224,7 @@ export async function buildStreamContext(
 ): Promise<StreamContext> {
   let temporal: TemporalContext | undefined
   if (options?.preferences) {
-    temporal = buildTemporalContext(options.preferences, options.currentTime)
+    temporal = buildTemporalContext(options.preferences, options.currentTime, options.deviceTimezone)
   } else if (options?.currentTime) {
     temporal = buildTemporalContext(
       {
@@ -224,7 +232,8 @@ export async function buildStreamContext(
         dateFormat: DEFAULT_USER_PREFERENCES.dateFormat,
         timeFormat: DEFAULT_USER_PREFERENCES.timeFormat,
       },
-      options.currentTime
+      options.currentTime,
+      options.deviceTimezone
     )
   }
 
@@ -280,13 +289,18 @@ export async function buildStreamContext(
 
 type TemporalPreferenceFields = Pick<UserPreferences, "timezone" | "dateFormat" | "timeFormat">
 
-function buildTemporalContext(preferences: TemporalPreferenceFields, currentTime?: Date): TemporalContext {
+function buildTemporalContext(
+  preferences: TemporalPreferenceFields,
+  currentTime?: Date,
+  deviceTimezone?: string
+): TemporalContext {
   const now = currentTime ?? new Date()
+  const timezone = deviceTimezone ?? preferences.timezone
 
   return {
     currentTime: now.toISOString(),
-    timezone: preferences.timezone,
-    utcOffset: getUtcOffset(preferences.timezone, now),
+    timezone,
+    utcOffset: getUtcOffset(timezone, now),
     dateFormat: preferences.dateFormat,
     timeFormat: preferences.timeFormat,
   }

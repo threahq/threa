@@ -705,6 +705,7 @@ export async function startServer(): Promise<ServerInstance> {
     authService,
     streamService,
     pushService,
+    workspaceService,
     userSocketRegistry,
     sessionAbortRegistry,
   })

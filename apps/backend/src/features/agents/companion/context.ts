@@ -5,7 +5,7 @@ import type { UserPreferences } from "@threa/types"
 import { AuthorTypes, StreamTypes } from "@threa/types"
 import type { UserPreferencesService } from "../../user-preferences"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
-import { UserRepository } from "../../workspaces"
+import { UserRepository, type User } from "../../workspaces"
 import type { Persona } from "../persona-repository"
 import { resolveActorNames } from "../actor-names"
 import { AttachmentRepository } from "../../attachments"
@@ -122,8 +122,12 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   const invokingUserId = triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : undefined
 
   let preferences: UserPreferences | undefined
+  let invokingUser: User | null = null
   if (invokingUserId) {
-    preferences = await userPreferencesService.getPreferences(workspaceId, invokingUserId)
+    ;[preferences, invokingUser] = await Promise.all([
+      userPreferencesService.getPreferences(workspaceId, invokingUserId),
+      UserRepository.findById(db, workspaceId, invokingUserId),
+    ])
   }
 
   // Await attachment processing for trigger message so agent can access extracted content
@@ -159,6 +163,9 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
 
   const streamContext = await buildStreamContext(db, stream, {
     preferences,
+    // users.timezone is the heartbeat-fresh device timezone; it wins over the
+    // "home timezone" preference so scheduling and "now" match the device.
+    deviceTimezone: invokingUser?.timezone ?? undefined,
     currentTime,
     maxMessages: policy.maxMessages,
     maxChars: policy.maxChars,
@@ -241,8 +248,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
 
   let mentionerName: string | undefined
   if (purpose.kind === "mention" && triggerMessage?.authorType === AuthorTypes.USER) {
-    const mentioner = await UserRepository.findById(db, workspaceId, triggerMessage.authorId)
-    mentionerName = mentioner?.name ?? undefined
+    // invokingUser IS the trigger author when authorType is USER (see above).
+    mentionerName = invokingUser?.name ?? undefined
   }
 
   // Resolve quote-reply precursors referenced from the conversation history and

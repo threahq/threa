@@ -21,6 +21,21 @@ export interface ParticipantTemporal {
 }
 
 /**
+ * Whether a string is a usable IANA timezone identifier (e.g. "Europe/Stockholm").
+ * Client-reported timezones must pass this before being persisted — an invalid
+ * zone would make every downstream Intl.DateTimeFormat call throw.
+ */
+export function isValidIanaTimezone(timezone: string): boolean {
+  if (!timezone || timezone.length > 64) return false
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Get the UTC offset string for a timezone (e.g., "UTC+1", "UTC-5").
  */
 export function getUtcOffset(timezone: string, date: Date = new Date()): string {

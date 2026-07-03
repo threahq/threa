@@ -27,16 +27,22 @@ export async function buildEnclaveSystemPrompt(params: {
   stream: Stream
   /** The owner whose timezone + scratchpad custom instructions ground the prompt. */
   preferences: UserPreferences
+  /**
+   * The trigger author's device timezone (`users.timezone`, heartbeat-fresh).
+   * Wins over `preferences.timezone` for temporal grounding, same as the
+   * in-process companion path.
+   */
+  deviceTimezone?: string
   /** The persona (Ariadne) — its base prompt is the seed buildSystemPrompt layers on. */
   persona: BuiltInAgentConfig
 }): Promise<string> {
-  const { pool, stream, preferences, persona } = params
+  const { pool, stream, preferences, deviceTimezone, persona } = params
 
   // Same context builder the main app uses. For E2E it can't read message
   // plaintext, but the system prompt depends only on stream metadata + temporal
   // (not conversation content), so building it server-side is faithful — the
   // encrypted history is shipped separately and decrypted inside the enclave.
-  const context = await buildStreamContext(pool, stream, { preferences, currentTime: new Date() })
+  const context = await buildStreamContext(pool, stream, { preferences, deviceTimezone, currentTime: new Date() })
 
   // Built-in config is structurally a persona (buildSystemPrompt only reads
   // name/systemPrompt; createdAt/updatedAt fill out the Persona shape).
