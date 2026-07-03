@@ -177,8 +177,13 @@ The channel advertises in its `bot:hello` / presence `capabilities` **only when 
   "supportsActiveScratchpad": true,
   "supportsPersistentSessions": true,
   "supportsSessionControlCommands": true,
-  "sessionControlCommands": ["stop", "steer", "model", "compact", "run"],
-  "modelSuggestions": [{ "value": "sonnet" }, { "value": "opus" }, { "value": "default" }, { "value": "opusplan" }],
+  "sessionControlCommands": ["stop", "steer", "model", "thinking", "compact", "run", "reload"],
+  "modelSuggestions": [
+    { "value": "opus", "label": "Opus", "description": "Opus 4.8 with 1M context · Best for everyday, complex tasks" },
+    // …built-in aliases (default/opus/sonnet/haiku) plus models discovered from the
+    // local client's ~/.claude.json additionalModelOptionsCache (see model-catalog.ts)
+  ],
+  "thinkingLevels": ["low", "medium", "high", "xhigh", "max", "ultracode"],
 }
 ```
 
@@ -191,9 +196,12 @@ Commands chosen for v1: **stop, steer, model, compact, run, reload**. `reload` m
 Code's `/reload-skills` (v2.1.152+) — picks up skills + custom commands added on disk mid-session;
 verified live ("16 skills available"). Newly `claude mcp add`'d MCP servers still can't hot-reload
 (Claude Code limitation — restart only); `/reload-plugins` is reachable via the generic `run`.
-Dropped from Pi's set: `thinking` (no Claude Code slash equivalent), `skill` (needs the skill list
-the channel doesn't have — fold into generic `run`). `shell` could be added later as a direct exec
-in the channel (like Pi's `runShellCommand`), independent of tmux.
+`thinking` joined later: Claude Code v2.1.x grew `/effort <low|medium|high|xhigh|max|ultracode>`,
+so Threa's canonical `/thinking` now actuates as `/effort` (verified live on v2.1.199, which also
+dropped the old mid-session "Switch model?" confirm dialog — `/model <alias>` sets directly).
+Still dropped from Pi's set: `skill` (needs the skill list the channel doesn't have — fold into
+generic `run`). `shell` could be added later as a direct exec in the channel (like Pi's
+`runShellCommand`), independent of tmux.
 
 `run` is a **new generic command** (arg = slash command to type, e.g. `run /remote-control`),
 added to the canonical name list + catalog. Open UX question for Kris: `run` vs surfacing named
