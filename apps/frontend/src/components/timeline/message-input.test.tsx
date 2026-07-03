@@ -640,6 +640,69 @@ describe("MessageInput", () => {
       expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
     })
 
+    it("stays silent when scheduling a reply whose conversation is live in this same stream", async () => {
+      // Default mock: last-active stream === rendered stream, so the strip is
+      // shown inline and a scheduled send behaves like the obvious happy path —
+      // no toast (INV-63: the strip already shows what will happen).
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("later, same channel")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await act(async () => {
+        await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
+      })
+
+      expect(mockScheduleMutateAsync).toHaveBeenCalled()
+      expect(infoToastSpy).not.toHaveBeenCalled()
+    })
+
+    it("signals that a scheduled reply will still file into a drifted (thread-live) conversation", async () => {
+      // Arm same-stream (route latches inline, strip stays), then a background
+      // update moves the conversation into a thread — the latch keeps the arm put
+      // rather than evicting to the panel. A live send would hand off; a scheduled
+      // send can't, so it files by id at fire time. Surface that so the deferred
+      // reply doesn't read as a flat channel send (INV-63).
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("later, into the thread's conversation")
+
+      const { rerender } = render(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
+        post: {
+          conversation: { id: "conv_1", streamId, topicSummary: "Pizza plans" },
+          recentMessages: [{ streamId: "thread_789" }],
+        },
+        isLoading: false,
+        notFound: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>)
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+
+      await act(async () => {
+        await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
+      })
+
+      expect(mockScheduleMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversation: { intent: "existing", conversationId: "conv_1" },
+        })
+      )
+      expect(infoToastSpy).toHaveBeenCalled()
+    })
+
     it("schedules with no directive when the composer isn't armed", async () => {
       mockComposerState.canSend = true
       mockComposerState.content = makeDoc("just a normal scheduled message")
