@@ -1,5 +1,6 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
+import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import {
   useDraftComposer,
@@ -348,16 +349,27 @@ function MessageInputComponent({
   const streamIdRef = useRef(streamId)
   streamIdRef.current = streamId
 
-  // Thread-follow: once the projection resolves, route the armed reply. A
-  // conversation live in THIS stream keeps the inline strip and focuses the
-  // composer to type; one that has moved into a thread hands off to the panel — a
-  // flat send here would re-interleave the channel, the mess recency-biased
-  // continuation avoids (board-view-design.md). Waits while unresolved (`target`
-  // null); fires once, since disarming nulls `conversationReply`.
+  // Thread-follow: route the armed reply ONCE, at first resolution of the
+  // projection. A conversation live in THIS stream keeps the inline strip and
+  // focuses the composer to type; one that has moved into a thread hands off to
+  // the panel — a flat send there would re-interleave the channel, the mess
+  // recency-biased continuation avoids (board-view-design.md).
+  //
+  // The route is latched per arm (`routedArmIdRef`): `conversationReplyLastActive-
+  // StreamId` is a live Dexie value, so without the latch a background reply that
+  // later moves the conversation into a thread would re-fire this effect and evict
+  // the user from the channel mid-composition, unsolicited. Once routed, only an
+  // explicit send re-checks routing. The latch resets when the arm is cleared.
+  const routedArmIdRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!conversationReply) return
+    if (!conversationReply) {
+      routedArmIdRef.current = null
+      return
+    }
+    if (routedArmIdRef.current === conversationReply.conversationId) return
     const target = conversationReplyLastActiveStreamId
     if (!target) return
+    routedArmIdRef.current = conversationReply.conversationId
     if (target === streamIdRef.current) composerFocusRef.current?.focus()
     else redirectReplyToPanel(conversationReply.conversationId)
   }, [conversationReply, conversationReplyLastActiveStreamId, redirectReplyToPanel])
@@ -616,9 +628,13 @@ function MessageInputComponent({
       // flat here would re-interleave the channel. Hand off to the conversation
       // panel and keep the composer content — nothing typed is lost, the user
       // continues in the panel. The inline flat send below only runs once the
-      // conversation is confirmed same-stream.
+      // conversation is confirmed same-stream. A toast because the send didn't do
+      // the obvious thing (post here): the panel can cover this view on mobile, so
+      // the kept draft needs a word or the message reads as vanished (INV-63:
+      // deferred action, no other on-screen signal).
       if (conversationReply && conversationReplyLastActiveStreamId !== streamId) {
         redirectReplyToPanel(conversationReply.conversationId)
+        toast.info("Opening the conversation to reply — your draft was kept here.")
         composer.setIsSending(false)
         return
       }

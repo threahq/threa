@@ -18,6 +18,7 @@ import {
 import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
+import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 import type { JSONContent } from "@threa/types"
 
@@ -61,6 +62,7 @@ let mockMessageSendMode: "enter" | "cmdEnter" = "enter"
 
 const mockSendMessage = vi.fn()
 const mockOpenPanel = vi.fn()
+let infoToastSpy: ReturnType<typeof vi.spyOn>
 const mockClearDraft = vi.fn()
 const mockResolveDraft = vi.fn()
 const mockClearAttachments = vi.fn()
@@ -109,6 +111,7 @@ beforeEach(() => {
   mockSendMessage.mockReset()
   mockSendMessage.mockResolvedValue({})
   mockOpenPanel.mockReset()
+  infoToastSpy = vi.spyOn(toast, "info").mockImplementation(() => "toast-id")
   resetConversationReplyOpenStoreCache()
   mockNavigate.mockReset()
   mockMessageSendMode = "enter"
@@ -679,6 +682,41 @@ describe("MessageInput", () => {
       expect(consumeConversationReplyOpen("conv_1")).toBe(true)
       // No flat send — routing was unresolved, so the directive send never fired.
       expect(mockSendMessage).not.toHaveBeenCalled()
+      // The redirect is signalled — the panel can cover this view, so the kept
+      // draft needs a word or the message reads as vanished (INV-63).
+      expect(infoToastSpy).toHaveBeenCalled()
+    })
+
+    it("keeps the inline reply put when a background update later moves the conversation to a thread", () => {
+      // Armed and resolved same-stream (strip shown, composer focused). A live
+      // board-post update then reports the conversation living in a thread — the
+      // route is latched at arm time, so it must NOT evict the user to the panel
+      // mid-composition without any action from them.
+      const { rerender } = render(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      expect(mockComposerFocus).toHaveBeenCalledTimes(1)
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
+        post: {
+          conversation: { id: "conv_1", streamId, topicSummary: "Pizza plans" },
+          recentMessages: [{ streamId: "thread_789" }],
+        },
+        isLoading: false,
+        notFound: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>)
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+
+      expect(mockOpenPanel).not.toHaveBeenCalled()
     })
 
     it("does not open the panel when navigating away from an armed same-stream reply", () => {
