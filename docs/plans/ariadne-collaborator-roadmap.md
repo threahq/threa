@@ -39,7 +39,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
-| 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      |       |
+| 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
 | 2.1  | Generalized session abort                            | ☐      |       |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
