@@ -3,19 +3,49 @@
 import * as React from "react"
 import { Drawer as DrawerPrimitive } from "vaul"
 
+import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
+import { HistoryBackClose } from "./history-back-close"
 
 const Drawer = ({
   shouldScaleBackground = true,
   repositionInputs = false,
+  open,
+  defaultOpen,
+  onOpenChange,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Root>) => (
-  // repositionInputs=false disables Vaul's built-in visualViewport keyboard
-  // handling which sets inline style.height on the drawer content. This conflicts
-  // with our dvh units that already account for the virtual keyboard, causing
-  // drawers to shrink to strange sizes after focus/blur cycles on mobile.
-  <DrawerPrimitive.Root shouldScaleBackground={shouldScaleBackground} repositionInputs={repositionInputs} {...props} />
-)
+}: React.ComponentProps<typeof DrawerPrimitive.Root>) => {
+  const isMobile = useIsMobile()
+  // Open state is lifted out of vaul (mirroring uncontrolled usage into local
+  // state) so HistoryBackClose can close trigger-driven drawers too.
+  const isControlled = open !== undefined
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen ?? false)
+  const resolvedOpen = isControlled ? open : uncontrolledOpen
+  const handleOpenChange = React.useCallback(
+    (next: boolean) => {
+      if (!isControlled) setUncontrolledOpen(next)
+      onOpenChange?.(next)
+    },
+    [isControlled, onOpenChange]
+  )
+
+  return (
+    <>
+      {isMobile && <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />}
+      {/* repositionInputs=false disables Vaul's built-in visualViewport keyboard
+          handling which sets inline style.height on the drawer content. This conflicts
+          with our dvh units that already account for the virtual keyboard, causing
+          drawers to shrink to strange sizes after focus/blur cycles on mobile. */}
+      <DrawerPrimitive.Root
+        shouldScaleBackground={shouldScaleBackground}
+        repositionInputs={repositionInputs}
+        open={resolvedOpen}
+        onOpenChange={handleOpenChange}
+        {...props}
+      />
+    </>
+  )
+}
 Drawer.displayName = "Drawer"
 
 const DrawerTrigger = DrawerPrimitive.Trigger
