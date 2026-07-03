@@ -111,6 +111,11 @@ export async function processOperationQueue(
       if (!next) break
 
       try {
+        // Mark the attempt BEFORE executing: once a request may have left the
+        // device, a coalescing replace of this op must carry its idempotency
+        // lineage (writeId) forward instead of minting a fresh one — otherwise
+        // a committed-but-unacked write reads as drift and splits server-side.
+        await db.pendingOperations.update(next.id, { startedAt: Date.now() })
         await executeOperation(next, messageService, reactionService, scheduledService, draftsService)
         await db.pendingOperations.delete(next.id)
       } catch {
@@ -224,7 +229,16 @@ async function executeOperation(
       // Without a drafts service this context is local-only: drop the op rather
       // than throw (a throw would retry forever, never reaching a service).
       if (!draftsService) break
-      await executeDraftUpsert(workspaceId, payload.draftId as string, payload.writeId as string, draftsService)
+      const priorWriteIds = Array.isArray(payload.priorWriteIds)
+        ? payload.priorWriteIds.filter((id): id is string => typeof id === "string")
+        : []
+      await executeDraftUpsert(
+        workspaceId,
+        payload.draftId as string,
+        payload.writeId as string,
+        draftsService,
+        priorWriteIds
+      )
       break
     }
 
@@ -249,7 +263,10 @@ async function executeOperation(
 
     case "delete_draft": {
       if (!draftsService) break
-      await executeDraftDelete(workspaceId, payload.draftId as string, draftsService)
+      const supersededWriteIds = Array.isArray(payload.supersededWriteIds)
+        ? payload.supersededWriteIds.filter((id): id is string => typeof id === "string")
+        : []
+      await executeDraftDelete(workspaceId, payload.draftId as string, draftsService, supersededWriteIds)
       break
     }
   }

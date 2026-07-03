@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
-import { resetDraftStoreCache } from "@/stores/draft-store"
+import * as draftStore from "@/stores/draft-store"
+import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { markDraftResolved, resetDraftResolutionGuard } from "./draft-resolution-guard"
 import {
   applyDraftDeleted,
@@ -16,6 +17,7 @@ import {
   executeDraftResolve,
   executeDraftUpsert,
   hasPendingDraftUpsert,
+  migrateLocalDraftId,
   reconcileStagedDrafts,
   syncDraftResolution,
   type DraftsServiceLike,
@@ -318,9 +320,25 @@ describe("applyDraftsBootstrap", () => {
 
     expect(await db.drafts.get("draft_dirty")).toBeDefined()
   })
+
+  it("does not drop confirmed-absent locals when the snapshot is truncated at the server cap", async () => {
+    // A snapshot at the cap proves nothing about rows beyond it — absence is
+    // truncation, not deletion elsewhere.
+    await db.drafts.put(localDraft({ id: "draft_beyond_cap", baseVersion: 4 }))
+    const capped = Array.from({ length: 500 }, (_, i) => wireDraft({ id: `draft_s${i}` }))
+
+    await applyDraftsBootstrap(workspaceId, capped)
+
+    expect(await db.drafts.get("draft_beyond_cap")).toBeDefined()
+  })
 })
 
 describe("enqueueDraftUpsert / enqueueDraftDelete", () => {
+  async function upsertOp(draftId: string) {
+    const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    return ops.find((o) => o.payload.draftId === draftId)
+  }
+
   it("coalesces to a single upsert op per draft id", async () => {
     await enqueueDraftUpsert(workspaceId, "draft_x")
     await enqueueDraftUpsert(workspaceId, "draft_x")
@@ -331,6 +349,42 @@ describe("enqueueDraftUpsert / enqueueDraftDelete", () => {
     expect(ops.filter((o) => o.payload.draftId === "draft_y")).toHaveLength(1)
   })
 
+  it("keeps a never-attempted op untouched — its writeId (idempotency key) stays stable", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    const first = await upsertOp("draft_x")
+
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    const second = await upsertOp("draft_x")
+
+    // The op reads content fresh at drain, so re-enqueueing has nothing to add;
+    // churning the writeId here is what used to break lost-ack recognition.
+    expect(second?.id).toBe(first?.id)
+    expect(second?.payload.writeId).toBe(first?.payload.writeId)
+  })
+
+  it("replaces an attempted op with a successor that carries its write lineage", async () => {
+    // The op attempted a push (startedAt set by the queue): it may have reached
+    // the server even though the client never saw the ack. A save arriving now
+    // must chain the old writeId so the server can recognize the lineage and
+    // update in place instead of splitting a same-device duplicate.
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    const first = await upsertOp("draft_x")
+    await db.pendingOperations.update(first!.id, { startedAt: Date.now() })
+
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    const second = await upsertOp("draft_x")
+
+    expect(second?.id).not.toBe(first?.id)
+    expect(second?.payload.writeId).not.toBe(first?.payload.writeId)
+    expect(second?.payload.priorWriteIds).toEqual([first?.payload.writeId])
+
+    // A third replacement accumulates the whole chain.
+    await db.pendingOperations.update(second!.id, { startedAt: Date.now() })
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    const third = await upsertOp("draft_x")
+    expect(third?.payload.priorWriteIds).toEqual([second?.payload.writeId, first?.payload.writeId])
+  })
+
   it("enqueueDraftDelete drops a queued push and adds a delete", async () => {
     await enqueueDraftUpsert(workspaceId, "draft_x")
     await enqueueDraftDelete(workspaceId, "draft_x")
@@ -338,6 +392,20 @@ describe("enqueueDraftUpsert / enqueueDraftDelete", () => {
     expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
     const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
     expect(dels.filter((o) => o.payload.draftId === "draft_x")).toHaveLength(1)
+  })
+
+  it("enqueueDraftDelete carries the dropped push's write lineage onto the delete", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_x")
+    const op = await upsertOp("draft_x")
+    const writeId = op?.payload.writeId as string
+
+    await enqueueDraftDelete(workspaceId, "draft_x")
+
+    // If that push already left the device, its late landing must read as
+    // discarded content — the tombstone needs the lineage to drop it.
+    const dels = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    const del = dels.find((o) => o.payload.draftId === "draft_x")
+    expect(del?.payload.supersededWriteIds).toEqual([writeId])
   })
 
   it("enqueueDraftResolve keeps a queued push as the in-flight echo marker", async () => {
@@ -428,6 +496,19 @@ describe("executeDraftUpsert", () => {
     expect((await db.drafts.get("draft_e2e"))?.baseVersion).toBe(2)
   })
 
+  it("pushes the op's carried write lineage (priorWriteIds) on the wire", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2 }))
+    const calls: UpsertDraftInput[] = []
+    const upsert = vi.fn(async (_w: string, id: string, input: UpsertDraftInput): Promise<UpsertDraftResponse> => {
+      calls.push(input)
+      return { draft: wireDraft({ id, version: 3 }), split: false }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_b", service(upsert), ["write_a"])
+
+    expect(calls[0]).toMatchObject({ writeId: "write_b", priorWriteIds: ["write_a"] })
+  })
+
   it("migrates the local id to the server-minted id on a split", async () => {
     await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("mine") }))
     await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
@@ -445,6 +526,87 @@ describe("executeDraftUpsert", () => {
     const migrated = await db.drafts.get("draft_new")
     expect(migrated).toMatchObject({ contentJson: makeDoc("mine"), baseVersion: 1 })
     expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_new")
+  })
+
+  it("keeps keystrokes typed during the in-flight split push (id migration re-reads the live row)", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("pushed") }))
+    await db.composerLoaded.put({ scope, workspaceId, draftId: "draft_x" })
+    const upsert = vi.fn(async (_w: string, id: string): Promise<UpsertDraftResponse> => {
+      // A debounced save commits newer content while the PUT is in flight.
+      await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("pushed plus more") }))
+      return { draft: wireDraft({ id: "draft_new", version: 1 }), split: true, originalId: id }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    // The migration must carry the LIVE row's content, not the stale pre-push
+    // snapshot — otherwise the newer keystrokes vanish from IDB.
+    expect((await db.drafts.get("draft_new"))?.contentJson).toEqual(makeDoc("pushed plus more"))
+  })
+
+  it("seeds the server-kept row (the other copy) as a stash entry on a split", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1, contentJson: makeDoc("mine") }))
+    const upsert = vi.fn(
+      async (_w: string, id: string): Promise<UpsertDraftResponse> => ({
+        draft: wireDraft({ id: "draft_new", version: 1, contentJson: makeDoc("mine") }),
+        split: true,
+        originalId: id,
+        keptDraft: wireDraft({ id: "draft_x", version: 3, contentJson: makeDoc("theirs") }),
+      })
+    )
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    // Our content moved to the new id; the other device's kept row seeds locally
+    // (its socket echo was ignored while this device was dirty).
+    expect((await db.drafts.get("draft_new"))?.contentJson).toEqual(makeDoc("mine"))
+    const kept = await db.drafts.get("draft_x")
+    expect(kept).toMatchObject({ baseVersion: 3, contentJson: makeDoc("theirs") })
+    // Seeding never activates the composer.
+    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+  })
+
+  it("seeds a drifted kept row even while this push's own op row is still in the table (sent mid-push)", async () => {
+    // In production the executing op is deleted by the QUEUE only after
+    // executeDraftUpsert returns — it must not trip the seed's dirty guard.
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2 }))
+    await enqueueDraftUpsert(workspaceId, "draft_x") // the op being executed
+    await enqueueDraftResolve(workspaceId, "draft_x", 3) // the send
+    const upsert = vi.fn(async (_w: string, id: string): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      return {
+        draft: wireDraft({ id: "draft_new", version: 1 }),
+        split: true,
+        originalId: id,
+        // Strictly newer than the pending resolve (3) — genuine foreign drift.
+        keptDraft: wireDraft({ id: "draft_x", version: 4, contentJson: makeDoc("their newer edits") }),
+      }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    const kept = await db.drafts.get("draft_x")
+    expect(kept).toMatchObject({ baseVersion: 4, contentJson: makeDoc("their newer edits") })
+  })
+
+  it("does not seed a kept row this device just resolved (send raced the split)", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 2 }))
+    await enqueueDraftResolve(workspaceId, "draft_x", 3)
+    const upsert = vi.fn(async (_w: string, id: string): Promise<UpsertDraftResponse> => {
+      await db.drafts.delete("draft_x")
+      return {
+        draft: wireDraft({ id: "draft_new", version: 1 }),
+        split: true,
+        originalId: id,
+        keptDraft: wireDraft({ id: "draft_x", version: 3 }),
+      }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_x", "write_a", service(upsert))
+
+    // The kept row is at the version the pending resolve targets — re-seeding it
+    // would resurrect the just-sent draft as a stash entry.
+    expect(await db.drafts.get("draft_x")).toBeUndefined()
   })
 
   it("re-routes the queued push to the migrated id on a split (mid-push edits aren't stranded)", async () => {
@@ -552,10 +714,12 @@ describe("executeDraftUpsert", () => {
 })
 
 describe("executeDraftDelete", () => {
-  it("delegates to the service", async () => {
+  it("delegates to the service, carrying the superseded write lineage for the tombstone", async () => {
     const del = vi.fn(async () => {})
-    await executeDraftDelete(workspaceId, "draft_x", { upsert: vi.fn(), delete: del } as unknown as DraftsServiceLike)
-    expect(del).toHaveBeenCalledWith(workspaceId, "draft_x")
+    await executeDraftDelete(workspaceId, "draft_x", { upsert: vi.fn(), delete: del } as unknown as DraftsServiceLike, [
+      "write_inflight",
+    ])
+    expect(del).toHaveBeenCalledWith(workspaceId, "draft_x", { supersededWriteIds: ["write_inflight"] })
   })
 })
 
@@ -709,6 +873,40 @@ describe("resolve-on-send is authoritative against inbound echoes (no resurrecti
       resolves.filter((op) => op.payload.draftId === "draft_split" && op.payload.expectedVersion === 1)
     ).toHaveLength(1)
   })
+
+  it("deletes a split echo whose write id belongs to a DISCARDED draft (no stash zombie)", async () => {
+    // The user discarded the draft while its push was in flight; the push split
+    // server-side and its echo arrives under a fresh id carrying our writeId.
+    // That's the discarded body — remove it, don't stash it.
+    await enqueueDraftUpsert(workspaceId, "draft_server1")
+    const upserts = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const writeId = upserts.find((o) => o.payload.draftId === "draft_server1")?.payload.writeId as string
+    await enqueueDraftDelete(workspaceId, "draft_server1") // collects the lineage
+
+    await applyDraftUpserted(
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ id: "draft_split", version: 1, lastClientWriteId: writeId }),
+      },
+      workspaceId
+    )
+
+    expect(await db.drafts.get("draft_split")).toBeUndefined()
+    const deletes = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+    expect(deletes.filter((op) => op.payload.draftId === "draft_split")).toHaveLength(1)
+  })
+
+  it("bootstrap does not resurrect a split row from a discarded draft's lineage", async () => {
+    await enqueueDraftUpsert(workspaceId, "draft_server1")
+    const upserts = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    const writeId = upserts.find((o) => o.payload.draftId === "draft_server1")?.payload.writeId as string
+    await enqueueDraftDelete(workspaceId, "draft_server1")
+
+    await applyDraftsBootstrap(workspaceId, [wireDraft({ id: "draft_split", version: 1, lastClientWriteId: writeId })])
+
+    expect(await db.drafts.get("draft_split")).toBeUndefined()
+  })
 })
 
 describe("inbound sync never activates the composer (loaded pointer is local-only)", () => {
@@ -764,6 +962,44 @@ describe("deleteDraftById — the single user-initiated delete path", () => {
     await deleteDraftById(workspaceId, "draft_missing")
 
     expect(await db.pendingOperations.where("type").equals("delete_draft").toArray()).toHaveLength(0)
+  })
+})
+
+describe("cache signals defer to the surrounding transaction (no cache/IDB divergence on abort)", () => {
+  it("drops the cache update when the outer transaction aborts after an id migration", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    await seedDraftCacheFromIdb(workspaceId)
+    const migrateInCache = vi.spyOn(draftStore, "migrateLoadedDraftInCache")
+
+    await expect(
+      db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+        await migrateLocalDraftId(workspaceId, "draft_x", localDraft({ id: "draft_new", baseVersion: 0 }))
+        throw new Error("abort")
+      })
+    ).rejects.toThrow("abort")
+
+    // IDB rolled back — the cache must not have been told about the migration,
+    // or it would render a draft id that no longer exists.
+    expect(await db.drafts.get("draft_x")).toBeDefined()
+    expect(await db.drafts.get("draft_new")).toBeUndefined()
+    expect(migrateInCache).not.toHaveBeenCalled()
+    migrateInCache.mockRestore()
+  })
+
+  it("emits the cache update only after the outer transaction commits", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    await seedDraftCacheFromIdb(workspaceId)
+    const migrateInCache = vi.spyOn(draftStore, "migrateLoadedDraftInCache")
+
+    await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+      await migrateLocalDraftId(workspaceId, "draft_x", localDraft({ id: "draft_new", baseVersion: 0 }))
+      // Not yet — the write isn't durable until the outer transaction commits.
+      expect(migrateInCache).not.toHaveBeenCalled()
+    })
+
+    await vi.waitFor(() => expect(migrateInCache).toHaveBeenCalledTimes(1))
+    expect(await db.drafts.get("draft_new")).toBeDefined()
+    migrateInCache.mockRestore()
   })
 })
 

@@ -347,6 +347,13 @@ export interface PendingOperation {
   createdAt: number
   retryCount: number
   retryAfter?: number
+  /**
+   * Set by the queue right before the op's first execution attempt. An op that
+   * ever started may have reached the server even if its result was lost, so a
+   * coalescing replace must carry its idempotency lineage forward (see
+   * `enqueueDraftUpsert`); an op that never started can be reused in place.
+   */
+  startedAt?: number
 }
 
 export interface SyncCursor {

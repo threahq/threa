@@ -1999,6 +1999,15 @@ export interface UpsertDraftInput {
   rootStreamId?: string | null
   expectedVersion: number
   writeId: string
+  /**
+   * Write ids of this device's earlier pushes for this draft that were
+   * superseded before their ack was observed (a coalesced save replaced a push
+   * that had already been attempted). If the server row's
+   * `last_client_write_id` is any of these, the last accepted write was this
+   * device's own — no other device has written since — so the server updates in
+   * place instead of splitting a lost ack into a duplicate draft.
+   */
+  priorWriteIds?: string[]
   clientUpdatedAt: string
   contentJson?: JSONContent | null
   attachmentIds?: string[]
@@ -2014,11 +2023,15 @@ export interface UpsertDraftInput {
  * drift: `draft.id` is a freshly minted entity carrying the incoming content,
  * `originalId` is the id the client pushed under (whose row was left untouched
  * for the other device), and the client migrates its local state to `draft.id`.
+ * `keptDraft` is that untouched row when it is still live: the pushing device
+ * ignored its socket echo while dirty, so the response carries it and the
+ * client seeds it as a stash entry instead of waiting for the next bootstrap.
  */
 export interface UpsertDraftResponse {
   draft: Draft
   split: boolean
   originalId?: string
+  keptDraft?: Draft
 }
 
 /**
@@ -2041,6 +2054,25 @@ export interface ResolveDraftResponse {
   /** False when the version no longer matched — the draft drifted and was kept. */
   resolved: boolean
 }
+
+/**
+ * Optional wire body for `DELETE /drafts/:id` (explicit discard). Like resolve,
+ * a discard can race this device's own in-flight upsert: a push that left the
+ * client but lands after the tombstone must be dropped, not split into a live
+ * zombie of the discarded content. The tombstone remembers these write ids so
+ * the late write is recognized as superseded.
+ */
+export interface DeleteDraftInput {
+  supersededWriteIds?: string[]
+}
+
+/**
+ * Defensive cap on the drafts bootstrap read (`GET /drafts`). Shared so the
+ * client can tell a complete snapshot from a truncated one: when the snapshot
+ * hits the cap, absence from it no longer proves a local draft was deleted
+ * elsewhere, so the bootstrap sweep must not drop local rows.
+ */
+export const MAX_DRAFTS_PER_USER = 500
 
 export interface DraftListResponse {
   drafts: Draft[]

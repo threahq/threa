@@ -953,3 +953,91 @@ describe("draft staging (synchronous reload safety)", () => {
     expect(readStagedDraft(workspaceId, draftKey)).toBeNull()
   })
 })
+
+describe("upsertLoadedDraft — save races the sync engine (in-transaction revalidation)", () => {
+  const sealContext = { senderId: "user_1", streamId: "stream_e2e_root" }
+  const sealedPayload = {
+    ciphertext: "ct_sealed",
+    envelope: { v: 2 },
+    e2eVersion: 2,
+    contentMarkdown: "typed",
+    attachmentRefs: [],
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function putLoaded(id: string, baseVersion: number) {
+    await db.drafts.put({
+      id,
+      workspaceId,
+      scope: draftKey,
+      contentJson: EMPTY_DOC,
+      attachments: [],
+      ciphertext: "ct_old",
+      envelope: { v: 2 },
+      e2eVersion: 2,
+      baseVersion,
+      clientUpdatedAt: Date.now(),
+    })
+    await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: id })
+  }
+
+  it("retargets to the migrated id when a split ack moves the draft mid-save (no old-id resurrection)", async () => {
+    await putLoaded("draft_old", 1)
+    // The seal is the save's awaited gap; a split ack migrating the id lands
+    // exactly there. The save must NOT write the pre-migration id back (that
+    // row would re-push, re-split server-side, and breed duplicates) — it
+    // retries against the new identity.
+    const { migrateLocalDraftId } = await import("@/sync/draft-sync")
+    let firstCall = true
+    vi.spyOn(sealDraft, "sealDraftContent").mockImplementation(async () => {
+      if (firstCall) {
+        firstCall = false
+        const current = await db.drafts.get("draft_old")
+        await migrateLocalDraftId(workspaceId, "draft_old", { ...current!, id: "draft_new", baseVersion: 5 })
+      }
+      return sealedPayload
+    })
+
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] }, sealContext)
+
+    expect(await db.drafts.get("draft_old")).toBeUndefined()
+    const migrated = await db.drafts.get("draft_new")
+    // The save landed on the migrated row, preserving its post-split basis.
+    expect(migrated).toMatchObject({ ciphertext: "ct_sealed", baseVersion: 5 })
+    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_new")
+    const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
+    expect(ops.map((op) => op.payload.draftId)).toEqual(["draft_new"])
+  })
+
+  it("keeps a baseVersion advanced by a push ack mid-save (stale basis would split the next push)", async () => {
+    await putLoaded("draft_x", 1)
+    let firstCall = true
+    vi.spyOn(sealDraft, "sealDraftContent").mockImplementation(async () => {
+      if (firstCall) {
+        firstCall = false
+        // A push ack confirms version 7 while the save is sealing.
+        const current = await db.drafts.get("draft_x")
+        await db.drafts.put({ ...current!, baseVersion: 7 })
+      }
+      return sealedPayload
+    })
+
+    await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] }, sealContext)
+
+    // The freshly confirmed basis survives the save; writing the stale 1 back
+    // would make the next push CAS against an old version and split.
+    expect((await db.drafts.get("draft_x"))?.baseVersion).toBe(7)
+  })
+})

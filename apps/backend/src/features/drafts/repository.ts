@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { DraftCommand, JSONContent } from "@threa/types"
+import { MAX_DRAFTS_PER_USER, type DraftCommand, type JSONContent } from "@threa/types"
 
 interface DraftRow {
   id: string
@@ -18,6 +18,7 @@ interface DraftRow {
   e2e_version: number | null
   version: number
   last_client_write_id: string | null
+  superseded_write_ids: string[] | null
   client_updated_at: Date
   created_at: Date
   updated_at: Date
@@ -51,6 +52,13 @@ export interface Draft {
    * so the retry doesn't read as drift and spuriously split.
    */
   lastClientWriteId: string | null
+  /**
+   * Set on tombstones only: the authoring device's write ids that the resolve
+   * or discard superseded. A late upsert whose write lineage matches is a push
+   * of already-sent/discarded content and is dropped instead of split into a
+   * live zombie.
+   */
+  supersededWriteIds: string[] | null
   clientUpdatedAt: Date
   createdAt: Date
   updatedAt: Date
@@ -82,6 +90,13 @@ export interface CasUpdateDraftParams {
   userId: string
   id: string
   expectedVersion: number
+  /**
+   * The incoming write id plus this device's superseded prior write ids. A row
+   * whose `last_client_write_id` is any of them was last written by THIS device
+   * with no other writer since, so updating in place is safe even when
+   * `expectedVersion` trails (the ack of the prior write was lost).
+   */
+  ownWriteIds: string[]
   rootStreamId: string | null
   contentJson: JSONContent | null
   contentMarkdown: string | null
@@ -96,14 +111,7 @@ export interface CasUpdateDraftParams {
 }
 
 const COLUMNS =
-  "id, workspace_id, user_id, scope, root_stream_id, content_json, content_markdown, attachment_ids, command, context_refs, ciphertext, envelope, e2e_version, version, last_client_write_id, client_updated_at, created_at, updated_at, deleted_at"
-
-/**
- * Defensive cap on the per-user bootstrap read. Real stashes are far smaller;
- * this only bounds a pathological account so the list query can never scan an
- * unbounded set.
- */
-const MAX_DRAFTS_PER_USER = 500
+  "id, workspace_id, user_id, scope, root_stream_id, content_json, content_markdown, attachment_ids, command, context_refs, ciphertext, envelope, e2e_version, version, last_client_write_id, superseded_write_ids, client_updated_at, created_at, updated_at, deleted_at"
 
 function mapRow(row: DraftRow): Draft {
   return {
@@ -122,6 +130,7 @@ function mapRow(row: DraftRow): Draft {
     e2eVersion: row.e2e_version,
     version: row.version,
     lastClientWriteId: row.last_client_write_id,
+    supersededWriteIds: Array.isArray(row.superseded_write_ids) ? row.superseded_write_ids : null,
     clientUpdatedAt: row.client_updated_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -192,11 +201,16 @@ export const DraftsRepository = {
    * Optimistic-concurrency update (INV-20). Replaces the whole composer payload
    * — a draft is full state, so a cleared field (removed attachment, emptied
    * command) is honored rather than COALESCE-preserved. The CAS in the WHERE
-   * rejects when `version` has moved on; the service splits on a null return.
-   * The `deleted_at IS NULL` guard keeps a resolved tombstone from being
-   * revived through this path.
+   * accepts either a `version` match or a row whose last accepted write is one
+   * of the caller's own (`ownWriteIds`): a lost ack leaves `expectedVersion`
+   * trailing, but if no other device wrote since, updating in place is exactly
+   * "update the one that is live" — splitting there would mint a same-device
+   * duplicate. Rejects otherwise (genuine drift); the service splits on a null
+   * return. The `deleted_at IS NULL` guard keeps a resolved tombstone from
+   * being revived through this path.
    */
   async casUpdate(db: Querier, params: CasUpdateDraftParams): Promise<Draft | null> {
+    const ownWriteIds = params.ownWriteIds
     const result = await db.query<DraftRow>(sql`
       UPDATE drafts SET
         root_stream_id = ${params.rootStreamId},
@@ -216,7 +230,8 @@ export const DraftsRepository = {
         AND workspace_id = ${params.workspaceId}
         AND user_id = ${params.userId}
         AND deleted_at IS NULL
-        AND version = ${params.expectedVersion}
+        AND (version = ${params.expectedVersion}
+          OR (${ownWriteIds.length > 0} AND last_client_write_id = ANY(${ownWriteIds})))
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
@@ -226,8 +241,11 @@ export const DraftsRepository = {
    * CAS soft-delete for resolve-on-send. Tombstones the row when `version` still
    * matches, or when its last write id is one this device already superseded by
    * sending the message. Unrelated drift survives as a stash entry instead of
-   * being collaterally destroyed. Returns the tombstoned row on success, `null`
-   * on version drift.
+   * being collaterally destroyed. The superseded write ids are PERSISTED on the
+   * tombstone so a write from that lineage landing after this resolve (an
+   * in-flight push the client had already given up on) is dropped by the upsert
+   * path instead of split into a live zombie of sent content. Returns the
+   * tombstoned row on success, `null` on version drift.
    */
   async softDeleteCas(
     db: Querier,
@@ -244,6 +262,7 @@ export const DraftsRepository = {
       UPDATE drafts SET
         deleted_at = NOW(),
         updated_at = NOW(),
+        superseded_write_ids = ${JSON.stringify(supersededWriteIds)}::jsonb,
         version = version + 1
       WHERE id = ${params.id}
         AND workspace_id = ${params.workspaceId}
@@ -254,6 +273,43 @@ export const DraftsRepository = {
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * Merge write ids into an EXISTING tombstone's `superseded_write_ids`. Covers
+   * the second-tombstoner: when a resolve/discard loses the race (the row is
+   * already tombstoned, so `softDelete` / `softDeleteCas` no-op), its superseded
+   * lineage must still land on the tombstone — otherwise that device's own
+   * late-landing push has a lineage the tombstone doesn't know and splits into
+   * a zombie. Locks the row, merges + dedupes in code (INV-20: read is under
+   * FOR UPDATE), caps the stored set. No-op on live/absent rows.
+   */
+  async mergeTombstoneSupersededWriteIds(
+    db: Querier,
+    params: { workspaceId: string; userId: string; id: string; supersededWriteIds: string[] }
+  ): Promise<void> {
+    if (params.supersededWriteIds.length === 0) return
+    const result = await db.query<{ superseded_write_ids: string[] | null }>(sql`
+      SELECT superseded_write_ids
+      FROM drafts
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND user_id = ${params.userId}
+        AND deleted_at IS NOT NULL
+      FOR UPDATE
+    `)
+    const row = result.rows[0]
+    if (!row) return
+    const existing = Array.isArray(row.superseded_write_ids) ? row.superseded_write_ids : []
+    const merged = [...new Set([...existing, ...params.supersededWriteIds])].slice(0, 128)
+    if (merged.length === existing.length) return
+    await db.query(sql`
+      UPDATE drafts SET superseded_write_ids = ${JSON.stringify(merged)}::jsonb
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND user_id = ${params.userId}
+        AND deleted_at IS NOT NULL
+    `)
   },
 
   /**
@@ -295,18 +351,27 @@ export const DraftsRepository = {
    * Unconditional soft-delete for explicit discard and resolve-on-send of a
    * never-confirmed draft (no CAS). Plants a negative tombstone when the id has
    * not been seen yet, so a delete that reaches the server before the draft's
-   * first insert still wins the race. Returns the row when this call tombstoned
-   * it (live row transitioned, or negative marker inserted) and `null` when the
-   * row was already tombstoned.
+   * first insert still wins the race. Like `softDeleteCas`, the discarding
+   * device's superseded write ids are persisted on the tombstone so its own
+   * late-landing push is dropped rather than split into a zombie. Returns the
+   * row when this call tombstoned it (live row transitioned, or negative marker
+   * inserted) and `null` when the row was already tombstoned.
    */
-  async softDelete(db: Querier, workspaceId: string, userId: string, id: string): Promise<Draft | null> {
+  async softDelete(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    id: string,
+    supersededWriteIds: string[] = []
+  ): Promise<Draft | null> {
     const result = await db.query<DraftRow>(sql`
-      INSERT INTO drafts (id, workspace_id, user_id, scope, client_updated_at, deleted_at)
+      INSERT INTO drafts (id, workspace_id, user_id, scope, client_updated_at, deleted_at, superseded_write_ids)
       -- Empty scope is a tombstone-only sentinel; real draft scopes are never blank.
-      VALUES (${id}, ${workspaceId}, ${userId}, '', NOW(), NOW())
+      VALUES (${id}, ${workspaceId}, ${userId}, '', NOW(), NOW(), ${JSON.stringify(supersededWriteIds)}::jsonb)
       ON CONFLICT (id) DO UPDATE SET
         deleted_at = NOW(),
         updated_at = NOW(),
+        superseded_write_ids = ${JSON.stringify(supersededWriteIds)}::jsonb,
         version = drafts.version + 1
       WHERE drafts.workspace_id = ${workspaceId}
         AND drafts.user_id = ${userId}
