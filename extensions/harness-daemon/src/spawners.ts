@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, join } from "node:path"
 import { die } from "./errors"
 import { commandExists, commandPath, run, shellQuote } from "./shell"
-import { capturePane, ensureTmuxSession, pickTmuxWindow, tmuxSession } from "./tmux"
+import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, sendKeys, tmuxSession } from "./tmux"
 import type { SpawnOptions, SpawnResult, ThreaChannelConfig } from "./types"
 import { ensureWorktree } from "./worktree"
 
@@ -32,26 +32,34 @@ export class PiRuntimeSpawner extends RuntimeSpawner {
     ensureTmuxSession(session)
     const { worktree, branch } = this.createWorktree(options)
     const window = pickTmuxWindow(session, options.name)
-    console.log(`harnessd: launching Pi in tmux ${session}:${window}`)
-    run(["tmux", "new-window", "-t", session, "-a", "-n", window, "-c", worktree, piBin])
+    const windowId = createWindow(session, window, worktree, piBin)
+    console.log(`harnessd: launched Pi in tmux ${session}:${window} (${windowId})`)
 
     if (!options.noRemote) {
       await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_BOOT_WAIT_MS ?? 8000))
-      run(["tmux", "send-keys", "-t", `${session}:${window}`, "/remote-control", "Enter"])
+      sendKeys(windowId, ["/remote-control", "Enter"])
       await Bun.sleep(Number(process.env.THREA_HARNESSD_PI_REMOTE_WAIT_MS ?? 6000))
     }
 
-    const outputText = capturePane(session, window)
+    const outputText = capturePane(windowId)
     return {
       worktree,
       branch,
       tmuxSession: session,
       tmuxWindow: window,
+      tmuxWindowId: windowId,
       scratchpadUrl: firstScratchpadUrl(outputText),
       output: outputText,
     }
   }
 }
+
+// Boot dialogs (trust prompt, MCP-server approval, update notices) all end
+// with an "Enter to confirm/continue" hint; the composer's input line is a
+// bare "❯" only once boot has settled (during a dialog that line carries the
+// highlighted option, e.g. "❯ 1. Use this MCP server").
+const BOOT_DIALOG_RE = /Enter to confirm|Enter to continue/
+const IDLE_PROMPT_RE = /^❯\s*$/m
 
 export class ClaudeRuntimeSpawner extends RuntimeSpawner {
   async spawn(options: SpawnOptions): Promise<SpawnResult> {
@@ -75,39 +83,75 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const scratchpadUrl = await this.prelinkScratchpad(worktree)
     if (scratchpadUrl) console.log(`harnessd: scratchpad: ${scratchpadUrl}`)
 
+    const args = [claudeBin, "--name", `threa.${options.name}`]
     if (!options.noRegister) {
-      console.log(`harnessd: registering Claude MCP server '${channel}'`)
-      run([claudeBin, "mcp", "remove", channel, "--scope", "local"], { cwd: worktree, allowFailure: true })
-      run([claudeBin, "mcp", "add", channel, "--scope", "local", "--", "bun", channelEntry], { cwd: worktree })
+      args.push(
+        "--mcp-config",
+        this.writeMcpConfig(options.name, channel, channelEntry),
+        "--dangerously-load-development-channels",
+        `server:${channel}`
+      )
     }
+    if (!options.noYolo) args.push("--dangerously-skip-permissions")
 
     const window = pickTmuxWindow(session, options.name)
-    const args = [
-      claudeBin,
-      "--name",
-      `threa.${options.name}`,
-      "--dangerously-load-development-channels",
-      `server:${channel}`,
-    ]
-    if (!options.noYolo) args.push("--dangerously-skip-permissions")
-    console.log(`harnessd: launching Claude Code in tmux ${session}:${window}`)
-    run(["tmux", "new-window", "-t", session, "-a", "-n", window, "-c", worktree, args.map(shellQuote).join(" ")])
+    const windowId = createWindow(session, window, worktree, args.map(shellQuote).join(" "))
+    console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
 
-    if (!options.noAutoAccept) {
-      await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_BOOT_WAIT_MS ?? 5000))
-      run(["tmux", "send-keys", "-t", `${session}:${window}`, "Enter"])
-      await Bun.sleep(Number(process.env.THREA_HARNESSD_CLAUDE_ACCEPT_WAIT_MS ?? 6000))
-    }
+    if (!options.noAutoAccept) await this.acceptBootPrompts(windowId)
 
-    const outputText = capturePane(session, window)
+    const outputText = capturePane(windowId)
     return {
       worktree,
       branch,
       tmuxSession: session,
       tmuxWindow: window,
+      tmuxWindowId: windowId,
       scratchpadUrl: scratchpadUrl ?? firstScratchpadUrl(outputText),
       output: outputText,
     }
+  }
+
+  /**
+   * Session-scoped MCP wiring via `--mcp-config` instead of `claude mcp add
+   * --scope local`: Claude Code resolves every worktree of a repo to the same
+   * project entry, so a persisted local-scope registration from worktree A
+   * silently repoints worktree B's channel at A's code the next time B starts
+   * (and stacks a duplicate channel on top of a user-scope registration). A
+   * config file passed at launch binds this session to this worktree's channel
+   * and leaves global config untouched.
+   */
+  private writeMcpConfig(name: string, channel: string, channelEntry: string): string {
+    const dir = join(homedir(), ".threa", "harnessd", "mcp")
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, `${name}.json`)
+    writeFileSync(
+      path,
+      JSON.stringify({ mcpServers: { [channel]: { type: "stdio", command: "bun", args: [channelEntry] } } }, null, 2)
+    )
+    return path
+  }
+
+  /**
+   * Walk Claude Code through its boot dialogs by pressing Enter until the
+   * composer prompt is idle. Polling capture-pane beats fixed sleeps: a fast
+   * boot isn't held for the full wait and a slow one isn't abandoned with a
+   * dialog still open (which left the channel half-wired often enough that the
+   * old two-blind-Enters approach needed constant retuning).
+   */
+  private async acceptBootPrompts(windowId: string): Promise<void> {
+    const deadline = Date.now() + Number(process.env.THREA_HARNESSD_CLAUDE_BOOT_WAIT_MS ?? 45_000)
+    while (Date.now() < deadline) {
+      const text = capturePane(windowId)
+      if (BOOT_DIALOG_RE.test(text)) {
+        sendKeys(windowId, ["Enter"])
+        await Bun.sleep(1000)
+        continue
+      }
+      if (IDLE_PROMPT_RE.test(text)) return
+      await Bun.sleep(500)
+    }
+    console.warn("harnessd: Claude Code boot did not settle before the wait deadline; continuing")
   }
 
   private async prelinkScratchpad(worktree: string): Promise<string | undefined> {
