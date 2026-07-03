@@ -1,3 +1,4 @@
+import Dexie from "dexie"
 import { db, generateLocalDraftId, type CachedDraft, type PendingOperation } from "@/db"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import {
@@ -94,6 +95,21 @@ export function cachedDraftFromWire(draft: Draft): CachedDraft {
 // Local persistence primitives (IDB + in-memory draft-store cache)
 // ============================================================================
 
+/**
+ * Emit an in-memory cache update only once the surrounding Dexie transaction
+ * (if any) has committed. The persistence helpers below run their cache signal
+ * after their own transaction, but they are also composed inside larger ones
+ * (`deleteDraftById`, `applyDraftDeleted`'s preserve flow, `rescopeScopeDrafts`)
+ * — there the inner sub-transaction resolving does NOT mean the write is
+ * durable, and emitting immediately would leave the cache holding state that
+ * IDB rolls back if the outer transaction aborts.
+ */
+function emitCacheAfterTxn(emit: () => void): void {
+  const txn = Dexie.currentTransaction
+  if (txn) txn.on("complete", emit)
+  else emit()
+}
+
 /** Write a draft to IDB and (when the workspace cache is live) the store cache. */
 export async function putLocalDraft(row: CachedDraft): Promise<void> {
   await db.drafts.put(row)
@@ -122,10 +138,11 @@ export async function deleteLocalDraft(workspaceId: string, id: string): Promise
     }
     await db.drafts.delete(id)
   })
-  if (hasSeededDraftCache(workspaceId)) {
+  emitCacheAfterTxn(() => {
+    if (!hasSeededDraftCache(workspaceId)) return
     deleteDraftFromCache(workspaceId, id)
     if (clearedScope) setComposerLoadedInCache(workspaceId, clearedScope, null)
-  }
+  })
   return removed
 }
 
@@ -175,9 +192,10 @@ export async function migrateLocalDraftScope(
       movedToScope = toRow.scope
     }
   })
-  if (hasSeededDraftCache(workspaceId)) {
+  emitCacheAfterTxn(() => {
+    if (!hasSeededDraftCache(workspaceId)) return
     migrateDraftScopeInCache(workspaceId, fromScope, toRow, movedToScope)
-  }
+  })
 }
 
 /**
@@ -210,9 +228,10 @@ export async function migrateLocalDraftId(workspaceId: string, fromId: string, t
   // One cache signal (delete-old + insert-new + repoint) so a reader never sees
   // the loaded draft missing mid-migration — i.e. the composer never flashes
   // empty during a server split or a remote-delete preserve.
-  if (hasSeededDraftCache(workspaceId)) {
+  emitCacheAfterTxn(() => {
+    if (!hasSeededDraftCache(workspaceId)) return
     migrateLoadedDraftInCache(workspaceId, fromId, finalRow, repointedScope)
-  }
+  })
 }
 
 // ============================================================================

@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import type { Draft, JSONContent, UpsertDraftInput, UpsertDraftResponse } from "@threa/types"
 import { db, type CachedDraft } from "@/db"
-import { resetDraftStoreCache } from "@/stores/draft-store"
+import * as draftStore from "@/stores/draft-store"
+import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { markDraftResolved, resetDraftResolutionGuard } from "./draft-resolution-guard"
 import {
   applyDraftDeleted,
@@ -16,6 +17,7 @@ import {
   executeDraftResolve,
   executeDraftUpsert,
   hasPendingDraftUpsert,
+  migrateLocalDraftId,
   reconcileStagedDrafts,
   syncDraftResolution,
   type DraftsServiceLike,
@@ -960,6 +962,44 @@ describe("deleteDraftById — the single user-initiated delete path", () => {
     await deleteDraftById(workspaceId, "draft_missing")
 
     expect(await db.pendingOperations.where("type").equals("delete_draft").toArray()).toHaveLength(0)
+  })
+})
+
+describe("cache signals defer to the surrounding transaction (no cache/IDB divergence on abort)", () => {
+  it("drops the cache update when the outer transaction aborts after an id migration", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    await seedDraftCacheFromIdb(workspaceId)
+    const migrateInCache = vi.spyOn(draftStore, "migrateLoadedDraftInCache")
+
+    await expect(
+      db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+        await migrateLocalDraftId(workspaceId, "draft_x", localDraft({ id: "draft_new", baseVersion: 0 }))
+        throw new Error("abort")
+      })
+    ).rejects.toThrow("abort")
+
+    // IDB rolled back — the cache must not have been told about the migration,
+    // or it would render a draft id that no longer exists.
+    expect(await db.drafts.get("draft_x")).toBeDefined()
+    expect(await db.drafts.get("draft_new")).toBeUndefined()
+    expect(migrateInCache).not.toHaveBeenCalled()
+    migrateInCache.mockRestore()
+  })
+
+  it("emits the cache update only after the outer transaction commits", async () => {
+    await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 1 }))
+    await seedDraftCacheFromIdb(workspaceId)
+    const migrateInCache = vi.spyOn(draftStore, "migrateLoadedDraftInCache")
+
+    await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+      await migrateLocalDraftId(workspaceId, "draft_x", localDraft({ id: "draft_new", baseVersion: 0 }))
+      // Not yet — the write isn't durable until the outer transaction commits.
+      expect(migrateInCache).not.toHaveBeenCalled()
+    })
+
+    await vi.waitFor(() => expect(migrateInCache).toHaveBeenCalledTimes(1))
+    expect(await db.drafts.get("draft_new")).toBeDefined()
+    migrateInCache.mockRestore()
   })
 })
 
