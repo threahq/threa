@@ -38,6 +38,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.2  | Follow-up turn invocation (context + prompt)         | ☐      |       |
 | 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
+| 1.5  | Turn-purpose consolidation (invocation variants)     | ☐      |       |
 | 2.1  | Generalized session abort                            | ☐      |       |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
@@ -64,7 +65,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |       |
 | 8.3  | Ambient precision eval                               | ☐      |       |
 
-Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1 and 4).
+Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1, 1.5, and 4). Pull **3.1 forward to right after Phase 1** — fired follow-up turns consume episode summaries (see 3.1), and until it lands the 1.2 prompt hint is compensating for their absence.
 
 ---
 
@@ -134,6 +135,18 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 
 **Done when:** a workspace admin can raise the follow-up cap from settings and the tool's self-reported limit reflects it.
 
+### 1.5 Turn-purpose consolidation (invocation variants)
+
+**Goal:** one first-class answer to "why is this turn running," replacing accumulating optional fields and ad-hoc flags. **Hard prerequisite for Phase 8**, which adds invocation kind #5.
+
+**Shape:** `PersonaAgentInput` carries four orthogonal variant signals — `trigger?: MENTION`, `supersedesSessionId?`, `rerunContext?` (`persona-agent.ts:138-149`), and `followUpId?` (#1142) — each with scattered if-branches, a bespoke prompt section, and repurposed runtime flags (`allowNoMessageOutput` was supersede-only, now also follow-up; the runtime's continuation prompt still uses supersede wording on follow-up turns, recorded as out-of-scope in #1142). Consolidate into a discriminated union `purpose: { kind: 'catch_up' | 'mention' | 'follow_up' | 'supersede_rerun', … }` resolved in **one place** into three derived behaviors: (a) the purpose's system-prompt section (self-describing, mirroring the tools' `promptBlock` pattern), (b) runtime flags derived from purpose kind — never set ad hoc; this also fixes the supersede-flavored continuation-wording leak mechanically, (c) context-assembly hints for `buildAgentContext`. Wire compat: job payload fields stay as-is (queue rows in flight); the worker maps payload → purpose at the boundary. This pays down the refactor 1.2's recorded deviation deferred ("a `trigger` union would touch every `trigger === MENTION` reader") — once, before ambient turns multiply the variants.
+
+**Files:** `persona-agent.ts` (input type + variant readers), `persona-agent-worker.ts` (payload→purpose mapping), `companion/context.ts`, `companion/prompt/system-prompt.ts` (per-purpose sections), `packages/agent-runtime` `TurnRequest` if flag derivation moves there.
+
+**Tests:** existing per-variant tests pass unchanged (behavioral no-op); one test per purpose kind asserting derived flags + prompt-section presence.
+
+**Done when:** adding a new invocation kind = one union member + its prompt block — no new optional field on `PersonaAgentInput`, no ad-hoc flag setting.
+
 ---
 
 ## Phase 2 — Steer & stop (runtime polish)
@@ -193,6 +206,8 @@ Independent; interleave anytime.
 **Shape:** at session completion (third phase of `withCompanionSession`, `companion/session.ts`), enqueue a summary job (do NOT summarize inline — INV-41 keeps the completion txn short): haiku-4.5 condenses the session (trigger, what was researched, what was concluded) into ~2-3 sentences stored on `agent_sessions.episode_summary` (migration: nullable TEXT column — post-completion metadata of the session row itself, not workflow state, so a column not a tracking table). Read path: `buildAgentContext` includes the last N episode summaries for the stream (N from `companion/config.ts`) in a "Previous sessions" prompt section when they aren't already covered by the rolling summary; `workspace_research` can also query them (extend the researcher's stream-context source, not a new tool).
 
 Not a duplicate of the two existing summaries: `conversations.topic_summary` names a clustered topic, and the rolling `agent_conversation_summaries` fold is per-(stream, persona) context-window management — neither captures "what Ariadne did and concluded in a session," which can span multiple conversations. Reuse the `conversation-summary-service.ts` worker pattern rather than adding a parallel summarizer.
+
+**Feeds fired follow-up turns directly** (why this step should be pulled forward to right after Phase 1): `agent_follow_ups.session_id` records the creating session, so the fired turn (1.2) loads that session's episode summary — the _context of the promise_, not just its note text. Until this lands, 1.2's "this IS that reminder firing" prompt hint is compensating for missing episodic memory; after it, the hint carries purpose and the summary carries the substance.
 
 **Files:** migration, `companion/session.ts` (enqueue), fold into the existing summary worker (`conversation-summary-service.ts` precedent), `companion/context.ts`, `companion/prompt/system-prompt.ts`, `companion/config.ts` (model + N).
 
@@ -454,7 +469,7 @@ Code-complete backend machinery (`applyBuiltInAgentPatch`, `agent_config_overrid
 
 ## Phase 8 — Bounded passive following (deliberately last)
 
-Depends on Phase 1 (follow-up plumbing) and Phase 4 (the brief gives ambient work somewhere durable to land). Proactivity done wrong erodes trust fastest — hence last, budgeted, and off by default outside scratchpads.
+Depends on Phase 1 (follow-up plumbing), **step 1.5 (turn-purpose union — an ambient turn is invocation kind #5 and must be a `purpose` member, not another optional field)**, and Phase 4 (the brief gives ambient work somewhere durable to land). Proactivity done wrong erodes trust fastest — hence last, budgeted, and off by default outside scratchpads.
 
 ### 8.1 Ambient classifier on settled conversations
 
