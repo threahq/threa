@@ -184,7 +184,7 @@ import { AttachmentRepository } from "./features/attachments"
 import { ulid } from "ulid"
 import { loadConfig } from "./lib/env"
 import { createCorsOriginChecker } from "./lib/cors"
-import type { AuthorType } from "@threa/types"
+import type { AuthorType, ConversationDirective } from "@threa/types"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
@@ -353,6 +353,8 @@ export async function startServer(): Promise<ServerInstance> {
      * user's full access here would be a privilege escalation.
      */
     accessibleStreamIds?: string[]
+    /** Declared conversation for an agent reply (roadmap 3.3); forwarded to event-service's synchronous assigner. */
+    conversation?: ConversationDirective
   }) => {
     const initialMarkdown = normalizeMessage(params.content)
     const initialJson = parseMarkdown(initialMarkdown, undefined, toEmoji)
@@ -393,6 +395,7 @@ export async function startServer(): Promise<ServerInstance> {
       sessionId: params.sessionId,
       clientMessageId: params.clientMessageId,
       accessibleStreamIds: params.accessibleStreamIds,
+      conversation: params.conversation,
     })
   }
   const editMessage = async (params: {
