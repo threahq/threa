@@ -94,6 +94,18 @@ export function DraftsPage() {
     setSelectedIds(new Set())
   }, [])
 
+  // Escape exits batch mode from anywhere. A document listener (not <main>'s
+  // onKeyDown) so it fires no matter where focus landed — clicking the header
+  // "Select" button moves focus to <body>, outside <main>'s subtree.
+  useEffect(() => {
+    if (!batchMode) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitBatchMode()
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [batchMode, exitBatchMode])
+
   const allSelected = drafts.length > 0 && selectedIds.size === drafts.length
   const toggleSelectAll = useCallback(() => {
     setSelectedIds((prev) => (prev.size === drafts.length ? new Set() : new Set(drafts.map((draft) => draft.id))))
@@ -105,11 +117,11 @@ export function DraftsPage() {
     const ids = drafts.filter((draft) => selectedIds.has(draft.id)).map((draft) => draft.id)
     setBulkConfirmOpen(false)
     exitBatchMode()
-    try {
-      for (const id of ids) await deleteDraft(id)
-    } catch {
-      toast.error("Failed to delete some drafts")
-    }
+    // allSettled, not a for-await loop: one failing delete must not abort the
+    // rest, and the toast reports the real failed count (INV-11, fail loudly).
+    const results = await Promise.allSettled(ids.map((id) => deleteDraft(id)))
+    const failed = results.filter((result) => result.status === "rejected").length
+    if (failed > 0) toast.error(`Failed to delete ${failed} of ${ids.length} drafts`)
   }, [drafts, selectedIds, deleteDraft, exitBatchMode])
 
   // Convert drafts to QuickSwitcherItem format. Stashed rows render under the
@@ -166,7 +178,7 @@ export function DraftsPage() {
   const countPill = (
     <span
       className={cn(
-        "inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums tracking-tight transition-colors",
+        "inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-medium tabular-nums tracking-tight transition-colors",
         selectedCount > 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
       )}
       aria-live="polite"
@@ -184,23 +196,33 @@ export function DraftsPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8"
+                className="h-8 w-8 shrink-0"
                 onClick={exitBatchMode}
                 aria-label="Cancel selection"
               >
                 <X className="h-4 w-4" />
               </Button>
               {countPill}
-              <span className="text-sm font-medium">selected</span>
+              {/* Label hidden on phones to keep the control row from overflowing
+                  narrow viewports — mirrors the timeline's BatchSelectionBar. */}
+              <span className="hidden text-sm font-medium sm:inline">selected</span>
               <div className="ml-auto flex items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={toggleSelectAll} disabled={drafts.length === 0}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={toggleSelectAll}
+                  disabled={drafts.length === 0}
+                >
                   {allSelected ? "Deselect all" : "Select all"}
                 </Button>
                 <Button
                   variant="destructive"
                   size="sm"
+                  className="shrink-0"
                   onClick={() => setBulkConfirmOpen(true)}
                   disabled={selectedCount === 0}
+                  aria-label="Delete selected drafts"
                 >
                   <Trash2 className="h-4 w-4 sm:mr-1.5" />
                   <span className="hidden sm:inline">Delete</span>
@@ -220,7 +242,13 @@ export function DraftsPage() {
                 <h1 className="font-semibold">Drafts</h1>
               </div>
               {drafts.length > 0 && (
-                <Button variant="ghost" size="sm" className="ml-auto" onClick={enterBatchMode}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="ml-auto"
+                  onClick={enterBatchMode}
+                  aria-label="Select drafts"
+                >
                   <ListChecks className="h-4 w-4 sm:mr-1.5" />
                   <span className="hidden sm:inline">Select</span>
                 </Button>
@@ -243,12 +271,6 @@ export function DraftsPage() {
               case "ArrowUp":
                 e.preventDefault()
                 setSelectedIndex((prev) => Math.max(prev - 1, 0))
-                break
-              case "Escape":
-                if (batchMode) {
-                  e.preventDefault()
-                  exitBatchMode()
-                }
                 break
               case "Enter": {
                 e.preventDefault()

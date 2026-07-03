@@ -58,13 +58,13 @@ describe("DraftsPage batch delete", () => {
   it("hides the Select control when there are no drafts", () => {
     mockDrafts([])
     renderPage()
-    expect(screen.queryByRole("button", { name: "Select" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Select drafts" })).not.toBeInTheDocument()
   })
 
   it("enters batch mode, selects rows by tapping, and reflects the count", async () => {
     renderPage()
 
-    await userEvent.click(screen.getByRole("button", { name: "Select" }))
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
     // Rows are now toggles (no navigation): tap two of them.
     await userEvent.click(screen.getByRole("option", { name: /Alpha/ }))
     await userEvent.click(screen.getByRole("option", { name: /Charlie/ }))
@@ -74,12 +74,23 @@ describe("DraftsPage batch delete", () => {
     expect(screen.getByRole("option", { name: /Bravo/ })).toHaveAttribute("aria-selected", "false")
   })
 
+  it("toggles a row selection with the keyboard (Enter)", async () => {
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
+    const row = screen.getByRole("option", { name: /Alpha/ })
+    row.focus()
+    await userEvent.keyboard("{Enter}")
+
+    expect(row).toHaveAttribute("aria-selected", "true")
+  })
+
   it("select-all then delete confirms with the batch count and removes every draft", async () => {
     renderPage()
 
-    await userEvent.click(screen.getByRole("button", { name: "Select" }))
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
     await userEvent.click(screen.getByRole("button", { name: "Select all" }))
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }))
+    await userEvent.click(screen.getByRole("button", { name: "Delete selected drafts" }))
 
     // Confirmation carries the count, not a singular string.
     const dialog = await screen.findByRole("alertdialog")
@@ -88,19 +99,31 @@ describe("DraftsPage batch delete", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Delete" }))
 
     expect(deleteDraft).toHaveBeenCalledTimes(3)
-    expect(deleteDraft.mock.calls.map((c) => c[0])).toEqual(["a", "b", "c"])
+    expect(deleteDraft.mock.calls.map((c) => c[0]).sort()).toEqual(["a", "b", "c"])
     // Batch mode exits after the delete — the Select control returns.
-    expect(await screen.findByRole("button", { name: "Select" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Select drafts" })).toBeInTheDocument()
   })
 
   it("leaves batch mode via Cancel without deleting anything", async () => {
     renderPage()
 
-    await userEvent.click(screen.getByRole("button", { name: "Select" }))
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
     await userEvent.click(screen.getByRole("option", { name: /Alpha/ }))
     await userEvent.click(screen.getByRole("button", { name: "Cancel selection" }))
 
     expect(deleteDraft).not.toHaveBeenCalled()
-    expect(screen.getByRole("button", { name: "Select" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Select drafts" })).toBeInTheDocument()
+  })
+
+  it("exits batch mode on Escape from anywhere", async () => {
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
+    expect(screen.getByRole("button", { name: "Cancel selection" })).toBeInTheDocument()
+
+    await userEvent.keyboard("{Escape}")
+
+    expect(screen.getByRole("button", { name: "Select drafts" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Cancel selection" })).not.toBeInTheDocument()
   })
 })

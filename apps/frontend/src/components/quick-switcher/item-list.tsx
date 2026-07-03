@@ -32,20 +32,22 @@ interface ItemListProps {
 }
 
 /**
- * Leading check circle shown in a row's icon slot while batch selection is on.
- * Sized to the icon footprint (`h-4 w-4`) so entering select mode swaps the
- * icon for the toggle without shifting the row (INV-21).
+ * Leading check circle shown in a row's leading slot while batch selection is
+ * on. Sized to the footprint of the visual it replaces — the `h-7 w-7` avatar
+ * on avatar rows, the `h-4 w-4` icon otherwise — so entering select mode swaps
+ * in place without shifting the row (INV-21).
  */
-function SelectionToggle({ checked }: { checked: boolean }) {
+function SelectionToggle({ checked, large }: { checked: boolean; large?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
-        "grid h-4 w-4 shrink-0 place-content-center rounded-full border transition-colors",
+        "grid shrink-0 place-content-center border transition-colors",
+        large ? "h-7 w-7 rounded-md" : "h-4 w-4 rounded-full",
         checked ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40 bg-transparent"
       )}
     >
-      {checked && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+      {checked && <Check className={large ? "h-3.5 w-3.5" : "h-2.5 w-2.5"} strokeWidth={3} />}
     </span>
   )
 }
@@ -137,7 +139,7 @@ export function ItemList({
 
             let leadingVisual: React.ReactNode = null
             if (selectionEnabled) {
-              leadingVisual = <SelectionToggle checked={isChecked} />
+              leadingVisual = <SelectionToggle checked={isChecked} large={!!item.avatarUrl} />
             } else if (item.avatarUrl) {
               leadingVisual = (
                 <Avatar className="h-7 w-7 rounded-md">
@@ -218,9 +220,26 @@ export function ItemList({
                 role="option"
                 aria-selected={selectionEnabled ? isChecked : isHighlighted}
                 data-index={index}
+                // Selection rows are focusable toggles so the list is operable
+                // by keyboard alone (Enter/Space); plain nav rows are not.
+                tabIndex={selectionEnabled ? 0 : undefined}
                 className={className}
                 onMouseEnter={() => onSelectIndex(index)}
                 onClick={(e) => handleClick(e, item)}
+                onKeyDown={
+                  selectionEnabled
+                    ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          // Stop the row's Enter from also reaching a container
+                          // keydown handler (e.g. the drafts page's) and toggling
+                          // the highlighted index — that would double-fire.
+                          e.stopPropagation()
+                          selection?.onToggle(item.id)
+                        }
+                      }
+                    : undefined
+                }
               >
                 {itemContent}
               </div>
