@@ -21,7 +21,7 @@ const extensionsDir = join(homedir(), ".pi", "agent", "extensions")
 const dest = process.argv[2] ?? join(extensionsDir, "threa-remote")
 
 // The runtime files of bot-runtime-client (its tests are not needed at runtime).
-const VENDOR_FILES = ["index.ts", "transport.ts", "types.ts", "ws-hint.ts"]
+const VENDOR_FILES = ["index.ts", "transport.ts", "types.ts", "ws-hint.ts", "crypto.ts", "sealed.ts"]
 
 // 1. Clean any prior install — both the legacy single-file form and the dir form.
 rmSync(join(extensionsDir, "threa-remote.ts"), { force: true })
@@ -49,13 +49,17 @@ if (rewritten === code) {
 }
 writeFileSync(entry, rewritten)
 
-// 5. Drop the now-vendored dep from the copied package.json.
+// 5. Drop the now-vendored dep from the copied package.json, and inherit the
+//    vendored source's own runtime deps (@hpke/*, ulid for the sealed path) so
+//    the standalone install can resolve them without the workspace.
 const pkgPath = join(dest, "package.json")
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
 delete pkg.dependencies?.["@threa/bot-runtime-client"]
+const botRuntimePkg = JSON.parse(readFileSync(join(botRuntime, "package.json"), "utf8"))
+pkg.dependencies = { ...(botRuntimePkg.dependencies ?? {}), ...pkg.dependencies }
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 
-// 6. Install the remaining deps (socket.io-client) in the standalone copy.
+// 6. Install the remaining deps in the standalone copy.
 const result = spawnSync("bun", ["install"], { cwd: dest, stdio: "inherit" })
 if (result.status !== 0) process.exit(result.status ?? 1)
 

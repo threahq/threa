@@ -2,6 +2,26 @@
 
 Pi package for linking a local Pi session to a Threa scratchpad.
 
+## End-to-end encrypted scratchpads
+
+The extension serves sealed (E2EE) turns via `@threa/bot-runtime-client`'s sealed
+module. On first presence write it mints a BIK (Bot Identity Key, an X25519
+keypair persisted `0600` at `~/.pi/agent/threa-remote-bik.json`) and registers
+the public half on every hello/presence. Once the scratchpad owner invites this
+bot into an encrypted scratchpad (which wraps the stream key to the BIK), claims
+arrive sealed: the extension decrypts the trigger + history locally, runs the
+turn, and seals every reply and trace step back under the stream key — the
+server only ever stores ciphertext.
+
+Because the server can't read sealed step content, sealed turns default to FULL
+trace detail (real commands, file contents, tool output) instead of the
+"omitted for safety" redactions plaintext turns keep. Set `sealedFullTrace:
+false` in the config to opt sealed traces back to redacted; the toggle can never
+enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) are not
+yet supported on sealed turns — directives are stripped with a note in the
+reply. Deleting the BIK file orphans the owner's key wraps; the owner must
+re-invite the bot after it registers a fresh key.
+
 ## Install locally
 
 From the monorepo root:

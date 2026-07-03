@@ -53,6 +53,8 @@ Verify the adapter still:
 - Claims messages that arrive while Pi is busy and injects them with Pi steering (`deliverAs: "steer"`) instead of waiting until idle.
 - Records trace steps through `/steps` without leaking raw tool args, file contents, shell output, or secrets.
 - Completes/fails through `/complete` and `/fail` with `instanceId` + `claimToken`.
+- Serves sealed (E2EE) claims via `@threa/bot-runtime-client`'s sealed module: mints/persists the BIK at `~/.pi/agent/threa-remote-bik.json` and sends `publicKey`/`publicKeyId` on EVERY hello and presence write (the backend upsert clears an omitted key), opens `sealedContext` with the ROOT stream id, seals steps to the `bot:invocation:sealed-steps` WS frame (HTTP `/sealed-steps` fallback) and the reply to `/sealed-complete` with the `X-Threa-Callback-Token` header.
+- Emits FULL tool args/output on sealed turns only (`sealedFullTrace`, default on; plaintext turns always stay redacted), scrubs sealed `/fail` errors to the error class name, strips `THREA_ATTACH:` directives on sealed turns instead of uploading plaintext bytes, and never fetches plaintext stream messages for sealed context (the decrypted claim history is the context).
 - Stores enabled/disabled state per Pi session link, not as a global config flag.
 - Stores stream cursors per Pi session link, not as a global cursor map.
 - Stops polling and marks presence offline on final `session_shutdown`; reload shutdown should reconnect automatically.
