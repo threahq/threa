@@ -96,6 +96,45 @@ export function ItemList({
 
   const selectionEnabled = selection?.enabled ?? false
 
+  const focusRow = (index: number) => {
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)
+    el?.focus()
+  }
+
+  // Roving arrow-key navigation for selection mode: the listbox is one tab stop
+  // (only the active option has tabIndex 0), and Up/Down/Home/End move focus
+  // between options, per the WAI-ARIA listbox pattern. Enter/Space toggle.
+  const handleSelectionKeyDown = (e: React.KeyboardEvent, index: number, itemId: string) => {
+    switch (e.key) {
+      case "Enter":
+      case " ":
+        e.preventDefault()
+        e.stopPropagation()
+        selection?.onToggle(itemId)
+        break
+      case "ArrowDown":
+        e.preventDefault()
+        e.stopPropagation()
+        focusRow(Math.min(index + 1, items.length - 1))
+        break
+      case "ArrowUp":
+        e.preventDefault()
+        e.stopPropagation()
+        focusRow(Math.max(index - 1, 0))
+        break
+      case "Home":
+        e.preventDefault()
+        e.stopPropagation()
+        focusRow(0)
+        break
+      case "End":
+        e.preventDefault()
+        e.stopPropagation()
+        focusRow(items.length - 1)
+        break
+    }
+  }
+
   const handleClick = (e: React.MouseEvent, item: QuickSwitcherItem) => {
     if (selectionEnabled) {
       // In batch mode the whole row is a selection toggle — never navigate.
@@ -127,6 +166,9 @@ export function ItemList({
             const ActionIcon = item.actionIcon
             const isHighlighted = index === selectedIndex
             const isChecked = selection?.selectedIds.has(item.id) ?? false
+            // Roving tabindex in selection mode: active option is the tab stop.
+            let rowTabIndex: number | undefined
+            if (selectionEnabled) rowTabIndex = isHighlighted ? 0 : -1
             const iconFallback = Icon ? (
               <Icon className="h-3.5 w-3.5 opacity-60" />
             ) : (
@@ -224,25 +266,16 @@ export function ItemList({
                 role="option"
                 aria-selected={selectionEnabled ? isChecked : isHighlighted}
                 data-index={index}
-                // Selection rows are focusable toggles so the list is operable
-                // by keyboard alone (Enter/Space); plain nav rows are not.
-                tabIndex={selectionEnabled ? 0 : undefined}
+                // Roving tabindex: only the active option is a tab stop, so the
+                // list is one Tab stop and Arrow keys move between options
+                // (handled in handleSelectionKeyDown). Plain nav rows aren't
+                // focusable.
+                tabIndex={rowTabIndex}
                 className={className}
                 onMouseEnter={() => onSelectIndex(index)}
+                onFocus={selectionEnabled ? () => onSelectIndex(index) : undefined}
                 onClick={(e) => handleClick(e, item)}
-                onKeyDown={
-                  selectionEnabled
-                    ? (e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          // Keep the toggle from bubbling to an ancestor keydown
-                          // handler that might act on the same key.
-                          e.stopPropagation()
-                          selection?.onToggle(item.id)
-                        }
-                      }
-                    : undefined
-                }
+                onKeyDown={selectionEnabled ? (e) => handleSelectionKeyDown(e, index, item.id) : undefined}
               >
                 {itemContent}
               </div>

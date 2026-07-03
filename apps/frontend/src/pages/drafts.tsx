@@ -287,7 +287,10 @@ export function DraftsPage() {
               }
             }
           }}
-          tabIndex={0}
+          // Not a tab stop in batch mode — the option list owns keyboard focus
+          // there (roving tabindex), so <main> shouldn't sit between the header
+          // controls and the first row.
+          tabIndex={batchMode ? -1 : 0}
         >
           <ItemList
             items={items}

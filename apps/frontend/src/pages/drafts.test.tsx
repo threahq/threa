@@ -85,6 +85,23 @@ describe("DraftsPage batch delete", () => {
     expect(row).toHaveAttribute("aria-selected", "true")
   })
 
+  it("moves focus between rows with arrow keys and toggles the focused row", async () => {
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
+    const alpha = screen.getByRole("option", { name: /Alpha/ })
+    const bravo = screen.getByRole("option", { name: /Bravo/ })
+    alpha.focus()
+
+    await userEvent.keyboard("{ArrowDown}")
+    expect(bravo).toHaveFocus()
+
+    await userEvent.keyboard("{Enter}")
+    // Enter acts on the focused (Bravo) row, not the originally-focused Alpha.
+    expect(bravo).toHaveAttribute("aria-selected", "true")
+    expect(alpha).toHaveAttribute("aria-selected", "false")
+  })
+
   it("select-all then delete confirms with the batch count and removes every draft", async () => {
     renderPage()
 
