@@ -115,6 +115,23 @@ describe("DraftsPage batch delete", () => {
     expect(screen.getByRole("button", { name: "Select drafts" })).toBeInTheDocument()
   })
 
+  it("Escape while the confirm dialog is open dismisses only the dialog, keeping the selection", async () => {
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
+    await userEvent.click(screen.getByRole("button", { name: "Select all" }))
+    await userEvent.click(screen.getByRole("button", { name: "Delete selected drafts" }))
+    expect(await screen.findByRole("alertdialog")).toBeInTheDocument()
+
+    await userEvent.keyboard("{Escape}")
+
+    // Dialog gone, but still in batch mode with the selection intact.
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Cancel selection" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: /Alpha/ })).toHaveAttribute("aria-selected", "true")
+    expect(deleteDraft).not.toHaveBeenCalled()
+  })
+
   it("exits batch mode on Escape from anywhere", async () => {
     renderPage()
 

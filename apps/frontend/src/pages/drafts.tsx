@@ -96,15 +96,18 @@ export function DraftsPage() {
 
   // Escape exits batch mode from anywhere. A document listener (not <main>'s
   // onKeyDown) so it fires no matter where focus landed — clicking the header
-  // "Select" button moves focus to <body>, outside <main>'s subtree.
+  // "Select" button moves focus to <body>, outside <main>'s subtree. Suspended
+  // while the confirm dialog is open: Radix closes it on Escape via a
+  // capture-phase preventDefault without stopPropagation, so an unguarded
+  // listener here would also fire and drop the whole selection.
   useEffect(() => {
-    if (!batchMode) return
+    if (!batchMode || bulkConfirmOpen) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") exitBatchMode()
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [batchMode, exitBatchMode])
+  }, [batchMode, bulkConfirmOpen, exitBatchMode])
 
   const allSelected = drafts.length > 0 && selectedIds.size === drafts.length
   const toggleSelectAll = useCallback(() => {
