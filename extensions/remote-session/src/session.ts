@@ -1,4 +1,4 @@
-import { BotRuntimeTransport, type BotRuntimeHello } from "@threa/bot-runtime-client"
+import { BotRuntimeTransport, type BotRuntimeHello, type StepFrame } from "@threa/bot-runtime-client"
 import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
 import type { RemoteSessionConfig } from "./identity"
 import { ThreaClient, type ClaimedInvocation, type RuntimeSessionLink } from "./client"
@@ -24,6 +24,9 @@ const RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 // bootstrap callback.
 const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 const MAX_CLAIMS_PER_DRAIN = 20
+// Server-side cap on frames per bot:invocation:steps call (`stepsFrameSchema`
+// in apps/backend/src/features/bot-runtimes/socket-handler.ts).
+const MAX_STEP_FRAMES_PER_CALL = 50
 const MAX_CONTEXT_MESSAGES = 12
 const MAX_MESSAGE_CHARS = 2_000
 // Recent messages to scan for inbound attachments. The trigger message is always
@@ -730,6 +733,32 @@ export class RemoteSession {
     if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
     return { ok: true, message: "sent" }
+  }
+
+  /**
+   * Record trace steps against an in-flight turn. Fire-and-forget: a failed
+   * frame is logged and dropped, not retried — steps are ephemeral progress,
+   * not state. Returns false when the invocation is no longer in flight
+   * (answered, expired, superseded), which a transcript tailer uses as its
+   * stop signal. Frames must arrive already redacted; this method ships them
+   * verbatim.
+   */
+  async recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean> {
+    const entry = this.inflight.get(invocationId)
+    if (!entry) return false
+    // The server rejects >50 frames per bot:invocation:steps call, so a large
+    // batch (e.g. a transcript replay after late binding) ships in chunks.
+    for (let start = 0; start < frames.length; start += MAX_STEP_FRAMES_PER_CALL) {
+      const chunk = frames.slice(start, start + MAX_STEP_FRAMES_PER_CALL)
+      await this.transport
+        .recordSteps(invocationId, entry.invocation.claimToken, chunk, statusText ?? this.runtime.busyStatusText)
+        .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
+      // The turn can close during an awaited send (reply, /stop, idle timeout)
+      // — exactly the long multi-chunk replays this loop exists for. Recheck so
+      // the returned boolean stays an honest stop signal for the tailer.
+      if (!this.inflight.has(invocationId)) return false
+    }
+    return true
   }
 
   /** Post a message into a stream outside the turn flow (e.g. a relayed approval prompt). */

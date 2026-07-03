@@ -51,3 +51,4 @@ export {
   type SelectedAttachment,
 } from "./attachments"
 export { wireLifecycle, type LifecycleOptions, type LifecycleProcess } from "./lifecycle"
+export type { StepFrame } from "@threa/bot-runtime-client"

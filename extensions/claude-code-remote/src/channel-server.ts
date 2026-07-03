@@ -15,6 +15,7 @@ import { z } from "zod"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
 import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
 import { interrupt, killOwnWindow, submitLine, tmuxAvailable } from "./tmux-control"
+import { TranscriptTracer } from "./transcript-trace"
 
 const RUNTIME_KIND = "claude-code-channel"
 export const CHANNEL_SOURCE = "threa"
@@ -159,6 +160,7 @@ function log(message: string): void {
 export class ChannelServer {
   private readonly mcp: Server
   readonly session: RemoteSession
+  private readonly tracer: TranscriptTracer
   private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
 
   constructor(
@@ -198,6 +200,12 @@ export class ChannelServer {
           : {}),
       },
     })
+    // Steps ship only while the SDK holds the turn in flight — recordSteps
+    // returns false once the invocation closes, which stops the tail.
+    this.tracer = new TranscriptTracer({
+      emit: (invocationId, frames, statusText) => this.session.recordSteps(invocationId, frames, statusText),
+      log,
+    })
     this.registerHandlers()
   }
 
@@ -211,6 +219,7 @@ export class ChannelServer {
   }
 
   async shutdown(): Promise<void> {
+    this.tracer.stop()
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
     await this.session.shutdown()
@@ -236,6 +245,9 @@ export class ChannelServer {
   // --- Turn delivery ----------------------------------------------------------
 
   private async deliverToClaude(turn: DeliveredTurn): Promise<void> {
+    // Window the transcript tail BEFORE the content is pushed, so the tracer's
+    // start offset precedes the prompt echo it binds on.
+    this.tracer.beginTurn(turn.invocationId)
     await this.notify("notifications/claude/channel", {
       content: turn.content,
       meta: {
@@ -303,6 +315,7 @@ export class ChannelServer {
         req.params.name === "send"
           ? await this.session.sendInterim(invocationId, text)
           : await this.session.reply(invocationId, text)
+      if (req.params.name === "reply" && result.ok) this.tracer.endTurn(invocationId)
       return toToolResult(result)
     })
 
