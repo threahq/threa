@@ -1,0 +1,53 @@
+export {
+  RemoteSession,
+  parseSessionControlCommand,
+  isSessionControlInvocation,
+  formatInvocationContent,
+  buildSteerContent,
+  supportedCapabilitiesFor,
+  claimCapabilitiesFor,
+  runtimeCapabilitiesFor,
+  SESSION_CONTROL_CAPABILITY,
+  STEER_SETTLE_MS,
+  type DeliveredTurn,
+  type ModelSuggestionInfo,
+  type RemoteSessionDelegate,
+  type RemoteSessionOptions,
+  type RuntimeDescriptor,
+  type SendResult,
+  type SessionControlActuator,
+} from "./session"
+export {
+  ThreaClient,
+  ThreaApiError,
+  type AttachmentSummary,
+  type ClaimedInvocation,
+  type ExternalHistoryMessage,
+  type RuntimeSessionLink,
+  type StreamMessageSummary,
+  type ThreaClientOptions,
+} from "./client"
+export {
+  loadConfig,
+  parseConfigFile,
+  sanitizeId,
+  deriveStableId,
+  defaultDisplayName,
+  type ConnectorIdentity,
+  type LoadConfigInput,
+  type LoadConfigResult,
+  type RawConfig,
+  type RemoteSessionConfig,
+} from "./identity"
+export {
+  downloadInboundAttachments,
+  formatInboundAttachmentManifest,
+  uploadReplyAttachments,
+  extractAttachmentDirectives,
+  guessMimeType,
+  ATTACH_DIRECTIVE_RE,
+  ATTACHMENT_DIR,
+  type DownloadedAttachment,
+  type SelectedAttachment,
+} from "./attachments"
+export { wireLifecycle, type LifecycleOptions, type LifecycleProcess } from "./lifecycle"

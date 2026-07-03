@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 // Build a self-contained standalone install of the Threa Claude Code channel.
 //
-// Inside the monorepo, `@threa/bot-runtime-client` resolves via the sibling
-// `file:../bot-runtime-client`. Running the channel from outside a monorepo checkout
-// (registering `bun <abs path>/src/index.ts` from a box that has no threa clone) has no
-// sibling and the package is private (not on npm), so a plain copy + `bun install` can't
-// resolve it. We vendor bot-runtime-client's source into the copy and drop the dep. Its
-// only runtime dependency, socket.io-client, is already a direct dependency here.
+// Inside the monorepo, `@threa/remote-session` and `@threa/bot-runtime-client`
+// resolve via sibling `file:` deps. Running the channel from outside a monorepo
+// checkout (registering `bun <abs path>/src/index.ts` from a box that has no
+// threa clone) has no siblings and the packages are private (not on npm), so a
+// plain copy + `bun install` can't resolve them. We vendor both packages'
+// runtime source into the copy and drop the deps. Their only runtime
+// dependency, socket.io-client, is already a direct dependency here.
 //
 // Usage: bun run extensions/claude-code-remote/install-local.ts [destDir]
 
@@ -17,12 +18,24 @@ import { homedir } from "node:os"
 import { spawnSync } from "node:child_process"
 
 const here = dirname(fileURLToPath(import.meta.url)) // extensions/claude-code-remote
-const botRuntime = resolve(here, "../bot-runtime-client")
 const dest = process.argv[2] ?? join(homedir(), ".threa", "claude-code-remote")
 
-const DEP = "@threa/bot-runtime-client"
-// The runtime files of bot-runtime-client (its tests are not needed at runtime).
-const VENDOR_FILES = ["index.ts", "transport.ts", "types.ts", "ws-hint.ts"]
+// Vendored sibling packages: dep specifier → source dir + runtime files (tests
+// are not needed at runtime).
+const VENDORED = [
+  {
+    dep: "@threa/bot-runtime-client",
+    src: resolve(here, "../bot-runtime-client"),
+    files: ["index.ts", "transport.ts", "types.ts", "ws-hint.ts"],
+    dir: "bot-runtime-client",
+  },
+  {
+    dep: "@threa/remote-session",
+    src: resolve(here, "../remote-session"),
+    files: ["index.ts", "session.ts", "client.ts", "identity.ts", "attachments.ts", "lifecycle.ts"],
+    dir: "remote-session",
+  },
+]
 
 // 1. Clean any prior install.
 rmSync(dest, { recursive: true, force: true })
@@ -35,44 +48,52 @@ cpSync(here, dest, {
   filter: (src) => !/\/(node_modules|bun\.lock|install-local\.ts)$/.test(src),
 })
 
-// 3. Vendor bot-runtime-client's runtime source.
-const vendor = join(dest, "src", "vendor", "bot-runtime-client")
-mkdirSync(vendor, { recursive: true })
-for (const f of VENDOR_FILES) cpSync(join(botRuntime, "src", f), join(vendor, f))
+// 3. Vendor each package's runtime source.
+const vendorRoot = join(dest, "src", "vendor")
+for (const pkg of VENDORED) {
+  const vendorDir = join(vendorRoot, pkg.dir)
+  mkdirSync(vendorDir, { recursive: true })
+  for (const f of pkg.files) cpSync(join(pkg.src, "src", f), join(vendorDir, f))
+}
 
-// 4. Repoint every import of the dep at the vendored copy. The channel references it from
-//    more than one file (channel-server.ts and its test), so rewrite all copied sources;
-//    the specifier is computed per file so nested files resolve correctly too.
-const vendorEntry = join(vendor, "index.ts")
+// 4. Repoint every import of the vendored deps at the vendored copies — in the
+//    channel sources AND between the vendored packages themselves
+//    (remote-session imports bot-runtime-client). The specifier is computed per
+//    file so nested files resolve correctly.
 let rewrites = 0
 const walk = (dir: string) => {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, ent.name)
     if (ent.isDirectory()) {
-      if (p !== vendor) walk(p) // never rewrite the vendored source itself
+      walk(p)
       continue
     }
     if (!ent.name.endsWith(".ts")) continue
-    const code = readFileSync(p, "utf8")
-    if (!code.includes(DEP)) continue
-    let spec = relative(dirname(p), vendorEntry).replace(/\.ts$/, "")
-    if (!spec.startsWith(".")) spec = `./${spec}`
-    const rewritten = code.replaceAll(`"${DEP}"`, `"${spec}"`).replaceAll(`'${DEP}'`, `'${spec}'`)
-    if (rewritten !== code) {
-      writeFileSync(p, rewritten)
+    let code = readFileSync(p, "utf8")
+    let changed = false
+    for (const pkg of VENDORED) {
+      if (!code.includes(pkg.dep)) continue
+      const entry = join(vendorRoot, pkg.dir, "index.ts")
+      let spec = relative(dirname(p), entry).replace(/\.ts$/, "")
+      if (!spec.startsWith(".")) spec = `./${spec}`
+      code = code.replaceAll(`"${pkg.dep}"`, `"${spec}"`).replaceAll(`'${pkg.dep}'`, `'${spec}'`)
+      changed = true
+    }
+    if (changed) {
+      writeFileSync(p, code)
       rewrites++
     }
   }
 }
 walk(join(dest, "src"))
 if (rewrites === 0) {
-  throw new Error(`import rewrite failed: '${DEP}' specifier not found under src/`)
+  throw new Error("import rewrite failed: no vendored dep specifiers found under src/")
 }
 
-// 5. Drop the now-vendored dep from the copied package.json.
+// 5. Drop the now-vendored deps from the copied package.json.
 const pkgPath = join(dest, "package.json")
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
-delete pkg.dependencies?.[DEP]
+for (const vendored of VENDORED) delete pkg.dependencies?.[vendored.dep]
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 
 // 6. Install the remaining deps (@modelcontextprotocol/sdk, socket.io-client, zod).

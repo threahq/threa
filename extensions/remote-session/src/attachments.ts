@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
-import type { AttachmentSummary, StreamMessageSummary, ThreaClient } from "./threa-client"
+import type { AttachmentSummary, StreamMessageSummary, ThreaClient } from "./client"
 
 /** A reply line `THREA_ATTACH: ./out.png` tells the channel to upload that file and attach it to the reply. */
 export const ATTACH_DIRECTIVE_RE = /^THREA_ATTACH:\s*(.+?)\s*$/
