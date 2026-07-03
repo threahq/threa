@@ -17,7 +17,7 @@ import { MessageRepository } from "../../src/features/messaging"
 import { buildStreamContext } from "../../src/features/agents"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId } from "../../src/lib/id"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threa/types"
 
 describe("Context Builder", () => {
   let pool: Pool
@@ -120,6 +120,56 @@ describe("Context Builder", () => {
           dateFormat: "YYYY-MM-DD",
           timeFormat: "24h",
         })
+      })
+    })
+
+    test("device timezone overrides preference timezone for temporal grounding", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const workosUserId = userId()
+        const wsId = workspaceId()
+        const scratchpadId = streamId()
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Device TZ Workspace",
+          slug: `ctx-ws-${wsId}`,
+          createdBy: workosUserId,
+        })
+        const ownerUserId = (await addTestMember(client, wsId, workosUserId)).id
+
+        const scratchpad = await StreamRepository.insert(client, {
+          id: scratchpadId,
+          workspaceId: wsId,
+          type: StreamTypes.SCRATCHPAD,
+          displayName: "Device TZ scratchpad",
+          description: null,
+          visibility: Visibilities.PRIVATE,
+          createdBy: ownerUserId,
+        })
+
+        const preferences: UserPreferences = {
+          ...DEFAULT_USER_PREFERENCES,
+          workspaceId: wsId,
+          userId: ownerUserId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }
+
+        // November → CET (UTC+1), deterministic across DST.
+        const pinned = new Date("2026-11-15T10:00:00.000Z")
+        const context = await buildStreamContext(client, scratchpad, {
+          preferences,
+          deviceTimezone: "Europe/Stockholm",
+          currentTime: pinned,
+        })
+
+        expect(context.temporal).toMatchObject({
+          timezone: "Europe/Stockholm",
+          utcOffset: "UTC+1",
+        })
+
+        // Without a device timezone the preference (UTC default) still grounds.
+        const fallback = await buildStreamContext(client, scratchpad, { preferences, currentTime: pinned })
+        expect(fallback.temporal).toMatchObject({ timezone: "UTC" })
       })
     })
   })

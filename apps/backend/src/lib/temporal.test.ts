@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test"
 import {
+  isValidIanaTimezone,
   getUtcOffset,
   parseUtcOffsetMinutes,
   hasSameOffset,
@@ -13,6 +14,21 @@ import {
 } from "./temporal"
 
 describe("temporal utilities", () => {
+  describe("isValidIanaTimezone", () => {
+    it("accepts real IANA identifiers", () => {
+      expect(isValidIanaTimezone("Europe/Stockholm")).toBe(true)
+      expect(isValidIanaTimezone("America/New_York")).toBe(true)
+      expect(isValidIanaTimezone("UTC")).toBe(true)
+    })
+
+    it("rejects garbage, empty, and oversized input", () => {
+      expect(isValidIanaTimezone("Not/AZone")).toBe(false)
+      expect(isValidIanaTimezone("")).toBe(false)
+      expect(isValidIanaTimezone("<script>")).toBe(false)
+      expect(isValidIanaTimezone("x".repeat(65))).toBe(false)
+    })
+  })
+
   describe("getUtcOffset", () => {
     it("should return UTC offset for a timezone", () => {
       const date = new Date("2026-01-06T12:00:00Z")

@@ -223,7 +223,14 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       const lastInteractionAt = pageInteraction.getLastInteractionAt()
       const interacted = lastInteractionAt > lastSentInteractionAtRef.current
       if (interacted) lastSentInteractionAtRef.current = lastInteractionAt
-      socket.emit("heartbeat", { focused: pageFocusedRef.current, interacted })
+      socket.emit("heartbeat", {
+        focused: pageFocusedRef.current,
+        interacted,
+        // Resolved per emit (not cached) so travel/DST changes reach the backend
+        // on the next beat — it keeps users.timezone matching the device, which
+        // grounds agent runs in the user's actual local time.
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      })
     }
 
     // Emit immediately so the backend knows this tab is active right away
@@ -269,7 +276,11 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
     const now = Date.now()
     if (gainedFocus || now - focusChangeThrottleRef.current > FOCUS_CHANGE_HEARTBEAT_THROTTLE_MS) {
       focusChangeThrottleRef.current = now
-      socket.emit("heartbeat", { focused: pageActivity.isFocused, interacted: false })
+      socket.emit("heartbeat", {
+        focused: pageActivity.isFocused,
+        interacted: false,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      })
     }
   }, [socket, status, pageActivity])
 

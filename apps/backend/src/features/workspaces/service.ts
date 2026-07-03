@@ -409,6 +409,26 @@ export class WorkspaceService {
     }
   }
 
+  /**
+   * Refresh the user's device timezone as reported by a connected client
+   * (socket heartbeat / workspace join). No-ops without an outbox event when
+   * the stored value already matches, so the frequent reporters stay cheap.
+   * Returns the updated user, or null when nothing changed.
+   */
+  async refreshUserTimezone(userId: string, workspaceId: string, timezone: string): Promise<User | null> {
+    return withTransaction(this.pool, async (client) => {
+      const updated = await UserRepository.updateTimezoneIfChanged(client, workspaceId, userId, timezone)
+      if (!updated) return null
+
+      await OutboxRepository.insert(client, "workspace_user:updated", {
+        workspaceId,
+        user: serializeBigInt(updated),
+      })
+
+      return updated
+    })
+  }
+
   async updateUserProfile(
     userId: string,
     workspaceId: string,

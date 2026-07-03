@@ -354,7 +354,13 @@ export class EnclaveClaimService {
     // toolset is reduced. The enclave runs the same loop on the same prompt; just
     // the I/O is encrypted. This is the raw text the backend ships; the message
     // content stays ciphertext.
-    const systemPrompt = await buildEnclaveSystemPrompt({ pool, stream: rootStream, preferences, persona })
+    const systemPrompt = await buildEnclaveSystemPrompt({
+      pool,
+      stream: rootStream,
+      preferences,
+      deviceTimezone: authors[0]?.timezone ?? undefined,
+      persona,
+    })
 
     // Ship attachment ciphertext inline so the enclave can read files (it can't
     // reach S3 — egress is backend + OpenRouter only): the trigger's files plus
