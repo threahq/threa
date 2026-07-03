@@ -35,6 +35,19 @@ export interface CreateBoardPostInput {
 /** Shared stable empty list so a disabled/loading query returns one identity. */
 const EMPTY_CONVERSATIONS: ConversationWithStaleness[] = []
 
+/**
+ * The conversation's most-recently-active stream from its board projection: the
+ * newest recent-message's own stream (a thread under the root — recency-biased
+ * continuation, board-view-design.md), falling back to the conversation anchor.
+ * `recentMessages` is optional-chained because older cached `conversations` IDB
+ * rows predate the field. This is the projection-derived answer used where the
+ * live message rail isn't loaded (the timeline composer); the conversation panel
+ * refines it from its live merged `displayedReplies` once the rail is present.
+ */
+export function boardPostLastActiveStreamId(post: Pick<BoardPost, "recentMessages" | "conversation">): string {
+  return post.recentMessages?.at(-1)?.streamId ?? post.conversation.streamId
+}
+
 export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>

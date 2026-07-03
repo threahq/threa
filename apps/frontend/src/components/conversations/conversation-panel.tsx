@@ -61,15 +61,17 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   // "Reply in conversation" opened this panel with the intent to reply, not just
   // read — pick up its one-shot signal (queued before this panel mounted, or
   // arriving while it's already open for the same conversation) and land the user
-  // in the composer. Consumed on mount so a plain deep-link/"Show in conversation"
-  // open (no queued request) leaves it collapsed.
-  const [autoOpenReply, setAutoOpenReply] = useState(false)
+  // in the composer. A monotonic nonce, not a boolean, so a repeat request while
+  // the panel is already open re-opens the composer after a manual collapse.
+  // Stays 0 on a plain deep-link/"Show in conversation" open (no queued request).
+  const [openReplySignal, setOpenReplySignal] = useState(0)
   useEffect(() => {
     if (!conversationId) return
-    if (consumeConversationReplyOpen(conversationId)) setAutoOpenReply(true)
-    return subscribeConversationReplyOpen(conversationId, () => {
-      if (consumeConversationReplyOpen(conversationId)) setAutoOpenReply(true)
-    })
+    const bump = () => {
+      if (consumeConversationReplyOpen(conversationId)) setOpenReplySignal((n) => n + 1)
+    }
+    bump()
+    return subscribeConversationReplyOpen(conversationId, bump)
   }, [conversationId])
 
   // Keep the conversation's streams (root + threads) caught up + joined while the
@@ -134,7 +136,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
         workspaceId={workspaceId}
         post={post}
         hostStreamType={hostStreamType}
-        autoOpenReply={autoOpenReply}
+        openReplySignal={openReplySignal}
       />
     )
   } else if (isLoading) {
@@ -222,8 +224,8 @@ interface ConversationPanelBodyProps {
   workspaceId: string
   post: BoardViewPost
   hostStreamType: string | undefined
-  /** Raised when the panel was opened via "Reply in conversation" — opens the composer. */
-  autoOpenReply: boolean
+  /** Bumped each time the panel is opened via "Reply in conversation" — opens the composer. */
+  openReplySignal: number
 }
 
 /**
@@ -233,7 +235,7 @@ interface ConversationPanelBodyProps {
  * replies, backfilled with the complete ordered list when the local rail is
  * incomplete — the same merge the board card runs on expand.
  */
-function ConversationPanelBody({ workspaceId, post, hostStreamType, autoOpenReply }: ConversationPanelBodyProps) {
+function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySignal }: ConversationPanelBodyProps) {
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
@@ -335,7 +337,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, autoOpenRepl
           post={post}
           hostStreamType={hostStreamType}
           lastActiveStreamId={lastActiveStreamId}
-          autoOpenReply={autoOpenReply}
+          openReplySignal={openReplySignal}
         />
       </div>
     </QuoteReplyProvider>

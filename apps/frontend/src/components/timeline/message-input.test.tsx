@@ -651,6 +651,57 @@ describe("MessageInput", () => {
       // The panel's composer is asked to open, and no inline strip is left behind.
       expect(consumeConversationReplyOpen("conv_1")).toBe(true)
       expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      // The channel composer is never focused — focus would pop the mobile keyboard
+      // on the composer we're about to leave for the panel.
+      expect(mockComposerFocus).not.toHaveBeenCalled()
+    })
+
+    it("hands off to the panel instead of filing flat when the projection isn't resolved at send time", async () => {
+      // The board-post projection hasn't loaded (post null), so the last-active
+      // stream is unknown. A flat `{intent:"existing"}` send could re-interleave the
+      // channel if the conversation is actually thread-live — so the send is routed
+      // to the panel instead, and nothing is filed inline.
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
+        post: null,
+        isLoading: true,
+        notFound: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>)
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("late pizza take")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
+      expect(consumeConversationReplyOpen("conv_1")).toBe(true)
+      // No flat send — routing was unresolved, so the directive send never fired.
+      expect(mockSendMessage).not.toHaveBeenCalled()
+    })
+
+    it("does not open the panel when navigating away from an armed same-stream reply", () => {
+      // Arm a same-stream reply (mock last-active === rendered stream) — inline strip,
+      // no redirect. Switching streams must disarm quietly, never redirect the
+      // now-stale armed conversation into the panel.
+      const { rerender } = render(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument()
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId="stream_other" />
+        </Wrapper>
+      )
+
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
     })
   })
 
