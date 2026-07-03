@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo } from "react"
+import { createContext, useCallback, useContext, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useConversationService } from "@/contexts"
 import { useWorkspaceStreamMemberships, useWorkspaceUnreadState } from "@/stores/workspace-store"
@@ -103,6 +103,10 @@ export function useConversationReadController(
    * where a background action failing must stay silent (the next dwell retries);
    * the toast is reserved for the user-initiated menu action. */
   markReadSilently: (messageId: string) => Promise<void>
+  /** Registers the auto-read pin `markUnread` invokes synchronously BEFORE its
+   * request departs — a dwell-scheduled auto mark-read firing mid-flight would
+   * otherwise race the explicit unread, with server arrival order deciding. */
+  setExplicitUnreadListener: (listener: (() => void) | null) => void
 } {
   const conversationService = useConversationService()
   const unreadState = useWorkspaceUnreadState(workspaceId)
@@ -139,8 +143,14 @@ export function useConversationReadController(
     [markReadSilently]
   )
 
+  const explicitUnreadListenerRef = useRef<(() => void) | null>(null)
+  const setExplicitUnreadListener = useCallback((listener: (() => void) | null) => {
+    explicitUnreadListenerRef.current = listener
+  }, [])
+
   const markUnread = useCallback(
     (messageId: string) => {
+      explicitUnreadListenerRef.current?.()
       conversationService
         .markUnread(workspaceId, conversationId, messageId)
         .then((res) => applyReadStateSnapshots(workspaceId, res.streams))
@@ -163,5 +173,5 @@ export function useConversationReadController(
     [state, currentUserId, rootStreamId]
   )
 
-  return { value, hasUnread, markReadSilently }
+  return { value, hasUnread, markReadSilently, setExplicitUnreadListener }
 }

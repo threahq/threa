@@ -14,7 +14,10 @@ const DEBOUNCE_MS = 2_000
 
 interface UseConversationAutoReadOptions {
   /** Wraps this surface's rendered `MessageItem` rows (the board card's root, the
-   * panel's scroller) — rows are found by their `data-message-id` attribute. */
+   * panel's scroller). Rows are matched by `data-message-row` — NOT bare
+   * `data-message-id`, which editor nodes (quote reply, in-app links) also render
+   * inside a composer that may live in this container; observing those would let
+   * a quoted message "dwell" beside the cursor and mark rows never on screen. */
   containerRef: React.RefObject<HTMLElement | null>
   /**
    * The rows eligible for auto-read, chronological: the contiguous-from-the-start
@@ -25,7 +28,8 @@ interface UseConversationAutoReadOptions {
    * not be referentially stable; effects key on the id set.
    */
   messages: RenderableMessage[]
-  /** Fallback stream for rows without their own `streamId`, as row rendering. */
+  /** Fallback stream for rows without their own `streamId` — the same fallback
+   * the hosts pass when rendering the row. */
   rootStreamId: string
   /** The controller's per-row derivation — auto-read fires only when something
    * at/below the target is effectively unread, so it is idempotent against the
@@ -33,7 +37,11 @@ interface UseConversationAutoReadOptions {
   rowState: ConversationRowRead["state"]
   /** The silent mark-read mutation (`markReadSilently` off the controller). */
   markRead: (messageId: string) => Promise<void>
-  enabled?: boolean
+  /** The controller's `setExplicitUnreadListener`: lets the menu "Mark as
+   * unread" pin this hook synchronously BEFORE its request departs — a pending
+   * dwell-scheduled mark-read firing mid-flight would otherwise cutoff right
+   * back over the explicit unread, with server arrival order deciding. */
+  registerExplicitUnread: (listener: (() => void) | null) => void
 }
 
 /**
@@ -52,13 +60,20 @@ interface UseConversationAutoReadOptions {
  *   their dwell are covered by the cutoff — the viewer scrolled past them
  *   inside a run they were reading, the same acceptance as the timeline's
  *   partial reads.
- * - Mark-as-unread pins: when any eligible row regresses read → unread (the
- *   viewer's explicit action, here or on another device), everything unseen-s
- *   and the rows still on screen are suppressed — auto-read holds entirely
- *   until every suppressed row has left the viewport (the timeline's
- *   `pinnedRef`, with leave-and-return as the resume gesture instead of a
- *   scroll, which a small card doesn't have). Without the full hold, a newer
- *   row dwelling would cutoff-mark right back over the explicit unread.
+ * - Mark-as-unread pins (the timeline's `pinnedRef`, with leave-and-return as
+ *   the resume gesture instead of a scroll, which a small card doesn't have):
+ *   an explicit unread — the controller's synchronous signal, or a
+ *   read → unread regression from another device — unsees everything and
+ *   suppresses EVERY eligible row, holding auto-read entirely until the
+ *   suppressions release. All of them, not just the currently-visible set:
+ *   visibility is unknowable across observer teardowns (attention loss, id-set
+ *   changes), and under-suppressing would let a still-on-screen row dwell and
+ *   cutoff-mark right back over the explicit unread. Each row's suppression
+ *   releases when the observer reports it off-screen — immediately for rows
+ *   that weren't visible, on leave for the ones that were.
+ * - A pending debounce fires on unmount, and without re-checking attention:
+ *   the dwell already happened while the viewer was attending, so the read is
+ *   real — only the batching timer is late.
  * - Optimistic `temp_` rows are never targets (the id doesn't exist
  *   server-side yet); their confirmed swap re-enters normally.
  */
@@ -68,7 +83,7 @@ export function useConversationAutoRead({
   rootStreamId,
   rowState,
   markRead,
-  enabled = true,
+  registerExplicitUnread,
 }: UseConversationAutoReadOptions): void {
   const canAutoRead = useAutoReadAttention()
 
@@ -82,12 +97,9 @@ export function useConversationAutoRead({
   rootStreamIdRef.current = rootStreamId
   const markReadRef = useRef(markRead)
   markReadRef.current = markRead
-  const enabledRef = useRef(enabled)
-  enabledRef.current = enabled
 
   const seenRef = useRef(new Set<string>())
   const suppressedRef = useRef(new Set<string>())
-  const visibleRef = useRef(new Set<string>())
   const dwellTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastMarkedRef = useRef<string | null>(null)
@@ -100,7 +112,6 @@ export function useConversationAutoRead({
 
   const evaluate = useCallback(() => {
     debounceRef.current = null
-    if (!enabledRef.current) return
     // An active pin blocks firing entirely (not just for the pinned rows): the
     // cutoff means marking through ANY newer row would undo the explicit unread.
     if (suppressedRef.current.size > 0) return
@@ -133,6 +144,29 @@ export function useConversationAutoRead({
     debounceRef.current = setTimeout(evaluate, DEBOUNCE_MS)
   }, [evaluate])
 
+  /** Engage the mark-unread pin: unsee everything, cancel pending work, release
+   * the dedup (after the pin lifts, re-reading may legitimately re-target the
+   * same newest row), and suppress every eligible row. */
+  const pin = useCallback(() => {
+    seenRef.current.clear()
+    for (const timer of dwellTimersRef.current.values()) clearTimeout(timer)
+    dwellTimersRef.current.clear()
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+    lastMarkedRef.current = null
+    for (const m of eligibleRef.current) suppressedRef.current.add(m.id)
+  }, [])
+
+  // The controller invokes this synchronously at the top of the menu "Mark as
+  // unread", before the request departs — closing the window where a pending
+  // debounce could race the in-flight unread.
+  useEffect(() => {
+    registerExplicitUnread(pin)
+    return () => registerExplicitUnread(null)
+  }, [registerExplicitUnread, pin])
+
   const cancelDwell = (id: string) => {
     const timer = dwellTimersRef.current.get(id)
     if (timer) {
@@ -146,7 +180,7 @@ export function useConversationAutoRead({
   // the rebuild's initial entries restart dwells for rows still on screen.
   // Already-seen rows stay seen across rebuilds — they were legitimately read.
   useEffect(() => {
-    if (!enabled || !canAutoRead || eligibleIdsKey === "") return
+    if (!canAutoRead || eligibleIdsKey === "") return
     // jsdom (and any environment without IO) — auto-read simply stays off, the
     // same soft degradation as useLastSeenEvent's ResizeObserver guard.
     if (typeof IntersectionObserver === "undefined") return
@@ -158,7 +192,6 @@ export function useConversationAutoRead({
         const id = (entry.target as HTMLElement).dataset.messageId
         if (!id) continue
         if (entry.isIntersecting) {
-          visibleRef.current.add(id)
           if (seenRef.current.has(id) || suppressedRef.current.has(id)) continue
           if (dwellTimersRef.current.has(id)) continue
           dwellTimersRef.current.set(
@@ -170,14 +203,15 @@ export function useConversationAutoRead({
             }, DWELL_MS)
           )
         } else {
-          visibleRef.current.delete(id)
-          // Leaving the viewport is the pin's release gesture for this row.
+          // Off-screen is the pin's release gesture for this row — a genuine
+          // leave, or a rebuild's initial entries reporting it was never
+          // visible at all.
           suppressedRef.current.delete(id)
           cancelDwell(id)
         }
       }
     })
-    for (const el of container.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    for (const el of container.querySelectorAll<HTMLElement>("[data-message-row]")) {
       const id = el.dataset.messageId
       if (id && eligibleIds.has(id)) io.observe(el)
     }
@@ -185,16 +219,13 @@ export function useConversationAutoRead({
       io.disconnect()
       for (const timer of dwellTimersRef.current.values()) clearTimeout(timer)
       dwellTimersRef.current.clear()
-      // Visibility is unknowable while unobserved; the rebuild's initial
-      // entries repopulate it (and release pins for rows that left meanwhile).
-      visibleRef.current.clear()
     }
-  }, [enabled, canAutoRead, eligibleIdsKey, containerRef, scheduleEvaluate])
+  }, [canAutoRead, eligibleIdsKey, containerRef, scheduleEvaluate])
 
-  // The mark-unread pin. Watches per-row state for a read → unread regression —
-  // the viewer's explicit action (menu here, or another device) — and freezes
-  // auto-read: everything unseen-s, pending work cancels, and every row still on
-  // screen is suppressed until it leaves the viewport. First run only baselines.
+  // The cross-device arm of the pin: watches per-row state for a read → unread
+  // regression (a mark-unread applied elsewhere — the local menu action pins
+  // synchronously via registerExplicitUnread above, without waiting for its
+  // snapshot to land). First run only baselines.
   const prevStatesRef = useRef<Map<string, RowReadState> | null>(null)
   useEffect(() => {
     const next = new Map<string, RowReadState>()
@@ -206,26 +237,13 @@ export function useConversationAutoRead({
     for (const id of suppressedRef.current) if (!next.has(id)) suppressedRef.current.delete(id)
     for (const id of seenRef.current) if (!next.has(id)) seenRef.current.delete(id)
     if (!prev) return
-    let regressed = false
     for (const [id, state] of next) {
       if (state === "unread" && prev.get(id) === "read") {
-        regressed = true
-        break
+        pin()
+        return
       }
     }
-    if (!regressed) return
-    seenRef.current.clear()
-    for (const timer of dwellTimersRef.current.values()) clearTimeout(timer)
-    dwellTimersRef.current.clear()
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-    }
-    // Release the dedup too: after the pin lifts, re-reading may legitimately
-    // re-target the same newest row.
-    lastMarkedRef.current = null
-    for (const id of visibleRef.current) suppressedRef.current.add(id)
-  }, [rowState, eligibleIdsKey, rootStreamId, stateOf])
+  }, [rowState, eligibleIdsKey, rootStreamId, stateOf, pin])
 
   // Flush a pending debounce on unmount (panel closed, card scrolled out of the
   // board's window mid-read) — the rows were seen; losing the mark to the

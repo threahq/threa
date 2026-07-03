@@ -292,12 +292,21 @@ newestSeenRow)` per conversation; the gate re-checks effective unread at
   cutoff would otherwise silently read the hidden middle. The collapsed
   trailing preview therefore stays unread until expanded — the card dot is
   honest about the unseen middle.
-- Mark-as-unread **pins**: a read → unread regression on any eligible row
-  (menu here, or another device) clears the seen set and holds auto-read
-  entirely until every still-on-screen row has left the viewport — the
-  stream timeline's `pinnedRef`, with leave-and-return as the resume gesture
-  (a small card has no scroll to watch). Without the full hold, any newer
-  row dwelling would cutoff-mark right back over the explicit unread.
+- Mark-as-unread **pins**: the menu action signals the hook synchronously
+  BEFORE its request departs (the controller's `setExplicitUnreadListener`),
+  and a read → unread regression on any eligible row catches the cross-device
+  case. Pinning unsees everything and suppresses **every eligible row** — not
+  just the currently-visible set, because visibility is unknowable across
+  observer teardowns (attention loss, id-set changes) and under-suppressing
+  would let a still-on-screen row dwell and cutoff-mark right back over the
+  explicit unread. Auto-read holds entirely while any suppression is active;
+  each row's suppression releases when the observer reports it off-screen —
+  the stream timeline's `pinnedRef`, with leave-and-return as the resume
+  gesture (a small card has no scroll to watch).
+- Rows are matched by `data-message-row` on the `MessageItem` container, not
+  bare `data-message-id` — editor nodes (quote reply, in-app links) render
+  `data-message-id` inside the card's composer, and observing those would let
+  a quoted message "dwell" beside the cursor.
 - Optimistic `temp_` rows are never targets (the id doesn't exist
   server-side yet).
 

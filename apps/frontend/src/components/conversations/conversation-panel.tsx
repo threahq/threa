@@ -245,12 +245,11 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // Per-row read state + the mark-read/unread actions for this conversation's
   // rows (docs/sparse-read-overlay-design.md). The panel has no unread dot, so
   // only the provider value is used.
-  const { value: conversationReadValue, markReadSilently } = useConversationReadController(
-    workspaceId,
-    conversation.id,
-    conversation.streamId,
-    currentUserId
-  )
+  const {
+    value: conversationReadValue,
+    markReadSilently,
+    setExplicitUnreadListener,
+  } = useConversationReadController(workspaceId, conversation.id, conversation.streamId, currentUserId)
   // Deep-link target from `?m=` — the row to scroll to + flash. Shared with the
   // host page's `m` param, but only the conversation panel reads it here (the
   // board page, the panel's host for a conversation link, ignores it), so a
@@ -322,6 +321,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     rootStreamId: conversation.streamId,
     rowState: conversationReadValue.state,
     markRead: markReadSilently,
+    registerExplicitUnread: setExplicitUnreadListener,
   })
 
   return (

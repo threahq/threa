@@ -52,6 +52,7 @@ let attention = true
 
 function addRow(id: string) {
   const el = document.createElement("div")
+  el.dataset.messageRow = ""
   el.dataset.messageId = id
   container.appendChild(el)
   rowEls.set(id, el)
@@ -89,6 +90,13 @@ function settle() {
 
 const markRead = vi.fn<(messageId: string) => Promise<void>>()
 
+/** Captures the pin the hook registers, standing in for the controller's
+ * `setExplicitUnreadListener`; tests invoke it to simulate the menu action. */
+let explicitUnreadPin: (() => void) | null = null
+const registerExplicitUnread = (listener: (() => void) | null) => {
+  explicitUnreadPin = listener
+}
+
 function mount(messages: RenderableMessage[], states: Record<string, RowReadState>) {
   const containerRef = { current: container }
   return renderHook(
@@ -99,6 +107,7 @@ function mount(messages: RenderableMessage[], states: Record<string, RowReadStat
         rootStreamId: ROOT,
         rowState: props.rowState,
         markRead,
+        registerExplicitUnread,
       }),
     { initialProps: { messages, rowState: makeRowState(states) } }
   )
@@ -110,6 +119,7 @@ beforeEach(() => {
   FakeIntersectionObserver.instances = []
   rowEls.clear()
   attention = true
+  explicitUnreadPin = null
   markRead.mockReset()
   markRead.mockResolvedValue(undefined)
   vi.spyOn(autoMarkModule, "useAutoReadAttention").mockImplementation(() => attention)
@@ -192,6 +202,21 @@ describe("useConversationAutoRead", () => {
     expect(markRead).toHaveBeenCalledWith("m_a")
   })
 
+  it("only observes message rows — an editor node carrying an eligible data-message-id is not observed", () => {
+    // A quote-reply/in-app-link node in the card's composer renders
+    // data-message-id for an eligible row; without the data-message-row scope it
+    // would dwell beside the cursor and mark rows never on screen.
+    const messages = [msg("m_a", 0)]
+    addRow("m_a")
+    const quoteNode = document.createElement("span")
+    quoteNode.dataset.messageId = "m_a"
+    container.appendChild(quoteNode)
+    mount(messages, { m_a: "unread" })
+
+    expect(io().observed.has(rowEls.get("m_a")!)).toBe(true)
+    expect(io().observed.has(quoteNode)).toBe(false)
+  })
+
   it("pins after a read → unread regression: no re-mark while the rows stay on screen, resumes after leave + re-enter", () => {
     const messages = [msg("m_a", 0), msg("m_b", 1), msg("m_c", 2)]
     messages.forEach((m) => addRow(m.id))
@@ -228,6 +253,56 @@ describe("useConversationAutoRead", () => {
     settle()
     expect(markRead).toHaveBeenCalledTimes(2)
     expect(markRead).toHaveBeenLastCalledWith("m_d")
+  })
+
+  it("pins synchronously when the menu mark-unread fires, cancelling a pending debounce", () => {
+    const messages = [msg("m_a", 0), msg("m_b", 1)]
+    messages.forEach((m) => addRow(m.id))
+    mount(messages, { m_a: "read", m_b: "unread" })
+
+    enter("m_a", "m_b")
+    advance(1_100) // dwell done, debounce pending
+    // The user marks m_a unread; the controller invokes the registered pin
+    // before its request departs — the pending debounce must not fire.
+    act(() => explicitUnreadPin!())
+    advance(10_000)
+    expect(markRead).not.toHaveBeenCalled()
+
+    // Leave-and-return releases the pin and re-reads deliberately.
+    leave("m_a", "m_b")
+    enter("m_a", "m_b")
+    settle()
+    expect(markRead).toHaveBeenCalledWith("m_b")
+  })
+
+  it("pins on a regression that lands while attention is off, so refocus does not undo it", () => {
+    const messages = [msg("m_a", 0), msg("m_b", 1)]
+    messages.forEach((m) => addRow(m.id))
+    const { rerender } = mount(messages, { m_a: "unread", m_b: "unread" })
+
+    enter("m_a", "m_b")
+    settle()
+    expect(markRead).toHaveBeenCalledTimes(1)
+    rerender({ messages, rowState: makeRowState({ m_a: "read", m_b: "read" }) })
+
+    // Attention drops (observer torn down), then another device marks unread.
+    attention = false
+    rerender({ messages, rowState: makeRowState({ m_a: "read", m_b: "read" }) })
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+
+    // Refocus: the rebuilt observer's initial entries report the rows still on
+    // screen — they must stay pinned, not dwell into a re-mark.
+    attention = true
+    rerender({ messages, rowState: makeRowState({ m_a: "unread", m_b: "unread" }) })
+    enter("m_a", "m_b")
+    advance(10_000)
+    expect(markRead).toHaveBeenCalledTimes(1)
+
+    leave("m_a", "m_b")
+    enter("m_a", "m_b")
+    settle()
+    expect(markRead).toHaveBeenCalledTimes(2)
+    expect(markRead).toHaveBeenLastCalledWith("m_b")
   })
 
   it("does not observe at all while the viewer's attention is off the page", () => {
