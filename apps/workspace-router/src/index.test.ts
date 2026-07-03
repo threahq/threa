@@ -1,6 +1,6 @@
-import { describe, test, expect, mock } from "bun:test"
+import { beforeEach, describe, test, expect, mock } from "bun:test"
 import { ORIGINAL_HOST_HEADER } from "@threa/types"
-import worker from "./index"
+import worker, { clearRegionCache } from "./index"
 
 const REGIONS_JSON = JSON.stringify({
   "eu-north-1": {
@@ -66,6 +66,10 @@ async function getJson<T>(response: Response): Promise<T> {
 }
 
 describe("workspace-router", () => {
+  // The in-isolate region cache is module-level state; without a reset, one
+  // test's resolved region leaks into the next test's identically-named ws id.
+  beforeEach(() => clearRegionCache())
+
   describe("health check", () => {
     test("GET /readyz returns 200 OK", async () => {
       const res = await worker.fetch(makeRequest("/readyz"), makeEnv())
@@ -167,6 +171,54 @@ describe("workspace-router", () => {
         const env = makeEnvWithKv("eu-north-1")
         await worker.fetch(makeRequest("/api/workspaces/ws_123"), env)
         expect(getProxiedUrl(fn)).toBe("http://eu-north-1.backend:3002/api/workspaces/ws_123")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+  })
+
+  describe("in-isolate region caching", () => {
+    test("second request for the same workspace skips the KV read", async () => {
+      const originalFetch = globalThis.fetch
+      mockFetchFn(new Response('{"ok":true}', { status: 200 }))
+      try {
+        const env = makeEnvWithKv("eu-north-1")
+        await worker.fetch(makeRequest("/api/workspaces/ws_cached/a"), env)
+        await worker.fetch(makeRequest("/api/workspaces/ws_cached/b"), env)
+        expect(env.WORKSPACE_REGIONS.get).toHaveBeenCalledTimes(1)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
+    test("caches a control-plane resolution and a miss", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mock((url: string) =>
+        Promise.resolve(
+          String(url).includes("/internal/workspaces/ws_known/region")
+            ? new Response(JSON.stringify({ region: "eu-north-1" }), { status: 200 })
+            : String(url).includes("/internal/workspaces/")
+              ? new Response("not found", { status: 404 })
+              : new Response('{"ok":true}', { status: 200 })
+        )
+      )
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      globalThis.fetch = fn as any
+      try {
+        const env = makeEnv({ CONTROL_PLANE_URL: "http://cp", INTERNAL_API_KEY: "k" })
+        await worker.fetch(makeRequest("/api/workspaces/ws_known/a"), env)
+        await worker.fetch(makeRequest("/api/workspaces/ws_known/b"), env)
+        // one control-plane resolve + two proxied requests (not two resolves)
+        const cpCalls = fn.mock.calls.filter((c) => String(c[0]).includes("/internal/workspaces/")).length
+        expect(cpCalls).toBe(1)
+        expect(env.WORKSPACE_REGIONS.get).toHaveBeenCalledTimes(1)
+
+        const missA = await worker.fetch(makeRequest("/api/workspaces/ws_gone/a"), env)
+        const missB = await worker.fetch(makeRequest("/api/workspaces/ws_gone/b"), env)
+        expect(missA.status).toBe(404)
+        expect(missB.status).toBe(404)
+        // the negative result is cached too: KV consulted once for ws_gone
+        expect(env.WORKSPACE_REGIONS.get).toHaveBeenCalledTimes(2)
       } finally {
         globalThis.fetch = originalFetch
       }

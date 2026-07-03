@@ -240,10 +240,46 @@ function parseRegions(raw: string): RegionsMap {
   }
 }
 
+/**
+ * In-isolate cache for the workspace→region lookup. Every workspace-scoped API
+ * request resolves the region, and each `KV.get` is a billed read — with a
+ * fleet of agent sessions polling through the Worker all day, those reads alone
+ * ate a meaningful slice of the daily KV quota, despite the mapping being
+ * written once and never changed. The TTL bounds staleness if region migration
+ * ever becomes real; isolate recycling clears it anyway. Misses are cached
+ * briefly too, so an unknown id can't turn every request into a KV read + a
+ * control-plane round-trip.
+ */
+const REGION_CACHE_TTL_MS = 5 * 60 * 1000
+const REGION_NEGATIVE_TTL_MS = 30 * 1000
+const REGION_CACHE_MAX_ENTRIES = 5000
+const regionCache = new Map<string, { region: string | null; expiresAt: number }>()
+
+/** Test hook: module-level state would otherwise leak between test cases. */
+export function clearRegionCache(): void {
+  regionCache.clear()
+}
+
+function cacheRegion(workspaceId: string, region: string | null): void {
+  // Ids come from request URLs, so the key space is attacker-controlled; a hard
+  // cap with full reset beats unbounded growth (entries re-warm in one lookup).
+  if (regionCache.size >= REGION_CACHE_MAX_ENTRIES) regionCache.clear()
+  regionCache.set(workspaceId, {
+    region,
+    expiresAt: Date.now() + (region ? REGION_CACHE_TTL_MS : REGION_NEGATIVE_TTL_MS),
+  })
+}
+
 async function resolveRegion(workspaceId: string, env: Env): Promise<string | null> {
-  // Fast path: KV cache hit
+  const held = regionCache.get(workspaceId)
+  if (held && held.expiresAt > Date.now()) return held.region
+
+  // KV hit: the durable cache shared across isolates/colos
   const cached = await env.WORKSPACE_REGIONS.get(workspaceId)
-  if (cached) return cached
+  if (cached) {
+    cacheRegion(workspaceId, cached)
+    return cached
+  }
 
   // Slow path: ask the control-plane (source of truth) and cache the result
   if (!env.CONTROL_PLANE_URL || !env.INTERNAL_API_KEY) return null
@@ -251,10 +287,14 @@ async function resolveRegion(workspaceId: string, env: Env): Promise<string | nu
   const res = await fetch(`${env.CONTROL_PLANE_URL}/internal/workspaces/${workspaceId}/region`, {
     headers: { [INTERNAL_API_KEY_HEADER]: env.INTERNAL_API_KEY },
   })
-  if (!res.ok) return null
+  if (!res.ok) {
+    cacheRegion(workspaceId, null)
+    return null
+  }
 
   const { region } = (await res.json()) as { region: string }
   await env.WORKSPACE_REGIONS.put(workspaceId, region)
+  cacheRegion(workspaceId, region)
   return region
 }
 
