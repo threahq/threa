@@ -102,6 +102,27 @@ describe("DraftsPage batch delete", () => {
     expect(alpha).toHaveAttribute("aria-selected", "false")
   })
 
+  it("arrow nav follows visual render order when a group owns non-adjacent rows", async () => {
+    // Recency order interleaves group "Stream A" (rows 0 and 2) around "Stream B"
+    // (row 1); rows render grouped, so visually A-one is above A-two above Bravo.
+    mockDrafts([
+      draft({ id: "a1", displayName: "Alpha one", groupLabel: "Stream A" }),
+      draft({ id: "b", displayName: "Bravo", groupLabel: "Stream B" }),
+      draft({ id: "a2", displayName: "Alpha two", groupLabel: "Stream A" }),
+    ])
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Select drafts" }))
+    const aOne = screen.getByRole("option", { name: /Alpha one/ })
+    const aTwo = screen.getByRole("option", { name: /Alpha two/ })
+    aOne.focus()
+
+    // Down goes to the next row on screen (Alpha two, same group), not the
+    // next flat index (Bravo).
+    await userEvent.keyboard("{ArrowDown}")
+    expect(aTwo).toHaveFocus()
+  })
+
   it("select-all then delete confirms with the batch count and removes every draft", async () => {
     renderPage()
 

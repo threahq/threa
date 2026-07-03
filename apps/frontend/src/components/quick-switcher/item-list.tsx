@@ -96,9 +96,23 @@ export function ItemList({
 
   const selectionEnabled = selection?.enabled ?? false
 
-  const focusRow = (index: number) => {
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)
-    el?.focus()
+  // Move focus relative to the option that currently holds it, in RENDER order.
+  // Rows render grouped, so the flat `data-index` is not visual order — a group
+  // can own non-adjacent indices. Walking the live `[data-index]` node list
+  // keeps Up/Down matching what the user sees.
+  const focusOptionFrom = (currentIndex: number, to: "next" | "prev" | "first" | "last") => {
+    const list = listRef.current
+    if (!list) return
+    const options = Array.from(list.querySelectorAll<HTMLElement>("[data-index]"))
+    if (options.length === 0) return
+    const pos = options.findIndex((el) => el.dataset.index === String(currentIndex))
+    const target = {
+      next: Math.min(pos + 1, options.length - 1),
+      prev: Math.max(pos - 1, 0),
+      first: 0,
+      last: options.length - 1,
+    }[to]
+    options[target]?.focus()
   }
 
   // Roving arrow-key navigation for selection mode: the listbox is one tab stop
@@ -115,22 +129,22 @@ export function ItemList({
       case "ArrowDown":
         e.preventDefault()
         e.stopPropagation()
-        focusRow(Math.min(index + 1, items.length - 1))
+        focusOptionFrom(index, "next")
         break
       case "ArrowUp":
         e.preventDefault()
         e.stopPropagation()
-        focusRow(Math.max(index - 1, 0))
+        focusOptionFrom(index, "prev")
         break
       case "Home":
         e.preventDefault()
         e.stopPropagation()
-        focusRow(0)
+        focusOptionFrom(index, "first")
         break
       case "End":
         e.preventDefault()
         e.stopPropagation()
-        focusRow(items.length - 1)
+        focusOptionFrom(index, "last")
         break
     }
   }
@@ -272,7 +286,10 @@ export function ItemList({
                 // focusable.
                 tabIndex={rowTabIndex}
                 className={className}
-                onMouseEnter={() => onSelectIndex(index)}
+                // In selection mode the roving anchor follows focus, not hover,
+                // so the sole tab stop can't drift out from under the focused
+                // row (hover highlight is CSS-only via focus:/hover:bg-muted).
+                onMouseEnter={selectionEnabled ? undefined : () => onSelectIndex(index)}
                 onFocus={selectionEnabled ? () => onSelectIndex(index) : undefined}
                 onClick={(e) => handleClick(e, item)}
                 onKeyDown={selectionEnabled ? (e) => handleSelectionKeyDown(e, index, item.id) : undefined}

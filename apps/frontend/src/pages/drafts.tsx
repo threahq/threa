@@ -53,6 +53,14 @@ export function DraftsPage() {
     })
   }, [drafts])
 
+  // Keep the roving-tabindex anchor in range when the list shrinks. If
+  // selectedIndex pointed past the new end, no option would be the tab stop and
+  // (since <main> is not a tab stop in batch mode) the list would be
+  // unreachable by keyboard until a mouse click.
+  useEffect(() => {
+    setSelectedIndex((prev) => (drafts.length === 0 ? 0 : Math.min(prev, drafts.length - 1)))
+  }, [drafts.length])
+
   const handleSelectDraft = useCallback(
     (href: string | null) => {
       if (href) {
