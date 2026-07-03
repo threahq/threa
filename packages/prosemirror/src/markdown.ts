@@ -126,10 +126,11 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
     }
 
     case "sharedMessage": {
-      const { messageId, streamId, authorName } = node.attrs as {
+      const { messageId, streamId, authorName, conversationId } = node.attrs as {
         messageId: string
         streamId: string
         authorName?: string
+        conversationId?: string
       }
       // Wire-format serialization only — the frontend hydrates live content
       // on render, so this fallback is what external API consumers see and
@@ -138,7 +139,7 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       // the line to a clean sentence: "Shared a message from Alice".
       const rawName = authorName && authorName.length > 0 ? authorName : "another stream"
       const escapedName = rawName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
-      return `Shared a message from [${escapedName}](${buildSharedMessageHref({ streamId, messageId })})`
+      return `Shared a message from [${escapedName}](${buildSharedMessageHref({ streamId, messageId, conversationId })})`
     }
 
     case "bulletList":
@@ -680,6 +681,7 @@ export function parseMarkdown(
           messageId: sharedMessageMatch.messageId,
           streamId: sharedMessageMatch.streamId,
           authorName: sharedMessageMatch.authorName,
+          ...(sharedMessageMatch.conversationId && { conversationId: sharedMessageMatch.conversationId }),
           authorId: "",
           actorType: "user",
         },
@@ -701,16 +703,22 @@ export function parseMarkdown(
 
 /**
  * Match the canonical shared-message pointer line:
- *   `Shared a message from [Author](shared-message:streamId/messageId)`
+ *   `Shared a message from [Author](shared-message:streamId/messageId[/conversationId])`
  *
- * Returns the parsed metadata or `null` when the line is anything else.
+ * Returns the parsed metadata or `null` when the line is anything else. The
+ * optional trailing `/conversationId` segment round-trips a conversation-origin
+ * pointer; a two-segment (legacy / in-stream) link parses with it undefined.
  * Author names containing `]` are escaped as `\]` per the serializer.
  */
-function parseSharedMessageLine(line: string): { authorName: string; streamId: string; messageId: string } | null {
-  const match = line.match(/^Shared a message from \[((?:\\.|[^\]])+)\]\(shared-message:([\w-]+)\/([\w-]+)\)\s*$/)
+function parseSharedMessageLine(
+  line: string
+): { authorName: string; streamId: string; messageId: string; conversationId?: string } | null {
+  const match = line.match(
+    /^Shared a message from \[((?:\\.|[^\]])+)\]\(shared-message:([\w-]+)\/([\w-]+)(?:\/([\w-]+))?\)\s*$/
+  )
   if (!match) return null
   const authorName = match[1].replace(/\\([\]\\])/g, "$1")
-  return { authorName, streamId: match[2], messageId: match[3] }
+  return { authorName, streamId: match[2], messageId: match[3], conversationId: match[4] || undefined }
 }
 
 /**

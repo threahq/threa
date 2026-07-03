@@ -26,6 +26,7 @@ import { DeleteMessageDialog } from "@/components/timeline/delete-message-dialog
 import { EditedIndicator } from "@/components/timeline/edited-indicator"
 import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
 import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
+import { ShareMessageModal } from "@/components/share/share-message-modal"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { useQuoteReply } from "@/components/timeline/quote-reply-context"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
@@ -155,6 +156,7 @@ export function MessageItem({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
+  const [shareModalOpen, setShareModalOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
   // the timeline uses; the hover overflow button is desktop/keyboard only. This
@@ -358,6 +360,13 @@ export function MessageItem({
     // author's rows, mirroring the timeline row (`MessageEvent`).
     onDelete: () => setDeleteDialogOpen(true),
     onQuoteReply: quoteReplyCtx ? triggerQuote : undefined,
+    // Cross-stream Share picker — parity with the in-stream row (`MessageEvent`).
+    // A share from a conversation surface stamps `conversationId` on the pointer
+    // (see the modal render below) so the shared card deep-links back into the
+    // conversation panel. Hidden on E2E rows: there's no plaintext-decrypt path
+    // here (that lives on the in-stream row), and a ciphertext pointer share is
+    // rejected server-side — so route E2E sharing through the timeline instead.
+    onShare: rowStream?.e2eEnabled === true ? undefined : () => setShareModalOpen(true),
     isSaved,
     onToggleSave: handleToggleSave,
     onRequestReminder: handleRequestReminder,
@@ -449,6 +458,24 @@ export function MessageItem({
           messageId={message.id}
           conversationId={conversationId}
           saved={savedForMessage ?? null}
+        />
+      )}
+      {shareModalOpen && (
+        <ShareMessageModal
+          open={shareModalOpen}
+          onOpenChange={setShareModalOpen}
+          workspaceId={workspaceId}
+          attrs={{
+            messageId: message.id,
+            streamId,
+            authorName,
+            authorId: message.authorId,
+            actorType: message.authorType,
+            // Set only on conversation surfaces (undefined on the label page),
+            // so the resulting pointer's back-link is conversation-aware exactly
+            // where the message was shared from a conversation.
+            conversationId,
+          }}
         />
       )}
     </>

@@ -3,12 +3,20 @@ import { Link, useParams } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useSharedMessageSource } from "@/hooks/use-shared-message-source"
 import { SharedMessageCardBody } from "@/components/shared-messages/card-body"
+import { buildConversationPanelPath } from "@/lib/stream-links"
 
 interface SharedMessagePointerBlockProps {
   streamId: string
   messageId: string
   /** Author name parsed from the markdown link text; used as a pre-hydration fallback. */
   authorName: string
+  /**
+   * The conversation the message was shared from, when the pointer carries one
+   * (share originated on a board card / conversation panel). Reopens the source
+   * in that conversation's side panel; absent pointers link to the home-stream
+   * permalink as before.
+   */
+  conversationId?: string
 }
 
 /**
@@ -18,7 +26,12 @@ interface SharedMessagePointerBlockProps {
  * in `SharedMessageView` (a TipTap NodeView); both route through the shared
  * resolver hook + `SharedMessageCardBody` so cache + render behavior matches.
  */
-export function SharedMessagePointerBlock({ streamId, messageId, authorName }: SharedMessagePointerBlockProps) {
+export function SharedMessagePointerBlock({
+  streamId,
+  messageId,
+  authorName,
+  conversationId,
+}: SharedMessagePointerBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource(messageId, streamId)
 
@@ -39,8 +52,15 @@ export function SharedMessagePointerBlock({ streamId, messageId, authorName }: S
 
   if (!workspaceId) return card
 
+  // A conversation-origin pointer reopens the source in its conversation panel
+  // (resolved under the clicking viewer's own access — the panel self-guards);
+  // otherwise the card links to the message's home-stream permalink as before.
+  const target = conversationId
+    ? buildConversationPanelPath(workspaceId, conversationId, messageId)
+    : `/w/${workspaceId}/s/${streamId}?m=${messageId}`
+
   return (
-    <Link to={`/w/${workspaceId}/s/${streamId}?m=${messageId}`} className="block no-underline">
+    <Link to={target} className="block no-underline">
       {card}
     </Link>
   )

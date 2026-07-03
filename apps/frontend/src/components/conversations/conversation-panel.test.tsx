@@ -21,6 +21,7 @@ import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
+import * as shareHandoffModule from "@/stores/share-handoff-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const WORKSPACE_ID = "ws_1"
@@ -180,6 +181,30 @@ describe("ConversationPanel", () => {
     await user.click(firstRowMenu)
 
     expect(await screen.findByText("Quote reply")).toBeTruthy()
+  })
+
+  it("shares a conversation row with a conversation-aware pointer (conversationId in the handoff)", async () => {
+    const user = userEvent.setup()
+    // Give the share picker one selectable target channel.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
+      { id: "stream_target", type: "channel", slug: "general", displayName: null, visibility: "public" },
+    ] as never)
+    const queueSpy = vi.spyOn(shareHandoffModule, "queueShareHandoff").mockImplementation(() => {})
+
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    const [firstRowMenu] = screen.getAllByRole("button", { name: "Message actions" })
+    await user.click(firstRowMenu)
+    await user.click(await screen.findByText("Share message"))
+
+    // The cross-stream picker opens; selecting a target queues the share.
+    await user.click(await screen.findByText("#general"))
+
+    expect(queueSpy).toHaveBeenCalledWith(
+      "stream_target",
+      expect.objectContaining({ messageId: "msg_1", conversationId: CONVERSATION_ID })
+    )
   })
 
   it("reveals the quote affordance when a row is swiped left on touch", async () => {
