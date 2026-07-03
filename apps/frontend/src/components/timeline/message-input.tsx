@@ -715,6 +715,15 @@ function MessageInputComponent({
       const attachments = extractUploadedAttachments(normalizedContent)
       const attachmentIds = attachments.map((a) => a.id)
 
+      // A live send whose conversation has drifted into a thread hands off to the
+      // panel (handleSubmit above). A scheduled send can't — there's no live thread
+      // at fire time and the picker has no panel affordance — so it always files by
+      // id. Surface that divergence when armed-and-drifted so the deferred reply
+      // doesn't read as a flat channel send (INV-63: deferred action, no other
+      // on-screen signal). Same-stream stays silent (the strip already shows it).
+      const filesIntoDriftedConversation =
+        conversationReply !== null && conversationReplyLastActiveStreamId !== streamId
+
       try {
         composer.setContent(EMPTY_DOC)
         setExpanded(false)
@@ -736,6 +745,9 @@ function MessageInputComponent({
         setConversationReply(null)
         composer.resolveDraft()
         composer.clearAttachments()
+        if (filesIntoDriftedConversation) {
+          toast.info("Scheduled — this reply will file into the conversation when it sends.")
+        }
       } catch (err) {
         composer.setContent(liveContent)
         const message = err instanceof Error ? err.message : "Could not schedule message"
@@ -744,7 +756,7 @@ function MessageInputComponent({
         composer.setIsSending(false)
       }
     },
-    [composer, scheduleMessageMutation, streamId, conversationReply]
+    [composer, scheduleMessageMutation, streamId, conversationReply, conversationReplyLastActiveStreamId]
   )
 
   if (disabled && disabledReason) {
