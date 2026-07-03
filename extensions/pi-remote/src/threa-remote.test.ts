@@ -297,6 +297,67 @@ describe("Pi remote trace safety", () => {
     ).toBe("Error: model provider rate-limited the request.")
   })
 
+  // The 2026-07-03 Pi-Orchestrator failure: opencode's gateway 502'd every
+  // call, the client THREW (so `after_provider_response` never fired and
+  // providerError stayed unset), and each errored assistant message had empty
+  // content plus `stopReason: "error"`. The turn fell through every branch to
+  // the "Done." fallback — the user asked "Did I mess up?" and got "Done.".
+  test("surfaces a model error carried on an errored assistant message instead of Done.", () => {
+    const messages = [
+      { role: "user", content: "Hi" },
+      {
+        role: "assistant",
+        content: [],
+        stopReason: "error",
+        errorMessage: "502 status code (no body)",
+        provider: "opencode-go",
+        model: "deepseek-v4-flash",
+      },
+    ]
+    expect(__testing.resolveFinalText({ messages }, { assistantTexts: [], otherTexts: [] })).toBe(
+      "⚠️ Model call failed (opencode-go/deepseek-v4-flash): 502 status code (no body). Try /model to switch models."
+    )
+  })
+
+  test("prefers the modelError captured at message_end when agent_end carries no messages", () => {
+    const modelError =
+      "⚠️ Model call failed (opencode-go/deepseek-v4-flash): 502 status code (no body). Try /model to switch models."
+    expect(__testing.resolveFinalText({}, { assistantTexts: [], otherTexts: [], modelError })).toBe(modelError)
+  })
+
+  test("a successful assistant message after an errored one means the retry recovered", () => {
+    const messages = [
+      { role: "assistant", content: [], stopReason: "error", errorMessage: "502 status code (no body)" },
+      { role: "assistant", content: "Recovered on retry — here is the answer." },
+    ]
+    expect(__testing.trailingModelError(messages)).toBeUndefined()
+    expect(__testing.resolveFinalText({ messages }, { assistantTexts: [], otherTexts: [] })).toBe(
+      "Recovered on retry — here is the answer."
+    )
+  })
+
+  test("appends the model error when narration exists but the final model call died", () => {
+    const messages = [
+      { role: "assistant", content: "Let me rebase the branch first." },
+      { role: "assistant", content: [], stopReason: "error", errorMessage: "502 status code (no body)" },
+    ]
+    expect(
+      __testing.resolveFinalText({ messages }, { assistantTexts: ["Let me rebase the branch first."], otherTexts: [] })
+    ).toBe(
+      "Let me rebase the branch first.\n\n⚠️ Model call failed: 502 status code (no body). Try /model to switch models."
+    )
+  })
+
+  test("extractModelError formats without a provider/model pair and defaults a blank message", () => {
+    expect(__testing.extractModelError({ role: "assistant", stopReason: "error", errorMessage: "  " })).toBe(
+      "⚠️ Model call failed: unknown error. Try /model to switch models."
+    )
+    expect(
+      __testing.extractModelError({ role: "assistant", stopReason: "stop", errorMessage: "irrelevant" })
+    ).toBeUndefined()
+    expect(__testing.extractModelError({ role: "user", stopReason: "error" })).toBeUndefined()
+  })
+
   test("parseRetryAfter understands the seconds form of Retry-After", () => {
     expect(__testing.parseRetryAfter({ "retry-after": "120" })).toBe(120_000)
     expect(__testing.parseRetryAfter({ "Retry-After": "0.5" })).toBe(500)

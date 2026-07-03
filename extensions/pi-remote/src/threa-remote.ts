@@ -166,6 +166,7 @@ let pendingAssistantTexts: string[] = []
 let pendingNonAssistantTexts: Array<{ role: string; text: string }> = []
 let pendingToolCalls = new Map<string, { headline: string }>()
 let pendingProviderError: string | undefined
+let pendingModelError: string | undefined
 let pendingRetryAfterMs: number | undefined
 let pendingInvocationPrompt: string | undefined
 let pendingRetry: { timer: ReturnType<typeof setTimeout>; retryAt: number; attempts: number } | undefined
@@ -1503,6 +1504,7 @@ function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string):
   pendingNonAssistantTexts = []
   pendingToolCalls = new Map()
   pendingProviderError = undefined
+  pendingModelError = undefined
   pendingRetryAfterMs = undefined
   pendingInvocationPrompt = undefined
   clearPendingRetry()
@@ -1521,6 +1523,7 @@ function resetPendingTurnTexts(): void {
   pendingNonAssistantTexts = []
   pendingToolCalls = new Map()
   pendingProviderError = undefined
+  pendingModelError = undefined
   pendingRetryAfterMs = undefined
   lastTraceHeartbeat = undefined
 }
@@ -2083,6 +2086,48 @@ function captureMessageText(message: unknown): { role: string; text: string } | 
   return text ? { role, text } : null
 }
 
+/**
+ * An assistant message whose model call died carries the failure on the
+ * message itself (`stopReason: "error"` + `errorMessage`) and usually has no
+ * text content — so the text-capture path drops it entirely and the turn
+ * "completes" silently. This is the only place that error is visible when the
+ * provider throws instead of returning an HTTP response (a thrown 502 never
+ * fires `after_provider_response`, so `pendingProviderError` stays unset).
+ */
+function extractModelError(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined
+  const raw = message as {
+    role?: unknown
+    stopReason?: unknown
+    errorMessage?: unknown
+    provider?: unknown
+    model?: unknown
+  }
+  if (raw.role !== "assistant" || raw.stopReason !== "error") return undefined
+  const detail =
+    typeof raw.errorMessage === "string" && raw.errorMessage.trim().length > 0
+      ? raw.errorMessage.trim()
+      : "unknown error"
+  const source =
+    typeof raw.provider === "string" && typeof raw.model === "string" ? ` (${raw.provider}/${raw.model})` : ""
+  return `⚠️ Model call failed${source}: ${detail}. Try /model to switch models.`
+}
+
+/**
+ * Did the turn END in a model error? Scanning backwards, an error only counts
+ * if no assistant message with real text came after it — a later successful
+ * message means a retry recovered and the error is history, not the outcome.
+ */
+function trailingModelError(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const error = extractModelError(messages[i])
+    if (error) return error
+    if (captureMessageText(messages[i])?.role === "assistant") return undefined
+  }
+  return undefined
+}
+
 function textFromAgentMessages(messages: unknown): string {
   if (!Array.isArray(messages)) return "Done."
   const captured = messages
@@ -2208,12 +2253,25 @@ function resolveFinalText(
     assistantTexts: string[]
     otherTexts: Array<{ role: string; text: string }>
     providerError?: string
+    modelError?: string
   }
 ): string {
-  if (state.assistantTexts.length > 0) return state.assistantTexts[state.assistantTexts.length - 1]
+  // Captured at `message_end` when the errored message streamed through, with
+  // a scan of the turn's messages as backup for paths that bypass the pending
+  // state. Either way, a turn that ended in a model error must say so — the
+  // old behavior fell through to the "Done." fallback and posted a confident
+  // no-op while every model call was failing.
+  const modelError = state.modelError ?? trailingModelError((event as { messages?: unknown } | undefined)?.messages)
+  if (state.assistantTexts.length > 0) {
+    const answer = state.assistantTexts[state.assistantTexts.length - 1]
+    // Narration followed by a dead final model call: posting the narration
+    // alone reads as a finished answer, so carry the failure with it.
+    return modelError ? `${answer}\n\n${modelError}` : answer
+  }
   if (state.providerError) return state.providerError
   const eventError = extractAgentEndError(event)
   if (eventError) return eventError
+  if (modelError) return modelError
   if (state.otherTexts.length > 0) return state.otherTexts.map((item) => item.text).join("\n\n")
   return textFromAgentMessages((event as { messages?: unknown } | undefined)?.messages)
 }
@@ -2398,6 +2456,7 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   pendingNonAssistantTexts = []
   pendingToolCalls = new Map()
   pendingProviderError = undefined
+  pendingModelError = undefined
   pendingRetryAfterMs = undefined
   pendingInvocationPrompt = undefined
   clearPendingRetry()
@@ -2420,6 +2479,7 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   pendingNonAssistantTexts = []
   pendingToolCalls = new Map()
   pendingProviderError = undefined
+  pendingModelError = undefined
   pendingRetryAfterMs = undefined
   pendingInvocationPrompt = undefined
   clearPendingRetry()
@@ -2447,6 +2507,8 @@ export const __testing = {
   captureMessageText,
   textFromAgentMessages,
   extractAgentEndError,
+  extractModelError,
+  trailingModelError,
   resolveFinalText,
   parseRetryAfter,
   describeProviderError,
@@ -2643,9 +2705,18 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("message_end", async (event) => {
     if (!pending) return
+    const modelError = extractModelError(event.message)
+    if (modelError) {
+      pendingModelError = modelError
+      await recordTraceStep("tool_error", modelError, "Model call failed")
+      return
+    }
     const captured = captureMessageText(event.message)
     if (!captured) return
     if (captured.role === "assistant") {
+      // A successful assistant message after an errored one means the retry
+      // recovered — the earlier error is history, not the turn's outcome.
+      pendingModelError = undefined
       pendingAssistantTexts.push(captured.text)
       // Surface the model's running narration as a `thinking` trace step so
       // the scratchpad trace shows what the agent reasoned between tool
@@ -2691,6 +2762,7 @@ export default function (pi: ExtensionAPI): void {
         assistantTexts: pendingAssistantTexts,
         otherTexts: pendingNonAssistantTexts,
         providerError: pendingProviderError,
+        modelError: pendingModelError,
       })
       // When the reply is the model's final assistant message, it was already
       // recorded as the last `thinking` trace step in `message_end` — recording
