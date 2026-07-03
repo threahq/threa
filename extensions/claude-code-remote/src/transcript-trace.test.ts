@@ -244,6 +244,56 @@ describe("TranscriptTracer", () => {
     expect(batches.every((batch) => batch.invocationId === "binv_trace_test")).toBe(true)
   }, 10_000)
 
+  test("a sealed turn's per-turn full mode ships real content, and does NOT outlive the turn", async () => {
+    const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
+    const cwd = "/tmp/fake-worktree-sealed"
+    const projectDir = join(root, encodeProjectDir(cwd))
+    mkdirSync(projectDir, { recursive: true })
+    const file = join(projectDir, "cccc-sealed.jsonl")
+    writeFileSync(file, `${JSON.stringify({ type: "system", note: "session" })}\n`)
+
+    const batches: Array<{ invocationId: string; frames: TraceFrame[] }> = []
+    const tracer = new TranscriptTracer({
+      projectsRoot: root,
+      cwd,
+      pollMs: 20,
+      emit: async (invocationId, frames) => {
+        batches.push({ invocationId, frames })
+        return true
+      },
+    })
+
+    const runTurn = async (invocationId: string, command: string, mode?: "full") => {
+      tracer.beginTurn(invocationId, mode)
+      appendFileSync(
+        file,
+        `${JSON.stringify({ type: "user", message: { role: "user", content: `channel event invocation_id="${invocationId}"` } })}\n`
+      )
+      appendFileSync(
+        file,
+        `${assistantLine([{ type: "tool_use", id: `t-${invocationId}`, name: "Bash", input: { command } }])}\n`
+      )
+      const before = batches.length
+      const deadline = Date.now() + 3_000
+      while (batches.length === before && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      tracer.endTurn(invocationId)
+    }
+
+    // Sealed turn: constructor default is headline, the per-turn override is full.
+    await runTurn("binv_sealed_full", "rm -rf ./build", "full")
+    // Next turn is plaintext — no override — and must be redacted again.
+    await runTurn("binv_plain_after", "cat /etc/passwd")
+    tracer.stop()
+
+    const sealedBatches = JSON.stringify(batches.filter((batch) => batch.invocationId === "binv_sealed_full"))
+    const plainBatches = JSON.stringify(batches.filter((batch) => batch.invocationId === "binv_plain_after"))
+    expect(sealedBatches).toContain("rm -rf ./build")
+    expect(plainBatches).not.toContain("/etc/passwd")
+    expect(plainBatches).toContain("omitted for safety")
+  }, 15_000)
+
   test("binds a transcript created after the turn starts (fresh session, empty project dir)", async () => {
     // The harnessd-spawn case that failed live: Claude Code creates the
     // session's .jsonl at its FIRST turn, so the file never exists in the

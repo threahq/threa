@@ -70,6 +70,12 @@ export interface DeliveredTurn {
   streamId: string
   sourceMessageId: string
   content: string
+  /**
+   * The turn arrived sealed (E2EE): everything the connector records for it is
+   * ciphertext to the server, so a transcript tracer may run in full-detail
+   * mode — the point of sealed steps is more for the owner, nothing for the server.
+   */
+  sealed: boolean
 }
 
 /**
@@ -604,6 +610,7 @@ export class RemoteSession {
       streamId: invocation.responseStreamId,
       sourceMessageId: invocation.sourceMessageId,
       content,
+      sealed: invocation.sealing !== undefined,
     })
   }
 

@@ -31,6 +31,13 @@ export interface RemoteSessionConfig {
    */
   bikPath?: string
   /**
+   * Emit FULL trace detail (real commands, file contents, outputs) on sealed
+   * (E2EE) turns — safe because sealed step content is ciphertext the server
+   * can't read. Default on; set false to keep sealed traces redacted too. Has
+   * no effect on plaintext turns, which always stay redacted.
+   */
+  sealedFullTrace: boolean
+  /**
    * Create this connector's linked scratchpad end-to-end encrypted: the harness
    * mints the stream key and wraps it to the bot owner's UIK + its own BIK, so
    * the server only ever stores ciphertext. Requires the owner to have set up
@@ -93,6 +100,7 @@ export interface RawConfig {
   runtimeSessionId?: unknown
   bikPath?: unknown
   e2e?: unknown
+  sealedFullTrace?: unknown
 }
 
 export function parseConfigFile(text: string): RawConfig {
@@ -179,6 +187,7 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
       bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
       e2e: parseBool(env.THREA_E2E ?? file.e2e, false),
+      sealedFullTrace: parseBool(env.THREA_SEALED_FULL_TRACE ?? file.sealedFullTrace, true),
     },
   }
 }
