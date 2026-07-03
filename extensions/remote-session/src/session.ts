@@ -1,4 +1,4 @@
-import { BotRuntimeTransport, type BotRuntimeHello } from "@threa/bot-runtime-client"
+import { BotRuntimeTransport, type BotRuntimeHello, type StepFrame } from "@threa/bot-runtime-client"
 import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
 import type { RemoteSessionConfig } from "./identity"
 import { ThreaClient, type ClaimedInvocation, type RuntimeSessionLink } from "./client"
@@ -730,6 +730,25 @@ export class RemoteSession {
     if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
     return { ok: true, message: "sent" }
+  }
+
+  /**
+   * Record trace steps against an in-flight turn. Fire-and-forget: a failed
+   * frame is logged and dropped, not retried — steps are ephemeral progress,
+   * not state. Returns false when the invocation is no longer in flight
+   * (answered, expired, superseded), which a transcript tailer uses as its
+   * stop signal. Frames must arrive already redacted; this method ships them
+   * verbatim.
+   */
+  async recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean> {
+    const entry = this.inflight.get(invocationId)
+    if (!entry) return false
+    if (frames.length > 0) {
+      await this.transport
+        .recordSteps(invocationId, entry.invocation.claimToken, frames, statusText ?? this.runtime.busyStatusText)
+        .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
+    }
+    return true
   }
 
   /** Post a message into a stream outside the turn flow (e.g. a relayed approval prompt). */
