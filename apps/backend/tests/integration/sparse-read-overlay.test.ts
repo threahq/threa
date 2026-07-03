@@ -301,6 +301,27 @@ describe("Sparse read overlay", () => {
     expect(await effectiveUnread(sid, reader)).toBe(1)
   })
 
+  test("removing a member purges their overlay so a born-read rejoin can't undercount", async () => {
+    const reader = userId()
+    const other = userId()
+    const { wid, sid, authorId } = await seedChannel([reader, other])
+    const [, , msg3] = await sendMessages(wid, sid, authorId, 3)
+
+    // Board-read hole, then the member is removed. The overlay must go with the
+    // membership: a rejoin born-reads the watermark at latest, and a surviving
+    // row below it would double-subtract in the effective unread count.
+    await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(1)
+
+    await streamService.removeMember(sid, reader)
+
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    // The other member's overlay state is untouched by reader's removal.
+    expect(await effectiveUnread(sid, other)).toBe(3)
+  })
+
   test("applySparseUnread drops the affected ids and regresses when the watermark is past them", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])

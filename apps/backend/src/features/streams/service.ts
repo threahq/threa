@@ -1610,6 +1610,11 @@ export class StreamService {
     const deleted = await StreamMemberRepository.delete(client, stream.id, memberId)
     if (!deleted) return null
 
+    // The overlay leaves with the membership: a rejoin born-reads the watermark
+    // at latest, and any surviving row would sit below it — violating the
+    // strictly-above invariant and double-subtracting in the unread count.
+    await SparseReadRepository.deleteAllForStreams(client, memberId, [stream.id])
+
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
       streamId: stream.id,
@@ -1655,6 +1660,7 @@ export class StreamService {
       if (event) {
         // Batch-remove from all descendant threads the member is in (single recursive CTE)
         const removedStreamIds = await StreamMemberRepository.deleteByMemberInDescendants(client, memberId, streamId)
+        await SparseReadRepository.deleteAllForStreams(client, memberId, removedStreamIds)
         for (const removedStreamId of removedStreamIds) {
           const threadEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
