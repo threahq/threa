@@ -11,9 +11,14 @@ import * as authModule from "@/auth"
 import * as quoteReplyModule from "./quote-reply-context"
 import * as conversationReplyModule from "./conversation-reply-context"
 import * as useConversationsModule from "@/hooks/use-conversations"
+import {
+  consumeConversationReplyOpen,
+  resetConversationReplyOpenStoreCache,
+} from "@/stores/conversation-reply-open-store"
 import * as composerModule from "@/components/composer"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
+import { toast } from "sonner"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 import type { JSONContent } from "@threa/types"
 
@@ -56,6 +61,8 @@ const mockNavigate = vi.fn()
 let mockMessageSendMode: "enter" | "cmdEnter" = "enter"
 
 const mockSendMessage = vi.fn()
+const mockOpenPanel = vi.fn()
+let infoToastSpy: ReturnType<typeof vi.spyOn>
 const mockClearDraft = vi.fn()
 const mockResolveDraft = vi.fn()
 const mockClearAttachments = vi.fn()
@@ -103,6 +110,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockSendMessage.mockReset()
   mockSendMessage.mockResolvedValue({})
+  mockOpenPanel.mockReset()
+  infoToastSpy = vi.spyOn(toast, "info").mockImplementation(() => "toast-id")
+  resetConversationReplyOpenStoreCache()
   mockNavigate.mockReset()
   mockMessageSendMode = "enter"
   mockComposerState = {
@@ -180,15 +190,27 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof conversationReplyModule.useConversationReply>)
   // The armed-reply strip resolves its topic label via the board-post hook,
   // which needs the services context + query client; stub it with a fixed topic.
+  // `recentMessages`/`conversation.streamId` default the conversation's last-active
+  // stream to the rendered stream ("stream_456"), so the inline strip stays put —
+  // the thread-follow redirect only fires when they point elsewhere (own test).
   vi.spyOn(useConversationsModule, "useConversationBoardPost").mockImplementation(
     (_workspaceId: string, conversationId: string | null) =>
       ({
-        post: conversationId ? { conversation: { id: conversationId, topicSummary: "Pizza plans" } } : null,
+        post: conversationId
+          ? {
+              conversation: { id: conversationId, streamId: "stream_456", topicSummary: "Pizza plans" },
+              recentMessages: [],
+            }
+          : null,
         isLoading: false,
         notFound: false,
         refetch: vi.fn(),
       }) as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>
   )
+
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+    openPanel: mockOpenPanel,
+  } as unknown as ReturnType<typeof contextsModule.usePanel>)
 
   vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
     sendMessage: mockSendMessage,
@@ -603,6 +625,121 @@ describe("MessageInput", () => {
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
       expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ conversation: undefined }))
+    })
+
+    it("hands off to the conversation panel when the conversation is live in a thread (thread-follow)", () => {
+      // The conversation's most-recently-active stream is a thread (`thread_789`),
+      // not the rendered channel (`stream_456`) — a flat send here would
+      // re-interleave the channel, so the composer redirects to the conversation
+      // panel and asks it to open its reply composer instead of arming inline.
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockImplementation(
+        (_workspaceId: string, conversationId: string | null) =>
+          ({
+            post: conversationId
+              ? {
+                  conversation: { id: conversationId, streamId, topicSummary: "Pizza plans" },
+                  recentMessages: [{ streamId: "thread_789" }],
+                }
+              : null,
+            isLoading: false,
+            notFound: false,
+            refetch: vi.fn(),
+          }) as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>
+      )
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
+      // The panel's composer is asked to open, and no inline strip is left behind.
+      expect(consumeConversationReplyOpen("conv_1")).toBe(true)
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+      // The channel composer is never focused — focus would pop the mobile keyboard
+      // on the composer we're about to leave for the panel.
+      expect(mockComposerFocus).not.toHaveBeenCalled()
+    })
+
+    it("hands off to the panel instead of filing flat when the projection isn't resolved at send time", async () => {
+      // The board-post projection hasn't loaded (post null), so the last-active
+      // stream is unknown. A flat `{intent:"existing"}` send could re-interleave the
+      // channel if the conversation is actually thread-live — so the send is routed
+      // to the panel instead, and nothing is filed inline.
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
+        post: null,
+        isLoading: true,
+        notFound: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>)
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("late pizza take")
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
+      expect(consumeConversationReplyOpen("conv_1")).toBe(true)
+      // No flat send — routing was unresolved, so the directive send never fired.
+      expect(mockSendMessage).not.toHaveBeenCalled()
+      // The redirect is signalled — the panel can cover this view, so the kept
+      // draft needs a word or the message reads as vanished (INV-63).
+      expect(infoToastSpy).toHaveBeenCalled()
+    })
+
+    it("keeps the inline reply put when a background update later moves the conversation to a thread", () => {
+      // Armed and resolved same-stream (strip shown, composer focused). A live
+      // board-post update then reports the conversation living in a thread — the
+      // route is latched at arm time, so it must NOT evict the user to the panel
+      // mid-composition without any action from them.
+      const { rerender } = render(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      expect(mockComposerFocus).toHaveBeenCalledTimes(1)
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+
+      vi.spyOn(useConversationsModule, "useConversationBoardPost").mockReturnValue({
+        post: {
+          conversation: { id: "conv_1", streamId, topicSummary: "Pizza plans" },
+          recentMessages: [{ streamId: "thread_789" }],
+        },
+        isLoading: false,
+        notFound: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useConversationsModule.useConversationBoardPost>)
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+    })
+
+    it("does not open the panel when navigating away from an armed same-stream reply", () => {
+      // Arm a same-stream reply (mock last-active === rendered stream) — inline strip,
+      // no redirect. Switching streams must disarm quietly, never redirect the
+      // now-stale armed conversation into the panel.
+      const { rerender } = render(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId={streamId} />
+        </Wrapper>
+      )
+      act(() => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
+      expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument()
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+
+      rerender(
+        <Wrapper>
+          <MessageInput workspaceId={workspaceId} streamId="stream_other" />
+        </Wrapper>
+      )
+
+      expect(mockOpenPanel).not.toHaveBeenCalled()
+      expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
     })
   })
 

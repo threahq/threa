@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor, fireEvent } from "@testing-library/react"
+import { act, render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -22,6 +22,11 @@ import * as contextsModule from "@/contexts"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as shareHandoffModule from "@/stores/share-handoff-store"
+import * as boardReplyComposerModule from "@/components/board/board-reply-composer"
+import {
+  requestConversationReplyOpen,
+  resetConversationReplyOpenStoreCache,
+} from "@/stores/conversation-reply-open-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const WORKSPACE_ID = "ws_1"
@@ -140,7 +145,10 @@ beforeEach(() => {
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
 })
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  resetConversationReplyOpenStoreCache()
+  vi.restoreAllMocks()
+})
 
 describe("ConversationPanel", () => {
   it("renders the conversation from the reactive store row without a by-id fetch", async () => {
@@ -155,6 +163,48 @@ describe("ConversationPanel", () => {
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
     expect(screen.getByRole("button", { name: "Write a reply…" })).toBeTruthy()
+  })
+
+  it("bumps openReplySignal on the composer when opened via 'Reply in conversation' (queued request)", async () => {
+    // The message-row action queues this before opening the panel; the panel picks
+    // it up on mount and bumps its composer's open signal instead of resting collapsed.
+    let captured: number | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured = props.openReplySignal
+      return <></>
+    })
+    requestConversationReplyOpen(CONVERSATION_ID)
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    await waitFor(() => expect(captured ?? 0).toBeGreaterThan(0))
+  })
+
+  it("leaves the composer collapsed on a plain open (no queued request)", async () => {
+    let captured: number | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured = props.openReplySignal
+      return <></>
+    })
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    expect(captured).toBe(0)
+  })
+
+  it("re-bumps openReplySignal on a repeat request while the panel is already open", async () => {
+    // A boolean handoff would no-op here (already true); the nonce increments so
+    // the composer reopens after a manual collapse on a second "Reply in conversation".
+    let captured: number | undefined
+    vi.spyOn(boardReplyComposerModule, "BoardReplyComposer").mockImplementation((props) => {
+      captured = props.openReplySignal
+      return <></>
+    })
+    requestConversationReplyOpen(CONVERSATION_ID)
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    await waitFor(() => expect(captured).toBe(1))
+
+    act(() => requestConversationReplyOpen(CONVERSATION_ID))
+    await waitFor(() => expect(captured).toBe(2))
   })
 
   it("fetches the post by id when the store has no row (deep-link / in-stream list)", async () => {

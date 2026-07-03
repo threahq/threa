@@ -25,6 +25,7 @@ import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationService, usePanel, parseConversationPanel, useSidebar } from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
+import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { conversationKeys, useConversationBoardPost } from "@/hooks/use-conversations"
 import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
@@ -56,6 +57,22 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   const { panelId } = usePanel()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
   const { post, isLoading, notFound, refetch } = useConversationBoardPost(workspaceId, conversationId)
+
+  // "Reply in conversation" opened this panel with the intent to reply, not just
+  // read — pick up its one-shot signal (queued before this panel mounted, or
+  // arriving while it's already open for the same conversation) and land the user
+  // in the composer. A monotonic nonce, not a boolean, so a repeat request while
+  // the panel is already open re-opens the composer after a manual collapse.
+  // Stays 0 on a plain deep-link/"Show in conversation" open (no queued request).
+  const [openReplySignal, setOpenReplySignal] = useState(0)
+  useEffect(() => {
+    if (!conversationId) return
+    const bump = () => {
+      if (consumeConversationReplyOpen(conversationId)) setOpenReplySignal((n) => n + 1)
+    }
+    bump()
+    return subscribeConversationReplyOpen(conversationId, bump)
+  }, [conversationId])
 
   // Keep the conversation's streams (root + threads) caught up + joined while the
   // panel is open, so the rail is live and offline-first. Its own SyncEngine slot,
@@ -114,7 +131,14 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
 
   let body: React.ReactNode
   if (post) {
-    body = <ConversationPanelBody workspaceId={workspaceId} post={post} hostStreamType={hostStreamType} />
+    body = (
+      <ConversationPanelBody
+        workspaceId={workspaceId}
+        post={post}
+        hostStreamType={hostStreamType}
+        openReplySignal={openReplySignal}
+      />
+    )
   } else if (isLoading) {
     body = (
       <div className="flex flex-col gap-3 p-4">
@@ -200,6 +224,8 @@ interface ConversationPanelBodyProps {
   workspaceId: string
   post: BoardViewPost
   hostStreamType: string | undefined
+  /** Bumped each time the panel is opened via "Reply in conversation" — opens the composer. */
+  openReplySignal: number
 }
 
 /**
@@ -209,7 +235,7 @@ interface ConversationPanelBodyProps {
  * replies, backfilled with the complete ordered list when the local rail is
  * incomplete — the same merge the board card runs on expand.
  */
-function ConversationPanelBody({ workspaceId, post, hostStreamType }: ConversationPanelBodyProps) {
+function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySignal }: ConversationPanelBodyProps) {
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
@@ -311,6 +337,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType }: Conversati
           post={post}
           hostStreamType={hostStreamType}
           lastActiveStreamId={lastActiveStreamId}
+          openReplySignal={openReplySignal}
         />
       </div>
     </QuoteReplyProvider>

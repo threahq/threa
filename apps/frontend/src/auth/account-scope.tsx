@@ -12,6 +12,7 @@ import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
 import { resetSnippetRequestStoreCache } from "@/stores/snippet-request-store"
+import { resetConversationReplyOpenStoreCache } from "@/stores/conversation-reply-open-store"
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
 import { useAuth } from "./hooks"
@@ -70,6 +71,7 @@ function flushModuleStoreCaches(): void {
   resetDraftStoreCache()
   resetShareHandoffStoreCache()
   resetSnippetRequestStoreCache()
+  resetConversationReplyOpenStoreCache()
   resetE2eSessionStoreCache()
   resetRevealGate()
 }

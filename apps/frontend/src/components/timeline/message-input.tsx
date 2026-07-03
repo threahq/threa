@@ -1,5 +1,6 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
+import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import {
   useDraftComposer,
@@ -28,10 +29,12 @@ import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
 import { useConversationReply, type ConversationReplyData } from "./conversation-reply-context"
-import { useConversationBoardPost } from "@/hooks/use-conversations"
+import { useConversationBoardPost, boardPostLastActiveStreamId } from "@/hooks/use-conversations"
+import { usePanel, createConversationPanelId } from "@/contexts"
 import { Layers, X } from "lucide-react"
 import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
+import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent, type CommandInfo } from "@threa/types"
@@ -297,23 +300,79 @@ function MessageInputComponent({
   // reload would silently misfile whatever is typed next, so it resets with the
   // session and with the stream.
   const conversationReplyCtx = useConversationReply()
+  const { openPanel } = usePanel()
   const [conversationReply, setConversationReply] = useState<ConversationReplyData | null>(null)
   useEffect(() => {
     if (!conversationReplyCtx) return
+    // Arm only. Focus is deferred to the resolve effect below: focusing the
+    // channel composer here would pop the mobile keyboard on it a beat before a
+    // thread-follow reply redirects to the conversation panel.
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
       setConversationReply(data)
-      composerFocusRef.current?.focus()
     })
   }, [conversationReplyCtx])
   useEffect(() => {
     setConversationReply(null)
   }, [streamId])
-  // Topic label for the strip — cached board card or a one-shot by-id fetch.
+  // Topic label for the strip — cached board card or a one-shot by-id fetch. The
+  // same projection carries the conversation's most-recently-active stream: the
+  // latest reply's own stream (a thread under the root), falling back to the
+  // conversation's anchor.
   const { post: conversationReplyPost } = useConversationBoardPost(
     workspaceId,
     conversationReply?.conversationId ?? null
   )
   const conversationReplyTopic = conversationReplyPost?.conversation.topicSummary ?? null
+  const conversationReplyLastActiveStreamId = conversationReplyPost
+    ? boardPostLastActiveStreamId(conversationReplyPost)
+    : null
+
+  // Hand the armed conversation off to its side panel (Mechanism B), which renders
+  // it across its root + threads and routes the reply recency-biased into the live
+  // thread. Shared by the resolve effect (proactive, once the projection loads) and
+  // the send guard (the race where the user sends before it loads).
+  const redirectReplyToPanel = useCallback(
+    (conversationId: string) => {
+      requestConversationReplyOpen(conversationId)
+      openPanel(createConversationPanelId(conversationId))
+      setConversationReply(null)
+    },
+    [openPanel]
+  )
+
+  // Current stream read through a ref so the routing effect doesn't take `streamId`
+  // as a dep: on a plain stream switch, `streamId` changes while `conversationReply`
+  // still holds the previous stream's armed value (the `[streamId]` reset effect
+  // hasn't committed yet), and a streamId-driven re-run would misread that as a
+  // thread-follow and spuriously open the panel. The reset effect nulls the arm,
+  // which re-runs this effect to a clean no-op.
+  const streamIdRef = useRef(streamId)
+  streamIdRef.current = streamId
+
+  // Thread-follow: route the armed reply ONCE, at first resolution of the
+  // projection. A conversation live in THIS stream keeps the inline strip and
+  // focuses the composer to type; one that has moved into a thread hands off to
+  // the panel — a flat send there would re-interleave the channel, the mess
+  // recency-biased continuation avoids (board-view-design.md).
+  //
+  // The route is latched per arm (`routedArmIdRef`): `conversationReplyLastActive-
+  // StreamId` is a live Dexie value, so without the latch a background reply that
+  // later moves the conversation into a thread would re-fire this effect and evict
+  // the user from the channel mid-composition, unsolicited. Once routed, only an
+  // explicit send re-checks routing. The latch resets when the arm is cleared.
+  const routedArmIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!conversationReply) {
+      routedArmIdRef.current = null
+      return
+    }
+    if (routedArmIdRef.current === conversationReply.conversationId) return
+    const target = conversationReplyLastActiveStreamId
+    if (!target) return
+    routedArmIdRef.current = conversationReply.conversationId
+    if (target === streamIdRef.current) composerFocusRef.current?.focus()
+    else redirectReplyToPanel(conversationReply.conversationId)
+  }, [conversationReply, conversationReplyLastActiveStreamId, redirectReplyToPanel])
 
   // Consume any pending share handoff for this stream, pre-inserting the
   // shared-message pointer into the composer and leaving the cursor after it.
@@ -564,6 +623,22 @@ function MessageInputComponent({
         return
       }
 
+      // Armed for "Reply in conversation" but not confirmed live in THIS stream
+      // (thread-live, or the board-post projection hasn't resolved yet): filing
+      // flat here would re-interleave the channel. Hand off to the conversation
+      // panel and keep the composer content — nothing typed is lost, the user
+      // continues in the panel. The inline flat send below only runs once the
+      // conversation is confirmed same-stream. A toast because the send didn't do
+      // the obvious thing (post here): the panel can cover this view on mobile, so
+      // the kept draft needs a word or the message reads as vanished (INV-63:
+      // deferred action, no other on-screen signal).
+      if (conversationReply && conversationReplyLastActiveStreamId !== streamId) {
+        redirectReplyToPanel(conversationReply.conversationId)
+        toast.info("Opening the conversation to reply — your draft was kept here.")
+        composer.setIsSending(false)
+        return
+      }
+
       const attachments = extractUploadedAttachments(normalizedContent)
       const attachmentIds = attachments.map((attachment) => attachment.id)
 
@@ -615,6 +690,8 @@ function MessageInputComponent({
       queueCommand,
       availableCommandByName,
       conversationReply,
+      conversationReplyLastActiveStreamId,
+      redirectReplyToPanel,
     ]
   )
 
