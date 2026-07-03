@@ -791,6 +791,25 @@ export async function startServer(): Promise<ServerInstance> {
           }
         : { ok: false, reason: "cap_reached", pendingCount: result.pendingCount, limit: result.limit }
     },
+    listFollowUps: async ({ workspaceId, streamId }) => {
+      const rows = await agentFollowUpService.listPending({ workspaceId, streamId })
+      return rows.map((r) => ({ followUpId: r.id, note: r.note, scheduledFor: r.scheduledFor }))
+    },
+    cancelFollowUp: async ({ workspaceId, streamId, followUpId }) => {
+      const cancelled = await agentFollowUpService.cancel({ workspaceId, streamId, id: followUpId })
+      return cancelled ? { ok: true, followUpId: cancelled.id } : { ok: false }
+    },
+    updateFollowUp: async ({ workspaceId, streamId, followUpId, note, scheduledFor }) => {
+      const result = await agentFollowUpService.update({ workspaceId, streamId, id: followUpId, note, scheduledFor })
+      return result.ok
+        ? {
+            ok: true,
+            followUpId: result.followUp.id,
+            note: result.followUp.note,
+            scheduledFor: result.followUp.scheduledFor,
+          }
+        : { ok: false, reason: result.reason }
+    },
     loadFollowUp: ({ workspaceId, followUpId }) => agentFollowUpService.getById({ workspaceId, followUpId }),
   })
   // Tier assignments (see QueueManager `tiers` config above):

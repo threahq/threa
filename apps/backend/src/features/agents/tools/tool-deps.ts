@@ -36,13 +36,57 @@ export type ScheduleFollowUpToolResult =
   | { ok: true; followUpId: string; scheduledFor: Date; pendingCount: number; limit: number }
   | { ok: false; reason: "cap_reached"; pendingCount: number; limit: number }
 
+/** One pending follow-up as the `list_follow_ups` tool reports it. */
+export interface FollowUpSummary {
+  followUpId: string
+  note: string
+  scheduledFor: Date
+}
+
 /**
- * Follow-up scheduling callback for the `schedule_follow_up` tool, bound to the
- * running persona/session/stream by the caller (like `ReactionToolDeps`). The
- * tool supplies only the note and target time; workspace/stream/persona/session
- * identity and the source-conversation anchor are fixed at bind time. Present
- * only on the live companion turn — the researcher sub-agent never schedules.
+ * Result of the `cancel_follow_up` tool's callback. `null` from the service (row
+ * gone, in another stream, or no longer pending) collapses to `ok: false` — the
+ * tool tells the model to re-list rather than guessing why.
  */
-export interface FollowUpToolDeps {
+export type CancelFollowUpToolResult = { ok: true; followUpId: string } | { ok: false }
+
+/**
+ * Result of the `update_follow_up` tool's callback. `not_found` = bad id or a
+ * follow-up in another stream; `not_pending` = already fired or cancelled (can't
+ * be edited). On success it echoes the stored note + new time.
+ */
+export type UpdateFollowUpToolResult =
+  | { ok: true; followUpId: string; note: string; scheduledFor: Date }
+  | { ok: false; reason: "not_found" | "not_pending" }
+
+/**
+ * Per-tool callbacks for the follow-up tools, each bound to the running
+ * persona/session/stream by the caller (like `ReactionToolDeps`). The tools
+ * supply only their own inputs (note/time/id); workspace/stream/persona/session
+ * identity — and, for scheduling, the source-conversation anchor — are fixed at
+ * bind time. The admin tools (list/cancel/update) are stream-scoped by the bind,
+ * so a turn can only administer its own stream's follow-ups.
+ *
+ * Each tool takes only the narrow interface it needs so its unit test can wire a
+ * single callback; `FollowUpToolDeps` is the bundle the live companion turn
+ * passes (the researcher sub-agent never gets it — it reads/searches, it never
+ * schedules or administers durable work).
+ */
+export interface ScheduleFollowUpToolDeps {
   scheduleFollowUp: (params: { note: string; scheduledFor: Date }) => Promise<ScheduleFollowUpToolResult>
 }
+export interface ListFollowUpsToolDeps {
+  listFollowUps: () => Promise<FollowUpSummary[]>
+}
+export interface CancelFollowUpToolDeps {
+  cancelFollowUp: (params: { followUpId: string }) => Promise<CancelFollowUpToolResult>
+}
+export interface UpdateFollowUpToolDeps {
+  updateFollowUp: (params: {
+    followUpId: string
+    note?: string
+    scheduledFor?: Date
+  }) => Promise<UpdateFollowUpToolResult>
+}
+export interface FollowUpToolDeps
+  extends ScheduleFollowUpToolDeps, ListFollowUpsToolDeps, CancelFollowUpToolDeps, UpdateFollowUpToolDeps {}

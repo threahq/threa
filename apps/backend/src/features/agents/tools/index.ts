@@ -2,7 +2,14 @@ export {
   type WorkspaceToolDeps,
   type ReactionToolDeps,
   type FollowUpToolDeps,
+  type ScheduleFollowUpToolDeps,
+  type ListFollowUpsToolDeps,
+  type CancelFollowUpToolDeps,
+  type UpdateFollowUpToolDeps,
   type ScheduleFollowUpToolResult,
+  type CancelFollowUpToolResult,
+  type UpdateFollowUpToolResult,
+  type FollowUpSummary,
 } from "./tool-deps"
 // Web + send tools live in @threa/agent-runtime (shared with the enclave).
 // Re-exported here so backend imports (`../tools`) keep working.
@@ -41,6 +48,9 @@ export { createReadAttachmentTool, type ReadAttachmentInput } from "./read-attac
 export { createDescribeMemoTool, type DescribeMemoInput } from "./describe-memo-tool"
 export { createReactToMessageTool, type ReactToMessageInput } from "./react-to-message-tool"
 export { createScheduleFollowUpTool, type ScheduleFollowUpInput } from "./schedule-follow-up-tool"
+export { createListFollowUpsTool, type ListFollowUpsInput } from "./list-follow-ups-tool"
+export { createCancelFollowUpTool, type CancelFollowUpInput } from "./cancel-follow-up-tool"
+export { createUpdateFollowUpTool, type UpdateFollowUpInput } from "./update-follow-up-tool"
 export {
   createWorkspaceResearchTool,
   WORKSPACE_RESEARCH_TOOL_NAME,

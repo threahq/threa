@@ -114,6 +114,125 @@ describe("AgentFollowUpService.cancel", () => {
     expect(result).toBeNull()
     expect(queueCancel).not.toHaveBeenCalled()
   })
+
+  it("uses the stream-scoped CAS so an agent only cancels its own stream's follow-ups", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    const markInStream = spyOn(AgentFollowUpRepository, "markCancelledInStream").mockResolvedValue(null)
+    const markWorkspace = spyOn(AgentFollowUpRepository, "markCancelled").mockResolvedValue(null)
+
+    await makeService().cancel({ workspaceId: "ws_1", id: "agfu_01", streamId: "stream_1" })
+
+    expect(markInStream.mock.calls[0]?.slice(1)).toEqual(["ws_1", "stream_1", "agfu_01"])
+    expect(markWorkspace).not.toHaveBeenCalled()
+  })
+})
+
+describe("AgentFollowUpService.listPending", () => {
+  afterEach(() => mock.restore())
+
+  it("returns a stream's pending rows via the pool", async () => {
+    const rows = [fakeFollowUp()]
+    const listPending = spyOn(AgentFollowUpRepository, "listPending").mockResolvedValue(rows)
+
+    const result = await makeService().listPending({ workspaceId: "ws_1", streamId: "stream_1" })
+
+    expect(result).toEqual(rows)
+    expect(listPending.mock.calls[0]?.slice(1)).toEqual(["ws_1", "stream_1"])
+  })
+})
+
+describe("AgentFollowUpService.update", () => {
+  afterEach(() => mock.restore())
+
+  const NEW_TIME = new Date("2026-07-10T09:00:00.000Z")
+
+  it("reschedules: tombstones the old fire job and enqueues a fresh one at the new time", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ queueMessageId: "agfuq_old" }))
+    spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(
+      fakeFollowUp({ note: "new note", scheduledFor: NEW_TIME })
+    )
+    spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
+    const queueCancel = spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
+    const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+
+    const result = await makeService().update({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      id: "agfu_01",
+      note: "new note",
+      scheduledFor: NEW_TIME,
+    })
+
+    expect(result).toEqual({ ok: true, followUp: expect.objectContaining({ scheduledFor: NEW_TIME }) })
+    expect(queueCancel).toHaveBeenCalledWith(expect.anything(), "agfuq_old")
+    const fireEnqueue = queueInsert.mock.calls.find(
+      (call) => (call[1] as { queueName: string }).queueName === JobQueues.AGENT_FOLLOW_UP_FIRE
+    )
+    expect((fireEnqueue?.[1] as { processAfter: Date }).processAfter).toEqual(NEW_TIME)
+  })
+
+  it("note-only update leaves the fire job alone (no reschedule)", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ queueMessageId: "agfuq_old" }))
+    spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(fakeFollowUp({ note: "new note" }))
+    const queueCancel = spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
+    const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+
+    const result = await makeService().update({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      id: "agfu_01",
+      note: "new note",
+    })
+
+    expect(result).toEqual({ ok: true, followUp: expect.objectContaining({ note: "new note" }) })
+    expect(queueCancel).not.toHaveBeenCalled()
+    expect(queueInsert).not.toHaveBeenCalled()
+  })
+
+  it("returns not_found for an unknown id without touching the row", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(null)
+    const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
+
+    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_x", note: "n" })
+
+    expect(result).toEqual({ ok: false, reason: "not_found" })
+    expect(updatePending).not.toHaveBeenCalled()
+  })
+
+  it("returns not_found for a follow-up that belongs to a different stream", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ streamId: "stream_other" }))
+    const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
+
+    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
+
+    expect(result).toEqual({ ok: false, reason: "not_found" })
+    expect(updatePending).not.toHaveBeenCalled()
+  })
+
+  it("returns not_pending when the follow-up already fired", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp({ status: FollowUpStatuses.FIRED }))
+    const updatePending = spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
+
+    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
+
+    expect(result).toEqual({ ok: false, reason: "not_pending" })
+    expect(updatePending).not.toHaveBeenCalled()
+  })
+
+  it("returns not_pending when the CAS loses the race after the read", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "findById").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "updatePending").mockResolvedValue(null)
+
+    const result = await makeService().update({ workspaceId: "ws_1", streamId: "stream_1", id: "agfu_01", note: "n" })
+
+    expect(result).toEqual({ ok: false, reason: "not_pending" })
+  })
 })
 
 describe("AgentFollowUpService.fire", () => {

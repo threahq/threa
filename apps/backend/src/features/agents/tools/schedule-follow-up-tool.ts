@@ -3,7 +3,8 @@ import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import { MAX_FOLLOW_UP_HORIZON_DAYS } from "../config"
-import type { FollowUpToolDeps } from "./tool-deps"
+import { formatLocalTime, validateScheduledFor } from "./follow-up-shared"
+import type { ScheduleFollowUpToolDeps } from "./tool-deps"
 
 const ScheduleFollowUpSchema = z.object({
   note: z
@@ -23,8 +24,6 @@ const ScheduleFollowUpSchema = z.object({
 
 export type ScheduleFollowUpInput = z.infer<typeof ScheduleFollowUpSchema>
 
-const HORIZON_MS = MAX_FOLLOW_UP_HORIZON_DAYS * 24 * 60 * 60 * 1000
-
 const PROMPT_BLOCK = `## Scheduling follow-ups
 
 Use \`schedule_follow_up\` when something genuinely needs revisiting later — "check tomorrow whether the deploy landed", "revisit this decision next week" — instead of trying to do long-horizon work in the current turn. It creates a durable reminder that wakes you up at the chosen time to take another look at this stream.
@@ -33,29 +32,6 @@ Use \`schedule_follow_up\` when something genuinely needs revisiting later — "
 - \`scheduledFor\` must be in the future and within ${MAX_FOLLOW_UP_HORIZON_DAYS} days. Compute it against the current time shown in "## Current Time" (the user's local time).
 - When you tell the user when you'll check back, use the \`scheduledForLocal\` field from the tool result — it is already rendered in the user's timezone. Never quote the raw UTC time to the user.
 - There is a cap on how many follow-ups a stream can have pending at once; the tool result reports the current count and the limit, so don't stack up near-duplicates. Prefer one good follow-up over several.`
-
-/**
- * Render an instant in the user's timezone for the tool result, so the model
- * confirms "I'll check back at 6:13 PM" in the user's local time rather than
- * parroting the UTC instant back at them. Includes the zone abbreviation so it's
- * unambiguous; falls back to the ISO string if the timezone is missing/invalid.
- */
-function formatLocalTime(date: Date, timeZone: string | undefined): string {
-  if (!timeZone) return date.toISOString()
-  try {
-    return new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-    }).format(date)
-  } catch {
-    return date.toISOString()
-  }
-}
 
 /**
  * Schedule a follow-up: a durable, cancellable reminder that wakes the running
@@ -72,7 +48,10 @@ function formatLocalTime(date: Date, timeZone: string | undefined): string {
  * only by the per-stream pending cap (surfaced in the result so the model
  * self-regulates), not by data-privacy categories.
  */
-export function createScheduleFollowUpTool(deps: FollowUpToolDeps, opts?: { timezone?: string; currentTime?: string }) {
+export function createScheduleFollowUpTool(
+  deps: ScheduleFollowUpToolDeps,
+  opts?: { timezone?: string; currentTime?: string }
+) {
   const parsedNow = opts?.currentTime ? Date.parse(opts.currentTime) : NaN
   if (opts?.currentTime && Number.isNaN(parsedNow)) {
     // Loud on malformed injected time (INV-11): we still fall back to wall-clock
@@ -92,29 +71,9 @@ Use this instead of attempting long-horizon work in one turn: "check back tomorr
 
     execute: async (input): Promise<AgentToolResult> => {
       const scheduledFor = new Date(input.scheduledFor)
-      if (Number.isNaN(scheduledFor.getTime())) {
-        return {
-          output: JSON.stringify({
-            ok: false,
-            error: "Invalid scheduledFor — expected an ISO 8601 timestamp",
-            scheduledFor: input.scheduledFor,
-          }),
-        }
-      }
-
-      const now = nowMs ?? Date.now()
-      if (scheduledFor.getTime() <= now) {
-        return {
-          output: JSON.stringify({ ok: false, error: "scheduledFor must be in the future" }),
-        }
-      }
-      if (scheduledFor.getTime() > now + HORIZON_MS) {
-        return {
-          output: JSON.stringify({
-            ok: false,
-            error: `scheduledFor must be within ${MAX_FOLLOW_UP_HORIZON_DAYS} days`,
-          }),
-        }
+      const validationError = validateScheduledFor(scheduledFor, nowMs ?? Date.now())
+      if (validationError) {
+        return { output: JSON.stringify({ ok: false, error: validationError }) }
       }
 
       try {

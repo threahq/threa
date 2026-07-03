@@ -198,3 +198,63 @@ describe("AgentFollowUpRepository.setQueueMessageId", () => {
     expect(captured.values).toEqual(["agfuq_1", "agfu_01", "ws_1"])
   })
 })
+
+describe("AgentFollowUpRepository stream-scoped admin reads/writes", () => {
+  afterEach(() => mock.restore())
+
+  it("markCancelledInStream scopes the CAS to workspace + stream + id", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [])
+
+    await AgentFollowUpRepository.markCancelledInStream(db, "ws_1", "stream_1", "agfu_01")
+
+    expect(captured.text).toContain("stream_id =")
+    expect(captured.values).toContain("stream_1")
+    expect(captured.values).toContain(FollowUpStatuses.CANCELLED)
+    expect(captured.values).toContain(FollowUpStatuses.PENDING)
+  })
+
+  it("listPending selects a stream's pending rows soonest-first", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [ROW])
+
+    const result = await AgentFollowUpRepository.listPending(db, "ws_1", "stream_1")
+
+    expect(captured.text).toContain("ORDER BY scheduled_for ASC")
+    expect(captured.values).toEqual(["ws_1", "stream_1", FollowUpStatuses.PENDING])
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ id: "agfu_01", scheduledFor: SCHEDULED_FOR })
+  })
+
+  it("updatePending CASes note + time on a pending row scoped to workspace + stream + id", async () => {
+    const captured: Captured = { text: null, values: null }
+    const newTime = new Date("2026-07-10T09:00:00.000Z")
+    const db = createQuerier(captured, [{ ...ROW, note: "new note", scheduled_for: newTime }])
+
+    const result = await AgentFollowUpRepository.updatePending(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      id: "agfu_01",
+      note: "new note",
+      scheduledFor: newTime,
+    })
+
+    expect(captured.text).toContain("UPDATE agent_follow_ups")
+    expect(captured.text).toContain("stream_id =")
+    // Status is unchanged, so status_changed_at is not re-stamped in SET
+    // (it still appears in the RETURNING column list).
+    expect(captured.text).not.toContain("status_changed_at = NOW()")
+    expect(captured.values).toContain(FollowUpStatuses.PENDING)
+    expect(captured.values).toContain("new note")
+    expect(result).toMatchObject({ note: "new note", scheduledFor: newTime })
+  })
+
+  it("markFired guards on scheduled_for <= NOW() so a rescheduled-to-later row can't fire early", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [ROW])
+
+    await AgentFollowUpRepository.markFired(db, "ws_1", "agfu_01")
+
+    expect(captured.text).toContain("scheduled_for <= NOW()")
+  })
+})
