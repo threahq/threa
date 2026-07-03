@@ -209,3 +209,91 @@ describe("withCompanionSession", () => {
     expect(insertOutboxSpy).not.toHaveBeenCalled()
   })
 })
+
+// The running-session slot is the partial unique index on
+// agent_sessions(stream_id) WHERE status='running'
+// (20260109155152_agent_session_one_running.sql, INV-20). withCompanionSession
+// keys the session on the *addressed* stream id it is handed — persona-agent
+// passes the thread's own id (or, for a channel mention, the freshly created
+// thread's id), never a re-resolved root. So a channel/scratchpad and a thread
+// beneath it hold distinct slots and run concurrently, while two turns targeting
+// the same thread collide on the index and the second serializes to a no-op.
+describe("per-stream session concurrency (roadmap 3.2)", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("keys each session on its addressed stream id, so a channel and its thread occupy distinct slots and both run", async () => {
+    mockTransactions()
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    const insertSpy = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockImplementation(async (_db, params) =>
+      makeRunningSession({ id: `session_${params.streamId}`, streamId: params.streamId })
+    )
+    spyOn(AgentSessionRepository, "completeSession").mockImplementation(async (_db, id) =>
+      makeRunningSession({ id, status: SessionStatuses.COMPLETED, completedAt: new Date("2026-02-19T12:01:00.000Z") })
+    )
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const base = {
+      pool: {} as any,
+      personaId: "persona_1",
+      personaName: "Ariadne",
+      workspaceId: "ws_1",
+      serverId: "server_1",
+      initialSequence: 10n,
+    }
+    const work = async () => ({ messagesSent: 1, sentMessageIds: ["msg_agent_1"], lastSeenSequence: 11n })
+
+    const channelResult = await withCompanionSession(
+      { ...base, triggerMessageId: "msg_channel", streamId: "stream_channel" },
+      work
+    )
+    const threadResult = await withCompanionSession(
+      { ...base, triggerMessageId: "msg_thread", streamId: "stream_thread_under_channel" },
+      work
+    )
+
+    expect(channelResult.status).toBe("completed")
+    expect(threadResult.status).toBe("completed")
+    expect(insertSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ streamId: "stream_channel" }))
+    expect(insertSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ streamId: "stream_thread_under_channel" })
+    )
+  })
+
+  it("serializes a second turn in the same stream: the running-index conflict (null insert) skips instead of running a duplicate", async () => {
+    mockTransactions()
+    // No prior session for this trigger message, but a concurrent turn already
+    // holds the thread's running slot, so INSERT ... ON CONFLICT DO NOTHING
+    // returns no row.
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null)
+    const eventSpy = spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await withCompanionSession(
+      {
+        pool: {} as any,
+        triggerMessageId: "msg_second_in_thread",
+        streamId: "stream_thread",
+        personaId: "persona_1",
+        personaName: "Ariadne",
+        workspaceId: "ws_1",
+        serverId: "server_1",
+        initialSequence: 10n,
+      },
+      async () => ({ messagesSent: 1, sentMessageIds: ["msg_agent_1"], lastSeenSequence: 11n })
+    )
+
+    expect(result).toEqual({
+      status: "skipped",
+      sessionId: null,
+      reason: "agent already running for stream",
+    })
+    expect(eventSpy).not.toHaveBeenCalled()
+    expect(outboxSpy).not.toHaveBeenCalled()
+  })
+})

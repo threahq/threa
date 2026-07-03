@@ -44,7 +44,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
-| 3.2  | Per-thread session concurrency                       | ☐      |       |
+| 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                  | ☐      |       |
 | 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
 | 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
@@ -269,6 +269,15 @@ Not a duplicate of the two existing summaries: `conversations.topic_summary` nam
 **Tests:** concurrent sessions in a channel and its thread both run; two messages in the _same_ thread still serialize (INV-20 index).
 
 **Done when:** the concurrency semantics are tested, whichever way the investigation lands.
+
+**Investigation outcome (shipped): already concurrent — test-only, no code change.** Sessions key on the _addressed_ stream id end to end, so channel + thread never share a slot:
+
+- The running-session slot is the partial unique index `agent_sessions(stream_id) WHERE status='running'` (`20260109155152_agent_session_one_running.sql`). Threads are their own stream ids.
+- Dispatch keys on the addressed stream: `CompanionHandler` sends the `PERSONA_AGENT` job with the message's own `streamId` — root resolution (`companionSource`) is used only to inherit companion mode + persona, never to re-key the dispatch (`companion-outbox-handler.ts:86-158`).
+- Session insert keys on the addressed stream: `persona-agent.ts` sets `sessionStreamId = streamId` (a channel _mention_ spawns a fresh thread and keys on _that_), and `withCompanionSession` passes it verbatim to `insertRunningOrSkip` (`companion/session.ts:87`). The only root usages in the turn — tool-privacy policy and context-window policy (`persona-agent.ts:288`) — don't touch session keying. The other two `insertRunningOrSkip` callers (public-api bot invocations, enclave claim) likewise key on the invocation's target stream.
+- No advisory lock or other primitive serializes sessions on the root (the `pg_advisory_xact_lock` in `agents/` is the follow-up cap, unrelated).
+
+So a channel/scratchpad and a thread beneath it already run concurrently, and two turns in the same thread serialize on the index. The missing coverage — the concurrency contract as a unit — landed in `companion/session.test.ts` (`per-stream session concurrency (roadmap 3.2)`): distinct addressed streams both complete with their own `stream_id` forwarded to `insertRunningOrSkip`; a same-stream second turn whose insert conflicts (null) skips as "agent already running for stream" with no started event. The existing `companion-outbox-handler.test.ts` already covers threads dispatching on their own id.
 
 ### 3.3 Conversation-anchored agent replies
 
