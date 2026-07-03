@@ -3,9 +3,13 @@ import { useState } from "react"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { createMemoryRouter, RouterProvider } from "react-router-dom"
 import * as mobileModule from "@/hooks/use-mobile"
+import { __resetOverlayHistoryForTests } from "./history-back-close"
 import { Drawer, DrawerContent, DrawerTitle } from "./drawer"
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  __resetOverlayHistoryForTests()
+})
 
 function DrawerHarness() {
   const [open, setOpen] = useState(false)
@@ -23,6 +27,11 @@ function DrawerHarness() {
   )
 }
 
+/**
+ * Two drawers with a same-tick handoff, mirroring the sidebar footer's
+ * account-drawer → status-picker flow (`openStatus` closes the drawer and
+ * opens the dialog in one click handler).
+ */
 function StackedHarness() {
   const [aOpen, setAOpen] = useState(false)
   const [bOpen, setBOpen] = useState(false)
@@ -32,6 +41,14 @@ function StackedHarness() {
       <span>{bOpen ? "b-open" : "b-closed"}</span>
       <button onClick={() => setAOpen(true)}>open-a</button>
       <button onClick={() => setBOpen(true)}>open-b</button>
+      <button
+        onClick={() => {
+          setAOpen(false)
+          setBOpen(true)
+        }}
+      >
+        handoff-a-to-b
+      </button>
       <button
         onClick={() => {
           setAOpen(false)
@@ -109,26 +126,19 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
   })
 
-  it("survives a forward navigation and closes on the back that pops its sentinel", async () => {
+  it("survives a forward navigation and closes on the next back, in place", async () => {
     const router = makeRouter(<DrawerHarness />)
     render(<RouterProvider router={router} />)
 
     await openDrawer(router)
 
-    // A forward push (drawer stacking, in-page navigation) must not close it
+    // A forward push must not close the drawer; the coordinator re-establishes
+    // the sentinel at the new location.
     await act(async () => {
       await router.navigate(`${STREAM_PATH}?x=1`)
     })
     expect(screen.getByText("drawer-open")).toBeInTheDocument()
 
-    // Back onto the sentinel: still open — the sentinel is current again
-    await act(async () => {
-      await router.navigate(-1)
-    })
-    await waitFor(() => expect(router.state.location.search).toBe(""))
-    expect(screen.getByText("drawer-open")).toBeInTheDocument()
-
-    // Back past the sentinel closes the drawer without leaving the page
     await act(async () => {
       await router.navigate(-1)
     })
@@ -141,7 +151,8 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     render(<RouterProvider router={router} />)
 
     await openDrawer(router, "open-a")
-    await openDrawer(router, "open-b")
+    fireEvent.click(screen.getByText("open-b"))
+    await waitFor(() => expect(screen.getByText("b-open")).toBeInTheDocument())
 
     await act(async () => {
       await router.navigate(-1)
@@ -150,21 +161,55 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     await waitFor(() => expect(screen.getByText("b-closed")).toBeInTheDocument())
     expect(screen.getByText("a-open")).toBeInTheDocument()
     expect(router.state.location.pathname).toBe(STREAM_PATH)
+
+    // Second back peels the remaining drawer, still without leaving the page
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("a-closed")).toBeInTheDocument())
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
   })
 
-  it("closing a stack in one tick unwinds both sentinel entries", async () => {
+  it("closing a stack in one tick unwinds the sentinel", async () => {
     const router = makeRouter(<StackedHarness />)
     render(<RouterProvider router={router} />)
     const initialKey = router.state.location.key
 
     await openDrawer(router, "open-a")
-    await openDrawer(router, "open-b")
+    fireEvent.click(screen.getByText("open-b"))
+    await waitFor(() => expect(screen.getByText("b-open")).toBeInTheDocument())
 
     fireEvent.click(screen.getByText("close-both"))
 
     await waitFor(() => expect(router.state.location.key).toBe(initialKey))
     expect(screen.getByText("a-closed")).toBeInTheDocument()
     expect(screen.getByText("b-closed")).toBeInTheDocument()
+  })
+
+  it("same-tick handoff (close A, open B) keeps back working for B", async () => {
+    const router = makeRouter(<StackedHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    await openDrawer(router, "open-a")
+    fireEvent.click(screen.getByText("handoff-a-to-b"))
+    await waitFor(() => expect(screen.getByText("b-open")).toBeInTheDocument())
+    expect(screen.getByText("a-closed")).toBeInTheDocument()
+
+    // Let any serialized pop/push settle, then back must close B in place
+    await act(async () => {})
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("b-closed")).toBeInTheDocument())
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
+
+    // History is balanced: the next back leaves the page
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
   })
 })
 
