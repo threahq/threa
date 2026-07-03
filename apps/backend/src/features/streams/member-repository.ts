@@ -264,7 +264,10 @@ export const StreamMemberRepository = {
    * (greatest sequence strictly below the moved event's original source sequence),
    * or null when nothing prior survives. Set-based (INV-56); MUST run AFTER the
    * move so the moved rows are already gone from the source and can't be chosen as
-   * their own predecessor.
+   * their own predecessor. `last_read_at` is deliberately left untouched: this is
+   * an automated correction, not a read, and the timestamp feeds the conversation
+   * card's time fallback — bumping it to NOW() would falsely mark every older
+   * sequenceless/non-member-thread row as read.
    */
   async repointWatermarksForMovedEvents(
     db: Querier,
@@ -289,7 +292,7 @@ export const StreamMemberRepository = {
         WHERE sm.stream_id = $1
       )
       UPDATE stream_members sm
-      SET last_read_event_id = repoint.new_event_id, last_read_at = NOW()
+      SET last_read_event_id = repoint.new_event_id
       FROM repoint
       WHERE sm.stream_id = $1 AND sm.member_id = repoint.member_id
       `,

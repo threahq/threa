@@ -141,6 +141,10 @@ describe("Phantom-unread drift fixes", () => {
     // unread count would resolve against a foreign thread-space sequence.
     const after = await streamService.getMembership(source, reader.id)
     expect(after?.lastReadEventId).toBe(eventByMsg.get(m1)!.id)
+    // The repoint is an automated correction, not a read: last_read_at must be
+    // preserved — it feeds the conversation card's time fallback, and bumping it
+    // to NOW() would falsely mark older sequenceless rows as read.
+    expect(after?.lastReadAt).toEqual(before!.lastReadAt)
 
     // Source now holds target + m1; nothing unread above m1.
     const counts = await streamService.getUnreadCounts([

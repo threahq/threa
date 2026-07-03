@@ -900,7 +900,7 @@ export function registerStreamSocketHandlers(
       if (payload.sourceMessageOrdinal !== undefined) {
         const sourceOrdinal = payload.sourceMessageOrdinal
         commitCounterMutation(queryClient, workspaceId, (s) =>
-          applyMovedSourceOrdinal(s, payload.sourceStreamId, sourceOrdinal)
+          applyMovedSourceOrdinal(s, payload.sourceStreamId, sourceOrdinal, payload.movedMessageIds)
         )
       }
     }

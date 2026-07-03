@@ -315,16 +315,31 @@ export function applyStreamReadMessages(
 export function applyMovedSourceOrdinal(
   state: UnreadCounterState,
   streamId: string,
-  sourceMessageOrdinal: number
+  sourceMessageOrdinal: number,
+  movedMessageIds: readonly string[] = []
 ): UnreadCounterState {
-  const ov = overlaySize(state, streamId)
+  // Reconstruct the read position with the PRE-move overlay, then drop the moved
+  // ids from the source set before recomputing — the server rehomed their rows
+  // to the destination, so a stale entry here keeps subtracting for a message
+  // the shrunk latest no longer counts, silently hiding genuine unread. One
+  // fold for both writes so no reader sees the ordinal without the drop.
+  // (Destination overlay is deliberately NOT topped up: destination `latest`
+  // isn't bumped on move either, so omitting both keeps its arithmetic
+  // consistent-stale until the next snapshot/bootstrap heals it.)
+  const ovBefore = overlaySize(state, streamId)
   const prevUnread = state.unreadCounts[streamId] ?? 0
   const base = state.latestOrdinals?.[streamId] ?? sourceMessageOrdinal
-  const read = Math.max(0, base - prevUnread - ov)
+  const read = Math.max(0, base - prevUnread - ovBefore)
+
+  const moved = new Set(movedMessageIds)
+  const remaining = (state.readMessageIds?.[streamId] ?? []).filter((id) => !moved.has(id))
+  const next = setOverlay(state, streamId, remaining)
+  const ovAfter = overlaySize(next, streamId)
+
   return {
-    ...state,
-    latestOrdinals: { ...state.latestOrdinals, [streamId]: sourceMessageOrdinal },
-    unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, sourceMessageOrdinal - read - ov) },
+    ...next,
+    latestOrdinals: { ...next.latestOrdinals, [streamId]: sourceMessageOrdinal },
+    unreadCounts: { ...next.unreadCounts, [streamId]: Math.max(0, sourceMessageOrdinal - read - ovAfter) },
   }
 }
 

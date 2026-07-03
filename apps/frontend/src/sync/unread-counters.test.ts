@@ -509,6 +509,32 @@ describe("applyMovedSourceOrdinal", () => {
     expect(state.unreadCounts.s1).toBe(0)
   })
 
+  it("drops moved ids from the source overlay so a stale entry can't hide genuine unread", () => {
+    // Messages 1..5, watermark at 1, m2 overlay-read → unread 3 ({m3,m4,m5}).
+    // m2 (overlay-read) + m3 (unread) move to a thread → source count 3.
+    // True post-move state: watermark 1, overlay empty, unread 2 ({m4,m5}).
+    // With a stale m2 entry the math yields 1 — hiding a genuinely unread row.
+    const state = makeState({
+      unreadCounts: { s1: 3 },
+      latestOrdinals: { s1: 5 },
+      readMessageIds: { s1: ["m2"] },
+    })
+    const next = applyMovedSourceOrdinal(state, "s1", 3, ["m2", "m3"])
+    expect(next.readMessageIds).toEqual({})
+    expect(next.unreadCounts.s1).toBe(2)
+  })
+
+  it("leaves the overlay untouched when no moved id is in it", () => {
+    const state = makeState({
+      unreadCounts: { s1: 2 },
+      latestOrdinals: { s1: 5 },
+      readMessageIds: { s1: ["m4"] },
+    })
+    const next = applyMovedSourceOrdinal(state, "s1", 4, ["m2"])
+    expect(next.readMessageIds).toEqual({ s1: ["m4"] })
+    expect(next.unreadCounts.s1).toBe(1)
+  })
+
   it("without the source-ordinal fix the read cannot clear the phantom (regression guard)", () => {
     let state = makeState({ unreadCounts: { s1: 1 }, latestOrdinals: { s1: 1 } })
     state = applyStreamActivityOrdinal(state, "s1", 2, { isOwnMessage: false, isViewing: false })
