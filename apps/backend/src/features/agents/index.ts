@@ -3,6 +3,9 @@ export { createAgentSessionHandlers } from "./session-handlers"
 export { PersonaAgent } from "./persona-agent"
 export type { PersonaAgentDeps, PersonaAgentInput, PersonaAgentResult, WithSessionResult } from "./persona-agent"
 
+export { resolveTurnPurpose, deriveTurnFlags } from "./turn-purpose"
+export type { TurnPurpose, TurnPurposeKind } from "./turn-purpose"
+
 export { defineAgentTool, toVercelToolDefs, AgentRuntime, createSessionTraceProjector, OtelObserver } from "./runtime"
 export type {
   AgentTool,

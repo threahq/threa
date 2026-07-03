@@ -69,7 +69,7 @@ import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import { EventService } from "../../../src/features/messaging"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threa/prosemirror"
-import { AuthorTypes, AgentTriggers, StreamTypes } from "@threa/types"
+import { AuthorTypes, StreamTypes } from "@threa/types"
 import { ulid } from "ulid"
 import { personaId as generatePersonaId, streamId as generateStreamId } from "../../../src/lib/id"
 
@@ -447,7 +447,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       messageId,
       personaId,
       serverId: `eval-server-${ulid()}`,
-      trigger: input.trigger === "mention" ? AgentTriggers.MENTION : undefined,
+      purpose: input.trigger === "mention" ? { kind: "mention" } : { kind: "catch_up" },
       currentTime: input.currentTime ? new Date(input.currentTime) : undefined,
     }
 

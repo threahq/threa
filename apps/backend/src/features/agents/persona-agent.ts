@@ -4,7 +4,6 @@ import { withClient, type Querier } from "../../db"
 import {
   AgentStepTypes,
   AgentToolNames,
-  AgentTriggers,
   AuthorTypes,
   StreamTypes,
   type AgentSessionRerunContext,
@@ -35,6 +34,7 @@ import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
+import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
@@ -168,15 +168,14 @@ export interface PersonaAgentInput {
   messageId: string
   personaId: string
   serverId: string
-  trigger?: typeof AgentTriggers.MENTION
-  supersedesSessionId?: string
-  rerunContext?: AgentSessionRerunContext
   /**
-   * Set when this run was enqueued by a fired follow-up. `messageId` is then
-   * synthetic (no real trigger message); the agent loads the follow-up's context
-   * and injects the "why you woke up" prompt section (roadmap 1.2).
+   * Why this turn is running (roadmap 1.5). One discriminated union replaces the
+   * four orthogonal optional signals that used to accumulate here — mention,
+   * supersede rerun, fired follow-up, and plain companion catch-up. A fired
+   * follow-up carries a synthetic `messageId` (no real trigger message); the
+   * agent loads its row and injects the "why you woke up" prompt section.
    */
-  followUpId?: string
+  purpose: TurnPurpose
   /** Invocation time override for deterministic evals/tests. Production leaves this unset. */
   currentTime?: Date
 }
@@ -236,18 +235,11 @@ export class PersonaAgent {
       scheduleFollowUp,
       loadFollowUp,
     } = this.deps
-    const {
-      workspaceId,
-      streamId,
-      messageId,
-      personaId,
-      serverId,
-      trigger,
-      supersedesSessionId,
-      rerunContext,
-      followUpId,
-      currentTime,
-    } = input
+    const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime } = input
+    // Supersede-rerun payload, extracted once from the purpose (roadmap 1.5) and
+    // threaded through the session setup, reconciliation, trace, and validator.
+    const supersedesSessionId = purpose.kind === "supersede_rerun" ? purpose.supersedesSessionId : undefined
+    const rerunContext = purpose.kind === "supersede_rerun" ? purpose.rerunContext : undefined
 
     const precheck = await withClient(pool, async (client) => {
       const persona = await PersonaRepository.findById(client, personaId, workspaceId)
@@ -298,13 +290,13 @@ export class PersonaAgent {
     // catch-up — the two live staging bugs (declining the check-in, re-scheduling
     // in a loop) stem from exactly that context-less path, so this is the fix.
     let followUpContext: { note: string; scheduledFor: Date } | undefined
-    if (followUpId) {
-      const followUp = loadFollowUp ? await loadFollowUp({ workspaceId, followUpId }) : null
+    if (purpose.kind === "follow_up") {
+      const followUp = loadFollowUp ? await loadFollowUp({ workspaceId, followUpId: purpose.followUpId }) : null
       if (followUp) {
         followUpContext = { note: followUp.note, scheduledFor: followUp.scheduledFor }
       } else {
         logger.warn(
-          { workspaceId, followUpId, streamId },
+          { workspaceId, followUpId: purpose.followUpId, streamId },
           "Fired follow-up row not found or loader unbound; running as a plain catch-up turn"
         )
       }
@@ -312,7 +304,7 @@ export class PersonaAgent {
     const isFollowUp = followUpContext !== undefined
 
     // Create the thread eagerly so session events go there for channel mentions.
-    const isChannelMention = trigger === AgentTriggers.MENTION && stream.type === StreamTypes.CHANNEL
+    const isChannelMention = purpose.kind === "mention" && stream.type === StreamTypes.CHANNEL
     let sessionStreamId = streamId
     let channelStreamId: string | undefined
     if (isChannelMention) {
@@ -364,7 +356,7 @@ export class PersonaAgent {
 
         const agentContext = await buildAgentContext(
           { db: pool, userPreferencesService, conversationSummaryService },
-          { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime, followUp: followUpContext }
+          { workspaceId, streamId, stream, messageId, persona, purpose, policy, currentTime, followUp: followUpContext }
         )
 
         // Resolve an attached ContextBag (if any) so `stable + delta` flow into
@@ -474,6 +466,16 @@ export class PersonaAgent {
           triggerMessageId: messageId,
         })
         const isSupersedeRerun = !!supersededMessagePlan
+
+        // The purpose as it effectively behaves this turn: a supersede rerun
+        // whose target session vanished (no reusable plan), or a follow-up whose
+        // row failed to load, degrades to a plain catch-up. The purpose prompt
+        // section and the derived runtime flags both key off this, so wording and
+        // behavior match what the turn actually does.
+        let effectivePurpose: TurnPurpose = purpose
+        if (purpose.kind === "supersede_rerun" && !isSupersedeRerun) effectivePurpose = { kind: "catch_up" }
+        else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
+        const turnFlags = deriveTurnFlags(effectivePurpose)
 
         // `sources` is required on the commit payload (empty array = none) so a
         // caller can't silently drop citations — see TurnCommit.
@@ -721,21 +723,20 @@ export class PersonaAgent {
             sessionId: session.id,
             origin: agentContext.invokingUserId ? "user" : "system",
           },
-          systemPrompt: appendBagToSystemPrompt(
-            isSupersedeRerun
-              ? buildSupersedeRerunSystemPrompt(agentContext.composeSystemPrompt(tools), rerunContext)
-              : agentContext.composeSystemPrompt(tools),
-            resolvedBag
-          ),
+          // The purpose's prompt section (mention/follow-up early, supersede
+          // reconciliation last) is composed here from the effective purpose —
+          // one dispatch, no bespoke supersede wrap at the call site (roadmap 1.5).
+          systemPrompt: appendBagToSystemPrompt(agentContext.composeSystemPrompt(tools, effectivePurpose), resolvedBag),
           messages: agentContext.messages,
           initialContext,
           tools,
           maxTokens: persona.maxTokens,
           temperature: persona.temperature,
-          // Follow-up turns may legitimately conclude "nothing to add" — enabling
-          // this exposes `keep_response` so they can end silently instead of the
-          // runtime auto-committing filler or throwing (roadmap 1.2).
-          allowNoMessageOutput: isSupersedeRerun || isFollowUp,
+          // Supersede reruns and fired follow-ups may legitimately conclude
+          // "nothing to add" — this exposes `keep_response` so they end silently
+          // instead of the runtime auto-committing filler. Derived from the
+          // purpose kind, never set ad hoc (roadmap 1.5).
+          allowNoMessageOutput: turnFlags.allowNoMessageOutput,
           validateFinalResponse: isSupersedeRerun
             ? buildSupersedeResponseValidator({
                 ai,
@@ -1232,44 +1233,6 @@ function toTraceRerunContext(rerunContext?: AgentSessionRerunContext): Record<st
     editedMessageAfter: rerunContext.editedMessageAfter ?? null,
     editedMessageRevision: rerunContext.editedMessageRevision ?? null,
   }
-}
-
-function buildSupersedeRerunSystemPrompt(basePrompt: string, rerunContext?: AgentSessionRerunContext): string {
-  const cause =
-    rerunContext?.cause === "referenced_message_edited"
-      ? "a follow-up (referenced) message was edited"
-      : "the invoking message was edited"
-  const editedBefore = rerunContext?.editedMessageBefore?.trim()
-  const editedAfter = rerunContext?.editedMessageAfter?.trim()
-
-  const changeBlock = [
-    `Rerun cause: ${cause}.`,
-    `Edited message ID: ${rerunContext?.editedMessageId ?? "unknown"}.`,
-    editedBefore ? `Before edit: "${editedBefore}"` : null,
-    editedAfter ? `After edit: "${editedAfter}"` : null,
-    rerunContext?.editedMessageRevision ? `Edited message revision: ${rerunContext.editedMessageRevision}.` : null,
-  ]
-    .filter((line): line is string => line !== null)
-    .join("\n")
-
-  return `${basePrompt}
-
-## Superseded Session Reconciliation
-
-This run supersedes a previous completed session because conversation context changed after completion.
-${changeBlock}
-
-For the final outcome:
-- Compare the previous response(s) against the edited context and current conversation state.
-- Treat the edited message text as the authoritative user intent. The prior wording is obsolete.
-- If any previous response is now incorrect, contradictory, or misses a new constraint, call \`send_message\` with the revised response.
-- When updating, answer the edited request directly with concrete help. Do not ask the user to reconfirm the edited intent unless the edited prompt is genuinely ambiguous or missing required constraints.
-- For "best" or singular requests, provide one clear recommendation first (with practical details), then optional alternatives.
-- If the edited request is concrete (for example noun/topic substitutions), do not reply with only a clarification question.
-- Avoid meta narration about the edit itself (for example "I see your message was edited") unless the user explicitly asks about that process.
-- If the previous response should stay exactly as-is, call \`keep_response\` with a specific reason that references what changed and why no update is needed.
-- Never use both \`keep_response\` and \`send_message\` for the same final decision.
-- Do not end your turn without calling exactly one of \`keep_response\` or \`send_message\`.`
 }
 
 const SupersedeResponseValidationSchema = z.object({

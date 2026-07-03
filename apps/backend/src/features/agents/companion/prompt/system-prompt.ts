@@ -1,14 +1,16 @@
-import { AgentTriggers, StreamTypes } from "@threa/types"
 import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentTool } from "@threa/agent-runtime"
-import { buildTemporalPromptSection, formatCurrentTime } from "../../../../lib/temporal"
+import { buildTemporalPromptSection } from "../../../../lib/temporal"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
+import type { TurnPurpose } from "../../turn-purpose"
 import { WORKSPACE_RESEARCH_TOOL_NAME } from "../../tools"
 import { buildPromptSectionForStreamType } from "./stream-context-sections"
+import { buildEarlyPurposeSection, buildLatePurposeSection } from "./turn-purpose-prompt"
 
 /**
  * Build the system prompt for the persona agent.
- * Produces stream-type-specific context and optional mention invocation context.
+ * Produces stream-type-specific context and the turn's purpose section (mention,
+ * scheduled follow-up, or supersede reconciliation — dispatched in turn-purpose-prompt).
  *
  * `tools` is the ACTUAL built toolset for the turn: each tool's prose rides its
  * definition (`AgentToolConfig.promptBlock`) and is assembled here in toolset
@@ -20,7 +22,7 @@ export function buildSystemPrompt(
   persona: Persona,
   context: StreamContext,
   scratchpadCustomPrompt?: string | null,
-  trigger?: typeof AgentTriggers.MENTION,
+  purpose: TurnPurpose = { kind: "catch_up" },
   mentionerName?: string,
   rollingConversationSummary?: string | null,
   tools: AgentTool[] = [],
@@ -47,40 +49,10 @@ Apply them in scratchpads and scratchpad-root threads unless they conflict with 
 ${scratchpadCustomPrompt.trim()}`
   }
 
-  if (trigger === AgentTriggers.MENTION) {
-    const mentionerDesc = mentionerName ? `**${mentionerName}**` : "a user"
-    prompt += `
-
-## Invocation Context
-
-You were explicitly @mentioned by ${mentionerDesc} who wants your assistance.`
-
-    if (context.streamType === StreamTypes.CHANNEL) {
-      prompt += ` This conversation is happening in a thread created specifically for your response.`
-    }
-  }
-
-  if (followUp) {
-    const scheduledForDisplay = context.temporal
-      ? formatCurrentTime(
-          followUp.scheduledFor,
-          context.temporal.timezone,
-          context.temporal.dateFormat,
-          context.temporal.timeFormat
-        )
-      : followUp.scheduledFor.toISOString()
-
-    prompt += `
-
-## Scheduled follow-up firing now
-
-This turn is a follow-up you scheduled for yourself — not a new message from anyone. You are waking up on your own timer to revisit this stream.
-
-- You set this reminder (at ${scheduledForDisplay}) to: "${followUp.note.trim()}"
-- This IS that reminder firing. Act on it now — look at what has happened in the stream since you scheduled it and, if there's something worth saying, post your check-in with \`send_message\`. Do not decline or promise to check back later; later is now.
-- Do NOT schedule another follow-up for the same thing. The note above is what this turn is already handling — re-reading it as a fresh instruction and scheduling again just loops forever. Only schedule a new follow-up if genuinely new future work has surfaced.
-- If nothing needs saying (the matter resolved itself, nothing changed, or you're still waiting on someone), call \`keep_response\` with a brief reason and stay silent. Do not post filler.`
-  }
+  // Why-this-turn-is-running section, dispatched by purpose. Mention and
+  // follow-up describe the invocation up front; supersede reconciliation lands
+  // last (below) for salience. `followUp` carries the note the fired row held.
+  prompt += buildEarlyPurposeSection(purpose, { context, mentionerName, followUp })
 
   prompt += buildPromptSectionForStreamType(context, workspaceResearchEnabled)
 
@@ -178,6 +150,11 @@ Safety rules:
   if (context.temporal) {
     prompt += buildTemporalPromptSection(context.temporal, context.participantTimezones)
   }
+
+  // Supersede reconciliation lands last so its "call exactly one of
+  // keep_response / send_message" directive is the most salient instruction
+  // before the model acts. Empty for every other purpose.
+  prompt += buildLatePurposeSection(purpose)
 
   return prompt
 }

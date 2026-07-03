@@ -38,7 +38,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.2  | Follow-up turn invocation (context + prompt)         | ☑      | #1142 |
 | 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
-| 1.5  | Turn-purpose consolidation (invocation variants)     | ☐      |       |
+| 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #TBD  |
 | 2.1  | Generalized session abort                            | ☐      |       |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
@@ -151,6 +151,13 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 **Files:** `persona-agent.ts` (input type + variant readers), `persona-agent-worker.ts` (payload→purpose mapping), `companion/context.ts`, `companion/prompt/system-prompt.ts` (per-purpose sections), `packages/agent-runtime` `TurnRequest` if flag derivation moves there.
 
 **Tests:** existing per-variant tests pass unchanged (behavioral no-op); one test per purpose kind asserting derived flags + prompt-section presence.
+
+**Deviations (shipped):**
+
+- `TurnPurpose` union + `resolveTurnPurpose` (payload→purpose at the worker boundary) + `deriveTurnFlags` live in a new `features/agents/turn-purpose.ts`. Flag derivation stayed backend-side (`deriveTurnFlags`), not moved onto `TurnRequest` — cleaner than plumbing purpose into the generic runtime.
+- Per-purpose prompt sections unified in `companion/prompt/turn-purpose-prompt.ts`: `buildEarlyPurposeSection` (mention, follow-up — before stream context) and `buildLatePurposeSection` (supersede reconciliation — last, for final-decision salience). The supersede section moved out of persona-agent's `buildSupersedeRerunSystemPrompt` wrap into `buildSystemPrompt` at its exact prior position (after temporal), so composition is byte-identical to the old wrap.
+- The continuation-wording leak is fixed at the source: the runtime's `allowNoMessageOutput` continuation prompt (`agent-runtime.ts`) is now edit-neutral, since that phrasing already misapplied to fired-follow-up *and* research turns. The supersede system-prompt section still carries the edit-comparison instructions where they belong.
+- Degradation preserves behavior via `effectivePurpose`: a supersede rerun whose target session vanished, or a follow-up whose row failed to load, resolves to `catch_up` — so its prompt section and derived flags match the plain-catch-up turn it already ran as (true no-op).
 
 **Done when:** adding a new invocation kind = one union member + its prompt block — no new optional field on `PersonaAgentInput`, no ad-hoc flag setting.
 

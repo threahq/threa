@@ -765,8 +765,13 @@ export class AgentRuntime {
       return conversation
     }
 
+    // Neutral wording for the may-end-silently case: this fires for supersede
+    // reruns, fired follow-ups, and research alike, so it must not assume an
+    // "updated context" edit (that phrasing leaked supersede framing onto
+    // follow-up turns). The supersede system-prompt section carries the
+    // edit-comparison instructions where they actually belong.
     const continuationPrompt = this.config.allowNoMessageOutput
-      ? "Review the conversation above and follow the system instructions. Compare the latest assistant response against the updated context, then call keep_response or send_message."
+      ? "Review the conversation above and follow the system instructions, then call keep_response or send_message."
       : "Continue from the conversation above and follow the system instructions."
 
     return [...conversation, { role: "user", content: continuationPrompt }]

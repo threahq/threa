@@ -16,7 +16,7 @@ function makeAgent(capture: (input: PersonaAgentInput) => void): PersonaAgentLik
 }
 
 describe("createPersonaAgentWorker", () => {
-  it("forwards followUpId from the fired-follow-up job to agent.run", async () => {
+  it("maps a fired-follow-up job payload to a follow_up purpose", async () => {
     let captured: PersonaAgentInput | undefined
     const worker = createPersonaAgentWorker({
       agent: makeAgent((input) => (captured = input)),
@@ -35,11 +35,11 @@ describe("createPersonaAgentWorker", () => {
     }
     await worker({ id: "job_1", name: "persona.agent", data })
 
-    expect(captured?.followUpId).toBe("agfu_01")
+    expect(captured?.purpose).toEqual({ kind: "follow_up", followUpId: "agfu_01" })
     expect(captured?.messageId).toBe("followup_agfu_01")
   })
 
-  it("leaves followUpId undefined for a normal companion job", async () => {
+  it("maps a plain companion job payload to a catch_up purpose", async () => {
     let captured: PersonaAgentInput | undefined
     const worker = createPersonaAgentWorker({
       agent: makeAgent((input) => (captured = input)),
@@ -57,6 +57,6 @@ describe("createPersonaAgentWorker", () => {
     }
     await worker({ id: "job_2", name: "persona.agent", data })
 
-    expect(captured?.followUpId).toBeUndefined()
+    expect(captured?.purpose).toEqual({ kind: "catch_up" })
   })
 })
