@@ -5,7 +5,7 @@ import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
-import { MessageRepository, type EventService } from "../messaging"
+import { MessageRepository, type EventService, type Message } from "../messaging"
 import {
   resolveDeliveryVerdict,
   TrustTiers,
@@ -611,6 +611,49 @@ async function buildSealedClaimContext(
   return context
 }
 
+/**
+ * The minimal sealed material a session-control invocation needs to seal its ack
+ * on an E2E scratchpad. Unlike {@link buildSealedClaimContext} there is no
+ * trigger/history to open (the command name is cleartext dispatch metadata, not
+ * a sealed message) — only the current-generation SSK wraps addressed to the
+ * claiming bot's BIK plus the `reply` binding. Returns `undefined` when the bot
+ * can't seal (no registered BIK, or no wrap for the current generation): the
+ * harness then falls back to a silent close, so a key-race never wedges the
+ * command.
+ */
+async function buildSessionControlSealedAck(
+  pool: Pool,
+  invocation: BotInvocation,
+  instanceId: string
+): Promise<
+  | {
+      wraps: { keyGeneration: number; wrapEnc: string; wrapCt: string }[]
+      reply: { keyGeneration: number; senderId: string }
+    }
+  | undefined
+> {
+  const instance = await BotRuntimeInstanceRepository.findByInstance(pool, {
+    workspaceId: invocation.workspaceId,
+    botId: invocation.actorId,
+    instanceId,
+  })
+  if (!instance?.publicKeyId) return undefined
+  const e2e = await E2eStreamsRepository.getByStreamId(pool, invocation.workspaceId, invocation.rootStreamId)
+  if (!e2e) return undefined
+  const wraps = await StreamE2eKeyWrapsRepository.listForStream(pool, invocation.workspaceId, invocation.rootStreamId)
+  const botWraps = wraps.filter(
+    (w) =>
+      w.recipientKind === "bot" &&
+      w.recipientKeyId === instance.publicKeyId &&
+      w.keyGeneration === e2e.currentKeyGeneration
+  )
+  if (botWraps.length === 0) return undefined
+  return {
+    wraps: botWraps.map((w) => ({ keyGeneration: w.keyGeneration, wrapEnc: w.wrapEnc, wrapCt: w.wrapCt })),
+    reply: { keyGeneration: e2e.currentKeyGeneration, senderId: invocation.actorId },
+  }
+}
+
 export interface PublicApiDeps {
   searchService: SearchService
   memoExplorerService: MemoExplorerService
@@ -1120,6 +1163,7 @@ export function createPublicApiHandlers({
       })
       const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
       let sealedContext: SealedTurnContext | undefined
+      let sealedAck: Awaited<ReturnType<typeof buildSessionControlSealedAck>>
       let callbackBinding: { callbackTokenHash: string; replyKeyGeneration: number } | undefined
       if (!isSessionControl && verdict.delivery === "sealed") {
         sealedContext = await buildSealedClaimContext(pool, invocation, data.instanceId)
@@ -1127,6 +1171,12 @@ export function createPublicApiHandlers({
           callbackTokenHash: hashCallbackToken(invocation.claimToken!),
           replyKeyGeneration: sealedContext.reply.keyGeneration,
         }
+      } else if (isSessionControl && verdict.delivery === "sealed") {
+        // Session-control (e.g. /model) on an E2E scratchpad: no sealed turn, but
+        // hand the harness the current-generation SSK wraps so it can seal the
+        // command ack. Undefined when the bot can't seal (no BIK / wrap race) —
+        // the harness then closes silently, exactly as before this shipped.
+        sealedAck = await buildSessionControlSealedAck(pool, invocation, data.instanceId)
       }
 
       if (!isSessionControl && bot && !bot.archivedAt) {
@@ -1184,6 +1234,7 @@ export function createPublicApiHandlers({
           metadata: invocation.metadata,
           ...(context && { context }),
           ...(sealedContext && { sealedContext }),
+          ...(sealedAck && { sealedAck }),
         },
       })
     },
@@ -1464,20 +1515,51 @@ export function createPublicApiHandlers({
         // dispatched there with plaintext claims, and blocking their close
         // would strand every one of them in a TTL-recycle loop.
         if (contentMarkdown) await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)
-        const message = contentMarkdown
-          ? await eventService.createMessageInTransaction(client, {
-              workspaceId: req.workspaceId!,
-              streamId: claim.responseStreamId,
-              authorId: bot.id,
-              authorType: AuthorTypes.BOT,
-              contentJson: contentJson!,
-              contentMarkdown,
-              attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-              clientMessageId: `bot-invocation:${claim.id}`,
-              sources: data.sources,
-              metadata: data.metadata,
+        let message: Message | null = null
+        if (data.sealedReply) {
+          // Sealed session-control ack: the stream MUST be E2E and the seal MUST
+          // bind the current generation, or the row is permanently undecryptable.
+          const e2e = await E2eStreamsRepository.getByStreamId(client, req.workspaceId!, claim.responseStreamId)
+          if (!e2e) {
+            throw new HttpError("A sealed reply requires an E2E stream", {
+              status: 400,
+              code: "SEALED_REPLY_REQUIRES_E2E_STREAM",
             })
-          : null
+          }
+          if (data.sealedReply.envelope.keyGeneration !== e2e.currentKeyGeneration) {
+            throw new HttpError(
+              `Sealed reply uses key generation ${data.sealedReply.envelope.keyGeneration}; the stream is at ${e2e.currentKeyGeneration}`,
+              { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
+            )
+          }
+          message = await eventService.createMessageInTransaction(client, {
+            id: data.sealedReply.messageId,
+            workspaceId: req.workspaceId!,
+            streamId: claim.responseStreamId,
+            authorId: bot.id,
+            authorType: AuthorTypes.BOT,
+            contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+            contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+            ciphertext: Buffer.from(data.sealedReply.ciphertext, "base64"),
+            envelope: data.sealedReply.envelope,
+            e2eVersion: 2,
+            accessibleStreamIds: [claim.responseStreamId],
+            clientMessageId: `bot-invocation:${claim.id}`,
+          })
+        } else if (contentMarkdown) {
+          message = await eventService.createMessageInTransaction(client, {
+            workspaceId: req.workspaceId!,
+            streamId: claim.responseStreamId,
+            authorId: bot.id,
+            authorType: AuthorTypes.BOT,
+            contentJson: contentJson!,
+            contentMarkdown,
+            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            clientMessageId: `bot-invocation:${claim.id}`,
+            sources: data.sources,
+            metadata: data.metadata,
+          })
+        }
         const completed = await botRuntimeService.completeInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,

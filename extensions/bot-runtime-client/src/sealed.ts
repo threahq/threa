@@ -469,6 +469,74 @@ export function scrubSealedError(error: unknown): string {
   return error instanceof Error ? error.name || "Error" : "Error"
 }
 
+// ── session-control sealed ack ────────────────────────────────────────────────
+
+/**
+ * The minimal sealed material a claim carries for a session-control command
+ * (e.g. `/model`) on an E2E scratchpad: the current-generation SSK wraps
+ * addressed to this bot's BIK plus the reply binding. No trigger/history — the
+ * command name is cleartext dispatch metadata, so only the ack needs sealing.
+ * Absent when the bot can't seal (no BIK / wrap race); the harness then closes
+ * the command silently.
+ */
+export interface SealedAckContext {
+  wraps: SealedSskWrap[]
+  reply: { keyGeneration: number; senderId: string }
+}
+
+/** Validate a claim's `sealedAck` field (untyped JSON at the harness boundary). */
+export function parseSealedAckContext(raw: unknown): SealedAckContext | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined
+  const c = raw as Record<string, unknown>
+  if (!Array.isArray(c.wraps)) return undefined
+  const wraps: SealedSskWrap[] = []
+  for (const wrap of c.wraps) {
+    if (typeof wrap !== "object" || wrap === null) return undefined
+    const w = wrap as Record<string, unknown>
+    if (typeof w.keyGeneration !== "number" || typeof w.wrapEnc !== "string" || typeof w.wrapCt !== "string") {
+      return undefined
+    }
+    wraps.push({ keyGeneration: w.keyGeneration, wrapEnc: w.wrapEnc, wrapCt: w.wrapCt })
+  }
+  const reply = c.reply as Record<string, unknown> | undefined
+  if (!reply || typeof reply.keyGeneration !== "number" || typeof reply.senderId !== "string") return undefined
+  return { wraps, reply: { keyGeneration: reply.keyGeneration, senderId: reply.senderId } }
+}
+
+/**
+ * Open a session-control sealed ack: unwrap the SSK for the reply generation
+ * with this bot's BIK and return the {@link SealingState} `sealReply` seals the
+ * ack with. `callbackToken` is empty — a session-control ack authorizes with the
+ * claim token on `/complete`, not a per-turn callback token. Throws when no wrap
+ * covers the reply generation (a key race); the caller falls back to a silent close.
+ */
+export async function openSealedAck(params: {
+  ack: SealedAckContext
+  identity: BotIdentityKey
+  streamId: string
+}): Promise<SealingState> {
+  const { ack, identity, streamId } = params
+  let replySsk: Uint8Array | undefined
+  for (const wrap of ack.wraps) {
+    if (wrap.keyGeneration !== ack.reply.keyGeneration) continue
+    replySsk = await unwrapStreamKey({
+      enc: base64ToBytes(wrap.wrapEnc),
+      ct: base64ToBytes(wrap.wrapCt),
+      recipientPrivateKey: identity.privateKey,
+      aad: buildWrapAad({ streamId, keyGeneration: wrap.keyGeneration, recipientKeyId: identity.publicKeyId }),
+    })
+    break
+  }
+  if (!replySsk) throw new Error("Sealed ack: no SSK wrap for the reply's key generation")
+  return {
+    streamId,
+    replyKeyGeneration: ack.reply.keyGeneration,
+    replySenderId: ack.reply.senderId,
+    replySsk,
+    callbackToken: "",
+  }
+}
+
 // ── stream-key provisioning (harness-created E2E scratchpads) ─────────────────
 
 /** One recipient a freshly-minted stream key is wrapped to. */

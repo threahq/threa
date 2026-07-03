@@ -636,19 +636,27 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
           AND w.recipient_key_id = ri.public_key_id
           AND w.key_generation = e.current_key_generation
       )
-      AND EXISTS (
-        SELECT 1 FROM stream_e2e_key_wraps w
-        -- messages has no workspace_id column (it is scoped by stream_id); the
-        -- join on the globally-unique source message id is the invocation's own
-        -- trigger, so it stays tenant-safe without one (as enclave claimNext does).
-        JOIN messages m ON m.id = i.source_message_id
-        JOIN bot_runtime_instances ri
-          ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${instanceId}
-        WHERE w.workspace_id = i.workspace_id
-          AND w.stream_id = i.root_stream_id
-          AND w.recipient_kind = 'bot'
-          AND w.recipient_key_id = ri.public_key_id
-          AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+      AND (
+        -- A session-control invocation (e.g. slash-model) has no sealed trigger
+        -- to open: its source_message_id is a command event, not a sealed
+        -- messages row, so only the reply/ack generation (checked above) must be
+        -- covered. Requiring trigger coverage here would leave every
+        -- session-control invocation on an E2E stream permanently unclaimable.
+        i.trigger = 'session-control'
+        OR EXISTS (
+          SELECT 1 FROM stream_e2e_key_wraps w
+          -- messages has no workspace_id column (it is scoped by stream_id); the
+          -- join on the globally-unique source message id is the invocation's own
+          -- trigger, so it stays tenant-safe without one (as enclave claimNext does).
+          JOIN messages m ON m.id = i.source_message_id
+          JOIN bot_runtime_instances ri
+            ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${instanceId}
+          WHERE w.workspace_id = i.workspace_id
+            AND w.stream_id = i.root_stream_id
+            AND w.recipient_kind = 'bot'
+            AND w.recipient_key_id = ri.public_key_id
+            AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+        )
       )
     )
   )`

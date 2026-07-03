@@ -2593,6 +2593,44 @@
                       "pattern": "^[a-zA-Z0-9_.\\-:]+$"
                     },
                     "additionalProperties": { "type": "string", "maxLength": 256 }
+                  },
+                  "sealedReply": {
+                    "type": "object",
+                    "properties": {
+                      "messageId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                      "ciphertext": {
+                        "type": "string",
+                        "minLength": 1,
+                        "format": "base64",
+                        "contentEncoding": "base64",
+                        "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                      },
+                      "envelope": {
+                        "type": "object",
+                        "properties": {
+                          "v": { "type": "number" },
+                          "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                          "iv": {
+                            "type": "string",
+                            "minLength": 1,
+                            "format": "base64",
+                            "contentEncoding": "base64",
+                            "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                          },
+                          "aad": {
+                            "type": "string",
+                            "minLength": 1,
+                            "format": "base64",
+                            "contentEncoding": "base64",
+                            "pattern": "^$|^(?:[0-9a-zA-Z+/]{4})*(?:(?:[0-9a-zA-Z+/]{2}==)|(?:[0-9a-zA-Z+/]{3}=))?$"
+                          }
+                        },
+                        "required": ["v", "keyGeneration", "iv", "aad"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["messageId", "ciphertext", "envelope"],
+                    "additionalProperties": false
                   }
                 },
                 "required": ["instanceId", "claimToken"],

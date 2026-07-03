@@ -297,6 +297,60 @@ describe("scrubSealedError", () => {
   })
 })
 
+describe("openSealedAck (session-control command acks)", () => {
+  test("unwraps the SSK and yields a SealingState that seals an ack the owner opens", async () => {
+    const { openSealedAck, parseSealedAckContext, sealReply } = await import("./sealed")
+    const bik = (await new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} }).ensure())!
+    const ssk = randomSsk()
+    const wrap = await ownerWrapSsk(
+      ssk,
+      bik.publicKeyBase64,
+      buildWrapAad({ streamId: STREAM_ID, keyGeneration: 2, recipientKeyId: bik.publicKeyId })
+    )
+    const ack = parseSealedAckContext({
+      wraps: [{ keyGeneration: 2, ...wrap }],
+      reply: { keyGeneration: 2, senderId: SENDER_ID },
+    })
+    expect(ack).toBeDefined()
+
+    const sealing = await openSealedAck({ ack: ack!, identity: bik, streamId: STREAM_ID })
+    expect(sealing.replyKeyGeneration).toBe(2)
+    expect(sealing.callbackToken).toBe("")
+
+    const body = await sealReply(sealing, "Model changed: `a` → `b`")
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: body.envelope,
+      ciphertext: base64ToBytes(body.ciphertext),
+    })
+    expect(opened).toBe("Model changed: `a` → `b`")
+    expect(new TextDecoder().decode(base64ToBytes(body.envelope.aad))).toBe(
+      `${STREAM_ID}|${body.messageId}|${SENDER_ID}`
+    )
+  })
+
+  test("throws when no wrap covers the reply generation", async () => {
+    const { openSealedAck } = await import("./sealed")
+    const bik = (await new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} }).ensure())!
+    await expect(
+      openSealedAck({
+        ack: { wraps: [], reply: { keyGeneration: 2, senderId: SENDER_ID } },
+        identity: bik,
+        streamId: STREAM_ID,
+      })
+    ).rejects.toThrow("no SSK wrap")
+  })
+
+  test.each([
+    ["missing reply", { wraps: [] }],
+    ["malformed wrap", { wraps: [{ keyGeneration: "x" }], reply: { keyGeneration: 0, senderId: "b" } }],
+    ["not an object", 42],
+  ])("parseSealedAckContext rejects %s", async (_label, input) => {
+    const { parseSealedAckContext } = await import("./sealed")
+    expect(parseSealedAckContext(input)).toBeUndefined()
+  })
+})
+
 describe("mintStreamKeyWraps (harness-created E2E scratchpads)", () => {
   test("each recipient's wrap unwraps to the same key under its own slot AAD", async () => {
     const owner = await ownerSuite.kem.generateKeyPair()

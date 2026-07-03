@@ -4,7 +4,9 @@ import {
   BikKeystore,
   BotRuntimeTransport,
   mintStreamKeyWraps,
+  openSealedAck,
   openSealedTurnContext,
+  parseSealedAckContext,
   parseSealedTurnContext,
   scrubSealedError,
   sealReply,
@@ -773,7 +775,44 @@ export class RemoteSession {
     await this.deliverTurn(invocation, buildSteerContent(parts))
   }
 
+  /**
+   * Seal a session-control command ack under the stream key, when the claim
+   * carried the SSK wraps (an E2E scratchpad). Returns undefined on a plaintext
+   * claim or a key race — the caller then takes the plaintext path, which
+   * closes silently on E2E rather than showing the command as failed.
+   */
+  private async sealSessionControlAck(
+    invocation: ClaimedInvocation,
+    markdown: string
+  ): Promise<SealedReplyBody | undefined> {
+    const ack = parseSealedAckContext(invocation.sealedAck)
+    if (!ack) return undefined
+    const identity = await this.bik.ensure()
+    if (!identity) return undefined
+    try {
+      const sealing = await openSealedAck({ ack, identity, streamId: invocation.rootStreamId })
+      return await sealReply(sealing, markdown)
+    } catch {
+      return undefined
+    }
+  }
+
   private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<void> {
+    // Sealed session-control ack on E2E: seal the confirmation under the stream
+    // key and post it as `sealedReply`. Falls through to the plaintext path when
+    // the bot can't seal (no wrap / key race), which silently closes on E2E.
+    const sealedReply = await this.sealSessionControlAck(invocation, markdown)
+    if (sealedReply) {
+      await this.client
+        .complete(invocation.id, {
+          instanceId: this.config.instanceId,
+          claimToken: invocation.claimToken,
+          sealedReply,
+          metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
+        })
+        .catch((error) => this.log(`sealed session-control ack failed: ${this.summarize(error)}`))
+      return
+    }
     try {
       await this.client.complete(invocation.id, {
         instanceId: this.config.instanceId,
