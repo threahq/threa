@@ -98,135 +98,160 @@ export async function upsertLoadedDraft(
    */
   opts?: { observedResolveSeq?: number }
 ): Promise<CachedDraft> {
-  const loadedId = await getLoadedDraftId(scope)
-  const existing = loadedId ? await db.drafts.get(loadedId) : undefined
-  // The draft id binds the seal AAD (in the message-id slot), so resolve it
-  // before sealing — a re-seal of the same draft reuses the id.
-  const id = existing?.id ?? generateLocalDraftId()
+  // The save's target identity is re-validated INSIDE the write transaction:
+  // a split ack can migrate the loaded draft's id (and a push ack can advance
+  // its baseVersion) between our reads and our write. Writing against the
+  // stale identity would resurrect the pre-split id as a duplicate row — one
+  // that re-pushes, re-splits, and breeds copies — so on a mismatch we retry
+  // against the new identity instead. Two retries bound the loop; a save that
+  // still conflicts is dropped (the content stands in the editor and the
+  // staging buffer, and the next keystroke re-saves).
+  let row!: CachedDraft
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const loadedId = await getLoadedDraftId(scope)
+    const existing = loadedId ? await db.drafts.get(loadedId) : undefined
+    // The draft id binds the seal AAD (in the message-id slot), so resolve it
+    // before sealing — a re-seal of the same draft reuses the id.
+    const id = existing?.id ?? generateLocalDraftId()
 
-  let row: CachedDraft
-  // The attachment refs the seal embedded — re-seeded into the decrypt cache
-  // below so the composer reads attachments back without a self-decrypt.
-  let sealedAttachmentRefs: SealedDraftFields["attachmentRefs"] = []
-  if (seal) {
-    const sealed = await sealDraftContent({
-      workspaceId,
-      senderId: seal.senderId,
-      streamId: seal.streamId,
-      draftId: id,
-      contentJson: fields.contentJson,
-      attachmentIds: fields.attachments.map((a) => a.id),
-    })
-    row = {
-      id,
-      workspaceId,
-      scope,
-      // E2EE-4: neither the plaintext body nor the plaintext attachment linkage
-      // lands on disk — the sealed `ciphertext` is the at-rest copy of both (the
-      // attachment key/iv/filename ride inside it as `attachmentRefs`), and
-      // `contentJson`/`attachments` are only empty placeholders. The composer
-      // reads body + attachments back from the seeded/decrypted in-memory cache.
-      contentJson: EMPTY_DOC,
-      attachments: [],
-      clientUpdatedAt: Date.now(),
-      baseVersion: existing?.baseVersion,
-      ciphertext: sealed.ciphertext,
-      envelope: sealed.envelope,
-      e2eVersion: sealed.e2eVersion,
+    // The attachment refs the seal embedded — re-seeded into the decrypt cache
+    // below so the composer reads attachments back without a self-decrypt.
+    let sealedAttachmentRefs: SealedDraftFields["attachmentRefs"] = []
+    if (seal) {
+      // Seal outside the transaction (async crypto would break a Dexie txn);
+      // the AAD binds `id`, which the txn re-validates before persisting.
+      const sealed = await sealDraftContent({
+        workspaceId,
+        senderId: seal.senderId,
+        streamId: seal.streamId,
+        draftId: id,
+        contentJson: fields.contentJson,
+        attachmentIds: fields.attachments.map((a) => a.id),
+      })
+      row = {
+        id,
+        workspaceId,
+        scope,
+        // E2EE-4: neither the plaintext body nor the plaintext attachment linkage
+        // lands on disk — the sealed `ciphertext` is the at-rest copy of both (the
+        // attachment key/iv/filename ride inside it as `attachmentRefs`), and
+        // `contentJson`/`attachments` are only empty placeholders. The composer
+        // reads body + attachments back from the seeded/decrypted in-memory cache.
+        contentJson: EMPTY_DOC,
+        attachments: [],
+        clientUpdatedAt: Date.now(),
+        baseVersion: existing?.baseVersion,
+        ciphertext: sealed.ciphertext,
+        envelope: sealed.envelope,
+        e2eVersion: sealed.e2eVersion,
+      }
+      sealedAttachmentRefs = sealed.attachmentRefs
+    } else {
+      const contextRefs = fields.contextRefs && fields.contextRefs.length > 0 ? fields.contextRefs : undefined
+      row = {
+        id,
+        workspaceId,
+        scope,
+        contentJson: fields.contentJson,
+        attachments: fields.attachments,
+        contextRefs,
+        clientUpdatedAt: Date.now(),
+        // Carry the sync bookkeeping forward. Without this, editing a confirmed
+        // draft would reset baseVersion to undefined, and the next push
+        // (expectedVersion 0) would collide with the server's existing row and the
+        // server would SPLIT it into a duplicate — once per keystroke after the
+        // first sync. Preserve it so the push CAS-updates in place instead.
+        baseVersion: existing?.baseVersion,
+        attachmentIds: existing?.attachmentIds,
+      }
     }
-    sealedAttachmentRefs = sealed.attachmentRefs
-  } else {
-    const contextRefs = fields.contextRefs && fields.contextRefs.length > 0 ? fields.contextRefs : undefined
-    row = {
-      id,
-      workspaceId,
-      scope,
-      contentJson: fields.contentJson,
-      attachments: fields.attachments,
-      contextRefs,
-      clientUpdatedAt: Date.now(),
-      // Carry the sync bookkeeping forward. Without this, editing a confirmed
-      // draft would reset baseVersion to undefined, and the next push
-      // (expectedVersion 0) would collide with the server's existing row and the
-      // server would SPLIT it into a duplicate — once per keystroke after the
-      // first sync. Preserve it so the push CAS-updates in place instead.
-      baseVersion: existing?.baseVersion,
-      attachmentIds: existing?.attachmentIds,
+
+    // One transaction for the row write, the pointer, AND the queued push: the
+    // pending op IS the dirty bit, so committing the row without it opens a
+    // window where an inbound echo reads this device as clean and overwrites
+    // the just-typed content.
+    //
+    // The resolve-seq guard runs inside too: if a resolve-on-send advanced the
+    // scope's sequence since this (debounced) save began, the save is a stale
+    // echo of just-sent content — creating a draft from it would resurrect the
+    // sent message into the composer. `recordScopeResolved` runs before the
+    // resolve clears the pointer, so by the time the cleared pointer routes a
+    // stale save into the create branch the bumped seq is visible.
+    const outcome = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+      if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return "dropped"
+      const livePointer = (await db.composerLoaded.get(scope))?.draftId ?? null
+      if (livePointer !== loadedId) return "conflict"
+      if (existing) {
+        const liveRow = await db.drafts.get(id)
+        if (!liveRow) return "conflict"
+        // Freshest sync bookkeeping wins: a push ack can advance baseVersion
+        // between our read and this txn, and writing the stale value back would
+        // make the next push CAS against an old version and split.
+        row = seal
+          ? { ...row, baseVersion: liveRow.baseVersion }
+          : { ...row, baseVersion: liveRow.baseVersion, attachmentIds: liveRow.attachmentIds }
+        await db.drafts.put(row)
+      } else {
+        await db.drafts.put(row)
+        await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+      }
+      // Mirror to the backend: a coalesced push that retries silently. The
+      // caller kicks the queue so it drains promptly.
+      await enqueueDraftUpsert(workspaceId, id)
+      return "persisted"
+    })
+
+    if (outcome === "conflict") continue
+    if (outcome === "dropped") return row
+    if (existing) {
+      upsertDraftInCache(workspaceId, row)
+    } else {
+      upsertLoadedDraftInCache(workspaceId, row, scope)
     }
-  }
 
-  let persisted = false
-  if (existing) {
-    await db.transaction("rw", db.drafts, async () => {
-      if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return
-      await db.drafts.put(row)
-      persisted = true
-    })
-    if (!persisted || isStaleObservedResolve(scope, opts?.observedResolveSeq)) return row
-    upsertDraftInCache(workspaceId, row)
-  } else {
-    // No loaded draft for this scope → this save would CREATE one and check it
-    // into the composer. If a resolve-on-send advanced the scope's resolve
-    // sequence since this (debounced) save began, the save is stale — a keystroke
-    // that predates the send — and creating a draft here would resurrect the
-    // just-sent content into the composer (the "it came back, so I sent it twice"
-    // race). `recordScopeResolved` runs before the resolve clears the pointer, so
-    // by the time the cleared pointer routes us here the bumped seq is visible.
-    // Only the debounced save passes `observedResolveSeq`; every other create
-    // path (share-target, attachments, fresh first keystroke) is unaffected.
-    // Check inside the write transaction too: a stale save may have already read
-    // the old loaded row before resolve-on-send deleted it, and writing that row
-    // afterward would stash an identical copy of the sent message.
-    await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
-      if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return
-      await db.drafts.put(row)
-      await db.composerLoaded.put({ scope, workspaceId, draftId: id })
-      persisted = true
-    })
-    if (!persisted || isStaleObservedResolve(scope, opts?.observedResolveSeq)) return row
-    upsertLoadedDraftInCache(workspaceId, row, scope)
+    if (seal) {
+      // Keep the read path serving the live plaintext: invalidate the reused
+      // id's stale entry, then seed the fresh body AND the attachment refs just
+      // sealed, so the next decrypt-on-read (and any remount) serves THIS
+      // edit's body + attachments, not a prior one. The refs carry the
+      // filename/mime/size the composer renders and the key/iv a later send
+      // re-seals.
+      invalidateDecryption(id)
+      seedDecryption(id, {
+        contentMarkdown: serializeToMarkdown(fields.contentJson),
+        contentJson: fields.contentJson,
+        attachmentRefs: sealedAttachmentRefs,
+        sources: [],
+      })
+    }
+    return row
   }
-
-  if (seal) {
-    // Keep the read path serving the live plaintext (see the doc comment above):
-    // invalidate the reused id's stale entry, then seed the fresh body AND the
-    // attachment refs just sealed, so the next decrypt-on-read (and any remount)
-    // serves THIS edit's body + attachments, not a prior one. The refs carry the
-    // filename/mime/size the composer renders and the key/iv a later send re-seals.
-    invalidateDecryption(id)
-    seedDecryption(id, {
-      contentMarkdown: serializeToMarkdown(fields.contentJson),
-      contentJson: fields.contentJson,
-      attachmentRefs: sealedAttachmentRefs,
-      sources: [],
-    })
-  }
-
-  // Mirror to the backend: a coalesced, debounced push that retries silently.
-  // The caller kicks the queue so it drains promptly.
-  await enqueueDraftUpsert(workspaceId, id)
   return row
 }
 
 /**
  * Remove the loaded draft for `scope` locally (IDB row + pointer + cache) and
- * report what was removed. Shared by `clearLoadedDraft` (discard) and
- * `resolveLoadedDraft` (send) — they differ only in how the removal is mirrored
- * to the backend, so the local teardown lives on one path (INV-43).
+ * mirror the removal to the backend via `mirror`. Shared by `clearLoadedDraft`
+ * (discard) and `resolveLoadedDraft` (send) — they differ only in how the
+ * removal is mirrored, so the local teardown lives on one path (INV-43).
  *
- * The row delete AND the pointer clear happen in ONE transaction. Reading
- * `baseVersion` here also keeps a mid-clear server confirmation from slipping
- * between read and delete (the "ghost draft" race). Crucially the pointer clear
- * is inside the txn too: otherwise a `draft:upserted` echo landing between the
- * row delete and the pointer clear would find no local row and re-insert the
- * just-cleared draft as an orphan stash entry (resurrection race).
+ * The pointer read, the row delete, the pointer clear, AND the mirror enqueue
+ * happen in ONE transaction. Reading `baseVersion` inside keeps a mid-clear
+ * server confirmation from slipping between read and delete (the "ghost draft"
+ * race); the pointer clear inside stops a `draft:upserted` echo landing
+ * mid-teardown from re-inserting the just-cleared draft as an orphan stash
+ * entry; and the enqueue inside means there is no instant where the row is
+ * gone but no queued op yet marks it as deleted/resolved (an echo in that gap
+ * would resurrect it).
  */
 async function removeLoadedDraftLocally(
   workspaceId: string,
-  scope: string
-): Promise<{ loadedId: string | null; baseVersion: number | undefined }> {
-  const loadedId = await getLoadedDraftId(scope)
-  const baseVersion = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+  scope: string,
+  mirror: (loadedId: string, baseVersion: number | undefined) => Promise<void>
+): Promise<void> {
+  let removedId: string | null = null
+  await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+    const loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
     let version: number | undefined
     if (loadedId) {
       const row = await db.drafts.get(loadedId)
@@ -234,11 +259,11 @@ async function removeLoadedDraftLocally(
       await db.drafts.delete(loadedId)
     }
     await db.composerLoaded.delete(scope)
-    return version
+    if (loadedId) await mirror(loadedId, version)
+    removedId = loadedId
   })
-  if (loadedId) deleteDraftFromCache(workspaceId, loadedId)
+  if (removedId) deleteDraftFromCache(workspaceId, removedId)
   setComposerLoadedInCache(workspaceId, scope, null)
-  return { loadedId, baseVersion }
 }
 
 /**
@@ -250,9 +275,9 @@ export async function clearLoadedDraft(workspaceId: string, scope: string): Prom
   // Drop the staging buffer first (synchronous) so a racing flush or a reload
   // can't recover the discarded content back into the composer.
   clearStagedDraft(workspaceId, scope)
-  const { loadedId, baseVersion } = await removeLoadedDraftLocally(workspaceId, scope)
-  // Sync side-effect after the local state is fully cleared.
-  if (loadedId) await syncDraftRemoval(workspaceId, loadedId, baseVersion)
+  await removeLoadedDraftLocally(workspaceId, scope, (loadedId, baseVersion) =>
+    syncDraftRemoval(workspaceId, loadedId, baseVersion)
+  )
 }
 
 /**
@@ -273,15 +298,14 @@ export async function resolveLoadedDraft(workspaceId: string, scope: string): Pr
   // that would route a racing save into the create path — so the save sees the
   // advanced seq and drops its create.
   recordScopeResolved(scope)
-  const { loadedId, baseVersion } = await removeLoadedDraftLocally(workspaceId, scope)
-  if (loadedId) {
+  await removeLoadedDraftLocally(workspaceId, scope, async (loadedId, baseVersion) => {
     // Remember this draft's (id, version) so an inbound echo of our own push, or a
     // reconnect bootstrap that re-seeds the still-present server row before the
     // resolve op drains, is dropped rather than resurrected as a stash entry. A
     // strictly newer version from another device is NOT suppressed (no-loss).
     markDraftResolved(loadedId, baseVersion ?? 0)
     await syncDraftResolution(workspaceId, loadedId, baseVersion)
-  }
+  })
 }
 
 /**
@@ -290,20 +314,20 @@ export async function resolveLoadedDraft(workspaceId: string, scope: string): Pr
  */
 export async function purgeScopeDrafts(workspaceId: string, scope: string): Promise<void> {
   clearStagedDraft(workspaceId, scope)
-  // Read + delete the rows AND clear the loaded pointer atomically: `baseVersion`
-  // reflects any server confirmation that landed before the delete (ghost-draft
-  // race), and clearing the pointer inside the txn prevents an inbound echo from
-  // re-inserting a just-purged draft as an orphan (resurrection race).
-  const rows = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+  // Read + delete the rows, clear the loaded pointer, AND enqueue the server
+  // deletes atomically: `baseVersion` reflects any server confirmation that
+  // landed before the delete (ghost-draft race), and an inbound echo can never
+  // land in an instant where a row is gone with no queued delete to suppress
+  // its resurrection.
+  const rows = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
     const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
     for (const row of found) await db.drafts.delete(row.id)
     await db.composerLoaded.delete(scope)
+    for (const row of found) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
     return found
   })
   for (const row of rows) deleteDraftFromCache(workspaceId, row.id)
   setComposerLoadedInCache(workspaceId, scope, null)
-  // Sync side-effects after the local state is fully cleared.
-  for (const row of rows) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
 }
 
 /**
@@ -320,7 +344,7 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
   // only ever clears a stray entry written before the stream was known to be E2E.
   clearStagedDraft(workspaceId, scope)
   let clearedPointer = false
-  const removed = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+  const removed = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
     const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
     const plaintext = found.filter((row) => !row.ciphertext)
     const loaded = await db.composerLoaded.get(scope)
@@ -329,12 +353,13 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
       await db.composerLoaded.delete(scope)
       clearedPointer = true
     }
+    // Mirror the removal of any plaintext copy that reached the server, inside
+    // the same txn so an echo can't resurrect a row mid-purge.
+    for (const row of plaintext) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
     return plaintext
   })
   for (const row of removed) deleteDraftFromCache(workspaceId, row.id)
   if (clearedPointer) setComposerLoadedInCache(workspaceId, scope, null)
-  // Mirror the removal of any plaintext copy that reached the server too.
-  for (const row of removed) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
 }
 
 /**
@@ -395,8 +420,12 @@ export async function restoreStashedDraftToComposer(
 export async function rescopeScopeDrafts(workspaceId: string, fromScope: string, toScope: string): Promise<void> {
   const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
   for (const row of rows) {
-    await migrateLocalDraftScope(workspaceId, fromScope, { ...row, scope: toScope })
-    await enqueueDraftUpsert(workspaceId, row.id)
+    // Move + enqueue in one txn so the re-scoped row is never visible without
+    // its dirty bit (an inbound echo in that gap could overwrite the move).
+    await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+      await migrateLocalDraftScope(workspaceId, fromScope, { ...row, scope: toScope })
+      await enqueueDraftUpsert(workspaceId, row.id)
+    })
   }
 }
 

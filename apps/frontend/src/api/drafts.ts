@@ -1,5 +1,6 @@
 import { api } from "./client"
 import type {
+  DeleteDraftInput,
   DraftListResponse,
   ResolveDraftInput,
   ResolveDraftResponse,
@@ -44,8 +45,14 @@ export const draftsApi = {
     return api.post<ResolveDraftResponse>(`/api/workspaces/${workspaceId}/drafts/${id}/resolve`, input)
   },
 
-  /** Unconditional soft-delete (idempotent on an already-gone draft). */
-  async delete(workspaceId: string, id: string): Promise<void> {
-    await api.delete<{ ok: true }>(`/api/workspaces/${workspaceId}/drafts/${id}`)
+  /**
+   * Unconditional soft-delete (idempotent on an already-gone draft). The body
+   * carries this device's in-flight write ids so a push that lands after the
+   * tombstone is recognized as discarded content and dropped, not resurrected.
+   */
+  async delete(workspaceId: string, id: string, input?: DeleteDraftInput): Promise<void> {
+    await api.delete<{ ok: true }>(`/api/workspaces/${workspaceId}/drafts/${id}`, {
+      body: input ? JSON.stringify(input) : undefined,
+    })
   },
 }

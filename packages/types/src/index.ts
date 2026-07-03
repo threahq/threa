@@ -516,6 +516,7 @@ export type {
   UpsertDraftResponse,
   ResolveDraftInput,
   ResolveDraftResponse,
+  DeleteDraftInput,
   DraftListResponse,
   DraftUpsertedPayload,
   DraftDeletedPayload,
@@ -565,7 +566,8 @@ export { DEVICE_KEY_LENGTH } from "./api"
 export { CommandKinds, CommandScopes } from "./api"
 
 // Draft scope builders (single source of truth for the scope string format)
-export { draftStreamScope, draftThreadScope } from "./api"
+// and the shared bootstrap cap (the client must know when a snapshot is truncated)
+export { draftStreamScope, draftThreadScope, MAX_DRAFTS_PER_USER } from "./api"
 
 // Discuss-with-Ariadne client-action id (single source of truth)
 export const DISCUSS_WITH_ARIADNE_COMMAND = "discuss-with-ariadne" as const

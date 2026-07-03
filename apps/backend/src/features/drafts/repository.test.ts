@@ -21,6 +21,7 @@ const DRAFT_ROW = {
   e2e_version: null,
   version: 1,
   last_client_write_id: "write_1",
+  superseded_write_ids: null,
   client_updated_at: NOW,
   created_at: NOW,
   updated_at: NOW,
@@ -108,7 +109,7 @@ describe("DraftsRepository.findByIdForUpdate", () => {
 describe("DraftsRepository.casUpdate", () => {
   afterEach(() => mock.restore())
 
-  it("gates the update on version and liveness, and bumps the version (INV-20)", async () => {
+  it("gates the update on version-or-own-lineage and liveness, and bumps the version (INV-20)", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured)
 
@@ -117,6 +118,7 @@ describe("DraftsRepository.casUpdate", () => {
       userId: "usr_1",
       id: "draft_01",
       expectedVersion: 3,
+      ownWriteIds: ["write_2", "write_prior"],
       rootStreamId: "stream_1",
       contentJson: { type: "doc", content: [] },
       contentMarkdown: "edited",
@@ -134,11 +136,15 @@ describe("DraftsRepository.casUpdate", () => {
     expect(captured.text).toContain("version = version + 1")
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).toContain("version =")
+    // Lost-ack escape hatch: a row last written by this device's own lineage
+    // updates in place even when expectedVersion trails.
+    expect(captured.text).toContain("last_client_write_id = ANY")
     expect(captured.values).toContain(3)
     expect(captured.values).toContain("write_2")
+    expect(captured.values).toContainEqual(["write_2", "write_prior"])
   })
 
-  it("returns null when the version no longer matches (drift)", async () => {
+  it("returns null when the version no longer matches and the lineage is foreign (drift)", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [])
 
@@ -147,6 +153,7 @@ describe("DraftsRepository.casUpdate", () => {
       userId: "usr_1",
       id: "draft_01",
       expectedVersion: 99,
+      ownWriteIds: ["write_3"],
       rootStreamId: null,
       contentJson: { type: "doc", content: [] },
       contentMarkdown: "x",
@@ -183,8 +190,12 @@ describe("DraftsRepository.softDeleteCas", () => {
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).toContain("version =")
     expect(captured.text).toContain("last_client_write_id = ANY")
+    // The superseded ids are persisted on the tombstone so a write from that
+    // lineage landing AFTER the resolve is dropped instead of zombie-split.
+    expect(captured.text).toContain("superseded_write_ids =")
     expect(captured.values).toContain(2)
     expect(captured.values).toContainEqual(["write_sent"])
+    expect(captured.values).toContain(JSON.stringify(["write_sent"]))
   })
 })
 
@@ -205,6 +216,16 @@ describe("DraftsRepository.softDelete", () => {
     expect(captured.values).toContain("draft_01")
     expect(captured.values).toContain("ws_1")
     expect(captured.values).toContain("usr_1")
+  })
+
+  it("persists the discarding device's superseded write ids on the tombstone", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured)
+
+    await DraftsRepository.softDelete(db, "ws_1", "usr_1", "draft_01", ["write_inflight"])
+
+    expect(captured.text).toContain("superseded_write_ids")
+    expect(captured.values).toContain(JSON.stringify(["write_inflight"]))
   })
 })
 

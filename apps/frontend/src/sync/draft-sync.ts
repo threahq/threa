@@ -8,14 +8,16 @@ import {
   setComposerLoadedInCache,
   upsertDraftInCache,
 } from "@/stores/draft-store"
-import type {
-  Draft,
-  DraftDeletedPayload,
-  DraftUpsertedPayload,
-  ResolveDraftInput,
-  ResolveDraftResponse,
-  UpsertDraftInput,
-  UpsertDraftResponse,
+import {
+  MAX_DRAFTS_PER_USER,
+  type DeleteDraftInput,
+  type Draft,
+  type DraftDeletedPayload,
+  type DraftUpsertedPayload,
+  type ResolveDraftInput,
+  type ResolveDraftResponse,
+  type UpsertDraftInput,
+  type UpsertDraftResponse,
 } from "@threa/types"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { clearStagedDraft, listStagedDrafts, type StagedDraft } from "@/lib/drafts/draft-staging"
@@ -51,7 +53,7 @@ import { isResolvedDraftEcho } from "./draft-resolution-guard"
 export interface DraftsServiceLike {
   upsert: (workspaceId: string, id: string, input: UpsertDraftInput) => Promise<UpsertDraftResponse>
   resolve: (workspaceId: string, id: string, input: ResolveDraftInput) => Promise<ResolveDraftResponse>
-  delete: (workspaceId: string, id: string) => Promise<void>
+  delete: (workspaceId: string, id: string, input?: DeleteDraftInput) => Promise<void>
 }
 
 // ============================================================================
@@ -136,10 +138,16 @@ export async function deleteLocalDraft(workspaceId: string, id: string): Promise
  * pointer when it pointed here) and queues an unconditional, idempotent server
  * delete so the removal propagates to the author's other devices. No-op on an
  * already-gone row. Callers kick the operation queue so the delete drains now.
+ *
+ * Row removal and the delete-op enqueue share ONE transaction: an inbound
+ * upsert echo landing between them would see neither the row nor the queued
+ * delete and resurrect the draft the user just removed.
  */
 export async function deleteDraftById(workspaceId: string, id: string): Promise<void> {
-  const removed = await deleteLocalDraft(workspaceId, id)
-  if (removed) await syncDraftRemoval(workspaceId, id, removed.baseVersion)
+  await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
+    const removed = await deleteLocalDraft(workspaceId, id)
+    if (removed) await syncDraftRemoval(workspaceId, id, removed.baseVersion)
+  })
 }
 
 /**
@@ -178,15 +186,24 @@ export async function migrateLocalDraftScope(
  * optimistic-message id-swap in `stream-sync.ts`: the new row is written before
  * the old one is removed, so a live Dexie query never observes a frame with
  * neither present.
+ *
+ * The source row is re-read INSIDE the transaction: a composer save can commit
+ * between the caller's read (before its network round-trip) and this
+ * transaction, and building the target from that stale copy would silently
+ * drop the newer keystrokes from IDB. Only the identity fields (`id`,
+ * `baseVersion`) come from `toRow`; content is whatever is live at commit time.
  */
 export async function migrateLocalDraftId(workspaceId: string, fromId: string, toRow: CachedDraft): Promise<void> {
   let repointedScope: string | null = null
+  let finalRow: CachedDraft = toRow
   await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
-    await db.drafts.put(toRow)
-    const loaded = await db.composerLoaded.get(toRow.scope)
+    const live = await db.drafts.get(fromId)
+    finalRow = live ? { ...live, id: toRow.id, baseVersion: toRow.baseVersion } : toRow
+    await db.drafts.put(finalRow)
+    const loaded = await db.composerLoaded.get(finalRow.scope)
     if (loaded?.draftId === fromId) {
-      await db.composerLoaded.put({ ...loaded, draftId: toRow.id })
-      repointedScope = toRow.scope
+      await db.composerLoaded.put({ ...loaded, draftId: finalRow.id })
+      repointedScope = finalRow.scope
     }
     await db.drafts.delete(fromId)
   })
@@ -194,7 +211,7 @@ export async function migrateLocalDraftId(workspaceId: string, fromId: string, t
   // the loaded draft missing mid-migration — i.e. the composer never flashes
   // empty during a server split or a remote-delete preserve.
   if (hasSeededDraftCache(workspaceId)) {
-    migrateLoadedDraftInCache(workspaceId, fromId, toRow, repointedScope)
+    migrateLoadedDraftInCache(workspaceId, fromId, finalRow, repointedScope)
   }
 }
 
@@ -264,21 +281,55 @@ async function hasPendingSupersededWriteId(writeId: string): Promise<boolean> {
 }
 
 /**
+ * Bound on the accumulated write lineage carried by one op. The chain only
+ * grows when a save replaces an op that already ATTEMPTED a push (at most one
+ * in flight at a time), so real chains are 1-2 long; the cap is a backstop
+ * matched to the server schema's bound, keeping the most recent ids (the ones
+ * most likely to be the server's last accepted write).
+ */
+const MAX_PRIOR_WRITE_IDS = 64
+
+/** The op's full idempotency lineage: its writeId plus all carried prior ids. */
+function opWriteLineage(op: PendingOperation): string[] {
+  const ids: string[] = []
+  if (typeof op.payload.writeId === "string") ids.push(op.payload.writeId)
+  if (Array.isArray(op.payload.priorWriteIds)) {
+    for (const id of op.payload.priorWriteIds) {
+      if (typeof id === "string") ids.push(id)
+    }
+  }
+  return ids
+}
+
+/**
  * Enqueue a debounced background push for a draft. Coalesces to at most one
- * queued `upsert_draft` op per id: the op reads the draft's current content
- * fresh at drain time, so a superseded op would only re-push identical state.
- * A fresh `writeId` (per-push idempotency key, reused across that op's retries)
- * means a lost ack never causes a spurious server-side split.
+ * queued `upsert_draft` op per id — the op reads the draft's current content
+ * fresh at drain time, so a queued-but-never-attempted op is simply KEPT: its
+ * `writeId` (per-push idempotency key, reused across retries) stays stable and
+ * a lost ack can never read as drift.
+ *
+ * An op that already attempted a push (`startedAt` set) may have reached the
+ * server even though its result was lost, so it is replaced by a fresh op that
+ * carries the old lineage in `priorWriteIds`. The server treats a row whose
+ * last accepted write is any of those ids as "no other device wrote since" and
+ * updates in place — without this, a committed-but-unacked push followed by
+ * more typing splits the draft on a single device.
  */
 export async function enqueueDraftUpsert(workspaceId: string, draftId: string): Promise<void> {
   await db.transaction("rw", db.pendingOperations, async () => {
     const dupes = await pendingDraftOps("upsert_draft", draftId)
+    if (dupes.length > 0 && dupes.every((op) => op.startedAt === undefined)) {
+      // Never attempted — the op will read the latest content at drain, and its
+      // writeId must stay stable. Nothing to do.
+      return
+    }
+    const priorWriteIds = [...new Set(dupes.flatMap(opWriteLineage))].slice(0, MAX_PRIOR_WRITE_IDS)
     if (dupes.length > 0) await db.pendingOperations.bulkDelete(dupes.map((op) => op.id))
     await db.pendingOperations.add({
       id: operationId(),
       workspaceId,
       type: "upsert_draft",
-      payload: { draftId, writeId: writeId() },
+      payload: { draftId, writeId: writeId(), priorWriteIds },
       createdAt: Date.now(),
       retryCount: 0,
     })
@@ -291,19 +342,33 @@ export async function enqueueDraftUpsert(workspaceId: string, draftId: string): 
  * never-confirmed local drafts: their queued upsert may already be in-flight, so
  * an idempotent delete is the durable cleanup/suppression marker that prevents a
  * late server insert from reappearing on the next socket/bootstrap pass.
+ *
+ * The write lineage of every dropped upsert (and of any delete op being
+ * replaced) rides along as `supersededWriteIds`, persisted onto the server
+ * tombstone: a push from that lineage landing AFTER the delete is discarded
+ * content and gets dropped instead of splitting into a zombie.
  */
 export async function enqueueDraftDelete(workspaceId: string, draftId: string): Promise<void> {
   await db.transaction("rw", db.pendingOperations, async () => {
-    const stale = [
-      ...(await pendingDraftOps("upsert_draft", draftId)),
-      ...(await pendingDraftOps("delete_draft", draftId)),
-    ]
+    const upserts = await pendingDraftOps("upsert_draft", draftId)
+    const deletes = await pendingDraftOps("delete_draft", draftId)
+    const supersededWriteIds = [
+      ...new Set([
+        ...upserts.flatMap(opWriteLineage),
+        ...deletes.flatMap((op) =>
+          Array.isArray(op.payload.supersededWriteIds)
+            ? op.payload.supersededWriteIds.filter((id): id is string => typeof id === "string")
+            : []
+        ),
+      ]),
+    ].slice(0, MAX_PRIOR_WRITE_IDS)
+    const stale = [...upserts, ...deletes]
     if (stale.length > 0) await db.pendingOperations.bulkDelete(stale.map((op) => op.id))
     await db.pendingOperations.add({
       id: operationId(),
       workspaceId,
       type: "delete_draft",
-      payload: { draftId },
+      payload: { draftId, supersededWriteIds },
       createdAt: Date.now(),
       retryCount: 0,
     })
@@ -330,13 +395,22 @@ export async function enqueueDraftResolve(
 ): Promise<void> {
   await db.transaction("rw", db.pendingOperations, async () => {
     const pendingUpserts = await pendingDraftOps("upsert_draft", draftId)
-    const supersededWriteIds = pendingUpserts
-      .map((op) => op.payload.writeId)
-      .filter((value): value is string => typeof value === "string" && value.length > 0)
-    const stale = [
-      ...(await pendingDraftOps("resolve_draft", draftId)),
-      ...(await pendingDraftOps("delete_draft", draftId)),
-    ]
+    const staleResolves = await pendingDraftOps("resolve_draft", draftId)
+    // The full lineage of every pending push (writeId + carried priors), merged
+    // with any replaced resolve op's list — a replaced resolve may reference an
+    // op the queue has since consumed, and every id in it still names this
+    // device's own sent-draft writes.
+    const supersededWriteIds = [
+      ...new Set([
+        ...pendingUpserts.flatMap(opWriteLineage),
+        ...staleResolves.flatMap((op) =>
+          Array.isArray(op.payload.supersededWriteIds)
+            ? op.payload.supersededWriteIds.filter((id): id is string => typeof id === "string")
+            : []
+        ),
+      ]),
+    ].slice(0, MAX_PRIOR_WRITE_IDS)
+    const stale = [...staleResolves, ...(await pendingDraftOps("delete_draft", draftId))]
     if (stale.length > 0) await db.pendingOperations.bulkDelete(stale.map((op) => op.id))
     await db.pendingOperations.add({
       id: operationId(),
@@ -563,6 +637,10 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
     )
   }
 
+  // A snapshot at the server cap may be truncated: absence no longer proves a
+  // draft was deleted elsewhere, so the sweep below must not drop local rows.
+  const snapshotTruncated = drafts.length >= MAX_DRAFTS_PER_USER
+
   const localDrafts = await db.drafts.where("workspaceId").equals(workspaceId).toArray()
   for (const local of localDrafts) {
     if (serverIds.has(local.id)) continue
@@ -571,7 +649,7 @@ export async function applyDraftsBootstrap(workspaceId: string, drafts: Draft[])
     if (confirmed) {
       // Tombstoned on another device — drop it, unless we have unpushed edits
       // (those re-upsert and split server-side rather than vanish).
-      if (!queued) await deleteLocalDraft(workspaceId, local.id)
+      if (!queued && !snapshotTruncated) await deleteLocalDraft(workspaceId, local.id)
     } else if (!queued) {
       // Never synced (incl. pre-Stage-3 rows) — mirror it up.
       await enqueueDraftUpsert(workspaceId, local.id)
@@ -670,14 +748,17 @@ async function applyStagedDraft(workspaceId: string, entry: StagedDraft): Promis
 /**
  * Push a draft's current local state to the backend (operation-queue replay of
  * `upsert_draft`). Reads the draft fresh so a coalesced op always mirrors the
- * latest content, and pushes `expectedVersion = baseVersion`. Throws on failure
- * so the queue retries with backoff — never surfaced to the user.
+ * latest content, and pushes `expectedVersion = baseVersion` plus the op's
+ * carried write lineage (`priorWriteIds`) so a lost ack of a superseded push
+ * updates in place instead of splitting. Throws on failure so the queue
+ * retries with backoff — never surfaced to the user.
  */
 export async function executeDraftUpsert(
   workspaceId: string,
   draftId: string,
   writeIdValue: string,
-  service: DraftsServiceLike
+  service: DraftsServiceLike,
+  priorWriteIds: string[] = []
 ): Promise<void> {
   const row = await db.drafts.get(draftId)
   if (!row) return // discarded locally after the op was enqueued — nothing to push
@@ -699,6 +780,7 @@ export async function executeDraftUpsert(
     rootStreamId: null,
     expectedVersion: row.baseVersion ?? 0,
     writeId: writeIdValue,
+    priorWriteIds,
     clientUpdatedAt: new Date(row.clientUpdatedAt).toISOString(),
     // An E2E draft pushes its sealed body, never plaintext — the server stores
     // the ciphertext opaquely and the upsert schema rejects carrying both.
@@ -715,7 +797,6 @@ export async function executeDraftUpsert(
   if (res.split) {
     // The server kept the existing row (the other device's content) under
     // `draftId` and minted `res.draft.id` for ours — migrate our local id to it.
-    // The original id's divergent server row arrives via its own socket event.
     const current = await db.drafts.get(draftId)
     if (!current) {
       // Removed locally while the push was in flight. A sent draft gets a CAS
@@ -727,6 +808,7 @@ export async function executeDraftUpsert(
       } else {
         await enqueueDraftDelete(workspaceId, res.draft.id)
       }
+      await seedKeptDraft(res, workspaceId)
       return
     }
     await migrateLocalDraftId(workspaceId, draftId, {
@@ -739,6 +821,7 @@ export async function executeDraftUpsert(
     // the new id — push them so they reach the server instead of stranding locally.
     await cancelPendingDraftUpsert(draftId)
     await enqueueDraftUpsert(workspaceId, res.draft.id)
+    await seedKeptDraft(res, workspaceId)
     return
   }
 
@@ -768,6 +851,18 @@ export async function executeDraftUpsert(
 }
 
 /**
+ * Seed the row the server kept on a split (the other copy's content). This
+ * device ignored that row's socket echo while it was dirty, so without the
+ * seed it would stay invisible until the next reconnect bootstrap. Routed
+ * through the normal inbound apply so every suppression guard (resolved echo,
+ * pending delete/resolve, dirty) still holds.
+ */
+async function seedKeptDraft(res: UpsertDraftResponse, workspaceId: string): Promise<void> {
+  if (!res.keptDraft) return
+  await applyDraftUpserted({ workspaceId, targetUserId: res.keptDraft.userId, draft: res.keptDraft }, workspaceId)
+}
+
+/**
  * Resolve a draft on the backend after its message sent (operation-queue replay
  * of `resolve_draft`). CAS-guarded by `expectedVersion` plus superseded write
  * ids: the server keeps unrelated drift (`resolved: false`) rather than deleting
@@ -787,11 +882,17 @@ export async function executeDraftResolve(
   await service.resolve(workspaceId, draftId, { expectedVersion, supersededWriteIds })
 }
 
-/** Push a draft deletion to the backend (operation-queue replay of `delete_draft`). */
+/**
+ * Push a draft deletion to the backend (operation-queue replay of
+ * `delete_draft`). `supersededWriteIds` is the discarding device's in-flight
+ * write lineage, persisted onto the tombstone so a late-landing push of the
+ * discarded content is dropped rather than resurrected as a zombie.
+ */
 export async function executeDraftDelete(
   workspaceId: string,
   draftId: string,
-  service: DraftsServiceLike
+  service: DraftsServiceLike,
+  supersededWriteIds: string[] = []
 ): Promise<void> {
-  await service.delete(workspaceId, draftId)
+  await service.delete(workspaceId, draftId, { supersededWriteIds })
 }

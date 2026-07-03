@@ -45,10 +45,12 @@ drafts are not.** Everything below is in service of that rule holding under reco
 lost acks, sends, and offline edits.
 
 Concurrency rides on an integer `version` with compare-and-swap, the same primitive
-`scheduled_messages` uses (INV-20). Delivery rides on the outbox (INV-4/7) into the
-author-scoped socket room, and the client reconciles a fresh snapshot on every
-reconnect (INV-53). The feature reuses those three proven subsystems and adds only the
-split behavior on top.
+`scheduled_messages` uses (INV-20) — plus a per-device **write lineage** (the push's
+`writeId` and the superseded `priorWriteIds` before it) that lets the server distinguish
+"my own write whose ack I lost" from "another device wrote": only the latter is drift,
+so only the latter splits. Delivery rides on the outbox (INV-4/7) into the author-scoped
+socket room, and the client reconciles a fresh snapshot on every reconnect (INV-53). The
+feature reuses those proven subsystems and adds only the split behavior on top.
 
 If you only need the mental model, you can stop here.
 
@@ -77,20 +79,34 @@ the device that just sent a draft can recognize its own late echo.
 ### The split-on-drift upsert
 
 The one endpoint that matters is `PUT /drafts/:id`, served by `DraftsService.upsert`
-(`apps/backend/src/features/drafts/service.ts:87`). It runs in a single transaction and
-locks the row by id so concurrent pushes serialize:
+(`apps/backend/src/features/drafts/service.ts`). It runs in a single transaction and
+locks the row by id so concurrent pushes serialize. The decisive question at every
+branch is **"who wrote this row last?"** — answered by the device's _write lineage_:
+the push's `writeId` plus the `priorWriteIds` of its own earlier pushes whose acks were
+never observed (see below).
 
 1. `insertIfAbsent` (`ON CONFLICT (id) DO NOTHING`). A brand-new id lands at version 1.
    Done.
-2. Otherwise lock the existing row. If its `last_client_write_id` equals the incoming
-   `writeId`, this is a lost-ack retry of a write the server already accepted, so it
-   returns the row unchanged (no spurious split).
-3. Otherwise compare-and-swap on `expectedVersion`. A match bumps the version and
-   updates in place: the happy path.
-4. Otherwise (the version drifted, or the original id is a resolved tombstone) it
+2. Otherwise lock the existing row. A **tombstoned** row drops the push (no split, no
+   zombie) when the push is a never-confirmed first insert (`expectedVersion` 0), or
+   when the tombstone's `last_client_write_id` / persisted `superseded_write_ids`
+   intersect the incoming lineage — that content was already sent or discarded, and a
+   late-landing copy of it must not resurrect. Only a lineage the tombstone does not
+   know (another device's unpushed edits) falls through to the split.
+3. Otherwise compare-and-swap: `version = expectedVersion` **or**
+   `last_client_write_id ∈ lineage`. The version match is the happy path; the lineage
+   match is the lost-ack path — the last accepted write was this same device's, no one
+   else wrote in between, so applying the incoming content in place IS "update the one
+   that is live". Both bump the version. The lineage match applies the content rather
+   than acking-and-discarding it, because a retry can carry newer keystrokes than the
+   write whose ack was lost.
+4. Otherwise (genuine drift: another device wrote since, or an unrelated tombstone) it
    **splits**: the existing row is left untouched and the incoming content is inserted
    under a freshly minted `draft_` id at version 1. The response carries
-   `{ split: true, originalId }` so the client migrates its local state to the new id.
+   `{ split: true, originalId }` so the client migrates its local state to the new id,
+   plus `keptDraft` (the untouched row, when live) so the pushing device — which ignored
+   that row's socket echo while it was dirty — can seed the other copy as a stash entry
+   immediately instead of waiting for the next bootstrap.
 
 Every state-changing branch writes a `draft:upserted` outbox row in the same transaction
 (INV-4/7), targeted at the owner's user id. There is no 409 and no merge UI: drift always
@@ -104,18 +120,28 @@ in-memory draft-store cache immediately, then enqueues an `upsert_draft` operati
 offline queue. The queue drains serially under a Web Lock, retries silently with backoff,
 and never surfaces a failure to the user.
 
-Two ideas make the push safe:
+Three ideas make the push safe:
 
 - **The dirty bit is a queued op, not a row flag.** A draft has unpushed edits exactly
   when a pending `upsert_draft` op exists for its id (`hasPendingDraftUpsert`). Read live
   from the op table, it cannot drift out of sync with reality the way a stored flag could.
+  Every write path commits the row **and** its op in one IDB transaction, so there is no
+  instant where an inbound echo could read a just-edited draft as clean and overwrite it.
 - **Content is read fresh at drain, and ops coalesce to one per id.** `executeDraftUpsert`
-  (`apps/frontend/src/sync/draft-sync.ts:548`) re-reads the draft when the op runs and
+  (`apps/frontend/src/sync/draft-sync.ts`) re-reads the draft when the op runs and
   pushes `expectedVersion = baseVersion` (the last server-confirmed version). On a clean
   ack it advances only `baseVersion`, never clobbering content typed since the push; on
   `split: true` it migrates the local id to the server-minted one. Because the queue is
   single-flighted, a user's own rapid sequential edits confirm in order and never
   self-split.
+- **The write lineage survives coalescing.** A queued op that never attempted a push is
+  simply kept — its `writeId` stays stable, so a retry is always recognizable. An op
+  that _did_ attempt (`startedAt`, stamped by the queue before execution) may have
+  reached the server even though the client never saw the ack; replacing it chains its
+  writeId (and its own priors) into the successor's `priorWriteIds`. That chain is what
+  lets the server tell "my own unacked write" from "another device wrote" — without it,
+  typing during a flaky push splits the draft on a single device, which was the root
+  cause of the spurious-duplicate bug this section used to hide.
 
 Inbound events arrive on the `user:{userId}` room and go through `applyDraftUpserted`
 (`draft-sync.ts:395`), which mirrors the server's rule client-side. No local row means
@@ -129,12 +155,13 @@ edits, in which case it preserves them under a new id rather than losing them.
 ### Bootstrap on every reconnect
 
 `SyncEngine.syncDrafts` calls `GET /drafts` and feeds the snapshot through
-`applyDraftsBootstrap` (`draft-sync.ts:491`) on every connect and reconnect (INV-53).
+`applyDraftsBootstrap` (`draft-sync.ts`) on every connect and reconnect (INV-53).
 Each server draft goes through the same drift-aware apply. Locally-confirmed drafts
 absent from the snapshot were resolved or deleted elsewhere and are dropped, _unless_
-they still carry unpushed edits. Never-confirmed local drafts (including any authored
-before sync existed) are queued for their first push. The whole pass is idempotent, so
-re-running it on reconnect is always safe.
+they still carry unpushed edits, or the snapshot is truncated at the shared
+`MAX_DRAFTS_PER_USER` cap (absence then proves nothing). Never-confirmed local drafts
+(including any authored before sync existed) are queued for their first push. The whole
+pass is idempotent, so re-running it on reconnect is always safe.
 
 That is the core. The rest is reference for when you are working on the edges.
 
@@ -188,15 +215,25 @@ edited the draft after this send started, an unconditional delete would destroy 
 work. So the send path calls `resolve`, not `delete`:
 `POST /drafts/:id/resolve` soft-deletes **only if** `version` still matches
 `expectedVersion`, or if the row's `last_client_write_id` is one this send already
-superseded (`DraftsService.resolve`, `service.ts:169`). On unrelated drift the server
-keeps the row and reports `resolved: false`, and the drifted copy survives as a stash
-entry. Explicit discard (stashing away, emptying the composer, deleting from the Drafts
-view) keeps the unconditional `delete`, which is idempotent on an already-gone row.
-Never-confirmed drafts (`baseVersion = 0`) also use `delete`: there is no server version
-to CAS against. To make delete-before-insert ordering safe, `DraftsRepository.softDelete`
-plants a negative tombstone even when the row is absent; a late first upsert
-(`expectedVersion = 0`) that collides with that tombstone is dropped rather than split
-into a live zombie.
+superseded (`DraftsService.resolve`). On unrelated drift the server keeps the row and
+reports `resolved: false`, and the drifted copy survives as a stash entry.
+
+The superseded write ids are **persisted on the tombstone** (`superseded_write_ids`),
+not just checked at resolve time. That covers the nastiest ordering: a push that left
+the device before the send but reaches the server _after_ the tombstone (the client
+aborted the request; the server processed it anyway). Without the persisted set, that
+late write hit "tombstoned + version drift" and split into a live duplicate of content
+the user had already sent — the zombie-draft bug. With it, the upsert path recognizes
+the lineage and drops the write.
+
+Explicit discard (stashing away, emptying the composer, deleting from the Drafts view)
+keeps the unconditional `delete`, which is idempotent on an already-gone row and now
+carries the same `supersededWriteIds` (collected from the upsert ops it cancels) for the
+same reason. Never-confirmed drafts (`baseVersion = 0`) also use `delete`: there is no
+server version to CAS against. To make delete-before-insert ordering safe,
+`DraftsRepository.softDelete` plants a negative tombstone even when the row is absent; a
+late first upsert (`expectedVersion = 0`) that collides with that tombstone is dropped
+rather than split into a live zombie.
 
 ### The resolution guard stops a sent draft from coming back
 
@@ -305,9 +342,11 @@ contiguity / `broadcastSequence` machinery (INV-61) correctly does not apply to 
 ## Entry points
 
 - `apps/backend/src/db/migrations/20260613130739_drafts.sql`: the `drafts` table and its
-  two partial indexes.
-- `apps/backend/src/features/drafts/service.ts`: split-on-drift `upsert`, CAS `resolve`,
-  unconditional `delete`, bootstrap `list`; outbox-in-transaction.
+  two partial indexes; `20260703082208_drafts_superseded_write_ids.sql` adds the
+  tombstone's persisted `superseded_write_ids`.
+- `apps/backend/src/features/drafts/service.ts`: split-on-drift `upsert` (write-lineage
+  aware), CAS `resolve`, unconditional `delete`, bootstrap `list`;
+  outbox-in-transaction.
 - `apps/backend/src/features/drafts/repository.ts`: `insertIfAbsent` / `casUpdate` /
   `softDeleteCas` / `rescopeByScope` / `listByUser`.
 - `apps/frontend/src/sync/draft-sync.ts`: wire-to-local mapping, the coalesced

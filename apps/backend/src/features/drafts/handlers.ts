@@ -24,6 +24,9 @@ const upsertSchema = z
     rootStreamId: z.string().min(1).nullable().optional(),
     expectedVersion: z.number().int().min(0),
     writeId: z.string().min(1),
+    // The device's superseded write lineage (bounded — the client caps the
+    // chain; the schema bound is a defensive backstop, not a protocol limit).
+    priorWriteIds: z.array(z.string().min(1)).max(64).optional(),
     clientUpdatedAt: z.string().datetime(),
     contentJson: contentJsonSchema.nullable().optional(),
     attachmentIds: z.array(z.string()).optional(),
@@ -39,7 +42,13 @@ const upsertSchema = z
 
 const resolveSchema = z.object({
   expectedVersion: z.number().int().min(1),
-  supersededWriteIds: z.array(z.string().min(1)).optional(),
+  supersededWriteIds: z.array(z.string().min(1)).max(64).optional(),
+})
+
+// DELETE body is optional (legacy clients send none); when present it carries
+// the discarding device's in-flight write ids for the tombstone.
+const deleteSchema = z.object({
+  supersededWriteIds: z.array(z.string().min(1)).max(64).optional(),
 })
 
 interface Dependencies {
@@ -78,6 +87,7 @@ export function createDraftsHandlers({ draftsService }: Dependencies) {
         rootStreamId: data.rootStreamId ?? null,
         expectedVersion: data.expectedVersion,
         writeId: data.writeId,
+        priorWriteIds: data.priorWriteIds ?? [],
         clientUpdatedAt: new Date(data.clientUpdatedAt),
         contentJson,
         contentMarkdown: contentJson ? deriveContentMarkdown(contentJson) : null,
@@ -117,7 +127,17 @@ export function createDraftsHandlers({ draftsService }: Dependencies) {
       const workspaceId = req.workspaceId!
       const id = req.params.id!
 
-      await draftsService.delete({ workspaceId, userId, id })
+      const parsed = deleteSchema.safeParse(req.body ?? {})
+      if (!parsed.success) {
+        throw new HttpError("Invalid draft delete request", { status: 400, code: "VALIDATION_ERROR" })
+      }
+
+      await draftsService.delete({
+        workspaceId,
+        userId,
+        id,
+        supersededWriteIds: parsed.data.supersededWriteIds ?? [],
+      })
       res.json({ ok: true })
     },
   }

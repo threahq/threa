@@ -18,6 +18,13 @@ export interface UpsertDraftParams {
   rootStreamId: string | null
   expectedVersion: number
   writeId: string
+  /**
+   * This device's earlier write ids for this draft that were superseded before
+   * their ack was observed. Together with `writeId` they form the device's
+   * write lineage: a row last written by any of them has no other writer since,
+   * so it is updated in place rather than split.
+   */
+  priorWriteIds: string[]
   clientUpdatedAt: Date
   contentJson: JSONContent | null
   contentMarkdown: string | null
@@ -33,6 +40,8 @@ export interface UpsertDraftResult {
   draft: DraftView
   split: boolean
   originalId?: string
+  /** On a split against a live row: that untouched row, so the client can seed it. */
+  keptDraft?: DraftView
 }
 
 export interface ResolveDraftParams {
@@ -47,6 +56,8 @@ export interface DeleteDraftParams {
   workspaceId: string
   userId: string
   id: string
+  /** The discarding device's in-flight write ids, persisted on the tombstone. */
+  supersededWriteIds?: string[]
 }
 
 /**
@@ -73,20 +84,30 @@ export class DraftsService {
    * serialize:
    *
    *  a. `insertIfAbsent` — brand-new id lands at version 1. Done, no split.
-   *  b. else lock the existing row. If its `last_client_write_id` matches the
-   *     incoming `writeId`, this is a lost-ack retry of an already-accepted
-   *     write — return the row unchanged, no split.
-   *  c. else CAS-update on `expectedVersion`. Match → version+1, no split.
-   *  d. else (version drift, or the original id is a resolved tombstone) →
-   *     SPLIT: leave the existing row untouched, insert a fresh `draft_` id
-   *     carrying the incoming content at version 1. Return `originalId` so the
-   *     client migrates its local state to the new id.
+   *  b. else lock the existing row. Tombstoned rows: a first push
+   *     (`expectedVersion` 0), or any write whose lineage the tombstone
+   *     superseded (its `last_client_write_id` / persisted
+   *     `superseded_write_ids` intersect the incoming write ids), is a late
+   *     push of content the user already sent or discarded — drop it, no
+   *     split, no zombie.
+   *  c. else CAS-update: `expectedVersion` match, OR the row's last accepted
+   *     write is one of the caller's own write ids (a lost ack — no other
+   *     device wrote since, so updating in place IS "update the one that is
+   *     live"). Match → version+1 and the incoming content applies, no split.
+   *  d. else (genuine drift: another device wrote since, or an unrelated
+   *     tombstone) → SPLIT: leave the existing row untouched, insert a fresh
+   *     `draft_` id carrying the incoming content at version 1. Return
+   *     `originalId` so the client migrates its local state to the new id, and
+   *     `keptDraft` (when live) so it can seed the other device's copy.
    *
    * Every branch that changes state writes a `draft:upserted` outbox row so the
    * author's other devices converge (INV-4/7, INV-53).
    */
   async upsert(params: UpsertDraftParams): Promise<UpsertDraftResult> {
     return withTransaction(this.pool, async (client) => {
+      // This device's write lineage since its last observed ack. If the row's
+      // last accepted write is any of these, no other device has written since.
+      const ownWriteIds = [params.writeId, ...params.priorWriteIds]
       const insertParams = {
         workspaceId: params.workspaceId,
         userId: params.userId,
@@ -113,32 +134,37 @@ export class DraftsService {
       // The id already exists — lock it and decide update vs split.
       const existing = await DraftsRepository.findByIdForUpdate(client, params.workspaceId, params.userId, params.id)
 
-      // (a2) A never-confirmed draft's first push can land after resolve/discard
-      // planted a negative tombstone for the id. The content was already sent or
-      // thrown away, so drop the late insert rather than splitting it into a live
-      // zombie. Confirmed drift (expectedVersion > 0) still splits below.
-      if (existing && existing.deletedAt && params.expectedVersion === 0) {
-        return { draft: toDraftView(existing), split: false }
-      }
-
-      // (b) Lost-ack retry of a write we already accepted — return as-is. Gated
-      // on a LIVE row: if the draft was resolved (tombstoned) after this write
-      // landed, the writeId still matches but the row is gone, so we must not
-      // hand back a deleted draft as live (it would contradict the draft:deleted
-      // already on the wire). A tombstoned match falls through to the split.
-      if (existing && !existing.deletedAt && existing.lastClientWriteId === params.writeId) {
-        return { draft: toDraftView(existing), split: false }
-      }
-
-      // (c) Happy path — CAS update on the version the edit was based on. The
-      // CAS guards `deleted_at IS NULL`, so a tombstoned row returns null here
-      // and drops to the split.
-      if (existing && !existing.deletedAt) {
+      if (existing?.deletedAt) {
+        // (b) A never-confirmed draft's first push landing after resolve/discard
+        // planted a negative tombstone: the content was already sent or thrown
+        // away — drop the late insert rather than splitting it into a live zombie.
+        if (params.expectedVersion === 0) {
+          return { draft: toDraftView(existing), split: false }
+        }
+        // (b) A write from a lineage this tombstone superseded: the resolve or
+        // discard that tombstoned the row recorded the device's in-flight write
+        // ids, and the tombstone's own last accepted write counts too. Either
+        // way this push carries content the user already sent/discarded — drop
+        // it. Only a lineage the tombstone does NOT know (another device's
+        // unpushed edits) falls through to the no-loss split.
+        const superseded = new Set(existing.supersededWriteIds ?? [])
+        if (existing.lastClientWriteId) superseded.add(existing.lastClientWriteId)
+        if (ownWriteIds.some((id) => superseded.has(id))) {
+          return { draft: toDraftView(existing), split: false }
+        }
+      } else if (existing) {
+        // (c) In-place update: version match, or a lost-ack write lineage match
+        // (both checked race-safely inside the UPDATE, INV-20). Applying the
+        // incoming content on a lineage match matters: a retry can carry NEWER
+        // content than the write whose ack was lost (the queue re-reads the
+        // draft at drain), and acking without applying would strand that
+        // content locally until a cross-device edit overwrote it.
         const updated = await DraftsRepository.casUpdate(client, {
           workspaceId: params.workspaceId,
           userId: params.userId,
           id: params.id,
           expectedVersion: params.expectedVersion,
+          ownWriteIds,
           rootStreamId: params.rootStreamId,
           contentJson: params.contentJson,
           contentMarkdown: params.contentMarkdown,
@@ -156,7 +182,7 @@ export class DraftsService {
         }
       }
 
-      // (d) Drift (or a tombstoned original) → split into a fresh draft.
+      // (d) Genuine drift (or an unrelated tombstone) → split into a fresh draft.
       const newRow = await DraftsRepository.insertIfAbsent(client, { id: draftId(), ...insertParams })
       if (!newRow) {
         // The split id is a freshly minted ULID, so the insert lands unless the
@@ -164,7 +190,10 @@ export class DraftsService {
         throw new Error("draft split insert returned no row (id collision)")
       }
       const result = await this.finishUpsert(client, newRow, true)
-      return { ...result, originalId: params.id }
+      // The pushing device ignored the kept row's socket echo while it was
+      // dirty; returning the live row lets it seed the copy immediately.
+      const keptDraft = existing && !existing.deletedAt ? toDraftView(existing) : undefined
+      return { ...result, originalId: params.id, ...(keptDraft ? { keptDraft } : {}) }
     })
   }
 
@@ -196,11 +225,19 @@ export class DraftsService {
   /**
    * Explicit discard — the user threw the draft away, so drift doesn't matter.
    * Unconditional soft-delete, idempotent on an already-gone row. Emits
-   * `draft:deleted` so other devices drop it too.
+   * `draft:deleted` so other devices drop it too. The device's superseded write
+   * ids ride onto the tombstone so its own late-landing push is dropped by the
+   * upsert path instead of resurrecting the discarded content.
    */
   async delete(params: DeleteDraftParams): Promise<void> {
     return withTransaction(this.pool, async (client) => {
-      const deleted = await DraftsRepository.softDelete(client, params.workspaceId, params.userId, params.id)
+      const deleted = await DraftsRepository.softDelete(
+        client,
+        params.workspaceId,
+        params.userId,
+        params.id,
+        params.supersededWriteIds ?? []
+      )
       if (deleted) {
         await this.publishDelete(client, params.workspaceId, params.userId, params.id)
       }
