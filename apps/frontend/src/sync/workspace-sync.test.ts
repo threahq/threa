@@ -421,6 +421,7 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           memberId: "user_1",
           notificationLevel: null,
           lastReadEventId: "evt_cached",
+          lastReadSequence: "77",
           lastReadAt: null,
           joinedAt: new Date().toISOString(),
           _cachedAt: Date.now(),
@@ -440,9 +441,10 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     })
 
     expect(merged.streams.map((stream) => stream.id)).toContain("stream_failed")
-    expect(
-      merged.streamMemberships.find((membership) => membership.streamId === "stream_failed")?.lastReadEventId
-    ).toBe("evt_cached")
+    const failedMembership = merged.streamMemberships.find((membership) => membership.streamId === "stream_failed")
+    // The board-card sequence frontier must survive the cached→bootstrap
+    // conversion — dropping it silently degrades card rows to the time fallback.
+    expect(failedMembership).toMatchObject({ lastReadEventId: "evt_cached", lastReadSequence: "77" })
     expect(merged.unreadCounts.stream_failed).toBe(3)
     expect(merged.mutedStreamIds).toContain("stream_failed")
   })

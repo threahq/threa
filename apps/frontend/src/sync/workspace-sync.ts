@@ -289,6 +289,7 @@ function toWorkspaceBootstrapMembership(membership: CachedStreamMembership): Str
     memberId: membership.memberId,
     notificationLevel: membership.notificationLevel,
     lastReadEventId: membership.lastReadEventId,
+    lastReadSequence: membership.lastReadSequence,
     lastReadAt: membership.lastReadAt,
     joinedAt: membership.joinedAt,
   }

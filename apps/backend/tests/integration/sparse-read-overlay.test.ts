@@ -250,6 +250,57 @@ describe("Sparse read overlay", () => {
     expect(await effectiveUnread(sid, reader)).toBe(2)
   })
 
+  test("members at/below the watermark never survive in the overlay (no double-subtract)", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, msg2, , msg4] = await sendMessages(wid, sid, authorId, 4)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // Timeline read through msg2, then a conversation whose members straddle the
+    // watermark ({msg1, msg4}) is marked read while msg3 (another conversation)
+    // stays a hole above the watermark — so no compaction fires. msg1 sits below
+    // the watermark and must be pruned, not inserted: a surviving row would
+    // double-subtract and hide msg3's genuine unread.
+    await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg2)!.id)
+    const snapshot = await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1, msg4] })
+    )
+
+    expect(snapshot.readMessageIds).toEqual([msg4])
+    const belowWatermark = await pool.query(
+      `SELECT message_id FROM stream_member_message_reads
+       WHERE stream_id = $1 AND member_id = $2 AND sequence <= $3`,
+      [sid, reader, eventByMsg.get(msg2)!.sequence.toString()]
+    )
+    expect(belowWatermark.rows).toEqual([])
+    // msg3 is the one genuinely unread message.
+    expect(await effectiveUnread(sid, reader)).toBe(1)
+  })
+
+  test("mark-unread that ADVANCES the watermark past overlay holes clears them too", async () => {
+    const reader = userId()
+    const { wid, sid, authorId } = await seedChannel([reader])
+    const [msg1, , msg3, msg4] = await sendMessages(wid, sid, authorId, 4)
+    const events = await StreamEventRepository.list(pool, sid)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // Watermark at msg1, board-read hole at msg3. Mark-unread from msg4 lands the
+    // pointer on msg3 — an ADVANCE, not a regress. The absorbed hole (msg3) is now
+    // at the watermark and must be pruned or it double-subtracts, reporting the
+    // just-marked-unread msg4 as read.
+    await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg1)!.id)
+    await withTransaction(pool, (client) =>
+      applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
+    )
+    await streamService.markUnread(wid, sid, reader, msg4)
+
+    const membership = await streamService.getMembership(sid, reader)
+    expect(membership?.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
+    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await effectiveUnread(sid, reader)).toBe(1)
+  })
+
   test("applySparseUnread drops the affected ids and regresses when the watermark is past them", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])

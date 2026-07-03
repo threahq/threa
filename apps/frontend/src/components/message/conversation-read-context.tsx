@@ -50,10 +50,19 @@ function deriveRowState(
   sequence: string | undefined,
   createdAt: string | Date,
   overlay: Record<string, string[]> | undefined,
+  unreadCounts: Record<string, number> | undefined,
   frontierByStream: Map<string, ReadFrontierRow>,
   rootStreamId: string
 ): RowReadState {
   if (overlay?.[streamId]?.includes(messageId)) return "read"
+
+  // A stream whose effective unread is 0 is fully read — every row in it is at/
+  // below the watermark or in the overlay by definition. This short-circuit is
+  // what keeps the card honest when a watermark advance doesn't carry a
+  // sequence the frontier map can see (mark-all-read advances counts to 0
+  // without a per-stream sequence payload). Strict === 0: a missing entry means
+  // "no data" (non-member thread legs), which must fall through, not read.
+  if (unreadCounts?.[streamId] === 0) return "read"
 
   const membership = frontierByStream.get(streamId)
   if (membership) {
@@ -89,7 +98,9 @@ export function useConversationReadController(
   currentUserId: string | null
 ): { value: ConversationRowRead; hasUnread: (messages: RenderableMessage[]) => boolean } {
   const conversationService = useConversationService()
-  const overlay = useWorkspaceUnreadState(workspaceId)?.readMessageIds
+  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const overlay = unreadState?.readMessageIds
+  const unreadCounts = unreadState?.unreadCounts
   const memberships = useWorkspaceStreamMemberships(workspaceId)
 
   const frontierByStream = useMemo(() => {
@@ -102,8 +113,8 @@ export function useConversationReadController(
 
   const state = useCallback<ConversationRowRead["state"]>(
     (streamId, messageId, sequence, createdAt) =>
-      deriveRowState(streamId, messageId, sequence, createdAt, overlay, frontierByStream, rootStreamId),
-    [overlay, frontierByStream, rootStreamId]
+      deriveRowState(streamId, messageId, sequence, createdAt, overlay, unreadCounts, frontierByStream, rootStreamId),
+    [overlay, unreadCounts, frontierByStream, rootStreamId]
   )
 
   const markReadUpToHere = useCallback(

@@ -1881,9 +1881,15 @@ export class StreamService {
       if (membership) {
         // Mark-unread means "this message and everything after it is unread", so
         // overlay rows at/above the target contradict the intent — drop them. The
-        // watermark already regressed below the target; the remaining overlay is
-        // the holes still above it.
+        // pointer lands just before the target, which can also ADVANCE it (target
+        // above the old watermark, e.g. after board reads left holes): overlay
+        // rows now at/below the new watermark must go too, or they double-subtract
+        // in the effective unread count. `previous` is the message immediately
+        // before the target, so together the two deletes clear the whole overlay.
         await SparseReadRepository.deleteAtOrAbove(client, streamId, memberId, messageEvent.sequence)
+        if (previous) {
+          await SparseReadRepository.pruneAtOrBelow(client, streamId, memberId, previous.sequence)
+        }
         const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
         await OutboxRepository.insert(client, "stream:read_set", {
           workspaceId,

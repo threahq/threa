@@ -58,6 +58,14 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
   let watermarkEventId = membership?.lastReadEventId ?? null
   let watermarkSeq = await resolveWatermarkSequence(db, streamId, watermarkEventId)
 
+  // The conversation cutoff filters by createdAt only, so member ids at/below
+  // the watermark reach the insert; drop them unconditionally (not just in the
+  // compaction branch) or they double-subtract in the effective unread count —
+  // the overlay invariant is "every row strictly above the watermark".
+  if (watermarkSeq > 0n) {
+    await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
+  }
+
   if (membership) {
     const target = await SparseReadRepository.findCompactionTarget(db, streamId, memberId, watermarkSeq)
     if (target) {

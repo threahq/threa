@@ -44,11 +44,14 @@ function msg(overrides: Partial<RenderableMessage> & Pick<RenderableMessage, "id
   }
 }
 
-async function seedReadState(overlay: Record<string, string[]> = {}) {
+async function seedReadState(
+  overlay: Record<string, string[]> = {},
+  unreadCounts: Record<string, number> = { [ROOT]: 1 }
+) {
   await db.unreadState.put({
     id: WS,
     workspaceId: WS,
-    unreadCounts: { [ROOT]: 1 },
+    unreadCounts,
     mentionCounts: {},
     activityCounts: {},
     unreadActivityCount: 0,
@@ -101,6 +104,20 @@ describe("useConversationReadController", () => {
     await waitFor(() =>
       expect(result.current.value.state(ROOT, "m_reply", "5", "2026-06-22T12:00:00.000Z")).toBe("read")
     )
+  })
+
+  it("treats a stream with zero effective unread as fully read despite a stale sequence frontier", async () => {
+    // Mark-all-read advances counts to 0 without a per-stream sequence payload,
+    // so the membership's lastReadSequence (3) goes stale. The count-0
+    // short-circuit must win over the sequence comparison — a row at sequence 5
+    // would otherwise re-derive as unread (phantom card dot).
+    await seedReadState({}, { [ROOT]: 0 })
+    const { result } = renderHook(() => useConversationReadController(WS, CONV, ROOT, ME), { wrapper: wrapper() })
+
+    await waitFor(() =>
+      expect(result.current.value.state(ROOT, "m_reply", "5", "2026-06-22T13:00:00.000Z")).toBe("read")
+    )
+    expect(result.current.hasUnread([msg({ id: "m_reply", sequence: "5" })])).toBe(false)
   })
 
   it("falls back to the root read-through time for a non-member thread leg", async () => {

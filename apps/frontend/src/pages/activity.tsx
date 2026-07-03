@@ -5,6 +5,7 @@ import { Bell, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { useActivityFeed, useMarkActivityRead, useMarkAllActivityRead, useActors } from "@/hooks"
+import { ACTIVITY_FEED_PAGE_LIMIT } from "@/hooks/use-activity"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useActivityCounts } from "@/hooks/use-activity-counts"
@@ -72,8 +73,13 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
   // shows unread, so the badge can never disagree with the open feed (mops up
   // residual drift like a move-rehomed row under an unvisited root). Folds
   // through commitCounter so a live row spliced mid-fetch applies on top.
+  // Only when the page is the COMPLETE unread set (rows < limit): replacing the
+  // held set with a truncated page would clamp an honest 80-unread badge to 50.
+  // The drift this backstop targets is a handful of orphaned rows, so the
+  // full-page case can safely skip.
   useEffect(() => {
     if (filter !== "unread" || isLoading || !activities) return
+    if (activities.length >= ACTIVITY_FEED_PAGE_LIMIT) return
     commitCounterMutation(queryClient, workspaceId, (s) => reconcileActivities(s, activities))
   }, [filter, isLoading, activities, queryClient, workspaceId])
 
