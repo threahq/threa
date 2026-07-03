@@ -456,7 +456,16 @@ export class TranscriptTracer {
   private async tryBind(): Promise<void> {
     const turn = this.turn
     if (!turn) return
-    if (this.candidates.length === 0) this.candidates = this.scanCandidates()
+    // Rescan on every unbound poll: a fresh session's transcript is BORN at
+    // its first turn — i.e. mid-window — so it can never be in the beginTurn
+    // baseline. A file discovered after turn start reads from offset 0 (its
+    // entire content belongs to the window, including the echo that already
+    // landed); baseline files keep their turn-start snapshot so another
+    // session's history is never read.
+    const known = new Set(this.candidates.map((candidate) => candidate.path))
+    for (const found of this.scanCandidates()) {
+      if (!known.has(found.path)) this.candidates.push({ ...found, offset: 0 })
+    }
     for (const candidate of this.candidates) {
       const appended = this.readAppended(candidate)
       if (appended) {

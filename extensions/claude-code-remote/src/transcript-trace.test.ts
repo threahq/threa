@@ -244,6 +244,48 @@ describe("TranscriptTracer", () => {
     expect(batches.every((batch) => batch.invocationId === "binv_trace_test")).toBe(true)
   }, 10_000)
 
+  test("binds a transcript created after the turn starts (fresh session, empty project dir)", async () => {
+    // The harnessd-spawn case that failed live: Claude Code creates the
+    // session's .jsonl at its FIRST turn, so the file never exists in the
+    // beginTurn baseline and the prompt echo has already landed by the time a
+    // rescan sees it. Discovered-late files must read from offset 0.
+    const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
+    const cwd = "/tmp/fake-worktree-fresh"
+    const projectDir = join(root, encodeProjectDir(cwd))
+    mkdirSync(projectDir, { recursive: true })
+
+    const batches: TraceFrame[][] = []
+    const tracer = new TranscriptTracer({
+      projectsRoot: root,
+      cwd,
+      pollMs: 20,
+      emit: async (_invocationId, frames) => {
+        batches.push(frames)
+        return true
+      },
+    })
+    tracer.beginTurn("binv_fresh_session")
+    // File is born after the turn started, echo + work already inside it.
+    const file = join(projectDir, "newborn.jsonl")
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: 'event invocation_id="binv_fresh_session"' },
+        }),
+        assistantLine([{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/x/notes.md" } }]),
+        "",
+      ].join("\n")
+    )
+    const deadline = Date.now() + 3_000
+    while (batches.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    tracer.stop()
+    expect(JSON.stringify(batches)).toContain("Reading file notes.md")
+  }, 10_000)
+
   test("stops the turn when emit reports the invocation closed", async () => {
     const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
     const cwd = "/tmp/fake-worktree-2"
