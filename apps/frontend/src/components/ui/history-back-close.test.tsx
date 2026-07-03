@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { useState } from "react"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { createMemoryRouter, RouterProvider } from "react-router-dom"
+import { createMemoryRouter, Link, RouterProvider } from "react-router-dom"
 import * as mobileModule from "@/hooks/use-mobile"
-import { __resetOverlayHistoryForTests } from "./history-back-close"
+import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter, OverlayHistoryLayout } from "./history-back-close"
 import { Drawer, DrawerContent, DrawerTitle } from "./drawer"
 
 afterEach(() => {
@@ -18,6 +18,14 @@ function DrawerHarness() {
       <span>{open ? "drawer-open" : "drawer-closed"}</span>
       <button onClick={() => setOpen(true)}>open-drawer</button>
       <button onClick={() => setOpen(false)}>close-drawer</button>
+      {/* A sidebar-style stream link: closes the overlay and pushes, one tick */}
+      <Link to="/other" onClick={() => setOpen(false)}>
+        navigate-item
+      </Link>
+      {/* A settings-style item: closes the overlay and replace-navigates */}
+      <Link to={`${STREAM_PATH}?settings=profile`} replace onClick={() => setOpen(false)}>
+        settings-item
+      </Link>
       <Drawer open={open} onOpenChange={setOpen}>
         <DrawerContent>
           <DrawerTitle>Menu</DrawerTitle>
@@ -74,13 +82,22 @@ function StackedHarness() {
 const STREAM_PATH = "/w/ws1/s/stream1"
 
 function makeRouter(ui: React.ReactElement) {
-  return createMemoryRouter(
+  // Same shape as production: the coordinator's location feed is a pathless
+  // layout wrapping every route, and the router itself is attached.
+  const router = createMemoryRouter(
     [
-      { path: "/other", element: <div>other-page</div> },
-      { path: STREAM_PATH, element: ui },
+      {
+        element: <OverlayHistoryLayout />,
+        children: [
+          { path: "/other", element: <div>other-page</div> },
+          { path: STREAM_PATH, element: ui },
+        ],
+      },
     ],
     { initialEntries: ["/other", STREAM_PATH], initialIndex: 1 }
   )
+  attachOverlayHistoryRouter(router)
+  return router
 }
 
 async function openDrawer(router: ReturnType<typeof makeRouter>, name = "open-drawer") {
@@ -186,6 +203,32 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     expect(screen.getByText("b-closed")).toBeInTheDocument()
   })
 
+  it("a menu item that closes the drawer and pushes a route actually navigates", async () => {
+    const router = makeRouter(<DrawerHarness />)
+    render(<RouterProvider router={router} />)
+
+    await openDrawer(router)
+    fireEvent.click(screen.getByText("navigate-item"))
+
+    // The navigation must survive the sentinel cleanup — not get popped away
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+    await act(async () => {})
+    expect(router.state.location.pathname).toBe("/other")
+  })
+
+  it("a menu item that closes the drawer and replace-navigates keeps its target", async () => {
+    const router = makeRouter(<DrawerHarness />)
+    render(<RouterProvider router={router} />)
+
+    await openDrawer(router)
+    fireEvent.click(screen.getByText("settings-item"))
+
+    await waitFor(() => expect(router.state.location.search).toBe("?settings=profile"))
+    await act(async () => {})
+    expect(router.state.location.search).toBe("?settings=profile")
+    await waitFor(() => expect(screen.getByText("drawer-closed")).toBeInTheDocument())
+  })
+
   it("same-tick handoff (close A, open B) keeps back working for B", async () => {
     const router = makeRouter(<StackedHarness />)
     render(<RouterProvider router={router} />)
@@ -233,10 +276,27 @@ describe("HistoryBackClose via Drawer (desktop)", () => {
   })
 })
 
+// DrawerHarness calls useNavigate, so the no-router test needs a router-free twin.
+function RouterlessDrawerHarness() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div>
+      <span>{open ? "drawer-open" : "drawer-closed"}</span>
+      <button onClick={() => setOpen(true)}>open-drawer</button>
+      <button onClick={() => setOpen(false)}>close-drawer</button>
+      <Drawer open={open} onOpenChange={setOpen}>
+        <DrawerContent>
+          <DrawerTitle>Menu</DrawerTitle>
+        </DrawerContent>
+      </Drawer>
+    </div>
+  )
+}
+
 describe("HistoryBackClose outside a router", () => {
   it("drawer works without a router context", async () => {
     vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
-    render(<DrawerHarness />)
+    render(<RouterlessDrawerHarness />)
 
     fireEvent.click(screen.getByText("open-drawer"))
     expect(await screen.findByText("drawer-open")).toBeInTheDocument()

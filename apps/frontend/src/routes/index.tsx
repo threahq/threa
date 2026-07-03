@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { createBrowserRouter, Navigate, useLocation, useParams } from "react-router-dom"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { FallbackLoader } from "@/components/fallback-loader"
+import { attachOverlayHistoryRouter, OverlayHistoryLayout } from "@/components/ui/history-back-close"
 import { useSidebar } from "@/contexts"
 import { useLastStream } from "@/hooks"
 import { getLastWorkspaceId } from "@/lib/last-workspace"
@@ -11,136 +12,148 @@ import { getLastWorkspaceId } from "@/lib/last-workspace"
 // with the pages that actually use them instead of bloating the main bundle.
 export const router = createBrowserRouter([
   {
-    path: "/",
-    element: <RootRedirect />,
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: "/login",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/login")).LoginPage }),
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: "/workspaces",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/workspace-select")).WorkspaceSelectPage }),
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    // Custom add-account picker. Sits in front of `/api/auth/login?intent=add`
-    // because AuthKit's hosted UI silent-refreshes and can't reliably show an
-    // account picker. Buttons hit provider-direct social URLs or the magic
-    // auth endpoints — see apps/control-plane/src/features/auth/handlers.ts.
-    path: "/add-account",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/add-account")).AddAccountPage }),
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: "/share",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/share-target")).ShareTargetPage }),
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    // Public, unauthenticated. The recipient enters their email to claim the
-    // invitation — no workspace bootstrap needed, lives outside WorkspaceLayout.
-    path: "/join/:token",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/join")).JoinPage }),
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    // Setup page lives outside WorkspaceLayout — it's a lightweight form that
-    // doesn't need the full workspace bootstrap (socket, sidebar, etc.)
-    path: "/w/:workspaceId/setup",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/user-setup")).UserSetupPage }),
-    errorElement: <ErrorBoundary />,
-  },
-  {
-    path: "/w/:workspaceId",
-    HydrateFallback: FallbackLoader,
-    lazy: async () => ({ Component: (await import("@/pages/workspace-layout")).WorkspaceLayout }),
+    // Pathless layout so the overlay-history coordinator's location feed stays
+    // mounted across EVERY navigation (see history-back-close.tsx).
+    element: <OverlayHistoryLayout />,
     errorElement: <ErrorBoundary />,
     children: [
       {
-        index: true,
-        element: <WorkspaceHome />,
+        path: "/",
+        element: <RootRedirect />,
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "drafts",
+        path: "/login",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/drafts")).DraftsPage }),
+        lazy: async () => ({ Component: (await import("@/pages/login")).LoginPage }),
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "saved/:tab?",
+        path: "/workspaces",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/saved")).SavedPage }),
+        lazy: async () => ({ Component: (await import("@/pages/workspace-select")).WorkspaceSelectPage }),
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "scheduled/:tab?",
+        // Custom add-account picker. Sits in front of `/api/auth/login?intent=add`
+        // because AuthKit's hosted UI silent-refreshes and can't reliably show an
+        // account picker. Buttons hit provider-direct social URLs or the magic
+        // auth endpoints — see apps/control-plane/src/features/auth/handlers.ts.
+        path: "/add-account",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/scheduled")).ScheduledPage }),
+        lazy: async () => ({ Component: (await import("@/pages/add-account")).AddAccountPage }),
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "board",
+        path: "/share",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/board")).BoardPage }),
+        lazy: async () => ({ Component: (await import("@/pages/share-target")).ShareTargetPage }),
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "activity/:filter?",
+        // Public, unauthenticated. The recipient enters their email to claim the
+        // invitation — no workspace bootstrap needed, lives outside WorkspaceLayout.
+        path: "/join/:token",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/activity")).ActivityPage }),
+        lazy: async () => ({ Component: (await import("@/pages/join")).JoinPage }),
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "search",
+        // Setup page lives outside WorkspaceLayout — it's a lightweight form that
+        // doesn't need the full workspace bootstrap (socket, sidebar, etc.)
+        path: "/w/:workspaceId/setup",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/search")).SearchPage }),
+        lazy: async () => ({ Component: (await import("@/pages/user-setup")).UserSetupPage }),
+        errorElement: <ErrorBoundary />,
       },
       {
-        path: "memory",
+        path: "/w/:workspaceId",
         HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/memory")).MemoryPage }),
-      },
-      {
-        path: "labels",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/labels")).LabelsPage }),
-      },
-      {
-        path: "labels/:labelId",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/label-detail")).LabelDetailPage }),
-      },
-      {
-        path: "files",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/files")).FilesPage }),
-      },
-      {
-        path: "memos/:memoId",
-        element: <LegacyMemoRedirect />,
-      },
-      {
-        path: "s/:streamId",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/stream")).StreamPage }),
-      },
-      {
-        path: "share",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/share-picker")).SharePickerPage }),
-      },
-      {
-        path: "admin/ai-usage",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/ai-usage-admin")).AIUsageAdminPage }),
+        lazy: async () => ({ Component: (await import("@/pages/workspace-layout")).WorkspaceLayout }),
+        errorElement: <ErrorBoundary />,
+        children: [
+          {
+            index: true,
+            element: <WorkspaceHome />,
+          },
+          {
+            path: "drafts",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/drafts")).DraftsPage }),
+          },
+          {
+            path: "saved/:tab?",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/saved")).SavedPage }),
+          },
+          {
+            path: "scheduled/:tab?",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/scheduled")).ScheduledPage }),
+          },
+          {
+            path: "board",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/board")).BoardPage }),
+          },
+          {
+            path: "activity/:filter?",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/activity")).ActivityPage }),
+          },
+          {
+            path: "search",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/search")).SearchPage }),
+          },
+          {
+            path: "memory",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/memory")).MemoryPage }),
+          },
+          {
+            path: "labels",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/labels")).LabelsPage }),
+          },
+          {
+            path: "labels/:labelId",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/label-detail")).LabelDetailPage }),
+          },
+          {
+            path: "files",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/files")).FilesPage }),
+          },
+          {
+            path: "memos/:memoId",
+            element: <LegacyMemoRedirect />,
+          },
+          {
+            path: "s/:streamId",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/stream")).StreamPage }),
+          },
+          {
+            path: "share",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/share-picker")).SharePickerPage }),
+          },
+          {
+            path: "admin/ai-usage",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/ai-usage-admin")).AIUsageAdminPage }),
+          },
+        ],
       },
     ],
   },
 ])
+
+// The overlay-history coordinator reads router.state directly (never a
+// React-committed location — see history-back-close.tsx).
+attachOverlayHistoryRouter(router)
 
 // PWA `start_url` is `/`. A returning user almost always wants the workspace
 // they last had open, which renders instantly from IndexedDB — so jump
