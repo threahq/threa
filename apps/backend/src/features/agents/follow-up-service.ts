@@ -3,6 +3,7 @@ import { withTransaction } from "../../db"
 import { agentFollowUpId, agentFollowUpQueueId, queueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type PersonaAgentJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
+import { FollowUpStatuses } from "@threa/types"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
@@ -23,6 +24,10 @@ export interface ScheduleFollowUpParams {
 export type ScheduleFollowUpResult =
   | { ok: true; followUp: AgentFollowUp; pendingCount: number; limit: number }
   | { ok: false; reason: "cap_reached"; pendingCount: number; limit: number }
+
+export type UpdateFollowUpResult =
+  | { ok: true; followUp: AgentFollowUp }
+  | { ok: false; reason: "not_found" | "not_pending" }
 
 /**
  * Lifecycle owner for agent follow-ups (roadmap 1.1). A follow-up is a durable,
@@ -114,18 +119,91 @@ export class AgentFollowUpService {
   }
 
   /**
+   * List a stream's pending follow-ups (soonest first) so the running persona
+   * can administer them via `list_follow_ups`. Read-only single query, pass the
+   * pool directly (INV-30).
+   */
+  async listPending(params: { workspaceId: string; streamId: string }): Promise<AgentFollowUp[]> {
+    return AgentFollowUpRepository.listPending(this.pool, params.workspaceId, params.streamId)
+  }
+
+  /**
    * Cancel a pending follow-up (CAS `pending → cancelled`) and tombstone its
    * fire queue row in the same tx. Returns the cancelled row, or `null` when the
-   * cancel lost the race to the fire worker (already fired/cancelled).
+   * cancel lost the race to the fire worker (already fired/cancelled). Pass
+   * `streamId` (the agent-admin tools do) to also require the row belong to that
+   * stream, so a turn can only cancel its own stream's follow-ups.
    */
-  async cancel(params: { workspaceId: string; id: string }): Promise<AgentFollowUp | null> {
+  async cancel(params: { workspaceId: string; id: string; streamId?: string }): Promise<AgentFollowUp | null> {
     return withTransaction(this.pool, async (client) => {
-      const cancelled = await AgentFollowUpRepository.markCancelled(client, params.workspaceId, params.id)
+      const cancelled = params.streamId
+        ? await AgentFollowUpRepository.markCancelledInStream(client, params.workspaceId, params.streamId, params.id)
+        : await AgentFollowUpRepository.markCancelled(client, params.workspaceId, params.id)
       if (!cancelled) return null
       if (cancelled.queueMessageId) {
         await QueueRepository.cancelById(client, cancelled.queueMessageId)
       }
       return cancelled
+    })
+  }
+
+  /**
+   * Update a pending follow-up's note and/or scheduled time, stream-scoped (the
+   * agent-admin `update_follow_up` path). Unspecified fields keep their current
+   * value. When the time changes, the old fire job is tombstoned and a fresh one
+   * enqueued at the new time in the same tx (INV-7) — mirroring the
+   * scheduled-messages reschedule; `markFired`'s `scheduled_for <= NOW()` guard
+   * keeps a surviving old tick from firing early. Returns `not_found` (bad id /
+   * other stream) or `not_pending` (already fired/cancelled) so the tool can tell
+   * the model which happened.
+   */
+  async update(params: {
+    workspaceId: string
+    streamId: string
+    id: string
+    note?: string
+    scheduledFor?: Date
+  }): Promise<UpdateFollowUpResult> {
+    return withTransaction(this.pool, async (client) => {
+      // Single atomic CAS — no service-side read-then-set (INV-20). `COALESCE`
+      // applies only the fields the caller changed; the returned row carries the
+      // queue id as of the row lock, so the reschedule below cancels the live
+      // fire job (never a pre-lock stale id that could orphan a queue row).
+      const updated = await AgentFollowUpRepository.updatePending(client, {
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        id: params.id,
+        note: params.note ?? null,
+        scheduledFor: params.scheduledFor ?? null,
+      })
+      if (!updated) {
+        // Failure-path read only classifies the error (the row didn't mutate):
+        // another stream / unknown id → not_found; else already fired/cancelled.
+        const existing = await AgentFollowUpRepository.findById(client, params.workspaceId, params.id)
+        if (!existing || existing.streamId !== params.streamId) return { ok: false, reason: "not_found" }
+        return { ok: false, reason: "not_pending" }
+      }
+
+      // Reschedule whenever a new time was supplied: tombstone the old fire job
+      // (the CAS-fresh id from `updated`) and enqueue a fresh one at the new time
+      // in the same tx (INV-7). Re-enqueuing at an unchanged time is a harmless
+      // no-op churn, so we don't need the pre-image to detect "changed".
+      if (params.scheduledFor !== undefined) {
+        if (updated.queueMessageId) {
+          await QueueRepository.cancelById(client, updated.queueMessageId)
+        }
+        const queueMessageId = await enqueueQueuedJob(client, {
+          queueName: JobQueues.AGENT_FOLLOW_UP_FIRE,
+          workspaceId: params.workspaceId,
+          payload: { workspaceId: params.workspaceId, followUpId: params.id },
+          processAfter: updated.scheduledFor,
+          generateId: agentFollowUpQueueId,
+        })
+        await AgentFollowUpRepository.setQueueMessageId(client, params.workspaceId, params.id, queueMessageId)
+        return { ok: true, followUp: { ...updated, queueMessageId } }
+      }
+
+      return { ok: true, followUp: updated }
     })
   }
 

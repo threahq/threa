@@ -127,6 +127,22 @@ export const AgentFollowUpRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  /**
+   * List a stream's pending follow-ups, soonest first (INV-8 workspace-scoped).
+   * Backs the agent's `list_follow_ups` tool: only pending rows are actionable
+   * (a fired/cancelled one can't be cancelled or rescheduled).
+   */
+  async listPending(db: Querier, workspaceId: string, streamId: string): Promise<AgentFollowUp[]> {
+    const result = await db.query<AgentFollowUpRow>(sql`
+      SELECT ${sql.raw(COLUMNS)} FROM agent_follow_ups
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
+        AND status = ${FollowUpStatuses.PENDING}
+      ORDER BY scheduled_for ASC
+    `)
+    return result.rows.map(mapRow)
+  },
+
   /** Count pending follow-ups for a stream (INV-8 workspace-scoped). */
   async countPending(db: Querier, workspaceId: string, streamId: string): Promise<number> {
     const result = await db.query<{ count: string }>(sql`
@@ -151,6 +167,13 @@ export const AgentFollowUpRepository = {
    * CAS `pending → fired`. The status guard makes firing exactly-once: a stale
    * queue tick that lost the cancel race, or a duplicate delivery, finds the
    * row no longer pending and gets `null`.
+   *
+   * The `scheduled_for <= NOW()` guard is load-bearing for reschedule: it is a
+   * no-op on the normal path (the fire job's `processAfter` equals
+   * `scheduled_for`, so the queue never delivers before it), but if a
+   * reschedule-to-later races an already-leased old fire job, that stale tick
+   * finds the row's new time still in the future and no-ops instead of firing
+   * early. The freshly enqueued job fires it at the new time.
    */
   async markFired(db: Querier, workspaceId: string, id: string): Promise<AgentFollowUp | null> {
     const result = await db.query<AgentFollowUpRow>(sql`
@@ -161,6 +184,7 @@ export const AgentFollowUpRepository = {
       WHERE id = ${id}
         AND workspace_id = ${workspaceId}
         AND status = ${FollowUpStatuses.PENDING}
+        AND scheduled_for <= NOW()
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
@@ -178,6 +202,59 @@ export const AgentFollowUpRepository = {
         updated_at = NOW()
       WHERE id = ${id}
         AND workspace_id = ${workspaceId}
+        AND status = ${FollowUpStatuses.PENDING}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * CAS `pending → cancelled`, additionally scoped to `streamId` — the
+   * agent-admin `cancel_follow_up` path, so a turn in one stream can only cancel
+   * its own stream's follow-ups. Same exactly-once semantics as `markCancelled`.
+   */
+  async markCancelledInStream(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    id: string
+  ): Promise<AgentFollowUp | null> {
+    const result = await db.query<AgentFollowUpRow>(sql`
+      UPDATE agent_follow_ups SET
+        status = ${FollowUpStatuses.CANCELLED},
+        status_changed_at = NOW(),
+        updated_at = NOW()
+      WHERE id = ${id}
+        AND workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
+        AND status = ${FollowUpStatuses.PENDING}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * CAS-update a pending follow-up's note and/or scheduled time, stream-scoped
+   * (the agent-admin `update_follow_up` path). `COALESCE` applies each field in
+   * the same statement that guards `status = pending`, so a `null` arg leaves the
+   * column as-is and two concurrent updates that change *different* fields don't
+   * clobber each other from a stale read (INV-20 — no service-side read-then-set).
+   * `status_changed_at` is left untouched (the status doesn't change). Returns the
+   * updated row (with the current `queue_message_id`), or `null` when the row is
+   * no longer pending (lost the race to fire/cancel) or isn't in this stream.
+   */
+  async updatePending(
+    db: Querier,
+    params: { workspaceId: string; streamId: string; id: string; note: string | null; scheduledFor: Date | null }
+  ): Promise<AgentFollowUp | null> {
+    const result = await db.query<AgentFollowUpRow>(sql`
+      UPDATE agent_follow_ups SET
+        note = COALESCE(${params.note}::text, note),
+        scheduled_for = COALESCE(${params.scheduledFor}::timestamptz, scheduled_for),
+        updated_at = NOW()
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND stream_id = ${params.streamId}
         AND status = ${FollowUpStatuses.PENDING}
       RETURNING ${sql.raw(COLUMNS)}
     `)

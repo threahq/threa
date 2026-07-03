@@ -39,6 +39,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.3  | Follow-up visibility: timeline card + cancel         | ☐      |       |
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
+| 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
 | 2.1  | Generalized session abort                            | ☐      |       |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
@@ -156,10 +157,30 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 
 - `TurnPurpose` union + `resolveTurnPurpose` (payload→purpose at the worker boundary) + `deriveTurnFlags` live in a new `features/agents/turn-purpose.ts`. Flag derivation stayed backend-side (`deriveTurnFlags`), not moved onto `TurnRequest` — cleaner than plumbing purpose into the generic runtime.
 - Per-purpose prompt sections unified in `companion/prompt/turn-purpose-prompt.ts`: `buildEarlyPurposeSection` (mention, follow-up — before stream context) and `buildLatePurposeSection` (supersede reconciliation — last, for final-decision salience). The supersede section moved out of persona-agent's `buildSupersedeRerunSystemPrompt` wrap into `buildSystemPrompt` at its exact prior position (after temporal), so composition is byte-identical to the old wrap.
-- The continuation-wording leak is fixed at the source: the runtime's `allowNoMessageOutput` continuation prompt (`agent-runtime.ts`) is now edit-neutral, since that phrasing already misapplied to fired-follow-up *and* research turns. The supersede system-prompt section still carries the edit-comparison instructions where they belong.
+- The continuation-wording leak is fixed at the source: the runtime's `allowNoMessageOutput` continuation prompt (`agent-runtime.ts`) is now edit-neutral, since that phrasing already misapplied to fired-follow-up _and_ research turns. The supersede system-prompt section still carries the edit-comparison instructions where they belong.
 - Degradation preserves behavior via `effectivePurpose`: a supersede rerun whose target session vanished, or a follow-up whose row failed to load, resolves to `catch_up` — so its prompt section and derived flags match the plain-catch-up turn it already ran as (true no-op).
 
 **Done when:** adding a new invocation kind = one union member + its prompt block — no new optional field on `PersonaAgentInput`, no ad-hoc flag setting.
+
+### 1.6 Follow-up admin tools (list/cancel/update)
+
+**Goal:** Ariadne can administer the follow-ups she schedules, not just create them. Before this, `schedule_follow_up` (1.1) was the only follow-up tool — she had no way to see, cancel, or reschedule a pending follow-up across turns, so a plan change or a resolved item left a stale reminder that still fired. This also gives the 1.2 "don't re-schedule the same note" guard a mechanical backstop: she can cancel/reschedule the existing row instead of relying on a prompt-only don't-loop instruction.
+
+**Shape:** three tools per the 1.1 checklist, all riding the always-allowed `messaging` privacy class (in-product self-administration, not egress — same as `schedule_follow_up`) and **stream-scoped by the bind** so a turn only touches its own stream's follow-ups:
+
+- `list_follow_ups` (no input) — the stream's pending follow-ups (id, note, local time), soonest-first. The discovery tool: it's what turns a `followUpId` into something the model can act on across turns, and a dedupe check before scheduling.
+- `cancel_follow_up` `{ followUpId }` — reuses 1.1's `AgentFollowUpService.cancel` CAS (`pending → cancelled` + queue tombstone), now stream-scoped via `markCancelledInStream`.
+- `update_follow_up` `{ followUpId, note?, scheduledFor? }` (≥1 of note/time) — new `AgentFollowUpService.update`: reads the row, coalesces unspecified fields, CAS-updates the pending row (`updatePending`), and on a time change tombstones the old fire job and enqueues a fresh one at the new time in the same tx (INV-7), mirroring the scheduled-messages reschedule.
+
+**Race-safety (INV-20):** rescheduling could let a surviving old queue tick fire the row early, so `markFired` now guards on `scheduled_for <= NOW()` — a no-op on the normal path (fire `processAfter` equals `scheduled_for`), but it makes a rescheduled-to-later row wait for the freshly enqueued job. `update` verifies `existing.streamId` before mutating (`stream_id` is immutable, so the read-then-CAS is safe); the `scheduledFor` future/horizon validation is shared with `schedule_follow_up` via `tools/follow-up-shared.ts` (also extracted `formatLocalTime`).
+
+**Files:** `packages/types/src/{constants,tool-privacy}.ts`; `features/agents/follow-up-{repository,service}.ts` (+ tests); new `tools/{list-follow-ups,cancel-follow-up,update-follow-up}-tool.ts` + `tools/follow-up-shared.ts` (+ tests); `tools/{tool-deps,index}.ts`; `companion/tool-set.ts`; `persona-agent.ts` (deps + bundle); `server.ts` (bind to service); `built-in-agents.ts` (Ariadne `enabledTools`).
+
+**Deviations (shipped):** each admin tool takes its own narrow deps interface (not the whole `FollowUpToolDeps` bundle) so its unit test wires one callback; the bundle `FollowUpToolDeps` extends all four and is what the live companion turn passes (the researcher sub-agent still never gets it). Stream scoping is dedicated plain-`sql` methods (`markCancelledInStream`, `updatePending`, `listPending`) rather than optional `streamId` params on the workspace-scoped worker/HTTP methods — `composeSql` can't splice squid `sql`+`sql.raw` fragments cleanly, and the duplication is one small CAS. Enclave/E2E parity omitted, consistent with `schedule_follow_up` (clean degrade — see the backlog parity item).
+
+**Tests:** repository — `listPending`, `updatePending`, `markCancelledInStream` scoping, `markFired` time guard; service — `listPending`, `update` (reschedule tombstone+re-enqueue, note-only no-reschedule, not_found / other-stream / not_pending / lost-race), stream-scoped `cancel`; three tool tests (happy paths, validation, error reasons); `tool-privacy.test.ts` covers the new tools via its `satisfies` enumeration.
+
+**Done when:** in a companion stream, Ariadne can list her pending follow-ups, cancel one that's no longer needed, and push another's time out — each stream-scoped, race-safe, and reusing the 1.1 substrate.
 
 ---
 

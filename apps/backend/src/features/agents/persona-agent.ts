@@ -150,6 +150,29 @@ export interface PersonaAgentDeps {
     scheduledFor: Date
   }) => Promise<import("./tools/tool-deps").ScheduleFollowUpToolResult>
   /**
+   * Follow-up admin callbacks (list / cancel / update), bound to the
+   * `AgentFollowUpService` in server.ts. The turn supplies `streamId` so each is
+   * scoped to the stream it runs in — a persona administers only its own
+   * stream's follow-ups. Wired together with `scheduleFollowUp`; all present or
+   * all absent (harnesses without follow-ups omit the whole bundle).
+   */
+  listFollowUps?: (params: {
+    workspaceId: string
+    streamId: string
+  }) => Promise<import("./tools/tool-deps").FollowUpSummary[]>
+  cancelFollowUp?: (params: {
+    workspaceId: string
+    streamId: string
+    followUpId: string
+  }) => Promise<import("./tools/tool-deps").CancelFollowUpToolResult>
+  updateFollowUp?: (params: {
+    workspaceId: string
+    streamId: string
+    followUpId: string
+    note?: string
+    scheduledFor?: Date
+  }) => Promise<import("./tools/tool-deps").UpdateFollowUpToolResult>
+  /**
    * Load a fired follow-up's context (the note it carries + when it was
    * scheduled) so the turn it wakes can be told why. Bound to
    * `AgentFollowUpService.getById` in server.ts; consulted only when a job
@@ -233,6 +256,9 @@ export class PersonaAgent {
       removeReaction,
       createThread,
       scheduleFollowUp,
+      listFollowUps,
+      cancelFollowUp,
+      updateFollowUp,
       loadFollowUp,
     } = this.deps
     const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime } = input
@@ -583,31 +609,37 @@ export class PersonaAgent {
         // the turn it fires (extraction lags), so prefer-only would resolve to
         // null in the common case. Best-effort per §2.8 Q8; null when nothing
         // overlaps (e.g. E2E streams the segmenter skips).
-        const followUpDeps: import("./tools/tool-deps").FollowUpToolDeps | undefined = scheduleFollowUp
-          ? {
-              scheduleFollowUp: async ({ note, scheduledFor }) => {
-                let sourceConversationId: string | null = null
-                if (agentContext.triggerMessage) {
-                  const anchor = await resolveEligibleConversation(db, {
+        const followUpDeps: import("./tools/tool-deps").FollowUpToolDeps | undefined =
+          scheduleFollowUp && listFollowUps && cancelFollowUp && updateFollowUp
+            ? {
+                scheduleFollowUp: async ({ note, scheduledFor }) => {
+                  let sourceConversationId: string | null = null
+                  if (agentContext.triggerMessage) {
+                    const anchor = await resolveEligibleConversation(db, {
+                      workspaceId,
+                      preferMessageId: agentContext.triggerMessage.id,
+                      windowMessageIds: contextMessageIds,
+                      isEligible: () => true,
+                    })
+                    sourceConversationId = anchor?.id ?? null
+                  }
+                  return scheduleFollowUp({
                     workspaceId,
-                    preferMessageId: agentContext.triggerMessage.id,
-                    windowMessageIds: contextMessageIds,
-                    isEligible: () => true,
+                    streamId: session.streamId,
+                    personaId: persona.id,
+                    sessionId: session.id,
+                    sourceConversationId,
+                    note,
+                    scheduledFor,
                   })
-                  sourceConversationId = anchor?.id ?? null
-                }
-                return scheduleFollowUp({
-                  workspaceId,
-                  streamId: session.streamId,
-                  personaId: persona.id,
-                  sessionId: session.id,
-                  sourceConversationId,
-                  note,
-                  scheduledFor,
-                })
-              },
-            }
-          : undefined
+                },
+                listFollowUps: () => listFollowUps({ workspaceId, streamId: session.streamId }),
+                cancelFollowUp: ({ followUpId }) =>
+                  cancelFollowUp({ workspaceId, streamId: session.streamId, followUpId }),
+                updateFollowUp: ({ followUpId, note, scheduledFor }) =>
+                  updateFollowUp({ workspaceId, streamId: session.streamId, followUpId, note, scheduledFor }),
+              }
+            : undefined
 
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }

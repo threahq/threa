@@ -16,6 +16,9 @@ import {
   createDescribeMemoTool,
   createReactToMessageTool,
   createScheduleFollowUpTool,
+  createListFollowUpsTool,
+  createCancelFollowUpTool,
+  createUpdateFollowUpTool,
   createWorkspaceResearchTool,
   createGithubReposTool,
   createGithubCommitsTool,
@@ -139,6 +142,15 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
     followUps && isToolEnabled(enabledTools, AgentToolNames.SCHEDULE_FOLLOW_UP)
       ? createScheduleFollowUpTool(followUps, { timezone, currentTime })
+      : null,
+    followUps && isToolEnabled(enabledTools, AgentToolNames.LIST_FOLLOW_UPS)
+      ? createListFollowUpsTool(followUps, { timezone })
+      : null,
+    followUps && isToolEnabled(enabledTools, AgentToolNames.CANCEL_FOLLOW_UP)
+      ? createCancelFollowUpTool(followUps)
+      : null,
+    followUps && isToolEnabled(enabledTools, AgentToolNames.UPDATE_FOLLOW_UP)
+      ? createUpdateFollowUpTool(followUps, { timezone, currentTime })
       : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)

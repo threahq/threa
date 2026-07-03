@@ -53,6 +53,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // workspace read. It rides the always-allowed `messaging` class; its abuse
   // bound is the per-stream pending cap, not a privacy grant.
   schedule_follow_up: ["messaging"],
+  // Listing / cancelling / updating follow-ups is the agent administering its
+  // own scheduled participation in this stream — the same in-product class as
+  // scheduling one, and scoped to the running turn's stream by the caller, so
+  // it reads nothing beyond the follow-ups it created here.
+  list_follow_ups: ["messaging"],
+  cancel_follow_up: ["messaging"],
+  update_follow_up: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],
