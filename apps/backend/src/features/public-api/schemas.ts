@@ -219,6 +219,19 @@ export const sourceItemSchema = z.object({
   snippet: z.string().max(2000).optional(),
 })
 
+// Sealed-message envelope framing (v2 StreamEnvelope): iv/aad base64. These
+// fields are persisted verbatim and only decrypted later (in the owner's
+// browser), so decodability is validated at the boundary — malformed base64
+// that slips through becomes a permanently unreadable row. Mirrors the enclave's
+// sealed validation (session-handlers.ts). Declared above the first user
+// (`completeInvocationSchema`'s sealed ack) so the const is initialized in time.
+const sealedStreamEnvelopeSchema = z.object({
+  v: z.number(),
+  keyGeneration: z.number().int().min(0),
+  iv: z.base64().min(1),
+  aad: z.base64().min(1),
+})
+
 export const completeInvocationSchema = z
   .object({
     instanceId: z.string().min(1).max(128),
@@ -227,10 +240,27 @@ export const completeInvocationSchema = z
     noResponse: z.boolean().optional(),
     sources: z.array(sourceItemSchema).max(50).optional(),
     metadata: messageMetadataSchema.optional(),
+    // Sealed variant of `finalMessageMarkdown`, for a session-control ack on an
+    // E2E scratchpad: the "Model changed …" confirmation sealed under the stream
+    // key. Session-control invocations have no sealed session, so they complete
+    // here rather than via `/sealed-complete`. `messageId` is client-minted (it
+    // binds the seal AAD); content is ciphertext the server never reads (INV-E7).
+    // Mutually exclusive with `finalMessageMarkdown`.
+    sealedReply: z
+      .object({
+        messageId: z.string().min(1).max(128),
+        ciphertext: z.base64().min(1),
+        envelope: sealedStreamEnvelopeSchema,
+      })
+      .optional(),
   })
-  .refine((value) => value.noResponse === true || value.finalMessageMarkdown != null, {
-    message: "Either finalMessageMarkdown or noResponse is required",
+  .refine((value) => value.noResponse === true || value.finalMessageMarkdown != null || value.sealedReply != null, {
+    message: "Either finalMessageMarkdown, sealedReply, or noResponse is required",
     path: ["finalMessageMarkdown"],
+  })
+  .refine((value) => !(value.finalMessageMarkdown != null && value.sealedReply != null), {
+    message: "Provide finalMessageMarkdown or sealedReply, not both",
+    path: ["sealedReply"],
   })
 
 export const failInvocationSchema = z.object({
@@ -247,17 +277,6 @@ export const recordInvocationStepSchema = z.object({
   statusText: z.string().max(200).optional(),
   // Client idempotency key: a step re-sent under the same id dedups server-side.
   clientStepId: z.string().min(1).max(128).optional(),
-})
-
-// These base64 fields are persisted verbatim and only decrypted later (in the
-// owner's browser), so decodability is validated at the boundary — malformed
-// base64 that slips through becomes a permanently unreadable step. Mirrors the
-// enclave's sealed-step validation (session-handlers.ts).
-const sealedStreamEnvelopeSchema = z.object({
-  v: z.number(),
-  keyGeneration: z.number().int().min(0),
-  iv: z.base64().min(1),
-  aad: z.base64().min(1),
 })
 
 // One sealed trace step a sealed-capable bot harness finalized (the external

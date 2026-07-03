@@ -60,6 +60,8 @@ export interface ClaimedInvocation {
   context?: { kind: "inline"; messages: ExternalHistoryMessage[] }
   /** Present on a sealed (E2E) claim as delivered by the server; consumed and cleared by hydration. */
   sealedContext?: unknown
+  /** Present on a session-control claim on an E2E stream: SSK wraps to seal the command ack. */
+  sealedAck?: unknown
   /** Derived from `sealedContext` at claim time; carries the stream key + binding for sealing replies/steps. */
   sealing?: SealingState
 }

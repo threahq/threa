@@ -298,6 +298,10 @@ describe("BotInvocationRepository.claimOne", () => {
     // (the trigger envelope's), mirroring the enclave's claimNext two-EXISTS.
     expect(captured.text).toContain("w.key_generation = e.current_key_generation")
     expect(captured.text).toContain("w.key_generation = (m.envelope ->> 'keyGeneration')::int")
+    // A session-control invocation has no sealed trigger message, so the prompt-
+    // generation EXISTS is bypassed for it (only the ack/current generation must
+    // be covered) — otherwise it is permanently unclaimable on an E2E stream.
+    expect(captured.text).toContain("i.trigger = 'session-control'")
     // The trigger ciphertext is keyed off the invocation's own source message
     // (messages has no workspace_id column — it is scoped by stream_id).
     expect(captured.text).toContain("JOIN messages m ON m.id = i.source_message_id")

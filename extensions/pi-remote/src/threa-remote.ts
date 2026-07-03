@@ -18,13 +18,16 @@ import {
   BotRuntimeTransport,
   THREA_CALLBACK_TOKEN_HEADER,
   mintStreamKeyWraps,
+  openSealedAck,
   openSealedTurnContext,
+  parseSealedAckContext,
   parseSealedTurnContext,
   scrubSealedError,
   sealReply,
   sealStep,
   type BotRuntimeHello,
   type DecryptedHistoryItem,
+  type SealedReplyBody,
   type SealingState,
 } from "@threa/bot-runtime-client"
 import type {
@@ -178,6 +181,8 @@ type ClaimedInvocation = {
   sealing?: SealingState
   /** Decrypted prior-message context, pre-formatted for the prompt (no plaintext fetch on E2E). */
   sealedContextText?: string
+  /** Present on a session-control claim on an E2E stream: SSK wraps to seal the command ack. */
+  sealedAck?: unknown
 }
 
 interface AttachmentSummary {
@@ -1680,6 +1685,29 @@ async function failInvocationScrubbed(invocation: ClaimedInvocation, reason: str
   }).catch(() => undefined)
 }
 
+/**
+ * Seal a session-control command ack under the stream key, when the claim
+ * carried the SSK wraps (an E2E scratchpad). Returns undefined on a plaintext
+ * claim or a key race — the caller then takes the plaintext path, which closes
+ * silently on E2E rather than showing the command as failed.
+ */
+async function sealSessionControlAck(
+  invocation: ClaimedInvocation,
+  markdown: string
+): Promise<SealedReplyBody | undefined> {
+  const ack = parseSealedAckContext(invocation.sealedAck)
+  if (!ack) return undefined
+  const bik = await bikKeystore.ensure()
+  if (!bik) return undefined
+  try {
+    const streamId = invocation.rootStreamId ?? invocation.activeStreamId
+    const sealing = await openSealedAck({ ack, identity: bik, streamId })
+    return await sealReply(sealing, markdown)
+  } catch {
+    return undefined
+  }
+}
+
 type RuntimeCommandMetadata = { id: string; name: string; args: string; executionKind: "bot-runtime" }
 
 function getRuntimeCommand(invocation: ClaimedInvocation): RuntimeCommandMetadata | null {
@@ -1737,8 +1765,34 @@ async function completeInvocationWithMarkdown(
   ctx?: ExtensionContext
 ): Promise<void> {
   if (!config) return
-  await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
   const instanceId = getInvocationInstanceId(invocation)
+
+  // Sealed session-control ack: on an E2E scratchpad the claim carries the SSK
+  // wraps, so seal the "Model changed …" confirmation under the stream key and
+  // post it as `sealedReply`. No plaintext trace step (the server would reject
+  // it, and it'd leak the ack text). Falls through to the plaintext path when
+  // the bot can't seal (no wrap / key race) — which silently closes on E2E.
+  const sealedReply = await sealSessionControlAck(invocation, finalMessageMarkdown)
+  if (sealedReply) {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        sealedReply,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+        },
+      }),
+    }).catch(() => undefined)
+    lastBusyHeartbeatAt = 0
+    await heartbeat("available", undefined, ctx).catch(() => undefined)
+    return
+  }
+
+  await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
   try {
     await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
       method: "POST",
