@@ -78,6 +78,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     hasUnread,
     markReadSilently,
     setExplicitUnreadListener,
+    getReadTruth,
   } = useConversationReadController(workspaceId, conversation.id, streamId, currentUserId)
   // Over the card's known local messages (opening + the full local reply rail);
   // own-authored rows are excluded inside `hasUnread`.
@@ -143,6 +144,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     rowState: conversationReadValue.state,
     markRead: markReadSilently,
     registerExplicitUnread: setExplicitUnreadListener,
+    getReadTruth,
   })
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => (

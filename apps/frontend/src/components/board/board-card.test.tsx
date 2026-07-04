@@ -107,6 +107,7 @@ describe("BoardCard unread dot", () => {
       hasUnread: () => true,
       markReadSilently: () => Promise.resolve(),
       setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
     })
     mountCard()
     expect(await screen.findByLabelText("Unread")).toBeTruthy()
@@ -118,6 +119,7 @@ describe("BoardCard unread dot", () => {
       hasUnread: () => false,
       markReadSilently: () => Promise.resolve(),
       setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
     })
     mountCard()
     await screen.findByText("Opening body.")

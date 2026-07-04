@@ -249,6 +249,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     value: conversationReadValue,
     markReadSilently,
     setExplicitUnreadListener,
+    getReadTruth,
   } = useConversationReadController(workspaceId, conversation.id, conversation.streamId, currentUserId)
   // Deep-link target from `?m=` — the row to scroll to + flash. Shared with the
   // host page's `m` param, but only the conversation panel reads it here (the
@@ -318,6 +319,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     rowState: conversationReadValue.state,
     markRead: markReadSilently,
     registerExplicitUnread: setExplicitUnreadListener,
+    getReadTruth,
   })
 
   return (

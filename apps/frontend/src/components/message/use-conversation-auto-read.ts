@@ -55,6 +55,10 @@ interface UseConversationAutoReadOptions {
    * dwell-scheduled mark-read firing mid-flight would otherwise cutoff right
    * back over the explicit unread, with server arrival order deciding. */
   registerExplicitUnread: (listener: (() => void) | null) => void
+  /** The controller's `getReadTruth`: raw per-stream watermark sequence +
+   * overlay ids, diffed to catch a cross-device mark-unread. See the pin notes
+   * on the hook doc for why this is raw truth and not derived row state. */
+  getReadTruth: (streamId: string) => { lastReadSequence: string | null; readMessageIds: readonly string[] }
 }
 
 /**
@@ -75,12 +79,20 @@ interface UseConversationAutoReadOptions {
  *   partial reads.
  * - Mark-as-unread pins (the timeline's `pinnedRef`, with leave-and-return as
  *   the resume gesture instead of a scroll, which a small card doesn't have):
- *   an explicit unread — the controller's synchronous signal, or a
- *   read → unread regression from another device — unsees everything and
- *   suppresses EVERY eligible row, holding auto-read entirely until the
- *   suppressions release. All of them, not just the currently-visible set:
- *   visibility is unknowable across observer teardowns (attention loss, id-set
- *   changes), and under-suppressing would let a still-on-screen row dwell and
+ *   an explicit unread — the controller's synchronous signal, or a RAW
+ *   read-truth regression from another device (watermark sequence decreasing,
+ *   or overlay ids removed without a compensating watermark advance, on a row
+ *   this surface shows) — unsees everything and suppresses EVERY eligible
+ *   row, holding auto-read entirely until the suppressions release. The
+ *   cross-device arm deliberately watches raw primitives, never derived row
+ *   state: derivation flaps (the `unreadCounts === 0` short-circuit falling
+ *   back to a stale frontier when a count leaves zero, a stale `lastReadAt`
+ *   time fallback after compaction) would read as mass regressions and
+ *   false-pin — and a pinned card on a static board never releases, wedging
+ *   auto-read (first dogfood's board failure). Suppression covers all
+ *   eligible rows, not just the currently-visible set: visibility is
+ *   unknowable across observer teardowns (attention loss, id-set changes),
+ *   and under-suppressing would let a still-on-screen row dwell and
  *   cutoff-mark right back over the explicit unread. Each row's suppression
  *   releases when the observer reports it off-screen — immediately for rows
  *   that weren't visible, on leave for the ones that were.
@@ -97,6 +109,7 @@ export function useConversationAutoRead({
   rowState,
   markRead,
   registerExplicitUnread,
+  getReadTruth,
 }: UseConversationAutoReadOptions): void {
   const canAutoRead = useAutoReadAttention()
 
@@ -259,28 +272,66 @@ export function useConversationAutoRead({
     }
   }, [canAutoRead, eligibleIdsKey, containerRef, scheduleEvaluate])
 
-  // The cross-device arm of the pin: watches per-row state for a read → unread
-  // regression (a mark-unread applied elsewhere — the local menu action pins
-  // synchronously via registerExplicitUnread above, without waiting for its
-  // snapshot to land). First run only baselines.
-  const prevStatesRef = useRef<Map<string, RowReadState> | null>(null)
+  // The cross-device arm of the pin: diff RAW per-stream read truth (the local
+  // menu action pins synchronously via registerExplicitUnread above, without
+  // waiting for its snapshot to land). A stream regresses when its watermark
+  // sequence decreases, or when overlay ids vanish without the watermark
+  // advancing (compaction drops ids but always advances; a message move drops
+  // ids but the row leaves the stream too). Pin only when the regression
+  // exposes a row THIS surface shows: previously covered by the old truth
+  // (id in the old overlay, or sequence at/below the old watermark) and now
+  // deriving unread — that is an actual mark-unread of on-surface content, not
+  // a move artifact. First run only baselines. Derived row state is NEVER the
+  // trigger — see the pin notes above.
+  const prevTruthRef = useRef<Map<string, { seq: bigint | null; overlay: Set<string> }> | null>(null)
   useEffect(() => {
-    const next = new Map<string, RowReadState>()
-    for (const m of eligibleRef.current) next.set(m.id, stateOf(m))
-    const prev = prevStatesRef.current
-    prevStatesRef.current = next
+    const eligibleIds = new Set(eligibleRef.current.map((m) => m.id))
     // Rows that left the conversation (deleted, re-clustered) can't hold a pin
     // or a seen slot forever.
-    for (const id of suppressedRef.current) if (!next.has(id)) suppressedRef.current.delete(id)
-    for (const id of seenRef.current) if (!next.has(id)) seenRef.current.delete(id)
+    for (const id of suppressedRef.current) if (!eligibleIds.has(id)) suppressedRef.current.delete(id)
+    for (const id of seenRef.current) if (!eligibleIds.has(id)) seenRef.current.delete(id)
+
+    const streamIds = new Set<string>([rootStreamIdRef.current])
+    for (const m of eligibleRef.current) if (m.streamId) streamIds.add(m.streamId)
+    const next = new Map<string, { seq: bigint | null; overlay: Set<string> }>()
+    for (const streamId of streamIds) {
+      const truth = getReadTruth(streamId)
+      next.set(streamId, {
+        seq: truth.lastReadSequence != null ? BigInt(truth.lastReadSequence) : null,
+        overlay: new Set(truth.readMessageIds),
+      })
+    }
+    const prev = prevTruthRef.current
+    prevTruthRef.current = next
     if (!prev) return
-    for (const [id, state] of next) {
-      if (state === "unread" && prev.get(id) === "read") {
-        pin()
-        return
+
+    for (const [streamId, truth] of next) {
+      const before = prev.get(streamId)
+      if (!before) continue
+      const seqRegressed = truth.seq != null && before.seq != null && truth.seq < before.seq
+      const advanced = truth.seq != null && before.seq != null && truth.seq > before.seq
+      let overlayDropped = false
+      if (!advanced) {
+        for (const id of before.overlay) {
+          if (!truth.overlay.has(id)) {
+            overlayDropped = true
+            break
+          }
+        }
+      }
+      if (!seqRegressed && !overlayDropped) continue
+      for (const m of eligibleRef.current) {
+        if ((m.streamId ?? rootStreamIdRef.current) !== streamId) continue
+        const wasCovered =
+          before.overlay.has(m.id) || (m.sequence != null && before.seq != null && BigInt(m.sequence) <= before.seq)
+        if (wasCovered && stateOf(m) === "unread") {
+          autoReadDebug("pin: read-truth regression", { streamId, row: m.id })
+          pin()
+          return
+        }
       }
     }
-  }, [rowState, eligibleIdsKey, rootStreamId, stateOf, pin])
+  }, [rowState, eligibleIdsKey, rootStreamId, getReadTruth, stateOf, pin])
 
   // Flush a pending debounce on unmount (panel closed, card scrolled out of the
   // board's window mid-read) — the rows were seen; losing the mark to the

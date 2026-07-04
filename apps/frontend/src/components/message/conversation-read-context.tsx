@@ -23,6 +23,8 @@ export interface ConversationRowRead {
 
 const ConversationReadContext = createContext<ConversationRowRead | null>(null)
 
+const EMPTY_OVERLAY: readonly string[] = []
+
 export function useConversationRowRead(): ConversationRowRead | null {
   return useContext(ConversationReadContext)
 }
@@ -107,6 +109,12 @@ export function useConversationReadController(
    * request departs — a dwell-scheduled auto mark-read firing mid-flight would
    * otherwise race the explicit unread, with server arrival order deciding. */
   setExplicitUnreadListener: (listener: (() => void) | null) => void
+  /** One stream's RAW read truth (watermark sequence + overlay ids) — what the
+   * auto-read hook diffs to detect a cross-device mark-unread. Raw primitives,
+   * not derived row state: derivation flaps (the `unreadCounts === 0`
+   * short-circuit, a stale `lastReadAt` fallback) must never read as a
+   * regression, or auto-read false-pins and wedges on a static board card. */
+  getReadTruth: (streamId: string) => { lastReadSequence: string | null; readMessageIds: readonly string[] }
 } {
   const conversationService = useConversationService()
   const unreadState = useWorkspaceUnreadState(workspaceId)
@@ -143,6 +151,14 @@ export function useConversationReadController(
     [markReadSilently]
   )
 
+  const getReadTruth = useCallback(
+    (streamId: string) => ({
+      lastReadSequence: frontierByStream.get(streamId)?.lastReadSequence ?? null,
+      readMessageIds: overlay?.[streamId] ?? EMPTY_OVERLAY,
+    }),
+    [frontierByStream, overlay]
+  )
+
   const explicitUnreadListenerRef = useRef<(() => void) | null>(null)
   const setExplicitUnreadListener = useCallback((listener: (() => void) | null) => {
     explicitUnreadListenerRef.current = listener
@@ -173,5 +189,5 @@ export function useConversationReadController(
     [state, currentUserId, rootStreamId]
   )
 
-  return { value, hasUnread, markReadSilently, setExplicitUnreadListener }
+  return { value, hasUnread, markReadSilently, setExplicitUnreadListener, getReadTruth }
 }

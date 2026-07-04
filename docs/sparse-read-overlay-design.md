@@ -295,16 +295,23 @@ newestSeenRow)` per conversation; the gate re-checks effective unread at
   inert on any active conversation — Kris's ruling: having the conversation
   open is enough to mark it.)
 - Mark-as-unread **pins**: the menu action signals the hook synchronously
-  BEFORE its request departs (the controller's `setExplicitUnreadListener`),
-  and a read → unread regression on any eligible row catches the cross-device
-  case. Pinning unsees everything and suppresses **every eligible row** — not
-  just the currently-visible set, because visibility is unknowable across
-  observer teardowns (attention loss, id-set changes) and under-suppressing
-  would let a still-on-screen row dwell and cutoff-mark right back over the
-  explicit unread. Auto-read holds entirely while any suppression is active;
-  each row's suppression releases when the observer reports it off-screen —
-  the stream timeline's `pinnedRef`, with leave-and-return as the resume
-  gesture (a small card has no scroll to watch).
+  BEFORE its request departs (the controller's `setExplicitUnreadListener`);
+  the cross-device case is caught by diffing **raw read truth** per spanned
+  stream (the controller's `getReadTruth`) — a watermark sequence decrease,
+  or overlay ids removed without a compensating watermark advance, exposing
+  a row the surface shows. Never derived row state: derivation flaps (the
+  `unreadCounts === 0` short-circuit falling back to a stale frontier when a
+  count leaves zero, the stale-`lastReadAt` time fallback) read as mass
+  read → unread regressions, and a false pin on a static board card never
+  releases — that wedge was the first dogfood failure. Pinning unsees
+  everything and suppresses **every eligible row** — not just the
+  currently-visible set, because visibility is unknowable across observer
+  teardowns (attention loss, id-set changes) and under-suppressing would let
+  a still-on-screen row dwell and cutoff-mark right back over the explicit
+  unread. Auto-read holds entirely while any suppression is active; each
+  row's suppression releases when the observer reports it off-screen — the
+  stream timeline's `pinnedRef`, with leave-and-return as the resume gesture
+  (a small card has no scroll to watch).
 - Rows are matched by `data-message-row` on the `MessageItem` container, not
   bare `data-message-id` — editor nodes (quote reply, in-app links) render
   `data-message-id` inside the card's composer, and observing those would let
