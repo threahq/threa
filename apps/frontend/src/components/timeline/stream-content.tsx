@@ -1098,6 +1098,13 @@ export function StreamContent({
     return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
   }, [timelineItems, useVirtualized, isChannel, showOlderSkeletons])
 
+  // Collected from the PRE-filter `timelineItems`: the zero-height
+  // `agent:follow_up_cancelled` events are dropped by `filterVisibleItems`, so
+  // reading `visibleItems` would never see a cancellation and a scheduled card
+  // could never flip on the virtualized path. Passed into TimelineMessageList's
+  // render context so every viewer's card reflects the cancel (survives reload).
+  const cancelledFollowUpIds = useMemo(() => collectCancelledFollowUpIds(timelineItems), [timelineItems])
+
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
   // which the event window can shift. Reading the ref keeps each retry tick
@@ -2047,6 +2054,7 @@ export function StreamContent({
                       <>
                         <TimelineMessageList
                           visibleItems={visibleItems}
+                          cancelledFollowUpIds={cancelledFollowUpIds}
                           isLoading={isLoading}
                           holdForDeepLink={holdForDeepLink}
                           isConfirmedEmpty={isConfirmedEmpty}
@@ -2306,6 +2314,7 @@ export function StreamContent({
 /** Virtuoso-powered message list for streams, channels, and scratchpads */
 function TimelineMessageList({
   visibleItems,
+  cancelledFollowUpIds,
   isLoading,
   holdForDeepLink,
   isConfirmedEmpty,
@@ -2339,6 +2348,7 @@ function TimelineMessageList({
   onJumpToDate,
 }: {
   visibleItems: TimelineItem[]
+  cancelledFollowUpIds: Set<string>
   isLoading: boolean
   /** Hold the skeleton until a deep-link (?m=) target is in the loaded window
    *  so the keyed list mounts already anchored on it. */
@@ -2438,7 +2448,6 @@ function TimelineMessageList({
   // conversation opened with. Without this, virtualized scratchpad timelines
   // would never get `isFirstMessage=true` and the badge would silently drop.
   const firstMessageId = useMemo(() => findFirstMessageId(visibleItems), [visibleItems])
-  const cancelledFollowUpIds = useMemo(() => collectCancelledFollowUpIds(visibleItems), [visibleItems])
 
   const renderCtx = useMemo<TimelineItemRenderContext>(
     () => ({

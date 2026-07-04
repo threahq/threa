@@ -44,7 +44,10 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
   const cancelled = cancelledByEvent || optimisticallyCancelled
 
   async function handleCancel() {
-    if (!payload) return
+    // Re-entrancy guard replaces the native `disabled` attribute: a disabled
+    // button loses focus (browsers blur it), which would drop a keyboard/AT
+    // user mid-timeline during the request. `aria-disabled` keeps it focusable.
+    if (!payload || cancelling || cancelled) return
     setCancelling(true)
     try {
       const { cancelled: didCancel } = await agentFollowUpsApi.cancel(workspaceId, payload.followUpId)
@@ -83,13 +86,14 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
          */}
         <button
           type="button"
-          onClick={cancelled ? undefined : handleCancel}
-          disabled={cancelling}
-          aria-disabled={cancelled}
+          onClick={handleCancel}
+          aria-disabled={cancelled || cancelling}
+          aria-busy={cancelling}
           aria-live="polite"
           className={cn(
-            "inline-flex items-center gap-1 text-xs font-medium text-muted-foreground disabled:opacity-60",
-            cancelled ? "cursor-default" : "hover:text-foreground"
+            "inline-flex items-center gap-1 text-xs font-medium text-muted-foreground",
+            cancelled || cancelling ? "cursor-default" : "hover:text-foreground",
+            cancelling && "opacity-60"
           )}
         >
           {cancelling && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
