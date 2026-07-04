@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Bot as BotIcon } from "lucide-react"
+import type { Bot } from "@threa/types"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,19 +10,31 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { cn } from "@/lib/utils"
 import { botsApi } from "@/api/bots"
 import { useInviteActor } from "@/hooks/use-invite-actor"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { StreamTypes } from "@threa/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
 const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+const overflowPillClass =
+  "shrink-0 border-border bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 // Invited-bot pills share the scratchpad header row with the title, labels, and
 // the encryption + Ariadne affordances — an unbounded run of full name pills
 // overflows a phone-width header. Cap the visible pills like `LabelStack` does
 // and fold the rest into a "+N" pill (INV-21: no layout shift, the count sits
 // in place). Each name also truncates so one long bot name can't blow the row.
 const VISIBLE_CAP = 2
+
+// A bot's SSK wrap (E2eActor.keyId) is null until the owner unlocks and the
+// key-roll wraps the stream key to it — so `keyId` present ⇔ the bot can
+// actually decrypt. An invite made while locked lands here as `false` (pending).
+function accessLabel(name: string, canRead: boolean): string {
+  return canRead ? `${name} can read this encrypted scratchpad` : `${name} is invited; unlock to grant it access`
+}
 
 interface InviteBotButtonProps {
   workspaceId: string
@@ -47,43 +60,40 @@ export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
 
   if (!eligible) return null
 
-  const invitedBotIds = new Set((stream.e2eActors ?? []).filter((a) => a.kind === "bot").map((a) => a.actorId))
-  const invited = (bots ?? []).filter((bot) => invitedBotIds.has(bot.id))
-  const candidates = (bots ?? []).filter((bot) => !bot.archivedAt && !invitedBotIds.has(bot.id))
+  // actorId → whether the SSK is wrapped to this bot yet (can it actually read).
+  const wrappedById = new Map(
+    (stream.e2eActors ?? []).filter((a) => a.kind === "bot").map((a) => [a.actorId, Boolean(a.keyId)])
+  )
+  const invited = (bots ?? []).filter((bot) => wrappedById.has(bot.id))
+  const candidates = (bots ?? []).filter((bot) => !bot.archivedAt && !wrappedById.has(bot.id))
   const visibleInvited = invited.slice(0, VISIBLE_CAP)
   const overflowInvited = invited.slice(VISIBLE_CAP)
+  const canRead = (botId: string) => wrappedById.get(botId) === true
 
   return (
     <>
-      {visibleInvited.map((bot) => (
-        <Tooltip key={bot.id}>
-          <TooltipTrigger asChild>
-            <span
-              className={cn(pillBase, "min-w-0 border-border bg-secondary text-foreground")}
-              aria-label={`${bot.name} can read this scratchpad`}
-            >
-              <BotIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="max-w-[8rem] truncate">{bot.name}</span>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>{bot.name} can read this encrypted scratchpad.</TooltipContent>
-        </Tooltip>
-      ))}
-      {overflowInvited.length > 0 && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className={cn(pillBase, "shrink-0 border-border bg-secondary text-muted-foreground")}
-              aria-label={`${overflowInvited.length} more agents can read this scratchpad: ${overflowInvited.map((b) => b.name).join(", ")}`}
-            >
-              +{overflowInvited.length}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {overflowInvited.map((b) => b.name).join(", ")} can read this encrypted scratchpad.
-          </TooltipContent>
-        </Tooltip>
-      )}
+      {visibleInvited.map((bot) => {
+        const label = accessLabel(bot.name, canRead(bot.id))
+        return (
+          <Tooltip key={bot.id}>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  pillBase,
+                  "min-w-0 border-border bg-secondary",
+                  canRead(bot.id) ? "text-foreground" : "border-dashed text-muted-foreground"
+                )}
+                aria-label={label}
+              >
+                <BotIcon className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <span className="max-w-[8rem] truncate">{bot.name}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{label}.</TooltipContent>
+          </Tooltip>
+        )
+      })}
+      {overflowInvited.length > 0 && <InvitedBotsOverflow bots={overflowInvited} canRead={canRead} />}
       {/* Visible even while locked, mirroring the sibling Ariadne pill: an
           invite made without unlocked owner credentials is recorded and warns
           ("unlock to grant access"), then the owner-wrap repair heals it — so
@@ -96,10 +106,7 @@ export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
               type="button"
               disabled={isInviting}
               aria-label="Invite an agent to this scratchpad"
-              className={cn(
-                pillBase,
-                "shrink-0 border-border bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-60"
-              )}
+              className={cn(pillBase, overflowPillClass, "disabled:opacity-60")}
             >
               <BotIcon className="h-3 w-3" aria-hidden="true" />
               <span>{isInviting ? "Inviting…" : "Invite agent"}</span>
@@ -120,5 +127,62 @@ export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
         </DropdownMenu>
       )}
     </>
+  )
+}
+
+/**
+ * The "+N" overflow for invited-bot pills. A hover-only tooltip would hide the
+ * folded bot names from touch users entirely (Radix tooltips no-op on touch and
+ * a bare span isn't focusable), so this discloses through a tap `Drawer` on
+ * touch and a `HoverCard` on mouse — the same input-mode branch `LabelStack`
+ * uses — with a focusable `<button>` trigger for keyboard access.
+ */
+function InvitedBotsOverflow({ bots, canRead }: { bots: Bot[]; canRead: (botId: string) => boolean }) {
+  const isTouch = useInputMode() === "touch"
+  const names = bots.map((b) => b.name).join(", ")
+  const trigger = (
+    <button
+      type="button"
+      aria-label={`${bots.length} more agents invited: ${names}`}
+      className={cn(pillBase, overflowPillClass)}
+    >
+      +{bots.length}
+    </button>
+  )
+  const list = (
+    <ul className="flex flex-col gap-2">
+      {bots.map((bot) => (
+        <li key={bot.id} className="flex items-center gap-2 text-sm">
+          <BotIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">{bot.name}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {canRead(bot.id) ? "can read" : "unlock to grant"}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+
+  if (isTouch) {
+    return (
+      <Drawer>
+        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
+        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">
+          <DrawerHeader>
+            <DrawerTitle>Agents with access</DrawerTitle>
+          </DrawerHeader>
+          <div className="px-4 pb-4">{list}</div>
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
+  return (
+    <HoverCard openDelay={100} closeDelay={100}>
+      <HoverCardTrigger asChild>{trigger}</HoverCardTrigger>
+      <HoverCardContent align="start" className="w-auto max-w-xs p-2">
+        {list}
+      </HoverCardContent>
+    </HoverCard>
   )
 }

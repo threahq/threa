@@ -86,6 +86,7 @@ function arrangeSealedClaim(params: {
   wraps?: StreamE2eKeyWrap[]
   surrounding?: Message[]
   trigger?: Message
+  sessionControl?: boolean
 }) {
   // A thread invocation: key material resolves against the root channel
   // (rootStreamId), the conversation window against the thread (activeStreamId).
@@ -94,12 +95,12 @@ function arrangeSealedClaim(params: {
     workspaceId: "ws_1",
     rootStreamId: "stream_channel",
     activeStreamId: "stream_thread",
-    sourceMessageId: "msg_trigger",
+    sourceMessageId: params.sessionControl ? "cmd_1" : "msg_trigger",
     responseStreamId: "stream_thread",
     actorType: "bot" as const,
     actorId: "bot_1",
-    trigger: "active-scratchpad",
-    requiredCapability: "active-scratchpad",
+    trigger: params.sessionControl ? "session-control" : "active-scratchpad",
+    requiredCapability: params.sessionControl ? "session-control" : "active-scratchpad",
     promptMarkdown: "[encrypted]",
     authorUserId: "usr_1",
     mentionedActorSlugs: [],
@@ -177,7 +178,11 @@ function arrangeSealedClaim(params: {
   const req = {
     workspaceId: "ws_1",
     botApiKey: { botId: "bot_1" },
-    body: { runtimeKind: "pi-local", instanceId: "inst_1", supportedCapabilities: ["active-scratchpad"] },
+    body: {
+      runtimeKind: "pi-local",
+      instanceId: "inst_1",
+      supportedCapabilities: params.sessionControl ? ["session-control"] : ["active-scratchpad"],
+    },
   } as unknown as Request
 
   return { handlers, req, insertSession, findSurrounding }
@@ -276,5 +281,64 @@ describe("claimBotInvocation sealed delivery", () => {
       status: 409,
       code: "SEALED_KEY_COVERAGE_LOST",
     })
+  })
+})
+
+// A session-control invocation (e.g. /model) has no sealed turn to open — the
+// command name is cleartext dispatch metadata. On an E2E stream the claim
+// instead carries a minimal `sealedAck`: the current-generation SSK wraps + the
+// reply binding, so the harness can seal only the command ack. Unlike a sealed
+// turn, a bot that can't seal (no BIK / stale wrap) still claims and runs the
+// command — `buildSessionControlSealedAck` returns undefined and the harness
+// closes silently, so the command never wedges.
+describe("claimBotInvocation session-control sealed ack", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("carries a sealedAck (current-generation bot wraps + reply binding), not a sealedContext", async () => {
+    const { handlers, req } = arrangeSealedClaim({
+      sessionControl: true,
+      // A non-bot wrap and a stale/other-key bot wrap are both filtered out.
+      wraps: [
+        botWrap({}),
+        { keyGeneration: 3, recipientKeyId: "ukey_1", recipientKind: "user", wrapEnc: "uenc", wrapCt: "uct" },
+        botWrap({ recipientKeyId: "bik_other", wrapEnc: "other", wrapCt: "other" }),
+        botWrap({ keyGeneration: 2, wrapEnc: "stale", wrapCt: "stale" }),
+      ],
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.claimBotInvocation(req, res)
+
+    const data = (payloads[0] as { data: Record<string, unknown> }).data
+    expect("sealedContext" in data).toBe(false)
+    expect(data.sealedAck).toEqual({
+      wraps: [{ keyGeneration: 3, wrapEnc: "enc3", wrapCt: "ct3" }],
+      reply: { keyGeneration: 3, senderId: "bot_1" },
+    })
+  })
+
+  it("claims WITHOUT a sealedAck (not a 409) when the instance has no registered identity key", async () => {
+    const { handlers, req } = arrangeSealedClaim({ sessionControl: true, publicKeyId: null })
+    const { res, payloads } = createResponse()
+
+    await handlers.claimBotInvocation(req, res)
+
+    const data = (payloads[0] as { data: Record<string, unknown> }).data
+    expect("sealedAck" in data).toBe(false)
+  })
+
+  it("claims WITHOUT a sealedAck when no wrap covers the current generation (stale key)", async () => {
+    const { handlers, req } = arrangeSealedClaim({
+      sessionControl: true,
+      wraps: [botWrap({ keyGeneration: 2, wrapEnc: "stale", wrapCt: "stale" })],
+    })
+    const { res, payloads } = createResponse()
+
+    await handlers.claimBotInvocation(req, res)
+
+    const data = (payloads[0] as { data: Record<string, unknown> }).data
+    expect("sealedAck" in data).toBe(false)
   })
 })

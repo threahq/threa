@@ -69,7 +69,9 @@ export interface ClaimedInvocation {
 export class ThreaApiError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    /** The server's structured error `code` (e.g. `E2E_STREAM_PLAINTEXT_UNSUPPORTED`), when the body was JSON. */
+    readonly code?: string
   ) {
     super(message)
     this.name = "ThreaApiError"
@@ -110,8 +112,22 @@ export class ThreaClient {
       clearTimeout(timeout)
     }
     if (!response.ok) {
-      // Don't read the body: proxy/server errors can return large HTML pages.
-      throw new ThreaApiError(`Threa API ${response.status}: ${response.statusText}`, response.status)
+      // Read the structured `code` so callers can branch on the specific error
+      // (e.g. an E2E-plaintext rejection vs a capability/validation 400) instead
+      // of swallowing every same-status error alike. Only parse a JSON body and
+      // cap it — a proxy/server 5xx can return a large HTML page, which we must
+      // not pull into memory.
+      let code: string | undefined
+      if (response.headers.get("content-type")?.includes("application/json")) {
+        try {
+          const body = (await response.text()).slice(0, 2000)
+          const parsed = JSON.parse(body) as { code?: unknown }
+          if (typeof parsed.code === "string") code = parsed.code
+        } catch {
+          code = undefined
+        }
+      }
+      throw new ThreaApiError(`Threa API ${response.status}: ${response.statusText}`, response.status, code)
     }
     if (response.status === 204) return undefined as T
     return (await response.json()) as T

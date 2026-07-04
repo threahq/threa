@@ -821,12 +821,13 @@ export class RemoteSession {
         metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
       })
     } catch (error) {
-      // A session-control invocation on an E2E scratchpad claims plaintext (no
-      // sealed session exists for it), so its markdown ack is rejected by the
-      // sealed-timeline gate (400). Close silently instead — the command still
-      // executed and the command:completed event carries the feedback; a sealed
-      // ack wire is follow-up work.
-      if (error instanceof ThreaApiError && error.status === 400) {
+      // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
+      // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
+      // plaintext ack is rejected with E2E_STREAM_PLAINTEXT_UNSUPPORTED; close
+      // silently — the command still ran and command:completed carries the
+      // feedback. Narrow to that exact code so a capability/validation 400 isn't
+      // masked as a successful close (INV-11, fail loud).
+      if (error instanceof ThreaApiError && error.code === "E2E_STREAM_PLAINTEXT_UNSUPPORTED") {
         await this.completeTurn(invocation, { noResponse: true }).catch((inner) =>
           this.log(`session-control silent ack failed: ${this.summarize(inner)}`)
         )

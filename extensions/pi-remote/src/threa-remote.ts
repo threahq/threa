@@ -1808,10 +1808,11 @@ async function completeInvocationWithMarkdown(
       }),
     })
   } catch (error) {
-    // A session-control ack is plaintext; an E2E scratchpad rejects it (the ack
-    // has no sealed wire yet). Close the invocation with noResponse so the
-    // command doesn't show as failed — it already ran locally, and the
-    // command:completed event still lands. Sealed acks are follow-up work.
+    // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
+    // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
+    // plaintext ack is rejected; close with noResponse so the command doesn't
+    // show as failed — it already ran locally and command:completed still lands.
+    // Any other error is a real failure, so rethrow.
     if (!String(error).includes("E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
     await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
       method: "POST",
