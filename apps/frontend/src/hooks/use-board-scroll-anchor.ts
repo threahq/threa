@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useLayoutEffect, useRef } from "react"
 
 /** Below this scrollTop the anchor is disabled, so prepended cards flow in at the
  *  top (the pill-click reveal) instead of being held off-screen above the fold. */
@@ -46,9 +46,22 @@ function measureAnchor(viewport: HTMLElement): Anchor | null {
  *
  * Disabled near the top so a pill-click reveal (scroll to top, then commit) lets
  * the new cards flow in rather than holding the old first card in place.
+ *
+ * `resetKey` identifies the current view (the board lens): when it changes the
+ * feed is replaced with a different subset, so drop the previous view's anchor
+ * and jump to the top. Done in a layout effect — before paint — so the reset
+ * lands ahead of the `ResizeObserver` firing on the swap's layout change, which
+ * would otherwise `compensate()` against the stale anchor and jump to a bogus
+ * offset (a visible double-scroll). After scrollTop is 0 the compensation is a
+ * no-op (`<= ANCHOR_DISABLE_PX`) and the anchor is null, so the swap starts clean.
  */
-export function useBoardScrollAnchor(viewport: HTMLElement | null): void {
+export function useBoardScrollAnchor(viewport: HTMLElement | null, resetKey?: string): void {
   const anchorRef = useRef<Anchor | null>(null)
+
+  useLayoutEffect(() => {
+    anchorRef.current = null
+    if (viewport) viewport.scrollTop = 0
+  }, [resetKey, viewport])
 
   useEffect(() => {
     if (!viewport) return

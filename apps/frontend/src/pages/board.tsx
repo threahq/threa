@@ -173,15 +173,11 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   useEffect(() => {
     setViewport(scrollRootRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]") ?? null)
   }, [])
-  useBoardScrollAnchor(viewport)
-
-  // Switching lens replaces the whole feed with a different (often much shorter)
-  // subset, so start it at the top — otherwise a viewer scrolled down the Active
-  // wall who taps Decisions lands past the end of a one-card list. Mirrors the
-  // `revealNew` scroll-to-top on the other wholesale content swap.
-  useEffect(() => {
-    if (viewport) viewport.scrollTop = 0
-  }, [lens, viewport])
+  // Pass the lens as the reset key so switching lens drops the previous view's
+  // scroll anchor and starts the new (often much shorter) subset at the top,
+  // pre-paint — otherwise a viewer scrolled down the Active wall who taps
+  // Decisions lands past the end of a one-card list.
+  useBoardScrollAnchor(viewport, lens)
 
   const revealNew = () => {
     // Jump to the top first so the freshly-committed cards flow in where the

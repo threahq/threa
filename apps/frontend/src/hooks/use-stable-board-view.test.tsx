@@ -228,4 +228,32 @@ describe("useStableBoardView", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
     expect(result.current.newCount).toBe(0)
   })
+
+  it("buffers a fresh new-lens arrival after a mixing-prone switch — no phantom absorption", () => {
+    // Guards the "mixing ids" path the fix names: on the switch a new-lens card
+    // sits BELOW the old lens's floor, so reconciling against the STALE committed
+    // (the pre-fix bug) mixes the old id into `committed.order`. That phantom id
+    // then silently absorbs the SAME conversation when it later qualifies for the
+    // new lens (classified "already committed"), so its fresh arrival never shows
+    // behind the "N new" pill. Feeding the reset (EMPTY_VIEW) into the reconcile
+    // leaves no phantom, so the later arrival buffers. Fails on the pre-fix code.
+    const stalled = lensPost("s", 300, { status: "stalled" }) // needs-resolution only
+    const decisionLow = lensPost("x", 200, { hasCapturedMemo: true }) // decisions, below s's floor
+    mockLive(feed(stalled, decisionLow))
+    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lens), {
+      initialProps: { lens: "needs-resolution" as BoardLens },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
+
+    rerender({ lens: "decisions" })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["x"])
+
+    // `s` gains a memo with fresh activity — a genuine new arrival on decisions.
+    const stalledWithMemo = lensPost("s", 500, { status: "stalled", hasCapturedMemo: true })
+    act(() => mockLive(feed(stalledWithMemo, decisionLow)))
+    rerender({ lens: "decisions" })
+    // The fresh `s` waits behind the pill; it is not absorbed in-place.
+    expect(result.current.newCount).toBe(1)
+    expect(result.current.posts.map((p) => p.id)).toEqual(["x"])
+  })
 })
