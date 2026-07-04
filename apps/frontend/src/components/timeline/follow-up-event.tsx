@@ -91,9 +91,11 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
           aria-busy={cancelling}
           aria-live="polite"
           className={cn(
+            // No dimming during the request — `text-muted-foreground` is already
+            // low-contrast at text-xs, so `opacity` on top drops it below AA at
+            // the least-legible moment. The spinner + aria-busy carry the state.
             "inline-flex items-center gap-1 text-xs font-medium text-muted-foreground",
-            cancelled || cancelling ? "cursor-default" : "hover:text-foreground",
-            cancelling && "opacity-60"
+            cancelled || cancelling ? "cursor-default" : "hover:text-foreground"
           )}
         >
           {cancelling && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
