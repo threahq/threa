@@ -15,6 +15,12 @@ import { StreamEventRepository } from "../streams"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
+/** The outbox event type that carries each follow-up timeline event to the stream room. */
+const FOLLOW_UP_OUTBOX_EVENT_TYPE = {
+  "agent:follow_up_scheduled": "stream:agent_follow_up_scheduled",
+  "agent:follow_up_cancelled": "stream:agent_follow_up_cancelled",
+} as const
+
 interface AgentFollowUpServiceDeps {
   pool: Pool
 }
@@ -120,7 +126,6 @@ export class AgentFollowUpService {
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         eventType: "agent:follow_up_scheduled",
-        outboxEventType: "stream:agent_follow_up_scheduled",
         payload: {
           followUpId: inserted.id,
           note: inserted.note,
@@ -185,7 +190,6 @@ export class AgentFollowUpService {
         workspaceId: params.workspaceId,
         streamId: cancelled.streamId,
         eventType: "agent:follow_up_cancelled",
-        outboxEventType: "stream:agent_follow_up_cancelled",
         payload: { followUpId: cancelled.id },
         actorId: actor.actorId,
         actorType: actor.actorType,
@@ -205,8 +209,7 @@ export class AgentFollowUpService {
     params: {
       workspaceId: string
       streamId: string
-      eventType: "agent:follow_up_scheduled" | "agent:follow_up_cancelled"
-      outboxEventType: "stream:agent_follow_up_scheduled" | "stream:agent_follow_up_cancelled"
+      eventType: keyof typeof FOLLOW_UP_OUTBOX_EVENT_TYPE
       payload: AgentFollowUpScheduledEventPayload | AgentFollowUpCancelledEventPayload
       actorId: string
       actorType: AuthorType
@@ -220,7 +223,10 @@ export class AgentFollowUpService {
       actorId: params.actorId,
       actorType: params.actorType,
     })
-    await OutboxRepository.insert(client, params.outboxEventType, {
+    // Derive the outbox type from the event type so the pairing can't drift
+    // (both payloads are structurally identical, so a mismatched literal
+    // wouldn't be caught by the type checker).
+    await OutboxRepository.insert(client, FOLLOW_UP_OUTBOX_EVENT_TYPE[params.eventType], {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       event,
