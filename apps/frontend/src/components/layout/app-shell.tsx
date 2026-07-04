@@ -4,6 +4,7 @@ import { useSidebar, useCoordinatedLoading, type UrgencyBlock } from "@/contexts
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh, useTouchCapable } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSyncEngine } from "@/sync/sync-engine"
+import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { TopbarLoadingIndicator } from "./topbar-loading-indicator"
 import { ConnectionStatus } from "./connection-status"
 import { cn } from "@/lib/utils"
@@ -227,6 +228,9 @@ export function AppShell({ sidebar, children }: AppShellProps) {
   // which blacked the screen out for hundreds of ms on mobile GPUs.
   return (
     <div className="flex w-screen flex-col overflow-hidden" style={{ height: "var(--viewport-height, 100dvh)" }}>
+      {/* On mobile the sidebar is an overlay, so the OS back gesture should
+           dismiss it instead of navigating to the previous stream */}
+      {isMobile && <HistoryBackClose open={isOpen} onClose={collapse} />}
       {/* Pull-to-refresh container — pulling anywhere (sidebar or main content)
            translates the entire area uniformly */}
       <div ref={pullRef} className="relative flex flex-1 flex-col overflow-hidden">
