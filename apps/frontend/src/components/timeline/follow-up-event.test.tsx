@@ -44,9 +44,9 @@ describe("FollowUpScheduledEvent", () => {
       </MemoryRouter>
     )
 
-    expect(screen.getByText(/Ariadne scheduled a follow-up/)).toBeInTheDocument()
     expect(screen.getByText("check the deploy went green")).toBeInTheDocument()
-    expect(screen.getByText(/2026/)).toBeInTheDocument()
+    // Meta line: persona + compact fire time, with the full datetime as a title.
+    expect(screen.getByText(/Ariadne · fires/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
   })
 
