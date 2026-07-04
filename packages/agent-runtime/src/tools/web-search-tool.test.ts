@@ -146,4 +146,21 @@ describe("web-search-tool", () => {
 
     expect(parsed.error).toContain("timed out")
   })
+
+  it("reports a graceful stop (not a timeout) when the session signal aborts", async () => {
+    const abortError = new Error("The operation was aborted")
+    abortError.name = "AbortError"
+    globalThis.fetch = mock(() => Promise.reject(abortError)) as unknown as typeof fetch
+
+    const controller = new AbortController()
+    controller.abort("user_abort")
+
+    const tool = createWebSearchTool({ tavilyApiKey: "test-key" })
+    const { output } = await tool.config.execute({ query: "test" }, { toolCallId: "test", signal: controller.signal })
+    const parsed = JSON.parse(output)
+
+    expect(parsed.stopped).toBe(true)
+    expect(parsed.error).toBeUndefined()
+    expect(parsed.query).toBe("test")
+  })
 })

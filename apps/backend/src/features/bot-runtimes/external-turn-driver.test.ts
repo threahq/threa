@@ -122,6 +122,7 @@ describe("ExternalTurnDriver", () => {
       newMessages: true,
       shouldAbort: true,
       toolSignalProvider: true,
+      runAbortSignal: true,
     })
   })
 

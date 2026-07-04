@@ -3,7 +3,6 @@ import { z } from "zod"
 import { withClient, type Querier } from "../../db"
 import {
   AgentStepTypes,
-  AgentToolNames,
   AuthorTypes,
   ConversationIntents,
   StreamTypes,
@@ -827,6 +826,17 @@ export class PersonaAgent {
           },
         }
 
+        // One graceful-Stop controller per session, registered up front (not
+        // lazily per-tool) so a Stop lands even when no tool has run yet — it
+        // cancels a pending LLM iteration (via runAbortSignal) and cuts any
+        // in-flight tool fetch (via toolSignalProvider). The socket handler
+        // aborts it; `finally` unregisters. This is the session-abort channel,
+        // distinct from shouldAbort (which fails the session).
+        const sessionAbortController = sessionAbortRegistry.register(session.id, {
+          workspaceId,
+          streamId: sessionStreamId,
+        })
+
         // The host edges this turn runs against: the commit path, the trace
         // observers, and the abort + interjection channels that used to be
         // handed to the loop as raw closures.
@@ -854,19 +864,14 @@ export class PersonaAgent {
             if (latestSession.status === SessionStatuses.SUPERSEDED) return "session superseded"
             return null
           },
-          toolSignalProvider: (_toolCallId, toolName) => {
-            // Wire graceful-abort for the long-running research tools. Both share
-            // one per-session controller (the persona runs tools sequentially, so
-            // they never overlap), which the `agent_session:research:abort` socket
-            // handler aborts. The registry is lazily populated so sessions that
-            // never research don't allocate a controller.
-            if (toolName !== "workspace_research" && toolName !== AgentToolNames.GENERAL_RESEARCH) return undefined
-            const controller = sessionAbortRegistry.register(session.id, {
-              workspaceId,
-              streamId: sessionStreamId,
-            })
-            return controller.signal
-          },
+          // Hand the session-Stop signal to every tool: the long HTTP-fetch
+          // tools (web_search, read_url) and the research tools check it and
+          // return partial gracefully; tools that ignore it are unaffected, and
+          // the loop halts at the next boundary regardless via runAbortSignal.
+          toolSignalProvider: () => sessionAbortController.signal,
+          // Cancels a pending LLM iteration and halts the loop gracefully when a
+          // Stop lands with no tool running (or between tool calls).
+          runAbortSignal: sessionAbortController.signal,
           newMessages: {
             check: async (checkStreamId, sinceSequence, excludeAuthorId) => {
               const events = await StreamEventRepository.list(db, checkStreamId, {
@@ -1046,9 +1051,7 @@ export class PersonaAgent {
             lastSeenSequence: loopResult.lastProcessedSequence,
           }
         } finally {
-          // Release the graceful-abort controller (if any was registered by the
-          // toolSignalProvider during workspace_research tool invocation). Safe to
-          // call when nothing is registered.
+          // Release the session-abort controller registered at turn start.
           sessionAbortRegistry.unregister(session.id)
         }
       }
