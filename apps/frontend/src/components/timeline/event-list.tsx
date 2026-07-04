@@ -311,6 +311,9 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "agent_session:completed",
   "agent_session:failed",
   "agent_session:deleted",
+  // Cancellation is a patch on the scheduled card (flips it to "Cancelled" via
+  // collectCancelledFollowUpIds), not a row of its own — renders null.
+  "agent:follow_up_cancelled",
 ])
 
 /**
@@ -345,6 +348,22 @@ export function findFirstMessageId(items: TimelineItem[]): string | undefined {
     if (messageId) return messageId
   }
   return undefined
+}
+
+/**
+ * Collect the followUpIds cancelled within the loaded window, from the
+ * `agent:follow_up_cancelled` rows. A scheduled card reads membership to render
+ * its cancelled state for every viewer (roadmap 1.3), so the Cancel affordance
+ * reflects the authoritative timeline, not just the clicking session.
+ */
+export function collectCancelledFollowUpIds(items: TimelineItem[]): Set<string> {
+  const ids = new Set<string>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "agent:follow_up_cancelled") continue
+    const followUpId = (item.event.payload as { followUpId?: string })?.followUpId
+    if (followUpId) ids.add(followUpId)
+  }
+  return ids
 }
 
 /**
@@ -627,6 +646,13 @@ export interface TimelineItemRenderContext {
   sessionCanAbort: Map<string, boolean>
   /** Click handler for the Stop research button. */
   onAbortResearch?: (sessionId: string) => void
+  /**
+   * followUpIds that have a matching `agent:follow_up_cancelled` row in the
+   * loaded window. Lets a scheduled follow-up card show its cancelled state
+   * authoritatively for every viewer — not only the session that clicked
+   * Cancel — and hides the (now no-op) Cancel button once it's cancelled.
+   */
+  cancelledFollowUpIds: Set<string>
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
@@ -663,6 +689,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         agentActivity={ctx.hideSessionCards ? ctx.agentActivity : undefined}
         isNew={ctx.newMessageIds?.has(item.event.id)}
         deferSecondaryHydration={deferSecondaryHydration}
+        cancelledFollowUpIds={ctx.cancelledFollowUpIds}
         batch={ctx.batch}
         // Continuations directly under an UnreadDivider promote back to head so
         // the first unread message in a run still reads as a fresh turn for the
@@ -867,6 +894,14 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
   // moments decorated rows must repaint, so identity comparison is correct.
   if (p.conversationOverlay !== n.conversationOverlay) return false
 
+  // A scheduled follow-up card repaints only when its own id enters/leaves the
+  // cancelled set — set identity churns per cancel but membership for this id is
+  // what the row reads.
+  if (item.event.eventType === "agent:follow_up_scheduled") {
+    const fid = (item.event.payload as { followUpId?: string })?.followUpId
+    if (fid !== undefined && p.cancelledFollowUpIds.has(fid) !== n.cancelledFollowUpIds.has(fid)) return false
+  }
+
   const messageId = getEventMessageId(item.event)
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
@@ -976,6 +1011,7 @@ export function EventList({
   // file-attachment UX where uploads on the composer "move" onto the message
   // at send. `timelineItems` is already in render order (oldest first).
   const firstMessageId = findFirstMessageId(timelineItems)
+  const cancelledFollowUpIds = collectCancelledFollowUpIds(timelineItems)
 
   if (timelineItems.length === 0) {
     return (
@@ -1002,6 +1038,7 @@ export function EventList({
     sessionLiveSubsteps,
     sessionCanAbort,
     onAbortResearch: handleAbortResearch,
+    cancelledFollowUpIds,
     batch,
     conversationOverlay,
   }

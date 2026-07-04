@@ -467,6 +467,8 @@ export type {
   MovedFromProvenance,
   CapturedMemoSummary,
   MemosCapturedEventPayload,
+  AgentFollowUpScheduledEventPayload,
+  AgentFollowUpCancelledEventPayload,
   DescriptionSetEventPayload,
   // Workspaces
   CreateWorkspaceInput,

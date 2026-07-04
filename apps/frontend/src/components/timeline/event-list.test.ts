@@ -3,6 +3,7 @@ import type { ConversationWithStaleness, StreamEvent } from "@threa/types"
 import {
   annotateAuthorGroups,
   annotateConversationRevivals,
+  collectCancelledFollowUpIds,
   filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -578,6 +579,32 @@ describe("injectGapItems", () => {
   })
 })
 
+describe("collectCancelledFollowUpIds", () => {
+  const cancelledItem = (followUpId: string): TimelineItem => ({
+    type: "event",
+    event: createEvent({
+      id: `evt_${followUpId}`,
+      sequence: "5",
+      eventType: "agent:follow_up_cancelled",
+      payload: { followUpId },
+    }),
+  })
+
+  it("collects followUpIds from the cancelled events", () => {
+    const ids = collectCancelledFollowUpIds([cancelledItem("agfu_1"), cancelledItem("agfu_2")])
+    expect([...ids].sort()).toEqual(["agfu_1", "agfu_2"])
+  })
+
+  it("must run on pre-filter items — filterVisibleItems strips the zero-height cancelled event", () => {
+    const items = [cancelledItem("agfu_1")]
+    // Guards the call-site ordering: `agent:follow_up_cancelled` is zero-height,
+    // so collecting AFTER filterVisibleItems would miss it and the scheduled
+    // card could never flip on the virtualized path.
+    expect(collectCancelledFollowUpIds(items)).toEqual(new Set(["agfu_1"]))
+    expect(collectCancelledFollowUpIds(filterVisibleItems(items))).toEqual(new Set())
+  })
+})
+
 describe("OLDER_SKELETON_ITEMS (older-page skeleton rows)", () => {
   it("provides the configured number of skeleton items with stable, distinct keys", () => {
     expect(OLDER_SKELETON_ITEMS).toHaveLength(OLDER_SKELETON_COUNT)
@@ -605,6 +632,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       sessionLiveCounts: new Map(),
       sessionLiveSubsteps: new Map(),
       sessionCanAbort: new Map(),
+      cancelledFollowUpIds: new Set(),
       ...overrides,
     }
   }

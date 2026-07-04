@@ -111,6 +111,8 @@ export const EVENT_TYPES = [
   "agent_session:deleted",
   "messages:moved",
   "memos:captured",
+  "agent:follow_up_scheduled",
+  "agent:follow_up_cancelled",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -150,6 +152,12 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   "agent_session:deleted",
   "messages:moved",
   "memos:captured",
+  "agent:follow_up_scheduled",
+  // `agent:follow_up_cancelled` is deliberately NOT here: it's a patch on the
+  // scheduled card (it flips that row to "Cancelled" via correlation), not a
+  // visible row of its own — so, like edits/reactions, it takes no broadcast
+  // slot (INV-61). It's still an EVENT_TYPE, delivered + persisted, so every
+  // viewer's scheduled card reflects the cancel live and after reload.
 ] as const
 export type TimelineBroadcastEventType = (typeof TIMELINE_BROADCAST_EVENT_TYPES)[number]
 

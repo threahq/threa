@@ -1,11 +1,24 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { FollowUpStatuses } from "@threa/types"
+import { AuthorTypes, FollowUpStatuses } from "@threa/types"
 import { AgentFollowUpService } from "./follow-up-service"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 import { JobQueues, QueueRepository } from "../../lib/queue"
+import { OutboxRepository } from "../../lib/outbox"
+import { StreamEventRepository } from "../streams"
 import * as dbModule from "../../db"
 import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
+
+/**
+ * Stub the timeline-event append the service performs inside its transactions
+ * (roadmap 1.3). Returns the spies so a test can assert the broadcast row and
+ * its outbox row were written (INV-23: presence + content, not counts).
+ */
+function stubEventAppend() {
+  const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({} as never)
+  const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+  return { insertEvent, insertOutbox }
+}
 
 const NOW = new Date("2026-07-02T12:00:00.000Z")
 const SCHEDULED_FOR = new Date("2026-07-03T12:00:00.000Z")
@@ -54,6 +67,7 @@ describe("AgentFollowUpService.schedule", () => {
     spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
     spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
     const queueInsert = spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+    stubEventAppend()
 
     const result = await makeService().schedule(scheduleParams)
 
@@ -67,6 +81,35 @@ describe("AgentFollowUpService.schedule", () => {
       (call) => (call[1] as { queueName: string }).queueName === JobQueues.AGENT_FOLLOW_UP_FIRE
     )
     expect(fireEnqueue).toBeDefined()
+  })
+
+  it("appends a scheduled broadcast row (+ outbox) attributed to the persona (roadmap 1.3)", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
+    spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+    const { insertEvent, insertOutbox } = stubEventAppend()
+
+    await makeService().schedule(scheduleParams)
+
+    expect(insertEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        streamId: "stream_1",
+        eventType: "agent:follow_up_scheduled",
+        actorId: "persona_system_ariadne",
+        actorType: AuthorTypes.PERSONA,
+        payload: expect.objectContaining({
+          followUpId: "agfu_01",
+          note: "check back on the deploy",
+          scheduledFor: SCHEDULED_FOR.toISOString(),
+          sourceConversationId: null,
+        }),
+      })
+    )
+    expect(insertOutbox.mock.calls[0]?.[1]).toBe("stream:agent_follow_up_scheduled")
   })
 
   it("returns cap_reached without enqueuing when the guarded insert writes nothing", async () => {
@@ -97,11 +140,54 @@ describe("AgentFollowUpService.cancel", () => {
       fakeFollowUp({ status: FollowUpStatuses.CANCELLED, queueMessageId: "agfuq_1" })
     )
     const queueCancel = spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
+    stubEventAppend()
 
     const result = await makeService().cancel({ workspaceId: "ws_1", id: "agfu_01" })
 
     expect(result?.status).toBe(FollowUpStatuses.CANCELLED)
     expect(queueCancel).toHaveBeenCalledWith(expect.anything(), "agfuq_1")
+  })
+
+  it("appends a cancelled broadcast row (+ outbox), attributing to the persona by default (roadmap 1.3)", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "markCancelled").mockResolvedValue(
+      fakeFollowUp({ status: FollowUpStatuses.CANCELLED, queueMessageId: "agfuq_1" })
+    )
+    spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
+    const { insertEvent, insertOutbox } = stubEventAppend()
+
+    await makeService().cancel({ workspaceId: "ws_1", id: "agfu_01" })
+
+    expect(insertEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "agent:follow_up_cancelled",
+        actorId: "persona_system_ariadne",
+        actorType: AuthorTypes.PERSONA,
+        payload: { followUpId: "agfu_01" },
+      })
+    )
+    expect(insertOutbox.mock.calls[0]?.[1]).toBe("stream:agent_follow_up_cancelled")
+  })
+
+  it("attributes the cancelled row to the caller when cancelledBy is given (the card's Cancel button)", async () => {
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "markCancelled").mockResolvedValue(
+      fakeFollowUp({ status: FollowUpStatuses.CANCELLED })
+    )
+    spyOn(QueueRepository, "cancelById").mockResolvedValue(true)
+    const { insertEvent } = stubEventAppend()
+
+    await makeService().cancel({
+      workspaceId: "ws_1",
+      id: "agfu_01",
+      cancelledBy: { actorId: "usr_kris", actorType: AuthorTypes.USER },
+    })
+
+    expect(insertEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorId: "usr_kris", actorType: AuthorTypes.USER })
+    )
   })
 
   it("returns null and cancels nothing when it loses the race to the fire worker", async () => {

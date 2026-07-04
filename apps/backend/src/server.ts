@@ -491,6 +491,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedItemCreator: savedMessagesService,
   })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
+  const agentFollowUpService = new AgentFollowUpService({ pool })
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
@@ -650,6 +651,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedMessagesService,
     savedSuggestionsService,
     scheduledMessagesService,
+    agentFollowUpService,
     draftsService,
     labelService,
     labelAssignmentService,
@@ -745,7 +747,6 @@ export async function startServer(): Promise<ServerInstance> {
     modelId: COMPANION_SUMMARY_MODEL_ID,
     temperature: COMPANION_SUMMARY_TEMPERATURE,
   })
-  const agentFollowUpService = new AgentFollowUpService({ pool })
   const episodeSummaryService = new EpisodeSummaryService({
     pool,
     ai,

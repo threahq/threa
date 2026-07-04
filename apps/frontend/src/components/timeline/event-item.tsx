@@ -6,6 +6,7 @@ import { MessageEvent } from "./message-event"
 import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
+import { FollowUpScheduledEvent } from "./follow-up-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
 
@@ -21,6 +22,8 @@ interface EventItemProps {
   agentActivity?: Map<string, MessageAgentActivity>
   /** Whether this event just arrived via socket (brief visual indicator) */
   isNew?: boolean
+  /** followUpIds cancelled within the loaded window — drives the scheduled card's cancelled state. */
+  cancelledFollowUpIds?: Set<string>
   /** Defer non-critical per-message hydration until coordinated reveal completes */
   deferSecondaryHydration?: boolean
   /**
@@ -52,6 +55,7 @@ export function EventItem({
   highlightMessageId,
   agentActivity,
   isNew,
+  cancelledFollowUpIds,
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
@@ -146,6 +150,22 @@ export function EventItem({
           <MemoCapturedEvent event={event} workspaceId={workspaceId} />
         </div>
       )
+
+    case "agent:follow_up_scheduled": {
+      const followUpId = (event.payload as { followUpId?: string })?.followUpId
+      const cancelledByEvent = followUpId ? (cancelledFollowUpIds?.has(followUpId) ?? false) : false
+      return (
+        <div data-event-id={event.id}>
+          <FollowUpScheduledEvent event={event} workspaceId={workspaceId} cancelledByEvent={cancelledByEvent} />
+        </div>
+      )
+    }
+
+    case "agent:follow_up_cancelled":
+      // Patch, not a row: it flips the matching scheduled card to "Cancelled"
+      // via cancelledFollowUpIds (collected in event-list), so it renders nothing
+      // itself — avoids a redundant second row for the same cancellation.
+      return null
 
     case "reaction_added":
     case "reaction_removed":
