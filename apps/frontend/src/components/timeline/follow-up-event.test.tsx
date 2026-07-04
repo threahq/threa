@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import type { AgentFollowUpScheduledEventPayload, AgentFollowUpCancelledEventPayload, StreamEvent } from "@threa/types"
+import { toast } from "sonner"
 import * as hooksModule from "@/hooks"
 import { agentFollowUpsApi } from "@/api"
 import { FollowUpScheduledEvent, FollowUpCancelledEvent } from "./follow-up-event"
@@ -77,6 +78,35 @@ describe("FollowUpScheduledEvent", () => {
     expect(cancel).toHaveBeenCalledWith("ws_1", "agfu_1")
     await waitFor(() => expect(screen.getByText("Cancelled")).toBeInTheDocument())
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it("shows a muted Cancelled state (no button) when a sibling cancelled row is present", () => {
+    render(
+      <MemoryRouter>
+        <FollowUpScheduledEvent event={scheduledEvent(SCHEDULED_PAYLOAD)} workspaceId="ws_1" cancelledByEvent />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument()
+  })
+
+  it("does not mislabel the card when the cancel lost the race (already fired)", async () => {
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "")
+    vi.spyOn(agentFollowUpsApi, "cancel").mockResolvedValue({ cancelled: false })
+
+    render(
+      <MemoryRouter>
+        <FollowUpScheduledEvent event={scheduledEvent(SCHEDULED_PAYLOAD)} workspaceId="ws_1" />
+      </MemoryRouter>
+    )
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(info).toHaveBeenCalled())
+    // Button stays; the card is NOT durably flipped to "Cancelled" for a fired row.
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument()
+    expect(screen.queryByText("Cancelled")).not.toBeInTheDocument()
   })
 
   it("renders nothing without a payload", () => {

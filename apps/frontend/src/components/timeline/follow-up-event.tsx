@@ -11,36 +11,52 @@ interface FollowUpEventProps {
   workspaceId: string
 }
 
+interface FollowUpScheduledEventProps extends FollowUpEventProps {
+  /**
+   * True when a matching `agent:follow_up_cancelled` row is in the loaded
+   * window — the authoritative cancelled state, so every viewer (not just the
+   * one who clicked) sees the card as cancelled, and it survives a reload.
+   */
+  cancelledByEvent?: boolean
+}
+
 /**
  * Timeline row for `agent:follow_up_scheduled` (roadmap 1.3): the visible trace
  * of a persona scheduling a follow-up, so scheduled agent work is never
  * invisible state. Shows what it will do and when it fires, and — for any member
  * who can see the stream — a Cancel action (a button, not a link: it mutates,
- * INV-40). Cancelling flips the button to a muted "Cancelled" in place (INV-63:
- * the card state change is the confirmation, no success toast); other members
- * see the separate `agent:follow_up_cancelled` row. The fire time renders in the
- * viewer's local timezone (INV-42).
+ * INV-40). The cancelled state is authoritative from `cancelledByEvent` (the
+ * sibling cancelled row); the local optimistic flip only fast-paths the clicking
+ * member's own feedback (INV-63: the card state change is the confirmation, no
+ * success toast). A stale click on an already-fired/cancelled row is a no-op
+ * server-side and must NOT mislabel the card, so it does not flip locally — the
+ * fire time renders in the viewer's local timezone (INV-42).
  */
-export function FollowUpScheduledEvent({ event, workspaceId }: FollowUpEventProps) {
+export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = false }: FollowUpScheduledEventProps) {
   const { getActorName } = useActors(workspaceId)
   const payload = event.payload as AgentFollowUpScheduledEventPayload | undefined
-  const [cancelled, setCancelled] = useState(false)
+  const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [cancelling, setCancelling] = useState(false)
 
   if (!payload) return null
 
   const actorName = getActorName(event.actorId, event.actorType)
   const scheduledFor = new Date(payload.scheduledFor)
+  const cancelled = cancelledByEvent || optimisticallyCancelled
 
   async function handleCancel() {
     if (!payload) return
     setCancelling(true)
     try {
       const { cancelled: didCancel } = await agentFollowUpsApi.cancel(workspaceId, payload.followUpId)
-      // A lost race (already fired/cancelled) still settles the button — the row
-      // is no longer actionable either way.
-      setCancelled(true)
-      if (!didCancel) {
+      if (didCancel) {
+        // Fast-path the clicker's own feedback; other viewers flip when the
+        // broadcast cancelled row lands and sets `cancelledByEvent`.
+        setOptimisticallyCancelled(true)
+      } else {
+        // Lost the race (already fired, or cancelled elsewhere). Don't flip to
+        // "Cancelled" — that would durably mislabel a fired follow-up. The
+        // authoritative `cancelledByEvent` covers a real cancel-by-another.
         toast.info("This follow-up already fired or was cancelled")
       }
     } catch {

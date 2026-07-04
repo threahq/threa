@@ -66,6 +66,7 @@ import {
   injectDayDividers,
   itemDayStartMs,
   findFirstMessageId,
+  collectCancelledFollowUpIds,
   findMessageItemIndex,
   findEventItemIndex,
   getTimelineItemKey,
@@ -2437,6 +2438,7 @@ function TimelineMessageList({
   // conversation opened with. Without this, virtualized scratchpad timelines
   // would never get `isFirstMessage=true` and the badge would silently drop.
   const firstMessageId = useMemo(() => findFirstMessageId(visibleItems), [visibleItems])
+  const cancelledFollowUpIds = useMemo(() => collectCancelledFollowUpIds(visibleItems), [visibleItems])
 
   const renderCtx = useMemo<TimelineItemRenderContext>(
     () => ({
@@ -2453,6 +2455,7 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       sessionCanAbort,
       onAbortResearch: handleAbortResearch,
+      cancelledFollowUpIds,
       batch,
       conversationOverlay,
     }),
@@ -2470,6 +2473,7 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       sessionCanAbort,
       handleAbortResearch,
+      cancelledFollowUpIds,
       batch,
       conversationOverlay,
     ]

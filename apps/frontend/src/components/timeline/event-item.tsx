@@ -22,6 +22,8 @@ interface EventItemProps {
   agentActivity?: Map<string, MessageAgentActivity>
   /** Whether this event just arrived via socket (brief visual indicator) */
   isNew?: boolean
+  /** followUpIds cancelled within the loaded window — drives the scheduled card's cancelled state. */
+  cancelledFollowUpIds?: Set<string>
   /** Defer non-critical per-message hydration until coordinated reveal completes */
   deferSecondaryHydration?: boolean
   /**
@@ -53,6 +55,7 @@ export function EventItem({
   highlightMessageId,
   agentActivity,
   isNew,
+  cancelledFollowUpIds,
   deferSecondaryHydration = false,
   groupContinuation = false,
   isFirstMessage = false,
@@ -148,12 +151,15 @@ export function EventItem({
         </div>
       )
 
-    case "agent:follow_up_scheduled":
+    case "agent:follow_up_scheduled": {
+      const followUpId = (event.payload as { followUpId?: string })?.followUpId
+      const cancelledByEvent = followUpId ? (cancelledFollowUpIds?.has(followUpId) ?? false) : false
       return (
         <div data-event-id={event.id}>
-          <FollowUpScheduledEvent event={event} workspaceId={workspaceId} />
+          <FollowUpScheduledEvent event={event} workspaceId={workspaceId} cancelledByEvent={cancelledByEvent} />
         </div>
       )
+    }
 
     case "agent:follow_up_cancelled":
       return (
