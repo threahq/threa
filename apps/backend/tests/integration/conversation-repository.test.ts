@@ -354,7 +354,9 @@ describe("ConversationRepository", () => {
     let stalledConv: string
     let idleIncompleteConv: string
     let idleCompleteConv: string
+    let resolvedIdleConv: string
     let decisionConv: string
+    let archivedMemoConv: string
     let seq = 1
 
     async function seedConversation(
@@ -400,7 +402,13 @@ describe("ConversationRepository", () => {
           completenessScore: 2,
         })
         idleCompleteConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 7 })
+        // Resolved but idle + low-score: done, so it must NOT read as a loose end.
+        resolvedIdleConv = await seedConversation(client, {
+          status: ConversationStatuses.RESOLVED,
+          completenessScore: 2,
+        })
         decisionConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
+        archivedMemoConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
 
         // A captured memo makes decisionConv a member of the Decisions lens.
         await MemoRepository.insert(client, {
@@ -417,11 +425,27 @@ describe("ConversationRepository", () => {
           tags: [],
           status: "active",
         })
+        // An archived memo is no longer captured knowledge — its conversation must
+        // drop off the Decisions lens.
+        await MemoRepository.insert(client, {
+          id: memoId(),
+          workspaceId: testWorkspaceId,
+          memoType: "conversation",
+          sourceConversationId: archivedMemoConv,
+          title: "An archived note",
+          abstract: "No longer active.",
+          keyPoints: [],
+          sourceMessageIds: [],
+          participantIds: [testUserId],
+          knowledgeType: "decision",
+          tags: [],
+          status: "archived",
+        })
       })
-      // Backdate the two "idle" conversations past the staleness window; the fresh
-      // ones keep their insert-time `last_activity_at` (≈ now).
+      // Backdate the "idle" conversations past the staleness window; the fresh ones
+      // keep their insert-time `last_activity_at` (≈ now).
       await pool.query(`UPDATE conversations SET last_activity_at = NOW() - INTERVAL '20 hours' WHERE id = ANY($1)`, [
-        [idleIncompleteConv, idleCompleteConv],
+        [idleIncompleteConv, idleCompleteConv, resolvedIdleConv],
       ])
     })
 
@@ -446,9 +470,11 @@ describe("ConversationRepository", () => {
       expect(ids.has(idleIncompleteConv)).toBe(true)
       expect(ids.has(activeConv)).toBe(false)
       expect(ids.has(idleCompleteConv)).toBe(false)
+      // Resolved is done — excluded even when idle + low-score.
+      expect(ids.has(resolvedIdleConv)).toBe(false)
     })
 
-    test("decisions lens keeps only conversations with a captured memo", async () => {
+    test("decisions lens keeps only conversations with an active captured memo", async () => {
       const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
         lens: "decisions",
         limit: 100,
@@ -457,6 +483,8 @@ describe("ConversationRepository", () => {
       expect(ids.has(decisionConv)).toBe(true)
       expect(ids.has(activeConv)).toBe(false)
       expect(ids.has(stalledConv)).toBe(false)
+      // An archived memo doesn't count — its conversation drops off.
+      expect(ids.has(archivedMemoConv)).toBe(false)
     })
   })
 

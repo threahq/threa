@@ -173,15 +173,28 @@ export function useStableBoardView(workspaceId: string, lens: BoardLens): Stable
   // React-blessed render-time reset; the ref writes are idempotent and gated by
   // the changed key. Switching lens starts a fresh frozen order + empty pill so
   // the new subset isn't reconciled against the previous lens's committed cards.
+  // The reset feeds THIS render's reconcile below, not just state. `setState`
+  // during render doesn't update the `committed`/`buffered` bindings in place, so
+  // reconciling the new lens's feed against the STALE (previous-lens) committed
+  // would let the old lens's ids leak in: `reconcileStableView` keeps a non-empty
+  // committed and classifies a fresh new-lens post below the stale floor as paged
+  // (mixing ids) or above it as buffered (stranding it behind an empty "N new"
+  // pill), never re-taking its wholesale-commit branch. Folding the reset into the
+  // reconcile INPUT (`committedInput`/`bufferedInput`) makes the new lens start
+  // from EMPTY_VIEW and commit its own feed wholesale.
   const viewKey = `${workspaceId}|${lens}`
   const viewKeyRef = useRef(viewKey)
+  let committedInput = committed
+  let bufferedInput = buffered
   if (viewKeyRef.current !== viewKey) {
     viewKeyRef.current = viewKey
     retainedRef.current = new Map()
     liveRef.current = []
     revealNextRef.current = false
-    setCommitted(EMPTY_VIEW)
-    setBuffered([])
+    committedInput = EMPTY_VIEW
+    bufferedInput = []
+    if (committed !== EMPTY_VIEW) setCommitted(EMPTY_VIEW)
+    if (buffered.length > 0) setBuffered([])
   }
 
   // Fold the live feed into the committed view during render (deriving state from
@@ -192,14 +205,14 @@ export function useStableBoardView(workspaceId: string, lens: BoardLens): Stable
   if (live) {
     liveRef.current = live
     for (const post of live) retainedRef.current.set(postId(post), post)
-    const next = reconcileStableView(committed, live)
-    if (next.committed !== committed) setCommitted(next.committed)
+    const next = reconcileStableView(committedInput, live)
+    if (next.committed !== committedInput) setCommitted(next.committed)
     if (revealNextRef.current && next.buffered.length > 0) {
       disarmReveal()
       const snap = snapshot(live)
-      if (!sameIds(snap.order, committed.order)) setCommitted(snap)
-      if (buffered.length > 0) setBuffered([])
-    } else if (!sameIds(buffered, next.buffered)) {
+      if (!sameIds(snap.order, committedInput.order)) setCommitted(snap)
+      if (bufferedInput.length > 0) setBuffered([])
+    } else if (!sameIds(bufferedInput, next.buffered)) {
       setBuffered(next.buffered)
     }
   }

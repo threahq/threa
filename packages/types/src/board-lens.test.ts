@@ -55,4 +55,14 @@ describe("matchesBoardLens", () => {
       matchesBoardLens(post({ hoursIdle: BOARD_LENS_STALE_HOURS + 10, completenessScore: 7 }), "needs-resolution", NOW)
     ).toBe(false)
   })
+
+  it("needs-resolution rejects a resolved conversation even when idle and incomplete", () => {
+    expect(
+      matchesBoardLens(
+        post({ status: "resolved", hoursIdle: BOARD_LENS_STALE_HOURS + 5, completenessScore: 2 }),
+        "needs-resolution",
+        NOW
+      )
+    ).toBe(false)
+  })
 })

@@ -18,6 +18,24 @@ function post(id: string, activityMs: number): CachedBoardPost {
   } as unknown as CachedBoardPost
 }
 
+/** A post carrying the fields `matchesBoardLens` reads, for cross-lens tests. */
+function lensPost(
+  id: string,
+  activityMs: number,
+  opts: { status?: "active" | "stalled" | "resolved"; completenessScore?: number; hasCapturedMemo?: boolean }
+): CachedBoardPost {
+  const base = post(id, activityMs)
+  return {
+    ...base,
+    hasCapturedMemo: opts.hasCapturedMemo ?? false,
+    conversation: {
+      ...base.conversation,
+      status: opts.status ?? "active",
+      completenessScore: opts.completenessScore ?? 5,
+    },
+  } as unknown as CachedBoardPost
+}
+
 /** Newest-first feed, matching what `useBoardPosts` returns. */
 function feed(...posts: CachedBoardPost[]): CachedBoardPost[] {
   return [...posts].sort((a, b) => b._lastActivityMs - a._lastActivityMs)
@@ -190,5 +208,24 @@ describe("useStableBoardView", () => {
     // Fresh frozen view for the new lens — only the captured-memo card, not the
     // previous lens's committed order.
     expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
+  })
+
+  it("commits the new lens's feed wholesale across disjoint subsets — no stranding behind the pill", () => {
+    // The bug this guards: switching between two lenses with disjoint subsets where
+    // a fresh card of the new lens sits ABOVE the old lens's committed floor. `s`
+    // is the only Needs-resolution card (floor 300); `d` is a Decisions card above
+    // it (400) that isn't a Needs-resolution card. Reconciling `d` against the
+    // stale `{s}` committed strands it behind an empty "N new" pill; folding the
+    // reset into the reconcile input commits `d` immediately instead.
+    const stalled = lensPost("s", 300, { status: "stalled" })
+    const decision = lensPost("d", 400, { hasCapturedMemo: true })
+    mockLive(feed(stalled, decision))
+    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lens), {
+      initialProps: { lens: "needs-resolution" as BoardLens },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
+    rerender({ lens: "decisions" })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
+    expect(result.current.newCount).toBe(0)
   })
 })

@@ -16,17 +16,28 @@ import {
  */
 function boardLensCondSql(lens: BoardLens | undefined) {
   if (lens === "needs-resolution") {
+    // A `resolved` conversation is done — never a loose end — even if its LLM
+    // completeness score was never bumped up on resolution, so exclude it from the
+    // idle branch (the `stalled` branch can't match a resolved row anyway).
     return composeSql`AND (
       status = ${ConversationStatuses.STALLED}
       OR (
-        last_activity_at < NOW() - make_interval(hours => ${BOARD_LENS_STALE_HOURS})
+        status <> ${ConversationStatuses.RESOLVED}
+        AND last_activity_at < NOW() - make_interval(hours => ${BOARD_LENS_STALE_HOURS})
         AND completeness_score < ${BOARD_LENS_MAX_COMPLETENESS}
       )
     )`
   }
   if (lens === "decisions") {
+    // Workspace-scoped (INV-8) and active-only, matching
+    // `MemoRepository.findConversationIdsWithMemos` and the file's
+    // `findActiveBySourceConversation` — an archived/superseded memo is no longer
+    // captured knowledge, so it must drop the conversation from the lens.
     return composeSql`AND EXISTS (
-      SELECT 1 FROM memos WHERE memos.source_conversation_id = conversations.id
+      SELECT 1 FROM memos
+      WHERE memos.source_conversation_id = conversations.id
+        AND memos.workspace_id = conversations.workspace_id
+        AND memos.status = 'active'
     )`
   }
   return sql``

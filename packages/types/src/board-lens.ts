@@ -26,6 +26,10 @@ export function matchesBoardLens(post: BoardPost, lens: BoardLens, nowMs: number
     case "needs-resolution": {
       const { status, lastActivityAt, completenessScore } = post.conversation
       if (status === "stalled") return true
+      // A resolved conversation is done, not a loose end — exclude it from the
+      // idle branch even if its completeness score was never bumped (matches the
+      // SQL `status <> 'resolved'` guard).
+      if (status === "resolved") return false
       const hoursIdle = (nowMs - Date.parse(lastActivityAt)) / 3_600_000
       return hoursIdle >= BOARD_LENS_STALE_HOURS && completenessScore < BOARD_LENS_MAX_COMPLETENESS
     }

@@ -175,6 +175,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   }, [])
   useBoardScrollAnchor(viewport)
 
+  // Switching lens replaces the whole feed with a different (often much shorter)
+  // subset, so start it at the top — otherwise a viewer scrolled down the Active
+  // wall who taps Decisions lands past the end of a one-card list. Mirrors the
+  // `revealNew` scroll-to-top on the other wholesale content swap.
+  useEffect(() => {
+    if (viewport) viewport.scrollTop = 0
+  }, [lens, viewport])
+
   const revealNew = () => {
     // Jump to the top first so the freshly-committed cards flow in where the
     // viewer can see them; the anchor stays out of the way near the top.
