@@ -4,8 +4,17 @@ import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
 import type { RenderableMessage } from "@/components/message/message-item"
-import { StreamTypes, type AuthorType } from "@threa/types"
+import { StreamTypes, BOARD_EVENT_ROW_TYPES, type AuthorType, type EventType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
+
+/**
+ * Event types the board rail reads alongside `message_created`: the non-message
+ * rows the board draws (agent sessions, memo captures, follow-ups — derived from
+ * the shared STREAM_ROW_SPEC) plus the follow-up *cancel* patch, which carries no
+ * row of its own but flips a scheduled card to "Cancelled". Registering a new
+ * conversation-scoped row kind in the spec adds it here automatically.
+ */
+const BOARD_RAIL_EVENT_TYPES: EventType[] = [...BOARD_EVENT_ROW_TYPES, "agent:follow_up_cancelled", "message_created"]
 
 interface MessageCreatedPayloadShape {
   messageId?: string
@@ -57,6 +66,10 @@ interface StreamRail {
    *  hand-off); once it's in `messageIds` the card dedups it. Only board replies
    *  carry the tag, so this stays proportional to the stream's reply count. */
   taggedByConversation: Map<string, RenderableMessage[]>
+  /** Spec-eligible non-message rows on this stream (agent sessions, memo captures,
+   *  follow-up scheduled/cancelled), in read order — resolved to conversation rows
+   *  by `resolveBoardEventRows`. Render-only: none is a member or bumps activity. */
+  events: CachedEvent[]
   /** False until the first IDB read resolves — distinguishes loading from empty. */
   resolved: boolean
 }
@@ -65,6 +78,7 @@ const LOADING_RAIL: StreamRail = {
   messages: new Map(),
   seen: new Set(),
   taggedByConversation: new Map(),
+  events: [],
   resolved: false,
 }
 
@@ -72,7 +86,14 @@ function buildRail(events: CachedEvent[]): StreamRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
+  const eventRows: CachedEvent[] = []
   for (const event of events) {
+    // The rail reads message_created + the board's non-message row types; anything
+    // that isn't a message is a spec event row (a trace/memo/follow-up).
+    if (event.eventType !== "message_created") {
+      eventRows.push(event)
+      continue
+    }
     const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
     if (payload.messageId) seen.add(payload.messageId)
     const message = eventToRenderable(event)
@@ -91,7 +112,7 @@ function buildRail(events: CachedEvent[]): StreamRail {
   for (const list of taggedByConversation.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
-  return { messages, seen, taggedByConversation, resolved: true }
+  return { messages, seen, taggedByConversation, events: eventRows, resolved: true }
 }
 
 interface StreamRailEntry {
@@ -141,7 +162,10 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
     // entry so a late emission after teardown is a no-op.
     railRegistry.set(streamId, created)
     created.subscription = liveQuery(() =>
-      db.events.where("[streamId+eventType]").equals([streamId, "message_created"]).toArray()
+      db.events
+        .where("[streamId+eventType]")
+        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [streamId, eventType]))
+        .toArray()
     ).subscribe((events) => {
       const live = railRegistry.get(streamId)
       if (!live) return
@@ -192,6 +216,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
+  const eventsById = new Map<string, CachedEvent>()
   // Resolved once every GATING rail has read — a still-loading discovered thread
   // doesn't count, so the card keeps its live view instead of dropping to the
   // projection the instant a thread appears.
@@ -204,6 +229,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
     }
     for (const [id, message] of rail.messages) messages.set(id, message)
     for (const id of rail.seen) seen.add(id)
+    for (const event of rail.events) eventsById.set(event.id, event)
     for (const [conversationId, list] of rail.taggedByConversation) {
       const existing = taggedByConversation.get(conversationId)
       if (existing) existing.push(...list)
@@ -213,7 +239,10 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
   for (const list of taggedByConversation.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
-  return { messages, seen, taggedByConversation, resolved, allResolved }
+  const events = [...eventsById.values()].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  )
+  return { messages, seen, taggedByConversation, events, resolved, allResolved }
 }
 
 /**
@@ -384,6 +413,11 @@ export interface BoardCardMessages {
   /** Where the bodies came from: the live `db.events` rail, or the cached server
    *  projection (a stream not yet synced into IDB — a cold/offline first open). */
   source: "events" | "projection"
+  /** Spec-eligible non-message rows across the conversation's streams (agent
+   *  sessions, memo captures, follow-ups), unresolved — the card runs
+   *  `resolveBoardEventRows` to filter+group them to this conversation. Always the
+   *  live rail's rows (empty on a cold projection open, filled once synced). */
+  events: CachedEvent[]
 }
 
 const NO_PENDING: RenderableMessage[] = []
@@ -535,6 +569,7 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
         totalReplies: serverTotal,
         pendingReplies,
         source: "projection" as const,
+        events: rail.events,
         nextRetained,
       }
     }
@@ -589,7 +624,15 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     else if (bridgeCount > 0) nextRetained = retained
     else nextRetained = NO_PENDING
 
-    return { openingMessage, replies, totalReplies, pendingReplies, source: "events" as const, nextRetained }
+    return {
+      openingMessage,
+      replies,
+      totalReplies,
+      pendingReplies,
+      source: "events" as const,
+      events: rail.events,
+      nextRetained,
+    }
   }, [rail, replyIds, openingId, messageIds, post, conversationId])
 
   // Commit the bridge bookkeeping after render, never during it.

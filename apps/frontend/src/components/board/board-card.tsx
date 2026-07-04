@@ -5,7 +5,9 @@ import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type 
 import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
+import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
+import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
+import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
@@ -63,6 +65,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     totalReplies,
     pendingReplies,
     source,
+    events: railEvents,
   } = useBoardCardMessages(post, streamType)
 
   const streamId = conversation.streamId
@@ -86,6 +89,21 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     [openingMessage, railReplies]
   )
   const cardHasUnread = hasUnread(knownMessages)
+
+  // Agent traces / memo captures / follow-ups on this conversation, interleaved
+  // into the message rows below. Render-only (STREAM_ROW_SPEC `bumps: false`), so
+  // they stay OUT of the read-state arrays above — they are not members and carry
+  // no read state. A session shows iff its invoking message is a conversation
+  // member; the member set is the card's known messages plus the server ids.
+  const memberMessageIds = useMemo(() => {
+    const set = new Set<string>(conversation.messageIds)
+    for (const message of knownMessages) set.add(message.id)
+    return set
+  }, [conversation.messageIds, knownMessages])
+  const eventRows = useMemo(
+    () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds }),
+    [railEvents, conversation.id, memberMessageIds]
+  )
 
   // The rail carries every locally-synced reply; older ones (or a wholly unsynced
   // stream — `source === "projection"`) may be missing, so on expand we backfill
@@ -236,8 +254,13 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
 
           <div className="mt-3 [&>*:first-child]:mt-0">
             {contiguous ? (
-              (openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies).map((message, i, all) =>
-                renderMessage(message, i > 0 && isContinuation(all[i - 1], message))
+              buildBoardRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies, eventRows).map(
+                (row) =>
+                  row.kind === "message" ? (
+                    renderMessage(row.message, row.continuation)
+                  ) : (
+                    <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
+                  )
               )
             ) : (
               <>
@@ -267,8 +290,12 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                     Couldn't load older messages. Retry.
                   </button>
                 )}
-                {displayedReplies.map((message, i) =>
-                  renderMessage(message, i > 0 && isContinuation(displayedReplies[i - 1], message))
+                {buildBoardRows(displayedReplies, eventRows).map((row) =>
+                  row.kind === "message" ? (
+                    renderMessage(row.message, row.continuation)
+                  ) : (
+                    <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
+                  )
                 )}
               </>
             )}
