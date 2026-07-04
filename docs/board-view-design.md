@@ -772,6 +772,22 @@ thread open. Add the human correction for when it lands wrong: **"split this
 thread into its own topic"** (cheap: reassign the thread's members to a minted
 conversation; the stub falls out of the branch relationship).
 
+**The branch gesture must live on the board/panel (Kris, 2026-07-04).** The
+board and conversation panel are where conversations turn from implicit to
+explicit, so the explicit branch originates there, not only in the timeline:
+on any member message row, a **"new sub-topic"** action opens a real thread
+under that message _and_ mints the child conversation in the same declared,
+determinable path (sync assign + bump, no LLM). That completes the symmetry of
+declared gestures from the board: **reply = declared continue**
+(recency-routed into the conversation's live stream); **new sub-topic =
+declared branch** (thread under the chosen message + minted conversation).
+Both are clean labels; neither touches the source stream's order — a thread
+under a message is additive. The branch relationship needs **no new column**:
+the child conversation's anchor thread hangs off a `parentMessageId` that is a
+member of the parent conversation, so the parent card's stub and the child's
+"branched from" provenance both derive from the graph — structure decides
+rendering, here too.
+
 **What stays correct as-is:** the sync determinable path files thread replies
 into the parent message's conversation — right even when a later pass splits
 (the split is refinement, not correction; same blessing as the realtime
@@ -830,8 +846,9 @@ Next, in order (re-sequenced 2026-07-03):
    read-state shipped at message grain.
 5. **Nested threads on the card** (section above) — branch stubs + "branched
    from" provenance, the soft-thread seam, bounded spanning-tree rendering;
-   the declared thread-open directive and "split this thread into its own
-   topic" ride along.
+   the declared thread-open directive — with the "new sub-topic" action on
+   board-card and panel message rows as its primary home — and "split this
+   thread into its own topic" ride along.
 6. **Mine lens** (Saved later, per the 2026-06-22 decisions).
 7. **Retitle + mark-resolved** on cards. Merge/split UI drops to backlog —
    declared filing has replaced corrections as the primary eval fuel, and
