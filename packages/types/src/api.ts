@@ -1179,17 +1179,16 @@ export interface AgentFollowUpScheduledEventPayload {
 }
 
 /**
- * Payload for `agent:follow_up_cancelled` timeline events (roadmap 1.3):
- * appended when a pending follow-up is cancelled — by the persona via
- * `cancel_follow_up`, or by a stream member via the card's Cancel button — in
- * the same transaction as the CAS. Carries the note + original fire time so the
- * row renders standalone even when the scheduling card has scrolled out of the
- * loaded window. The event's `actorId`/`actorType` attribute who cancelled.
+ * Payload for `agent:follow_up_cancelled` events (roadmap 1.3): appended when a
+ * pending follow-up is cancelled — by the persona via `cancel_follow_up`, or by
+ * a stream member via the card's Cancel button — in the same transaction as the
+ * CAS. This is a patch, not a visible row: it carries only the `followUpId` so
+ * the matching `agent:follow_up_scheduled` card flips to "Cancelled" (see
+ * `collectCancelledFollowUpIds`). The event's `actorId`/`actorType` record who
+ * cancelled.
  */
 export interface AgentFollowUpCancelledEventPayload {
   followUpId: string
-  note: string
-  scheduledFor: string
 }
 
 /**

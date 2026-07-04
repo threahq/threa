@@ -186,11 +186,7 @@ export class AgentFollowUpService {
         streamId: cancelled.streamId,
         eventType: "agent:follow_up_cancelled",
         outboxEventType: "stream:agent_follow_up_cancelled",
-        payload: {
-          followUpId: cancelled.id,
-          note: cancelled.note,
-          scheduledFor: cancelled.scheduledFor.toISOString(),
-        },
+        payload: { followUpId: cancelled.id },
         actorId: actor.actorId,
         actorType: actor.actorType,
       })

@@ -6,7 +6,7 @@ import { MessageEvent } from "./message-event"
 import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
-import { FollowUpScheduledEvent, FollowUpCancelledEvent } from "./follow-up-event"
+import { FollowUpScheduledEvent } from "./follow-up-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
 
@@ -162,11 +162,10 @@ export function EventItem({
     }
 
     case "agent:follow_up_cancelled":
-      return (
-        <div data-event-id={event.id}>
-          <FollowUpCancelledEvent event={event} workspaceId={workspaceId} />
-        </div>
-      )
+      // Patch, not a row: it flips the matching scheduled card to "Cancelled"
+      // via cancelledFollowUpIds (collected in event-list), so it renders nothing
+      // itself — avoids a redundant second row for the same cancellation.
+      return null
 
     case "reaction_added":
     case "reaction_removed":

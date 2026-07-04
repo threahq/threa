@@ -1,19 +1,17 @@
 import { useState } from "react"
 import { toast } from "sonner"
-import { Clock, CalendarX2, Loader2 } from "lucide-react"
-import type { AgentFollowUpScheduledEventPayload, AgentFollowUpCancelledEventPayload, StreamEvent } from "@threa/types"
+import { Clock, Loader2 } from "lucide-react"
+import type { AgentFollowUpScheduledEventPayload, StreamEvent } from "@threa/types"
 import { agentFollowUpsApi } from "@/api"
 import { useActors } from "@/hooks"
 import { formatFullDateTime } from "@/lib/dates"
+import { cn } from "@/lib/utils"
 
-interface FollowUpEventProps {
+interface FollowUpScheduledEventProps {
   event: StreamEvent
   workspaceId: string
-}
-
-interface FollowUpScheduledEventProps extends FollowUpEventProps {
   /**
-   * True when a matching `agent:follow_up_cancelled` row is in the loaded
+   * True when a matching `agent:follow_up_cancelled` event is in the loaded
    * window — the authoritative cancelled state, so every viewer (not just the
    * one who clicked) sees the card as cancelled, and it survives a reload.
    */
@@ -26,11 +24,12 @@ interface FollowUpScheduledEventProps extends FollowUpEventProps {
  * invisible state. Shows what it will do and when it fires, and — for any member
  * who can see the stream — a Cancel action (a button, not a link: it mutates,
  * INV-40). The cancelled state is authoritative from `cancelledByEvent` (the
- * sibling cancelled row); the local optimistic flip only fast-paths the clicking
- * member's own feedback (INV-63: the card state change is the confirmation, no
- * success toast). A stale click on an already-fired/cancelled row is a no-op
- * server-side and must NOT mislabel the card, so it does not flip locally — the
- * fire time renders in the viewer's local timezone (INV-42).
+ * matching `agent:follow_up_cancelled` patch); the local optimistic flip only
+ * fast-paths the clicking member's own feedback (INV-63: the card state change
+ * is the confirmation, no success toast). A stale click on an already-fired
+ * follow-up is a server-side no-op and must NOT mislabel the card, so it does
+ * not flip locally. The fire time renders in the viewer's local timezone
+ * (INV-42).
  */
 export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = false }: FollowUpScheduledEventProps) {
   const { getActorName } = useActors(workspaceId)
@@ -51,7 +50,7 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
       const { cancelled: didCancel } = await agentFollowUpsApi.cancel(workspaceId, payload.followUpId)
       if (didCancel) {
         // Fast-path the clicker's own feedback; other viewers flip when the
-        // broadcast cancelled row lands and sets `cancelledByEvent`.
+        // cancelled patch lands and sets `cancelledByEvent`.
         setOptimisticallyCancelled(true)
       } else {
         // Lost the race (already fired, or cancelled elsewhere). Don't flip to
@@ -75,45 +74,28 @@ export function FollowUpScheduledEvent({ event, workspaceId, cancelledByEvent = 
       </p>
       <p className="mt-0.5 text-sm text-foreground/70">{payload.note}</p>
       <div className="mt-1">
-        {cancelled ? (
-          <span className="text-xs text-muted-foreground">Cancelled</span>
-        ) : (
-          <button
-            type="button"
-            onClick={handleCancel}
-            disabled={cancelling}
-            className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-60"
-          >
-            {cancelling && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
-            Cancel
-          </button>
-        )}
+        {/*
+         * One button throughout its lifecycle (Cancel → Cancelled): the label
+         * swaps in place rather than unmounting, so a keyboard/AT user keeps
+         * focus on it, and `aria-live` announces the terminal state. `aria-
+         * disabled` (not `disabled`) makes it non-actionable while staying
+         * focusable; `disabled` is reserved for the in-flight request.
+         */}
+        <button
+          type="button"
+          onClick={cancelled ? undefined : handleCancel}
+          disabled={cancelling}
+          aria-disabled={cancelled}
+          aria-live="polite"
+          className={cn(
+            "inline-flex items-center gap-1 text-xs font-medium text-muted-foreground disabled:opacity-60",
+            cancelled ? "cursor-default" : "hover:text-foreground"
+          )}
+        >
+          {cancelling && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+          {cancelled ? "Cancelled" : "Cancel"}
+        </button>
       </div>
-    </div>
-  )
-}
-
-/**
- * Timeline row for `agent:follow_up_cancelled` (roadmap 1.3): renders standalone
- * so the cancellation stays visible even when the scheduling card has scrolled
- * out of the loaded window. Attribution (`actorId`/`actorType`) is whoever
- * cancelled — the persona, or a member via the card's Cancel button.
- */
-export function FollowUpCancelledEvent({ event, workspaceId }: FollowUpEventProps) {
-  const { getActorName } = useActors(workspaceId)
-  const payload = event.payload as AgentFollowUpCancelledEventPayload | undefined
-
-  if (!payload) return null
-
-  const actorName = getActorName(event.actorId, event.actorType)
-
-  return (
-    <div className="py-2 px-3 sm:px-6 text-center">
-      <p className="text-sm text-muted-foreground">
-        <CalendarX2 className="inline-block h-3.5 w-3.5 mr-1.5 -mt-0.5" aria-hidden="true" />
-        {actorName} cancelled a scheduled follow-up
-      </p>
-      <p className="mt-0.5 text-sm text-muted-foreground/70 line-through">{payload.note}</p>
     </div>
   )
 }

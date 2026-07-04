@@ -164,7 +164,7 @@ describe("AgentFollowUpService.cancel", () => {
         eventType: "agent:follow_up_cancelled",
         actorId: "persona_system_ariadne",
         actorType: AuthorTypes.PERSONA,
-        payload: expect.objectContaining({ followUpId: "agfu_01", note: "check back on the deploy" }),
+        payload: { followUpId: "agfu_01" },
       })
     )
     expect(insertOutbox.mock.calls[0]?.[1]).toBe("stream:agent_follow_up_cancelled")
