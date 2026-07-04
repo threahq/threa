@@ -622,7 +622,9 @@ extractor's continuation need this; lone-post→thread stays the one special cas
 across the root + its threads, live** — it subscribes to the rails of the streams its
 members span (a bounded set under one root) and merges by time. A thread-anchored
 conversation (legacy, below) still shows its thread parent as the opener; a root-anchored
-multi-stream conversation's opener is just its earliest member.
+multi-stream conversation's opener is just its earliest member. _The flatten is a v1
+rendering choice, not a model constraint — see "Nested threads × conversations" below
+for the structured rendering that replaces it._
 
 **Boundary extraction needs no tightening.** Same-root thread conversations appearing as
 assignment candidates (`findByMessageIds` over thread-context messages,
@@ -706,6 +708,81 @@ Nothing exists yet. Two grains, deliberately separate:
 Dismissals are signal (quiet-collector precedent): hiding a derived card is a
 soft "this topic wasn't worth surfacing" label for the eval loop.
 
+## Nested threads × conversations — soft vs true threads (2026-07-04)
+
+The worry (Kris): the board either hides or flattens nested threads depending on
+how they wound up being used — and thread nesting in the timeline is one of the
+genuinely useful things recently added; it must not be lost because the
+conversation system struggles with it.
+
+**Fact of the model first: a sub-thread is neither forced into the parent
+conversation nor forced to branch — it's classified.** For a message in any
+thread (any depth), the extractor fetches the conversation of the thread's
+_parent message_ and hands it to the LLM as an explicit candidate
+(`parentMessageConversations`, `boundary-extraction-service.ts:148-155`, in the
+prompt and `validUpdateTargets`). Both outcomes occur today: a thread that
+continues the discussion joins the parent's conversation as a cross-stream
+member (one root); a thread that changes subject gets a fresh conversation.
+
+**And nesting cannot be lost at the data layer.** Thread structure lives in the
+stream graph (`parentStreamId`/`parentMessageId`), not in conversation
+membership — conversations are flat sets of message ids, and every member still
+knows which thread it sits in. The v1 card _chose_ to flatten (see "Board
+rendering" above); the structure was never discarded. The only place nesting
+can be lost is the renderer, so the renderer is the fix.
+
+**The rule: topic decides membership; structure decides rendering.** Two named
+cases (Kris's vocabulary — and behavior the classifier already exhibits, just
+invisible and unnamed today):
+
+- **Soft thread** — the thread is _transport_, not a new subject: the
+  migrate-to-thread continuation, quote-reply spillover, convert-to-thread.
+  Same conversation, same card. Renders as continuation — at most a subtle
+  "moved to thread" seam, **no indent**, because topically nothing branched.
+- **True thread** — the thread is a _sub-topic_. Own conversation, own card,
+  linked both ways: a **branch stub** at the fork point on the parent card
+  ("↳ _GPU budget_") and "branched from _Hardware refresh_" provenance on the
+  child. Nesting survives **between** cards instead of inside one — the
+  conversation-grain mirror of the message-grain provenance chip.
+- **Spanning case** (one conversation genuinely across nested threads with
+  back-and-forth in several) — Reddit-style but bounded: indent per **thread
+  boundary** only (never per reply; Threa's tree is structural, not
+  reply-chain-deep), visible depth capped ~2, deeper collapsed behind a
+  "continue this thread →" link into the conversation panel / thread. Slack's
+  strictness stays right for the _timeline_ (the room); the card is the
+  overview surface, and an overview that can't show shape is why the flatten
+  feels unnatural. Likely the rarest of the three.
+
+**No depth special-case.** The rejected alternative was "the conversation chip
+covers top-level + first-level threading; nest everything deeper." That
+hard-codes a depth rule where soft/true does the work uniformly at every depth:
+a first-level thread can be a true sub-topic, a third-level thread can be a
+soft continuation. Depth is the wrong signal; topic trajectory is the signal —
+and topic trajectory is exactly what's being classified.
+
+**The decider shouldn't only be the LLM.** The channel case — a top-level
+message in an otherwise flat channel conversation branches off into a thread —
+is where the classifier is weakest, and it fights the "conversation starts in
+channel, migrates to thread" flow only apparently: recency-biased continuation
+answers _where new messages go_, not what renders where. Extend the #1146
+declared-beats-inferred rule to the **thread-opening moment**: the open carries
+a directive — _continue this conversation_ vs _new sub-topic_ — defaulting to
+continue for quote-reply/convert-to-thread, classifier-decides for a bare
+thread open. Add the human correction for when it lands wrong: **"split this
+thread into its own topic"** (cheap: reassign the thread's members to a minted
+conversation; the stub falls out of the branch relationship).
+
+**What stays correct as-is:** the sync determinable path files thread replies
+into the parent message's conversation — right even when a later pass splits
+(the split is refinement, not correction; same blessing as the realtime
+section). Read-state is message-grain (#1165), so it follows messages wherever
+they nest.
+
+**Build notes:** the card's contiguous-run logic (`board-card.tsx:109`) and
+`isContinuation` grouping assume a flat run — per-branch grouping replaces
+them; the stable-view rule extends naturally (a branch growing while committed
+updates in place, it never re-sorts siblings).
+
 ## Where we are + what's next (2026-07-03; replaces the original Phasing)
 
 Shipped, all flag-gated behind `board-view`:
@@ -751,11 +828,18 @@ Next, in order (re-sequenced 2026-07-03):
    chip honest when a declared conversation is later merged/retired.
 4. **Per-card hide** (above) — its own per-(user, conversation) table now that
    read-state shipped at message grain.
-5. **Mine lens** (Saved later, per the 2026-06-22 decisions).
-6. **Retitle + mark-resolved** on cards. Merge/split UI drops to backlog —
+5. **Nested threads on the card** (section above) — branch stubs + "branched
+   from" provenance, the soft-thread seam, bounded spanning-tree rendering;
+   the declared thread-open directive and "split this thread into its own
+   topic" ride along.
+6. **Mine lens** (Saved later, per the 2026-06-22 decisions).
+7. **Retitle + mark-resolved** on cards. Merge/split UI drops to backlog —
    declared filing has replaced corrections as the primary eval fuel, and
-   merge/split is the expensive end of the correction set.
-7. **Promotion gate, with numbers** — re-run the floor query post-scope-filter;
+   merge/split is the expensive end of the correction set. (The nested-threads
+   "split this thread into its own topic" is the exception that stays — it's a
+   structural split along an existing thread boundary, not the free-form
+   message-picker split that made the UI expensive.)
+8. **Promotion gate, with numbers** — re-run the floor query post-scope-filter;
    watch declared share of new assignments (up) and correction rate per active
    conversation (down); one dogfood week with the scoped Active lens as the
    actual landing page. Land Q4 as a **per-user default-landing setting**, not
