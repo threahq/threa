@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo } from "react"
+import { createContext, useCallback, useContext, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useConversationService } from "@/contexts"
 import { useWorkspaceStreamMemberships, useWorkspaceUnreadState } from "@/stores/workspace-store"
@@ -22,6 +22,8 @@ export interface ConversationRowRead {
 }
 
 const ConversationReadContext = createContext<ConversationRowRead | null>(null)
+
+const EMPTY_OVERLAY: readonly string[] = []
 
 export function useConversationRowRead(): ConversationRowRead | null {
   return useContext(ConversationReadContext)
@@ -96,7 +98,24 @@ export function useConversationReadController(
   conversationId: string,
   rootStreamId: string,
   currentUserId: string | null
-): { value: ConversationRowRead; hasUnread: (messages: RenderableMessage[]) => boolean } {
+): {
+  value: ConversationRowRead
+  hasUnread: (messages: RenderableMessage[]) => boolean
+  /** The mark-read mutation without the failure toast — for viewport auto-read,
+   * where a background action failing must stay silent (the next dwell retries);
+   * the toast is reserved for the user-initiated menu action. */
+  markReadSilently: (messageId: string) => Promise<void>
+  /** Registers the auto-read pin `markUnread` invokes synchronously BEFORE its
+   * request departs — a dwell-scheduled auto mark-read firing mid-flight would
+   * otherwise race the explicit unread, with server arrival order deciding. */
+  setExplicitUnreadListener: (listener: (() => void) | null) => void
+  /** One stream's RAW read truth (watermark sequence + overlay ids) — what the
+   * auto-read hook diffs to detect a cross-device mark-unread. Raw primitives,
+   * not derived row state: derivation flaps (the `unreadCounts === 0`
+   * short-circuit, a stale `lastReadAt` fallback) must never read as a
+   * regression, or auto-read false-pins and wedges on a static board card. */
+  getReadTruth: (streamId: string) => { lastReadSequence: string | null; readMessageIds: readonly string[] }
+} {
   const conversationService = useConversationService()
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const overlay = unreadState?.readMessageIds
@@ -117,18 +136,37 @@ export function useConversationReadController(
     [overlay, unreadCounts, frontierByStream, rootStreamId]
   )
 
-  const markReadUpToHere = useCallback(
-    (messageId: string) => {
+  const markReadSilently = useCallback(
+    (messageId: string) =>
       conversationService
         .markRead(workspaceId, conversationId, messageId)
-        .then((res) => applyReadStateSnapshots(workspaceId, res.streams))
-        .catch(() => toast.error("Couldn't mark as read"))
-    },
+        .then((res) => applyReadStateSnapshots(workspaceId, res.streams)),
     [conversationService, workspaceId, conversationId]
   )
 
+  const markReadUpToHere = useCallback(
+    (messageId: string) => {
+      markReadSilently(messageId).catch(() => toast.error("Couldn't mark as read"))
+    },
+    [markReadSilently]
+  )
+
+  const getReadTruth = useCallback(
+    (streamId: string) => ({
+      lastReadSequence: frontierByStream.get(streamId)?.lastReadSequence ?? null,
+      readMessageIds: overlay?.[streamId] ?? EMPTY_OVERLAY,
+    }),
+    [frontierByStream, overlay]
+  )
+
+  const explicitUnreadListenerRef = useRef<(() => void) | null>(null)
+  const setExplicitUnreadListener = useCallback((listener: (() => void) | null) => {
+    explicitUnreadListenerRef.current = listener
+  }, [])
+
   const markUnread = useCallback(
     (messageId: string) => {
+      explicitUnreadListenerRef.current?.()
       conversationService
         .markUnread(workspaceId, conversationId, messageId)
         .then((res) => applyReadStateSnapshots(workspaceId, res.streams))
@@ -151,5 +189,5 @@ export function useConversationReadController(
     [state, currentUserId, rootStreamId]
   )
 
-  return { value, hasUnread }
+  return { value, hasUnread, markReadSilently, setExplicitUnreadListener, getReadTruth }
 }

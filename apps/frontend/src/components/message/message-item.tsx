@@ -599,6 +599,7 @@ export function MessageItem({
       <div
         ref={containerRef}
         tabIndex={-1}
+        data-message-row=""
         data-message-id={message.id}
         data-stream-id={streamId}
         data-author-name={authorName}
@@ -646,6 +647,7 @@ export function MessageItem({
     <div
       ref={containerRef}
       tabIndex={-1}
+      data-message-row=""
       data-message-id={message.id}
       data-stream-id={streamId}
       data-author-name={authorName}

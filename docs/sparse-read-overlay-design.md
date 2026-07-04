@@ -43,7 +43,7 @@ Two layers of truth, one derivation:
    owning it.
 
 2. **A sparse overlay above the watermark.** Table
-   `stream_member_message_reads`: individually-read messages *above* the
+   `stream_member_message_reads`: individually-read messages _above_ the
    watermark. A message is **effectively read** iff
    `sequence ≤ watermark OR id ∈ overlay`.
 
@@ -58,7 +58,7 @@ Two layers of truth, one derivation:
    immediately above the watermark, advance the watermark over that run and
    delete the absorbed rows (set-based, under the locked membership row).
    Reading the frontier on the board just moves the watermark; the overlay
-   only holds *holes*, and most reading happens in the timeline (wholesale
+   only holds _holes_, and most reading happens in the timeline (wholesale
    watermark advance), so the overlay stays small and self-erasing.
 
 **Overlay invariant: every overlay row sits strictly above its member's
@@ -98,9 +98,9 @@ that is load-bearing for threads (see below).
   `unreadCounts[s] = max(0, latestOrdinals[s] − readOrdinal(s) − |overlay(s)|)`
   with the read position reconstructed as `latest − unread − |overlay|`.
 - **Card unread** = "does this conversation contain any effectively-unread
-  message", computed at read time against *current* membership.
+  message", computed at read time against _current_ membership.
 - **Timeline**: row read state, the "new messages" divider, and the
-  new-message flash all mean "first/any *effectively* unread" — watermark
+  new-message flash all mean "first/any _effectively_ unread" — watermark
   comparison plus an overlay-set membership check.
 
 ### Mark-unread (the asymmetric inverse)
@@ -109,7 +109,7 @@ that is load-bearing for threads (see below).
 - **Below the watermark**: regress the watermark to just before the
   conversation's earliest member in that stream (existing `stream:read_set`
   semantics), accepting collateral un-reading of interleaved messages — the
-  same contract the timeline's "mark as unread" already has. A *negative*
+  same contract the timeline's "mark as unread" already has. A _negative_
   overlay (sparse unread exceptions below the watermark) is explicitly
   rejected: two overlays with opposite signs is unmaintainable.
 
@@ -136,8 +136,8 @@ house split (backend `lib/outbox/repository.ts`, frontend inline in
 - **NEW `stream:read_messages`** — the absolute post-write read-state snapshot
   for one stream:
   `{ workspaceId, authorId, streamId, readMessageIds: string[],
-  lastReadEventId: string | null, lastReadSequence: string,
-  lastReadOrdinal: number }`.
+lastReadEventId: string | null, lastReadSequence: string,
+lastReadOrdinal: number }`.
   `readMessageIds` is the **entire** overlay for that (stream, member) after
   the write (post-compaction) — absolute state, not a delta, so application is
   idempotent and order-convergent under the sync log's per-workspace total
@@ -156,7 +156,7 @@ house split (backend `lib/outbox/repository.ts`, frontend inline in
   surviving prior source event (set-based) — fix A3 below.
 - **Message delete**: the delete transaction marks the message's
   `user_activity` rows read (`read_at = NOW() WHERE message_id = … AND
-  read_at IS NULL`). No new socket event: clients already receive the
+read_at IS NULL`). No new socket event: clients already receive the
   `message_deleted` stream event and drop held activity rows for that
   message id there (mirror `dropReactionActivity`) — fix A2 below.
 
@@ -175,7 +175,7 @@ read(s) is implicit: latest − unread − |overlay|
 - Watermark ordinals keep their existing merge rules (`stream:read`
   max-merges, `read_set` SETs).
 - `messages:moved` applier **SETs** `latestOrdinals[source] =
-  sourceMessageOrdinal` and recomputes unread — the one sanctioned
+sourceMessageOrdinal` and recomputes unread — the one sanctioned
   non-monotonic latest write (precedent: `applyStreamReadSet`). Fix A1 below.
 - Bootstrap (`toCounterState`/`withCounterState`) carries the overlay;
   `mergeReconnectWorkspaceBootstrap` must keep the
@@ -183,7 +183,7 @@ read(s) is implicit: latest − unread − |overlay|
   stream (today it pairs the first two).
 
 `WorkspaceBootstrap` gains `readMessageIds?: Record<string, string[]>`
-(this one *is* a shared API type in `@threa/types`).
+(this one _is_ a shared API type in `@threa/types`).
 
 ## Conversation read API (pinned)
 
@@ -243,8 +243,8 @@ Investigated and adversarially re-verified; three real defects:
    sticks for the whole session (heals only on a full network bootstrap;
    cache-first bootstrap re-serves the drift). **Fix:** the
    `sourceMessageOrdinal` payload + SET applier above.
-   *(The originally-suspected delete trigger is refuted: deletion soft-deletes
-   and keeps the `message_created` row, so ordinals are delete-stable.)*
+   _(The originally-suspected delete trigger is refuted: deletion soft-deletes
+   and keeps the `message_created` row, so ordinals are delete-stable.)_
 2. **A2 (CONFIRMED, reload-surviving)** — message deletion never touches
    `user_activity` (`event-service.ts:916-957`): an unread activity row for a
    deleted message survives server-side forever unless the user opens that
@@ -253,7 +253,7 @@ Investigated and adversarially re-verified; three real defects:
 3. **A4 (CONFIRMED, reload-surviving)** — on move, the activity row is
    rehomed to the destination thread on both sides
    (`messaging/repository.ts:513-519`, `rehomeActivities`); opening the
-   *root* clears nothing under the thread, so the badge persists on a stream
+   _root_ clears nothing under the thread, so the badge persists on a stream
    the user never visits. Rehoming itself is correct (the row must deep-link
    to where the message lives). **Fix (backstop):** opening the activity feed
    reconciles the held set against the server's `unreadOnly` feed — replacing
@@ -266,15 +266,61 @@ Investigated and adversarially re-verified; three real defects:
    (`event-repository.ts:707`) — survives reload. **Fix:** the watermark
    repoint in the move transaction. Ship with a regression test either way.
 
-*(The activity half's originally-hypothesized D2-guard blockage was refuted
+_(The activity half's originally-hypothesized D2-guard blockage was refuted
 in verification: `prevRead` collapses to 0 in the canonical scenario and the
 `markAsReadMutation` clears held rows unconditionally on stream open. The D2
-coupling is untouched by this work.)*
+coupling is untouched by this work.)_
+
+## Viewport auto-read (shipped as a follow-up)
+
+Reading IS marking — the menu actions are the override, not the primary UX.
+`useConversationAutoRead` (`apps/frontend/src/components/message/use-conversation-auto-read.ts`)
+runs on both conversation surfaces (board card, panel), frontend-only over the
+same conversation mark-read cutoff API:
+
+- A row is **seen** after ~1s of any-part-in-viewport dwell
+  (IntersectionObserver) while the viewer's attention is on the page — the
+  same visible/focused gate as the stream's auto-read, shared via
+  `useAutoReadAttention` (phone-like devices relax the focus check).
+- Seen rows debounce (~2s) into **one** `markRead(conversationId,
+newestSeenRow)` per conversation; the gate re-checks effective unread at
+  fire time, so it is idempotent against the overlay and never fires on a
+  read conversation.
+- Every **rendered row** is eligible. On a collapsed card the cutoff through
+  a trailing-preview row also covers the hidden "N more" middle —
+  deliberate: the card IS the conversation surface, so reading its visible
+  tail reads the conversation up to there, exactly like invoking "Mark as
+  read up to here" on that row. (v1 protected the hidden middle by making
+  gapped cards opening-only; dogfooding showed that renders the feature
+  inert on any active conversation — Kris's ruling: having the conversation
+  open is enough to mark it.)
+- Mark-as-unread **pins**: the menu action signals the hook synchronously
+  BEFORE its request departs (the controller's `setExplicitUnreadListener`);
+  the cross-device case is caught by diffing **raw read truth** per spanned
+  stream (the controller's `getReadTruth`) — a watermark sequence decrease,
+  or overlay ids removed without a compensating watermark advance, exposing
+  a row the surface shows. Never derived row state: derivation flaps (the
+  `unreadCounts === 0` short-circuit falling back to a stale frontier when a
+  count leaves zero, the stale-`lastReadAt` time fallback) read as mass
+  read → unread regressions, and a false pin on a static board card never
+  releases — that wedge was the first dogfood failure. Pinning unsees
+  everything and suppresses **every eligible row** — not just the
+  currently-visible set, because visibility is unknowable across observer
+  teardowns (attention loss, id-set changes) and under-suppressing would let
+  a still-on-screen row dwell and cutoff-mark right back over the explicit
+  unread. Auto-read holds entirely while any suppression is active; each
+  row's suppression releases when the observer reports it off-screen — the
+  stream timeline's `pinnedRef`, with leave-and-return as the resume gesture
+  (a small card has no scroll to watch).
+- Rows are matched by `data-message-row` on the `MessageItem` container, not
+  bare `data-message-id` — editor nodes (quote reply, in-app links) render
+  `data-message-id` inside the card's composer, and observing those would let
+  a quoted message "dwell" beside the cursor.
+- Optimistic `temp_` rows are never targets (the id doesn't exist
+  server-side yet).
 
 ## Out of scope for v1
 
-- Viewport-driven auto-read on the board (the "seen" question —
-  board-view-design edge 6 territory).
 - Restoring activity badges on mark-unread (accepted gap, matches the
   stream path).
 - Offline queueing for read actions (existing read mutations are not queued;

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
+import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
@@ -72,12 +73,13 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   // the card's effectively-unread signal for the header dot. Both derive live
   // from the overlay + per-stream watermarks, so the dot clears the moment a
   // read lands (docs/sparse-read-overlay-design.md).
-  const { value: conversationReadValue, hasUnread } = useConversationReadController(
-    workspaceId,
-    conversation.id,
-    streamId,
-    currentUserId
-  )
+  const {
+    value: conversationReadValue,
+    hasUnread,
+    markReadSilently,
+    setExplicitUnreadListener,
+    getReadTruth,
+  } = useConversationReadController(workspaceId, conversation.id, streamId, currentUserId)
   // Over the card's known local messages (opening + the full local reply rail);
   // own-authored rows are excluded inside `hasUnread`.
   const knownMessages = useMemo(
@@ -126,6 +128,24 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   // No middle is hidden, so opening + replies form one uninterrupted run that
   // groups across the boundary. Otherwise a gap row sits between them.
   const contiguous = (expanded && (!incompleteLocally || !!allMessages)) || (!expanded && hiddenCount === 0)
+
+  // Viewport auto-read: rows that dwell on screen mark themselves read (the menu
+  // actions are the override). Every rendered row is eligible — on a collapsed
+  // card the cutoff through a trailing-preview row also covers the hidden "N
+  // more" middle, deliberately: the card IS the conversation surface, so reading
+  // its visible tail reads the conversation up to there, exactly like invoking
+  // "Mark as read up to here" on that row (Kris's dogfood ruling on PR #1174 —
+  // having the conversation open is enough to mark it).
+  const autoReadRows = openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies
+  useConversationAutoRead({
+    containerRef: cardRef,
+    messages: autoReadRows,
+    rootStreamId: streamId,
+    rowState: conversationReadValue.state,
+    markRead: markReadSilently,
+    registerExplicitUnread: setExplicitUnreadListener,
+    getReadTruth,
+  })
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => (
     <MessageItem

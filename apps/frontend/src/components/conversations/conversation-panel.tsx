@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, isContinuation, type RenderableMessage } from "@/components/message/message-item"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
+import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
@@ -244,12 +245,12 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   // Per-row read state + the mark-read/unread actions for this conversation's
   // rows (docs/sparse-read-overlay-design.md). The panel has no unread dot, so
   // only the provider value is used.
-  const { value: conversationReadValue } = useConversationReadController(
-    workspaceId,
-    conversation.id,
-    conversation.streamId,
-    currentUserId
-  )
+  const {
+    value: conversationReadValue,
+    markReadSilently,
+    setExplicitUnreadListener,
+    getReadTruth,
+  } = useConversationReadController(workspaceId, conversation.id, conversation.streamId, currentUserId)
   // Deep-link target from `?m=` — the row to scroll to + flash. Shared with the
   // host page's `m` param, but only the conversation panel reads it here (the
   // board page, the panel's host for a conversation link, ignores it), so a
@@ -305,6 +306,21 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
 
   // Scopes text-selection quoting to this panel's message list.
   const listRef = useRef<HTMLDivElement>(null)
+
+  // Viewport auto-read: every rendered row is eligible. While older replies are
+  // still backfilling, the cutoff through a rendered row also covers the not-
+  // yet-fetched middle — deliberate, same as the board card: reading the
+  // conversation's visible tail reads it up to there.
+  const autoReadRows = all
+  useConversationAutoRead({
+    containerRef: listRef,
+    messages: autoReadRows,
+    rootStreamId: conversation.streamId,
+    rowState: conversationReadValue.state,
+    markRead: markReadSilently,
+    registerExplicitUnread: setExplicitUnreadListener,
+    getReadTruth,
+  })
 
   return (
     // Quote reply from a row routes into this conversation's reply composer.
