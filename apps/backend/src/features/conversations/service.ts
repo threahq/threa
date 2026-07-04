@@ -7,12 +7,19 @@ import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSna
 import { ActivityRepository } from "../activity"
 import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
+import { MemoRepository } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
-import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
+import {
+  StreamTypes,
+  type AttachmentSummary,
+  type BoardLens,
+  type ConversationStatus,
+  type LinkPreviewSummary,
+} from "@threa/types"
 
 export { ConversationWithStaleness }
 
@@ -22,6 +29,8 @@ export interface ListConversationsOptions {
 }
 
 export interface ListWorkspaceConversationsOptions extends ListConversationsOptions {
+  /** Structural lens (Active / Needs-resolution / Decisions) to filter the feed by. */
+  lens?: BoardLens
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }
@@ -211,6 +220,15 @@ export class ConversationService {
       [...hydrateIds].map((id) => messageById.get(id)).filter((m): m is Message => Boolean(m))
     )
 
+    // The Decisions/Knowledge lens signal: which of these conversations produced a
+    // captured memo. One batch presence read (INV-56); a board-level field, not on
+    // the conversation aggregate the `conversation:*` events carry.
+    const conversationIdsWithMemos = await MemoRepository.findConversationIdsWithMemos(
+      this.pool,
+      workspaceId,
+      conversations.map((c) => c.id)
+    )
+
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!
       const opening = plan.originId ? hydratedById.get(plan.originId) : undefined
@@ -234,6 +252,7 @@ export class ConversationService {
         recentMessages,
         totalReplies: plan.totalReplies,
         streamIds,
+        hasCapturedMemo: conversationIdsWithMemos.has(conversation.id),
       }
     })
 

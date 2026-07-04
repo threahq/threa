@@ -1,6 +1,36 @@
 import { sql, composeSql, type Querier } from "../../db"
 import { streamAccessPredicateSql } from "../streams"
-import { ConversationStatuses, type ConversationStatus } from "@threa/types"
+import {
+  ConversationStatuses,
+  type ConversationStatus,
+  type BoardLens,
+  BOARD_LENS_STALE_HOURS,
+  BOARD_LENS_MAX_COMPLETENESS,
+} from "@threa/types"
+
+/**
+ * The board-lens WHERE fragment — the SQL half of the seed/pagination filter,
+ * kept in lockstep with `matchesBoardLens` (the client's read-side predicate) so
+ * a page can't return rows the client then hides. Reads the same signals and the
+ * same `BOARD_LENS_*` thresholds. `active` adds nothing (everything, by recency).
+ */
+function boardLensCondSql(lens: BoardLens | undefined) {
+  if (lens === "needs-resolution") {
+    return composeSql`AND (
+      status = ${ConversationStatuses.STALLED}
+      OR (
+        last_activity_at < NOW() - make_interval(hours => ${BOARD_LENS_STALE_HOURS})
+        AND completeness_score < ${BOARD_LENS_MAX_COMPLETENESS}
+      )
+    )`
+  }
+  if (lens === "decisions") {
+    return composeSql`AND EXISTS (
+      SELECT 1 FROM memos WHERE memos.source_conversation_id = conversations.id
+    )`
+  }
+  return sql``
+}
 
 interface ConversationRow {
   id: string
@@ -335,6 +365,7 @@ export const ConversationRepository = {
     userId: string,
     options?: {
       status?: ConversationStatus
+      lens?: BoardLens
       limit?: number
       cursor?: { lastActivityAt: string; id: string }
     }
@@ -343,6 +374,7 @@ export const ConversationRepository = {
     const fields = sql`${sql.raw(SELECT_FIELDS)}`
     const access = streamAccessPredicateSql(workspaceId, userId, "conversations.stream_id")
     const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
+    const lensCond = boardLensCondSql(options?.lens)
     // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
     // column — because the cursor is minted from a JS Date (ms precision) while
     // timestamptz stores microseconds. Comparing the raw µs value against an
@@ -359,6 +391,7 @@ export const ConversationRepository = {
       WHERE workspace_id = ${workspaceId}
         AND cardinality(message_ids) > 0
         ${statusCond}
+        ${lensCond}
         ${cursorCond}
         AND ${access}
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC

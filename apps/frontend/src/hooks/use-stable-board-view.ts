@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { matchesBoardLens, type BoardLens } from "@threa/types"
 import { useBoardPosts } from "@/stores/board-store"
 import type { CachedBoardPost } from "@/db"
 
@@ -127,9 +128,23 @@ export interface StableBoardView {
  * under the eye. Wraps the live IDB feed (`useBoardPosts`); the committed snapshot
  * is React state, re-derived from the live feed without ever reordering a
  * committed card.
+ *
+ * The `lens` narrows the shared IDB feed to the cards that belong on the active
+ * structural lens (board-view-design.md § "Lenses") — the read-side authority
+ * matching the backend's seed/pagination filter (`matchesBoardLens`). One IDB
+ * table holds every seeded conversation regardless of lens, so filtering here is
+ * what makes each lens show its own subset live; switching lens resets the frozen
+ * view so the pill and order start fresh for the new subset.
  */
-export function useStableBoardView(workspaceId: string): StableBoardView {
-  const live = useBoardPosts(workspaceId)
+export function useStableBoardView(workspaceId: string, lens: BoardLens): StableBoardView {
+  const rawLive = useBoardPosts(workspaceId)
+  // Filter the shared feed to the lens. Recomputed when the feed or lens changes;
+  // `Date.now()` is sampled then (the staleness signal for `needs-resolution` only
+  // needs to be fresh at feed-change granularity, which is frequent on a live board).
+  const live = useMemo(
+    () => (rawLive === undefined ? undefined : rawLive.filter((post) => matchesBoardLens(post, lens, Date.now()))),
+    [rawLive, lens]
+  )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
   // Last-known content for committed cards, so one that vanishes from the live
@@ -153,12 +168,15 @@ export function useStableBoardView(workspaceId: string): StableBoardView {
   }, [])
   useEffect(() => disarmReveal, [disarmReveal])
 
-  // Reset the view when the workspace changes in place (the board route keeps the
-  // same component instance across `:workspaceId`). React-blessed render-time
-  // reset; the ref writes are idempotent and gated by the changed key.
-  const wsRef = useRef(workspaceId)
-  if (wsRef.current !== workspaceId) {
-    wsRef.current = workspaceId
+  // Reset the view when the workspace OR the lens changes in place (the board
+  // route keeps the same component instance across `:workspaceId` and `:lens`).
+  // React-blessed render-time reset; the ref writes are idempotent and gated by
+  // the changed key. Switching lens starts a fresh frozen order + empty pill so
+  // the new subset isn't reconciled against the previous lens's committed cards.
+  const viewKey = `${workspaceId}|${lens}`
+  const viewKeyRef = useRef(viewKey)
+  if (viewKeyRef.current !== viewKey) {
+    viewKeyRef.current = viewKey
     retainedRef.current = new Map()
     liveRef.current = []
     revealNextRef.current = false

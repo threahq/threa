@@ -18,7 +18,32 @@ import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
-import type { ConversationWithStaleness } from "@threa/types"
+import { BOARD_LENSES, type BoardLens, type ConversationWithStaleness } from "@threa/types"
+
+/** The structural lenses as tab chips — order and labels for the board header. */
+const LENS_TABS: { value: BoardLens; label: string }[] = [
+  { value: "active", label: "Active" },
+  { value: "needs-resolution", label: "Needs resolution" },
+  { value: "decisions", label: "Decisions" },
+]
+
+const VALID_LENSES = new Set<string>(BOARD_LENSES)
+
+/** Empty-state copy per lens — an empty Decisions view isn't "nothing on the board". */
+const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
+  active: {
+    title: "Nothing on the board yet",
+    body: "As your conversations build up, the topics worth returning to surface here, newest activity first.",
+  },
+  "needs-resolution": {
+    title: "No loose ends",
+    body: "Conversations that stall or go quiet while unresolved show up here. Nothing needs picking back up right now.",
+  },
+  decisions: {
+    title: "No decisions captured yet",
+    body: "When a conversation produces a memo — a decision, a fact worth keeping — it surfaces here as settled knowledge.",
+  },
+}
 
 /**
  * Coarse recency bucket for a post's last activity, in device-local time
@@ -64,13 +89,22 @@ function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number
 /**
  * The board: a cross-stream feed of posts (each conversation surfaced as a
  * message-led post) ordered by recent activity, grouped into recency sections.
- * Lenses and a scope filter land as tabs here later; for now a single "All" tab
- * shows everything the viewer can read.
+ *
+ * Route is `/w/:workspaceId/board/:lens?` — bare `/board` is the default Active
+ * lens; `/board/needs-resolution`, `/board/decisions` render the structural
+ * lenses (board-view-design.md § "Lenses"). Refreshes, back/forward, and shared
+ * links land on the same lens (INV-59). `active` canonicalises to the unsegmented
+ * URL so there aren't two URLs for the default; an unknown segment redirects to it.
  */
 export function BoardPage() {
-  const { workspaceId } = useParams<{ workspaceId: string }>()
+  const { workspaceId, lens: lensParam } = useParams<{ workspaceId: string; lens?: string }>()
   if (!workspaceId) return null
-  return <BoardPageGate workspaceId={workspaceId} />
+  if (lensParam === "active") return <Navigate to={`/w/${workspaceId}/board`} replace />
+  if (lensParam !== undefined && !VALID_LENSES.has(lensParam)) {
+    return <Navigate to={`/w/${workspaceId}/board`} replace />
+  }
+  const lens: BoardLens = (lensParam as BoardLens | undefined) ?? "active"
+  return <BoardPageGate workspaceId={workspaceId} lens={lens} />
 }
 
 /**
@@ -80,14 +114,14 @@ export function BoardPage() {
  * refreshes on /board before the bootstrap cache is populated. The backend
  * endpoint 404s without the flag too, so this is the UX half of the gate.
  */
-function BoardPageGate({ workspaceId }: { workspaceId: string }) {
+function BoardPageGate({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
   if (boardFlag === null) return null
   if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
-  return <BoardPageInner workspaceId={workspaceId} />
+  return <BoardPageInner workspaceId={workspaceId} lens={lens} />
 }
 
-function BoardPageInner({ workspaceId }: { workspaceId: string }) {
+function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   const { isMobile } = useSidebar()
   const { isPanelOpen, closePanel } = usePanel()
   const {
@@ -109,8 +143,15 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
   // accumulates live changes behind the "N new" pill (INV-61, extended from the
   // timeline's insertion rule to the board's ordering).
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
-    useWorkspaceConversations(workspaceId, { limit: 50 })
-  const { posts, activityById, newCount, commit, revealNext, isLoading: viewLoading } = useStableBoardView(workspaceId)
+    useWorkspaceConversations(workspaceId, { lens, limit: 50 })
+  const {
+    posts,
+    activityById,
+    newCount,
+    commit,
+    revealNext,
+    isLoading: viewLoading,
+  } = useStableBoardView(workspaceId, lens)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed
@@ -236,10 +277,8 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
     content = (
       <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
         <LayoutGrid className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm font-medium">Nothing on the board yet</p>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          As your conversations build up, the topics worth returning to surface here, newest activity first.
-        </p>
+        <p className="text-sm font-medium">{LENS_EMPTY_COPY[lens].title}</p>
+        <p className="max-w-sm text-sm text-muted-foreground">{LENS_EMPTY_COPY[lens].body}</p>
       </div>
     )
   }
@@ -250,8 +289,12 @@ function BoardPageInner({ workspaceId }: { workspaceId: string }) {
         backTo={`/w/${workspaceId}`}
         icon={LayoutGrid}
         title="Board"
-        value="all"
-        tabs={[{ value: "all", label: "All", href: `/w/${workspaceId}/board` }]}
+        value={lens}
+        tabs={LENS_TABS.map((t) => ({
+          value: t.value,
+          label: t.label,
+          href: t.value === "active" ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${t.value}`,
+        }))}
       />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}

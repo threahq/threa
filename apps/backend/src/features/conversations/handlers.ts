@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
 import type { FeatureFlagService } from "../feature-flags"
-import { CONVERSATION_STATUSES } from "@threa/types"
+import { CONVERSATION_STATUSES, BOARD_LENSES } from "@threa/types"
 import { validateRequest } from "../../lib/validation"
 import { HttpError } from "../../lib/errors"
 
@@ -12,9 +12,10 @@ const listConversationsSchema = z.object({
   limit: z.coerce.number().min(1).max(100).optional(),
 })
 
-// The board feed adds keyset pagination: `cursor` is an opaque `"<iso>|<id>"`
-// minted by a prior page's `nextCursor`.
+// The board feed adds keyset pagination (`cursor` is an opaque `"<iso>|<id>"`
+// minted by a prior page's `nextCursor`) and a structural `lens` filter.
 const listWorkspaceConversationsSchema = listConversationsSchema.extend({
+  lens: z.enum(BOARD_LENSES).optional(),
   cursor: z.string().min(1).optional(),
 })
 
@@ -71,6 +72,7 @@ export function createConversationHandlers({ conversationService, streamService,
 
       const result = await conversationService.listByWorkspace(workspaceId, userId, {
         status: query.status,
+        lens: query.lens,
         limit: query.limit,
         cursor: decodeBoardCursor(query.cursor),
       })

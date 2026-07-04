@@ -723,6 +723,15 @@ export interface BoardPost {
    * `conversation:message_assigned`.
    */
   streamIds: string[]
+  /**
+   * Whether this conversation has produced at least one captured memo — the
+   * Decisions/Knowledge lens signal (board-view-design.md § "Lenses"). A
+   * board-level field, not part of the conversation aggregate, because it comes
+   * from a memos join the pure `conversation:*` event payload never carries; the
+   * board card preserves it across live merges (a memo is never un-captured), so
+   * a newly-captured memo only surfaces on the Decisions lens after a refetch.
+   */
+  hasCapturedMemo: boolean
 }
 
 /**

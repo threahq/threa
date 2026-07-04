@@ -329,6 +329,29 @@ export const ConversationStatuses = {
   RESOLVED: "resolved",
 } as const satisfies Record<string, ConversationStatus>
 
+/**
+ * Structural lenses over the workspace board (board-view-design.md § "Lenses").
+ * Each is a filter over signals Threa already computes — the board gives the
+ * dials, it doesn't decide what matters. `active` is the default (everything, by
+ * recency); the others narrow. Same signal for every viewer (personal lenses
+ * like Mine come later). Ordered as they render in the tab strip.
+ */
+export const BOARD_LENSES = ["active", "needs-resolution", "decisions"] as const
+export type BoardLens = (typeof BOARD_LENSES)[number]
+
+/**
+ * Idle hours after which a still-incomplete conversation counts as a loose end
+ * for the Needs-resolution lens. 12h ≈ temporalStaleness ≥ 3 (staleness.ts), so
+ * a conversation that went quiet mid-workday resurfaces the next.
+ */
+export const BOARD_LENS_STALE_HOURS = 12
+
+/**
+ * Completeness (1–7, LLM-scored) below which an idle conversation reads as
+ * unresolved. 4 is the midpoint — score 1–3 is "not yet half-settled".
+ */
+export const BOARD_LENS_MAX_COMPLETENESS = 4
+
 // How a message's conversation was decided. Absent/null on a message means the
 // async boundary-extractor inferred (clustered) it — the default. A set value
 // records that the sender DECLARED the conversation at send time, so the

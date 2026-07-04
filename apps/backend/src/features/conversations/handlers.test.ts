@@ -123,8 +123,24 @@ describe("Conversation Handlers", () => {
 
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {
         status: "active",
+        lens: undefined,
         limit: 25,
         cursor: { lastActivityAt: "2026-06-22T12:00:00.000Z", id: "conv_9" },
+      })
+    })
+
+    test("threads the validated lens through to the service", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { lens: "needs-resolution" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith(
+        "ws_1",
+        "usr_1",
+        expect.objectContaining({ lens: "needs-resolution" })
+      )
+    })
+
+    test("rejects an unknown lens with a 400", async () => {
+      await expect(handlers.listByWorkspace(mockReq({ query: { lens: "bogus" } }), mockRes())).rejects.toMatchObject({
+        status: 400,
       })
     })
 
@@ -132,6 +148,7 @@ describe("Conversation Handlers", () => {
       await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {
         status: undefined,
+        lens: undefined,
         limit: undefined,
         cursor: undefined,
       })

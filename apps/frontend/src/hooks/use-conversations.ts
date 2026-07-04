@@ -15,7 +15,14 @@ import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { generateClientId } from "./use-stream-or-draft"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { StreamTypes } from "@threa/types"
-import type { BoardPost, CompanionMode, ConversationWithStaleness, ConversationStatus, JSONContent } from "@threa/types"
+import type {
+  BoardLens,
+  BoardPost,
+  CompanionMode,
+  ConversationWithStaleness,
+  ConversationStatus,
+  JSONContent,
+} from "@threa/types"
 
 /**
  * Where a board post lands: an existing channel/DM the user picked, or a
@@ -52,7 +59,7 @@ export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
-  workspaceList: (workspaceId: string, options?: { status?: string; limit?: number }) =>
+  workspaceList: (workspaceId: string, options?: { status?: string; lens?: string; limit?: number }) =>
     [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
@@ -118,14 +125,15 @@ interface UseConversationsOptions {
  */
 export function useWorkspaceConversations(
   workspaceId: string,
-  options?: { status?: ConversationStatus; limit?: number }
+  options?: { status?: ConversationStatus; lens?: BoardLens; limit?: number }
 ) {
   const conversationService = useConversationService()
-  const { status, limit } = options ?? {}
+  const { status, lens, limit } = options ?? {}
 
   const query = useInfiniteQuery({
-    queryKey: conversationKeys.workspaceList(workspaceId, { status, limit }),
-    queryFn: ({ pageParam }) => conversationService.listByWorkspace(workspaceId, { status, limit, cursor: pageParam }),
+    queryKey: conversationKeys.workspaceList(workspaceId, { status, lens, limit }),
+    queryFn: ({ pageParam }) =>
+      conversationService.listByWorkspace(workspaceId, { status, lens, limit, cursor: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: Infinity,

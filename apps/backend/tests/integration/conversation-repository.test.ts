@@ -15,8 +15,9 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository } from "../../src/features/conversations"
+import { MemoRepository } from "../../src/features/memos"
 import { setupTestDatabase, testMessageContent } from "./setup"
-import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
+import { userId, workspaceId, streamId, messageId, conversationId, memoId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
 
 describe("ConversationRepository", () => {
@@ -342,6 +343,120 @@ describe("ConversationRepository", () => {
       })
 
       expect(conversations.some((c) => c.id === convId)).toBe(true)
+    })
+  })
+
+  describe("findByWorkspaceForViewer — board lenses", () => {
+    // A public channel so the viewer reads these without a stream_members row
+    // (INV-62), keeping the lens filter — not access — the thing under test.
+    let lensStreamId: string
+    let activeConv: string
+    let stalledConv: string
+    let idleIncompleteConv: string
+    let idleCompleteConv: string
+    let decisionConv: string
+    let seq = 1
+
+    async function seedConversation(
+      client: Parameters<typeof ConversationRepository.insert>[0],
+      opts: { status?: (typeof ConversationStatuses)[keyof typeof ConversationStatuses]; completenessScore?: number }
+    ): Promise<string> {
+      const convId = conversationId()
+      const msgId = messageId()
+      await MessageRepository.insert(client, {
+        id: msgId,
+        streamId: lensStreamId,
+        sequence: BigInt(seq++),
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("Lens message"),
+      })
+      await ConversationRepository.insert(client, {
+        id: convId,
+        streamId: lensStreamId,
+        workspaceId: testWorkspaceId,
+        status: opts.status,
+        completenessScore: opts.completenessScore,
+      })
+      await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+      return convId
+    }
+
+    beforeAll(async () => {
+      lensStreamId = streamId()
+      await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: lensStreamId,
+          workspaceId: testWorkspaceId,
+          type: "channel",
+          visibility: "public",
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        activeConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
+        stalledConv = await seedConversation(client, { status: ConversationStatuses.STALLED, completenessScore: 5 })
+        idleIncompleteConv = await seedConversation(client, {
+          status: ConversationStatuses.ACTIVE,
+          completenessScore: 2,
+        })
+        idleCompleteConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 7 })
+        decisionConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
+
+        // A captured memo makes decisionConv a member of the Decisions lens.
+        await MemoRepository.insert(client, {
+          id: memoId(),
+          workspaceId: testWorkspaceId,
+          memoType: "conversation",
+          sourceConversationId: decisionConv,
+          title: "A decision",
+          abstract: "What got settled.",
+          keyPoints: [],
+          sourceMessageIds: [],
+          participantIds: [testUserId],
+          knowledgeType: "decision",
+          tags: [],
+          status: "active",
+        })
+      })
+      // Backdate the two "idle" conversations past the staleness window; the fresh
+      // ones keep their insert-time `last_activity_at` (≈ now).
+      await pool.query(`UPDATE conversations SET last_activity_at = NOW() - INTERVAL '20 hours' WHERE id = ANY($1)`, [
+        [idleIncompleteConv, idleCompleteConv],
+      ])
+    })
+
+    test("active lens surfaces every readable conversation regardless of state", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "active",
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      for (const id of [activeConv, stalledConv, idleIncompleteConv, idleCompleteConv, decisionConv]) {
+        expect(ids.has(id)).toBe(true)
+      }
+    })
+
+    test("needs-resolution lens keeps stalled and long-idle-incomplete, drops fresh and near-complete", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "needs-resolution",
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(stalledConv)).toBe(true)
+      expect(ids.has(idleIncompleteConv)).toBe(true)
+      expect(ids.has(activeConv)).toBe(false)
+      expect(ids.has(idleCompleteConv)).toBe(false)
+    })
+
+    test("decisions lens keeps only conversations with a captured memo", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "decisions",
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(decisionConv)).toBe(true)
+      expect(ids.has(activeConv)).toBe(false)
+      expect(ids.has(stalledConv)).toBe(false)
     })
   })
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
+import type { BoardLens } from "@threa/types"
 import * as boardStoreModule from "@/stores/board-store"
 import type { CachedBoardPost } from "@/db"
 import { reconcileStableView, useStableBoardView, type CommittedView } from "./use-stable-board-view"
@@ -92,7 +93,7 @@ describe("useStableBoardView", () => {
 
   it("reports loading until the IDB read resolves, then the empty state", () => {
     mockLive(undefined)
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
     expect(result.current.isLoading).toBe(true)
     act(() => mockLive([]))
     rerender()
@@ -102,7 +103,7 @@ describe("useStableBoardView", () => {
 
   it("holds order frozen and surfaces a fresh arrival as the new count", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     act(() => mockLive(feed(post("new", 500), post("a", 300), post("b", 200))))
@@ -118,7 +119,7 @@ describe("useStableBoardView", () => {
 
   it("auto-reveals on the next arrival when revealNext is armed (the viewer's own post)", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
     act(() => result.current.revealNext())
     act(() => mockLive(feed(post("mine", 600), post("a", 300))))
     rerender()
@@ -130,7 +131,7 @@ describe("useStableBoardView", () => {
     vi.useFakeTimers()
     try {
       mockLive(feed(post("a", 300)))
-      const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
+      const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
       act(() => result.current.revealNext())
       // Nothing arrived within the window; the arm expires.
       act(() => vi.advanceTimersByTime(8001))
@@ -146,7 +147,7 @@ describe("useStableBoardView", () => {
 
   it("keeps a vanished committed card rendering in place until the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
     // "b" loses access / is deleted — it drops out of the live feed.
     act(() => mockLive(feed(post("a", 300))))
     rerender()
@@ -159,7 +160,7 @@ describe("useStableBoardView", () => {
 
   it("resets the committed view when the workspace changes", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(({ ws }) => useStableBoardView(ws), {
+    const { result, rerender } = renderHook(({ ws }) => useStableBoardView(ws, "active"), {
       initialProps: { ws: "ws_1" },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
@@ -167,5 +168,27 @@ describe("useStableBoardView", () => {
     rerender({ ws: "ws_2" })
     // Fresh snapshot for the new workspace, not the old order.
     expect(result.current.posts.map((p) => p.id)).toEqual(["z"])
+  })
+
+  it("shows only the lens's matching cards — decisions keeps captured-memo posts", () => {
+    const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
+    const without = { ...post("n", 200), hasCapturedMemo: false } as CachedBoardPost
+    mockLive(feed(withMemo, without))
+    const { result } = renderHook(() => useStableBoardView("ws_1", "decisions"))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
+  })
+
+  it("resets the committed view when the lens changes", () => {
+    const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
+    const plain = { ...post("a", 250), hasCapturedMemo: false } as CachedBoardPost
+    mockLive(feed(withMemo, plain))
+    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lens), {
+      initialProps: { lens: "active" as BoardLens },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
+    rerender({ lens: "decisions" })
+    // Fresh frozen view for the new lens — only the captured-memo card, not the
+    // previous lens's committed order.
+    expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
   })
 })

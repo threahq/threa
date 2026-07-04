@@ -81,6 +81,7 @@ function makePost(
         ...recentMessages.map((m) => m.streamId),
       ]),
     ],
+    hasCapturedMemo: false,
   }
 }
 

@@ -1,5 +1,12 @@
 import { api } from "./client"
-import type { ConversationWithStaleness, ConversationStatus, Message, BoardPost, BoardPostMessage } from "@threa/types"
+import type {
+  ConversationWithStaleness,
+  ConversationStatus,
+  BoardLens,
+  Message,
+  BoardPost,
+  BoardPostMessage,
+} from "@threa/types"
 import type { ReadStateSnapshot } from "@/sync/read-state"
 
 export interface ListConversationsParams {
@@ -8,6 +15,8 @@ export interface ListConversationsParams {
 }
 
 export interface ListWorkspaceConversationsParams extends ListConversationsParams {
+  /** Structural lens (Active / Needs-resolution / Decisions) to filter the feed by. */
+  lens?: BoardLens
   /** Opaque keyset cursor from a prior page's `nextCursor`. */
   cursor?: string
 }
@@ -29,6 +38,7 @@ export const conversationsApi = {
   ): Promise<WorkspaceConversationsPage> {
     const searchParams = new URLSearchParams()
     if (params?.status) searchParams.set("status", params.status)
+    if (params?.lens) searchParams.set("lens", params.lens)
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     if (params?.cursor) searchParams.set("cursor", params.cursor)
     const query = searchParams.toString()
