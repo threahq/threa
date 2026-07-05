@@ -43,24 +43,25 @@ const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "frida
  */
 const RESET_RE = /resets\s+(?:([A-Za-z]+day)\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i
 
-function zonedFields(timestamp: number, timeZone: string): { y: number; m: number; d: number; weekday: number } {
+/** Calendar date of `timestamp` in `timeZone`. */
+function zonedFields(timestamp: number, timeZone: string): { y: number; m: number; d: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
     month: "numeric",
     day: "numeric",
-    weekday: "long",
   }).formatToParts(timestamp)
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ""
-  return {
-    y: Number(get("year")),
-    m: Number(get("month")),
-    d: Number(get("day")),
-    weekday: WEEKDAYS.indexOf(get("weekday").toLowerCase() as (typeof WEEKDAYS)[number]),
-  }
+  return { y: Number(get("year")), m: Number(get("month")), d: Number(get("day")) }
 }
 
-/** Epoch ms of wall-clock (y, m, d, hh, mm) in `timeZone`, via guess-and-correct (two passes cover DST edges). */
+/**
+ * Epoch ms of wall-clock (y, m, d, hh, mm) in `timeZone`, via guess-and-correct
+ * (two passes cover DST offset shifts). Known limitation: a wall-clock time
+ * inside the fall-back repeated hour resolves to the LATER of its two instants
+ * — a resume up to an hour late on that one day a year, which the still-blocked
+ * re-detection path absorbs.
+ */
 function zonedTimestamp(y: number, m: number, d: number, hh: number, mm: number, timeZone: string): number {
   let guess = Date.UTC(y, m - 1, d, hh, mm)
   for (let pass = 0; pass < 2; pass++) {
@@ -104,12 +105,17 @@ export function parseResetTime(text: string, now: number): number | undefined {
   const wantedWeekday = weekdayRaw ? WEEKDAYS.indexOf(weekdayRaw.toLowerCase() as (typeof WEEKDAYS)[number]) : -1
   if (weekdayRaw && wantedWeekday === -1) return undefined
 
+  // Walk CALENDAR days from today's date in the zone — a fixed 24h-ms step
+  // would skip the 23h spring-forward day (and double-visit the 25h fall-back
+  // day), resolving a same-day reset up to a week late on a weekday match.
+  const base = zonedFields(now, timeZone!)
   for (let dayOffset = 0; dayOffset <= 7; dayOffset++) {
-    // Anchor each candidate day at noon UTC so date arithmetic never slips a
-    // calendar day across the tz offset.
-    const anchor = zonedFields(now + dayOffset * 86_400_000, timeZone!)
-    if (wantedWeekday !== -1 && anchor.weekday !== wantedWeekday) continue
-    const candidate = zonedTimestamp(anchor.y, anchor.m, anchor.d, hh, mm, timeZone!)
+    // Date.UTC normalizes day overflow across month/year ends, and a calendar
+    // date's weekday is timezone-independent, so noon-UTC of the date answers
+    // the weekday check without touching the zone.
+    const day = new Date(Date.UTC(base.y, base.m - 1, base.d + dayOffset, 12))
+    if (wantedWeekday !== -1 && day.getUTCDay() !== wantedWeekday) continue
+    const candidate = zonedTimestamp(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate(), hh, mm, timeZone!)
     // A reset that just passed (within a minute) means the quota is already
     // back — resume now rather than waiting a full day/week for the next slot.
     if (candidate >= now - 60_000) return candidate

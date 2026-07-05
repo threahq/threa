@@ -2638,11 +2638,21 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
         if (!isWaitingForRetry) break
       } else {
         const text = invocation.promptMarkdown.trim() || "(empty message)"
-        carryOnTexts.push(text)
         await recordTraceStep("steer", `Queued while rate-limited:\n\n${text}`, "Queued for retry…").catch(
           () => undefined
         )
         await completeInvocationNoResponse(invocation)
+        // The retry timer can fire during the awaits above and drain
+        // carryOnTexts without this text. Check-and-push with no await in
+        // between: still waiting → queue for the retry; wait over → the
+        // retried turn is running, so steer the text into it live instead of
+        // stranding it in a queue nothing will read.
+        if (isWaitingForRetry) {
+          carryOnTexts.push(text)
+        } else {
+          pi.sendUserMessage(text, pending !== undefined || !ctx.isIdle() ? { deliverAs: "steer" } : undefined)
+          break
+        }
       }
     }
     return true

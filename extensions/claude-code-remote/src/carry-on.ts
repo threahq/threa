@@ -29,15 +29,21 @@ export interface CarryOnTiming {
   maxHoldMs: number
   maxResumeAttempts: number
   minResumeDelayMs: number
+  /** One delayed re-attempt when posting the give-up close fails (a transient API error there would strand the turn on the idle reaper and eat the queued texts). */
+  giveUpRetryDelayMs: number
 }
 
 export const DEFAULT_CARRY_ON_TIMING: CarryOnTiming = {
+  // Must stay well under the session's idleTimeoutMs (default 1h in
+  // remote-session/identity.ts) or the idle reaper closes the held turn
+  // between keep-alives.
   keepAliveIntervalMs: 5 * 60_000,
   transientResumeDelayMs: 2 * 60_000,
   resumeJitterMs: 45_000,
   maxHoldMs: 8 * 60 * 60_000,
   maxResumeAttempts: 3,
   minResumeDelayMs: 5_000,
+  giveUpRetryDelayMs: 60_000,
 }
 
 /** What the controller needs from the channel; injected so tests drive it with fakes. */
@@ -188,9 +194,9 @@ export class CarryOnController {
     this.beginHold(invocationId, this.turn.streamId, resumeAt, attempts, signal)
   }
 
+  /** Channel shutdown. dropHold's best-effort orphan notice is the only shot at surfacing queued texts before the process dies. */
   stop(): void {
-    this.clearTimers()
-    this.hold = undefined
+    this.dropHold("channel shutting down")
     this.queue = []
   }
 
@@ -265,14 +271,24 @@ export class CarryOnController {
     const queued = this.queue
     this.queue = []
     this.dropHold(`giving up: ${reason}`)
+    if (this.turn?.invocationId === invocationId) this.turn = undefined
     const lines = [`⚠️ Quota carry-on gave up: ${reason}.`]
     if (signal) lines.push("", `Provider said: ${signal.summary}`)
     if (queued.length > 0) {
       lines.push("", "Dropped queued instructions (resend when the session is available):", quoteQueued(queued))
     }
-    await this.host
-      .closeTurn(invocationId, lines.join("\n"))
-      .catch((error) => this.host.log(`carry-on give-up close failed: ${String(error)}`))
+    const message = lines.join("\n")
+    await this.host.closeTurn(invocationId, message).catch((error) => {
+      // The SDK re-arms a failed reply for retry, but nothing here tracks the
+      // turn anymore — one delayed re-attempt beats stranding it (and the
+      // queued texts named in the message) on the idle reaper.
+      this.host.log(`carry-on give-up close failed (retrying once): ${String(error)}`)
+      setTimeout(() => {
+        void this.host
+          .closeTurn(invocationId, message)
+          .catch((retryError) => this.host.log(`carry-on give-up close retry failed: ${String(retryError)}`))
+      }, this.timing.giveUpRetryDelayMs)
+    })
   }
 
   private dropHold(reason: string): void {

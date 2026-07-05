@@ -76,6 +76,17 @@ describe("parseResetTime", () => {
     expect(parseResetTime("resets 11pm (Europe/Stockholm)", NOW)).toBe(Date.UTC(2026, 6, 5, 21, 0, 0))
   })
 
+  it("does not skip the 23h spring-forward day", () => {
+    // Sat 2026-03-28 23:00 CET (22:00 UTC); Stockholm springs forward on Sun 03-29.
+    // A fixed 24h-ms day walk lands past the whole 23h Sunday and resolves a
+    // day (or, weekday-qualified, a week) late.
+    const beforeTransition = Date.UTC(2026, 2, 28, 22, 0, 0)
+    // 05:00 CEST on 03-29 = 03:00 UTC.
+    const expected = Date.UTC(2026, 2, 29, 3, 0, 0)
+    expect(parseResetTime("resets 5:00am (Europe/Stockholm)", beforeTransition)).toBe(expected)
+    expect(parseResetTime("resets Sunday 5:00am (Europe/Stockholm)", beforeTransition)).toBe(expected)
+  })
+
   it("returns undefined for text without a reset clause", () => {
     expect(parseResetTime("ask your admin to raise it", NOW)).toBeUndefined()
   })

@@ -16,6 +16,7 @@ const FAST: Partial<CarryOnTiming> = {
   transientResumeDelayMs: 10,
   minResumeDelayMs: 1,
   resumeJitterMs: 0,
+  giveUpRetryDelayMs: 10,
 }
 
 interface HostLog {
@@ -25,9 +26,14 @@ interface HostLog {
   keepAlives: number
 }
 
-function makeHost(options: { injectOk?: boolean } = {}): { host: CarryOnHost; log: HostLog; inflight: Set<string> } {
+function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
+  host: CarryOnHost
+  log: HostLog
+  inflight: Set<string>
+} {
   const log: HostLog = { notices: [], closes: [], injects: [], keepAlives: 0 }
   const inflight = new Set<string>()
+  let closesToFail = options.failCloses ?? 0
   const host: CarryOnHost = {
     isInflight: (id) => inflight.has(id),
     keepAlive: () => {
@@ -37,6 +43,10 @@ function makeHost(options: { injectOk?: boolean } = {}): { host: CarryOnHost; lo
       log.notices.push({ streamId, text })
     },
     closeTurn: async (invocationId, text) => {
+      if (closesToFail > 0) {
+        closesToFail -= 1
+        throw new Error("transient close failure")
+      }
       log.closes.push({ invocationId, text })
       inflight.delete(invocationId)
     },
@@ -153,6 +163,16 @@ describe("CarryOnController", () => {
     expect(controller.holding).toBe(false)
   })
 
+  it("retries the give-up close once when the first attempt fails", async () => {
+    const { host, log, inflight } = makeHost({ failCloses: 1 })
+    const controller = new CarryOnController(host, FAST)
+    const id = startTurn(controller, inflight)
+    controller.onApiError(id, MONTHLY_LIMIT)
+    await wait(40)
+    expect(log.closes).toHaveLength(1)
+    expect(log.closes[0]!.text).toContain("no reset time")
+  })
+
   it("closes immediately when the quota has no reset time", async () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
@@ -186,6 +206,17 @@ describe("CarryOnController", () => {
     expect(log.injects).toHaveLength(0)
     expect(log.notices.map((n) => n.text).join("\n")).toContain("orphaned instruction")
     expect(controller.holding).toBe(false)
+  })
+
+  it("surfaces queued texts when shutdown drops the hold", () => {
+    const { host, log, inflight } = makeHost()
+    const controller = new CarryOnController(host, FAST)
+    const id = startTurn(controller, inflight)
+    controller.onApiError(id, SESSION_LIMIT)
+    controller.enqueue("survive the restart")
+    controller.stop()
+    expect(controller.holding).toBe(false)
+    expect(log.notices.map((n) => n.text).join("\n")).toContain("survive the restart")
   })
 
   it("drops the hold on /stop and on turn close", () => {
