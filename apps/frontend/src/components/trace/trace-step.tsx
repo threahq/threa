@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
-import { STEP_DISPLAY_CONFIG, isAbortableStepType } from "@/lib/step-config"
+import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
 import {
   ChevronRight,
   CircleSlash,
@@ -29,7 +29,7 @@ import { formatContextRefLabel } from "@/lib/context-bag/format-label"
 import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
-import { StopResearchButton } from "./stop-research-button"
+import { StopSessionButton } from "./session-action-buttons"
 
 interface TraceStepProps {
   step: AgentSessionStep
@@ -49,15 +49,15 @@ interface TraceStepProps {
    */
   liveSubsteps?: Array<{ text: string; at: string }>
   /**
-   * When the step is in-flight and this tool supports graceful abort, this
-   * callback is rendered as a Stop research button in the step header. The
-   * trace dialog only passes this when `status === "running"` and for tool
-   * types that opt in (workspace_search in V1).
+   * When the step is in-flight, this callback is rendered as a Stop button in
+   * the step header. The trace dialog only passes this while
+   * `status === "running"`; Stop halts the whole session gracefully regardless
+   * of which tool is active (roadmap 2.1).
    */
-  onAbortResearch?: () => void
+  onStopSession?: () => void
 }
 
-export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, onAbortResearch }: TraceStepProps) {
+export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, onStopSession }: TraceStepProps) {
   const config = STEP_DISPLAY_CONFIG[step.stepType]
   const Icon = config.icon
 
@@ -77,14 +77,14 @@ export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, o
   const hueColor = `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`
 
   // In-progress steps replace the default timestamp + duration right-slot with
-  // a spinning loader + "Running…" label + optional Stop research button. The
+  // a spinning loader + "Running…" label + optional Stop button. The
   // stopPropagation prop is false here because TraceStep is not wrapped in a
   // clickable Link (the trace dialog body is scrollable content, not a link).
   const rightSlot = isInProgress ? (
     <>
       <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
       <span className="text-muted-foreground">Running…</span>
-      {isAbortableStepType(step.stepType) && onAbortResearch && <StopResearchButton onClick={onAbortResearch} />}
+      {onStopSession && <StopSessionButton onClick={onStopSession} />}
     </>
   ) : undefined
 

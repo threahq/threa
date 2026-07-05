@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Check, X, Loader2 } from "lucide-react"
 import type {
@@ -11,7 +12,11 @@ import type {
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
-import { StopResearchButton } from "@/components/trace/stop-research-button"
+import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
+import { focusVisibleZoneEditor } from "./message-event"
+
+/** How long the Redirect hint replaces the subtitle line after a click. */
+const REDIRECT_HINT_MS = 5000
 
 interface AgentSessionEventProps {
   events: StreamEvent[]
@@ -23,14 +28,8 @@ interface AgentSessionEventProps {
    * tool. Shown in place of the generic step label when present.
    */
   liveSubstep?: string | null
-  /**
-   * When true, the abort-research button is rendered. Wired by the parent only
-   * when the current step is a workspace_search step (or another future tool that
-   * supports graceful abort).
-   */
-  canAbortResearch?: boolean
-  /** Click handler for the Stop research button. */
-  onAbortResearch?: (sessionId: string) => void
+  /** Click handler for the Stop button, rendered while the session is running. */
+  onStopSession?: (sessionId: string) => void
 }
 
 type SessionStatus = "running" | "completed" | "failed" | "deleted"
@@ -238,18 +237,42 @@ export function AgentSessionEvent({
   sessionVersion,
   liveCounts,
   liveSubstep,
-  canAbortResearch,
-  onAbortResearch,
+  onStopSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
   const { status, sessionId, startedPayload, completedPayload, failedPayload, deletedPayload } = deriveStatus(events)
 
   const config = buildStatusConfig(status, startedPayload, completedPayload, failedPayload, deletedPayload, liveCounts)
 
+  const [redirectHintVisible, setRedirectHintVisible] = useState(false)
+  const redirectHintTimer = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
+    },
+    []
+  )
+
   if (!sessionId) return null
 
-  const showAbortButton = status === "running" && canAbortResearch && !!onAbortResearch
+  // Redirect needs no backend call: the runtime already folds mid-run messages
+  // into the running session (NewMessageAwareness → reconsidering). The button
+  // just pulls the cursor into this surface's composer and hints at what
+  // typing will do.
+  const handleRedirect = (e: React.MouseEvent<HTMLButtonElement>) => {
+    focusVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
+    if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
+    setRedirectHintVisible(true)
+    redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)
+  }
+
+  // Stop and Redirect are gated on "session running", not on which tool is
+  // active — the backend aborts the whole session gracefully regardless
+  // (roadmap 2.1), so the buttons stay stable for the entire run (INV-21).
+  const showSessionActions = status === "running"
+  const showRedirectHint = showSessionActions && redirectHintVisible
   const showLiveSubstep = status === "running" && !!liveSubstep
+  const personaName = startedPayload?.personaName ?? "The agent"
 
   return (
     <div className="py-3">
@@ -293,7 +316,17 @@ export function AgentSessionEvent({
             substep span re-triggers the fade-in whenever the phase text changes, so
             the user sees a visible "tick" as research advances.
           */}
-          {showLiveSubstep ? (
+          {/*
+            The Redirect hint borrows the same single line for its short window
+            (still no height change, INV-21) and then yields back to the
+            substep/subtitle.
+          */}
+          {showRedirectHint && (
+            <div className="mt-0.5 min-w-0 truncate text-[11px] italic text-primary/90 animate-in fade-in-50 duration-200">
+              {personaName} will fold your message into the current work
+            </div>
+          )}
+          {!showRedirectHint && showLiveSubstep && (
             <div className="mt-0.5 flex items-center gap-1.5 min-w-0 text-[11px]">
               <span aria-hidden className="relative inline-flex h-1.5 w-1.5 shrink-0">
                 <span className="absolute inset-0 rounded-full bg-primary opacity-60 animate-activity-pulse" />
@@ -314,19 +347,23 @@ export function AgentSessionEvent({
                 </>
               )}
             </div>
-          ) : (
+          )}
+          {!showRedirectHint && !showLiveSubstep && (
             <div className="text-[11px] text-muted-foreground mt-0.5">{config.subtitle || "\u00a0"}</div>
           )}
         </div>
         {/*
-          Right-slot arbitration: only one thing at a time to avoid crowding and to
-          give the Stop research button an unobstructed target. When the session is
-          running and abort is available, the button owns the right edge (always
-          visible, not a hover-reveal). Otherwise the existing timestamp / "Show
-          trace and sources →" hover hint lives there.
+          Right-slot arbitration: while the session runs, the Redirect/Stop pair
+          owns the right edge (always visible, not a hover-reveal) — stable for
+          the whole run so nothing pops in or out as steps change (INV-21).
+          Otherwise the existing timestamp / "Show trace and sources →" hover
+          hint lives there.
         */}
-        {showAbortButton ? (
-          <StopResearchButton onClick={() => onAbortResearch?.(sessionId)} stopPropagation />
+        {showSessionActions ? (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <RedirectSessionButton onClick={handleRedirect} stopPropagation />
+            {onStopSession && <StopSessionButton onClick={() => onStopSession(sessionId)} stopPropagation />}
+          </div>
         ) : (
           <div className="shrink-0 text-[11px]">
             {config.timestamp && (

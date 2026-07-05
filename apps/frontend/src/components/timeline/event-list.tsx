@@ -12,8 +12,7 @@ import {
 } from "@threa/types"
 import type { MessageAgentActivity } from "@/hooks"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
-import { useAbortResearch } from "@/hooks"
-import { isAbortableStepType } from "@/lib/step-config"
+import { useAbortSession } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
 import { AgentSessionEvent } from "./agent-session-event"
@@ -642,10 +641,8 @@ export interface TimelineItemRenderContext {
   sessionLiveCounts: Map<string, { stepCount: number; messageCount: number }>
   /** Live substep text per session (e.g. "Evaluating results…"). */
   sessionLiveSubsteps: Map<string, string | null>
-  /** Whether the session's current step is one we can graceful-abort. */
-  sessionCanAbort: Map<string, boolean>
-  /** Click handler for the Stop research button. */
-  onAbortResearch?: (sessionId: string) => void
+  /** Click handler for the session card's Stop button. */
+  onStopSession?: (sessionId: string) => void
   /**
    * followUpIds that have a matching `agent:follow_up_cancelled` row in the
    * loaded window. Lets a scheduled follow-up card show its cancelled state
@@ -757,8 +754,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
             sessionVersion={item.sessionVersion}
             liveCounts={ctx.sessionLiveCounts.get(item.sessionId)}
             liveSubstep={ctx.sessionLiveSubsteps.get(item.sessionId)}
-            canAbortResearch={ctx.sessionCanAbort.get(item.sessionId) ?? false}
-            onAbortResearch={ctx.onAbortResearch}
+            onStopSession={ctx.onStopSession}
           />
         </div>
       )}
@@ -867,7 +863,7 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     p.streamId !== n.streamId ||
     p.hideSessionCards !== n.hideSessionCards ||
     p.isDividerDimmed !== n.isDividerDimmed ||
-    p.onAbortResearch !== n.onAbortResearch
+    p.onStopSession !== n.onStopSession
   ) {
     return false
   }
@@ -881,9 +877,6 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
       return false
     }
     if (p.sessionLiveSubsteps.get(item.sessionId) !== n.sessionLiveSubsteps.get(item.sessionId)) return false
-    if ((p.sessionCanAbort.get(item.sessionId) ?? false) !== (n.sessionCanAbort.get(item.sessionId) ?? false)) {
-      return false
-    }
     return true
   }
 
@@ -954,12 +947,11 @@ export function EventList({
 }: EventListProps) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
-  const abortResearch = useAbortResearch(socket)
+  const abortSession = useAbortSession(socket)
 
-  const { sessionLiveCounts, sessionLiveSubsteps, sessionCanAbort } = useMemo(() => {
+  const { sessionLiveCounts, sessionLiveSubsteps } = useMemo(() => {
     const counts = new Map<string, { stepCount: number; messageCount: number }>()
     const substeps = new Map<string, string | null>()
-    const canAbort = new Map<string, boolean>()
     if (agentActivity) {
       for (const activity of agentActivity.values()) {
         counts.set(activity.sessionId, {
@@ -967,15 +959,14 @@ export function EventList({
           messageCount: activity.messageCount,
         })
         substeps.set(activity.sessionId, activity.substep)
-        canAbort.set(activity.sessionId, isAbortableStepType(activity.currentStepType))
       }
     }
-    return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps, sessionCanAbort: canAbort }
+    return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
   }, [agentActivity])
 
-  const handleAbortResearch = useMemo(
-    () => (sessionId: string) => abortResearch({ sessionId, workspaceId }),
-    [abortResearch, workspaceId]
+  const handleStopSession = useMemo(
+    () => (sessionId: string) => abortSession({ sessionId, workspaceId }),
+    [abortSession, workspaceId]
   )
 
   // Day boundaries between rows from different local days (INV-42). Threads
@@ -1036,8 +1027,7 @@ export function EventList({
     firstMessageId,
     sessionLiveCounts,
     sessionLiveSubsteps,
-    sessionCanAbort,
-    onAbortResearch: handleAbortResearch,
+    onStopSession: handleStopSession,
     cancelledFollowUpIds,
     batch,
     conversationOverlay,

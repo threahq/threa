@@ -216,7 +216,12 @@ interface MessageLayoutProps {
   batch?: BatchTimelineState
 }
 
-function focusVisibleZoneEditor(zone: HTMLElement | null, attempt = 0) {
+/**
+ * Focus the zone's visible composer editor, retrying across a few frames while
+ * it mounts. Shared with the agent session card's Redirect action, which pulls
+ * the user's cursor into the same surface's composer.
+ */
+export function focusVisibleZoneEditor(zone: HTMLElement | null, attempt = 0) {
   if (!zone) return
 
   const editor = Array.from(zone.querySelectorAll<HTMLElement>('[contenteditable="true"]'))

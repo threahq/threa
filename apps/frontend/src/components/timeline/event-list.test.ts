@@ -631,7 +631,6 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       streamId: "stream_123",
       sessionLiveCounts: new Map(),
       sessionLiveSubsteps: new Map(),
-      sessionCanAbort: new Map(),
       cancelledFollowUpIds: new Set(),
       ...overrides,
     }
