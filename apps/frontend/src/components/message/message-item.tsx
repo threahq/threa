@@ -10,6 +10,7 @@ import {
   type StreamType,
 } from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
@@ -179,6 +180,9 @@ export function MessageItem({
   // Users open their profile on click (same as the timeline); other actor types
   // (persona/bot/system) are non-interactive.
   const interactiveName = message.authorType === "user" && Boolean(message.authorId)
+  // Per-actor accent + name color + badge, shared with the timeline row so an
+  // agent/bot/persona message is colorized the same on the board as in the stream.
+  const theme = actorRowTheme(message.authorType)
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
@@ -613,6 +617,7 @@ export function MessageItem({
           className={cn(
             "group reveal-host relative flex gap-3",
             surfaceClassName,
+            theme.rowAccent,
             longPress.isPressed && "opacity-70 transition-opacity",
             isHighlighted && "animate-highlight-flash"
           )}
@@ -661,6 +666,7 @@ export function MessageItem({
         className={cn(
           "group reveal-host relative flex items-start gap-3",
           surfaceClassName,
+          theme.rowAccent,
           longPress.isPressed && "opacity-70 transition-opacity",
           isHighlighted && "animate-highlight-flash"
         )}
@@ -680,13 +686,14 @@ export function MessageItem({
               <button
                 type="button"
                 onClick={() => openUserProfile(message.authorId)}
-                className="min-w-0 truncate text-left text-sm font-semibold hover:underline"
+                className={cn("min-w-0 truncate text-left text-sm font-semibold hover:underline", theme.nameClassName)}
               >
                 {authorName}
               </button>
             ) : (
-              <span className="min-w-0 truncate text-sm font-semibold">{authorName}</span>
+              <span className={cn("min-w-0 truncate text-sm font-semibold", theme.nameClassName)}>{authorName}</span>
             )}
+            {theme.badge}
             {/* Permalink to the message in its stream timeline — the body is
               interactive, so navigation lives on the timestamp instead. */}
             <Link

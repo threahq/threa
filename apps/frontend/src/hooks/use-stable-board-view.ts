@@ -186,6 +186,14 @@ export interface StableBoardView {
   revealNext: () => void
   /** True until the underlying IDB read first resolves. */
   isLoading: boolean
+  /**
+   * Whether the raw IDB feed (pre-lens/scope/exclusion filter) has ANY rows —
+   * i.e. the store is seeded, even if the active filters hide everything.
+   * Distinguishes a genuinely-empty filtered view (all cards hidden/muted/off-lens)
+   * from a not-yet-seeded one, so the board can show its empty state instead of a
+   * perpetual skeleton when the viewer filters down to zero.
+   */
+  hasRawPosts: boolean
 }
 
 /**
@@ -365,5 +373,6 @@ export function useStableBoardView(
     commit,
     revealNext,
     isLoading: live === undefined,
+    hasRawPosts: (rawLive?.length ?? 0) > 0,
   }
 }

@@ -97,8 +97,41 @@ describe("resolveBoardEventRows", () => {
     })
     const sessions = rows.filter((r) => r.kind === "session")
     expect(sessions).toHaveLength(1)
-    expect(sessions[0]).toMatchObject({ kind: "session", key: "session:sess_A" })
+    // Keyed by the trigger slot (like the timeline), not the raw session id.
+    expect(sessions[0]).toMatchObject({ kind: "session", key: "trigger:msg_member" })
     if (sessions[0].kind === "session") expect(sessions[0].events).toHaveLength(2)
+  })
+
+  it("collapses a superseded re-run to the latest session in the trigger slot (no duplicate card)", () => {
+    // An invoking-message edit reruns the agent: SAME triggerMessageId, NEW
+    // sessionId, no deleted tombstone. The old completed trace must NOT linger as
+    // a second card — the timeline replaces the slot in place, so the board does too.
+    const events = [
+      cachedEvent({
+        eventType: "agent_session:started",
+        createdAt: "2026-07-04T10:00:00Z",
+        payload: { sessionId: "sess_old", triggerMessageId: "msg_member" },
+      }),
+      cachedEvent({
+        eventType: "agent_session:completed",
+        createdAt: "2026-07-04T10:00:30Z",
+        payload: { sessionId: "sess_old" },
+      }),
+      cachedEvent({
+        eventType: "agent_session:started",
+        createdAt: "2026-07-04T10:05:00Z",
+        payload: { sessionId: "sess_new", triggerMessageId: "msg_member" },
+      }),
+    ]
+    const rows = resolveBoardEventRows(events, { conversationId: CONV, memberMessageIds: new Set(["msg_member"]) })
+    const sessions = rows.filter((r) => r.kind === "session")
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0]).toMatchObject({ key: "trigger:msg_member" })
+    // The surviving card is the NEW (running) session, not the stale completed one.
+    if (sessions[0].kind === "session") {
+      const sessionIds = new Set(sessions[0].events.map((e) => (e.payload as { sessionId: string }).sessionId))
+      expect(sessionIds).toEqual(new Set(["sess_new"]))
+    }
   })
 
   it("returns rows ordered by time across kinds", () => {

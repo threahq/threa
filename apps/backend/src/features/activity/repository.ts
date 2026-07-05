@@ -360,7 +360,8 @@ export const ActivityRepository = {
   /**
    * Of `messageIds`, which ones `@`-mentioned `userId` — the Mine-lens signal
    * (board `buildBoardPosts`). One batched presence read (INV-56), index-backed by
-   * `idx_user_activity_dedup (user_id, message_id, activity_type, actor_id)`.
+   * `idx_user_activity_dedup_non_reaction (user_id, message_id, activity_type,
+   * actor_id) WHERE activity_type <> 'reaction'` (mention is non-reaction).
    * Workspace-scoped (INV-8); `ActivityTypes.MENTION`, not a literal (INV-33).
    */
   async findMentionedMessageIds(

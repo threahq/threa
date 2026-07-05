@@ -38,8 +38,11 @@ function openingMessage(overrides: Partial<BoardPostMessage> = {}): BoardPostMes
   }
 }
 
-function makePost(conversation: Record<string, unknown> = {}): BoardViewPost {
-  const opening = openingMessage()
+function makePost(
+  conversation: Record<string, unknown> = {},
+  openingOverrides: Partial<BoardPostMessage> = {}
+): BoardViewPost {
+  const opening = openingMessage(openingOverrides)
   return {
     id: "conv_1",
     workspaceId: WS,
@@ -222,6 +225,13 @@ describe("BoardCard conversation actions", () => {
   it("shows the topic title when the conversation has one", async () => {
     mountCard(makePost({ topicSummary: "Rotate the API tokens", status: "active" }))
     expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
+  })
+
+  it("colorizes a bot message with its actor badge — same treatment as the timeline", async () => {
+    mountCard(makePost({}, { authorType: "bot", authorId: "bot_1" }))
+    await screen.findByText("Opening body.")
+    // The shared ACTOR_ROW_THEME badge (BOT) renders on the board row, not just the timeline.
+    expect(screen.getByText("BOT")).toBeTruthy()
   })
 
   it("renders the resolved treatment on a resolved conversation", async () => {

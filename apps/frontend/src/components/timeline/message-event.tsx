@@ -16,6 +16,7 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { MessageContextBadge } from "@/components/composer"
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { usePendingMessages, usePanel, createDraftPanelId, createConversationPanelId, useTrace } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
@@ -324,45 +325,6 @@ function ConversationProvenanceChip({ revival }: { revival: ConversationRevival 
 }
 
 /**
- * Per-actor-type row styling. Each entry is the single source of truth for
- * how a message from that actor type looks: the row accent gradient + inset
- * stripe, the author-name color, and an optional inline header badge.
- * Adding a new actor type means adding one entry here — no scattered
- * `isPersona && ... || isBot && ...` chains to keep in sync.
- */
-interface ActorRowTheme {
-  /** Row-level accent gradient + inset-stripe shadow; empty string = no accent. */
-  rowAccent: string
-  /** Color class applied to the author-name element. Empty = inherit. */
-  nameClassName: string
-  /** Optional inline pill rendered in the header row after the author name. */
-  badge: ReactNode | null
-}
-
-const ACTOR_ROW_THEME: Record<NonNullable<StreamEvent["actorType"]>, ActorRowTheme> = {
-  user: {
-    rowAccent: "",
-    nameClassName: "",
-    badge: null,
-  },
-  persona: {
-    rowAccent: "bg-gradient-to-r from-primary/[0.06] to-transparent shadow-[inset_3px_0_0_hsl(var(--primary))]",
-    nameClassName: "text-primary",
-    badge: null,
-  },
-  bot: {
-    rowAccent: "bg-gradient-to-r from-emerald-500/[0.06] to-transparent shadow-[inset_3px_0_0_hsl(152_69%_41%)]",
-    nameClassName: "text-emerald-600",
-    badge: <span className="text-[10px] text-emerald-600/70 font-medium cursor-default">BOT</span>,
-  },
-  system: {
-    rowAccent: "bg-gradient-to-r from-blue-500/[0.04] to-transparent shadow-[inset_3px_0_0_hsl(210_100%_55%)]",
-    nameClassName: "text-blue-500",
-    badge: null,
-  },
-}
-
-/**
  * Avatar-as-toggle for batch-selection mode (Gmail Android pattern).
  *
  * The avatar is the leading slot for non-continuation rows; in batch mode it
@@ -568,7 +530,7 @@ function MessageLayout({
   swipeLocked,
   batch,
 }: MessageLayoutProps) {
-  const theme = ACTOR_ROW_THEME[event.actorType ?? "user"]
+  const theme = actorRowTheme(event.actorType)
   // Users with a resolved actorId get a clickable name that opens their
   // profile; everything else (personas, bots, system, unknown) renders a
   // non-interactive span with the theme's color. This is the only remaining

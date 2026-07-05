@@ -459,4 +459,16 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
+
+  it("reports hasRawPosts when the feed is seeded but every card is excluded (empty view, not loading)", () => {
+    // Hiding the only card → posts empty, but the raw IDB feed is seeded, so the
+    // board can show its empty state instead of a perpetual seed skeleton.
+    mockLive(feed(post("a", 300)))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", ALL, { hidden: new Map([["a", 400]]), muted: new Set(), muteActive: true })
+    )
+    expect(result.current.posts).toEqual([])
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.hasRawPosts).toBe(true)
+  })
 })
