@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { BookMarked, Check, ChevronDown, CircleDashed, Hash, Layers, LayoutGrid, User, X, Zap } from "lucide-react"
+import {
+  Bell,
+  BellOff,
+  BookMarked,
+  Check,
+  ChevronDown,
+  CircleDashed,
+  Hash,
+  Layers,
+  LayoutGrid,
+  User,
+  X,
+  Zap,
+} from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import {
   BOARD_LENSES,
@@ -109,6 +122,10 @@ interface BoardFilterBarProps {
   scopeStreamTypes: BoardScopeStreamType[]
   /** Rewrites the type scope; the page owns the URL write. */
   onTypesChange: (types: BoardScopeStreamType[]) => void
+  /** Root streams the viewer muted from the board (board-view-design.md § "Hide & mute"). */
+  mutedStreamIds?: ReadonlySet<string>
+  /** Toggle a stream's board mute; the page owns the write. */
+  onToggleMute?: (streamId: string, mute: boolean) => void
 }
 
 /**
@@ -131,6 +148,8 @@ export function BoardFilterBar({
   onScopeChange,
   scopeStreamTypes,
   onTypesChange,
+  mutedStreamIds,
+  onToggleMute,
 }: BoardFilterBarProps) {
   const location = useLocation()
   const streams = useWorkspaceStreams(workspaceId)
@@ -152,6 +171,8 @@ export function BoardFilterBar({
         scopeStreamIds={scopeStreamIds}
         onScopeChange={onScopeChange}
         labelFor={labelFor}
+        mutedStreamIds={mutedStreamIds}
+        onToggleMute={onToggleMute}
       />
       <BoardTypePicker scopeStreamTypes={scopeStreamTypes} onTypesChange={onTypesChange} />
       {scopeStreamTypes.map((type) => {
@@ -316,11 +337,15 @@ function BoardScopePicker({
   scopeStreamIds,
   onScopeChange,
   labelFor,
+  mutedStreamIds,
+  onToggleMute,
 }: {
   workspaceId: string
   scopeStreamIds: string[]
   onScopeChange: (streamIds: string[]) => void
   labelFor: (streamId: string) => string
+  mutedStreamIds?: ReadonlySet<string>
+  onToggleMute?: (streamId: string, mute: boolean) => void
 }) {
   const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
@@ -370,20 +395,39 @@ function BoardScopePicker({
         ) : (
           entries.map(({ stream, label }) => {
             const checked = selected.has(stream.id)
+            const isMuted = mutedStreamIds?.has(stream.id) ?? false
             const Icon = STREAM_ICONS[stream.type]
             return (
-              <button
+              <div
                 key={stream.id}
-                type="button"
-                onClick={() => toggle(stream.id)}
-                aria-pressed={checked}
-                disabled={!checked && atCap}
-                className="mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-item px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted disabled:opacity-50"
+                className="mx-1 flex w-[calc(100%-0.5rem)] items-center rounded-item pr-1 transition-colors hover:bg-muted"
               >
-                <Checkbox checked={checked} tabIndex={-1} aria-hidden className="pointer-events-none" />
-                <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="flex-1 truncate">{label}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => toggle(stream.id)}
+                  aria-pressed={checked}
+                  disabled={!checked && atCap}
+                  className="flex flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm disabled:opacity-50"
+                >
+                  <Checkbox checked={checked} tabIndex={-1} aria-hidden className="pointer-events-none" />
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="flex-1 truncate">{label}</span>
+                </button>
+                {onToggleMute && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleMute(stream.id, !isMuted)}
+                    aria-pressed={isMuted}
+                    aria-label={isMuted ? `Unmute ${label} on the board` : `Mute ${label} from the board`}
+                    className={cn(
+                      "shrink-0 rounded p-1 transition-colors",
+                      isMuted ? "text-foreground" : "text-muted-foreground/60 hover:text-foreground"
+                    )}
+                  >
+                    {isMuted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </div>
             )
           })
         )}

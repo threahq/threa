@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
+import type { BoardExclusionService } from "./board-exclusion-service"
 import type { StreamService } from "../streams"
 import type { FeatureFlagService } from "../feature-flags"
 import {
@@ -88,13 +89,22 @@ const updateConversationBodySchema = z
     message: "Provide topicSummary or status",
   })
 
+const hideConversationParamsSchema = z.object({ conversationId: z.string().min(1) })
+const muteStreamParamsSchema = z.object({ streamId: z.string().min(1) })
+
 interface Dependencies {
   conversationService: ConversationService
+  boardExclusionService: BoardExclusionService
   streamService: StreamService
   featureFlagService: FeatureFlagService
 }
 
-export function createConversationHandlers({ conversationService, streamService, featureFlagService }: Dependencies) {
+export function createConversationHandlers({
+  conversationService,
+  boardExclusionService,
+  streamService,
+  featureFlagService,
+}: Dependencies) {
   return {
     /**
      * Cross-stream board feed. Access is enforced inside the query (INV-62), so
@@ -277,6 +287,77 @@ export function createConversationHandlers({ conversationService, streamService,
 
       const result = await conversationService.updateConversation({ workspaceId, conversationId, topicSummary, status })
       res.json(result)
+    },
+
+    /**
+     * Per-viewer board exclusions (board-view-design.md § "Hide & mute"). All are
+     * board-flag-gated (404 without `board-view`, like the feed). Hide/unhide gate
+     * on the conversation's root-stream access (INV-62); mute/unmute on the target
+     * stream.
+     */
+    async hideConversation(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      if ((await featureFlagService.getFlag(workspaceId, userId, "board-view")) !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+      const { conversationId } = validateRequest(hideConversationParamsSchema, req.params)
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+      const result = await boardExclusionService.hideConversation({ workspaceId, conversationId, userId })
+      res.json(result)
+    },
+
+    async unhideConversation(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      if ((await featureFlagService.getFlag(workspaceId, userId, "board-view")) !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+      const { conversationId } = validateRequest(hideConversationParamsSchema, req.params)
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+      await boardExclusionService.unhideConversation({ workspaceId, conversationId, userId })
+      res.json({ ok: true })
+    },
+
+    async muteStream(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      if ((await featureFlagService.getFlag(workspaceId, userId, "board-view")) !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+      const { streamId } = validateRequest(muteStreamParamsSchema, req.params)
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      await boardExclusionService.muteStream({ workspaceId, streamId, userId })
+      res.json({ ok: true })
+    },
+
+    async unmuteStream(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      if ((await featureFlagService.getFlag(workspaceId, userId, "board-view")) !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+      const { streamId } = validateRequest(muteStreamParamsSchema, req.params)
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      await boardExclusionService.unmuteStream({ workspaceId, streamId, userId })
+      res.json({ ok: true })
+    },
+
+    async getBoardExclusions(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      if ((await featureFlagService.getFlag(workspaceId, userId, "board-view")) !== "on") {
+        throw new HttpError("Not found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json(await boardExclusionService.getExclusions(workspaceId, userId))
     },
 
     /**

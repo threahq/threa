@@ -100,6 +100,41 @@ function boardTypeCondSql(scopeStreamTypes: string[] | undefined) {
   )`
 }
 
+/**
+ * Per-viewer hide exclusion (board-view-design.md § "Hide & mute"). A hidden
+ * conversation is suppressed UNLESS it revived — `last_activity_at` passing the
+ * `hidden_at` watermark un-hides it (mirrored client-side in
+ * `use-stable-board-view`; keep the `<=` boundary identical to avoid the SQL/JS
+ * lockstep drift Map C flags).
+ */
+function boardHiddenExcludeSql(userId: string) {
+  return composeSql`AND NOT EXISTS (
+    SELECT 1 FROM board_hidden_conversations h
+    WHERE h.conversation_id = conversations.id
+      AND h.user_id = ${userId}
+      AND h.workspace_id = conversations.workspace_id
+      AND conversations.last_activity_at <= h.hidden_at
+  )`
+}
+
+/**
+ * Per-viewer stream mute exclusion, matched by effective ROOT
+ * (`COALESCE(root_stream_id, id)`, mirroring `boardScopeCondSql`). Skipped when
+ * `applyMute` is false: an explicit `?in=` stream scope names streams the viewer
+ * asked for, so mute doesn't fight it; mute still applies under no-scope and
+ * under a type (`?is=`) scope.
+ */
+function boardMutedExcludeSql(userId: string, applyMute: boolean) {
+  if (!applyMute) return sql``
+  return composeSql`AND NOT EXISTS (
+    SELECT 1 FROM board_muted_streams m
+    JOIN streams ms ON ms.id = conversations.stream_id
+      AND ms.workspace_id = conversations.workspace_id
+      AND COALESCE(ms.root_stream_id, ms.id) = m.stream_id
+    WHERE m.user_id = ${userId} AND m.workspace_id = conversations.workspace_id
+  )`
+}
+
 interface ConversationRow {
   id: string
   stream_id: string
@@ -454,6 +489,9 @@ export const ConversationRepository = {
     const lensCond = boardLensCondSql(options?.lens, userId)
     const scopeCond = boardScopeCondSql(options?.scopeStreamIds)
     const typeCond = boardTypeCondSql(options?.scopeStreamTypes)
+    const hiddenCond = boardHiddenExcludeSql(userId)
+    // Mute is skipped when the viewer named explicit streams via `?in=`.
+    const mutedCond = boardMutedExcludeSql(userId, !options?.scopeStreamIds?.length)
     // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
     // column — because the cursor is minted from a JS Date (ms precision) while
     // timestamptz stores microseconds. Comparing the raw µs value against an
@@ -473,6 +511,8 @@ export const ConversationRepository = {
         ${lensCond}
         ${scopeCond}
         ${typeCond}
+        ${hiddenCond}
+        ${mutedCond}
         ${cursorCond}
         AND ${access}
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC

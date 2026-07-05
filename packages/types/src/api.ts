@@ -1774,6 +1774,26 @@ export interface SavedUpsertedPayload {
   saved: SavedMessageView
 }
 
+/** Wire payload on `board:conversation_hide_changed` (board-view-design.md § "Hide & mute"). */
+export interface BoardConversationHideChangedPayload {
+  workspaceId: string
+  targetUserId: string
+  conversationId: string
+  /** true = hidden, false = un-hidden. */
+  active: boolean
+  /** Snooze watermark (ISO), present only when `active`. */
+  hiddenAt?: string
+}
+
+/** Wire payload on `board:stream_mute_changed`. */
+export interface BoardStreamMuteChangedPayload {
+  workspaceId: string
+  targetUserId: string
+  streamId: string
+  /** true = muted, false = un-muted. */
+  active: boolean
+}
+
 /** Wire payload broadcast on `saved:deleted` socket events. */
 export interface SavedDeletedPayload {
   workspaceId: string

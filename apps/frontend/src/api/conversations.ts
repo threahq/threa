@@ -163,4 +163,27 @@ export const conversationsApi = {
   ): Promise<{ conversation: ConversationWithStaleness }> {
     return api.patch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`, body)
   },
+
+  // Per-viewer board exclusions (board-view-design.md § "Hide & mute").
+  async hideConversation(workspaceId: string, conversationId: string): Promise<{ hiddenAt: string }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/hide`)
+  },
+
+  async unhideConversation(workspaceId: string, conversationId: string): Promise<{ ok: true }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/unhide`)
+  },
+
+  async muteStream(workspaceId: string, streamId: string): Promise<{ ok: true }> {
+    return api.post(`/api/workspaces/${workspaceId}/streams/${streamId}/board-mute`)
+  },
+
+  async unmuteStream(workspaceId: string, streamId: string): Promise<{ ok: true }> {
+    return api.post(`/api/workspaces/${workspaceId}/streams/${streamId}/board-unmute`)
+  },
+
+  async getBoardExclusions(
+    workspaceId: string
+  ): Promise<{ hiddenConversations: { conversationId: string; hiddenAt: string }[]; mutedStreamIds: string[] }> {
+    return api.get(`/api/workspaces/${workspaceId}/board/exclusions`)
+  },
 }

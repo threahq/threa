@@ -56,6 +56,11 @@ function lensPost(
   } as unknown as CachedBoardPost
 }
 
+/** A post anchored to a root stream, for mute tests. */
+function streamPost(id: string, activityMs: number, rootStreamId: string): CachedBoardPost {
+  return { ...post(id, activityMs), rootStreamId } as unknown as CachedBoardPost
+}
+
 /** Newest-first feed, matching what `useBoardPosts` returns. */
 function feed(...posts: CachedBoardPost[]): CachedBoardPost[] {
   return [...posts].sort((a, b) => b._lastActivityMs - a._lastActivityMs)
@@ -399,5 +404,59 @@ describe("useStableBoardView", () => {
     rerender({ filter: scopeFilter(["stream_two"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
     expect(result.current.newCount).toBe(0)
+  })
+})
+
+describe("useStableBoardView — hide & mute exclusions", () => {
+  let liveValue: CachedBoardPost[] | undefined
+  function mockLive(value: CachedBoardPost[] | undefined) {
+    liveValue = value
+    vi.spyOn(boardStoreModule, "useBoardPosts").mockImplementation(() => liveValue)
+  }
+  afterEach(() => vi.restoreAllMocks())
+
+  const NO_EXCL = { hidden: new Map<string, number>(), muted: new Set<string>(), muteActive: true }
+
+  it("drops a hidden card immediately — even after it was committed and retained (the crux)", () => {
+    mockLive(feed(post("a", 300), post("b", 200)))
+    const { result, rerender } = renderHook(({ excl }) => useStableBoardView("ws_1", ALL, excl), {
+      initialProps: { excl: NO_EXCL },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    // Hide "a" (watermark above its activity). It stays in the committed order and
+    // in `retainedRef`, so a filter that only touched `live` would keep rendering
+    // it — it must drop NOW, without a commit.
+    rerender({ excl: { hidden: new Map([["a", 400]]), muted: new Set<string>(), muteActive: true } })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+  })
+
+  it("revives a hidden card once its activity passes the watermark", () => {
+    const excl = { hidden: new Map([["a", 350]]), muted: new Set<string>(), muteActive: true }
+    mockLive(feed(post("a", 300)))
+    const { result, rerender } = renderHook(({ e }) => useStableBoardView("ws_1", ALL, e), {
+      initialProps: { e: excl },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual([])
+
+    act(() => mockLive(feed(post("a", 500))))
+    rerender({ e: excl })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+
+  it("drops a muted stream's cards when mute is active", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", ALL, { hidden: new Map(), muted: new Set(["stream_x"]), muteActive: true })
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+  })
+
+  it("keeps a muted stream's cards when mute is inactive (an explicit ?in= scope)", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", ALL, { hidden: new Map(), muted: new Set(["stream_x"]), muteActive: false })
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
 })

@@ -60,6 +60,34 @@ describe("resolveDeliveryGroups — enclave re-wrap nudges", () => {
   })
 })
 
+describe("resolveDeliveryGroups — board exclusions (hide & mute)", () => {
+  it("routes a hide change to the viewer's user group only, never the workspace", () => {
+    const groups = resolveDeliveryGroups(
+      event("board:conversation_hide_changed", {
+        workspaceId: "ws_1",
+        targetUserId: "usr_1",
+        conversationId: "conv_1",
+        active: true,
+        hiddenAt: "2026-07-05T00:00:00.000Z",
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_1")])
+    expect(groups).not.toContain("workspace")
+  })
+
+  it("routes a mute change to the viewer's user group only", () => {
+    const groups = resolveDeliveryGroups(
+      event("board:stream_mute_changed", {
+        workspaceId: "ws_1",
+        targetUserId: "usr_1",
+        streamId: "stream_1",
+        active: true,
+      })
+    )
+    expect(groups).toEqual([userGroup("usr_1")])
+  })
+})
+
 describe("resolveDeliveryGroups — label assignments", () => {
   // Labels are owner-scoped, so an assignment routes only to the owning actor's
   // user group — never a stream group, even when the labeled resource is a
