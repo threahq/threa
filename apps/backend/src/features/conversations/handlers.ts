@@ -202,7 +202,7 @@ export function createConversationHandlers({ conversationService, streamService,
       // validateStreamAccess handles public visibility + thread root membership
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
-      const post = await conversationService.getBoardPostById(workspaceId, conversationId)
+      const post = await conversationService.getBoardPostById(workspaceId, conversationId, userId)
       if (!post) {
         return res.status(404).json({ error: "Conversation not found" })
       }

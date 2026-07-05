@@ -80,6 +80,7 @@ function makePost(): BoardPost {
     totalReplies: 1,
     streamIds: ["stream_1"],
     hasCapturedMemo: false,
+    isMine: false,
   }
 }
 

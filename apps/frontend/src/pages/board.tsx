@@ -56,6 +56,10 @@ const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
     title: "No decisions captured yet",
     body: "When a conversation produces a memo — a decision, a fact worth keeping — it surfaces here as settled knowledge.",
   },
+  mine: {
+    title: "Nothing here for you yet",
+    body: "Conversations you start, join, or get mentioned in surface here — the slice of the board that's yours.",
+  },
 }
 
 /** Copy for an empty stream-scoped view, whatever the lens — the filters, not the
