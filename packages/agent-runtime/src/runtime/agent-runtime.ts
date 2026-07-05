@@ -97,6 +97,17 @@ export interface AgentRuntimeConfig {
   toolSignalProvider?: (toolCallId: string, toolName: string) => AbortSignal | undefined
 
   /**
+   * Optional run-level graceful stop signal (a user Stop). When it aborts, the
+   * loop finishes the current step and returns whatever it holds — a reply
+   * already committed, or no message — instead of throwing. It is threaded into
+   * the LLM call so a pending iteration with no tool running is cancelled at its
+   * next await, and checked at the top of each iteration so a Stop that lands
+   * between steps halts promptly. Distinct from `shouldAbort`, which throws and
+   * fails the session; this is cooperative, like `toolSignalProvider`.
+   */
+  runAbortSignal?: AbortSignal
+
+  /**
    * Allow sessions to complete without sending a new message.
    * Used for supersede reruns where retaining prior responses is a valid outcome.
    */
@@ -246,6 +257,7 @@ export class AgentRuntime {
     let repeatedInvalidDraftCount = 0
     let lastInvalidDraft: string | null = null
     let emptyFinalDecisionAttempts = 0
+    let stoppedByUser = false
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       const abortReason = await this.config.shouldAbort?.()
@@ -253,24 +265,44 @@ export class AgentRuntime {
         throw new Error(`Agent session aborted: ${abortReason}`)
       }
 
+      // A user Stop that landed between steps: halt before spending another LLM
+      // call. Falls into the finalization below, which returns gracefully.
+      if (this.config.runAbortSignal?.aborted) {
+        stoppedByUser = true
+        break
+      }
+
       const fullSystemPrompt = retrievedContext ? `${systemPrompt}\n\n${retrievedContext}` : systemPrompt
       const preparedConversation = this.prepareConversationForModel(conversation)
       const truncatedMessages = truncateMessages(preparedConversation, MAX_MESSAGE_CHARS)
 
       const startTime = Date.now()
-      const result = await this.wrapWithObserverContext(() =>
-        ai.generateTextWithTools({
-          model,
-          modelString: this.config.modelString,
-          system: fullSystemPrompt,
-          messages: truncatedMessages,
-          tools: this.toolDefs,
-          maxTokens: this.config.maxTokens ?? undefined,
-          temperature: this.config.temperature ?? undefined,
-          telemetry: this.config.telemetry,
-          context: this.config.costContext,
-        })
-      )
+      let result: Awaited<ReturnType<typeof ai.generateTextWithTools>>
+      try {
+        result = await this.wrapWithObserverContext(() =>
+          ai.generateTextWithTools({
+            model,
+            modelString: this.config.modelString,
+            system: fullSystemPrompt,
+            messages: truncatedMessages,
+            tools: this.toolDefs,
+            maxTokens: this.config.maxTokens ?? undefined,
+            temperature: this.config.temperature ?? undefined,
+            telemetry: this.config.telemetry,
+            context: this.config.costContext,
+            abortSignal: this.config.runAbortSignal,
+          })
+        )
+      } catch (err) {
+        // A Stop that fired mid-call aborts the LLM request. Treat it as a
+        // graceful halt (return what the turn holds), not a session failure —
+        // unlike an unrelated error, which still propagates.
+        if (this.config.runAbortSignal?.aborted) {
+          stoppedByUser = true
+          break
+        }
+        throw err
+      }
       const durationMs = Date.now() - startTime
 
       if (result.text.trim() || result.toolCalls.length > 0) {
@@ -497,7 +529,9 @@ export class AgentRuntime {
     // your Casual Greeting conversation"), commit that content. Otherwise an
     // edit-triggered rerun whose chain ends in a reconsider/keep_response
     // would silently emit nothing.
-    if (sent.ids.length === 0 && lastContentStep) {
+    // Skip this salvage on a user Stop: committing a half-formed thinking step
+    // the user just interrupted would surface content they chose to cut off.
+    if (sent.ids.length === 0 && lastContentStep && !stoppedByUser) {
       const validationError = this.config.validateFinalResponse
         ? await this.config.validateFinalResponse(lastContentStep)
         : null
@@ -509,9 +543,11 @@ export class AgentRuntime {
     }
 
     if (sent.ids.length === 0) {
-      if (this.config.allowNoMessageOutput) {
-        const noMessageReason =
-          keptResponseReason ?? "The existing response still fit the updated context, so no message changes were made."
+      if (this.config.allowNoMessageOutput || stoppedByUser) {
+        const noMessageReason = stoppedByUser
+          ? "Stopped by the user before a response was composed."
+          : (keptResponseReason ??
+            "The existing response still fit the updated context, so no message changes were made.")
 
         await this.emit({
           type: "response:kept",

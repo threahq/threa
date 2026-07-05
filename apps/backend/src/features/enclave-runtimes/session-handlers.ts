@@ -218,8 +218,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
      * Keeps the session's `heartbeat_at` fresh so orphan-cleanup doesn't reclaim
      * it while the enclave is still working, renews the turn's claim so a
      * healthy long turn never lapses back into the claimable set, and carries
-     * the abort flag back (§2.7): a user's "Stop research" is recorded on the
-     * session row and consumed here — the enclave has no inbound cancel route.
+     * the abort flag back (§2.7): a user's Stop is recorded on the session row
+     * and consumed here — the enclave has no inbound cancel route.
      */
     async heartbeat(req: Request, res: Response) {
       const id = req.params.id

@@ -90,6 +90,12 @@ export interface TurnSink {
   shouldAbort?: () => Promise<string | null>
   /** Cooperative per-tool cancellation (graceful partial results, not session failure). */
   toolSignalProvider?: (toolCallId: string, toolName: string) => AbortSignal | undefined
+  /**
+   * Cooperative run-level Stop: aborts a pending LLM iteration and halts the loop
+   * gracefully (returns what the turn holds, not a failure). The host aborts this
+   * on a user Stop; the same signal typically backs `toolSignalProvider`.
+   */
+  runAbortSignal?: AbortSignal
 }
 
 /**
@@ -273,6 +279,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
     newMessages: isDeclaredUnsupported(sink.newMessages) ? undefined : sink.newMessages,
     shouldAbort: sink.shouldAbort,
     toolSignalProvider: sink.toolSignalProvider,
+    runAbortSignal: sink.runAbortSignal,
   })
   return runtime.run()
 }

@@ -10,9 +10,9 @@ const logger = baseLogger.child({ name: "enclave-session" })
 /**
  * Refresh interval for the session heartbeat. The backend reclaims a session
  * whose heartbeat is older than ~60s, so this leaves many missed beats of
- * grace — and since the heartbeat response is also how a user's "Stop
- * research" reaches the turn (§2.7: no inbound cancel route), the interval is
- * the abort latency ceiling, which wants to stay a few seconds, not fifteen.
+ * grace — and since the heartbeat response is also how a user's Stop reaches
+ * the turn (§2.7: no inbound cancel route), the interval is the abort latency
+ * ceiling, which wants to stay a few seconds, not fifteen.
  */
 const HEARTBEAT_INTERVAL_MS = 5_000
 
@@ -26,8 +26,8 @@ export interface SessionRunnerDeps {
 
 /**
  * Owns one claimed turn end to end: keeps the session's heartbeat fresh while
- * the agent loop runs (consuming the heartbeat's abort flag — a graceful
- * "Stop research" trips the turn's AbortController), then hands the sealed
+ * the agent loop runs (consuming the heartbeat's abort flag — a graceful user
+ * Stop trips the turn's AbortController), then hands the sealed
  * replies back via `complete`. On failure it acks the backend via `fail` so
  * the session terminates promptly (orphan-cleanup stays the backstop if that
  * ack can't land). Plaintext lives only in `runEnclaveTurn`, for the duration
@@ -37,8 +37,9 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
   const { sessionId } = assignment
 
   // The cancel channel: the heartbeat response says whether a user requested
-  // an abort, and the controller feeds the loop's existing abort gate (the
-  // web-research sub-loop returns partial findings; the turn still replies).
+  // an abort, and the controller feeds the turn's session-abort wiring
+  // (runAbortSignal + all-tools toolSignalProvider) so the loop halts
+  // gracefully — a committed reply so far, or none — whatever tool is active.
   const abortController = new AbortController()
 
   const heartbeat = setInterval(() => {

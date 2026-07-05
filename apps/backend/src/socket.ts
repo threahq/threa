@@ -304,10 +304,11 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       logger.debug({ workosUserId, room }, "Left room")
     })
 
-    // Graceful research abort: tells the workspace_research tool to stop at the
-    // next safe checkpoint and return whatever partial results were collected.
-    // The session continues running normally with the partial context — this is
+    // Graceful session Stop: cancels the in-flight LLM iteration and any running
+    // tool, then lets the loop finish with whatever it holds (a partial reply, or
+    // none). Works for any running session regardless of which tool is active —
     // NOT the same as deleting/superseding the session, which uses shouldAbort.
+    // The wire event keeps its `research:abort` name for client compat.
     socket.on(
       "agent_session:research:abort",
       async (
@@ -341,7 +342,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
             if (!isJoinAccessError(error)) {
               logger.error(
                 { error, workosUserId, sessionId, streamId: session.streamId },
-                "Unexpected error during research abort auth check"
+                "Unexpected error during session abort auth check"
               )
             }
             callback?.({ ok: false, error: "Not authorized" })
@@ -353,8 +354,8 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           // carries a callback token hash, set only on the claim path. Record
           // the request on the session row — the enclave consumes it on its next
           // session heartbeat (§2.7: no inbound cancel route). An in-process turn
-          // lives in this server's abort registry. Both are graceful — research
-          // returns partial findings and the turn still replies.
+          // lives in this server's abort registry. Both are graceful — the turn
+          // wraps up with whatever it has rather than failing.
           const aborted = session.callbackTokenHash
             ? await AgentSessionRepository.requestAbort(pool, sessionId)
             : sessionAbortRegistry.abort(sessionId, "user_abort")
@@ -364,10 +365,10 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
             event_type: "agent_session:research:abort",
             room_pattern: "ws:{workspaceId}:agent_session:{sessionId}",
           })
-          logger.info({ sessionId, workosUserId, aborted }, "Research abort dispatched")
-          callback?.({ ok: aborted, error: aborted ? undefined : "No active research to abort" })
+          logger.info({ sessionId, workosUserId, aborted }, "Session abort dispatched")
+          callback?.({ ok: aborted, error: aborted ? undefined : "No running session to abort" })
         } catch (err) {
-          logger.warn({ err, sessionId }, "Research abort handler failed")
+          logger.warn({ err, sessionId }, "Session abort handler failed")
           callback?.({ ok: false, error: "Abort failed" })
         }
       }

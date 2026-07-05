@@ -146,4 +146,24 @@ describe("web-search-tool", () => {
 
     expect(parsed.error).toContain("timed out")
   })
+
+  it("reports a graceful stop (not a timeout) when the session signal aborts", async () => {
+    // Reject with the aborted signal's reason, as a real fetch does — the reason
+    // is the plain "user_abort" string, NOT an AbortError-named error, so a catch
+    // that keyed on `error.name` would miss it and fall through to a generic error.
+    globalThis.fetch = mock((_url: string, options: RequestInit) =>
+      Promise.reject(options.signal?.reason ?? new Error("aborted"))
+    ) as unknown as typeof fetch
+
+    const controller = new AbortController()
+    controller.abort("user_abort")
+
+    const tool = createWebSearchTool({ tavilyApiKey: "test-key" })
+    const { output } = await tool.config.execute({ query: "test" }, { toolCallId: "test", signal: controller.signal })
+    const parsed = JSON.parse(output)
+
+    expect(parsed.stopped).toBe(true)
+    expect(parsed.error).toBeUndefined()
+    expect(parsed.query).toBe("test")
+  })
 })

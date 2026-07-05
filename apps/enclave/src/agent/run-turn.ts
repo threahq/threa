@@ -16,7 +16,6 @@ import {
   unwrapStreamKey,
   type AttachmentRef,
 } from "@threa/crypto"
-import { AgentToolNames } from "@threa/types"
 import type {
   EnclaveMidTurnMessage,
   EnclaveSessionAssignment,
@@ -126,10 +125,12 @@ export interface EnclaveTurnDeps {
    */
   onSealedSummary?: (sealed: EnclaveSealedSummary) => Promise<void>
   /**
-   * Cooperative cancellation for long-running tools (research). Wired to the
-   * runtime's `toolSignalProvider`, so the user's "Stop research" aborts the web
-   * sub-loop gracefully — it returns partial findings and the turn still replies,
-   * exactly like the in-process `SessionAbortRegistry` path. Omitted → no cancel.
+   * Cooperative session Stop (from the heartbeat's abort flag). Wired to the
+   * runtime's `runAbortSignal` (cancels a pending LLM iteration + halts the loop),
+   * the all-tools `toolSignalProvider` (cuts an in-flight web_search/read_url/
+   * research fetch), and the OpenRouter call itself via `createEnclaveAI` — so a
+   * Stop halts any running sealed session gracefully, exactly like the in-process
+   * `SessionAbortRegistry` path. Omitted → no cancel.
    */
   abortSignal?: AbortSignal
   /**
@@ -407,14 +408,16 @@ export async function runEnclaveTurn(
           pollNewMessages,
         })
       : declaredUnsupported("Ariadne can't see mid-turn messages in encrypted scratchpads"),
-    // Hand ONLY the long-running research sub-loop the session's cancel signal so
-    // a user "Stop research" aborts it gracefully (partial findings, the turn
-    // still replies). Gated by tool name exactly like the in-process path, so a
-    // short/uninterruptible tool never receives an already-aborted signal.
+    // Session Stop: the heartbeat's abort flag cancels a pending LLM iteration
+    // and halts the loop gracefully (runAbortSignal), and cuts any in-flight
+    // tool fetch — web_search / read_url / research (toolSignalProvider for
+    // every tool; ones that ignore it are unaffected). Mirrors the in-process
+    // path so Stop works on any running sealed session, not only during
+    // research.
     ...(abortSignal
       ? {
-          toolSignalProvider: (_toolCallId: string, toolName: string) =>
-            toolName === AgentToolNames.GENERAL_RESEARCH ? abortSignal : undefined,
+          toolSignalProvider: () => abortSignal,
+          runAbortSignal: abortSignal,
         }
       : {}),
   }

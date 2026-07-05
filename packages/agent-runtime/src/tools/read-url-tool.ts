@@ -5,6 +5,7 @@ import { NodeHtmlMarkdown } from "node-html-markdown"
 import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, resolveFetchUserAgent } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
+import { composeAbortSignal } from "../research/research-support"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
 
 const ReadUrlSchema = z.object({
@@ -272,7 +273,7 @@ When to use read_url:
 - To read JSON APIs: small responses come back in full. For large ones you get the data's \`shape\` (a schema sketch), a sampled \`preview\`, and a \`hint\` — then call read_url again with a \`select\` path (e.g. \`.data.items[0:20]\`, \`.results[3].name\`, \`.users[*].email\`) to drill into the part you need.${imagePromptLine}`,
     inputSchema: ReadUrlSchema,
 
-    execute: async (input): Promise<AgentToolResult> => {
+    execute: async (input, { signal }): Promise<AgentToolResult> => {
       // Validate URL before fetching
       const validationError = await validateUrlWithDns(input.url)
       if (validationError) {
@@ -280,11 +281,16 @@ When to use read_url:
         return { output: JSON.stringify({ error: validationError, url: input.url }) }
       }
 
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+      // Compose the per-request timeout with the session Stop signal so a user
+      // abort cuts the fetch immediately instead of waiting out the timeout.
+      const { signal: fetchSignal, cleanup } = composeAbortSignal({
+        parent: signal,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        timeoutReason: "read_url timeout",
+      })
 
       try {
-        const result = await fetchWithRedirectValidation(input.url, controller.signal)
+        const result = await fetchWithRedirectValidation(input.url, fetchSignal)
 
         if ("error" in result) {
           logger.warn({ url: input.url, error: result.error }, "Fetch failed")
@@ -368,7 +374,19 @@ When to use read_url:
 
         return { output, sources }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
+        // A user Stop (the parent session signal) takes precedence: report the
+        // cancellation, not a spurious timeout.
+        if (signal?.aborted) {
+          logger.info({ url: input.url }, "URL read stopped by user")
+          return { output: JSON.stringify({ stopped: true, url: input.url }) }
+        }
+        // The composed signal's timeout arm firing aborts the fetch. Key off the
+        // signal — `composeAbortSignal` aborts with a TimeoutError/reason, not an
+        // AbortError-named error — with a name check as a defensive fallback.
+        if (
+          fetchSignal.aborted ||
+          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+        ) {
           logger.warn({ url: input.url }, "URL fetch timed out")
           return {
             output: JSON.stringify({ error: `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s`, url: input.url }),
@@ -383,7 +401,7 @@ When to use read_url:
           }),
         }
       } finally {
-        clearTimeout(timeout)
+        cleanup()
       }
     },
 

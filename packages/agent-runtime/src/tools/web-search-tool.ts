@@ -2,6 +2,7 @@ import { z } from "zod"
 import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
+import { composeAbortSignal } from "../research/research-support"
 
 const WebSearchSchema = z.object({
   query: z.string().describe("The search query to find information on the web"),
@@ -89,15 +90,20 @@ ${recencyGroundingBullet}
 - Use the snippets to answer accurately`,
     inputSchema: WebSearchSchema,
 
-    execute: async (input): Promise<AgentToolResult> => {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+    execute: async (input, { signal }): Promise<AgentToolResult> => {
+      // Compose the per-request timeout with the session Stop signal so a user
+      // abort cuts the fetch immediately instead of waiting out the timeout.
+      const { signal: fetchSignal, cleanup } = composeAbortSignal({
+        parent: signal,
+        timeoutMs: FETCH_TIMEOUT_MS,
+        timeoutReason: "web search timeout",
+      })
       const sanitizedQuery = redactQuery(input.query)
 
       try {
         const response = await fetch("https://api.tavily.com/search", {
           method: "POST",
-          signal: controller.signal,
+          signal: fetchSignal,
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${tavilyApiKey}`,
@@ -142,7 +148,19 @@ ${recencyGroundingBullet}
 
         return { output, sources }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
+        // A user Stop (the parent session signal) takes precedence: report the
+        // cancellation, not a spurious timeout.
+        if (signal?.aborted) {
+          logger.info({ query: input.query }, "Web search stopped by user")
+          return { output: JSON.stringify({ stopped: true, query: input.query }) }
+        }
+        // The composed signal's timeout arm firing aborts the fetch. Key off the
+        // signal — `composeAbortSignal` aborts with a TimeoutError/reason, not an
+        // AbortError-named error — with a name check as a defensive fallback.
+        if (
+          fetchSignal.aborted ||
+          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+        ) {
           logger.warn({ query: input.query }, "Web search timed out")
           return {
             output: JSON.stringify({
@@ -160,7 +178,7 @@ ${recencyGroundingBullet}
           }),
         }
       } finally {
-        clearTimeout(timeout)
+        cleanup()
       }
     },
 

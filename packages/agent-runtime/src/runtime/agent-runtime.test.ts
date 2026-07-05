@@ -598,3 +598,87 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
     expect(receivedSignal).toBeUndefined()
   })
 })
+
+describe("AgentRuntime runAbortSignal (graceful session Stop)", () => {
+  const emptyReply = () => ({
+    text: "reply",
+    toolCalls: [],
+    response: { messages: [{ role: "assistant" as const, content: "reply" } as any] },
+  })
+
+  it("halts before the LLM call when the signal is already aborted, without committing", async () => {
+    const controller = new AbortController()
+    controller.abort("user_abort")
+    const generateTextWithTools = mock(async () => emptyReply())
+    const sendMessage = mock(async () => ({ messageId: "msg_1", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "do it" }],
+      tools: [],
+      sendMessage,
+      runAbortSignal: controller.signal,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(result.messagesSent).toBe(0)
+    expect(result.noMessageReason).toContain("Stopped by the user")
+  })
+
+  it("cancels a pending LLM iteration when the signal aborts mid-call, returning gracefully", async () => {
+    const controller = new AbortController()
+    // A user Stop lands while the LLM request is in flight: the call sees the
+    // aborted signal and rejects, exactly as the AI SDK does on abort.
+    const generateTextWithTools = mock(async ({ abortSignal }: { abortSignal?: AbortSignal }) => {
+      controller.abort("user_abort")
+      if (abortSignal?.aborted) {
+        const err = new Error("Aborted")
+        err.name = "AbortError"
+        throw err
+      }
+      return emptyReply()
+    })
+    const sendMessage = mock(async () => ({ messageId: "msg_1", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "do it" }],
+      tools: [],
+      sendMessage,
+      runAbortSignal: controller.signal,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(1)
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(result.messagesSent).toBe(0)
+    expect(result.noMessageReason).toContain("Stopped by the user")
+  })
+
+  it("rethrows a non-abort error from the LLM call (not swallowed as a Stop)", async () => {
+    const controller = new AbortController()
+    const generateTextWithTools = mock(async () => {
+      throw new Error("upstream 500")
+    })
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "do it" }],
+      tools: [],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" as const }),
+      runAbortSignal: controller.signal,
+    })
+
+    await expect(runtime.run()).rejects.toThrow("upstream 500")
+  })
+})

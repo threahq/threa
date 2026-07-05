@@ -37,6 +37,9 @@ export function createEnclaveAI(rawChat: RawChatFn, usage: UsageAccumulator): Ag
         tools: toOpenAiTools(options.tools),
         temperature: options.temperature,
         maxTokens: options.maxTokens,
+        // A user Stop cancels the in-flight OpenRouter call, not just the next
+        // loop iteration (parity with the backend AI wrapper).
+        signal: options.abortSignal,
       })
 
       usage.promptTokens += result.usage?.prompt_tokens ?? 0

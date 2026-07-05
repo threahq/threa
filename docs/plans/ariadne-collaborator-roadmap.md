@@ -40,7 +40,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
 | 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
-| 2.1  | Generalized session abort                            | ☐      |       |
+| 2.1  | Generalized session abort                            | ☑      | #1177 |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
@@ -206,6 +206,14 @@ No new capabilities — surfacing machinery that already exists. Independent of 
 **Tests:** abort mid-`web_search` returns partial gracefully; abort with no tool running cancels the pending LLM iteration.
 
 **Done when:** Stop works on any running session regardless of which tool is active.
+
+**Deviations (shipped):**
+
+- **Two-layer abort, with the loop layer as the primary mechanism.** A new `runAbortSignal` on `AgentRuntimeConfig`/`TurnSink` (backed by the session's `AbortController`) is threaded into the loop's `generateTextWithTools` call and checked at the top of each iteration: a Stop cancels a pending LLM iteration and halts the loop **gracefully** — it returns whatever the turn holds (a committed reply, or none, with `noMessageReason: "Stopped by the user…"`) instead of the fatal `shouldAbort` throw. This is what makes Stop work "regardless of which tool is active": after any tool returns, the next loop-top check halts the session. `persona-agent.ts` now registers one session controller **up front** (not lazily per research tool) and hands its signal to BOTH edges — `runAbortSignal` and a `toolSignalProvider` that returns it for **every** tool (one path, INV-35), replacing the old research-only gate.
+- **Tool-layer honoring is scoped to the two genuine long-poles.** `web_search` and `read_url` compose `opts.signal` with their existing 30 s fetch timeout (`composeAbortSignal`) so a Stop cuts an in-flight fetch immediately and returns a graceful `{ stopped: true }` (distinguished from a timeout). The research tools already honored the signal.
+- **Both first-party drivers wired.** The sealed/enclave path (`apps/enclave/src/agent/run-turn.ts`) already had a live Stop channel — the session runner's heartbeat consumes the backend's `requestAbort` flag into an `AbortController` — but only fed it to research's `toolSignalProvider`. It now sets `runAbortSignal` + an all-tools `toolSignalProvider` too (it goes through the same `runTurnOnAgentRuntime`), so a Stop halts a sealed session mid-LLM-call or mid-`web_search`/`read_url`, not only during research (caught in self-review).
+- **GitHub / Linear / attachment internal signal-threading deferred (noted, not silent).** Their clients (`Octokit`, the Linear SDK, the S3 `StorageProvider`) don't accept a per-call signal without changing those class APIs and ~15 call sites, and the loop-layer abort already halts the session promptly after those fast DB/SDK calls return — only the 30 s HTTP fetches needed internal honoring. Threading the signal into those clients is a clean follow-up if a slow-call case shows up (INV-36: not built speculatively).
+- **Frontend untouched.** The `agent_session:research:abort` wire event and `use-abort-research.ts` are kept as-is (INV-49: rename internals only — comments/logs now say "session abort"); the card's Stop/Redirect relabel and "gate on running, not research" is 2.2's job, not this step.
 
 ### 2.2 Stop/Redirect affordances on the activity card
 

@@ -30,6 +30,7 @@ export class ExternalTurnDriver implements DispatchedTurnDriver {
     observers: { realizedBy: "recordBotInvocationStep (POST .../bot-invocations/{invocationId}/steps)" },
     shouldAbort: declaredUnsupported("cancellation toward an external runner has no carrier yet"),
     toolSignalProvider: declaredUnsupported("the harness drives its own tools"),
+    runAbortSignal: declaredUnsupported("the harness runs its own loop; there is no in-process LLM call to cancel"),
     newMessages: declaredUnsupported("third-party harnesses don't receive mid-turn messages"),
   }
 
