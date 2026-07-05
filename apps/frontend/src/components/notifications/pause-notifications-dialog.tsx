@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { Button } from "@/components/ui/button"
 import { DateTimeField } from "@/components/forms/date-time-field"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
 import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
@@ -27,7 +28,7 @@ interface PauseNotificationsDialogProps {
  * surface; only the chrome (a dialog vs. a settings section) differs.
  */
 export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: PauseNotificationsDialogProps) {
-  const { active, statusOnly, busy, pauseFor, pauseUntilLocal, resume } = useNotificationPauseControls(
+  const { active, statusOnly, busy, pauseFor, pauseUntilDate, pauseUntilLocal, resume } = useNotificationPauseControls(
     workspaceId,
     () => onOpenChange(false)
   )
@@ -49,7 +50,7 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
   const indefiniteOptions = NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null)
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
       <ResponsiveDialogContent desktopClassName="sm:max-w-sm">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Pause notifications</ResponsiveDialogTitle>
@@ -99,6 +100,14 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
               {timedOptions.map((option) => (
                 <PauseOptionRow key={option.id} label={option.label} disabled={busy} onClick={() => pauseFor(option)} />
               ))}
+              <CustomDurationPicker
+                onSubmit={pauseUntilDate}
+                disabled={busy}
+                submitLabel="Pause"
+                className="px-3"
+                controlClassName="h-11"
+                buttonClassName="h-11"
+              />
               <PauseOptionRow label="Until a specific time…" disabled={busy} onClick={() => setCustomOpen(true)} />
               {indefiniteOptions.map((option) => (
                 <PauseOptionRow key={option.id} label={option.label} disabled={busy} onClick={() => pauseFor(option)} />

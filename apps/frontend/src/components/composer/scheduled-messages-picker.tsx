@@ -22,6 +22,7 @@ import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/da
 import { ScheduledEditDialog } from "@/components/scheduled/scheduled-edit-dialog"
 import { ScheduledActionDrawer } from "@/components/scheduled/scheduled-action-drawer"
 import { ScheduledActions } from "@/components/scheduled/scheduled-actions"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { keepEditorFocusProps } from "@/lib/keep-editor-focus"
 import { useComposerAnchor } from "./use-composer-anchor"
 
@@ -144,6 +145,12 @@ export function ScheduledMessagesPicker({
     resetToList()
   }
 
+  const handleDurationSubmit = (when: Date) => {
+    onSchedule(when)
+    setOpen(false)
+    resetToList()
+  }
+
   const handleCustomSubmit = () => {
     const when = parseLocalDateTime(customDate, customTime)
     if (!when) return
@@ -248,6 +255,7 @@ export function ScheduledMessagesPicker({
               previewLabel={previewLabel}
               onBack={resetToList}
               onPreset={handlePreset}
+              onDurationSubmit={handleDurationSubmit}
               onShowCustom={() => {
                 // Built fresh each time — the composer is mounted for the
                 // lifetime of a session, so a memoized seed would go stale.
@@ -385,6 +393,7 @@ interface PickingModeProps {
   previewLabel: string | null
   onBack: () => void
   onPreset: (preset: ReminderPreset, overrideTz?: string) => void
+  onDurationSubmit: (when: Date) => void
   onShowCustom: () => void
   onCustomDateChange: (value: string) => void
   onCustomTimeChange: (value: string) => void
@@ -402,6 +411,7 @@ function PickingMode({
   previewLabel,
   onBack,
   onPreset,
+  onDurationSubmit,
   onShowCustom,
   onCustomDateChange,
   onCustomTimeChange,
@@ -432,6 +442,11 @@ function PickingMode({
               onPreset={onPreset}
             />
           ))}
+          <CustomDurationPicker
+            onSubmit={onDurationSubmit}
+            submitLabel="Schedule"
+            preview={(date) => formatFutureTime(date, new Date(), { timezone })}
+          />
           <button
             type="button"
             onClick={onShowCustom}

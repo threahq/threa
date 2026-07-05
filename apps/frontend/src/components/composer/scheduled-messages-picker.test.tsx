@@ -14,15 +14,18 @@ import * as editDialogModule from "@/components/scheduled/scheduled-edit-dialog"
 let isTouchMockValue = true
 
 function renderPicker() {
-  return render(
+  const onSchedule = vi.fn()
+  const result = render(
     <TooltipProvider>
-      <ScheduledMessagesPicker workspaceId="ws_1" streamId="stream_1" canSchedule onSchedule={vi.fn()} />
+      <ScheduledMessagesPicker workspaceId="ws_1" streamId="stream_1" canSchedule onSchedule={onSchedule} />
     </TooltipProvider>
   )
+  return { ...result, onSchedule }
 }
 
 describe("ScheduledMessagesPicker", () => {
   beforeEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     isTouchMockValue = true
     vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouchMockValue ? "touch" : "mouse"))
@@ -67,5 +70,20 @@ describe("ScheduledMessagesPicker", () => {
     fireEvent(scheduleSend, mousedown)
 
     expect(mousedown.defaultPrevented).toBe(false)
+  })
+
+  it("schedules with the inline custom duration", async () => {
+    const before = Date.now()
+    const { onSchedule } = renderPicker()
+
+    await userEvent.click(screen.getByRole("button", { name: /scheduled/i }))
+    await userEvent.click(screen.getByRole("button", { name: /schedule send/i }))
+    await userEvent.clear(screen.getByRole("spinbutton", { name: /custom duration/i }))
+    await userEvent.type(screen.getByRole("spinbutton", { name: /custom duration/i }), "30")
+    await userEvent.click(screen.getByRole("button", { name: /^schedule$/i }))
+
+    const scheduledAt = onSchedule.mock.calls[0]?.[0] as Date
+    expect(scheduledAt.getTime()).toBeGreaterThanOrEqual(before + 30 * 60_000)
+    expect(scheduledAt.getTime()).toBeLessThanOrEqual(Date.now() + 30 * 60_000)
   })
 })

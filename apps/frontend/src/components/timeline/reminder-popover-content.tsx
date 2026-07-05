@@ -8,6 +8,7 @@ import { useSaveMessage, useUpdateSaved, useDeleteSaved } from "@/hooks/use-save
 import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 
 interface ReminderPopoverContentProps {
   workspaceId: string
@@ -122,6 +123,11 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
             {preset.label}
           </PopoverMenuButton>
         ))}
+        <CustomDurationPicker
+          onSubmit={setReminder}
+          disabled={saveMutation.isPending || updateMutation.isPending}
+          submitLabel="Set reminder"
+        />
         <PopoverMenuButton onClick={openCustom}>
           <Bell className="h-3.5 w-3.5" />
           Pick a time…

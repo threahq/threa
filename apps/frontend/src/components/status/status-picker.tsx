@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { BellOff, Smile, X } from "lucide-react"
 import { toast } from "sonner"
@@ -24,6 +24,11 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { DateTimeField } from "@/components/forms/date-time-field"
+import {
+  CustomDurationPicker,
+  customDurationToDate,
+  type CustomDurationUnit,
+} from "@/components/scheduling/custom-duration-picker"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import { useSetStatus, useClearStatus, workspaceKeys } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -41,11 +46,37 @@ interface StatusPickerProps {
 }
 
 const CUSTOM_OPTION_ID = "custom"
+const CUSTOM_DURATION_OPTION_ID = "custom-duration"
 const NEW_PRESET_ID_PREFIX = "status_"
+
+function statusDurationOptionId(duration: StatusPreset["defaultDuration"]): string {
+  if (!duration) return "never"
+  const match = STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, duration))
+  if (match) return match.id
+  return duration.kind === "duration" ? CUSTOM_DURATION_OPTION_ID : "never"
+}
+
+function customDurationState(duration: StatusPreset["defaultDuration"]): { amount: number; unit: CustomDurationUnit } {
+  if (duration?.kind !== "duration") return { amount: 30, unit: "minutes" }
+  if (duration.minutes % 60 === 0) return { amount: duration.minutes / 60, unit: "hours" }
+  return { amount: duration.minutes, unit: "minutes" }
+}
+
+function customStatusDuration(amount: number, unit: CustomDurationUnit): StatusPreset["defaultDuration"] {
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  return { kind: "duration", minutes: unit === "hours" ? amount * 60 : amount }
+}
 
 /** Human label for a preset's default duration, shown beside it in the list. */
 function presetDurationLabel(preset: StatusPreset): string {
-  return STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, preset.defaultDuration))?.label ?? "Don't clear"
+  const option = STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, preset.defaultDuration))
+  if (option) return option.label
+  if (preset.defaultDuration?.kind === "duration") {
+    const { amount, unit } = customDurationState(preset.defaultDuration)
+    const label = amount === 1 ? unit.slice(0, -1) : unit
+    return `${amount} ${label}`
+  }
+  return "Don't clear"
 }
 
 // "Don't clear" reads best at the top of the menu (matches Slack); the rest
@@ -86,6 +117,9 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const [durationTouched, setDurationTouched] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
+  const [customDurationAmount, setCustomDurationAmount] = useState(30)
+  const [customDurationUnit, setCustomDurationUnit] = useState<CustomDurationUnit>("minutes")
+  const [customDurationSeedKey, setCustomDurationSeedKey] = useState(0)
   const [pausesNotifications, setPausesNotifications] = useState(false)
 
   // Seed the editor from the user's current status each time the dialog opens.
@@ -96,6 +130,9 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     setDurationId("never")
     setDurationTouched(false)
     setPausesNotifications(currentUser?.statusPausesNotifications ?? false)
+    setCustomDurationAmount(30)
+    setCustomDurationUnit("minutes")
+    setCustomDurationSeedKey((key) => key + 1)
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
     setCustomDate(toDateInputValue(tomorrow))
     setCustomTime(toTimeInputValue(tomorrow))
@@ -122,8 +159,11 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     // Respect a clear-time the user explicitly chose; otherwise adopt the
     // preset's default duration.
     if (!durationTouched) {
-      const match = STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, preset.defaultDuration))
-      setDurationId(match?.id ?? "never")
+      setDurationId(statusDurationOptionId(preset.defaultDuration))
+      const { amount, unit } = customDurationState(preset.defaultDuration)
+      setCustomDurationAmount(amount)
+      setCustomDurationUnit(unit)
+      setCustomDurationSeedKey((key) => key + 1)
     }
   }
 
@@ -134,7 +174,16 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     setEmoji(toShortcode(picked))
   }
 
+  const handleCustomDurationChange = useCallback((amount: number, unit: CustomDurationUnit) => {
+    setCustomDurationAmount(amount)
+    setCustomDurationUnit(unit)
+    setDurationTouched(true)
+  }, [])
+
   const resolveExpiry = (): string | null => {
+    if (durationId === CUSTOM_DURATION_OPTION_ID) {
+      return customDurationToDate(customDurationAmount, customDurationUnit)?.toISOString() ?? null
+    }
     if (durationId === CUSTOM_OPTION_ID) {
       const when = parseLocalDateTime(customDate, customTime)
       return when ? when.toISOString() : null
@@ -147,6 +196,10 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     if (!contentful) return
     // A "Custom" choice with an unparseable date/time must not silently fall
     // back to an indefinite status — abort and prompt for a valid time.
+    if (durationId === CUSTOM_DURATION_OPTION_ID && resolveExpiry() === null) {
+      toast.error("Pick a custom duration")
+      return
+    }
     if (durationId === CUSTOM_OPTION_ID && resolveExpiry() === null) {
       toast.error("Pick a valid custom date and time")
       return
@@ -175,13 +228,21 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
       return
     }
     const option = durationId === CUSTOM_OPTION_ID ? null : STATUS_DURATION_OPTIONS.find((o) => o.id === durationId)
+    const defaultDuration =
+      durationId === CUSTOM_DURATION_OPTION_ID
+        ? customStatusDuration(customDurationAmount, customDurationUnit)
+        : (option?.duration ?? null)
+    if (durationId === CUSTOM_DURATION_OPTION_ID && !defaultDuration) {
+      toast.error("Pick a custom duration")
+      return
+    }
     const preset: StatusPreset = {
       id: `${NEW_PRESET_ID_PREFIX}${crypto.randomUUID()}`,
       emoji,
       text: text.trim() || null,
       // Custom absolute times don't translate to a reusable preset duration, so
       // a preset saved from a custom time is indefinite.
-      defaultDuration: option?.duration ?? null,
+      defaultDuration,
       pausesNotifications,
     }
     try {
@@ -301,9 +362,26 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
                     {option.label}
                   </SelectItem>
                 ))}
-                <SelectItem value={CUSTOM_OPTION_ID}>Custom…</SelectItem>
+                <SelectItem value={CUSTOM_DURATION_OPTION_ID}>Custom duration…</SelectItem>
+                <SelectItem value={CUSTOM_OPTION_ID}>Custom time…</SelectItem>
               </SelectContent>
             </Select>
+            {durationId === CUSTOM_DURATION_OPTION_ID && (
+              <CustomDurationPicker
+                key={customDurationSeedKey}
+                onSubmit={() => {
+                  void handleSet()
+                }}
+                disabled={busy}
+                submitLabel="Set status"
+                initialAmount={customDurationAmount}
+                initialUnit={customDurationUnit}
+                onDurationChange={handleCustomDurationChange}
+                className="px-0"
+                controlClassName="h-11"
+                buttonClassName="h-11"
+              />
+            )}
             {durationId === CUSTOM_OPTION_ID && (
               <DateTimeField
                 date={customDate}

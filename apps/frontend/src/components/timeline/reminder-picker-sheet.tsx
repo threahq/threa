@@ -10,6 +10,7 @@ import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 import { DateTimeField } from "@/components/forms/date-time-field"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 
 interface ReminderPickerSheetProps {
@@ -122,7 +123,7 @@ export function ReminderPickerSheet({
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
-      <DrawerContent className="max-h-[85vh]">
+      <DrawerContent className="max-h-[85dvh] overflow-y-auto">
         <div className="flex flex-col px-5 pt-3 pb-6 pb-safe">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -155,6 +156,14 @@ export function ReminderPickerSheet({
                   {preset.label}
                 </SheetMenuButton>
               ))}
+              <CustomDurationPicker
+                onSubmit={setReminder}
+                disabled={saveMutation.isPending || updateMutation.isPending}
+                submitLabel="Set reminder"
+                className="flex-wrap px-3 py-1.5"
+                controlClassName="h-11"
+                buttonClassName="h-11"
+              />
               <SheetMenuButton onClick={openCustom}>
                 <CalendarIcon className="h-4 w-4 text-muted-foreground" />
                 Pick a time…
