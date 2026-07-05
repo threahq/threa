@@ -29,15 +29,18 @@ function SessionActionButton({
   stopPropagation,
   hover,
   title,
-  children,
+  label,
+  icon,
 }: SessionActionButtonProps & {
   hover: { border: string; bg: string; fg: string }
   title: string
-  children: React.ReactNode
+  label: string
+  icon: React.ReactNode
 }) {
   return (
     <button
       type="button"
+      aria-label={label}
       onClick={(e) => {
         if (stopPropagation) {
           e.preventDefault()
@@ -58,7 +61,11 @@ function SessionActionButton({
       className="shrink-0 inline-flex items-center gap-1.5 rounded-md border border-border/80 px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-all duration-150"
       title={title}
     >
-      {children}
+      {icon}
+      {/* Icon-only below `sm`: the pair shares a row with the card title on
+          phones, and two full-width labels squeeze it to nothing. aria-label
+          keeps the accessible name when the text hides. */}
+      <span className="max-sm:hidden">{label}</span>
     </button>
   )
 }
@@ -79,10 +86,9 @@ export function StopSessionButton({ onClick, stopPropagation }: SessionActionBut
       stopPropagation={stopPropagation}
       hover={STOP_HOVER}
       title="Stop this session — the agent wraps up with what it has so far"
-    >
-      <StopCircle className="h-3.5 w-3.5" />
-      Stop
-    </SessionActionButton>
+      label="Stop"
+      icon={<StopCircle className="h-3.5 w-3.5" />}
+    />
   )
 }
 
@@ -98,9 +104,8 @@ export function RedirectSessionButton({ onClick, stopPropagation }: SessionActio
       stopPropagation={stopPropagation}
       hover={REDIRECT_HOVER}
       title="Steer this session — your next message is folded into the current work"
-    >
-      <MessageSquarePlus className="h-3.5 w-3.5" />
-      Redirect
-    </SessionActionButton>
+      label="Redirect"
+      icon={<MessageSquarePlus className="h-3.5 w-3.5" />}
+    />
   )
 }

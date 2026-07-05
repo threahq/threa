@@ -178,5 +178,24 @@ describe("AgentSessionEvent", () => {
       expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor)
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })
+
+    it("Redirect shows no hint when the surface has no composer", () => {
+      const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
+
+      // A zone with no contenteditable — e.g. a non-member viewing a public
+      // channel, or an archived stream with the composer replaced by a notice.
+      render(
+        <div data-editor-zone="main">
+          <MemoryRouter>
+            <AgentSessionEvent events={runningEvents} onStopSession={vi.fn()} />
+          </MemoryRouter>
+        </div>
+      )
+
+      fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
+
+      expect(focusAtEnd).not.toHaveBeenCalled()
+      expect(screen.queryByText("Ariadne will fold your message into the current work")).not.toBeInTheDocument()
+    })
   })
 })

@@ -12,8 +12,9 @@ import type {
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
+import { focusAtEnd } from "@/hooks"
 import { StopSessionButton, RedirectSessionButton } from "@/components/trace/session-action-buttons"
-import { focusVisibleZoneEditor } from "./message-event"
+import { findVisibleZoneEditor } from "./message-event"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
@@ -260,7 +261,12 @@ export function AgentSessionEvent({
   // just pulls the cursor into this surface's composer and hints at what
   // typing will do.
   const handleRedirect = (e: React.MouseEvent<HTMLButtonElement>) => {
-    focusVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
+    // No composer on this surface (non-member public channel, archived or
+    // locked stream) — bail before the hint, or it promises a fold-in that
+    // can't happen.
+    const editor = findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
+    if (!editor) return
+    focusAtEnd(editor)
     if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
     setRedirectHintVisible(true)
     redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)
@@ -297,11 +303,17 @@ export function AgentSessionEvent({
         {config.icon}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <div className="font-medium" style={config.titleColor ? { color: config.titleColor } : undefined}>
+            {/* Truncate rather than wrap: on narrow viewports the running
+                card's two right-slot buttons squeeze this column, and a
+                two-line title would grow the card height (INV-21). */}
+            <div
+              className="min-w-0 truncate font-medium"
+              style={config.titleColor ? { color: config.titleColor } : undefined}
+            >
               {config.title}
             </div>
             {sessionVersion != null && sessionVersion > 1 && (
-              <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <span className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                 Version {sessionVersion}
               </span>
             )}
