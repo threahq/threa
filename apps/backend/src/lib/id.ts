@@ -69,4 +69,6 @@ export {
   streamE2eKeyWrapId,
   conversationFeedbackId,
   boardViewId,
+  streamBriefId,
+  streamBriefRevisionId,
 } from "@threa/backend-common"

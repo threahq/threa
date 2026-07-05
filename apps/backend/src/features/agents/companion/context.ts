@@ -9,7 +9,7 @@ import { UserRepository, type User } from "../../workspaces"
 import type { Persona } from "../persona-repository"
 import { resolveActorNames } from "../actor-names"
 import { AttachmentRepository } from "../../attachments"
-import { StreamRepository, type Stream } from "../../streams"
+import { StreamRepository, StreamBriefRepository, resolveBriefStreamId, type Stream } from "../../streams"
 import { awaitAttachmentProcessing } from "../../attachments"
 import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ContextWindowPolicy } from "../context-window-policy"
@@ -193,6 +193,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamId: stream.id,
     personaId: persona.id,
   })
+
+  // Durable stream brief (roadmap 4.1): the stream's standing working document,
+  // injected into every turn. Threads inherit the root stream's brief — the
+  // brief keys on the effective root, same rule as access (INV-62).
+  const streamBrief = await StreamBriefRepository.findByStreamId(db, workspaceId, resolveBriefStreamId(stream))
 
   // Best-effort "Current Topic" highlight (§2.8 Q8): the topic the segmenter has
   // placed this turn in, surfaced over the contiguous window. Reads current
@@ -409,7 +414,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       conversationTopic,
       spawnedFromContext,
       followUp,
-      previousSessionsBlock
+      previousSessionsBlock,
+      streamBrief?.content ?? null
     )
     if (turnDigestBlock) {
       systemPrompt += `\n\n${turnDigestBlock}`
