@@ -373,9 +373,12 @@ self.addEventListener("push", (event) => {
     data = {}
   }
 
-  // Backend-driven clear: dismiss notifications for this stream across all devices.
-  // Clear both the regular stream tag and the mention tag so reading a stream
-  // dismisses all notification groups for it.
+  // Legacy backend-driven clear. The backend no longer sends these — a push
+  // that shows no notification burns the browser's silent-push quota (Firefox
+  // revokes the subscription at 0) — but clears queued for offline devices
+  // before that change carried a 28-day TTL, so this guard must survive one
+  // TTL window to keep a straggler from falling through to the display path
+  // and rendering a junk notification. Safe to delete after 2026-08-05.
   if (data.action === "clear") {
     if (!data.streamId) return
     event.waitUntil(
