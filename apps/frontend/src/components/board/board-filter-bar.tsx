@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { BookMarked, Check, ChevronDown, CircleDashed, Hash, Layers, LayoutGrid, X, Zap } from "lucide-react"
+import { BookMarked, Check, ChevronDown, CircleDashed, Hash, Layers, LayoutGrid, User, X, Zap } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import {
   BOARD_LENSES,
@@ -47,6 +47,12 @@ export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
     label: "Decisions",
     description: "Settled — captured as a memo",
     icon: BookMarked,
+  },
+  mine: {
+    value: "mine",
+    label: "Mine",
+    description: "Conversations you're in or mentioned in",
+    icon: User,
   },
 }
 

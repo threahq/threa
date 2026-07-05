@@ -357,6 +357,29 @@ export const ActivityRepository = {
    * read clears exactly its messages' activity, never the stream's other
    * topics (contrast `markStreamAsRead`, the whole-stream open coupling).
    */
+  /**
+   * Of `messageIds`, which ones `@`-mentioned `userId` — the Mine-lens signal
+   * (board `buildBoardPosts`). One batched presence read (INV-56), index-backed by
+   * `idx_user_activity_dedup (user_id, message_id, activity_type, actor_id)`.
+   * Workspace-scoped (INV-8); `ActivityTypes.MENTION`, not a literal (INV-33).
+   */
+  async findMentionedMessageIds(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    messageIds: string[]
+  ): Promise<Set<string>> {
+    if (messageIds.length === 0) return new Set()
+    const result = await db.query<{ message_id: string }>(sql`
+      SELECT DISTINCT message_id FROM user_activity
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
+        AND activity_type = ${ActivityTypes.MENTION}
+        AND message_id = ANY(${messageIds}::text[])
+    `)
+    return new Set(result.rows.map((row) => row.message_id))
+  },
+
   async markMessagesAsRead(db: Querier, workspaceId: string, userId: string, messageIds: string[]): Promise<number> {
     if (messageIds.length === 0) return 0
     const result = await db.query(sql`

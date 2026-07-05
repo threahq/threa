@@ -346,7 +346,7 @@ export const ConversationStatuses = {
  * must opt out of. Same signal for every viewer (personal lenses like Mine
  * come later). Ordered as they render in the lens picker.
  */
-export const BOARD_LENSES = ["all", "active", "needs-resolution", "decisions"] as const
+export const BOARD_LENSES = ["all", "active", "needs-resolution", "decisions", "mine"] as const
 export type BoardLens = (typeof BOARD_LENSES)[number]
 
 /** The board's home view: everything, newest activity first, nothing hidden. */

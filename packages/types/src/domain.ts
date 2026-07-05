@@ -738,6 +738,16 @@ export interface BoardPost {
    */
   hasCapturedMemo: boolean
   /**
+   * Whether this conversation is "mine" to the requesting viewer — they authored
+   * or participate in it (`participant_ids`) or were `@`-mentioned on one of its
+   * messages. The Mine lens signal. Like {@link hasCapturedMemo} this is a
+   * board-level, viewer-scoped field computed per fetch (not on the conversation
+   * aggregate the `conversation:*` events carry), so it is only as fresh as the
+   * last board fetch — a viewer newly added/mentioned flips into Mine on the next
+   * mount/reconnect reseed (INV-53), not live.
+   */
+  isMine: boolean
+  /**
    * The effective root of the conversation's anchor stream (a top-level anchor
    * is its own root; a thread anchor resolves to its root channel/DM). The
    * board's stream-scope filter matches on this, so a thread-anchored

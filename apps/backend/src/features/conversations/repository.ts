@@ -1,6 +1,7 @@
 import { sql, composeSql, type Querier } from "../../db"
 import { streamAccessPredicateSql } from "../streams"
 import {
+  ActivityTypes,
   ConversationStatuses,
   type ConversationStatus,
   type BoardLens,
@@ -15,9 +16,27 @@ import {
  * same `BOARD_LENS_*` thresholds. `all` (and absent) adds nothing — the default
  * home shows everything.
  */
-function boardLensCondSql(lens: BoardLens | undefined) {
+function boardLensCondSql(lens: BoardLens | undefined, userId: string) {
   if (lens === "active") {
     return composeSql`AND status = ${ConversationStatuses.ACTIVE}`
+  }
+  if (lens === "mine") {
+    // The viewer's own conversations: authored/participating (`participant_ids`,
+    // GIN-indexed) OR `@`-mentioned on a primary message (`user_activity`,
+    // index-backed). Pinned to `conversations.message_ids` — the SAME set the JS
+    // half folds over in `buildBoardPosts` — so the seed boundary and the
+    // client's `isMine` render authority can't disagree. Workspace-scoped inside
+    // the EXISTS (INV-8); `ActivityTypes.MENTION`, not a literal (INV-33).
+    return composeSql`AND (
+      participant_ids @> ARRAY[${userId}]::text[]
+      OR EXISTS (
+        SELECT 1 FROM user_activity ua
+        WHERE ua.workspace_id = conversations.workspace_id
+          AND ua.user_id = ${userId}
+          AND ua.activity_type = ${ActivityTypes.MENTION}
+          AND ua.message_id = ANY(conversations.message_ids)
+      )
+    )`
   }
   if (lens === "needs-resolution") {
     // A `resolved` conversation is done — never a loose end — even if its LLM
@@ -427,7 +446,7 @@ export const ConversationRepository = {
     const fields = sql`${sql.raw(SELECT_FIELDS)}`
     const access = streamAccessPredicateSql(workspaceId, userId, "conversations.stream_id")
     const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
-    const lensCond = boardLensCondSql(options?.lens)
+    const lensCond = boardLensCondSql(options?.lens, userId)
     const scopeCond = boardScopeCondSql(options?.scopeStreamIds)
     const typeCond = boardTypeCondSql(options?.scopeStreamTypes)
     // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw

@@ -10,6 +10,7 @@ function post(overrides: {
   hoursIdle?: number
   completenessScore?: number
   hasCapturedMemo?: boolean
+  isMine?: boolean
 }): BoardPost {
   const hoursIdle = overrides.hoursIdle ?? 0
   return {
@@ -20,6 +21,7 @@ function post(overrides: {
       lastActivityAt: new Date(NOW - hoursIdle * 3_600_000).toISOString(),
     },
     hasCapturedMemo: overrides.hasCapturedMemo ?? false,
+    isMine: overrides.isMine ?? false,
   } as unknown as BoardPost
 }
 
@@ -39,6 +41,14 @@ describe("matchesBoardLens", () => {
   it("decisions accepts only captured-memo posts", () => {
     expect(matchesBoardLens(post({ hasCapturedMemo: true }), "decisions", NOW)).toBe(true)
     expect(matchesBoardLens(post({ hasCapturedMemo: false }), "decisions", NOW)).toBe(false)
+  })
+
+  it("mine accepts only the viewer's own posts (server-precomputed isMine)", () => {
+    expect(matchesBoardLens(post({ isMine: true }), "mine", NOW)).toBe(true)
+    expect(matchesBoardLens(post({ isMine: false }), "mine", NOW)).toBe(false)
+    // Mine narrows; it must not leak into the default home — `all` still takes an
+    // isMine:false post.
+    expect(matchesBoardLens(post({ isMine: false }), "all", NOW)).toBe(true)
   })
 
   it("needs-resolution accepts an explicitly stalled conversation regardless of age", () => {

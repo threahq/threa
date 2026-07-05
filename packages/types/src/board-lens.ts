@@ -14,6 +14,8 @@ import type { BoardPost } from "./domain"
  *  - `needs-resolution` — explicitly stalled, or gone quiet (≥ stale hours) while
  *    still incomplete (< max completeness). Loose ends.
  *  - `decisions` — produced a captured memo (`hasCapturedMemo`). What got settled.
+ *  - `mine` — the viewer authored/participates in it or was `@`-mentioned
+ *    (`isMine`, precomputed server-side like `hasCapturedMemo`). For you.
  *
  * `nowMs` is passed in (not read via `Date.now()`) so the filter is pure and
  * testable; callers pass the current time at render.
@@ -26,6 +28,8 @@ export function matchesBoardLens(post: BoardPost, lens: BoardLens, nowMs: number
       return post.conversation.status === "active"
     case "decisions":
       return post.hasCapturedMemo === true
+    case "mine":
+      return post.isMine === true
     case "needs-resolution": {
       const { status, lastActivityAt, completenessScore } = post.conversation
       if (status === "stalled") return true
