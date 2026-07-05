@@ -5,7 +5,7 @@ import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
-import { MessageRepository, type EventService } from "../messaging"
+import { MessageRepository, type EventService, type Message } from "../messaging"
 import {
   resolveDeliveryVerdict,
   TrustTiers,
@@ -22,7 +22,13 @@ import {
   type StreamService,
 } from "../streams"
 import { UserRepository } from "../workspaces"
-import { E2eStreamsRepository, StreamE2eKeyWrapsRepository, resolveSealingContext } from "../e2e-streams"
+import {
+  E2eStreamActorsRepository,
+  E2eStreamsRepository,
+  StreamE2eKeyWrapsRepository,
+  resolveSealingContext,
+} from "../e2e-streams"
+import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -87,6 +93,7 @@ import {
   type AgentSessionStep,
 } from "../agents"
 import { buildSealedTurnContext } from "./sealed-turn-context"
+import { authorizeSealedCallback, emitBotSealedProgress } from "./sealed-callbacks"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { serializeTraceStep, synthesizeReplyOnlyBotTrace } from "./trace-steps"
 import { createBotRuntimeWriteOps } from "./runtime-write-ops"
@@ -131,7 +138,9 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
+  provisionSessionKeyWrapsSchema,
   createLabelSchema,
   updateLabelSchema,
   assignLabelByNameSchema,
@@ -602,6 +611,49 @@ async function buildSealedClaimContext(
   return context
 }
 
+/**
+ * The minimal sealed material a session-control invocation needs to seal its ack
+ * on an E2E scratchpad. Unlike {@link buildSealedClaimContext} there is no
+ * trigger/history to open (the command name is cleartext dispatch metadata, not
+ * a sealed message) — only the current-generation SSK wraps addressed to the
+ * claiming bot's BIK plus the `reply` binding. Returns `undefined` when the bot
+ * can't seal (no registered BIK, or no wrap for the current generation): the
+ * harness then falls back to a silent close, so a key-race never wedges the
+ * command.
+ */
+async function buildSessionControlSealedAck(
+  pool: Pool,
+  invocation: BotInvocation,
+  instanceId: string
+): Promise<
+  | {
+      wraps: { keyGeneration: number; wrapEnc: string; wrapCt: string }[]
+      reply: { keyGeneration: number; senderId: string }
+    }
+  | undefined
+> {
+  const instance = await BotRuntimeInstanceRepository.findByInstance(pool, {
+    workspaceId: invocation.workspaceId,
+    botId: invocation.actorId,
+    instanceId,
+  })
+  if (!instance?.publicKeyId) return undefined
+  const e2e = await E2eStreamsRepository.getByStreamId(pool, invocation.workspaceId, invocation.rootStreamId)
+  if (!e2e) return undefined
+  const wraps = await StreamE2eKeyWrapsRepository.listForStream(pool, invocation.workspaceId, invocation.rootStreamId)
+  const botWraps = wraps.filter(
+    (w) =>
+      w.recipientKind === "bot" &&
+      w.recipientKeyId === instance.publicKeyId &&
+      w.keyGeneration === e2e.currentKeyGeneration
+  )
+  if (botWraps.length === 0) return undefined
+  return {
+    wraps: botWraps.map((w) => ({ keyGeneration: w.keyGeneration, wrapEnc: w.wrapEnc, wrapCt: w.wrapCt })),
+    reply: { keyGeneration: e2e.currentKeyGeneration, senderId: invocation.actorId },
+  }
+}
+
 export interface PublicApiDeps {
   searchService: SearchService
   memoExplorerService: MemoExplorerService
@@ -691,52 +743,20 @@ export function createPublicApiHandlers({
   }
 
   /**
-   * Resolve and authorize a sealed bot session callback — shared by the sealed
-   * `/steps`, `/steps/started`, and `/sealed-complete` handlers (the external
-   * siblings of the enclave's session-callback guards). Bot invocations reuse the
-   * invocation id as the agent session id, so the path's `invocationId` is the
-   * session id. The neutral callback token (model A — the claim token, delivered
-   * only inside the winning sealed claim) is the binding; the workspace + persona
-   * checks are defense-in-depth isolation (INV-8) on top of it. Mirrors the
-   * enclave's `assertRunning`/`assertCallbackBound` + stream resolution.
+   * Resolve and authorize a sealed bot session callback — the HTTP adapter over
+   * the transport-neutral `authorizeSealedCallback` core (shared with the
+   * `bot:invocation:sealed-steps` WS frame via `recordSealedSteps`). The verified
+   * token IS the per-claim claim token (model A); it is returned so the
+   * `/sealed-complete` claim flip scopes by it without re-reading the header,
+   * keeping that security dependency explicit rather than an implicit `!`.
    */
   async function authorizeSealedInvocationCallback(req: Request) {
     if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-    const session = await AgentSessionRepository.findById(pool, req.params.invocationId)
-    assertSessionRunning(session)
-    // The verified token IS the per-claim claim token (model A); return it so the
-    // `/sealed-complete` claim flip scopes by it without re-reading the header,
-    // keeping that security dependency explicit rather than an implicit `!`.
-    const callbackToken = req.header(THREA_CALLBACK_TOKEN_HEADER)
-    verifyCallbackToken(session, callbackToken)
-    const stream = await StreamRepository.findById(pool, session.streamId)
-    if (!stream || stream.workspaceId !== req.workspaceId) {
-      throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-    }
-    const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
-    if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-    if (session.personaId !== bot.id) {
-      throw new HttpError("Session does not belong to this bot", { status: 403, code: "FORBIDDEN" })
-    }
-    return { session, stream, bot, callbackToken: callbackToken! }
-  }
-
-  /**
-   * Drive the inline stream-view indicator at a sealed step boundary — the same
-   * `agent_session:progress` payload the plaintext sink emits, step type only
-   * (never sealed content). Emitted at step start (and on the finalize fallback
-   * when the start was dropped) so "<bot> is …" tracks the live step.
-   */
-  function emitBotSealedProgress(stream: Stream, session: AgentSession, bot: Bot, step: AgentSessionStep): void {
-    io.to(`ws:${stream.workspaceId}:stream:${session.streamId}`).emit("agent_session:progress", {
-      workspaceId: stream.workspaceId,
-      streamId: session.streamId,
-      sessionId: session.id,
-      triggerMessageId: session.triggerMessageId,
-      personaName: bot.name,
-      stepCount: step.stepNumber,
-      messageCount: 0,
-      currentStepType: step.stepType,
+    return authorizeSealedCallback(pool, {
+      workspaceId: req.workspaceId!,
+      botId: req.botApiKey.botId,
+      invocationId: req.params.invocationId,
+      callbackToken: req.header(THREA_CALLBACK_TOKEN_HEADER),
     })
   }
 
@@ -879,6 +899,18 @@ export function createPublicApiHandlers({
           code: "PERSONAL_BOT_REQUIRED",
         })
       }
+      // An E2E session wraps the stream key to the bot OWNER's identity key, so
+      // the declared key must be the owner's CURRENT one — wrapping to a stale
+      // or foreign key would create a scratchpad the owner can never open.
+      if (data.e2e) {
+        const ownerKey = await UserE2eKeysRepository.getActiveByUser(pool, req.workspaceId!, bot.ownerUserId)
+        if (!ownerKey || ownerKey.keyId !== data.e2e.ownerKeyId) {
+          throw new HttpError("ownerKeyId does not match the bot owner's active encryption key", {
+            status: 400,
+            code: "E2E_OWNER_KEY_MISMATCH",
+          })
+        }
+      }
 
       const requiredRuntimeTraits = ["active-scratchpad"] as const
 
@@ -904,6 +936,9 @@ export function createPublicApiHandlers({
             activeStreamId: existingLink.activeStreamId,
             runtimeSessionId: existingLink.runtimeSessionId,
             streamUrlPath: `/w/${req.workspaceId!}/s/${existingLink.activeStreamId}`,
+            // The resumed scratchpad's actual encryption state — a harness that
+            // asked for e2e can detect a plaintext resume (and vice versa).
+            e2eEnabled: await E2eStreamsRepository.isE2eStream(pool, req.workspaceId!, existingLink.rootStreamId),
           },
         })
       }
@@ -921,6 +956,7 @@ export function createPublicApiHandlers({
         labelName: data.labelName,
         description: data.description,
         traits: requiredRuntimeTraits,
+        ...(data.e2e ? { e2e: { ownerKeyId: data.e2e.ownerKeyId } } : {}),
       })
 
       res.json({
@@ -930,8 +966,99 @@ export function createPublicApiHandlers({
           activeStreamId: link.activeStreamId,
           runtimeSessionId: link.runtimeSessionId,
           streamUrlPath: `/w/${req.workspaceId!}/s/${stream.id}`,
+          e2eEnabled: stream.e2eEnabled === true,
         },
       })
+    },
+
+    /**
+     * The bot OWNER's active encryption key (public half + key id). A sealed
+     * harness fetches this before creating an E2E session so it can declare the
+     * owner key at create time and wrap the generation-0 stream key to it.
+     * Public-key material only — never secret. 404 tells the harness the owner
+     * has not set up encryption yet (the actionable next step for the user).
+     */
+    async getBotOwnerE2eKey(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      if (bot.type !== "personal") {
+        throw new HttpError("Only a personal bot has an owner key", { status: 400, code: "PERSONAL_BOT_REQUIRED" })
+      }
+      const key = await UserE2eKeysRepository.getActiveByUser(pool, req.workspaceId!, bot.ownerUserId)
+      if (!key) {
+        throw new HttpError("The bot owner has not set up encryption", {
+          status: 404,
+          code: "E2E_OWNER_KEY_NOT_FOUND",
+        })
+      }
+      res.json({ data: { keyId: key.keyId, publicKey: key.publicKey.toString("base64") } })
+    },
+
+    /**
+     * Store the generation-0 SSK wraps for a harness-created E2E scratchpad —
+     * phase two of the two-phase creation (the wrap AAD binds to the stream id
+     * minted in phase one). Only the stream's own bot actor may provision, only
+     * at the current generation, and only while the generation has NO wraps:
+     * slots are immutable (INV-20 upsert semantics), so a partial or replayed
+     * provision can never splice wraps of two different keys together — the
+     * whole batch lands in one transaction or the state stays empty.
+     */
+    async provisionStreamE2eKeyWraps(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const data = validateRequest(provisionSessionKeyWrapsSchema, req.body)
+      const workspaceId = req.workspaceId!
+      const streamId = req.params.streamId
+      const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, streamId)
+      if (!e2e) throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
+      if (!actors.some((actor) => actor.kind === "bot" && actor.actorId === req.botApiKey!.botId)) {
+        throw new HttpError("Bot is not an actor on this stream", { status: 403, code: "NOT_STREAM_ACTOR" })
+      }
+      if (data.keyGeneration !== e2e.currentKeyGeneration) {
+        throw new HttpError(
+          `Wraps target generation ${data.keyGeneration}; the stream is at ${e2e.currentKeyGeneration}`,
+          { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
+        )
+      }
+      // The user slot is pinned to the declared owner key: a wrap for any other
+      // user key would plant an unopenable owner slot.
+      for (const wrap of data.wraps) {
+        if (wrap.recipientKind === "user" && wrap.recipientKeyId !== e2e.ownerUserKeyId) {
+          throw new HttpError("A user wrap must target the stream owner's key", {
+            status: 400,
+            code: "E2E_OWNER_KEY_MISMATCH",
+          })
+        }
+      }
+      await withTransaction(pool, async (client) => {
+        // Serialize concurrent provisions on the stream's e2e row (INV-20):
+        // without the lock, two racers could each see zero wraps and interleave
+        // wraps of two DIFFERENT keys into the immutable slots — an unopenable
+        // splice. With it, the loser re-reads after commit and 409s cleanly.
+        await client.query(`SELECT 1 FROM e2e_streams WHERE workspace_id = $1 AND stream_id = $2 FOR UPDATE`, [
+          workspaceId,
+          streamId,
+        ])
+        const existing = await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId)
+        if (existing.some((wrap) => wrap.keyGeneration === data.keyGeneration)) {
+          // A replay after success lands here; the harness treats it as done.
+          throw new HttpError("This generation already has wraps", { status: 409, code: "E2E_ALREADY_PROVISIONED" })
+        }
+        await StreamE2eKeyWrapsRepository.insertMany(
+          client,
+          data.wraps.map((wrap) => ({
+            workspaceId,
+            streamId,
+            keyGeneration: data.keyGeneration,
+            recipientKeyId: wrap.recipientKeyId,
+            recipientKind: wrap.recipientKind,
+            wrapEnc: wrap.wrapEnc,
+            wrapCt: wrap.wrapCt,
+          }))
+        )
+      })
+      res.json({ data: { stored: data.wraps.length } })
     },
 
     async renameBotRuntimeSession(req: Request, res: Response) {
@@ -1036,6 +1163,7 @@ export function createPublicApiHandlers({
       })
       const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
       let sealedContext: SealedTurnContext | undefined
+      let sealedAck: Awaited<ReturnType<typeof buildSessionControlSealedAck>>
       let callbackBinding: { callbackTokenHash: string; replyKeyGeneration: number } | undefined
       if (!isSessionControl && verdict.delivery === "sealed") {
         sealedContext = await buildSealedClaimContext(pool, invocation, data.instanceId)
@@ -1043,6 +1171,12 @@ export function createPublicApiHandlers({
           callbackTokenHash: hashCallbackToken(invocation.claimToken!),
           replyKeyGeneration: sealedContext.reply.keyGeneration,
         }
+      } else if (isSessionControl && verdict.delivery === "sealed") {
+        // Session-control (e.g. /model) on an E2E scratchpad: no sealed turn, but
+        // hand the harness the current-generation SSK wraps so it can seal the
+        // command ack. Undefined when the bot can't seal (no BIK / wrap race) —
+        // the harness then closes silently, exactly as before this shipped.
+        sealedAck = await buildSessionControlSealedAck(pool, invocation, data.instanceId)
       }
 
       if (!isSessionControl && bot && !bot.archivedAt) {
@@ -1100,6 +1234,7 @@ export function createPublicApiHandlers({
           metadata: invocation.metadata,
           ...(context && { context }),
           ...(sealedContext && { sealedContext }),
+          ...(sealedAck && { sealedAck }),
         },
       })
     },
@@ -1168,63 +1303,70 @@ export function createPublicApiHandlers({
         sessionId: session.id,
         step: serializeTraceStep(persisted),
       })
-      emitBotSealedProgress(stream, session, bot, persisted)
+      emitBotSealedProgress(io, { stream, session, bot }, persisted)
 
       res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
     },
 
     /**
-     * Finalize one sealed trace step in place when it completes — set the sealed
-     * content + completed_at on the row opened at sealed `/steps/started`, keeping
-     * its original started_at so the duration is real. The content is ciphertext
-     * only; the owner's browser decrypts it (INV-E7). If the start POST was
-     * dropped, fall back to a race-safe completed insert so the trace still lands.
-     * The external sibling of the enclave's `/steps`.
+     * Finalize one sealed trace step in place when it completes — the HTTP
+     * adapter over the shared `recordSealedSteps` write-op (the WS
+     * `bot:invocation:sealed-steps` frame drives the same op, so the two
+     * transports can never diverge). The external sibling of the enclave's
+     * `/steps`.
      */
     async recordBotInvocationSealedStep(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(recordSealedInvocationStepSchema, req.body)
+      const result = await botRuntimeWriteOps.recordSealedSteps({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        callbackToken: req.header(THREA_CALLBACK_TOKEN_HEADER) ?? "",
+        steps: [data],
+      })
+      res.json({
+        data: { invocationId: result.invocationId, sessionId: result.sessionId, stepId: result.steps[0].stepId },
+      })
+    },
+
+    /**
+     * Post one sealed *interim* message from an in-flight sealed turn — the
+     * external sibling of the enclave streaming replies to its session
+     * `/messages` callback, and the sealed counterpart of a plaintext bot's
+     * mid-turn `POST /streams/:id/messages`. A channel-style harness (Claude
+     * Code's `send` tool, the permission-prompt relay) posts progress messages
+     * before its final reply; on an E2E stream those must be ciphertext, so the
+     * plaintext message API correctly rejects them and this route carries them
+     * instead. Auth is the per-claim callback token; the sealed grant scopes the
+     * write to the claim's own stream. `messageId` is client-minted (it binds
+     * the seal AAD) and doubles as the idempotency key, so a retried post can't
+     * double-insert. Dark until `externalSealedDelivery` flips.
+     */
+    async sendBotInvocationSealedMessage(req: Request, res: Response) {
+      const data = validateRequest(sendSealedInvocationMessageSchema, req.body)
       const { session, stream, bot } = await authorizeSealedInvocationCallback(req)
       assertReplyKeyGeneration(session, data.envelope)
 
-      const completedAt = new Date()
-      // Scope the finalize to this session: data.stepId is caller-supplied, so an
-      // unscoped update would let a bot overwrite another session's step row.
-      let persisted = await AgentSessionRepository.updateStep(pool, data.stepId, {
+      const message = await eventService.createMessage({
+        id: data.messageId,
+        workspaceId: stream.workspaceId,
+        streamId: session.streamId,
         sessionId: session.id,
-        contentCiphertext: data.ciphertext,
-        contentEnvelope: data.envelope,
-        messageId: data.messageId,
-        completedAt,
+        authorId: bot.id,
+        authorType: AuthorTypes.BOT,
+        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+        ciphertext: Buffer.from(data.ciphertext, "base64"),
+        envelope: data.envelope,
+        e2eVersion: 2,
+        // Restrict the bot's reach to this scratchpad, mirroring the sealed
+        // completion reply; the client-minted id dedupes a redelivered post.
+        accessibleStreamIds: [session.streamId],
+        clientMessageId: data.messageId,
       })
 
-      // Fallback: the start POST never landed (dropped/raced), so there's no row
-      // to finalize. Insert a completed row + advance current_step_type (INV-6,
-      // INV-20) so the trace and inline indicator still reflect this step.
-      if (!persisted) {
-        const startedAt = new Date(completedAt.getTime() - (data.durationMs ?? 0))
-        persisted = await withTransaction(pool, async (tx) => {
-          const created = await AgentSessionRepository.appendStep(tx, {
-            id: data.stepId,
-            sessionId: session.id,
-            stepType: data.stepType,
-            messageId: data.messageId,
-            contentCiphertext: data.ciphertext,
-            contentEnvelope: data.envelope,
-            startedAt,
-            completedAt,
-          })
-          await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
-          return created
-        })
-        emitBotSealedProgress(stream, session, bot, persisted)
-      }
-
-      io.to(`ws:${stream.workspaceId}:agent_session:${session.id}`).emit("agent_session:step:completed", {
-        sessionId: session.id,
-        step: serializeTraceStep(persisted),
-      })
-
-      res.json({ data: { invocationId: session.id, sessionId: session.id, stepId: persisted.id } })
+      res.json({ data: { messageId: message.id } })
     },
 
     /**
@@ -1365,27 +1507,59 @@ export function createPublicApiHandlers({
         })
         if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
         await assertStreamAccessible(req, claim.responseStreamId)
-        // E2EE-2: the public API has no sealed-write path, so a bot completion
-        // targeting an E2E stream would persist a plaintext reply into a sealed
-        // timeline. E2EE-11 stops these invocations from being created at all;
-        // this rejects any pre-existing claim loudly (and is the same gate
-        // send/update use) rather than letting the INV-E1 sink throw a less
-        // specific error deeper in.
-        await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)
-        const message = contentMarkdown
-          ? await eventService.createMessageInTransaction(client, {
-              workspaceId: req.workspaceId!,
-              streamId: claim.responseStreamId,
-              authorId: bot.id,
-              authorType: AuthorTypes.BOT,
-              contentJson: contentJson!,
-              contentMarkdown,
-              attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-              clientMessageId: `bot-invocation:${claim.id}`,
-              sources: data.sources,
-              metadata: data.metadata,
+        // E2EE-2: a plaintext completion MESSAGE into an E2E stream would break
+        // the sealed timeline (sealed replies go to /sealed-complete instead),
+        // so reject it loudly — but only when there is content to persist. A
+        // `noResponse` completion writes no message row and must work on E2E
+        // streams: session-control invocations (e.g. /model, /steer acks) are
+        // dispatched there with plaintext claims, and blocking their close
+        // would strand every one of them in a TTL-recycle loop.
+        if (contentMarkdown) await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)
+        let message: Message | null = null
+        if (data.sealedReply) {
+          // Sealed session-control ack: the stream MUST be E2E and the seal MUST
+          // bind the current generation, or the row is permanently undecryptable.
+          const e2e = await E2eStreamsRepository.getByStreamId(client, req.workspaceId!, claim.responseStreamId)
+          if (!e2e) {
+            throw new HttpError("A sealed reply requires an E2E stream", {
+              status: 400,
+              code: "SEALED_REPLY_REQUIRES_E2E_STREAM",
             })
-          : null
+          }
+          if (data.sealedReply.envelope.keyGeneration !== e2e.currentKeyGeneration) {
+            throw new HttpError(
+              `Sealed reply uses key generation ${data.sealedReply.envelope.keyGeneration}; the stream is at ${e2e.currentKeyGeneration}`,
+              { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
+            )
+          }
+          message = await eventService.createMessageInTransaction(client, {
+            id: data.sealedReply.messageId,
+            workspaceId: req.workspaceId!,
+            streamId: claim.responseStreamId,
+            authorId: bot.id,
+            authorType: AuthorTypes.BOT,
+            contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+            contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+            ciphertext: Buffer.from(data.sealedReply.ciphertext, "base64"),
+            envelope: data.sealedReply.envelope,
+            e2eVersion: 2,
+            accessibleStreamIds: [claim.responseStreamId],
+            clientMessageId: `bot-invocation:${claim.id}`,
+          })
+        } else if (contentMarkdown) {
+          message = await eventService.createMessageInTransaction(client, {
+            workspaceId: req.workspaceId!,
+            streamId: claim.responseStreamId,
+            authorId: bot.id,
+            authorType: AuthorTypes.BOT,
+            contentJson: contentJson!,
+            contentMarkdown,
+            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            clientMessageId: `bot-invocation:${claim.id}`,
+            sources: data.sources,
+            metadata: data.metadata,
+          })
+        }
         const completed = await botRuntimeService.completeInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,

@@ -27,6 +27,7 @@ function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConf
     permissionRelay: false,
     pollMs: 3000,
     idleTimeoutMs: 3_600_000,
+    sealedFullTrace: true,
     ...overrides,
   }
 }

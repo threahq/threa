@@ -1,3 +1,10 @@
+import {
+  THREA_CALLBACK_TOKEN_HEADER,
+  type ProvisionedWrap,
+  type SealedReplyBody,
+  type SealingState,
+} from "@threa/bot-runtime-client"
+
 const FETCH_TIMEOUT_MS = 30_000
 
 export interface RuntimeSessionLink {
@@ -6,6 +13,8 @@ export interface RuntimeSessionLink {
   activeStreamId: string
   runtimeSessionId: string
   streamUrlPath: string
+  /** The linked scratchpad's encryption state (create echoes the request; resume reports the actual state). */
+  e2eEnabled?: boolean
 }
 
 export interface ExternalHistoryMessage {
@@ -49,12 +58,20 @@ export interface ClaimedInvocation {
   runtimeSessionId: string | null
   metadata: Record<string, unknown>
   context?: { kind: "inline"; messages: ExternalHistoryMessage[] }
+  /** Present on a sealed (E2E) claim as delivered by the server; consumed and cleared by hydration. */
+  sealedContext?: unknown
+  /** Present on a session-control claim on an E2E stream: SSK wraps to seal the command ack. */
+  sealedAck?: unknown
+  /** Derived from `sealedContext` at claim time; carries the stream key + binding for sealing replies/steps. */
+  sealing?: SealingState
 }
 
 export class ThreaApiError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    /** The server's structured error `code` (e.g. `E2E_STREAM_PLAINTEXT_UNSUPPORTED`), when the body was JSON. */
+    readonly code?: string
   ) {
     super(message)
     this.name = "ThreaApiError"
@@ -95,8 +112,22 @@ export class ThreaClient {
       clearTimeout(timeout)
     }
     if (!response.ok) {
-      // Don't read the body: proxy/server errors can return large HTML pages.
-      throw new ThreaApiError(`Threa API ${response.status}: ${response.statusText}`, response.status)
+      // Read the structured `code` so callers can branch on the specific error
+      // (e.g. an E2E-plaintext rejection vs a capability/validation 400) instead
+      // of swallowing every same-status error alike. Only parse a JSON body and
+      // cap it — a proxy/server 5xx can return a large HTML page, which we must
+      // not pull into memory.
+      let code: string | undefined
+      if (response.headers.get("content-type")?.includes("application/json")) {
+        try {
+          const body = (await response.text()).slice(0, 2000)
+          const parsed = JSON.parse(body) as { code?: unknown }
+          if (typeof parsed.code === "string") code = parsed.code
+        } catch {
+          code = undefined
+        }
+      }
+      throw new ThreaApiError(`Threa API ${response.status}: ${response.statusText}`, response.status, code)
     }
     if (response.status === 204) return undefined as T
     return (await response.json()) as T
@@ -145,6 +176,47 @@ export class ThreaClient {
   async sendMessage(streamId: string, body: Record<string, unknown>): Promise<void> {
     await this.request(this.workspacePath(`/streams/${streamId}/messages`), {
       method: "POST",
+      body: JSON.stringify(body),
+    })
+  }
+
+  /** Post one sealed interim message from an in-flight sealed claim (callback-token auth). */
+  async sendSealedMessage(invocationId: string, callbackToken: string, body: SealedReplyBody): Promise<void> {
+    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-messages`), {
+      method: "POST",
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
+      body: JSON.stringify(body),
+    })
+  }
+
+  /** The bot owner's active encryption key (public half). 404 = the owner has not set up encryption. */
+  async getOwnerE2eKey(): Promise<{ keyId: string; publicKey: string }> {
+    const body = await this.request<{ data: { keyId: string; publicKey: string } }>(
+      this.workspacePath("/bot-runtime/owner-e2e-key")
+    )
+    return body.data
+  }
+
+  /** Phase two of harness-created E2E scratchpads: store the generation-0 stream-key wraps. */
+  async provisionStreamKeyWraps(
+    streamId: string,
+    body: { keyGeneration: number; wraps: ProvisionedWrap[] }
+  ): Promise<void> {
+    await this.request(this.workspacePath(`/streams/${streamId}/e2e/key-wraps`), {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  }
+
+  /** Complete a sealed turn with its final sealed reply — or silently (`noResponse`). Callback-token auth. */
+  async completeSealed(
+    invocationId: string,
+    callbackToken: string,
+    body: { reply: SealedReplyBody } | { noResponse: true }
+  ): Promise<void> {
+    await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-complete`), {
+      method: "POST",
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
       body: JSON.stringify(body),
     })
   }

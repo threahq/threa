@@ -374,7 +374,9 @@ export class TranscriptTracer {
 
   private bound: Candidate | undefined
   private candidates: Candidate[] = []
-  private turn: { invocationId: string; emitted: number; truncationNoted: boolean; bindDeadline: number } | undefined
+  private turn:
+    | { invocationId: string; mode?: RedactionMode; emitted: number; truncationNoted: boolean; bindDeadline: number }
+    | undefined
   private readonly toolHeadlines = new Map<string, string>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private polling = false
@@ -390,14 +392,26 @@ export class TranscriptTracer {
     this.log = options.log ?? (() => undefined)
   }
 
-  /** Start (or re-window) tailing for a delivered turn. Call BEFORE the turn content is pushed to the runtime. */
-  beginTurn(invocationId: string): void {
+  /**
+   * Start (or re-window) tailing for a delivered turn. Call BEFORE the turn
+   * content is pushed to the runtime. `mode` overrides the constructor default
+   * for this turn only — a sealed (E2EE) turn runs `full` because its steps are
+   * ciphertext to the server; the override never outlives the turn, so a
+   * missed reset can't leak full detail into a later plaintext turn.
+   */
+  beginTurn(invocationId: string, mode?: RedactionMode): void {
     this.stopTimer()
     // Orphaned tool_use ids (a call whose result never streamed before the
     // turn ended) must not accumulate across a long-lived session; pairing is
     // per-turn, so a fresh turn starts with an empty map.
     this.toolHeadlines.clear()
-    this.turn = { invocationId, emitted: 0, truncationNoted: false, bindDeadline: Date.now() + this.bindTimeoutMs }
+    this.turn = {
+      invocationId,
+      mode,
+      emitted: 0,
+      truncationNoted: false,
+      bindDeadline: Date.now() + this.bindTimeoutMs,
+    }
     if (this.bound) {
       const fresh = this.snapshotCandidate(this.bound.path)
       if (fresh) {
@@ -497,7 +511,7 @@ export class TranscriptTracer {
   private async emitLines(lines: string[]): Promise<void> {
     const turn = this.turn
     if (!turn) return
-    const ctx: MapContext = { mode: this.mode, toolHeadlines: this.toolHeadlines }
+    const ctx: MapContext = { mode: turn.mode ?? this.mode, toolHeadlines: this.toolHeadlines }
     let frames: TraceFrame[] = []
     let statusText: string | undefined
     for (const line of lines) {

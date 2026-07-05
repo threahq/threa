@@ -1,4 +1,5 @@
 import { io as openSocket, type Socket } from "socket.io-client"
+import { THREA_CALLBACK_TOKEN_HEADER, type SealedStepFrame } from "./sealed"
 import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint"
 import type {
   BotHelloBootstrap,
@@ -211,6 +212,32 @@ export class BotRuntimeTransport {
   }
 
   /**
+   * Record one or more SEALED trace steps for an E2E turn. Same routing and
+   * best-effort semantics as {@link recordSteps} — WS frame first, per-step HTTP
+   * fallback — but the frames carry ciphertext + envelope instead of plaintext
+   * content, and auth is the per-claim callback token (model A), not
+   * `instanceId`/`claimToken`. `stepId` is the idempotency key: the server
+   * finalizes/upserts by it, so a duplicate delivery can't double-persist.
+   */
+  async recordSealedSteps(invocationId: string, callbackToken: string, steps: SealedStepFrame[]): Promise<void> {
+    if (steps.length === 0) return
+    const { sent, ack } = await this.emitWrite("bot:invocation:sealed-steps", {
+      invocationId,
+      callbackToken,
+      steps,
+    })
+    if (ack) {
+      if (!ack.ok) this.logFn(`sealed steps rejected (${ack.code ?? "?"}): ${ack.message ?? ""}`)
+      return
+    }
+    if (sent) {
+      this.logFn("sealed steps ack timed out; relying on the in-flight frame (no HTTP retry)")
+      return
+    }
+    await this.httpRecordSealedStepsFallback(invocationId, callbackToken, steps)
+  }
+
+  /**
    * Renew a claim's lease. Correctness-critical, so the HTTP fallback is
    * mandatory: a missing ack, a dead socket, or any non-`NOT_FOUND` server error
    * all retry over HTTP. Returns `{ notFound: true }` when the claim is gone
@@ -328,6 +355,26 @@ export class BotRuntimeTransport {
         })
       } catch (error) {
         this.logFn(`step HTTP fallback failed: ${summarize(error)}`)
+      }
+    }
+  }
+
+  private async httpRecordSealedStepsFallback(
+    invocationId: string,
+    callbackToken: string,
+    steps: SealedStepFrame[]
+  ): Promise<void> {
+    // The HTTP /sealed-steps endpoint takes one step per request, so a batched
+    // WS frame unrolls into N posts here. Best-effort: swallow per-step failures.
+    for (const step of steps) {
+      try {
+        await this.httpRequest(this.v1Path(`/bot-invocations/${invocationId}/sealed-steps`), {
+          method: "POST",
+          headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
+          body: JSON.stringify(step),
+        })
+      } catch (error) {
+        this.logFn(`sealed step HTTP fallback failed: ${summarize(error)}`)
       }
     }
   }

@@ -18,6 +18,8 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "@hpke/core": "^1.9.0",
+    "@hpke/dhkem-x25519": "^1.6.0",
     "@types/bun": "latest",
     "typescript": "^5.9.3"
   }

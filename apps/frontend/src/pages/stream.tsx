@@ -61,7 +61,7 @@ import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
-import { InviteActorButton } from "@/components/encryption"
+import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamContextSurface, StreamContextGallery, useStreamGallery } from "@/components/stream-context"
@@ -613,7 +613,10 @@ export function StreamPage() {
             <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
           )}
           {stream && isScratchpad && !isDraft && (
-            <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
+            <>
+              <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
+              <InviteBotButton workspaceId={workspaceId!} stream={stream} />
+            </>
           )}
           {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
             <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>

@@ -122,6 +122,34 @@ const invocationStepsSchema = z.object({
   statusText: statusTextSchema,
 })
 
+// WS frame for `bot:invocation:sealed-steps` — the batched form of
+// POST /bot-invocations/:id/sealed-steps. Auth is the per-claim callback token
+// (model A), not instanceId/claimToken, mirroring the HTTP header model; the
+// content is ciphertext the server never reads (INV-E7), so there is no
+// statusText (a plaintext status derived from sealed content would leak).
+// `stepId` is client-minted and doubles as the idempotency key. No plaintext
+// content cap applies — the envelope schema mirrors public-api's
+// `sealedStreamEnvelopeSchema` (the duplication is deliberate, see above; the
+// ws-http parity test guards field-level drift).
+export const sealedStepFrameSchema = z.object({
+  stepId: z.string().min(1).max(128),
+  stepType: z.enum(AGENT_STEP_TYPES),
+  messageId: z.string().min(1).max(128).optional(),
+  ciphertext: z.base64().min(1),
+  envelope: z.object({
+    v: z.number(),
+    keyGeneration: z.number().int().min(0),
+    iv: z.base64().min(1),
+    aad: z.base64().min(1),
+  }),
+  durationMs: z.number().int().min(0).optional(),
+})
+const invocationSealedStepsSchema = z.object({
+  invocationId: invocationIdSchema,
+  callbackToken: z.string().min(1).max(256),
+  steps: z.array(sealedStepFrameSchema).min(1).max(50),
+})
+
 /**
  * Ack for the `/bot` write events. `ok: true` carries the same payload the REST
  * route returns; `ok: false` carries a `code` (the `HttpError` code, or
@@ -395,6 +423,33 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           })
         } catch (err) {
           ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:steps" }))
+        }
+      }
+    )
+
+    socket.on(
+      "bot:invocation:sealed-steps",
+      async (payload: unknown, ack?: (response: BotWriteAck) => void): Promise<void> => {
+        const parsed = invocationSealedStepsSchema.safeParse(payload)
+        if (!parsed.success) {
+          ack?.({ ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:sealed-steps payload" })
+          return
+        }
+        const data = parsed.data
+        try {
+          const result = await botRuntimeWriteOps.recordSealedSteps({
+            workspaceId,
+            botId,
+            invocationId: data.invocationId,
+            callbackToken: data.callbackToken,
+            steps: data.steps,
+          })
+          ack?.({
+            ok: true,
+            data: { invocationId: result.invocationId, sessionId: result.sessionId, steps: result.steps },
+          })
+        } catch (err) {
+          ack?.(toWriteErrorAck(err, { workspaceId, botId, event: "bot:invocation:sealed-steps" }))
         }
       }
     )

@@ -1,7 +1,34 @@
-import { BotRuntimeTransport, type BotRuntimeHello, type StepFrame } from "@threa/bot-runtime-client"
-import { downloadInboundAttachments, formatInboundAttachmentManifest, uploadReplyAttachments } from "./attachments"
-import type { RemoteSessionConfig } from "./identity"
-import { ThreaClient, type ClaimedInvocation, type RuntimeSessionLink } from "./client"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import {
+  BikKeystore,
+  BotRuntimeTransport,
+  mintStreamKeyWraps,
+  openSealedAck,
+  openSealedTurnContext,
+  parseSealedAckContext,
+  parseSealedTurnContext,
+  scrubSealedError,
+  sealReply,
+  sealStep,
+  type BotRuntimeHello,
+  type SealedReplyBody,
+  type StepFrame,
+} from "@threa/bot-runtime-client"
+import {
+  downloadInboundAttachments,
+  extractAttachmentDirectives,
+  formatInboundAttachmentManifest,
+  uploadReplyAttachments,
+} from "./attachments"
+import { sanitizeId, type RemoteSessionConfig } from "./identity"
+import {
+  ThreaApiError,
+  ThreaClient,
+  type ClaimedInvocation,
+  type ExternalHistoryMessage,
+  type RuntimeSessionLink,
+} from "./client"
 
 export const SUPPORTED_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
 export const SESSION_CONTROL_CAPABILITY = "session-control"
@@ -45,6 +72,12 @@ export interface DeliveredTurn {
   streamId: string
   sourceMessageId: string
   content: string
+  /**
+   * The turn arrived sealed (E2EE): everything the connector records for it is
+   * ciphertext to the server, so a transcript tracer may run in full-detail
+   * mode — the point of sealed steps is more for the owner, nothing for the server.
+   */
+  sealed: boolean
 }
 
 /**
@@ -211,6 +244,10 @@ interface Inflight {
   // The reply after attachment uploads, cached when a complete() fails so the
   // retry reuses the same uploads instead of orphaning a fresh copy each time.
   prepared?: { markdown: string; attachmentIds: string[] }
+  // A sealed interim whose POST failed, cached so the retry re-sends the SAME
+  // sealed body (same message id) and the server's idempotency key dedupes it —
+  // a fresh seal per attempt would double-post on retry.
+  pendingSealedInterim?: { seq: number; body: SealedReplyBody }
 }
 
 export interface RemoteSessionOptions {
@@ -236,6 +273,8 @@ export class RemoteSession {
   private readonly runtime: RuntimeDescriptor
   private readonly transport: BotRuntimeTransport
   private readonly log: (message: string) => void
+  private readonly bik: BikKeystore
+  private readonly hello: BotRuntimeHello
   private link: RuntimeSessionLink | undefined
   private claiming = false
   private stopped = false
@@ -255,21 +294,28 @@ export class RemoteSession {
     this.delegate = options.delegate
     this.runtime = options.runtime
     this.log = options.log ?? (() => undefined)
+    this.bik = new BikKeystore({
+      path: this.config.bikPath ?? join(homedir(), ".threa", `bik-${sanitizeId(this.runtime.kind)}.json`),
+      log: this.log,
+    })
+    // The transport re-sends this exact object on every reconnect hello, so the
+    // BIK fields assigned into it at start() (after ensure()) ride every one.
+    this.hello = {
+      instanceId: this.config.instanceId,
+      runtimeKind: this.runtime.kind,
+      runtimeSessionId: this.config.runtimeSessionId,
+      displayName: this.config.displayName,
+      supportedCapabilities: supportedCapabilitiesFor(this.sessionControlEnabled),
+      capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl),
+      ...(this.runtime.manifest ? { manifest: this.runtime.manifest } : {}),
+    }
     this.transport =
       options.transport ??
       new BotRuntimeTransport({
         baseUrl: this.config.baseUrl,
         workspaceId: this.config.workspaceId,
         apiKey: this.config.apiKey,
-        hello: {
-          instanceId: this.config.instanceId,
-          runtimeKind: this.runtime.kind,
-          runtimeSessionId: this.config.runtimeSessionId,
-          displayName: this.config.displayName,
-          supportedCapabilities: supportedCapabilitiesFor(this.sessionControlEnabled),
-          capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl),
-          ...(this.runtime.manifest ? { manifest: this.runtime.manifest } : {}),
-        },
+        hello: this.hello,
         callbacks: {
           onInvocationAvailable: () => void this.claimDrain(),
           onBootstrap: (bootstrap) => {
@@ -298,6 +344,11 @@ export class RemoteSession {
   // --- Lifecycle ------------------------------------------------------------
 
   async start(): Promise<void> {
+    // BIK before the first hello/presence write: the server's instance upsert
+    // overwrites the stored key by default, so a write without these fields
+    // clears the registration and breaks sealed-claim wrap coverage.
+    await this.bik.ensure()
+    Object.assign(this.hello, this.bik.presenceFields())
     await this.verifyPrincipal()
     await this.ensureLink()
     await this.transport.connect()
@@ -337,6 +388,8 @@ export class RemoteSession {
         this.client.fail(id, {
           instanceId: this.config.instanceId,
           claimToken: entry.invocation.claimToken,
+          // The shutdown message is a fixed string (never turn content), so it
+          // is safe on sealed turns too.
           errorMessage: this.runtime.shutdownErrorMessage,
         })
       )
@@ -355,14 +408,87 @@ export class RemoteSession {
   }
 
   private async createSession(): Promise<RuntimeSessionLink> {
-    return this.client.createSession({
+    const e2e = this.config.e2e ? await this.resolveE2eCreateBlock() : undefined
+    const link = await this.client.createSession({
       runtimeKind: this.runtime.kind,
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
       displayName: this.config.displayName,
       localCwd: process.cwd(),
       ...(this.config.defaultLabel && { labelName: this.config.defaultLabel }),
+      ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
     })
+    if (this.config.e2e && link.e2eEnabled !== true) {
+      // A resume of a pre-existing PLAINTEXT scratchpad — nothing to provision,
+      // but the user asked for encryption, so say why they aren't getting it.
+      this.log(
+        `WARNING: e2e is enabled but the resumed scratchpad ${link.rootStreamId} is plaintext ` +
+          "(it predates the setting). Archive it to get a fresh encrypted scratchpad on the next start."
+      )
+      return link
+    }
+    if (e2e && link.e2eEnabled === true) {
+      await this.provisionE2eStreamKey(link, e2e)
+    }
+    return link
+  }
+
+  /**
+   * Resolve the owner-key half of an E2E create. Throws with an actionable
+   * message when the owner has no encryption key or this install has no BIK —
+   * ensureLink logs it and retries each poll tick, so the session self-heals
+   * the moment the owner sets up encryption.
+   */
+  private async resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
+    const bik = await this.bik.ensure()
+    if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see earlier log)")
+    let ownerKey: { keyId: string; publicKey: string }
+    try {
+      ownerKey = await this.client.getOwnerE2eKey()
+    } catch (error) {
+      if (error instanceof ThreaApiError && error.status === 404) {
+        throw new Error(
+          "e2e is enabled but the bot owner has not set up encryption in Threa yet — " +
+            "set an encryption passphrase in the app, then this session will link encrypted."
+        )
+      }
+      throw error
+    }
+    return { ownerKeyId: ownerKey.keyId, ownerPublicKey: ownerKey.publicKey }
+  }
+
+  /**
+   * Phase two of the encrypted create: mint the generation-0 stream key, wrap
+   * it to the owner's UIK + this install's BIK, and store the wraps. Until this
+   * lands nobody can seal into the scratchpad (INV-E1 keeps plaintext out), so
+   * a failure retries in place; a 409 means an earlier attempt landed.
+   */
+  private async provisionE2eStreamKey(
+    link: RuntimeSessionLink,
+    e2e: { ownerKeyId: string; ownerPublicKey: string }
+  ): Promise<void> {
+    const bik = this.bik.current
+    if (!bik) throw new Error("BIK disappeared mid-provisioning")
+    const { wraps } = await mintStreamKeyWraps({
+      streamId: link.rootStreamId,
+      keyGeneration: 0,
+      recipients: [
+        { recipientKind: "user", recipientKeyId: e2e.ownerKeyId, publicKeyBase64: e2e.ownerPublicKey },
+        { recipientKind: "bot", recipientKeyId: bik.publicKeyId, publicKeyBase64: bik.publicKeyBase64 },
+      ],
+    })
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.client.provisionStreamKeyWraps(link.rootStreamId, { keyGeneration: 0, wraps })
+        this.log(`provisioned encrypted scratchpad ${link.rootStreamId} (gen 0, owner + BIK wraps)`)
+        return
+      } catch (error) {
+        // 409: a previous attempt (this process or a crashed predecessor) landed.
+        if (error instanceof ThreaApiError && error.status === 409) return
+        if (attempt >= 3) throw error
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1_000))
+      }
+    }
   }
 
   // --- Claiming -------------------------------------------------------------
@@ -381,7 +507,7 @@ export class RemoteSession {
         // control there's nothing to claim while busy: strict one-at-a-time.
         const busy = this.inflight.size > 0 && !this.interceptHoldsClaims
         if (busy && !this.sessionControlEnabled) break
-        const invocation = await this.client.claim(this.claimBody(busy))
+        const invocation = await this.claimNext(busy)
         if (!invocation) break
         if (isSessionControlInvocation(invocation)) {
           const isStop = parseSessionControlCommand(invocation)?.name === "stop"
@@ -407,15 +533,61 @@ export class RemoteSession {
    */
   interceptHoldsClaims = false
 
-  private async handleClaimed(invocation: ClaimedInvocation): Promise<void> {
-    if (this.delegate.interceptClaimed && (await this.delegate.interceptClaimed(invocation))) {
+  /**
+   * Claim one invocation and, when it arrives sealed, hydrate it in place: open
+   * the SSK wraps with this install's BIK, decrypt the trigger + history, and
+   * stash the {@link SealingState} every reply/step seals with. From here on the
+   * invocation looks like a plaintext one to the rest of the loop — only the
+   * write paths branch on `sealing`. A hydration failure fails the invocation
+   * loudly (scrubbed reason) and reports "nothing claimed" rather than throwing
+   * the drain into a TTL-recycle loop.
+   */
+  private async claimNext(busy: boolean): Promise<ClaimedInvocation | null> {
+    const invocation = await this.client.claim(this.claimBody(busy))
+    if (!invocation || invocation.sealedContext === undefined) return invocation
+    const fail = async (reason: string): Promise<null> => {
+      this.log(`sealed claim ${invocation.id} unusable: ${reason}`)
       await this.client
-        .complete(invocation.id, {
+        .fail(invocation.id, {
           instanceId: this.config.instanceId,
           claimToken: invocation.claimToken,
-          noResponse: true,
+          errorMessage: `Sealed turn failed: ${reason}`.slice(0, 200),
         })
-        .catch((error) => this.log(`intercepted-claim ack failed: ${this.summarize(error)}`))
+        .catch(() => undefined)
+      return null
+    }
+    const sealed = parseSealedTurnContext(invocation.sealedContext)
+    if (!sealed) return fail("malformed sealedContext")
+    const identity = await this.bik.ensure()
+    if (!identity) return fail("no bot identity key")
+    try {
+      // Wraps and the message AAD bind to the ROOT stream that owns the E2E key.
+      const opened = await openSealedTurnContext({ sealed, identity, streamId: invocation.rootStreamId })
+      const messages: ExternalHistoryMessage[] = opened.history.map((item) => ({
+        messageId: `sealed-${item.sequence}`,
+        role: item.role,
+        authorId: "",
+        authorType: item.role === "assistant" ? "bot" : "user",
+        contentMarkdown: item.contentMarkdown,
+        createdAt: "",
+      }))
+      return {
+        ...invocation,
+        sealedContext: undefined,
+        promptMarkdown: opened.promptMarkdown,
+        sealing: opened.sealing,
+        ...(messages.length > 0 ? { context: { kind: "inline" as const, messages } } : {}),
+      }
+    } catch (error) {
+      return fail(scrubSealedError(error))
+    }
+  }
+
+  private async handleClaimed(invocation: ClaimedInvocation): Promise<void> {
+    if (this.delegate.interceptClaimed && (await this.delegate.interceptClaimed(invocation))) {
+      await this.completeTurn(invocation, { noResponse: true }).catch((error) =>
+        this.log(`intercepted-claim ack failed: ${this.summarize(error)}`)
+      )
       return
     }
 
@@ -434,20 +606,70 @@ export class RemoteSession {
     // triggers belongs in this invocation's stream.
     this.activeTurnStream = invocation.responseStreamId
     await this.syncPresence()
-    await this.transport
-      .recordSteps(
-        invocation.id,
-        invocation.claimToken,
-        [{ stepType: "thinking", content: this.runtime.forwardedNote }],
-        this.runtime.busyStatusText
-      )
-      .catch(() => undefined)
+    await this.recordForwardedStep(invocation).catch(() => undefined)
     await this.delegate.deliverTurn({
       invocationId: invocation.id,
       streamId: invocation.responseStreamId,
       sourceMessageId: invocation.sourceMessageId,
       content,
+      sealed: invocation.sealing !== undefined,
     })
+  }
+
+  /** The turn-handed-to-runtime trace note — sealed under the stream key on an E2E turn. */
+  private async recordForwardedStep(invocation: ClaimedInvocation): Promise<void> {
+    if (invocation.sealing) {
+      const frame = await sealStep(invocation.sealing, "thinking", this.runtime.forwardedNote)
+      await this.transport.recordSealedSteps(invocation.id, invocation.sealing.callbackToken, [frame])
+      return
+    }
+    await this.transport.recordSteps(
+      invocation.id,
+      invocation.claimToken,
+      [{ stepType: "thinking", content: this.runtime.forwardedNote }],
+      this.runtime.busyStatusText
+    )
+  }
+
+  /**
+   * Close one turn — the single chokepoint that routes a completion to the
+   * plaintext `/complete` or, for a sealed turn, seals the markdown under the
+   * stream key and posts `/sealed-complete` (which carries no metadata; the
+   * sealed grant is the context). Every close path (reply, no-response,
+   * interrupt notes, idle timeout, intercepted-claim ack) funnels through here
+   * so none can leak plaintext into an E2E stream.
+   */
+  private async completeTurn(
+    invocation: ClaimedInvocation,
+    body: { markdown?: string; noResponse?: true; metadata?: Record<string, unknown> }
+  ): Promise<void> {
+    if (invocation.sealing) {
+      if (body.markdown) {
+        const reply = await sealReply(invocation.sealing, body.markdown)
+        await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, { reply })
+      } else {
+        await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, { noResponse: true })
+      }
+      return
+    }
+    await this.client.complete(invocation.id, {
+      instanceId: this.config.instanceId,
+      claimToken: invocation.claimToken,
+      ...(body.markdown ? { finalMessageMarkdown: body.markdown } : { noResponse: true }),
+      ...(body.metadata ? { metadata: body.metadata } : {}),
+    })
+  }
+
+  /**
+   * Strip `THREA_ATTACH:` directives out of sealed output — uploading the bytes
+   * would push plaintext file content through the attachment store, outside the
+   * E2E boundary. A note replaces them so the user knows why the file is missing.
+   */
+  private stripSealedAttachmentDirectives(text: string): string {
+    const extracted = extractAttachmentDirectives(text)
+    if (extracted.paths.length === 0) return text
+    const note = `_${extracted.paths.length} local attachment${extracted.paths.length === 1 ? "" : "s"} not uploaded — attachments aren't supported in encrypted scratchpads yet._`
+    return [extracted.markdown, note].filter(Boolean).join("\n\n")
   }
 
   // --- Session control (steer / stop / delegated commands) -------------------
@@ -526,7 +748,7 @@ export class RemoteSession {
     const parts: string[] = []
     const swept: ClaimedInvocation[] = []
     for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
-      const extra = await this.client.claim(this.claimBody(false)).catch(() => null)
+      const extra = await this.claimNext(false).catch(() => null)
       if (!extra) break
       swept.push(extra)
       if (isSessionControlInvocation(extra)) {
@@ -553,34 +775,84 @@ export class RemoteSession {
     await this.deliverTurn(invocation, buildSteerContent(parts))
   }
 
+  /**
+   * Seal a session-control command ack under the stream key, when the claim
+   * carried the SSK wraps (an E2E scratchpad). Returns undefined on a plaintext
+   * claim or a key race — the caller then takes the plaintext path, which
+   * closes silently on E2E rather than showing the command as failed.
+   */
+  private async sealSessionControlAck(
+    invocation: ClaimedInvocation,
+    markdown: string
+  ): Promise<SealedReplyBody | undefined> {
+    const ack = parseSealedAckContext(invocation.sealedAck)
+    if (!ack) return undefined
+    const identity = await this.bik.ensure()
+    if (!identity) return undefined
+    try {
+      const sealing = await openSealedAck({ ack, identity, streamId: invocation.rootStreamId })
+      return await sealReply(sealing, markdown)
+    } catch {
+      return undefined
+    }
+  }
+
   private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<void> {
-    await this.client
-      .complete(invocation.id, {
+    // Sealed session-control ack on E2E: seal the confirmation under the stream
+    // key and post it as `sealedReply`. Falls through to the plaintext path when
+    // the bot can't seal (no wrap / key race), which silently closes on E2E.
+    const sealedReply = await this.sealSessionControlAck(invocation, markdown)
+    if (sealedReply) {
+      await this.client
+        .complete(invocation.id, {
+          instanceId: this.config.instanceId,
+          claimToken: invocation.claimToken,
+          sealedReply,
+          metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
+        })
+        .catch((error) => this.log(`sealed session-control ack failed: ${this.summarize(error)}`))
+      return
+    }
+    try {
+      await this.client.complete(invocation.id, {
         instanceId: this.config.instanceId,
         claimToken: invocation.claimToken,
         finalMessageMarkdown: markdown,
         metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true" },
       })
-      .catch((error) => this.log(`session-control ack failed: ${this.summarize(error)}`))
+    } catch (error) {
+      // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
+      // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
+      // plaintext ack is rejected with E2E_STREAM_PLAINTEXT_UNSUPPORTED; close
+      // silently — the command still ran and command:completed carries the
+      // feedback. Narrow to that exact code so a capability/validation 400 isn't
+      // masked as a successful close (INV-11, fail loud).
+      if (error instanceof ThreaApiError && error.code === "E2E_STREAM_PLAINTEXT_UNSUPPORTED") {
+        await this.completeTurn(invocation, { noResponse: true }).catch((inner) =>
+          this.log(`session-control silent ack failed: ${this.summarize(inner)}`)
+        )
+        return
+      }
+      this.log(`session-control ack failed: ${this.summarize(error)}`)
+    }
   }
 
   private async completeNoResponse(invocation: ClaimedInvocation): Promise<void> {
-    await this.client
-      .complete(invocation.id, {
-        instanceId: this.config.instanceId,
-        claimToken: invocation.claimToken,
-        noResponse: true,
-        metadata: { "remote.invocationId": invocation.id, "remote.steered": "true" },
-      })
-      .catch((error) => this.log(`steered close failed: ${this.summarize(error)}`))
+    await this.completeTurn(invocation, {
+      noResponse: true,
+      metadata: { "remote.invocationId": invocation.id, "remote.steered": "true" },
+    }).catch((error) => this.log(`steered close failed: ${this.summarize(error)}`))
   }
 
   private async failInvocation(invocation: ClaimedInvocation, errorMessage: string): Promise<void> {
+    // A sealed turn's error text could echo decrypted content — scrub to a
+    // generic reason (the /fail wire itself is shared, model A).
+    const scrubbed = invocation.sealing ? "Sealed turn failed" : errorMessage.slice(0, 1000)
     await this.client
       .fail(invocation.id, {
         instanceId: this.config.instanceId,
         claimToken: invocation.claimToken,
-        errorMessage: errorMessage.slice(0, 1000),
+        errorMessage: scrubbed,
       })
       .catch((error) => this.log(`session-control fail failed: ${this.summarize(error)}`))
   }
@@ -603,16 +875,11 @@ export class RemoteSession {
     }
     await Promise.all(
       entries.map(([id, entry]) => {
-        const body =
-          entry.sentCount > 0 && !opts.alwaysNote ? { noResponse: true } : { finalMessageMarkdown: `_${note}_` }
-        return this.client
-          .complete(id, {
-            instanceId: this.config.instanceId,
-            claimToken: entry.invocation.claimToken,
-            ...body,
-            metadata: { "remote.invocationId": id, "remote.interrupted": "true" },
-          })
-          .catch((error) => this.log(`interrupted-turn close failed: ${this.summarize(error)}`))
+        const silent = entry.sentCount > 0 && !opts.alwaysNote
+        return this.completeTurn(entry.invocation, {
+          ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
+          metadata: { "remote.invocationId": id, "remote.interrupted": "true" },
+        }).catch((error) => this.log(`interrupted-turn close failed: ${this.summarize(error)}`))
       })
     )
   }
@@ -620,6 +887,10 @@ export class RemoteSession {
   /** The prompt + history the runtime reads, with any downloaded attachments appended as a manifest. */
   private async buildTurnContent(invocation: ClaimedInvocation): Promise<string> {
     const base = formatInvocationContent(invocation)
+    // A sealed turn's context is what hydration decrypted; the plaintext
+    // message list only holds ciphertext placeholders and sealed attachments
+    // aren't supported yet, so there is nothing to scan.
+    if (invocation.sealing) return base
     // Best-effort: a discovery/download failure (e.g. a key without
     // attachments:read) must never block the prompt from reaching the runtime.
     try {
@@ -655,12 +926,30 @@ export class RemoteSession {
     // instead of double-posting; commit the counter only once the post lands.
     const seq = entry.sentCount + 1
     try {
-      const { markdown } = await uploadReplyAttachments(this.client, text, process.cwd())
-      await this.client.sendMessage(entry.invocation.responseStreamId, {
-        content: markdown,
-        clientMessageId: `remote-send-${invocationId}-${seq}`,
-        metadata: { "remote.invocationId": invocationId, "remote.interim": "true" },
-      })
+      if (entry.invocation.sealing) {
+        // Sealed turn: seal the interim under the stream key and post it via
+        // the claim-bound sealed-messages callback. No attachment uploads —
+        // directives are stripped with a note (plaintext bytes must not leave
+        // the E2E boundary). A retry after a failed POST reuses the cached
+        // sealed body so the same message id dedupes server-side.
+        const sealedBody =
+          entry.pendingSealedInterim?.seq === seq
+            ? entry.pendingSealedInterim.body
+            : await sealReply(
+                entry.invocation.sealing,
+                this.stripSealedAttachmentDirectives(text.trim() || "(empty message)")
+              )
+        entry.pendingSealedInterim = { seq, body: sealedBody }
+        await this.client.sendSealedMessage(invocationId, entry.invocation.sealing.callbackToken, sealedBody)
+        entry.pendingSealedInterim = undefined
+      } else {
+        const { markdown } = await uploadReplyAttachments(this.client, text, process.cwd())
+        await this.client.sendMessage(entry.invocation.responseStreamId, {
+          content: markdown,
+          clientMessageId: `remote-send-${invocationId}-${seq}`,
+          metadata: { "remote.invocationId": invocationId, "remote.interim": "true" },
+        })
+      }
     } catch (error) {
       return { ok: false, message: `Failed to post message to Threa: ${this.summarize(error)}`, retryable: true }
     }
@@ -701,13 +990,19 @@ export class RemoteSession {
     let prepared = entry.prepared
     try {
       if (!prepared) {
-        const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
-        prepared = { markdown, attachmentIds: uploaded.map((a) => a.id) }
+        if (entry.invocation.sealing) {
+          // No uploads on a sealed turn — strip directives with a note instead.
+          prepared = {
+            markdown: this.stripSealedAttachmentDirectives(text.trim() || "Done."),
+            attachmentIds: [],
+          }
+        } else {
+          const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
+          prepared = { markdown, attachmentIds: uploaded.map((a) => a.id) }
+        }
       }
-      await this.client.complete(invocationId, {
-        instanceId: this.config.instanceId,
-        claimToken: entry.invocation.claimToken,
-        finalMessageMarkdown: prepared.markdown,
+      await this.completeTurn(entry.invocation, {
+        markdown: prepared.markdown,
         metadata: {
           "remote.invocationId": invocationId,
           "remote.instanceId": this.config.instanceId,
@@ -740,19 +1035,34 @@ export class RemoteSession {
    * frame is logged and dropped, not retried — steps are ephemeral progress,
    * not state. Returns false when the invocation is no longer in flight
    * (answered, expired, superseded), which a transcript tailer uses as its
-   * stop signal. Frames must arrive already redacted; this method ships them
-   * verbatim.
+   * stop signal. Frames must arrive already redacted (or full, on a sealed
+   * turn — the tailer decides); this method ships them verbatim, sealing each
+   * one under the stream key when the turn is sealed so plaintext step
+   * content never leaves the machine on an E2E scratchpad.
    */
   async recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean> {
     const entry = this.inflight.get(invocationId)
     if (!entry) return false
-    // The server rejects >50 frames per bot:invocation:steps call, so a large
-    // batch (e.g. a transcript replay after late binding) ships in chunks.
+    // The server rejects >50 frames per steps call (plaintext and sealed alike),
+    // so a large batch (e.g. a transcript replay after late binding) ships in chunks.
     for (let start = 0; start < frames.length; start += MAX_STEP_FRAMES_PER_CALL) {
       const chunk = frames.slice(start, start + MAX_STEP_FRAMES_PER_CALL)
-      await this.transport
-        .recordSteps(invocationId, entry.invocation.claimToken, chunk, statusText ?? this.runtime.busyStatusText)
-        .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
+      if (entry.invocation.sealing) {
+        // Sealed turn: seal each frame under the stream key and ship on the
+        // sealed wire. No statusText — the sealed wire deliberately carries
+        // none (a plaintext status derived from sealed content would leak).
+        const sealing = entry.invocation.sealing
+        try {
+          const sealedFrames = await Promise.all(chunk.map((frame) => sealStep(sealing, frame.stepType, frame.content)))
+          await this.transport.recordSealedSteps(invocationId, sealing.callbackToken, sealedFrames)
+        } catch (error) {
+          this.log(`recordSteps (sealed) failed: ${this.summarize(error)}`)
+        }
+      } else {
+        await this.transport
+          .recordSteps(invocationId, entry.invocation.claimToken, chunk, statusText ?? this.runtime.busyStatusText)
+          .catch((error) => this.log(`recordSteps failed: ${this.summarize(error)}`))
+      }
       // The turn can close during an awaited send (reply, /stop, idle timeout)
       // — exactly the long multi-chunk replays this loop exists for. Recheck so
       // the returned boolean stays an honest stop signal for the tailer.
@@ -761,11 +1071,30 @@ export class RemoteSession {
     return true
   }
 
-  /** Post a message into a stream outside the turn flow (e.g. a relayed approval prompt). */
+  /**
+   * Post a message into a stream outside the turn flow (e.g. a relayed approval
+   * prompt). On a sealed stream the plaintext message API would rightly reject
+   * it, so when an in-flight SEALED turn is executing in that stream the text is
+   * sealed under its stream key and posted via the claim-bound sealed-messages
+   * callback instead — which is exactly the permission-relay case (the prompt
+   * fires mid-turn).
+   */
   async postToStream(
     streamId: string,
     body: { content: string; clientMessageId?: string; metadata?: Record<string, unknown> }
   ): Promise<void> {
+    const sealedEntry = [...this.inflight.values()].find(
+      (entry) => entry.invocation.responseStreamId === streamId && entry.invocation.sealing
+    )
+    if (sealedEntry?.invocation.sealing) {
+      const sealed = await sealReply(sealedEntry.invocation.sealing, body.content)
+      await this.client.sendSealedMessage(
+        sealedEntry.invocation.id,
+        sealedEntry.invocation.sealing.callbackToken,
+        sealed
+      )
+      return
+    }
     await this.client.sendMessage(streamId, body)
   }
 
@@ -783,18 +1112,12 @@ export class RemoteSession {
     this.clearInflight(invocationId)
     // If the turn already posted interim messages, the user has heard from it —
     // close silently rather than posting a misleading "no reply" notice.
-    const closeBody =
-      entry.sentCount > 0
-        ? { noResponse: true }
-        : { finalMessageMarkdown: "_The session ended the turn without sending a reply._" }
-    await this.client
-      .complete(invocationId, {
-        instanceId: this.config.instanceId,
-        claimToken: entry.invocation.claimToken,
-        ...closeBody,
-        metadata: { "remote.invocationId": invocationId, "remote.timedOut": "true" },
-      })
-      .catch((error) => this.log(`timeout completion failed: ${this.summarize(error)}`))
+    await this.completeTurn(entry.invocation, {
+      ...(entry.sentCount > 0
+        ? { noResponse: true as const }
+        : { markdown: "_The session ended the turn without sending a reply._" }),
+      metadata: { "remote.invocationId": invocationId, "remote.timedOut": "true" },
+    }).catch((error) => this.log(`timeout completion failed: ${this.summarize(error)}`))
     if (this.activeTurnStream === entry.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
   }
@@ -902,6 +1225,9 @@ export class RemoteSession {
       // session-control keys here would wipe what bot:hello advertised.
       capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl),
       ...(statusText ? { statusText } : {}),
+      // The BIK must ride every presence write too — the upsert overwrites the
+      // stored key, so omitting it here would clear what hello registered.
+      ...this.bik.presenceFields(),
     }
   }
 

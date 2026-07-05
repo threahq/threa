@@ -14,7 +14,11 @@ export const CLAUDE_CONNECTOR_IDENTITY: ConnectorIdentity = {
 }
 
 export function loadChannelConfig(input: LoadConfigInput): LoadConfigResult {
-  return loadConfig(input, CLAUDE_CONNECTOR_IDENTITY)
+  const result = loadConfig(input, CLAUDE_CONNECTOR_IDENTITY)
+  if ("error" in result) return result
+  // Colocate the channel's BIK (its sealed-scratchpad identity key) with its
+  // config, unless the user pointed it elsewhere (THREA_BIK_PATH / file bikPath).
+  return { config: { ...result.config, bikPath: result.config.bikPath ?? join(CONFIG_DIR, "bik.json") } }
 }
 
 export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threa/remote-session"

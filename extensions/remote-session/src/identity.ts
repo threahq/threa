@@ -23,6 +23,28 @@ export interface RemoteSessionConfig {
    * makes, since it can't heartbeat while blocked on a tool.
    */
   idleTimeoutMs: number
+  /**
+   * Where this install's BIK (Bot Identity Key, for sealed/E2EE scratchpads)
+   * is persisted. Unset = a per-runtime-kind default under `~/.threa/`.
+   * Deleting the file orphans the owner's key wraps — the owner must re-invite
+   * the bot after it registers a fresh key.
+   */
+  bikPath?: string
+  /**
+   * Emit FULL trace detail (real commands, file contents, outputs) on sealed
+   * (E2EE) turns — safe because sealed step content is ciphertext the server
+   * can't read. Default on; set false to keep sealed traces redacted too. Has
+   * no effect on plaintext turns, which always stay redacted.
+   */
+  sealedFullTrace: boolean
+  /**
+   * Create this connector's linked scratchpad end-to-end encrypted: the harness
+   * mints the stream key and wraps it to the bot owner's UIK + its own BIK, so
+   * the server only ever stores ciphertext. Requires the owner to have set up
+   * encryption in Threa (their UIK is fetched at session create). Off by
+   * default — an encrypted scratchpad opts out of GAM memory extraction.
+   */
+  e2e?: boolean
 }
 
 /**
@@ -76,6 +98,9 @@ export interface RawConfig {
   idleTimeoutMs?: unknown
   instanceId?: unknown
   runtimeSessionId?: unknown
+  bikPath?: unknown
+  e2e?: unknown
+  sealedFullTrace?: unknown
 }
 
 export function parseConfigFile(text: string): RawConfig {
@@ -160,6 +185,9 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       permissionRelay: parseBool(env.THREA_PERMISSION_RELAY ?? file.permissionRelay, true),
       pollMs: parseNum(env.THREA_POLL_MS ?? file.pollMs, 3000, 1000),
       idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
+      bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
+      e2e: parseBool(env.THREA_E2E ?? file.e2e, false),
+      sealedFullTrace: parseBool(env.THREA_SEALED_FULL_TRACE ?? file.sealedFullTrace, true),
     },
   }
 }

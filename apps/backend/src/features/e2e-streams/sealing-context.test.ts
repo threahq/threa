@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, spyOn } from "bun:test"
 import type { Querier } from "../../db"
 import { E2eStreamsRepository } from "./repository"
 import { E2eStreamActorsRepository } from "./actor-repository"
+import { EXTERNAL_SEALED_DELIVERY } from "@threa/agent-runtime"
 import { resolveSealingContext } from "./sealing-context"
 
 const db = { query: async () => ({ rows: [], rowCount: 0 }) } as unknown as Querier
@@ -19,7 +20,11 @@ describe("resolveSealingContext", () => {
 
     const context = await resolveSealingContext(db, { ...params, actor: { kind: "bot", botId: "bot_pi" } })
 
-    expect(context).toEqual({ streamIsE2e: false, actorHasGrant: false, externalSealedDelivery: false })
+    expect(context).toEqual({
+      streamIsE2e: false,
+      actorHasGrant: false,
+      externalSealedDelivery: EXTERNAL_SEALED_DELIVERY,
+    })
     expect(listActors).not.toHaveBeenCalled()
   })
 
@@ -29,7 +34,11 @@ describe("resolveSealingContext", () => {
 
     const context = await resolveSealingContext(db, { ...params, actor: { kind: "companion" } })
 
-    expect(context).toEqual({ streamIsE2e: true, actorHasGrant: false, externalSealedDelivery: false })
+    expect(context).toEqual({
+      streamIsE2e: true,
+      actorHasGrant: false,
+      externalSealedDelivery: EXTERNAL_SEALED_DELIVERY,
+    })
     expect(listActors).not.toHaveBeenCalled()
   })
 
@@ -41,7 +50,11 @@ describe("resolveSealingContext", () => {
 
     const context = await resolveSealingContext(db, { ...params, actor: { kind: "enclave" } })
 
-    expect(context).toEqual({ streamIsE2e: true, actorHasGrant: true, externalSealedDelivery: false })
+    expect(context).toEqual({
+      streamIsE2e: true,
+      actorHasGrant: true,
+      externalSealedDelivery: EXTERNAL_SEALED_DELIVERY,
+    })
   })
 
   it("a bot's grant is pinned to its own bot id — another bot's invite does not count", async () => {
@@ -52,9 +65,17 @@ describe("resolveSealingContext", () => {
     ])
 
     const denied = await resolveSealingContext(db, { ...params, actor: { kind: "bot", botId: "bot_pi" } })
-    expect(denied).toEqual({ streamIsE2e: true, actorHasGrant: false, externalSealedDelivery: false })
+    expect(denied).toEqual({
+      streamIsE2e: true,
+      actorHasGrant: false,
+      externalSealedDelivery: EXTERNAL_SEALED_DELIVERY,
+    })
 
     const granted = await resolveSealingContext(db, { ...params, actor: { kind: "bot", botId: "bot_other" } })
-    expect(granted).toEqual({ streamIsE2e: true, actorHasGrant: true, externalSealedDelivery: false })
+    expect(granted).toEqual({
+      streamIsE2e: true,
+      actorHasGrant: true,
+      externalSealedDelivery: EXTERNAL_SEALED_DELIVERY,
+    })
   })
 })

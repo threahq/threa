@@ -58,13 +58,16 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3",
+    "@hpke/core": "^1.9.0",
+    "@hpke/dhkem-x25519": "^1.6.0",
     "@playwright/test": "^1.57.0",
     "@types/bun": "latest",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.7.4",
     "shadcn": "^3.6.3",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "ulid": "^2.3.0"
   },
   "lint-staged": {
     "!(.agents|.claude)/**/*.{js,jsx,ts,tsx,json,css,md,html}": "prettier --write"

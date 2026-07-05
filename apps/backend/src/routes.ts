@@ -850,6 +850,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
     publicApi.createBotRuntimeSession
   )
+  app.get(
+    "/api/v1/workspaces/:workspaceId/bot-runtime/owner-e2e-key",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
+    publicApi.getBotOwnerE2eKey
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
+    publicApi.provisionStreamE2eKeyWraps
+  )
   app.post(
     "/api/v1/workspaces/:workspaceId/bot-runtime/sessions/rename",
     ...publicMiddleware,
@@ -891,6 +903,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
     publicApi.recordBotInvocationSealedStep
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-messages",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.sendBotInvocationSealedMessage
   )
   app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/sealed-complete",

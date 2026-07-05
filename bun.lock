@@ -9,6 +9,8 @@
         "wrangler": "^4.94.0",
       },
       "devDependencies": {
+        "@hpke/core": "^1.9.0",
+        "@hpke/dhkem-x25519": "^1.6.0",
         "@playwright/test": "^1.57.0",
         "@types/bun": "latest",
         "husky": "^9.1.7",
@@ -17,6 +19,7 @@
         "shadcn": "^3.6.3",
         "socket.io-client": "^4.8.1",
         "typescript": "^5.9.3",
+        "ulid": "^2.3.0",
       },
     },
     "apps/backend": {
@@ -927,6 +930,8 @@
     "@hpke/common": ["@hpke/common@1.10.1", "", {}, "sha512-moJwhmtLtuxiUzzNp1jpfBfx8yefKoO9D/RCR9dmwrnc7qjJqId1rEtQz+lSlU5cabX8daToMSx/7HayXOiaFw=="],
 
     "@hpke/core": ["@hpke/core@1.9.0", "", { "dependencies": { "@hpke/common": "^1.10.0" } }, "sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q=="],
+
+    "@hpke/dhkem-x25519": ["@hpke/dhkem-x25519@1.8.0", "", { "dependencies": { "@hpke/common": "^1.10.0" } }, "sha512-S1MWWkAfu+TFxySgv5+2P3O4Mx/jk7BsoplzQaA1s3sfUJVJ2UsZsSzSsMc+FXJumLXncoJFlO6mK6mDGspfmA=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.1", "", {}, "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA=="],
 

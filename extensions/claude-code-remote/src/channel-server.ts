@@ -247,7 +247,9 @@ export class ChannelServer {
   private async deliverToClaude(turn: DeliveredTurn): Promise<void> {
     // Window the transcript tail BEFORE the content is pushed, so the tracer's
     // start offset precedes the prompt echo it binds on.
-    this.tracer.beginTurn(turn.invocationId)
+    // A sealed turn's steps are ciphertext to the server, so the tracer may
+    // run full-detail (the owner opted back to redacted via sealedFullTrace=false).
+    this.tracer.beginTurn(turn.invocationId, turn.sealed && this.config.sealedFullTrace ? "full" : undefined)
     await this.notify("notifications/claude/channel", {
       content: turn.content,
       meta: {

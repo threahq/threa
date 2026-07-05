@@ -34,6 +34,14 @@ export interface BotRuntimeHello {
   manifest?: { output: { reply?: boolean; trace?: boolean; sources?: boolean } }
   /** ISO cursor echoed from the previous hello ack so the bootstrap only replays unseen events. */
   sinceCursor?: string
+  /**
+   * Base64 X25519 public half of this install's BIK (see `BikKeystore`). Must
+   * ride every hello AND presence write together with `publicKeyId` — the
+   * server's instance upsert overwrites the stored key by default, so omitting
+   * it on a heartbeat clears the registration and breaks sealed-claim coverage.
+   */
+  publicKey?: string
+  publicKeyId?: string
 }
 
 /** The bootstrap snapshot the server returns in the `bot:hello` ack. */

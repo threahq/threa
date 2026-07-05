@@ -13,7 +13,23 @@ import {
 } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import { BotRuntimeTransport, type BotRuntimeHello } from "@threa/bot-runtime-client"
+import {
+  BikKeystore,
+  BotRuntimeTransport,
+  THREA_CALLBACK_TOKEN_HEADER,
+  mintStreamKeyWraps,
+  openSealedAck,
+  openSealedTurnContext,
+  parseSealedAckContext,
+  parseSealedTurnContext,
+  scrubSealedError,
+  sealReply,
+  sealStep,
+  type BotRuntimeHello,
+  type DecryptedHistoryItem,
+  type SealedReplyBody,
+  type SealingState,
+} from "@threa/bot-runtime-client"
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -23,6 +39,12 @@ import type {
 } from "@earendil-works/pi-coding-agent"
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
+// The Bot Identity Key (BIK): a per-install X25519 keypair the harness registers
+// so an owner can wrap an E2E scratchpad's stream key to it (design §2.6).
+// Persisted separately from the config (private key material, mode 0600) and
+// stable across restarts — the owner's wraps target its `publicKeyId`, so
+// rotating it would orphan every wrap.
+const BIK_PATH = join(homedir(), ".pi", "agent", "threa-remote-bik.json")
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
@@ -38,6 +60,10 @@ const BUSY_HEARTBEAT_MS = 15_000
 const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
+// Sealed steps carry ciphertext the server never reads, so the plaintext step
+// schema's 10K cap doesn't apply — a full-detail sealed trace (real command,
+// patch, stdout) gets a much roomier clamp, bounded only to keep frames sane.
+const SEALED_TRACE_CONTENT_MAX_CHARS = 60_000
 const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
@@ -80,6 +106,24 @@ type Config = {
   preferredModels?: string[]
   /** Label name to assign to scratchpads created by this Pi instance. */
   defaultLabel?: string
+  /**
+   * Emit FULL trace detail (real commands, file contents, patches, tool
+   * output) on a sealed (E2EE) turn. Safe because sealed step content is
+   * ciphertext the server can't read — the point is giving the owner more
+   * without giving the server anything. Defaults to ON for sealed turns; has
+   * no effect on plaintext turns, which always stay redacted (the toggle can
+   * never leak plaintext to the server). Set `false` to keep sealed traces
+   * redacted too.
+   */
+  sealedFullTrace?: boolean
+  /**
+   * Create new linked scratchpads end-to-end encrypted: the harness mints the
+   * stream key and wraps it to the bot owner's UIK + its own BIK, so the
+   * server only ever stores ciphertext. Requires the owner to have set up
+   * encryption in Threa. Off by default (an encrypted scratchpad opts out of
+   * GAM memory extraction).
+   */
+  e2e?: boolean
   /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
@@ -93,6 +137,8 @@ type RuntimeSessionLink = {
   activeStreamId: string
   runtimeSessionId: string
   streamUrlPath: string
+  /** The linked scratchpad's encryption state (create echoes the request; resume reports reality). */
+  e2eEnabled?: boolean
   instanceId?: string
   enabled?: boolean
   debugPolling?: boolean
@@ -107,12 +153,22 @@ type RuntimeSessionLink = {
 
 type ConfigPatch = Pick<
   Config,
-  "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels" | "defaultLabel"
+  | "baseUrl"
+  | "workspaceId"
+  | "apiKey"
+  | "pollMs"
+  | "defaultDisplayName"
+  | "preferredModels"
+  | "defaultLabel"
+  | "sealedFullTrace"
+  | "e2e"
 >
 
 type ClaimedInvocation = {
   id: string
   activeStreamId: string
+  /** Root stream that owns the E2E key — the AAD stream id for sealed wraps/messages. */
+  rootStreamId?: string
   sourceMessageId: string
   promptMarkdown: string
   claimToken: string
@@ -121,6 +177,12 @@ type ClaimedInvocation = {
   trigger?: string
   requiredCapability?: string
   metadata?: Record<string, unknown>
+  /** Present on a sealed (E2E) claim; absent on plaintext. The bot opened it with its BIK at claim time. */
+  sealing?: SealingState
+  /** Decrypted prior-message context, pre-formatted for the prompt (no plaintext fetch on E2E). */
+  sealedContextText?: string
+  /** Present on a session-control claim on an E2E stream: SSK wraps to seal the command ack. */
+  sealedAck?: unknown
 }
 
 interface AttachmentSummary {
@@ -182,6 +244,14 @@ let fallbackRuntimeSessionId: string | undefined
 // when the socket is down). Built lazily once the session ctx is known; torn
 // down + rebuilt on a workspace/auth change so it never reuses a stale target.
 let transport: BotRuntimeTransport | undefined
+// This install's BIK. `ensure()`d before the first presence write so the public
+// half rides every hello/presence body — the backend's instance upsert
+// overwrites the stored key by default, so omitting it on a heartbeat would
+// clear the registration and break sealed-claim wrap coverage.
+const bikKeystore = new BikKeystore({
+  path: BIK_PATH,
+  log: (message) => console.error(`Threa remote: ${message}`),
+})
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -601,6 +671,9 @@ async function heartbeat(
   ctx?: ExtensionContext
 ): Promise<void> {
   if (!config) return
+  // Cached after the first call; awaiting here guarantees no presence write
+  // ever omits the BIK (the upsert would clear the registered key).
+  await bikKeystore.ensure()
   const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
   const body = {
     runtimeKind: "pi-local",
@@ -611,6 +684,7 @@ async function heartbeat(
     acceptingInvocations: status === "available",
     capabilities: buildRuntimeCapabilities(ctx),
     statusText,
+    ...bikKeystore.presenceFields(),
   }
   // Prefer the socket once the transport exists (it falls back to HTTP itself
   // when the socket is down); before the transport is built (a heartbeat that
@@ -653,6 +727,10 @@ function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTra
     supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
     capabilities: buildRuntimeCapabilities(ctx),
     ...(link?.wsCursor ? { sinceCursor: link.wsCursor } : {}),
+    // The hello is a snapshot the transport re-sends on every reconnect, so the
+    // BIK must be loaded BEFORE the transport is built (see session_start /
+    // enableRemote, which ensure it ahead of this call).
+    ...bikKeystore.presenceFields(),
   }
   transport = new BotRuntimeTransport({
     baseUrl: config.baseUrl,
@@ -704,8 +782,35 @@ async function recordInvocationTraceStep(
   statusText?: string
 ): Promise<void> {
   if (!config) return
-  const trimmed = truncateForTrace(content)
+  const trimmed = truncateForTrace(
+    content,
+    invocation.sealing ? SEALED_TRACE_CONTENT_MAX_CHARS : TRACE_CONTENT_MAX_CHARS
+  )
   if (!trimmed) return
+  // Sealed turn: the step content is sealed under the stream key and posted to
+  // the sealed wire (WS frame first, HTTP /sealed-steps fallback). No
+  // statusText — the sealed wire deliberately carries none (a plaintext status
+  // derived from sealed content would leak); the whitelisted busy heartbeats
+  // cover the presence strip.
+  if (invocation.sealing) {
+    const sealing = invocation.sealing
+    try {
+      const frame = await sealStep(sealing, stepType, trimmed)
+      if (transport) {
+        await transport.recordSealedSteps(invocation.id, sealing.callbackToken, [frame])
+      } else {
+        await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-steps`, {
+          method: "POST",
+          headers: { [THREA_CALLBACK_TOKEN_HEADER]: sealing.callbackToken },
+          body: JSON.stringify(frame),
+        })
+      }
+    } catch {
+      // Best-effort like the plaintext path: a dropped step dulls the trace,
+      // never aborts the turn.
+    }
+    return
+  }
   const status = statusText?.trim().slice(0, 160)
   // High-volume, best-effort path (one per tool call + per assistant message,
   // 150+ in a long turn). The transport routes these over the socket — the cost
@@ -843,7 +948,9 @@ function textFromToolContent(content: unknown): string {
 function formatStructuredToolTrace(params: {
   headline: string
   sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }>
+  maxChars?: number
 }): string {
+  const maxChars = params.maxChars ?? TRACE_CONTENT_MAX_CHARS
   const sections = params.sections.map((section) => ({ ...section, originalBody: section.body }))
 
   for (let attempt = 0; attempt < 24; attempt++) {
@@ -852,7 +959,7 @@ function formatStructuredToolTrace(params: {
       headline: params.headline,
       sections: sections.map(({ originalBody: _originalBody, ...section }) => section),
     })
-    if (payload.length <= TRACE_CONTENT_MAX_CHARS) return payload
+    if (payload.length <= maxChars) return payload
 
     const largestIndex = sections.reduce(
       (largest, section, index) => (section.body.length > sections[largest]!.body.length ? index : largest),
@@ -861,7 +968,7 @@ function formatStructuredToolTrace(params: {
     const largest = sections[largestIndex]
     if (!largest || largest.originalBody.length === 0) break
 
-    const overflow = payload.length - TRACE_CONTENT_MAX_CHARS
+    const overflow = payload.length - maxChars
     const currentVisibleLength = largest.body.includes("…[section truncated;")
       ? largest.body.indexOf("\n\n…[section truncated;")
       : largest.body.length
@@ -896,16 +1003,44 @@ function safeToolArgumentSummary(event: ToolCallEvent): string {
   return `Arguments for ${toolName} omitted for safety.`
 }
 
-function formatToolCallTrace(event: ToolCallEvent): string {
+/**
+ * The real tool arguments, for a sealed (E2EE) trace: the actual shell command,
+ * the actual file path + contents/patch. Only ever serialized into sealed step
+ * content — the plaintext path stays on `safeToolArgumentSummary`.
+ */
+function fullToolArgumentSummary(event: ToolCallEvent): { body: string; lang: string | null } {
+  const input = "input" in event ? event.input : undefined
+  if (event.toolName === "bash" && isObject(input) && typeof input.command === "string") {
+    return { body: input.command, lang: "bash" }
+  }
+  if (input === undefined) return { body: "(no arguments)", lang: null }
+  if (typeof input === "string") return { body: input, lang: null }
+  try {
+    return { body: JSON.stringify(input, null, 2), lang: "json" }
+  } catch {
+    return { body: String(input), lang: null }
+  }
+}
+
+/**
+ * Whether this invocation's trace should carry FULL tool detail. True only when
+ * the turn is sealed (content is ciphertext to the server) AND the user hasn't
+ * opted sealed traces back to redacted via `sealedFullTrace: false`. `full`
+ * defaults to `false` at every formatter, so a missed call site fails safe
+ * (redacted) — the toggle can never turn full detail ON for a plaintext turn.
+ */
+function shouldEmitFullTrace(invocation: ClaimedInvocation | undefined): boolean {
+  return invocation?.sealing !== undefined && config?.sealedFullTrace !== false
+}
+
+function formatToolCallTrace(event: ToolCallEvent, full = false): string {
+  const detail = full
+    ? { label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, ...fullToolArgumentSummary(event) }
+    : { label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS, body: safeToolArgumentSummary(event), lang: null }
   return formatStructuredToolTrace({
     headline: describeToolCall(event).replace(/…$/, ""),
-    sections: [
-      {
-        label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
-        body: safeToolArgumentSummary(event),
-        lang: null,
-      },
-    ],
+    sections: [detail],
+    ...(full ? { maxChars: SEALED_TRACE_CONTENT_MAX_CHARS } : {}),
   })
 }
 
@@ -916,18 +1051,30 @@ function summarizeToolOutput(output: string): string {
   return `Tool output omitted for safety. Captured locally: ${text.length} characters across ${lines} ${lines === 1 ? "line" : "lines"}.`
 }
 
-function formatToolResultTrace(event: ToolResultEvent): string {
+function formatToolResultTrace(event: ToolResultEvent, full = false): string {
   const call = pendingToolCalls.get(event.toolCallId)
   const output = textFromToolContent(event.content)
   const sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }> = []
-  sections.push({
-    label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
-    body: event.isError
-      ? `${summarizeToolOutput(output)} Error details omitted for safety.`
-      : summarizeToolOutput(output),
-    lang: null,
+  if (full) {
+    sections.push({
+      label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
+      body: output.trim() || "Tool produced no textual output.",
+      lang: null,
+    })
+  } else {
+    sections.push({
+      label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
+      body: event.isError
+        ? `${summarizeToolOutput(output)} Error details omitted for safety.`
+        : summarizeToolOutput(output),
+      lang: null,
+    })
+  }
+  return formatStructuredToolTrace({
+    headline: call?.headline ?? `Used ${safeToolName(event.toolName)}`,
+    sections,
+    ...(full ? { maxChars: SEALED_TRACE_CONTENT_MAX_CHARS } : {}),
   })
-  return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${safeToolName(event.toolName)}`, sections })
 }
 
 function sanitizeTraceText(text: string): string {
@@ -974,11 +1121,72 @@ function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string
   return `${prefix} - ${dir}`
 }
 
+/**
+ * The owner-key half of an E2E session create. Throws with an actionable
+ * message when the owner has no encryption key or this install has no BIK —
+ * the /remote-control command surfaces it directly to the user.
+ */
+async function resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const bik = await bikKeystore.ensure()
+  if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see stderr)")
+  try {
+    const body = await request<{ data: { keyId: string; publicKey: string } }>(
+      `/api/v1/workspaces/${config.workspaceId}/bot-runtime/owner-e2e-key`
+    )
+    return { ownerKeyId: body.data.keyId, ownerPublicKey: body.data.publicKey }
+  } catch (error) {
+    if (String(error).includes("404")) {
+      throw new Error(
+        "e2e is enabled but the bot owner has not set up encryption in Threa yet — set an encryption passphrase in the app first."
+      )
+    }
+    throw error
+  }
+}
+
+/**
+ * Phase two of an encrypted create: mint the generation-0 stream key, wrap it
+ * to the owner's UIK + this install's BIK, and store the wraps. Until this
+ * lands nobody can seal into the scratchpad; a 409 means an earlier attempt
+ * already provisioned it.
+ */
+async function provisionE2eStreamKey(
+  rootStreamId: string,
+  e2e: { ownerKeyId: string; ownerPublicKey: string }
+): Promise<void> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const bik = await bikKeystore.ensure()
+  if (!bik) throw new Error("BIK unavailable for provisioning")
+  const { wraps } = await mintStreamKeyWraps({
+    streamId: rootStreamId,
+    keyGeneration: 0,
+    recipients: [
+      { recipientKind: "user", recipientKeyId: e2e.ownerKeyId, publicKeyBase64: e2e.ownerPublicKey },
+      { recipientKind: "bot", recipientKeyId: bik.publicKeyId, publicKeyBase64: bik.publicKeyBase64 },
+    ],
+  })
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await request(`/api/v1/workspaces/${config.workspaceId}/streams/${rootStreamId}/e2e/key-wraps`, {
+        method: "POST",
+        body: JSON.stringify({ keyGeneration: 0, wraps }),
+      })
+      return
+    } catch (error) {
+      if (String(error).includes("409")) return
+      if (attempt >= 3) throw error
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1_000))
+    }
+  }
+}
+
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
   const runtimeSessionId = getRuntimeSessionId(ctx)
   const instanceId = createInstanceId()
   const displayName = args.trim() || defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName)
+  const e2e = config.e2e ? await resolveE2eCreateBlock() : undefined
 
   const body = await request<{ data: RuntimeSessionLink }>(
     `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
@@ -991,9 +1199,19 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
         displayName,
         localCwd: ctx.cwd,
         ...(config.defaultLabel && { labelName: config.defaultLabel }),
+        ...(e2e ? { e2e: { ownerKeyId: e2e.ownerKeyId } } : {}),
       }),
     }
   )
+
+  if (e2e && body.data.e2eEnabled === true) {
+    await provisionE2eStreamKey(body.data.rootStreamId, e2e)
+  } else if (e2e) {
+    ctx.ui.notify(
+      "This session resumed an existing plaintext scratchpad; archive it to get an encrypted one on the next link.",
+      "warning"
+    )
+  }
 
   const existing = config.linkedSessions?.[runtimeSessionId]
   const legacyCursor =
@@ -1149,6 +1367,12 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       defaultDisplayName: existing?.defaultDisplayName ?? "",
       defaultLabel: existing?.defaultLabel ?? "",
       preferredModels: existing?.preferredModels ?? [],
+      // Full tool args/output in the trace on end-to-end-encrypted turns only
+      // (the server sees ciphertext). Plaintext turns always stay redacted.
+      sealedFullTrace: existing?.sealedFullTrace ?? true,
+      // Create new linked scratchpads end-to-end encrypted (requires the bot
+      // owner to have set up encryption in Threa).
+      e2e: existing?.e2e ?? false,
     },
     null,
     2
@@ -1181,6 +1405,12 @@ function parseConfigPatch(text: string): ConfigPatch {
   ) {
     throw new Error("preferredModels must be an array of strings")
   }
+  if (candidate.sealedFullTrace !== undefined && typeof candidate.sealedFullTrace !== "boolean") {
+    throw new Error("sealedFullTrace must be a boolean")
+  }
+  if (candidate.e2e !== undefined && typeof candidate.e2e !== "boolean") {
+    throw new Error("e2e must be a boolean")
+  }
   const { baseUrl, workspaceId, apiKey } = candidate as ConfigPatch
   return {
     baseUrl: baseUrl.trim(),
@@ -1190,6 +1420,8 @@ function parseConfigPatch(text: string): ConfigPatch {
     defaultDisplayName: candidate.defaultDisplayName?.trim() || undefined,
     defaultLabel: candidate.defaultLabel?.trim() || undefined,
     preferredModels: candidate.preferredModels?.map((value) => value.trim()).filter((value) => value.length > 0),
+    sealedFullTrace: candidate.sealedFullTrace,
+    e2e: candidate.e2e,
   }
 }
 
@@ -1377,7 +1609,7 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
   if (!config) return null
   const startedAt = Date.now()
   try {
-    const body = await request<{ data: ClaimedInvocation | null }>(
+    const body = await request<{ data: (ClaimedInvocation & { sealedContext?: unknown }) | null }>(
       `/api/v1/workspaces/${config.workspaceId}/bot-invocations/claim`,
       {
         method: "POST",
@@ -1390,10 +1622,89 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
         ? `claimed ${body.data.id} in ${Date.now() - startedAt}ms`
         : `no invocation in ${Date.now() - startedAt}ms`
     )
-    return body.data ? { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) } : null
+    if (!body.data) return null
+    const claimed = { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) }
+    if (claimed.sealedContext === undefined) return claimed
+    return hydrateSealedClaim(claimed, ctx)
   } catch (error) {
     emitPollDebug(ctx, `failed after ${Date.now() - startedAt}ms: ${summarizeError(error)}`)
     throw error
+  }
+}
+
+/**
+ * Open a sealed claim with this install's BIK: decrypt the trigger + history,
+ * set the decrypted trigger as the prompt, and stash the {@link SealingState}
+ * every reply/step seals with. A failure fails the invocation loudly (with a
+ * scrubbed, generic reason — the error could echo key material or content) and
+ * returns null, rather than throwing up through the poll and leaving the claim
+ * to TTL-recycle in a loop.
+ */
+async function hydrateSealedClaim(
+  claimed: ClaimedInvocation & { sealedContext?: unknown },
+  ctx: ExtensionContext
+): Promise<ClaimedInvocation | null> {
+  const fail = async (reason: string): Promise<null> => {
+    emitPollDebug(ctx, `sealed claim ${claimed.id} unusable: ${reason}`)
+    await failInvocationScrubbed(claimed, reason)
+    return null
+  }
+  const sealed = parseSealedTurnContext(claimed.sealedContext)
+  if (!sealed) return fail("malformed sealedContext")
+  const bik = await bikKeystore.ensure()
+  if (!bik) return fail("no bot identity key")
+  // Wraps and the owner's message AAD bind to the ROOT stream that owns the
+  // E2E key (a thread inherits the root's key), so hydrate against it.
+  const streamId = claimed.rootStreamId ?? claimed.activeStreamId
+  try {
+    const opened = await openSealedTurnContext({ sealed, identity: bik, streamId })
+    const historyLines = opened.history.map((item: DecryptedHistoryItem) => `- ${item.role}: ${item.contentMarkdown}`)
+    return {
+      ...claimed,
+      sealedContext: undefined,
+      promptMarkdown: opened.promptMarkdown,
+      sealing: opened.sealing,
+      sealedContextText:
+        historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : "",
+    }
+  } catch (error) {
+    return fail(scrubSealedError(error))
+  }
+}
+
+/** Fail an invocation with a generic, scrubbed reason — the sealed-path variant of {@link failInvocation}. */
+async function failInvocationScrubbed(invocation: ClaimedInvocation, reason: string): Promise<void> {
+  if (!config) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: getInvocationInstanceId(invocation),
+      claimToken: invocation.claimToken,
+      errorMessage: `Sealed turn failed: ${reason}`.slice(0, 200),
+    }),
+  }).catch(() => undefined)
+}
+
+/**
+ * Seal a session-control command ack under the stream key, when the claim
+ * carried the SSK wraps (an E2E scratchpad). Returns undefined on a plaintext
+ * claim or a key race — the caller then takes the plaintext path, which closes
+ * silently on E2E rather than showing the command as failed.
+ */
+async function sealSessionControlAck(
+  invocation: ClaimedInvocation,
+  markdown: string
+): Promise<SealedReplyBody | undefined> {
+  const ack = parseSealedAckContext(invocation.sealedAck)
+  if (!ack) return undefined
+  const bik = await bikKeystore.ensure()
+  if (!bik) return undefined
+  try {
+    const streamId = invocation.rootStreamId ?? invocation.activeStreamId
+    const sealing = await openSealedAck({ ack, identity: bik, streamId })
+    return await sealReply(sealing, markdown)
+  } catch {
+    return undefined
   }
 }
 
@@ -1454,20 +1765,70 @@ async function completeInvocationWithMarkdown(
   ctx?: ExtensionContext
 ): Promise<void> {
   if (!config) return
+  const instanceId = getInvocationInstanceId(invocation)
+
+  // Sealed session-control ack: on an E2E scratchpad the claim carries the SSK
+  // wraps, so seal the "Model changed …" confirmation under the stream key and
+  // post it as `sealedReply`. No plaintext trace step (the server would reject
+  // it, and it'd leak the ack text). Falls through to the plaintext path when
+  // the bot can't seal (no wrap / key race) — which silently closes on E2E.
+  const sealedReply = await sealSessionControlAck(invocation, finalMessageMarkdown)
+  if (sealedReply) {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        sealedReply,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+        },
+      }),
+    }).catch(() => undefined)
+    lastBusyHeartbeatAt = 0
+    await heartbeat("available", undefined, ctx).catch(() => undefined)
+    return
+  }
+
   await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: getInvocationInstanceId(invocation),
-      claimToken: invocation.claimToken,
-      finalMessageMarkdown,
-      metadata: {
-        "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": getInvocationInstanceId(invocation),
-        "pi.remote.sessionControl": "true",
-      },
-    }),
-  })
+  try {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        finalMessageMarkdown,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+        },
+      }),
+    })
+  } catch (error) {
+    // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
+    // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
+    // plaintext ack is rejected; close with noResponse so the command doesn't
+    // show as failed — it already ran locally and command:completed still lands.
+    // Any other error is a real failure, so rethrow.
+    if (!String(error).includes("E2E_STREAM_PLAINTEXT_UNSUPPORTED")) throw error
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId,
+        claimToken: invocation.claimToken,
+        noResponse: true,
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": instanceId,
+          "pi.remote.sessionControl": "true",
+          "pi.remote.noResponse": "true",
+        },
+      }),
+    }).catch(() => undefined)
+  }
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
@@ -1476,12 +1837,19 @@ async function buildInvocationPrompt(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext
 ): Promise<{ prompt: string; cursor?: string; context: string }> {
-  const { context, cursor } = await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx)).catch(
-    (error): { context: string; cursor?: string } => {
-      ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
-      return { context: "" }
-    }
-  )
+  // A sealed turn never touches the plaintext messages API — its context is
+  // what was already decrypted at claim time (the server would only return
+  // ciphertext placeholders anyway). Attachments are not supported on the
+  // sealed path yet, so the model isn't offered the directive.
+  const sealed = invocation.sealing !== undefined
+  const { context, cursor } = sealed
+    ? { context: invocation.sealedContextText ?? "", cursor: undefined }
+    : await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx)).catch(
+        (error): { context: string; cursor?: string } => {
+          ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
+          return { context: "" }
+        }
+      )
   return {
     context,
     cursor,
@@ -1489,7 +1857,9 @@ async function buildInvocationPrompt(
       `Remote Threa invocation ${invocation.id}.`,
       `Source message: ${invocation.sourceMessageId}`,
       "Respond normally; the extension will post your final answer back to Threa.",
-      "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
+      sealed
+        ? "This scratchpad is end-to-end encrypted; file attachments are not supported here yet."
+        : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
       invocation.promptMarkdown,
@@ -2396,6 +2766,14 @@ async function prepareFinalMarkdown(
 
 async function completeInvocationNoResponse(invocation: ClaimedInvocation): Promise<void> {
   if (!config) return
+  if (invocation.sealing) {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
+      method: "POST",
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: invocation.sealing.callbackToken },
+      body: JSON.stringify({ noResponse: true }),
+    }).catch(() => undefined)
+    return
+  }
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
@@ -2414,38 +2792,83 @@ async function completeInvocationNoResponse(invocation: ClaimedInvocation): Prom
 
 async function failInvocation(invocation: ClaimedInvocation, error: unknown): Promise<void> {
   if (!config) return
+  // A sealed turn's error text could echo decrypted content — send only the
+  // error's class name (the enclave's failure path is the same shape).
+  const errorMessage = invocation.sealing
+    ? `Sealed turn failed: ${scrubSealedError(error)}`
+    : String(error).slice(0, 1000)
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
     body: JSON.stringify({
       instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
-      errorMessage: String(error).slice(0, 1000),
+      errorMessage,
     }),
   }).catch(() => undefined)
+}
+
+/**
+ * Sealed sibling of the plaintext complete: seal the final markdown under the
+ * stream key and post it to `/sealed-complete` (callback-token auth). Local
+ * attachment directives are STRIPPED, never uploaded — the plaintext attachment
+ * store would leak file bytes out of the E2E boundary — with a one-line note so
+ * the user knows why the file is missing.
+ */
+async function completeSealedWithMarkdown(
+  invocation: ClaimedInvocation,
+  sealing: SealingState,
+  markdown: string
+): Promise<void> {
+  if (!config) return
+  const extracted = extractAttachmentDirectives(markdown.trim())
+  const noResponse = extracted.markdown === NO_RESPONSE_MARKER || (!extracted.markdown && extracted.paths.length === 0)
+  if (noResponse) {
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
+      method: "POST",
+      headers: { [THREA_CALLBACK_TOKEN_HEADER]: sealing.callbackToken },
+      body: JSON.stringify({ noResponse: true }),
+    })
+    return
+  }
+  const attachmentNote =
+    extracted.paths.length > 0
+      ? `_${extracted.paths.length} local attachment${extracted.paths.length === 1 ? "" : "s"} not uploaded — attachments aren't supported in encrypted scratchpads yet._`
+      : ""
+  const finalMarkdown = [extracted.markdown || "Done.", attachmentNote].filter(Boolean).join("\n\n")
+  const reply = await sealReply(sealing, finalMarkdown)
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
+    method: "POST",
+    headers: { [THREA_CALLBACK_TOKEN_HEADER]: sealing.callbackToken },
+    body: JSON.stringify({ reply }),
+  })
 }
 
 async function completePending(markdown: string, ctx: ExtensionContext): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
   const steered = steeredInvocations
-  const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
-  const noResponse = finalMarkdown === NO_RESPONSE_MARKER
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: getInvocationInstanceId(invocation),
-      claimToken: invocation.claimToken,
-      ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
-      metadata: {
-        "pi.remote.invocationId": invocation.id,
-        "pi.remote.instanceId": getInvocationInstanceId(invocation),
-        ...(noResponse && { "pi.remote.noResponse": "true" }),
-        ...(uploadedAttachments.length > 0 && {
-          "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
-        }),
-      },
-    }),
-  })
+  if (invocation.sealing) {
+    await completeSealedWithMarkdown(invocation, invocation.sealing, markdown)
+  } else {
+    const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
+    const noResponse = finalMarkdown === NO_RESPONSE_MARKER
+    await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId: getInvocationInstanceId(invocation),
+        claimToken: invocation.claimToken,
+        ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
+        metadata: {
+          "pi.remote.invocationId": invocation.id,
+          "pi.remote.instanceId": getInvocationInstanceId(invocation),
+          ...(noResponse && { "pi.remote.noResponse": "true" }),
+          ...(uploadedAttachments.length > 0 && {
+            "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
+          }),
+        },
+      }),
+    })
+  }
   await Promise.all(steered.map((item) => completeInvocationNoResponse(item.invocation)))
   advanceStreamCursor(invocation, ctx, pendingContextCursor)
   for (const item of steered) advanceStreamCursor(item.invocation, ctx, item.cursor)
@@ -2493,6 +2916,11 @@ export const __testing = {
   describeToolCall,
   formatToolCallTrace,
   formatToolResultTrace,
+  fullToolArgumentSummary,
+  shouldEmitFullTrace,
+  setConfigForTesting: (value: unknown) => {
+    config = value as Config | undefined
+  },
   buildClaimInvocationPayload,
   buildPersistedConfig,
   buildRuntimeCapabilities,
@@ -2679,14 +3107,14 @@ export default function (pi: ExtensionAPI): void {
     if (!pending) return
     const description = describeToolCall(event)
     pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, "") })
-    await recordTraceStep("tool_call", formatToolCallTrace(event), description)
+    await recordTraceStep("tool_call", formatToolCallTrace(event, shouldEmitFullTrace(pending)), description)
   })
 
   pi.on("tool_result", async (event) => {
     if (!pending) return
     await recordTraceStep(
       event.isError ? "tool_error" : "tool_call",
-      formatToolResultTrace(event),
+      formatToolResultTrace(event, shouldEmitFullTrace(pending)),
       event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
     )
     pendingToolCalls.delete(event.toolCallId)

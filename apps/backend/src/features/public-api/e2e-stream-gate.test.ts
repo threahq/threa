@@ -3,9 +3,12 @@ import type { Request, Response } from "express"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { BotRepository } from "./bot-repository"
+import { AgentSessionRepository } from "../agents"
 import * as dbModule from "../../db"
 import type { EventService } from "../messaging"
 import type { StreamService } from "../streams"
+
+const SEALED_ENVELOPE = { v: 2, keyGeneration: 3, iv: "aXY=", aad: "YWFk" }
 
 // The public API has no ciphertext message-write path, so plaintext sends/edits
 // into an E2E stream must be rejected before any insert (mirrors the first-party
@@ -136,6 +139,133 @@ describe("public API E2E-stream plaintext gate", () => {
     })
     // The gate fires before the bot's plaintext reply is written into the sealed stream.
     expect(createMessageInTransaction).not.toHaveBeenCalled()
+  })
+
+  it("accepts a sealed session-control ack completion on an E2E stream (ciphertext, current gen)", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({ currentKeyGeneration: 3 } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null as never)
+    spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
+      fn({})) as never)
+    const createMessageInTransaction = mock((_client: unknown, params: Record<string, unknown>) =>
+      Promise.resolve({
+        id: params.id,
+        streamId: "stream_1",
+        sequence: 1n,
+        authorId: "bot_1",
+        authorType: "bot",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: params.contentMarkdown,
+        reactions: {},
+        metadata: {},
+        editedAt: null,
+        createdAt: new Date(),
+      })
+    )
+    const botRuntimeService = {
+      findActiveClaimForUpdate: mock(() =>
+        Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", metadata: {}, authorUserId: "usr_1" })
+      ),
+      findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
+      completeInvocationInTransaction: mock(() =>
+        Promise.resolve({ id: "inv_1", responseStreamId: "stream_1", metadata: {} })
+      ),
+    } as unknown as PublicApiDeps["botRuntimeService"]
+    const botChannelService = {
+      isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
+    } as unknown as PublicApiDeps["botChannelService"]
+    const handlers = createHandlers({
+      eventService: { createMessageInTransaction } as unknown as EventService,
+      botRuntimeService,
+      botChannelService,
+    })
+
+    const req = {
+      workspaceId: "ws_1",
+      params: { invocationId: "inv_1" },
+      botApiKey: { botId: "bot_1" },
+      body: {
+        instanceId: "inst_1",
+        claimToken: "tok_1",
+        sealedReply: { messageId: "msg_ack", ciphertext: "c2VhbGVk", envelope: SEALED_ENVELOPE },
+      },
+    } as unknown as Request
+
+    await handlers.completeBotInvocation(req, createResponse())
+    const params = createMessageInTransaction.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    expect(params).toMatchObject({ id: "msg_ack", streamId: "stream_1", e2eVersion: 2, envelope: SEALED_ENVELOPE })
+    expect(Buffer.isBuffer(params.ciphertext)).toBe(true)
+    // No plaintext content — placeholder only, ciphertext carries the ack.
+    expect(params.contentMarkdown).toBeDefined()
+  })
+
+  it("rejects a sealed session-control ack under the wrong key generation with 400", async () => {
+    spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({ currentKeyGeneration: 4 } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
+      fn({})) as never)
+    const createMessageInTransaction = mock(() => Promise.resolve({ id: "msg_ack" }))
+    const botRuntimeService = {
+      findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
+      findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
+    } as unknown as PublicApiDeps["botRuntimeService"]
+    const botChannelService = {
+      isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
+    } as unknown as PublicApiDeps["botChannelService"]
+    const handlers = createHandlers({
+      eventService: { createMessageInTransaction } as unknown as EventService,
+      botRuntimeService,
+      botChannelService,
+    })
+
+    const req = {
+      workspaceId: "ws_1",
+      params: { invocationId: "inv_1" },
+      botApiKey: { botId: "bot_1" },
+      body: {
+        instanceId: "inst_1",
+        claimToken: "tok_1",
+        sealedReply: { messageId: "msg_ack", ciphertext: "c2VhbGVk", envelope: SEALED_ENVELOPE },
+      },
+    } as unknown as Request
+
+    await expect(handlers.completeBotInvocation(req, createResponse())).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_WRONG_KEY_GENERATION",
+    })
+    expect(createMessageInTransaction).not.toHaveBeenCalled()
+  })
+
+  it("rejects a plaintext trace step targeting an E2E stream with 400 (INV-E7 step sink)", async () => {
+    const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const findById = spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    const botRuntimeService = {
+      findActiveClaim: mock(() =>
+        Promise.resolve({ id: "claim_1", responseStreamId: "stream_1", sourceMessageId: "msg_t" })
+      ),
+    } as unknown as PublicApiDeps["botRuntimeService"]
+    const botChannelService = {
+      isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
+    } as unknown as PublicApiDeps["botChannelService"]
+    const handlers = createHandlers({ botRuntimeService, botChannelService })
+
+    const req = {
+      workspaceId: "ws_1",
+      params: { invocationId: "inv_1" },
+      botApiKey: { botId: "bot_1" },
+      body: { instanceId: "inst_1", claimToken: "tok_1", stepType: "tool_call", content: "$ echo leaked" },
+    } as unknown as Request
+
+    await expect(handlers.recordBotInvocationStep(req, createResponse())).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+    })
+    expect(isE2e).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1")
+    // The gate fires before the trace projector / appendStep runs, so no
+    // plaintext step content lands in the E2E stream (BotRepository.findById is
+    // only reached after the gate — never called here).
+    expect(findById).not.toHaveBeenCalled()
   })
 
   it("lets a plaintext sendMessage into a non-E2E stream through to createMessage", async () => {

@@ -30,6 +30,14 @@ export interface BotRuntimeWriteOps {
   renewClaim(params: RenewClaimParams): Promise<RenewClaimResult>
   /** Append one or more trace steps through the shared projector. Throws on auth/manifest failure. */
   recordSteps(params: RecordStepsParams): Promise<RecordStepsResult>
+  /**
+   * Finalize one or more SEALED trace steps for an E2E turn (ciphertext +
+   * envelope; the server never reads the content, INV-E7). Auth is the
+   * per-claim callback token (model A), not `instanceId`/`claimToken` — the
+   * sealed sibling of `recordSteps`, shared by the sealed `/sealed-steps` REST
+   * route and the `bot:invocation:sealed-steps` WS frame.
+   */
+  recordSealedSteps(params: RecordSealedStepsParams): Promise<RecordSealedStepsResult>
 }
 
 export interface ApplyPresenceParams {
@@ -97,6 +105,33 @@ export interface RecordStepResult {
 }
 
 export interface RecordStepsResult {
+  invocationId: string
+  sessionId: string
+  steps: RecordStepResult[]
+}
+
+/** One sealed step to finalize: `stepType` + ids + timing are clear, content is ciphertext (INV-E7). */
+export interface RecordSealedStepFrame {
+  /** Client-minted `step_…` id — keys the row, binds the seal AAD, and doubles as the idempotency key. */
+  stepId: string
+  stepType: AgentStepType
+  messageId?: string
+  /** Base64 AES-GCM ciphertext of the step content. */
+  ciphertext: string
+  envelope: { v: number; keyGeneration: number; iv: string; aad: string }
+  durationMs?: number
+}
+
+export interface RecordSealedStepsParams {
+  workspaceId: string
+  botId: string
+  invocationId: string
+  /** The per-claim callback token delivered inside the winning sealed claim (model A). */
+  callbackToken: string
+  steps: RecordSealedStepFrame[]
+}
+
+export interface RecordSealedStepsResult {
   invocationId: string
   sessionId: string
   steps: RecordStepResult[]

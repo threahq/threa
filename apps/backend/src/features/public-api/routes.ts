@@ -40,6 +40,7 @@ import {
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
   createRuntimeSessionSchema,
+  provisionSessionKeyWrapsSchema,
   renameRuntimeSessionSchema,
   rebindRuntimeSessionSchema,
   claimInvocationSchema,
@@ -49,6 +50,7 @@ import {
   recordInvocationStepSchema,
   recordSealedInvocationStepSchema,
   startSealedInvocationStepSchema,
+  sendSealedInvocationMessageSchema,
   completeSealedInvocationSchema,
   createLabelSchema,
   updateLabelSchema,
@@ -450,7 +452,12 @@ const runtimeSessionLinkSchema = z.object({
   activeStreamId: z.string(),
   runtimeSessionId: z.string(),
   streamUrlPath: z.string(),
+  // The linked scratchpad's encryption state — set on create (echoes the e2e
+  // request) and on resume (the existing stream's actual state).
+  e2eEnabled: z.boolean().optional(),
 })
+const ownerE2eKeySchema = z.object({ keyId: z.string(), publicKey: z.string() })
+const provisionedWrapsSchema = z.object({ stored: z.number().int() })
 
 const renamedRuntimeSessionLinkSchema = runtimeSessionLinkSchema.extend({ displayName: z.string() })
 
@@ -463,6 +470,7 @@ const sealedCompletedInvocationSchema = z.object({
   sessionId: z.string(),
   messageId: z.string().nullable(),
 })
+const sealedInterimMessageSchema = z.object({ messageId: z.string() })
 
 const errorSchema = z.object({
   error: z.string(),
@@ -684,6 +692,37 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     responseSchema: dataEnvelope(runtimeSessionLinkSchema),
   },
   {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/owner-e2e-key",
+    operationId: "getBotOwnerE2eKey",
+    summary: "Get the bot owner's active encryption public key",
+    description:
+      "The bot owner's active UIK (key id + base64 X25519 public key). A sealed harness fetches this before creating an end-to-end-encrypted session so it can wrap the generation-0 stream key to the owner. 404 when the owner has not set up encryption.",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    responseSchema: dataEnvelope(ownerE2eKeySchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/e2e/key-wraps",
+    operationId: "provisionStreamE2eKeyWraps",
+    summary: "Provision the generation-0 key wraps for a harness-created encrypted scratchpad",
+    description:
+      "Phase two of harness-created E2E scratchpads: stores the stream-key wraps (owner UIK + the harness's own BIK) minted against the stream id returned by session create. Bot-actor-only, current generation only, and only while the generation has no wraps — slots are immutable, so a replay cannot splice keys.",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "streamId", in: "path", required: true, schema: { type: "string" }, description: "Stream ID" },
+    ],
+    requestSchema: provisionSessionKeyWrapsSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(provisionedWrapsSchema),
+    canReturn404: true,
+  },
+  {
     method: "post",
     path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/rename",
     operationId: "renameBotRuntimeSession",
@@ -789,6 +828,25 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: recordSealedInvocationStepSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(invocationStepSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/sealed-messages",
+    operationId: "sendBotInvocationSealedMessage",
+    summary: "Post a sealed interim message from an in-flight sealed bot invocation",
+    description:
+      "Sealed variant of a mid-turn bot message, for an owner-granted E2E bot harness: posts one sealed interim message (ciphertext the server never decrypts) into the claim's stream before the turn completes — progress notes, permission prompts, early acks. The client-minted messageId binds the seal AAD and dedupes retries. Authenticated with the per-claim callback token in the X-Threa-Callback-Token header.",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+      callbackTokenHeaderParam,
+    ],
+    requestSchema: sendSealedInvocationMessageSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(sealedInterimMessageSchema),
     canReturn404: true,
   },
   {
