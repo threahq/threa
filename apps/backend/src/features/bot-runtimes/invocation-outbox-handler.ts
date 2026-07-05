@@ -126,6 +126,11 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const message = parseMessagePayload(payload)
     if (!message) return
     if (!message.event.actorId) return
+    // System-authored messages never trigger a bot turn. Critically, the
+    // missing-link notice below is itself a system message:created — reacting
+    // to it would feed this handler its own output forever (notice → event →
+    // notice …), flooding the stream and every per-message pipeline behind it.
+    if (message.event.actorType === AuthorTypes.SYSTEM) return
 
     const stream = await StreamRepository.findById(this.pool, message.streamId)
     if (!stream || stream.workspaceId !== message.workspaceId || stream.archivedAt) return
