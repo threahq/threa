@@ -53,6 +53,12 @@ const RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 // ~100 requests/day/session; reconnects still drain immediately via the hello
 // bootstrap callback.
 const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
+// With NO socket, the poll is the only delivery path, but a fast fixed cadence
+// is how a single wedged session burned ~29k billed edge requests/day. Back off
+// empty ticks exponentially from config.pollMs to this cap; a claimed turn or a
+// socket reconnect resets to the fast cadence. Worst-case degraded latency for
+// a socketless session is one cap interval.
+const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
 const MAX_CLAIMS_PER_DRAIN = 20
 // Server-side cap on frames per bot:invocation:steps call (`stepsFrameSchema`
 // in apps/backend/src/features/bot-runtimes/socket-handler.ts).
@@ -295,6 +301,8 @@ export class RemoteSession {
   private stopped = false
   private pollTimer: ReturnType<typeof setTimeout> | undefined
   private renewTimer: ReturnType<typeof setInterval> | undefined
+  /** Consecutive empty poll ticks while the socket is down; drives the poll backoff. */
+  private emptyNoSocketPolls = 0
   private readonly inflight = new Map<string, Inflight>()
   // The invocation whose turn is executing — the stream a relayed permission
   // prompt belongs in. Set when a non-intercepted invocation is pushed to the
@@ -508,8 +516,10 @@ export class RemoteSession {
 
   // --- Claiming -------------------------------------------------------------
 
-  private async claimDrain(): Promise<void> {
-    if (this.stopped || this.claiming) return
+  /** Returns whether at least one invocation was claimed (feeds the poll backoff reset). */
+  private async claimDrain(): Promise<boolean> {
+    if (this.stopped || this.claiming) return false
+    let claimedAny = false
     this.claiming = true
     try {
       for (let i = 0; i < MAX_CLAIMS_PER_DRAIN; i++) {
@@ -524,6 +534,7 @@ export class RemoteSession {
         if (busy && !this.sessionControlEnabled) break
         const invocation = await this.claimNext(busy)
         if (!invocation) break
+        claimedAny = true
         if (isSessionControlInvocation(invocation)) {
           const isStop = parseSessionControlCommand(invocation)?.name === "stop"
           await this.handleSessionControl(invocation)
@@ -539,6 +550,7 @@ export class RemoteSession {
     } finally {
       this.claiming = false
     }
+    return claimedAny
   }
 
   /**
@@ -1317,11 +1329,30 @@ export class RemoteSession {
       if (this.stopped) return
       if (!this.link) await this.ensureLink()
       if (!this.transport.socketConnected) await this.transport.connect()
-      await this.claimDrain()
-      const delay = this.transport.socketConnected ? WS_BACKSTOP_POLL_MS : this.config.pollMs
-      this.pollTimer = setTimeout(() => void tick(), delay)
+      const claimed = await this.claimDrain()
+      this.pollTimer = setTimeout(() => void tick(), this.nextPollDelay(claimed))
     }
     this.pollTimer = setTimeout(() => void tick(), this.config.pollMs)
+  }
+
+  /**
+   * Socket up → slow backstop (pushes deliver work). Socket down → start at the
+   * configured fast cadence and double per empty tick up to the cap, so an
+   * active HTTP-only conversation stays snappy while an idle socketless session
+   * can't burn the edge-request quota. Claimed work resets the backoff.
+   */
+  private nextPollDelay(claimed: boolean): number {
+    if (this.transport.socketConnected) {
+      this.emptyNoSocketPolls = 0
+      return WS_BACKSTOP_POLL_MS
+    }
+    if (claimed) {
+      this.emptyNoSocketPolls = 0
+      return this.config.pollMs
+    }
+    const delay = Math.min(NO_SOCKET_POLL_CAP_MS, this.config.pollMs * 2 ** this.emptyNoSocketPolls)
+    this.emptyNoSocketPolls = Math.min(this.emptyNoSocketPolls + 1, 30)
+    return delay
   }
 
   // --- Helpers --------------------------------------------------------------

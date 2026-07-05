@@ -911,3 +911,17 @@ describe("claim renewal during a turn", () => {
     ])
   })
 })
+
+describe("nextQuietPollMs (no-socket idle backoff)", () => {
+  test("doubles empty idle ticks to the cap and resets cleanly", () => {
+    __testing.resetQuietPollsForTesting()
+    // No transport, no pending turn, default 3s pollMs.
+    expect(__testing.nextQuietPollMs()).toBe(3000)
+    expect(__testing.nextQuietPollMs()).toBe(6000)
+    expect(__testing.nextQuietPollMs()).toBe(12000)
+    for (let i = 0; i < 10; i++) __testing.nextQuietPollMs()
+    expect(__testing.nextQuietPollMs()).toBe(__testing.NO_SOCKET_POLL_CAP_MS)
+    __testing.resetQuietPollsForTesting()
+    expect(__testing.nextQuietPollMs()).toBe(3000)
+  })
+})

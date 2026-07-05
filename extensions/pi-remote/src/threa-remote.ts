@@ -70,6 +70,13 @@ const CLAIM_RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 // day doing nothing; reconnects still drain immediately via the hello
 // bootstrap, so only a silently dropped push waits this long.
 const WS_BACKSTOP_POLL_MS = 15 * 60 * 1000
+// With NO socket the poll is the only delivery path, but an idle session
+// spinning at pollMs (3s) burns ~29k billed edge requests/day. Empty idle ticks
+// back off exponentially to this cap; a claim, an active turn, or a socket
+// reconnect resets to the fast cadence. Turns in flight never back off, so
+// steer/stop and queued follow-ups stay responsive mid-turn (renewal itself is
+// covered by the dedicated claim-renew timer either way).
+const NO_SOCKET_POLL_CAP_MS = 2 * 60 * 1000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 // Sealed steps carry ciphertext the server never reads, so the plaintext step
@@ -248,6 +255,7 @@ let isWaitingForRetry = false
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 let claimRenewTimer: ReturnType<typeof setInterval> | undefined
 let consecutivePollFailures = 0
+let consecutiveQuietPolls = 0
 let lastPollFailureSummary: string | undefined
 let lastBusyHeartbeatAt = 0
 let lastPollDebugSummary: string | undefined
@@ -1363,6 +1371,23 @@ function failurePollMs(): number {
   return Math.min(MAX_FAILURE_POLL_MS, basePollMs() * 2 ** Math.min(consecutivePollFailures - 1, 8))
 }
 
+/**
+ * Delay until the next poll tick, advancing the quiet-poll backoff. Socket up,
+ * turn in flight, or a fresh claim → fast cadence (steer/stop and queued
+ * follow-ups must stay responsive mid-turn). Idle AND socketless → double per
+ * empty tick up to {@link NO_SOCKET_POLL_CAP_MS}, so a wedged session can't
+ * burn the edge-request quota.
+ */
+function nextQuietPollMs(): number {
+  if (transport?.socketConnected || pending || steeredInvocations.length > 0) {
+    consecutiveQuietPolls = 0
+    return basePollMs()
+  }
+  const delay = Math.min(NO_SOCKET_POLL_CAP_MS, basePollMs() * 2 ** consecutiveQuietPolls)
+  consecutiveQuietPolls = Math.min(consecutiveQuietPolls + 1, 8)
+  return delay
+}
+
 function notePollSuccess(ctx: ExtensionContext): void {
   if (consecutivePollFailures === 0) return
   consecutivePollFailures = 0
@@ -1709,6 +1734,7 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
         : `no invocation in ${Date.now() - startedAt}ms`
     )
     if (!body.data) return null
+    consecutiveQuietPolls = 0
     const claimed = { ...body.data, claimedInstanceId: getSessionInstanceId(ctx) }
     if (claimed.sealedContext === undefined) return claimed
     return hydrateSealedClaim(claimed, ctx)
@@ -2783,6 +2809,7 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
       }
       const contactedServer = await claimIfIdle(pi, ctx)
       if (contactedServer) notePollSuccess(ctx)
+      delayMs = nextQuietPollMs()
     } catch (error) {
       notePollFailure(ctx, error)
       delayMs = failurePollMs()
@@ -3135,6 +3162,11 @@ export const __testing = {
     stopClaimRenewTimer()
     pending = undefined
     steeredInvocations = []
+  },
+  NO_SOCKET_POLL_CAP_MS,
+  nextQuietPollMs,
+  resetQuietPollsForTesting: () => {
+    consecutiveQuietPolls = 0
   },
 }
 
