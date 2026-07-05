@@ -37,6 +37,7 @@ describe("Conversation Handlers", () => {
   const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
   const mockGetBoardPostById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
+  const mockUpdateConversation = mock(() => Promise.resolve({ conversation: {} as Record<string, unknown> }))
   const mockGetFlag = mock(() => Promise.resolve("on" as string))
 
   const handlers = createConversationHandlers({
@@ -46,6 +47,7 @@ describe("Conversation Handlers", () => {
       getById: mockGetById,
       getMessages: mockGetMessages,
       getBoardPostById: mockGetBoardPostById,
+      updateConversation: mockUpdateConversation,
     } as never,
     streamService: {
       validateStreamAccess: mockValidateStreamAccess,
@@ -62,7 +64,11 @@ describe("Conversation Handlers", () => {
     mockGetById.mockReset()
     mockGetMessages.mockReset()
     mockGetBoardPostById.mockReset()
+    mockUpdateConversation.mockReset()
     mockGetFlag.mockReset()
+    mockUpdateConversation.mockResolvedValue({
+      conversation: { id: "conv_1", topicSummary: "Renamed", status: "active" },
+    })
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
@@ -288,6 +294,61 @@ describe("Conversation Handlers", () => {
       const res = mockRes()
       await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), res)
       expect((res as unknown as { body: unknown }).body).toEqual({ post })
+    })
+  })
+
+  describe("updateConversation", () => {
+    const req = (body: unknown) => mockReq({ params: { conversationId: "conv_1" }, body })
+
+    test("renames the topic and returns the updated conversation", async () => {
+      const res = mockRes()
+      await handlers.updateConversation(req({ topicSummary: "New topic" }), res)
+      expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+      expect(mockUpdateConversation).toHaveBeenCalledWith({
+        workspaceId: "ws_1",
+        conversationId: "conv_1",
+        topicSummary: "New topic",
+        status: undefined,
+      })
+      expect((res as unknown as { body: unknown }).body).toEqual({
+        conversation: { id: "conv_1", topicSummary: "Renamed", status: "active" },
+      })
+    })
+
+    test("marks the conversation resolved", async () => {
+      const res = mockRes()
+      await handlers.updateConversation(req({ status: "resolved" }), res)
+      expect(mockUpdateConversation).toHaveBeenCalledWith(
+        expect.objectContaining({ conversationId: "conv_1", status: "resolved" })
+      )
+    })
+
+    test("rejects an empty body with a 400", async () => {
+      await expect(handlers.updateConversation(req({}), mockRes())).rejects.toMatchObject({ status: 400 })
+      expect(mockUpdateConversation).not.toHaveBeenCalled()
+    })
+
+    test("rejects a non-user status (stalled) with a 400", async () => {
+      await expect(handlers.updateConversation(req({ status: "stalled" }), mockRes())).rejects.toMatchObject({
+        status: 400,
+      })
+      expect(mockUpdateConversation).not.toHaveBeenCalled()
+    })
+
+    test("404s a conversation in another workspace before writing", async () => {
+      mockGetById.mockResolvedValue({ id: "conv_1", streamId: "stream_1", workspaceId: "other_ws" })
+      const res = mockRes()
+      await handlers.updateConversation(req({ topicSummary: "x" }), res)
+      expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
+      expect(mockUpdateConversation).not.toHaveBeenCalled()
+    })
+
+    test("propagates a stream-access rejection (INV-62) before writing", async () => {
+      mockValidateStreamAccess.mockRejectedValue(new Error("Stream not found"))
+      await expect(handlers.updateConversation(req({ topicSummary: "x" }), mockRes())).rejects.toThrow(
+        "Stream not found"
+      )
+      expect(mockUpdateConversation).not.toHaveBeenCalled()
     })
   })
 })

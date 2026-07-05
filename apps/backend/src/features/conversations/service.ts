@@ -492,6 +492,42 @@ export class ConversationService {
   }
 
   /**
+   * User edit of a conversation's own fields from the board card / panel: rename
+   * the topic (`topicSummary`) and/or mark it resolved/reopened (`status`). The
+   * atomic `UPDATE … RETURNING` is race-safe on its own (INV-20) — no lock, no
+   * check-then-act — and `topic_summary` is written only at insert by the
+   * extractor (never on an existing conversation), so a user title is never
+   * clobbered by a later extraction pass. Emits `conversation:updated` in the same
+   * transaction (INV-7); the update touches `updated_at`, not `last_activity_at`,
+   * so the card changes in place without re-sorting the board (stable view).
+   */
+  async updateConversation(params: {
+    workspaceId: string
+    conversationId: string
+    topicSummary?: string
+    status?: ConversationStatus
+  }): Promise<{ conversation: ConversationWithStaleness }> {
+    const { workspaceId, conversationId, topicSummary, status } = params
+    return withTransaction(this.pool, async (client) => {
+      const updated = await ConversationRepository.update(client, workspaceId, conversationId, { topicSummary, status })
+      if (!updated) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+      const stream = await StreamRepository.findById(client, updated.streamId)
+      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+      await OutboxRepository.insert(client, "conversation:updated", {
+        workspaceId,
+        streamId: updated.streamId,
+        conversationId: updated.id,
+        conversation: addStalenessFields(updated),
+        parentStreamId,
+        streamVisibility,
+      })
+      return { conversation: addStalenessFields(updated) }
+    })
+  }
+
+  /**
    * Mark a conversation read through `throughMessageId` (inclusive). Read truth is
    * message-granular and stream-anchored (docs/sparse-read-overlay-design.md):
    * the conversation's member messages are snapshotted to concrete ids at write

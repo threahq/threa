@@ -2,7 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ChevronLeft, Hash, FileEdit, User, MessageSquareText, Link2, Check, type LucideIcon } from "lucide-react"
+import {
+  ChevronLeft,
+  Hash,
+  FileEdit,
+  User,
+  MessageSquareText,
+  Link2,
+  Check,
+  CircleCheck,
+  type LucideIcon,
+} from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -17,6 +27,8 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
+import { cn } from "@/lib/utils"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
@@ -195,7 +207,19 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
         </Button>
         <SidePanelTitle className="flex min-w-0 flex-1 items-center gap-1.5">
           <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate">{locator}</span>
+          {post?.conversation.status === "resolved" && (
+            <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
+          )}
+          {/* The topic is the conversation's identity — show it when set, falling
+            back to the stream locator (the pre-topic behavior). */}
+          <span
+            className={cn(
+              "truncate",
+              post?.conversation.status === "resolved" && "text-muted-foreground line-through decoration-1"
+            )}
+          >
+            {post?.conversation.topicSummary ?? locator}
+          </span>
           {post && (
             <RelativeTime
               date={post.conversation.lastActivityAt}
@@ -204,6 +228,15 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
             />
           )}
         </SidePanelTitle>
+        {post && (
+          <ConversationActionsMenu
+            workspaceId={workspaceId}
+            conversationId={post.conversation.id}
+            topicSummary={post.conversation.topicSummary}
+            status={post.conversation.status}
+            triggerClassName="shrink-0"
+          />
+        )}
         {conversationId && (
           <Tooltip>
             <TooltipTrigger asChild>

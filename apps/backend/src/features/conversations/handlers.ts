@@ -3,7 +3,14 @@ import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
 import type { FeatureFlagService } from "../feature-flags"
-import { CONVERSATION_STATUSES, BOARD_LENSES, BOARD_SCOPE_STREAM_TYPES, MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
+import {
+  CONVERSATION_STATUSES,
+  ConversationStatuses,
+  MAX_CONVERSATION_TOPIC_LENGTH,
+  BOARD_LENSES,
+  BOARD_SCOPE_STREAM_TYPES,
+  MAX_BOARD_SCOPE_STREAMS,
+} from "@threa/types"
 import { validateRequest } from "../../lib/validation"
 import { HttpError } from "../../lib/errors"
 
@@ -65,6 +72,21 @@ const markReadSchema = z.object({
 const markUnreadSchema = z.object({
   fromMessageId: z.string().min(1),
 })
+
+const updateConversationParamsSchema = z.object({
+  conversationId: z.string().min(1),
+})
+
+// Status is restricted to the two the user can set — reopen (`active`) or resolve
+// (`resolved`). `stalled` is a derived/LLM lifecycle state, never user-assignable.
+const updateConversationBodySchema = z
+  .object({
+    topicSummary: z.string().trim().min(1).max(MAX_CONVERSATION_TOPIC_LENGTH).optional(),
+    status: z.enum([ConversationStatuses.ACTIVE, ConversationStatuses.RESOLVED]).optional(),
+  })
+  .refine((body) => body.topicSummary !== undefined || body.status !== undefined, {
+    message: "Provide topicSummary or status",
+  })
 
 interface Dependencies {
   conversationService: ConversationService
@@ -229,6 +251,31 @@ export function createConversationHandlers({ conversationService, streamService,
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const result = await conversationService.reassignMessage({ workspaceId, conversationId, messageId, userId })
+      res.json(result)
+    },
+
+    /**
+     * User edit of a conversation from the board card / panel: rename the topic
+     * and/or mark it resolved/reopened. Ungated (like reassign/read/unread — only
+     * the board *read* endpoints gate on the flag). Access via the conversation's
+     * root stream (INV-62).
+     */
+    async updateConversation(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const { conversationId } = validateRequest(updateConversationParamsSchema, req.params)
+      const { topicSummary, status } = validateRequest(updateConversationBodySchema, req.body)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.updateConversation({ workspaceId, conversationId, topicSummary, status })
       res.json(result)
     },
 
