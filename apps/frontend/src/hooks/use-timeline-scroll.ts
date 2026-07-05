@@ -192,7 +192,7 @@ export function useTimelineScroll({
   const prevScrollTopRef = useRef(0)
   const prevScrollHeightRef = useRef(0)
   const initialSettleRafRef = useRef(0)
-  const initialSettleCleanupRef = useRef<(() => void) | null>(null)
+  const initialSettleCleanupRef = useRef<((reveal?: boolean) => void) | null>(null)
 
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
@@ -294,7 +294,13 @@ export function useTimelineScroll({
   // idempotent pinToBottom the ResizeObserver uses, so the two never disagree.
   const settleToBottom = useCallback(
     (maxMs: number) => {
-      initialSettleCleanupRef.current?.()
+      // Supersede a settle still in flight from a stream navigated away from
+      // before it converged (resetKey changed while its RAF loop was still
+      // ticking) — cancel it without revealing through its closure. Reveal
+      // would strip the mask this call is about to raise again, exposing
+      // whatever unsettled position the new stream is still mid-measurement
+      // at: the exact bounce the mask exists to hide.
+      initialSettleCleanupRef.current?.(false)
       const el = scrollerRef.current
       if (!el) {
         setIsInitialSettling(false)
@@ -311,22 +317,23 @@ export function useTimelineScroll({
           setIsInitialSettling(false)
         }
       }
-      const cleanup = () => {
+      const cleanup = (shouldReveal = true) => {
         aborted = true
-        reveal()
+        if (shouldReveal) reveal()
         if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
         initialSettleRafRef.current = 0
-        el.removeEventListener("wheel", cleanup)
-        el.removeEventListener("touchmove", cleanup)
-        el.removeEventListener("pointerdown", cleanup)
-        el.removeEventListener("keydown", cleanup)
+        el.removeEventListener("wheel", onGesture)
+        el.removeEventListener("touchmove", onGesture)
+        el.removeEventListener("pointerdown", onGesture)
+        el.removeEventListener("keydown", onGesture)
         initialSettleCleanupRef.current = null
       }
+      const onGesture = () => cleanup()
       initialSettleCleanupRef.current = cleanup
-      el.addEventListener("wheel", cleanup, { passive: true })
-      el.addEventListener("touchmove", cleanup, { passive: true })
-      el.addEventListener("pointerdown", cleanup, { passive: true })
-      el.addEventListener("keydown", cleanup)
+      el.addEventListener("wheel", onGesture, { passive: true })
+      el.addEventListener("touchmove", onGesture, { passive: true })
+      el.addEventListener("pointerdown", onGesture, { passive: true })
+      el.addEventListener("keydown", onGesture)
 
       const tick = () => {
         if (aborted) return
@@ -470,6 +477,13 @@ export function useTimelineScroll({
     if (!scroller || !content) return
 
     let prevClientHeight = scroller.clientHeight
+    let pendingRecheck = 0
+    const clearPendingRecheck = () => {
+      if (pendingRecheck) {
+        window.clearTimeout(pendingRecheck)
+        pendingRecheck = 0
+      }
+    }
     const observer = new ResizeObserver((entries) => {
       const el = scrollerRef.current
       if (!el) return
@@ -482,11 +496,27 @@ export function useTimelineScroll({
         // user-scroll-driven (the composer tap lands on the floating composer,
         // not the scroller, so the gesture stamp stays stale), so keyboard-follow
         // is unaffected.
-        const userScrolling = performance.now() - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+        const elapsedSinceGesture = performance.now() - (userInteractedAtRef?.current ?? 0)
+        const userScrolling = elapsedSinceGesture < USER_SCROLL_GRACE_MS
         if (!hasViewportEntry && userScrolling) {
           prevClientHeight = el.clientHeight
+          // The resize itself is real — a message, session card, or the composer
+          // genuinely changed size — we're only holding off because a scroller
+          // gesture landed a moment ago. If that's the only resize this content
+          // change ever fires, skipping it here would miss it forever, so
+          // re-check once the grace window actually elapses and catch up if
+          // we're still following.
+          clearPendingRecheck()
+          pendingRecheck = window.setTimeout(
+            () => {
+              pendingRecheck = 0
+              if (isFollowingTailRef.current) pinToBottom()
+            },
+            Math.max(0, USER_SCROLL_GRACE_MS - elapsedSinceGesture)
+          )
           return
         }
+        clearPendingRecheck()
         pinToBottom()
         prevClientHeight = el.clientHeight
         return
@@ -526,6 +556,7 @@ export function useTimelineScroll({
 
     return () => {
       observer.disconnect()
+      clearPendingRecheck()
       vv?.removeEventListener("resize", pinIfFollowing)
       vv?.removeEventListener("scroll", pinIfFollowing)
     }

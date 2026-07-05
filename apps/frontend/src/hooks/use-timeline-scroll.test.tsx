@@ -432,3 +432,155 @@ describe("useTimelineScroll — gesture stamp attaches when the scroller mounts 
     expect(userInteractedAtRef.current).toBeGreaterThan(0)
   })
 })
+
+describe("useTimelineScroll — deferred re-check after a resize skipped for an active scroll", () => {
+  it("catches up once the grace window elapses if a resize was skipped for a just-landed scroller gesture", () => {
+    // Regression: a content resize (new message, session card, composer growth)
+    // that lands within USER_SCROLL_GRACE_MS (300ms) of a genuine scroller
+    // gesture is deliberately skipped, so it doesn't fight an active scroll.
+    // But if that's the only resize this content change ever fires, skipping it
+    // with no follow-up misses it forever — the tail never re-pins and the
+    // last row stays stranded behind the composer. There must be a guaranteed
+    // recheck once the grace window actually elapses.
+    class MockResizeObserver {
+      targets: Element[] = []
+      constructor(public cb: ResizeObserverCallback) {}
+      observe(t: Element) {
+        this.targets.push(t)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    let observer: MockResizeObserver | undefined
+    class CapturingResizeObserver extends MockResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        super(cb)
+        observer = this
+      }
+    }
+    vi.stubGlobal("ResizeObserver", CapturingResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const userInteractedAtRef = { current: 0 }
+      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 800 })
+      act(() => harness.current.registerScroller(el))
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
+
+      // A genuine scroller gesture just landed.
+      userInteractedAtRef.current = performance.now()
+
+      // Content grows moments later (still inside the grace window) — a new
+      // message, a session card, or the composer footer spacer resizing.
+      Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 5200 })
+      act(() => observer!.cb([], observer as unknown as ResizeObserver))
+
+      // Skipped: an active scroll is not fought, so no snap yet.
+      expect(el.scrollTop).toBe(800)
+
+      // Grace window elapses with no further resize or scroll.
+      act(() => vi.advanceTimersByTime(300))
+
+      // Still following → the deferred recheck catches it up to the new bottom.
+      expect(el.scrollTop).toBe(5200)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not catch up if the user genuinely detached from the tail before the grace window elapsed", () => {
+    class MockResizeObserver {
+      targets: Element[] = []
+      constructor(public cb: ResizeObserverCallback) {}
+      observe(t: Element) {
+        this.targets.push(t)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    let observer: MockResizeObserver | undefined
+    class CapturingResizeObserver extends MockResizeObserver {
+      constructor(cb: ResizeObserverCallback) {
+        super(cb)
+        observer = this
+      }
+    }
+    vi.stubGlobal("ResizeObserver", CapturingResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const userInteractedAtRef = { current: 0 }
+      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 800 })
+      act(() => harness.current.registerScroller(el))
+
+      userInteractedAtRef.current = performance.now()
+      Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 5200 })
+      act(() => observer!.cb([], observer as unknown as ResizeObserver))
+      expect(el.scrollTop).toBe(800)
+
+      // The user deliberately scrolls away from the tail before the grace
+      // window elapses — the deferred recheck must respect that, not override it.
+      harness.current.disableAutoScroll()
+
+      act(() => vi.advanceTimersByTime(300))
+      expect(el.scrollTop).toBe(800)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe("useTimelineScroll — cold-load settle across a stream switch", () => {
+  it("does not prematurely reveal when superseding a settle still in flight from the stream navigated away from", () => {
+    // Regression: settleToBottom's own supersede-cancel used to call the
+    // PREVIOUS settle's cleanup unconditionally, which always reveals
+    // (setIsInitialSettling(false)) — so navigating to a new stream before the
+    // old one's cold-load settle converged stripped the new stream's mask
+    // before it ran even one frame of its own convergence, exposing whatever
+    // unsettled position virtua was still mid-measurement at (the last row
+    // parked behind the composer until something else happened to re-pin it).
+    const rafCallbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
+    const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
+    try {
+      const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a" }))
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      let height = 1000
+      const el = makeScrollerDiv({ scrollHeight: 0, clientHeight: 800 })
+      Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
+      act(() => harness.current.registerScroller(el))
+
+      // Stream A's first window lands — the cold-load settle starts, masked.
+      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a" }))
+      expect(harness.current.isInitialSettling).toBe(true)
+
+      // One frame in: height is still moving (virtua still measuring) — not
+      // converged, so the settle re-schedules itself for another frame.
+      height = 1200
+      runFrame()
+      expect(harness.current.isInitialSettling).toBe(true)
+      expect(rafCallbacks).toHaveLength(1)
+
+      // Navigate away to stream B before stream A's settle ever converged.
+      harness.rerender(opts({ itemCount: 5, getFirstKey: () => "b1", resetKey: "stream_b" }))
+
+      // Stream B's own settle just started, superseding A's stale one — still
+      // masked, since it hasn't run a single frame of its own convergence yet.
+      expect(harness.current.isInitialSettling).toBe(true)
+    } finally {
+      raf.mockRestore()
+      caf.mockRestore()
+    }
+  })
+})
