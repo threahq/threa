@@ -17,6 +17,7 @@ import { TraceStepList } from "./trace-step-list"
 import { commandsApi } from "@/api"
 import { findVisibleZoneEditor } from "@/components/timeline/message-event"
 import { X } from "lucide-react"
+import { toast } from "sonner"
 import { formatDuration } from "@/lib/dates"
 import { CommandKinds, type AgentSession, type AgentSessionRerunContext, type AgentSessionStatus } from "@threa/types"
 
@@ -29,6 +30,25 @@ function collectRuntimeSessionControlCommands(commands: Awaited<ReturnType<typeo
     if (command.name === "steer" || command.name === "stop") advertised.add(command.name)
   }
   return advertised
+}
+
+async function resolveRuntimeCommands({
+  workspaceId,
+  streamId,
+  runtimeCommands,
+}: {
+  workspaceId: string
+  streamId: string
+  runtimeCommands: ReadonlySet<SessionControlCommand> | null
+}): Promise<ReadonlySet<SessionControlCommand>> {
+  if (runtimeCommands) return runtimeCommands
+  return commandsApi
+    .listForStream(workspaceId, streamId)
+    .then(collectRuntimeSessionControlCommands)
+    .catch((error: unknown) => {
+      console.warn("[TraceDialog] failed to resolve runtime session-control commands", error)
+      return new Set<SessionControlCommand>()
+    })
 }
 
 const STATUS_TEXT: Record<AgentSessionStatus, string> = {
@@ -46,7 +66,7 @@ export function TraceDialog() {
   const { sessionId, highlightMessageId, getTraceUrl, closeTraceModal } = useTrace()
   const socket = useSocket()
   const abortSession = useAbortSession(socket)
-  const [runtimeCommands, setRuntimeCommands] = useState<ReadonlySet<SessionControlCommand>>(new Set())
+  const [runtimeCommands, setRuntimeCommands] = useState<ReadonlySet<SessionControlCommand> | null>(null)
   // Resolved once and threaded into the step list so each step can decrypt
   // sealed (enclave) content via the viewer's E2E session.
   const userId = useWorkspaceUserId(workspaceId!)
@@ -58,7 +78,7 @@ export function TraceDialog() {
 
   useEffect(() => {
     if (!workspaceId || !session?.streamId || status !== "running") {
-      setRuntimeCommands(new Set())
+      setRuntimeCommands(null)
       return
     }
 
@@ -86,38 +106,44 @@ export function TraceDialog() {
     if (!sessionId || !workspaceId) return
     void (async () => {
       if (session?.streamId) {
-        let advertised = runtimeCommands
-        if (!advertised.has("stop")) {
-          advertised = await commandsApi
-            .listForStream(workspaceId, session.streamId)
-            .then(collectRuntimeSessionControlCommands)
-            .catch(() => new Set<SessionControlCommand>())
-        }
+        const advertised = await resolveRuntimeCommands({ workspaceId, streamId: session.streamId, runtimeCommands })
         if (advertised.has("stop")) {
-          await commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/stop" })
-          return
+          try {
+            await commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/stop" })
+            return
+          } catch (error) {
+            console.warn("[TraceDialog] /stop dispatch failed, falling back to abort", error)
+            toast.error("Runtime stop failed — using local stop instead")
+          }
         }
       }
       abortSession({ sessionId, workspaceId })
     })().catch((error: unknown) => {
       console.warn("[TraceDialog] failed to stop session", error)
+      toast.error("Failed to stop session")
     })
   }, [abortSession, runtimeCommands, session?.streamId, sessionId, workspaceId])
 
   const handleSteerSession = useCallback(() => {
-    if (workspaceId && session?.streamId && runtimeCommands.has("steer")) {
-      void commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/steer" }).catch((error: unknown) => {
-        console.warn("[TraceDialog] failed to dispatch /steer", error)
-      })
-      return
-    }
+    void (async () => {
+      if (workspaceId && session?.streamId) {
+        const advertised = await resolveRuntimeCommands({ workspaceId, streamId: session.streamId, runtimeCommands })
+        if (advertised.has("steer")) {
+          await commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/steer" })
+          return
+        }
+      }
 
-    for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {
-      const editor = findVisibleZoneEditor(zone)
-      if (!editor) continue
-      focusAtEnd(editor)
-      return
-    }
+      for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {
+        const editor = findVisibleZoneEditor(zone)
+        if (!editor) continue
+        focusAtEnd(editor)
+        return
+      }
+    })().catch((error: unknown) => {
+      console.warn("[TraceDialog] failed to dispatch /steer", error)
+      toast.error("Failed to redirect session")
+    })
   }, [runtimeCommands, session?.streamId, workspaceId])
 
   if (!sessionId) return null

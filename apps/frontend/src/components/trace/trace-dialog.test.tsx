@@ -10,6 +10,7 @@ import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as hooksModule from "@/hooks"
 import { commandsApi } from "@/api"
+import { toast } from "sonner"
 
 let mockSessionId = "session_1"
 let mockSessionIndex = 0
@@ -91,6 +92,7 @@ describe("TraceDialog", () => {
 
     vi.spyOn(commandsApi, "listForStream").mockResolvedValue([])
     vi.spyOn(commandsApi, "dispatch").mockResolvedValue({ success: true, commandId: "cmd_1", command: "stop", args: "" })
+    vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
       <span>just now</span>
@@ -142,8 +144,9 @@ describe("TraceDialog", () => {
     expect(screen.getByText("3 steps • 1 message sent")).toBeInTheDocument()
   })
 
-  it("keeps Redirect visible for regular running agents and focuses the composer", () => {
+  it("keeps Redirect visible for regular running agents and focuses the composer", async () => {
     const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
+    mockSessionId = "session_run"
     mockSession = {
       id: "session_run",
       streamId: "stream_1",
@@ -176,11 +179,44 @@ describe("TraceDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
 
-    expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor)
+    await waitFor(() => expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor))
+    expect(commandsApi.dispatch).not.toHaveBeenCalled()
+  })
+
+  it("does not re-fetch runtime commands on Stop after an empty command list is loaded", async () => {
+    mockSessionId = "session_run"
+    mockSession = {
+      id: "session_run",
+      streamId: "stream_1",
+      personaId: "persona_1",
+      triggerMessageId: "msg_1",
+      status: "running",
+      sentMessageIds: [],
+      createdAt: "2026-02-19T10:00:00.000Z",
+    }
+    mockRelatedSessions = [mockSession]
+    mockSteps = [
+      {
+        id: "step_running",
+        sessionId: "session_run",
+        stepNumber: 1,
+        stepType: "thinking",
+        startedAt: "2026-02-19T10:00:01.000Z",
+      },
+    ]
+
+    renderTrace()
+
+    await waitFor(() => expect(commandsApi.listForStream).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }))
+
+    expect(commandsApi.listForStream).toHaveBeenCalledTimes(1)
     expect(commandsApi.dispatch).not.toHaveBeenCalled()
   })
 
   it("dispatches advertised runtime stop and steer commands from the running trace", async () => {
+    mockSessionId = "session_run"
     mockSession = {
       id: "session_run",
       streamId: "stream_1",
@@ -212,7 +248,44 @@ describe("TraceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
-    expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/steer" })
-    expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" })
+    await waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/steer" }))
+    await waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" }))
+  })
+
+  it("falls back to local Stop and surfaces a toast when advertised runtime stop fails", async () => {
+    const abortSession = vi.fn()
+    vi.spyOn(hooksModule, "useAbortSession").mockReturnValue(abortSession)
+    mockSessionId = "session_run"
+    mockSession = {
+      id: "session_run",
+      streamId: "stream_1",
+      personaId: "bot_1",
+      triggerMessageId: "msg_1",
+      status: "running",
+      sentMessageIds: [],
+      createdAt: "2026-02-19T10:00:00.000Z",
+    }
+    mockRelatedSessions = [mockSession]
+    mockSteps = [
+      {
+        id: "step_running",
+        sessionId: "session_run",
+        stepNumber: 1,
+        stepType: "thinking",
+        startedAt: "2026-02-19T10:00:01.000Z",
+      },
+    ]
+    vi.mocked(commandsApi.listForStream).mockResolvedValue([
+      { name: "stop", description: "Stop", kind: "bot-runtime", scope: "stream" },
+    ])
+    vi.mocked(commandsApi.dispatch).mockRejectedValue(new Error("network down"))
+
+    renderTrace()
+
+    await waitFor(() => expect(commandsApi.listForStream).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }))
+
+    await waitFor(() => expect(abortSession).toHaveBeenCalledWith({ sessionId: "session_run", workspaceId: "ws_1" }))
+    expect(toast.error).toHaveBeenCalledWith("Runtime stop failed — using local stop instead")
   })
 })
