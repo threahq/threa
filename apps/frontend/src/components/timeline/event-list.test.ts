@@ -432,6 +432,49 @@ describe("annotateConversationRevivals", () => {
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
   })
+
+  it("falls back to the membership map when the declared conversation was merged into a retired shell", () => {
+    // conv_x (declared) was emptied + resolved by a later extraction pass; the
+    // messages now live in conv_successor. The chip must route + label from the
+    // successor, not deep-link the dead shell.
+    const conversationsById = new Map<string, ConversationWithStaleness>([
+      [
+        "conv_x",
+        { status: "resolved", messageIds: [] as string[], topicSummary: "Pizza (old)" } as ConversationWithStaleness,
+      ],
+      [
+        "conv_successor",
+        { status: "active", messageIds: ["msg_a", "msg_c"], topicSummary: "Pizza" } as ConversationWithStaleness,
+      ],
+    ])
+    const membership = new Map([
+      ["msg_a", "conv_successor"],
+      ["msg_b", "conv_y"],
+      ["msg_c", "conv_successor"],
+    ])
+    const items = annotateConversationRevivals(scattered(true), membership, conversationsById)
+
+    expect(revivalOf(items[2])).toEqual({
+      conversationId: "conv_successor",
+      topicSummary: "Pizza",
+      previousActivityAt: "2026-02-19T00:00:00.000Z",
+    })
+  })
+
+  it("keeps the declared id when its conversation is resolved but still holds messages", () => {
+    // A legitimately-resolved topic (not an empty merge shell) — the declared id
+    // is still its real home, so the fallback must NOT fire.
+    const conversationsById = new Map<string, ConversationWithStaleness>([
+      [
+        "conv_x",
+        { status: "resolved", messageIds: ["msg_a", "msg_c"], topicSummary: "Pizza" } as ConversationWithStaleness,
+      ],
+    ])
+    const membership = new Map([["msg_c", "conv_other"]])
+    const items = annotateConversationRevivals(scattered(true), membership, conversationsById)
+
+    expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
+  })
 })
 
 describe("findMessageItemIndex", () => {

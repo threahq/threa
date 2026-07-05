@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react"
 import {
   COMMAND_EVENT_TYPES,
+  ConversationStatuses,
   type CommandEventType,
   type StreamEvent,
   type CommandDispatchedPayload,
@@ -254,7 +255,21 @@ export function annotateConversationRevivals(
     // messages (Mechanism A). The topic label still resolves from
     // `conversationsById` (loaded per-stream); a declared-but-not-yet-listed
     // conversation shows the generic label until the list catches up.
-    const conversationId = payload.declaredConversationId ?? membership.get(messageId) ?? null
+    //
+    // Fallback exception (resolved decision 3, board-view-design.md): a later
+    // extraction pass can merge/retire the declared conversation into an empty
+    // `resolved` shell — still present in `conversationsById` (the read query
+    // returns it) but holding no messages. Deep-linking that shell points at a
+    // dead conversation, so fall back to the membership map, which after a merge
+    // resolves the message to its surviving home. A declared id merely not-yet-
+    // listed (absent from `conversationsById`) is NOT retired — keep it, so the
+    // flicker-free just-sent case still wins over a not-yet-loaded list. The
+    // `status` check runs before `.messageIds` so a row missing that field can't
+    // be misread as retired.
+    const declared = payload.declaredConversationId
+    const declaredRow = declared != null ? conversationsById.get(declared) : undefined
+    const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
+    const conversationId = (declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId
