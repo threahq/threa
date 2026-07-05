@@ -82,9 +82,9 @@ export interface AgentSession {
   replyKeyGeneration: number | null
   heartbeatAt: Date | null
   /**
-   * A user's "Stop research" for an enclave-owned session (§2.7): the enclave
-   * has no inbound routes, so the request is recorded here and delivered on
-   * the session-heartbeat response, where the enclave trips its turn's
+   * A user's Stop for an enclave-owned session (§2.7): the enclave has no
+   * inbound routes, so the request is recorded here and delivered on the
+   * session-heartbeat response, where the enclave trips its turn's
    * AbortController. NULL = no abort requested. In-process sessions never set
    * this — their abort goes through the in-memory SessionAbortRegistry.
    */
@@ -473,11 +473,11 @@ export const AgentSessionRepository = {
   },
 
   /**
-   * Record a user's "Stop research" for an enclave-owned session. The flag is
-   * consumed by the session-heartbeat callback (the enclave's only inbound
-   * channel is its own polling). Returns whether a RUNNING session took the
-   * flag — a terminal session has nothing left to abort. Idempotent: a second
-   * request keeps the original timestamp.
+   * Record a user's Stop for an enclave-owned session. The flag is consumed by
+   * the session-heartbeat callback (the enclave's only inbound channel is its
+   * own polling). Returns whether a RUNNING session took the flag — a terminal
+   * session has nothing left to abort. Idempotent: a second request keeps the
+   * original timestamp.
    */
   async requestAbort(db: Querier, id: string): Promise<boolean> {
     const result = await db.query(
