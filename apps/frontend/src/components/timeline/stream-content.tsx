@@ -2298,7 +2298,7 @@ export function StreamContent({
                       disabled={isArchived || isSystem}
                       disabledReason={disabledReason}
                       autoFocus={autoFocus}
-                      onComposerHeightChange={useVirtualized ? handleComposerHeightChange : undefined}
+                      onComposerHeightChange={handleComposerHeightChange}
                     />
                   )}
                 </div>
