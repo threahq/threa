@@ -125,10 +125,12 @@ export interface EnclaveTurnDeps {
    */
   onSealedSummary?: (sealed: EnclaveSealedSummary) => Promise<void>
   /**
-   * Cooperative cancellation for long-running tools (research). Wired to the
-   * runtime's `toolSignalProvider`, so the user's "Stop research" aborts the web
-   * sub-loop gracefully — it returns partial findings and the turn still replies,
-   * exactly like the in-process `SessionAbortRegistry` path. Omitted → no cancel.
+   * Cooperative session Stop (from the heartbeat's abort flag). Wired to the
+   * runtime's `runAbortSignal` (cancels a pending LLM iteration + halts the loop),
+   * the all-tools `toolSignalProvider` (cuts an in-flight web_search/read_url/
+   * research fetch), and the OpenRouter call itself via `createEnclaveAI` — so a
+   * Stop halts any running sealed session gracefully, exactly like the in-process
+   * `SessionAbortRegistry` path. Omitted → no cancel.
    */
   abortSignal?: AbortSignal
   /**

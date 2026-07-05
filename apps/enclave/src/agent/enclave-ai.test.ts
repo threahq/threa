@@ -71,6 +71,22 @@ describe("createEnclaveAI", () => {
     ])
   })
 
+  it("forwards the abort signal so a Stop can cancel the in-flight call", async () => {
+    const chat = stub({ message: { content: "x" }, model: "stub" })
+    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
+    const ai = createEnclaveAI(chat.fn, usage)
+    const controller = new AbortController()
+
+    await ai.generateTextWithTools({
+      model: MODEL,
+      modelString: "m",
+      messages: [{ role: "user", content: "hi" }],
+      abortSignal: controller.signal,
+    })
+
+    expect(chat.seen[0]?.signal).toBe(controller.signal)
+  })
+
   it("accumulates token usage and cost across calls", async () => {
     const chat = stub({
       message: { content: "x" },

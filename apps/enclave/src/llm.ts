@@ -20,6 +20,12 @@ export interface RawChatRequest {
   tools?: OpenAiTool[]
   temperature?: number
   maxTokens?: number
+  /**
+   * Caller cancellation (a user Stop), composed with the per-call timeout below.
+   * Its abort cancels the in-flight OpenRouter request so a Stop mid-LLM-call
+   * doesn't wait out the current call before the loop halts.
+   */
+  signal?: AbortSignal
 }
 
 export interface RawChatResult {
@@ -85,7 +91,11 @@ export function createOpenRouterChat(config: EnclaveConfig): RawChatFn {
         // Restrict routing to providers that do not retain request data.
         provider: { data_collection: "deny" },
       }),
-      signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
+      // Compose the caller's Stop signal with the per-call timeout: whichever
+      // fires first aborts the request.
+      signal: req.signal
+        ? AbortSignal.any([req.signal, AbortSignal.timeout(OPENROUTER_TIMEOUT_MS)])
+        : AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
     })
 
     if (!res.ok) {
