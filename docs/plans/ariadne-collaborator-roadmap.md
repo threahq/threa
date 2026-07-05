@@ -41,7 +41,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
 | 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
 | 2.1  | Generalized session abort                            | ☑      | #1177 |
-| 2.2  | Stop/Redirect affordances on the activity card       | ☑      | #TBD  |
+| 2.2  | Stop/Redirect affordances on the activity card       | ☑      | #1190 |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
