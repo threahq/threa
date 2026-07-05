@@ -53,6 +53,7 @@ import {
   useMessageQueue,
   useUnreadTabIndicator,
   useNotificationSweep,
+  useVisibleStreams,
   useBackgroundBootstrapSync,
 } from "@/hooks"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
@@ -344,6 +345,16 @@ function NotificationSweeper({ workspaceId }: { workspaceId: string }) {
   return null
 }
 
+/**
+ * Publishes the URL-derived visible streams (main stream + bare-stream panels)
+ * for push suppression. `conv:` panels resolve their stream ids only after
+ * their post loads, so the conversation panel registers those itself.
+ */
+function VisibleStreamPresence({ streamIds }: { streamIds: string[] }) {
+  useVisibleStreams(streamIds.filter((id) => id.startsWith("stream_")))
+  return null
+}
+
 function AppUpdateChecker() {
   useAppUpdate()
   return null
@@ -448,6 +459,7 @@ export function WorkspaceLayout() {
         <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
           <UnreadTabIndicator workspaceId={workspaceId} />
           <NotificationSweeper workspaceId={workspaceId} />
+          <VisibleStreamPresence streamIds={streamIds} />
           <AppUpdateChecker />
           <FreshnessWatchers />
           <MessageQueueHandler />

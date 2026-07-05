@@ -2,6 +2,7 @@
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
 import { resolveTag } from "./lib/sw-notification-format"
 import { isDevicePresent, PRESENCE_CACHE } from "./lib/sw-presence"
+import { readVisibleStreams } from "./lib/visible-streams"
 import {
   BOOTSTRAP_SYNC_TAG,
   PENDING_SYNC_CACHE,
@@ -462,15 +463,20 @@ self.addEventListener("push", (event) => {
   // rule. Backend always sends the push; the SW decides whether to display it.
   // Skipping only the on-screen stream also keeps us off the userVisibleOnly
   // silent-push budget that browsers penalize on mobile.
+  //
+  // "Viewing" is two signals, either suffices: the window URL matches the
+  // stream route (/w/:ws/s/:id), or the page registered the stream as
+  // on-screen in the visible-streams presence entry — threads and
+  // conversations render as `?panel=` params (on any route, including /board),
+  // so their stream ids never appear in the URL path and only the registry
+  // knows they're being read.
   event.waitUntil(
-    Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true })]).then(
-      async ([{ appendMessage, formatTitle, formatBody, isViewingStream }, clients]) => {
-        const viewingThisStream = clients.some(
-          (c) =>
-            c.focused &&
-            new URL(c.url).origin === self.location.origin &&
-            isViewingStream(c.url, data.workspaceId, data.streamId)
-        )
+    Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()]).then(
+      async ([{ appendMessage, formatTitle, formatBody, isViewingStream }, clients, visibleStreams]) => {
+        const focusedClients = clients.filter((c) => c.focused && new URL(c.url).origin === self.location.origin)
+        const viewingThisStream =
+          focusedClients.some((c) => isViewingStream(c.url, data.workspaceId, data.streamId)) ||
+          (focusedClients.length > 0 && !!data.streamId && visibleStreams.has(data.streamId))
         if (viewingThisStream && (await isDevicePresent())) return
 
         // Accumulate a rolling list of recent messages from the existing notification
@@ -628,9 +634,11 @@ self.addEventListener("pushsubscriptionchange", (event) => {
         const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
 
         if (clients.length === 0) {
-          // No open windows — persist to IndexedDB so the app can sync on next load.
-          // The usePushNotifications hook re-subscribes on mount anyway (idempotent upsert),
-          // so a lost change event is recovered naturally when the user reopens the app.
+          // No open windows — the SW can't register with the backend itself
+          // (no workspace context or auth). The re-subscribe above keeps the
+          // browser side warm; usePushNotifications re-registers it on next
+          // app open (mount) or within LIVENESS_CHECK_INTERVAL_MS on an
+          // already-open tab, as a plain idempotent upsert.
           return
         }
 

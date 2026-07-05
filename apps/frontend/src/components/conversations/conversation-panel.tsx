@@ -22,7 +22,7 @@ import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { SidebarToggle } from "@/components/layout"
-import { useActors } from "@/hooks"
+import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationService, usePanel, parseConversationPanel, useSidebar } from "@/contexts"
@@ -84,6 +84,9 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
     [post]
   )
   usePanelStreamSubscriptions(panelStreamIds)
+  // The panel's streams aren't in the URL (`?panel=conv:…`), so the SW's push
+  // suppression can only know they're on screen if we register them here.
+  useVisibleStreams(panelStreamIds)
 
   // Escape closes the panel, matching StreamPanel — the two are peers in the same
   // slot, so the keyboard affordance should be consistent. Skip when the event was

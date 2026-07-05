@@ -53,6 +53,17 @@ const SUBSCRIBE_TIMEOUT_MS = 15_000
  */
 const RESUBSCRIBE_THROTTLE_MS = 5 * 60_000
 
+/**
+ * How often to re-verify that the browser still holds a push subscription.
+ * Firefox revokes a subscription when its silent-push quota is exhausted and
+ * defers the `pushsubscriptionchange` event for up to ~a day (idle timer /
+ * browser restart) — a long-lived focused tab fires none of the
+ * foreground/online triggers in that window, so without this check the UI
+ * says "Enabled" while delivery is dead. `getSubscription()` is a local call;
+ * a missing subscription triggers the full idempotent re-subscribe.
+ */
+const LIVENESS_CHECK_INTERVAL_MS = 5 * 60_000
+
 class SubscribeTimeoutError extends Error {
   constructor() {
     super("Timed out while subscribing to push notifications")
@@ -359,10 +370,27 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
       if (document.visibilityState !== "visible") return
       resubscribeThrottled()
     }
+    // Liveness re-verify (see LIVENESS_CHECK_INTERVAL_MS): a browser-side
+    // revocation with no visibility/online event otherwise goes unnoticed
+    // until the next app open. Bypasses the resubscribe throttle on purpose —
+    // it only acts when the subscription is genuinely gone.
+    const livenessTimer = setInterval(() => {
+      void (async () => {
+        try {
+          const registration = await navigator.serviceWorker?.ready
+          const existing = await registration?.pushManager.getSubscription()
+          if (!existing) void subscribe()
+        } catch {
+          // next tick retries
+        }
+      })()
+    }, LIVENESS_CHECK_INTERVAL_MS)
+
     window.addEventListener("pushsubscriptionchanged", handleSubscriptionChange)
     document.addEventListener("visibilitychange", handleVisible)
     window.addEventListener("online", resubscribeThrottled)
     return () => {
+      clearInterval(livenessTimer)
       window.removeEventListener("pushsubscriptionchanged", handleSubscriptionChange)
       document.removeEventListener("visibilitychange", handleVisible)
       window.removeEventListener("online", resubscribeThrottled)
