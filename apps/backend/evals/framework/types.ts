@@ -21,8 +21,12 @@ import type { ComponentOverrides } from "./config-types"
 export interface UsageAccumulator {
   /** Record usage from an AI call */
   recordUsage(usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number; cost?: number }): void
+  /** Record the model id an AI call actually executed with */
+  recordModel(modelId: string): void
   /** Get accumulated totals */
   getTotal(): { inputTokens: number; outputTokens: number; totalCost: number }
+  /** Executed model ids → call counts. The ground truth a -m override is verified against. */
+  getModels(): Record<string, number>
 }
 
 /**
@@ -32,6 +36,7 @@ export function createUsageAccumulator(): UsageAccumulator {
   let inputTokens = 0
   let outputTokens = 0
   let totalCost = 0
+  const models: Record<string, number> = {}
 
   return {
     recordUsage(usage) {
@@ -39,8 +44,14 @@ export function createUsageAccumulator(): UsageAccumulator {
       outputTokens += usage.completionTokens ?? 0
       totalCost += usage.cost ?? 0
     },
+    recordModel(modelId) {
+      models[modelId] = (models[modelId] ?? 0) + 1
+    },
     getTotal() {
       return { inputTokens, outputTokens, totalCost }
+    },
+    getModels() {
+      return { ...models }
     },
   }
 }
@@ -183,8 +194,13 @@ export interface CaseResult<TOutput, TExpected> {
  */
 export interface PermutationResult<TOutput, TExpected> {
   permutation: EvalPermutation
+  /** All case results; with --runs N each case appears N times (group by caseId to aggregate). */
   cases: CaseResult<TOutput, TExpected>[]
   runEvaluations: EvaluatorResult[]
+  /** Number of repeat runs the cases were executed for (1 = single pass). */
+  runs: number
+  /** Model ids the AI layer actually executed, with call counts. */
+  executedModels: Record<string, number>
   /** Total duration in milliseconds */
   totalDurationMs: number
   /** Token usage stats */
@@ -269,6 +285,19 @@ export interface RunnerOptions {
   temperature?: number
   /** Number of parallel workers (default: 1) */
   parallel?: number
+  /**
+   * Repeat every case this many times and report per-case pass rates
+   * (default 1). Stochastic components flip borderline cases run-to-run —
+   * single-run green is not evidence; tune against tallies.
+   */
+  runs?: number
+  /**
+   * Pass-rate threshold a case must clear when runs > 1 (0..1, default 1).
+   * A case passing 5/6 runs clears 0.8 but fails the default.
+   */
+  minPassRate?: number
+  /** Write machine-readable results JSON to this path. */
+  jsonOutput?: string
   /** Disable Langfuse recording */
   noLangfuse?: boolean
   /** Verbose output */

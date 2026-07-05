@@ -14,8 +14,14 @@ bun run eval -- -s companion
 # Run specific test case
 bun run eval -- -s companion -c scratchpad-companion-greeting-001
 
+# Repeat every case 6 times and read per-case pass rates (see "Variance")
+bun run eval -- -s boundary-extraction -r 6 --min-pass-rate 0.8
+
 # Compare models
 bun run eval -- -s companion -m openrouter:anthropic/claude-haiku-4.5,openrouter:openai/gpt-5.4-nano
+
+# Machine-readable results (per-case pass rates, usage, executed models)
+bun run eval -- -s memo-classifier -r 3 --json results.json
 
 # Run from config file
 bun run eval -- --config evals/example-config.yaml
@@ -28,8 +34,28 @@ bun run eval -- --config evals/example-config.yaml
 | `companion`           | Full companion agent with tools     |
 | `stream-naming`       | Stream name generation              |
 | `boundary-extraction` | Conversation boundary detection     |
+| `multimodal-vision`   | Vision/attachment understanding     |
 | `memo-classifier`     | Knowledge-worthiness classification |
 | `memorizer`           | Memo generation from messages       |
+
+## Variance: tune against tallies, not single runs
+
+The components under test are stochastic even at low temperature — borderline
+cases flip run-to-run, and a single green run is not evidence (a fully green
+single-run suite once masked every live failure mode these suites now encode).
+Use `--runs N` when tuning prompts or comparing models: each case reports a
+pass rate ("4/6"), run-level evaluators aggregate across all runs, and
+`--min-pass-rate` sets the threshold a case must clear for the exit code.
+
+## Model overrides are verified at runtime
+
+`-m` genuinely overrides the model for components that read their config via
+`ConfigResolver` (INV-44) — the runner wraps the resolver with the permutation
+model. The summary prints an `Executed:` line with the model ids the AI layer
+actually ran and their call counts, and the run **fails loudly** if a `-m`
+override never executed (that would be a silently-invalid comparison). Suites
+whose sub-components intentionally use other models pass as long as the
+requested model executed.
 
 ## Key Principle: Config Co-location (INV-44)
 
@@ -141,9 +167,12 @@ Options:
   -h, --help            Show help message
   -s, --suite <name>    Run specific suite
   -c, --case <id>       Run specific case(s), comma-separated
-  -m, --model <ids>     Override model(s), comma-separated
+  -m, --model <ids>     Override model(s), comma-separated (runtime-verified)
   -t, --temperature <n> Override temperature (0.0-1.0)
   -p, --parallel <n>    Parallel workers (default: 1)
+  -r, --runs <n>        Repeat every case n times, report per-case pass rates
+  --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (default: 1.0)
+  --json <file>         Write machine-readable results JSON to <file>
   --config <file>       Run from YAML config file
   --no-langfuse         Disable Langfuse recording
   -v, --verbose         Verbose output
