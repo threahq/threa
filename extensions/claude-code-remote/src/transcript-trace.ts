@@ -281,6 +281,31 @@ function toolResultStep(part: Record<string, unknown>, ctx: MapContext): MappedS
 }
 
 /**
+ * Extract the error text from a synthetic API-error transcript line. Claude
+ * Code records a dead model call (quota exhausted, overloaded, network) as an
+ * assistant message flagged `isApiErrorMessage: true` whose text is the error
+ * itself — the signal the quota carry-on machinery classifies.
+ */
+export function extractApiErrorText(raw: string): string | undefined {
+  if (raw.length === 0 || raw.length > MAX_LINE_CHARS) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (!isObject(parsed) || parsed.isApiErrorMessage !== true || parsed.type !== "assistant") return undefined
+  const message = parsed.message
+  if (!isObject(message) || !Array.isArray(message.content)) return undefined
+  const text = message.content
+    .map((part) => (isObject(part) && part.type === "text" && typeof part.text === "string" ? part.text : ""))
+    .filter(Boolean)
+    .join("\n")
+    .trim()
+  return text || undefined
+}
+
+/**
  * Map one transcript JSONL line to trace steps. Unknown/irrelevant line types
  * (session metadata, snapshots, the echoed user prompt) map to nothing.
  */
@@ -357,6 +382,12 @@ export interface TranscriptTracerOptions {
    * is no longer open — the tracer stops tailing for it.
    */
   emit: (invocationId: string, frames: TraceFrame[], statusText?: string) => Promise<boolean>
+  /**
+   * A synthetic API-error line landed for the in-flight turn (see
+   * {@link extractApiErrorText}). Fired even when the frame budget is spent —
+   * quota detection must not die with trace truncation.
+   */
+  onApiError?: (invocationId: string, text: string) => void
   log?: (message: string) => void
 }
 
@@ -379,6 +410,7 @@ export class TranscriptTracer {
   private readonly bindTimeoutMs: number
   private readonly maxFramesPerTurn: number
   private readonly emit: TranscriptTracerOptions["emit"]
+  private readonly onApiError: TranscriptTracerOptions["onApiError"]
   private readonly log: (message: string) => void
 
   private bound: Candidate | undefined
@@ -398,6 +430,7 @@ export class TranscriptTracer {
     this.bindTimeoutMs = options.bindTimeoutMs ?? DEFAULT_BIND_TIMEOUT_MS
     this.maxFramesPerTurn = options.maxFramesPerTurn ?? DEFAULT_MAX_FRAMES_PER_TURN
     this.emit = options.emit
+    this.onApiError = options.onApiError
     this.log = options.log ?? (() => undefined)
   }
 
@@ -524,6 +557,10 @@ export class TranscriptTracer {
     let frames: TraceFrame[] = []
     let statusText: string | undefined
     for (const line of lines) {
+      if (this.onApiError) {
+        const errorText = extractApiErrorText(line)
+        if (errorText) this.onApiError(turn.invocationId, errorText)
+      }
       for (const step of mapTranscriptLine(line, ctx)) {
         frames.push({ stepType: step.stepType, content: step.content })
         statusText = step.statusText

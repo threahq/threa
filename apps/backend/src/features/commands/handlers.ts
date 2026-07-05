@@ -29,12 +29,14 @@ export function resolveRuntimeInvocationRouting(
   trigger: (typeof BotInvocationTriggers)[keyof typeof BotInvocationTriggers]
   requiredCapability: (typeof BotInvocationCapabilities)[keyof typeof BotInvocationCapabilities]
 } {
-  if (commandName === "steer" || commandName === "stop") {
-    // steer/stop must reach the runtime mid-turn. Pi advertises `active-scratchpad`
-    // while busy, so it claims them there. The Claude Code channel instead advertises
-    // ONLY `session-control` while busy (so a normal `active-scratchpad` follow-up
-    // stays queued behind the running turn) — route its interrupts there so a busy
-    // channel can still claim them. See docs/claude-channel-session-control.md.
+  if (commandName === "steer" || commandName === "stop" || commandName === "carry-on") {
+    // steer/stop/carry-on must reach the runtime mid-turn. Pi advertises
+    // `active-scratchpad` while busy, so it claims them there. The Claude Code
+    // channel instead advertises ONLY `session-control` while busy (so a normal
+    // `active-scratchpad` follow-up stays queued behind the running turn) — route
+    // its interrupts there so a busy channel can still claim them. carry-on's
+    // whole purpose is a session blocked mid-turn on provider quota, so it takes
+    // the same route. See docs/claude-channel-session-control.md.
     return {
       trigger: BotInvocationTriggers.SESSION_CONTROL,
       requiredCapability:

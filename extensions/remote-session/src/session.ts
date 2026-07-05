@@ -1232,6 +1232,11 @@ export class RemoteSession {
     await this.client.sendMessage(streamId, body)
   }
 
+  /** Whether this session still holds the invocation open (not yet replied, timed out, or superseded). */
+  isInflight(invocationId: string): boolean {
+    return this.inflight.has(invocationId)
+  }
+
   /** Reset idle timeouts for every in-flight turn in a stream (a pending approval is a sign of life). */
   keepAlive(streamId: string): void {
     for (const [id, entry] of this.inflight) {

@@ -88,7 +88,17 @@ const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
 const ACTIVE_SCRATCHPAD_CAPABILITY = "active-scratchpad"
-const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop"] as const
+const SESSION_CONTROL_COMMANDS = [
+  "compact",
+  "model",
+  "thinking",
+  "skill",
+  "reload",
+  "shell",
+  "steer",
+  "stop",
+  "carry-on",
+] as const
 type PiSessionControlCommandName = (typeof SESSION_CONTROL_COMMANDS)[number]
 const STEER_DRAIN_LIMIT = 10
 const SHELL_TIMEOUT_MS = 60_000
@@ -252,6 +262,9 @@ let pendingRetryAfterMs: number | undefined
 let pendingInvocationPrompt: string | undefined
 let pendingRetry: { timer: ReturnType<typeof setTimeout>; retryAt: number; attempts: number } | undefined
 let isWaitingForRetry = false
+// User texts queued via /carry-on (and messages swept while rate-limited),
+// folded into the retry prompt when the wait ends.
+let carryOnTexts: string[] = []
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 let claimRenewTimer: ReturnType<typeof setInterval> | undefined
 let consecutivePollFailures = 0
@@ -1712,7 +1725,10 @@ function buildClaimInvocationPayload(
 
 function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown> {
   return buildClaimInvocationPayload(getSessionInstanceId(ctx), getRuntimeSessionId(ctx), {
-    includeSessionControl: !pending && ctx.isIdle(),
+    // During a rate-limit wait Pi is idle at the prompt, so session-control
+    // commands are safe — and /model is the escape hatch from a throttled
+    // provider, /carry-on the way to queue work for the retry.
+    includeSessionControl: (!pending && ctx.isIdle()) || isWaitingForRetry,
   })
 }
 
@@ -2009,6 +2025,7 @@ function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string):
   pendingInvocationPrompt = undefined
   clearPendingRetry()
   isWaitingForRetry = false
+  carryOnTexts = []
   lastTraceHeartbeat = undefined
 }
 
@@ -2383,16 +2400,52 @@ async function runSteerCommand(
   pi.sendUserMessage(prompt, shouldSteer ? { deliverAs: "steer" } : undefined)
 }
 
+/**
+ * /carry-on: queue text for the rate-limit retry. Only meaningful while a
+ * retry wait is active — Pi's quota state is the pending retry, so outside a
+ * wait a normal message is the right vehicle and we say so.
+ */
+async function runCarryOnCommand(invocation: ClaimedInvocation, args: string, ctx: ExtensionContext): Promise<void> {
+  const text = args.trim()
+  if (!isWaitingForRetry) {
+    await completeInvocationWithMarkdown(
+      invocation,
+      text
+        ? "No rate-limit wait is active — send this as a normal message and the session will pick it up."
+        : "No rate-limit wait is active; nothing to carry on from.",
+      ctx
+    )
+    return
+  }
+  const retryAt = pendingRetry ? ` around ${formatLocalTime(new Date(pendingRetry.retryAt))}` : " soon"
+  if (!text) {
+    const queuedNote = carryOnTexts.length > 0 ? ` ${carryOnTexts.length} message(s) queued.` : ""
+    await completeInvocationWithMarkdown(invocation, `Rate limited — retrying${retryAt}.${queuedNote}`, ctx)
+    return
+  }
+  carryOnTexts.push(text)
+  await completeInvocationWithMarkdown(invocation, `Queued — the retry${retryAt} folds it in.`, ctx)
+}
+
 async function runStopCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
   const hadPendingRemoteInvocation = pending !== undefined
   const wasBusy = !ctx.isIdle()
+  // completePending clears the carry-on queue with the rest of the retry
+  // state — count first so the ack can say what the stop threw away.
+  const droppedRetry = isWaitingForRetry
+  const droppedCarryOns = carryOnTexts.length
   if (wasBusy) ctx.abort()
   if (hadPendingRemoteInvocation) {
     await completePending(NO_RESPONSE_MARKER, ctx)
   }
+  const stoppedNote = droppedRetry
+    ? "Stopped the current Pi turn and dropped its scheduled rate-limit retry."
+    : "Stopped the current Pi turn."
+  const carryOnNote =
+    droppedCarryOns > 0 ? ` Dropped ${droppedCarryOns} queued carry-on message(s); resend if still wanted.` : ""
   await completeInvocationWithMarkdown(
     invocation,
-    wasBusy || hadPendingRemoteInvocation ? "Stopped the current Pi turn." : "No Pi turn is running.",
+    wasBusy || hadPendingRemoteInvocation ? `${stoppedNote}${carryOnNote}` : "No Pi turn is running.",
     ctx
   )
 }
@@ -2466,6 +2519,16 @@ async function handleSessionControlInvocation(
         await runThinkingCommand(pi, invocation, command.args, ctx)
         return
       case "skill":
+        // /skill starts a fresh pending turn (beginPendingInvocation) — during
+        // a rate-limit wait that would clobber the waiting invocation.
+        if (isWaitingForRetry) {
+          await completeInvocationWithMarkdown(
+            invocation,
+            "Session is waiting out a rate limit — run /skill again after the retry, or /stop first.",
+            ctx
+          )
+          return
+        }
         await runSkillCommand(pi, invocation, command.args, ctx)
         return
       case "reload":
@@ -2475,10 +2538,19 @@ async function handleSessionControlInvocation(
         await runShellCommand(invocation, command.args, ctx)
         return
       case "steer":
+        // Steering a rate-limited session would submit a prompt that dies the
+        // same way — fold the text into the retry instead.
+        if (isWaitingForRetry && command.args.trim()) {
+          await runCarryOnCommand(invocation, command.args, ctx)
+          return
+        }
         await runSteerCommand(pi, invocation, command.args, ctx)
         return
       case "stop":
         await runStopCommand(invocation, ctx)
+        return
+      case "carry-on":
+        await runCarryOnCommand(invocation, command.args, ctx)
         return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
@@ -2541,7 +2613,9 @@ async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, att
   setRemoteStatus(ctx, `Threa remote: running ${invocation.id}`)
   lastBusyHeartbeatAt = 0
   await heartbeat("busy", "Retrying after rate limit…", ctx).catch(() => undefined)
-  pi.sendUserMessage(prompt)
+  const queued = carryOnTexts
+  carryOnTexts = []
+  pi.sendUserMessage(buildRetryPrompt(prompt, queued))
 }
 
 async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
@@ -2551,6 +2625,26 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
   if (isWaitingForRetry) {
     const retryAt = pendingRetry ? formatLocalTime(new Date(pendingRetry.retryAt)) : "soon"
     await heartbeatBusyIfStale(`Rate limited; retrying around ${retryAt}`, ctx)
+    // Keep draining claims during the wait: /stop must still cancel the retry,
+    // /carry-on and /steer queue text for it, and plain messages fold in like
+    // a steer sweep (N messages → the one retried response). Without this the
+    // session is deaf until the retry fires.
+    for (let claimedCount = 0; claimedCount < STEER_DRAIN_LIMIT; claimedCount++) {
+      const invocation = await claimNextInvocation(ctx)
+      if (!invocation) break
+      if (isSessionControlInvocation(invocation)) {
+        await handleSessionControlInvocation(pi, ctx, invocation)
+        // A /stop cancelled the wait (and possibly the turn) — stop sweeping.
+        if (!isWaitingForRetry) break
+      } else {
+        const text = invocation.promptMarkdown.trim() || "(empty message)"
+        carryOnTexts.push(text)
+        await recordTraceStep("steer", `Queued while rate-limited:\n\n${text}`, "Queued for retry…").catch(
+          () => undefined
+        )
+        await completeInvocationNoResponse(invocation)
+      }
+    }
     return true
   }
 
@@ -2728,6 +2822,17 @@ function formatRetryNotice(retryAfterMs: number, attempt: number, now: number = 
   const retryAt = new Date(now + retryAfterMs)
   const attemptNote = attempt > 1 ? ` (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS})` : ""
   return `Rate limited by model provider. Will retry around ${formatLocalTime(retryAt)} (in ~${formatDuration(retryAfterMs)})${attemptNote}.`
+}
+
+/** The retry prompt with any texts the user queued (via /carry-on or messages swept mid-wait) folded in. */
+function buildRetryPrompt(prompt: string, queued: readonly string[]): string {
+  if (queued.length === 0) return prompt
+  return [
+    prompt,
+    "",
+    "Instructions the user queued while the session was rate-limited (oldest first):",
+    ...queued.map((text, i) => `${i + 1}. ${text}`),
+  ].join("\n")
 }
 
 function extractAgentEndError(event: unknown): string | undefined {
@@ -3077,6 +3182,7 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   pendingInvocationPrompt = undefined
   clearPendingRetry()
   isWaitingForRetry = false
+  carryOnTexts = []
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx)
@@ -3086,6 +3192,13 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   if (!config || !pending) return
   const invocation = pending
   const steered = steeredInvocations
+  // Queued carry-on texts die with the turn — say so instead of a silent drop.
+  const droppedNote =
+    carryOnTexts.length > 0
+      ? ` Dropped ${carryOnTexts.length} queued carry-on message(s); resend when the session is available.`
+      : ""
+  carryOnTexts = []
+  if (droppedNote) error = `${String(error)}${droppedNote}`
   await failInvocation(invocation, error)
   await Promise.all(steered.map((item) => failInvocation(item.invocation, error)))
   stopClaimRenewTimer()
@@ -3107,6 +3220,7 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
 }
 
 export const __testing = {
+  buildRetryPrompt,
   describeToolCall,
   formatToolCallTrace,
   formatToolResultTrace,
