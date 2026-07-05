@@ -853,9 +853,11 @@ Next, in order (re-sequenced 2026-07-03):
    (reshaped per the Lenses section):** All-default home; Active /
    Needs-resolution / Decisions as true filters behind a lens picker (INV-59
    route segments, `all` canonical at bare `/board`); stream scope via `?in=`
-   (root-resolving — a thread-anchored conversation stays in its channel's
-   scope), matched client-side on the post's `rootStreamId`. Stream-level
-   board _mute_ (a persisted per-viewer exclusion) remains open.
+   and stream-TYPE scope via `?is=` (both root-resolving — a thread-anchored
+   conversation stays in its channel's scope and counts as its root's type),
+   matched client-side on the post's server-computed
+   `rootStreamId`/`rootStreamType`. Stream-level board _mute_ (a persisted
+   per-viewer exclusion) remains open.
 2. **Agent sessions visible in conversation surfaces** (section above) — small
    projection change, big perceived-liveness win when driving agents from the
    board.
