@@ -42,7 +42,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
 | 2.1  | Generalized session abort                            | ☑      | #1177 |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☑      | #1190 |
-| 2.3  | Per-turn model resolution + first escalation rule    | ☑      | #TBD  |
+| 2.3  | Per-turn model resolution + first escalation rule    | ☑      | #1202 |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                  | ☑      | #1170 |
