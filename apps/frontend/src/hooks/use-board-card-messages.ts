@@ -344,6 +344,13 @@ function useChildThreadStreamIds(workspaceId: string, parentMessageIds: string[]
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
+/** How many stream rails the registry currently holds — for tests, to prove a
+ *  drained rail is actually torn down once its grace elapses (the leak half of
+ *  the grace-teardown contract). */
+export function __boardRailRegistrySize(): number {
+  return railRegistry.size
+}
+
 /** Tear down every shared stream subscription — for tests, so a module-level
  *  registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardRailRegistry(): void {
@@ -610,10 +617,11 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
  * sliding it, so a reply the viewer has seen never drops back under the "N
  * more" gap and rows never move under the eye (INV-61's no-motion rule,
  * extended inside the card). A deleted reply still leaves (a real removal, not
- * instability); the window re-anchors on its oldest surviving shown reply. An
- * older reply that syncs in late stays under the gap — revealing it would push
- * every shown row down. The shown set resets when the hook instance is recycled
- * onto another conversation.
+ * instability). A reply that syncs in late — older than the first shown row OR
+ * landing between shown rows — stays under the gap: revealing it would push
+ * shown rows around, so only rows strictly after the last shown reply append.
+ * The shown set resets when the hook instance is recycled onto another
+ * conversation.
  */
 export function useStableReplyWindow(conversationId: string, replies: RenderableMessage[]): RenderableMessage[] {
   const shownRef = useRef<{ conversationId: string; ids: Set<string> }>({ conversationId, ids: new Set() })
@@ -621,8 +629,11 @@ export function useStableReplyWindow(conversationId: string, replies: Renderable
   const window = useMemo(() => {
     const shown = shownRef.current.conversationId === conversationId ? shownRef.current.ids : null
     if (shown) {
-      const anchor = replies.findIndex((message) => shown.has(message.id))
-      if (anchor !== -1) return replies.slice(anchor)
+      let lastShownIndex = -1
+      for (let i = 0; i < replies.length; i++) if (shown.has(replies[i].id)) lastShownIndex = i
+      if (lastShownIndex !== -1) {
+        return replies.filter((message, index) => shown.has(message.id) || index > lastShownIndex)
+      }
     }
     return replies.slice(-RECENT_PREVIEW_CAP)
   }, [conversationId, replies])

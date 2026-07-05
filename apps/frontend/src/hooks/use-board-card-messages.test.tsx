@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
@@ -7,6 +7,7 @@ import {
   useBoardCardMessages,
   useStableReplyWindow,
   __clearBoardRailRegistry,
+  __boardRailRegistrySize,
   type BoardCardMessages,
 } from "./use-board-card-messages"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -458,12 +459,11 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       parentStreamId: STREAM,
     } as never)
     await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "thread reply", 2, THREAD)])
-    const before = makePost({
-      messageIds: ["m1", "r1"],
-      openingId: "m1",
-      streamIds: [STREAM],
-      recentMessages: [projectionMessage("r1", THREAD)],
-    })
+    // No recentMessages naming THREAD: the thread must enter via db.streams
+    // discovery (an EXTRA rail) so the widen below genuinely moves it into the
+    // gating set and re-subscribes — a preview row would make it gating from the
+    // first render and the test would never exercise the churn.
+    const before = makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM] })
     const { frames, result, rerender } = renderRecorded(before)
     await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"]))
     const from = frames.length
@@ -471,14 +471,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     // conversation:message_assigned lands: the thread moves from a discovered
     // (extra) rail to a server-known (gating) one. The re-subscription must not
     // tear the live rails down and flash the stale projection bodies.
-    rerender(
-      makePost({
-        messageIds: ["m1", "r1"],
-        openingId: "m1",
-        streamIds: [STREAM, THREAD],
-        recentMessages: [projectionMessage("r1", THREAD)],
-      })
-    )
+    rerender(makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM, THREAD] }))
     await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"]))
 
     for (const frame of frames.slice(from)) {
@@ -698,30 +691,43 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     }
   })
 
+  it("tears a drained rail down once the grace elapses (no subscription leak)", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result, unmount } = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(__boardRailRegistrySize()).toBeGreaterThan(0)
+
+    // Fake timers only around the unmount so the teardown setTimeout is
+    // controllable; the async rail setup above ran under real timers.
+    vi.useFakeTimers()
+    try {
+      unmount()
+      // The grace holds the rail briefly after the last subscriber leaves…
+      expect(__boardRailRegistrySize()).toBeGreaterThan(0)
+      // …and the deadline actually drains it (the leak half of the contract).
+      vi.advanceTimersByTime(60_000)
+      expect(__boardRailRegistrySize()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("holds the last live view (not the projection) while a brand-new gating rail loads", async () => {
     const THREAD = "stream_fresh_gating"
     // The thread's reply is synced, but the thread is NOT discoverable from
     // db.streams (no stream row yet) — the card learns of it only when streamIds
     // widen, so the widened set brings in a never-before-subscribed gating rail.
     await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "thread reply", 2, THREAD)])
-    const before = makePost({
-      messageIds: ["m1", "r1"],
-      openingId: "m1",
-      streamIds: [STREAM],
-      recentMessages: [projectionMessage("r1", THREAD)],
-    })
+    // No recentMessages naming THREAD (that would gate it from the first render
+    // and defeat the widen): the card knows nothing of the thread until the
+    // rerender introduces it as a brand-new, never-subscribed gating rail.
+    const before = makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM] })
     const { frames, result, rerender } = renderRecorded(before)
     await waitFor(() => expect(result.current.source).toBe("events"))
     const from = frames.length
 
-    rerender(
-      makePost({
-        messageIds: ["m1", "r1"],
-        openingId: "m1",
-        streamIds: [STREAM, THREAD],
-        recentMessages: [projectionMessage("r1", THREAD)],
-      })
-    )
+    rerender(makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM, THREAD] }))
     await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"]))
 
     // While the fresh thread rail resolves, the card must keep its live view —
@@ -787,6 +793,17 @@ describe("useStableReplyWindow", () => {
 
     rerender({ convId: "conv_1", replies: ["r2", "r3", "r4", "r5"].map(reply) })
     expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+  })
+
+  it("keeps a late-syncing mid-window reply under the gap instead of inserting between shown rows", () => {
+    const { result, rerender } = renderWindow("conv_1", ["r3", "r5", "r6"].map(reply))
+    expect(ids(result.current)).toEqual(["r3", "r5", "r6"])
+
+    // r4 syncs late, landing BETWEEN shown rows — revealing it would push r5/r6
+    // down. It stays under the "N more" gap; only rows after the last shown
+    // reply may append.
+    rerender({ convId: "conv_1", replies: ["r3", "r4", "r5", "r6"].map(reply) })
+    expect(ids(result.current)).toEqual(["r3", "r5", "r6"])
   })
 
   it("resets the shown window when recycled onto another conversation", () => {
