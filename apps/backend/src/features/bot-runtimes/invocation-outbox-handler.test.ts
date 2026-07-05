@@ -286,6 +286,34 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
     )
   })
 
+  // Reproduces the prod feedback loop: the missing-link notice is itself a
+  // system-authored message:created event, so without the system guard the
+  // handler answers its own notice with another notice, forever.
+  it("ignores a system-authored message — no notice, no dispatch", async () => {
+    const { createInvocation, createMessage } = setupActiveScratchpad({
+      instance: { runtimeKind: "claude-code-channel" },
+    })
+
+    await runProcessMessageCreated({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      event: {
+        id: "evt_2",
+        sequence: "2",
+        actorType: "system",
+        actorId: "system",
+        payload: {
+          messageId: "msg_2",
+          contentMarkdown: "**Scout is not linked to this scratchpad.** Start Claude Code…",
+          contentJson: docWithText("Scout is not linked to this scratchpad."),
+        },
+      },
+    })
+
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(createInvocation).not.toHaveBeenCalled()
+  })
+
   it("posts the Claude Code channel notice and skips dispatch when an unlinked claude-code-channel bot is active", async () => {
     const { createInvocation, createMessage } = setupActiveScratchpad({
       instance: { runtimeKind: "claude-code-channel" },
