@@ -64,7 +64,7 @@ function makePost(
 
 function mountCard(post: BoardViewPost = makePost(), conversations: Record<string, unknown> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <ServicesProvider services={{ conversations: conversations as never }}>
@@ -227,12 +227,18 @@ describe("BoardCard conversation actions", () => {
     expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
   })
 
-  it("colorizes a bot message with its actor badge on the board", async () => {
-    mountCard(makePost({}, { authorType: "bot", authorId: "bot_1" }))
+  it("colorizes a bot message with its actor badge + card accent on the board", async () => {
+    const { container } = mountCard(makePost({}, { authorType: "bot", authorId: "bot_1" }))
     await screen.findByText("Opening body.")
-    // Board colorization = the shared actor name-color + inline badge (BOT here),
-    // NOT the timeline's full-bleed row accent (which doesn't suit a padded card).
+    // Name-color + inline badge (BOT)...
     expect(screen.getByText("BOT")).toBeTruthy()
+    // ...AND the card accent (rounded left bar + tint) on the message CONTENT block.
+    // Board messages are standalone (first-from-author), so the standalone branch —
+    // not just the continuation branch — must carry the accent, or it never shows.
+    const botRow = container.querySelector('[data-actor-type="bot"]')
+    const content = botRow?.querySelector(".message-content")
+    expect(content?.className).toContain("border-l-2")
+    expect(content?.className).toContain("bg-emerald-500/[0.04]")
   })
 
   it("renders the resolved treatment on a resolved conversation", async () => {

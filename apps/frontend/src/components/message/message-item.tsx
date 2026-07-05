@@ -682,7 +682,7 @@ export function MessageItem({
           alt={authorName}
           showStatus={false}
         />
-        <div className="message-content min-w-0 flex-1 pr-14">
+        <div className={cn("message-content min-w-0 flex-1 pr-14", theme.cardAccent)}>
           <div className="mb-0.5 flex items-baseline gap-2">
             {interactiveName ? (
               <button
