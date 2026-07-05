@@ -1,10 +1,10 @@
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test"
 import webpush from "web-push"
 import type { Pool } from "pg"
-import { ActivityTypes, PrefNotificationLevels } from "@threa/types"
+import { ActivityTypes, PrefNotificationLevels, SavedStatuses } from "@threa/types"
 import { PushService } from "./service"
 import { PushSubscriptionRepository } from "./repository"
-import type { ActivityCreatedOutboxPayload } from "../../lib/outbox"
+import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../lib/outbox"
 
 function makeActivityPayload(): ActivityCreatedOutboxPayload {
   return {
@@ -124,5 +124,66 @@ describe("PushService delivery options", () => {
 
     const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
     expect(options).toEqual({ timeout: 10_000, TTL: 60, urgency: "high" })
+  })
+
+  it("sends saved-reminder pushes with high urgency and a savedId-derived topic", async () => {
+    const payload: SavedReminderFiredOutboxPayload = {
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      savedId: "saved_01ABCDEF",
+      messageId: null,
+      streamId: null,
+      saved: {
+        id: "saved_01ABCDEF",
+        workspaceId: "ws_1",
+        userId: "usr_1",
+        messageId: null,
+        streamId: null,
+        conversationId: null,
+        status: SavedStatuses.SAVED,
+        title: "Standalone reminder",
+        note: null,
+        remindAt: new Date().toISOString(),
+        reminderSentAt: null,
+        savedAt: new Date().toISOString(),
+        statusChangedAt: new Date().toISOString(),
+        message: null,
+        unavailableReason: null,
+      },
+    }
+    await makeService(false).deliverPushForSavedReminder(payload)
+
+    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(options).toEqual({ timeout: 10_000, TTL: 24 * 60 * 60, urgency: "high", topic: "01ABCDEF" })
+  })
+
+  it("sends rewrap nudges on a topic that never collapses into the stream's message pushes", async () => {
+    await makeService(false).deliverRewrapNudge({
+      workspaceId: "ws_1",
+      targetUserId: "usr_1",
+      rootStreamId: "stream_1",
+    })
+
+    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(options).toEqual({ timeout: 10_000, TTL: 24 * 60 * 60, urgency: "high", topic: "1r" })
+  })
+
+  it("delivers session-expired at normal urgency with a week-long TTL before cleaning the subscription up", async () => {
+    const deleteByIds = spyOn(PushSubscriptionRepository, "deleteByIds").mockResolvedValue(undefined)
+    try {
+      // 31 days without a re-registration or heartbeat → the expired partition.
+      const expired = { ...subscription, updatedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000) }
+      findByUserId.mockResolvedValue([expired])
+
+      await makeService(false).deliverPushForActivity(makeActivityPayload())
+
+      expect(sendNotification).toHaveBeenCalledTimes(1)
+      const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+      expect(JSON.parse(payload).data.action).toBe("session_expired")
+      expect(options).toEqual({ timeout: 10_000, TTL: 7 * 24 * 60 * 60, urgency: "normal", topic: "session-expired" })
+      expect(deleteByIds).toHaveBeenCalledWith(fakePool, "ws_1", [expired.id])
+    } finally {
+      deleteByIds.mockRestore()
+    }
   })
 })

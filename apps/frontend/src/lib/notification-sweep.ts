@@ -15,31 +15,52 @@
 const STREAM_TAG_PREFIX = "stream_"
 const MENTION_TAG_SUFFIX = ":mention"
 
-/**
- * Which of the displayed notification tags belong to streams with nothing
- * unread? Only stream tags (`stream_…` and `stream_…:mention`) are candidates —
- * rewrap/session-expired/test tags have no unread backing and are left alone.
- */
-export function selectStaleStreamTags(tags: readonly string[], unreadStreamIds: ReadonlySet<string>): string[] {
-  return tags.filter((tag) => {
-    const streamId = tag.endsWith(MENTION_TAG_SUFFIX) ? tag.slice(0, -MENTION_TAG_SUFFIX.length) : tag
-    if (!streamId.startsWith(STREAM_TAG_PREFIX)) return false
-    return !unreadStreamIds.has(streamId)
-  })
+export interface DisplayedNotification {
+  tag: string
+  /** From the push payload the SW stamps on the notification (PushData.workspaceId). */
+  workspaceId: string | undefined
 }
 
-/** Close displayed notifications for streams that are no longer unread. */
-export async function sweepStaleStreamNotifications(unreadStreamIds: ReadonlySet<string>): Promise<void> {
+/**
+ * Which displayed notifications belong to streams of THIS workspace with
+ * nothing unread? Only stream tags (`stream_…` and `stream_…:mention`) are
+ * candidates — rewrap/session-expired/test tags have no unread backing and are
+ * left alone. Notifications stamped with another workspace (or not stamped at
+ * all) are never touched: the keep-set is per-workspace, so a foreign
+ * workspace's unread stream would otherwise always look stale from here.
+ */
+export function selectStaleStreamTags(
+  notifications: readonly DisplayedNotification[],
+  workspaceId: string,
+  unreadStreamIds: ReadonlySet<string>
+): string[] {
+  return notifications
+    .filter((notification) => {
+      if (notification.workspaceId !== workspaceId) return false
+      const { tag } = notification
+      const streamId = tag.endsWith(MENTION_TAG_SUFFIX) ? tag.slice(0, -MENTION_TAG_SUFFIX.length) : tag
+      if (!streamId.startsWith(STREAM_TAG_PREFIX)) return false
+      return !unreadStreamIds.has(streamId)
+    })
+    .map((notification) => notification.tag)
+}
+
+/** Close this workspace's displayed notifications for streams that are no longer unread. */
+export async function sweepStaleStreamNotifications(
+  workspaceId: string,
+  unreadStreamIds: ReadonlySet<string>
+): Promise<void> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return
   try {
     const registration = await navigator.serviceWorker.ready
     const notifications = await registration.getNotifications()
-    const stale = new Set(
-      selectStaleStreamTags(
-        notifications.map((n) => n.tag),
-        unreadStreamIds
-      )
-    )
+    const entries = notifications.map((notification) => ({
+      tag: notification.tag,
+      workspaceId: (notification.data as { workspaceId?: string } | null)?.workspaceId,
+    }))
+    // Closing by tag is workspace-safe: a tag is a stream id, and a stream
+    // belongs to exactly one workspace.
+    const stale = new Set(selectStaleStreamTags(entries, workspaceId, unreadStreamIds))
     for (const notification of notifications) {
       if (stale.has(notification.tag)) notification.close()
     }

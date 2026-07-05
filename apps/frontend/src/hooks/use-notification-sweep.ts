@@ -34,8 +34,8 @@ export function useNotificationSweep(workspaceId: string): void {
   useEffect(() => {
     if (unreadSignature === null) return
     const unreadStreamIds = new Set(unreadSignature.split(" ").filter(Boolean))
-    void sweepStaleStreamNotifications(unreadStreamIds)
-  }, [unreadSignature])
+    void sweepStaleStreamNotifications(workspaceId, unreadStreamIds)
+  }, [workspaceId, unreadSignature])
 }
 
 function buildUnreadSignature(bootstrap: WorkspaceBootstrap): string {
