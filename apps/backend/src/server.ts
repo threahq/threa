@@ -72,6 +72,7 @@ import {
   BoundaryExtractionService,
   BoundaryExtractionHandler,
   createBoundaryExtractionWorker,
+  createStalenessSweepWorker,
   LLMBoundaryExtractor,
   StubBoundaryExtractor,
 } from "./features/conversations"
@@ -885,6 +886,14 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  // Cron-driven fade for conversations the extractor's window can no longer
+  // see (active → stalled → resolved on idle). No AI involved.
+  const stalenessSweepWorker = createStalenessSweepWorker({ pool })
+  jobQueue.registerHandler(JobQueues.CONVERSATION_STALENESS_SWEEP, stalenessSweepWorker, {
+    tier: QueueTiers.LIGHT,
+    fairness: QueueFairness.NONE,
+  })
+
   // Memo (GAM) processing — batched extraction, heavy LLM work
   const memoService = config.useStubAI
     ? new StubMemoService()
@@ -1142,6 +1151,11 @@ export async function startServer(): Promise<ServerInstance> {
   // payload workspaceId "system" = system-wide check; schedule workspaceId null = global schedule
   if (!config.useStubAI) {
     await jobQueue.schedule(JobQueues.MEMO_BATCH_CHECK, 30, { workspaceId: "system" }, null)
+  }
+  // Status fade is pure SQL (no AI), but stays off in stub/test stacks so
+  // long-running e2e fixtures never fade mid-test.
+  if (!config.useStubAI) {
+    await jobQueue.schedule(JobQueues.CONVERSATION_STALENESS_SWEEP, 600, { workspaceId: "system" }, null)
   }
 
   // Outbox dispatcher - single LISTEN connection fans out to all handlers

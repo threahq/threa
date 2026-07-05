@@ -17,6 +17,7 @@ export {
   type NamingJobData,
   type EmbeddingJobData,
   type BoundaryExtractionJobData,
+  type ConversationStalenessSweepJobData,
   type MemoBatchCheckJobData,
   type MemoBatchProcessJobData,
   type CommandExecuteJobData,

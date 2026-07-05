@@ -577,6 +577,57 @@ export const ConversationRepository = {
     `)
   },
 
+  /**
+   * Fade idle conversations: active → stalled after `stalledAfterSeconds` of
+   * silence, active/stalled → resolved after `resolvedAfterSeconds`. The LLM
+   * extractor only sees (and can only close) conversations still inside its
+   * message window, so anything that scrolls out would otherwise stay "active"
+   * forever — this sweep is the out-of-window counterpart.
+   *
+   * Set-based (INV-56) and cross-workspace by design: it is a system
+   * maintenance job like queue internals, and every returned row still carries
+   * its workspace for scoped event emission. `SKIP LOCKED` keeps the sweep
+   * from blocking on rows a live extraction holds; `limit` bounds the
+   * transaction so the first run over a large backlog drains in slices.
+   * Returns the transitioned conversations for outbox emission.
+   */
+  async sweepStale(
+    db: Querier,
+    params: { stalledAfterSeconds: number; resolvedAfterSeconds: number; limit: number }
+  ): Promise<Conversation[]> {
+    const result = await db.query<ConversationRow>(sql`
+      WITH candidates AS (
+        SELECT id,
+          CASE
+            WHEN last_activity_at < NOW() - make_interval(secs => ${params.resolvedAfterSeconds})
+              THEN ${ConversationStatuses.RESOLVED}
+            ELSE ${ConversationStatuses.STALLED}
+          END AS next_status
+        FROM conversations
+        WHERE (
+          status = ${ConversationStatuses.ACTIVE}
+            AND last_activity_at < NOW() - make_interval(secs => ${params.stalledAfterSeconds})
+        ) OR (
+          status = ${ConversationStatuses.STALLED}
+            AND last_activity_at < NOW() - make_interval(secs => ${params.resolvedAfterSeconds})
+        )
+        ORDER BY last_activity_at
+        LIMIT ${params.limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE conversations c
+      SET status = candidates.next_status, updated_at = NOW()
+      FROM candidates
+      WHERE c.id = candidates.id
+      RETURNING ${sql.raw(
+        SELECT_FIELDS.split(",")
+          .map((f) => `c.${f.trim()}`)
+          .join(", ")
+      )}
+    `)
+    return result.rows.map(mapRowToConversation)
+  },
+
   /** Bump last_activity_at on many conversations in one round-trip. Workspace-scoped (INV-8). */
   async bumpActivityForIds(db: Querier, workspaceId: string, ids: string[]): Promise<void> {
     if (ids.length === 0) return

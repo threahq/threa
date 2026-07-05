@@ -111,4 +111,16 @@ describe("MemoAccumulatorHandler memory gate", () => {
     expect(queue).not.toHaveBeenCalled()
     expect(activity).not.toHaveBeenCalled()
   })
+
+  it("skips staleness-sweep status fades — no new content to memoize", async () => {
+    const { handler, queue, activity } = arrange(() => makeStream({ id: "stream_x", memoryMode: MemoryModes.AUTO }))
+
+    const event = conversationEvent("stream_x")
+    ;(event.payload as unknown as Record<string, unknown>).origin = "staleness-sweep"
+    ;(event as { eventType: string }).eventType = "conversation:updated"
+    await handler.run(event)
+
+    expect(queue).not.toHaveBeenCalled()
+    expect(activity).not.toHaveBeenCalled()
+  })
 })

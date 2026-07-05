@@ -43,6 +43,12 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       return
     }
 
+    // Staleness-sweep fades carry no new content: re-queueing here would re-run
+    // memo extraction over an idle (possibly months-old) conversation.
+    if (payload.origin === "staleness-sweep") {
+      return
+    }
+
     const { streamId, workspaceId, conversationId } = payload as {
       streamId: string
       workspaceId: string
