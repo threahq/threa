@@ -4,16 +4,25 @@ import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
+import type { BranchGrouping, BranchNode, BranchStub } from "@/lib/board/branch-grouping"
 
 /**
- * One row in a board card / conversation panel: either a member message (with its
- * same-author continuation flag) or an interleaved agent/memo/follow-up event row.
- * The board renders both through {@link buildBoardRows} so a conversation surface
- * is a second *view* of the stream's events, not a message-only parallel renderer.
+ * One row in a board card / conversation panel: a member message (with its
+ * same-author continuation flag), an interleaved agent/memo/follow-up event row,
+ * or one of the branch chrome rows (a soft-thread seam, a true-thread stub, a
+ * spanning-overflow "continue thread" link). The board renders all through
+ * {@link buildBoardRows} / {@link buildBranchedBoardRows} so a conversation
+ * surface is a second *view* of the stream's events, not a parallel renderer.
+ *
+ * `displayDepth` is the row's indent level (0–2); absent on the flat
+ * {@link buildBoardRows} output, which never indents.
  */
 export type BoardRow =
-  | { kind: "message"; key: string; message: RenderableMessage; continuation: boolean }
-  | { kind: "event"; key: string; row: BoardEventRow }
+  | { kind: "message"; key: string; message: RenderableMessage; continuation: boolean; displayDepth?: number }
+  | { kind: "event"; key: string; row: BoardEventRow; displayDepth?: number }
+  | { kind: "seam"; key: string; streamId: string; direction: "down" | "up"; displayDepth?: number }
+  | { kind: "branch-stub"; key: string; childConversationId: string; title: string; displayDepth?: number }
+  | { kind: "continue-thread"; key: string; streamId: string; hiddenCount: number; displayDepth?: number }
 
 /**
  * Interleave a chronological message list with the conversation's event rows by
@@ -62,6 +71,187 @@ export function buildBoardRows(messages: RenderableMessage[], eventRows: BoardEv
     }
   }
   return rows
+}
+
+function messageMs(message: RenderableMessage): number {
+  return new Date(message.createdAt).getTime()
+}
+
+function subtreeMessageCount(node: BranchNode): number {
+  let count = node.messages.length
+  for (const child of node.children) count += subtreeMessageCount(child)
+  return count
+}
+
+function earliestMessageMs(nodes: BranchNode[]): number {
+  let min = Number.POSITIVE_INFINITY
+  const walk = (node: BranchNode) => {
+    for (const message of node.messages) {
+      const t = messageMs(message)
+      if (t < min) min = t
+    }
+    for (const child of node.children) walk(child)
+  }
+  for (const node of nodes) walk(node)
+  return min === Number.POSITIVE_INFINITY ? Number.NEGATIVE_INFINITY : min
+}
+
+/**
+ * Flatten a {@link BranchGrouping} into ordered board rows, interleaving event
+ * rows into the group whose stream owns them and inserting branch chrome:
+ *
+ * - `soft` → the two runs with one `seam` row between them (no indent).
+ * - `spanning` → base messages chronological; each occupied thread rendered as
+ *   one contiguous group placed after its fork message's row (or anchored
+ *   chronologically when its fork message isn't rendered), indented by
+ *   `displayDepth`; a subtree past depth 2 collapses to one `continue-thread` row.
+ * - true-thread `stubs` land immediately after their fork message's row.
+ *
+ * Same-author continuation never spans a group boundary and is reset by any seam,
+ * stub, event, or overflow row — exactly like {@link buildBoardRows} resets on an
+ * interleaved event. Events earlier than the first rendered message are dropped
+ * (the collapsed card's hidden middle), matching {@link buildBoardRows}. An event
+ * on a stream with no rendered group (its messages sit in the hidden middle, or a
+ * capture landed outside the occupied streams) still shows — chronologically at
+ * the base level — never silently vanishing; only events under a collapsed
+ * overflow subtree stay hidden with it.
+ */
+export function buildBranchedBoardRows(
+  grouping: BranchGrouping,
+  eventRows: BoardEventRow[],
+  stubsByForkMessageId: Map<string, BranchStub[]>
+): BoardRow[] {
+  const firstMs = earliestMessageMs(grouping.roots)
+  const eventsByStream = new Map<string, BoardEventRow[]>()
+  for (const event of eventRows) {
+    if (event.sortMs < firstMs) continue
+    const list = eventsByStream.get(event.streamId)
+    if (list) list.push(event)
+    else eventsByStream.set(event.streamId, [event])
+  }
+
+  const groupedStreamIds = new Set<string>()
+  const collectStreamIds = (node: BranchNode) => {
+    groupedStreamIds.add(node.streamId)
+    for (const child of node.children) collectStreamIds(child)
+  }
+  for (const node of grouping.roots) collectStreamIds(node)
+  const orphanEvents: BoardEventRow[] = []
+  for (const [streamId, list] of eventsByStream) {
+    if (!groupedStreamIds.has(streamId)) orphanEvents.push(...list)
+  }
+
+  const out: BoardRow[] = []
+
+  const emitChild = (node: BranchNode) => {
+    if (node.overflow) {
+      out.push({
+        kind: "continue-thread",
+        key: `continue:${node.streamId}`,
+        streamId: node.streamId,
+        hiddenCount: subtreeMessageCount(node),
+        displayDepth: node.displayDepth,
+      })
+      return
+    }
+    emitRun([node])
+  }
+
+  function emitRun(nodes: BranchNode[], orphans: BoardEventRow[] = []): void {
+    const present = new Set<string>()
+    for (const node of nodes) for (const message of node.messages) present.add(message.id)
+
+    type Item = {
+      t: number
+      slot: number
+      depth: number
+      message?: RenderableMessage
+      event?: BoardEventRow
+      child?: BranchNode
+    }
+    const items: Item[] = []
+    for (const event of orphans) items.push({ t: event.sortMs, slot: 2, depth: 0, event })
+    const forkChildren = new Map<string, BranchNode[]>()
+    for (const node of nodes) {
+      for (const message of node.messages)
+        items.push({ t: messageMs(message), slot: 0, depth: node.displayDepth, message })
+      for (const event of eventsByStream.get(node.streamId) ?? [])
+        items.push({ t: event.sortMs, slot: 2, depth: node.displayDepth, event })
+      for (const child of node.children) {
+        if (child.forkMessageId && present.has(child.forkMessageId)) {
+          const list = forkChildren.get(child.forkMessageId)
+          if (list) list.push(child)
+          else forkChildren.set(child.forkMessageId, [child])
+        } else {
+          const anchor = child.messages.length > 0 ? messageMs(child.messages[0]) : Number.POSITIVE_INFINITY
+          items.push({ t: anchor, slot: 1, depth: child.displayDepth, child })
+        }
+      }
+    }
+    items.sort((a, b) => (a.t !== b.t ? a.t - b.t : a.slot - b.slot))
+
+    let prev: RenderableMessage | null = null
+    for (const item of items) {
+      if (item.message) {
+        const continuation = prev != null && isContinuation(prev, item.message)
+        out.push({
+          kind: "message",
+          key: item.message.id,
+          message: item.message,
+          continuation,
+          displayDepth: item.depth,
+        })
+        prev = item.message
+        for (const stub of stubsByForkMessageId.get(item.message.id) ?? []) {
+          out.push({
+            kind: "branch-stub",
+            key: `stub:${stub.childConversationId}`,
+            childConversationId: stub.childConversationId,
+            title: stub.title,
+            displayDepth: item.depth,
+          })
+          prev = null
+        }
+        for (const child of forkChildren.get(item.message.id) ?? []) {
+          emitChild(child)
+          prev = null
+        }
+      } else if (item.event) {
+        out.push({ kind: "event", key: item.event.key, row: item.event, displayDepth: item.depth })
+        prev = null
+      } else if (item.child) {
+        emitChild(item.child)
+        prev = null
+      }
+    }
+  }
+
+  if (grouping.kind === "soft" && grouping.softSeam) {
+    const [runA, runB] = grouping.roots
+    // Orphan events split at the seam so each lands in its chronological run.
+    const runBStart = runB && runB.messages.length > 0 ? messageMs(runB.messages[0]) : Number.POSITIVE_INFINITY
+    if (runA)
+      emitRun(
+        [runA],
+        orphanEvents.filter((event) => event.sortMs < runBStart)
+      )
+    out.push({
+      kind: "seam",
+      key: `seam:${grouping.softSeam.streamId}`,
+      streamId: grouping.softSeam.streamId,
+      direction: grouping.softSeam.direction,
+      displayDepth: 0,
+    })
+    if (runB)
+      emitRun(
+        [runB],
+        orphanEvents.filter((event) => event.sortMs >= runBStart)
+      )
+  } else {
+    emitRun(grouping.roots, orphanEvents)
+  }
+
+  return out
 }
 
 /**

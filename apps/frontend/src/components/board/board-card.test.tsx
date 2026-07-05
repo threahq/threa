@@ -8,6 +8,7 @@ import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { ServicesProvider, PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
+import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db, type CachedEvent } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -102,7 +103,10 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 
 beforeEach(async () => {
   __clearBoardRailRegistry()
+  __clearConversationGraphRegistry()
   await db.events.clear()
+  await db.conversations.clear()
+  await db.streams.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)

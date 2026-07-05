@@ -6,8 +6,16 @@ import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
-import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows } from "@/components/board/board-row-item"
+import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { groupBranches } from "@/lib/board/branch-grouping"
+import {
+  useConversationGraph,
+  useStreamStructuralIndex,
+  deriveBranchStubs,
+  deriveBranchProvenance,
+} from "@/hooks/use-conversation-graph"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
@@ -48,7 +56,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
-  const { openPanel } = usePanel()
+  const { openPanel, getPanelUrl } = usePanel()
   const [expanded, setExpanded] = useState(false)
   // Scopes text-selection quoting to this card so a selection routes into this
   // card's composer, not a sibling card's provider.
@@ -104,6 +112,47 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds }),
     [railEvents, conversation.id, memberMessageIds]
   )
+
+  // Per-thread-boundary grouping: soft-thread seams, true-thread stubs, and
+  // "branched from" provenance derive from the stream graph + the shared
+  // conversation graph. Grouping runs over the already-displayed rows below, so
+  // the stable-window / allResolved machinery stays untouched.
+  const conversationGraph = useConversationGraph(workspaceId)
+  const structuralIndex = useStreamStructuralIndex(workspaceId)
+  const occupiedStreamIds = useMemo(() => {
+    const set = new Set<string>([streamId])
+    for (const message of knownMessages) if (message.streamId) set.add(message.streamId)
+    return set
+  }, [streamId, knownMessages])
+  const stubsByForkMessageId = useMemo(
+    () =>
+      deriveBranchStubs({
+        conversationId: conversation.id,
+        memberMessages: knownMessages,
+        occupiedStreamIds,
+        index: structuralIndex,
+        graph: conversationGraph,
+      }),
+    [conversation.id, knownMessages, occupiedStreamIds, structuralIndex, conversationGraph]
+  )
+  const provenance = useMemo(
+    () =>
+      deriveBranchProvenance({
+        conversationId: conversation.id,
+        anchorStreamId: streamId,
+        index: structuralIndex,
+        graph: conversationGraph,
+      }),
+    [conversation.id, streamId, structuralIndex, conversationGraph]
+  )
+  const branchRows = (messages: RenderableMessage[]) =>
+    buildBranchedBoardRows(
+      groupBranches(messages, { streams: structuralIndex.streamsById, conversation: { streamId } }),
+      eventRows,
+      stubsByForkMessageId
+    )
+  // A spanning-overflow row from a card opens the whole conversation in the panel.
+  const continueThreadTo = () => getPanelUrl(createConversationPanelId(conversation.id))
 
   // The rail carries every locally-synced reply; older ones (or a wholly unsynced
   // stream — `source === "projection"`) may be missing, so on expand we backfill
@@ -253,15 +302,16 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
           </div>
 
           <div className="mt-3 [&>*:first-child]:mt-0">
+            {provenance && (
+              <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+            )}
             {contiguous ? (
-              buildBoardRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies, eventRows).map(
-                (row) =>
-                  row.kind === "message" ? (
-                    renderMessage(row.message, row.continuation)
-                  ) : (
-                    <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
-                  )
-              )
+              <BranchedBoardRows
+                rows={branchRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies)}
+                workspaceId={workspaceId}
+                renderMessage={renderMessage}
+                continueThreadTo={continueThreadTo}
+              />
             ) : (
               <>
                 {openingMessage && renderMessage(openingMessage, false)}
@@ -290,13 +340,12 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                     Couldn't load older messages. Retry.
                   </button>
                 )}
-                {buildBoardRows(displayedReplies, eventRows).map((row) =>
-                  row.kind === "message" ? (
-                    renderMessage(row.message, row.continuation)
-                  ) : (
-                    <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
-                  )
-                )}
+                <BranchedBoardRows
+                  rows={branchRows(displayedReplies)}
+                  workspaceId={workspaceId}
+                  renderMessage={renderMessage}
+                  continueThreadTo={continueThreadTo}
+                />
               </>
             )}
           </div>

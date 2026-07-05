@@ -15,8 +15,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
-import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows } from "@/components/board/board-row-item"
+import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { groupBranches } from "@/lib/board/branch-grouping"
+import {
+  useConversationGraph,
+  useStreamStructuralIndex,
+  deriveBranchStubs,
+  deriveBranchProvenance,
+} from "@/hooks/use-conversation-graph"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { RelativeTime } from "@/components/relative-time"
@@ -317,7 +325,62 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds }),
     [railEvents, conversation.id, memberMessageIds]
   )
-  const rows = buildBoardRows(all, eventRows)
+
+  // Per-thread-boundary grouping — same derivation as the board card (the panel
+  // is the always-expanded peer). Overflow rows link into the thread's own stream
+  // panel here rather than back to this conversation.
+  const { getPanelUrl } = usePanel()
+  const conversationGraph = useConversationGraph(workspaceId)
+  const structuralIndex = useStreamStructuralIndex(workspaceId)
+  const occupiedStreamIds = useMemo(() => {
+    const set = new Set<string>([conversation.streamId])
+    for (const message of all) if (message.streamId) set.add(message.streamId)
+    return set
+  }, [conversation.streamId, all])
+  const stubsByForkMessageId = useMemo(
+    () =>
+      deriveBranchStubs({
+        conversationId: conversation.id,
+        memberMessages: all,
+        occupiedStreamIds,
+        index: structuralIndex,
+        graph: conversationGraph,
+      }),
+    [conversation.id, all, occupiedStreamIds, structuralIndex, conversationGraph]
+  )
+  const provenance = useMemo(
+    () =>
+      deriveBranchProvenance({
+        conversationId: conversation.id,
+        anchorStreamId: conversation.streamId,
+        index: structuralIndex,
+        graph: conversationGraph,
+      }),
+    [conversation.id, conversation.streamId, structuralIndex, conversationGraph]
+  )
+  const rows = buildBranchedBoardRows(
+    groupBranches(all, { streams: structuralIndex.streamsById, conversation: { streamId: conversation.streamId } }),
+    eventRows,
+    stubsByForkMessageId
+  )
+  const renderMessage = (message: RenderableMessage, continuation: boolean) => (
+    <MessageItem
+      key={message.id}
+      workspaceId={workspaceId}
+      // Each row renders against its own stream so reactions and the permalink
+      // target where the message actually lives (one root, many streams); fall
+      // back to the anchor.
+      streamId={message.streamId ?? conversation.streamId}
+      message={message}
+      authorName={getActorName(message.authorId, message.authorType)}
+      currentUserId={currentUserId}
+      continuation={continuation}
+      conversationId={conversation.id}
+      conversationRootStreamId={conversation.streamId}
+      isHighlighted={message.id === highlightMessageId}
+      surfaceClassName="bg-background"
+    />
+  )
   // The conversation's most-recently-active stream — the latest reply's own stream
   // (a thread under the root), so a continuation follows the conversation there
   // instead of re-interleaving the channel (board-view-design.md). Falls back to
@@ -350,28 +413,15 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
         <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&>*:first-child]:mt-0">
-          {rows.map((row) =>
-            row.kind === "message" ? (
-              <MessageItem
-                key={row.message.id}
-                workspaceId={workspaceId}
-                // Each row renders against its own stream so reactions and the
-                // permalink target where the message actually lives (one root, many
-                // streams); fall back to the anchor.
-                streamId={row.message.streamId ?? conversation.streamId}
-                message={row.message}
-                authorName={getActorName(row.message.authorId, row.message.authorType)}
-                currentUserId={currentUserId}
-                continuation={row.continuation}
-                conversationId={conversation.id}
-                conversationRootStreamId={conversation.streamId}
-                isHighlighted={row.message.id === highlightMessageId}
-                surfaceClassName="bg-background"
-              />
-            ) : (
-              <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
-            )
+          {provenance && (
+            <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
           )}
+          <BranchedBoardRows
+            rows={rows}
+            workspaceId={workspaceId}
+            renderMessage={renderMessage}
+            continueThreadTo={(streamId) => getPanelUrl(streamId)}
+          />
           {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
           {backfillFailed && (
             <button

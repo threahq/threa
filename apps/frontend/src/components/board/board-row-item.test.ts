@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest"
 import type { RenderableMessage } from "@/components/message/message-item"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
-import { buildBoardRows } from "./board-row-item"
+import { buildBoardRows, buildBranchedBoardRows } from "./board-row-item"
+import { groupBranches, type BranchStreamNode, type BranchStub } from "@/lib/board/branch-grouping"
 
-function msg(id: string, authorId: string, minute: number): RenderableMessage {
+function msg(id: string, authorId: string, minute: number, streamId?: string): RenderableMessage {
   return {
     id,
+    streamId,
     authorId,
     authorType: "user",
     contentMarkdown: id,
@@ -14,11 +16,18 @@ function msg(id: string, authorId: string, minute: number): RenderableMessage {
   }
 }
 
-// buildBoardRows only reads `kind` / `key` / `sortMs`, so the `event` field is a
-// stub — kept off `@/db` to leave this a pure-logic test (no persistence import).
-function memoEventRow(key: string, minute: number): BoardEventRow {
+// The builders only read `kind` / `key` / `sortMs` / `streamId`, so the `event`
+// field is a stub — kept off `@/db` to leave this a pure-logic test (no
+// persistence import).
+function memoEventRow(key: string, minute: number, streamId = "root"): BoardEventRow {
   const createdAt = `2026-07-04T10:${String(minute).padStart(2, "0")}:00Z`
-  return { kind: "memo", key, sortMs: new Date(createdAt).getTime(), event: { id: key, createdAt } } as BoardEventRow
+  return {
+    kind: "memo",
+    key,
+    sortMs: new Date(createdAt).getTime(),
+    streamId,
+    event: { id: key, createdAt },
+  } as BoardEventRow
 }
 
 describe("buildBoardRows", () => {
@@ -50,5 +59,90 @@ describe("buildBoardRows", () => {
   it("places a message before an event that shares its exact timestamp", () => {
     const rows = buildBoardRows([msg("a", "u1", 3)], [memoEventRow("evt", 3)])
     expect(rows.map((r) => r.kind)).toEqual(["message", "event"])
+  })
+})
+
+describe("buildBranchedBoardRows continuation", () => {
+  function streamNode(
+    parentStreamId: string | null,
+    rootStreamId: string | null,
+    parentMessageId: string | null
+  ): BranchStreamNode {
+    return { parentStreamId, rootStreamId, parentMessageId }
+  }
+
+  it("a soft seam breaks a same-author continuation run", () => {
+    // Same author within the grouping window, but split across a soft thread
+    // boundary: the seam sits between the runs and the second run doesn't group.
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", "a")],
+    ])
+    const grouping = groupBranches([msg("a", "u1", 0, "root"), msg("b", "u1", 1, "thread")], {
+      streams,
+      conversation: { streamId: "root" },
+    })
+    const rows = buildBranchedBoardRows(grouping, [], new Map())
+    expect(rows.map((r) => r.kind)).toEqual(["message", "seam", "message"])
+    const second = rows[2]
+    expect(second.kind === "message" && second.continuation).toBe(false)
+  })
+
+  it("a branch stub breaks a same-author continuation run", () => {
+    // Two same-author messages that WOULD group, with a true-thread stub anchored
+    // to the first — the stub resets continuation exactly like an event row.
+    const streams = new Map([["root", streamNode(null, null, null)]])
+    const grouping = groupBranches([msg("a", "u1", 0, "root"), msg("b", "u1", 1, "root")], {
+      streams,
+      conversation: { streamId: "root" },
+    })
+    const stub: BranchStub = {
+      forkMessageId: "a",
+      childConversationId: "conv_child",
+      threadStreamId: "thread_x",
+      title: "GPU budget",
+    }
+    const rows = buildBranchedBoardRows(grouping, [], new Map([["a", [stub]]]))
+    expect(rows.map((r) => r.kind)).toEqual(["message", "branch-stub", "message"])
+    const second = rows[2]
+    expect(second.kind === "message" && second.continuation).toBe(false)
+  })
+
+  it("an event on a stream with no rendered group joins the base run chronologically", () => {
+    // A memo capture landed on a member stream whose messages sit in the hidden
+    // middle (or outside the occupied set entirely). It must still render — at
+    // the base level, in time order — not silently vanish.
+    const streams = new Map([["root", streamNode(null, null, null)]])
+    const grouping = groupBranches([msg("a", "u1", 0, "root"), msg("b", "u1", 4, "root")], {
+      streams,
+      conversation: { streamId: "root" },
+    })
+    const rows = buildBranchedBoardRows(grouping, [memoEventRow("evt", 2, "other_stream")], new Map())
+    expect(rows.map((r) => (r.kind === "message" ? r.message.id : r.kind))).toEqual(["a", "event", "b"])
+    const orphanRow = rows[1]
+    expect(orphanRow.kind === "event" && orphanRow.displayDepth).toBe(0)
+  })
+
+  it("splits orphan events across a soft seam by time", () => {
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", "a")],
+    ])
+    const grouping = groupBranches([msg("a", "u1", 0, "root"), msg("b", "u2", 4, "thread")], {
+      streams,
+      conversation: { streamId: "root" },
+    })
+    const rows = buildBranchedBoardRows(
+      grouping,
+      [memoEventRow("early", 1, "elsewhere"), memoEventRow("late", 5, "elsewhere")],
+      new Map()
+    )
+    expect(rows.map((r) => (r.kind === "event" ? r.row.key : r.kind))).toEqual([
+      "message",
+      "early",
+      "seam",
+      "message",
+      "late",
+    ])
   })
 })
