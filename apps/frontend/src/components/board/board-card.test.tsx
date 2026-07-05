@@ -227,18 +227,21 @@ describe("BoardCard conversation actions", () => {
     expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
   })
 
-  it("colorizes a bot message with its actor badge + card accent on the board", async () => {
+  it("colorizes a bot message with its actor badge + full-bleed row accent on the board", async () => {
     const { container } = mountCard(makePost({}, { authorType: "bot", authorId: "bot_1" }))
     await screen.findByText("Opening body.")
     // Name-color + inline badge (BOT)...
     expect(screen.getByText("BOT")).toBeTruthy()
-    // ...AND the card accent (rounded left bar + tint) on the message CONTENT block.
-    // Board messages are standalone (first-from-author), so the standalone branch —
-    // not just the continuation branch — must carry the accent, or it never shows.
+    // ...AND the full-bleed rowAccent (tint + inset stripe) on the row's surface div —
+    // NOT indented onto the content block. Board messages are standalone
+    // (first-from-author), so the standalone branch must carry the accent.
     const botRow = container.querySelector('[data-actor-type="bot"]')
-    const content = botRow?.querySelector(".message-content")
-    expect(content?.className).toContain("border-l-2")
-    expect(content?.className).toContain("bg-emerald-500/[0.04]")
+    const surface = botRow?.querySelector(".reveal-host")
+    expect(surface?.className).toContain("from-emerald-500/[0.06]")
+    // The row breaks out of the card padding so the accent fills to the edges.
+    expect(botRow?.className).toContain("-mx-3")
+    // The content block itself stays plain (no indent → aligned with user rows).
+    expect(botRow?.querySelector(".message-content")?.className).not.toContain("border-l-2")
   })
 
   it("renders the resolved treatment on a resolved conversation", async () => {

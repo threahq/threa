@@ -214,7 +214,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
       continuation={continuation}
       conversationId={conversation.id}
       conversationRootStreamId={conversation.streamId}
-      surfaceClassName="bg-card"
+      // Break the row out of the card's p-3/p-4 padding and pad the content back in,
+      // so an actor accent fills to the card edges (stream-view look) with rows aligned.
+      surfaceClassName="bg-card px-3 sm:px-4"
+      rowInsetClassName="-mx-3 sm:-mx-4"
     />
   )
 
