@@ -535,3 +535,52 @@ describe("useTimelineScroll — deferred re-check after a resize skipped for an 
     }
   })
 })
+
+describe("useTimelineScroll — cold-load settle across a stream switch", () => {
+  it("does not prematurely reveal when superseding a settle still in flight from the stream navigated away from", () => {
+    // Regression: settleToBottom's own supersede-cancel used to call the
+    // PREVIOUS settle's cleanup unconditionally, which always reveals
+    // (setIsInitialSettling(false)) — so navigating to a new stream before the
+    // old one's cold-load settle converged stripped the new stream's mask
+    // before it ran even one frame of its own convergence, exposing whatever
+    // unsettled position virtua was still mid-measurement at (the last row
+    // parked behind the composer until something else happened to re-pin it).
+    const rafCallbacks: FrameRequestCallback[] = []
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+    const caf = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {})
+    const runFrame = () => act(() => rafCallbacks.shift()?.(performance.now()))
+    try {
+      const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, resetKey: "stream_a" }))
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      let height = 1000
+      const el = makeScrollerDiv({ scrollHeight: 0, clientHeight: 800 })
+      Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height })
+      act(() => harness.current.registerScroller(el))
+
+      // Stream A's first window lands — the cold-load settle starts, masked.
+      harness.rerender(opts({ itemCount: 10, getFirstKey: () => "a1", resetKey: "stream_a" }))
+      expect(harness.current.isInitialSettling).toBe(true)
+
+      // One frame in: height is still moving (virtua still measuring) — not
+      // converged, so the settle re-schedules itself for another frame.
+      height = 1200
+      runFrame()
+      expect(harness.current.isInitialSettling).toBe(true)
+      expect(rafCallbacks).toHaveLength(1)
+
+      // Navigate away to stream B before stream A's settle ever converged.
+      harness.rerender(opts({ itemCount: 5, getFirstKey: () => "b1", resetKey: "stream_b" }))
+
+      // Stream B's own settle just started, superseding A's stale one — still
+      // masked, since it hasn't run a single frame of its own convergence yet.
+      expect(harness.current.isInitialSettling).toBe(true)
+    } finally {
+      raf.mockRestore()
+      caf.mockRestore()
+    }
+  })
+})
