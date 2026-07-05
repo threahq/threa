@@ -95,6 +95,8 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+  spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
+  spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
   spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
@@ -225,5 +227,36 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
       embedding: expect.any(Array),
       maxDistance: expect.any(Number),
     })
+  })
+
+  it("supersedes the conversation's prior memo when a revised capture lands near it", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+
+    // A paraphrased re-capture: outside the dedup gate (0.15) but inside the
+    // supersede band — the prod failure where rewordings stacked forever.
+    const prior = { ...memoContent, id: "memo_prior", sourceConversationId: CONVERSATION_ID } as never
+    const findNear = spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([
+      { memo: prior, distance: 0.22 },
+    ])
+    const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+    expect(findNear).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      conversationId: CONVERSATION_ID,
+      embedding: expect.any(Array),
+      maxDistance: expect.any(Number),
+      excludeIds: [],
+    })
+    expect(markSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      ["memo_prior"],
+      expect.stringContaining("Superseded by revised capture")
+    )
+    // The new memo links back to the memo it replaced.
+    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_prior" }))
   })
 })

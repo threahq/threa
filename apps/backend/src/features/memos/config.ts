@@ -47,6 +47,18 @@ export const MEMO_MAX_PER_CONVERSATION = 5
 export const MEMO_DEDUP_DISTANCE = 0.15
 
 /**
+ * Same-conversation supersession threshold (pgvector cosine distance). When a
+ * revision pass emits a memo within this distance of an existing active memo
+ * from the SAME conversation, the old memo is superseded and the new one links
+ * to it via parentMemoId — a paraphrased re-capture replaces its predecessor
+ * instead of stacking next to it. Looser than MEMO_DEDUP_DISTANCE because
+ * observed prod re-captures ("framstår som sjuka" vs "helt galna") land in the
+ * 0.15–0.35 band; scoping to one conversation keeps the looser cutoff from
+ * merging genuinely distinct topics.
+ */
+export const MEMO_SUPERSEDE_DISTANCE = 0.35
+
+/**
  * B2 structural boost. A multiplicative factor on the fused RRF score,
  * applied in the *outer* stage of hybrid search (after the inner
  * access-scoped scan — never before it, §3.1). The factor is structural
@@ -233,7 +245,7 @@ How to write memos:
 1. ONE TOPIC PER MEMO. If a conversation settles two unrelated things (e.g. a deployment decision and a hiring update), produce two separate memos. Never blend topics into a single memo.
 2. EXTRACT, DON'T SUMMARIZE. Capture the durable conclusion — the decision, the answer, the fact, the procedure that was worked out — not a play-by-play of the discussion. A memo is what someone would want to recall in six months, never a transcript of who said what.
 3. BE TERSE. An abstract is a few sentences at most. If it reads like a recap of the conversation, rewrite it down to the bare conclusion.
-4. OMIT THE FORGETTABLE. Greetings, status pings, back-and-forth, and unresolved tangents produce no memo. Returning very few memos — or only the one thing that actually mattered — is correct and expected.
+4. OMIT THE FORGETTABLE. Greetings, status pings, back-and-forth, and unresolved tangents produce no memo. Opinions, hot takes, gossip, and reactions to news or third-party products are NEVER memos, no matter how strongly worded or how long the exchange — commentary about the world is not knowledge the participants produced. Recasting the commentary as a fact about the participants ("they dislike X", "they found Y impressive") does not rescue it: sentiment toward external things is still commentary, memo-worthy only when it fixes a concrete choice with consequences (a tool adopted, a vendor rejected for a project). Likewise, facts about the outside world picked up from news, links, or hearsay are re-findable and go stale — no memo unless the participants acted on them. A "learning" is something the participants discovered, validated, or decided themselves. Returning very few memos — none at all when the conversation is commentary — is correct and expected.
 {{MEMO_LANGUAGE_RULE}}
 6. BE FACTUAL. State the knowledge directly. No meta-commentary like "this memo captures..." or "the team discussed...".
 7. Use consistent vocabulary with prior memos when the same concept reappears.
@@ -278,6 +290,8 @@ export const MEMORIZER_CONVERSATION_PROMPT = `Extract the memos worth rememberin
 Return one memo per distinct topic worth remembering, each terse and self-contained. Most conversations yield one or two; return fewer rather than padding, and return none if nothing here is worth keeping. For each memo, set sourceMessageIds to only the messages that topic draws from.`
 
 export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. Capture only what is NEW or has CHANGED since them. Do NOT re-create memos for topics the existing memos already cover unchanged.
+
+Treat the existing memos as authoritative coverage: a topic that is restated, rephrased, elaborated with opinions, or met with agreement in the new messages is COVERED — emit nothing for it. Only a changed conclusion (a decision reversed, a setup replaced, a fact corrected) or a genuinely new topic earns a memo. Returning an empty set is the expected common case when a conversation is re-processed after a few new messages.
 
 ## Memory Context (prior memos for vocabulary consistency)
 {{MEMORY_CONTEXT}}

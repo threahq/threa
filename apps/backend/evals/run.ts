@@ -17,10 +17,19 @@ import { companionSuite } from "./suites/companion/suite"
 import { streamNamingSuite } from "./suites/stream-naming/suite"
 import { boundaryExtractionSuite } from "./suites/boundary-extraction/suite"
 import { multimodalVisionSuite } from "./suites/multimodal-vision/suite"
+import { memoClassifierSuite } from "./suites/memo-classifier/suite"
+import { memorizerSuite } from "./suites/memorizer/suite"
 import { isConfigFilePath } from "./framework/config-loader"
 
 // All available suites
-const allSuites = [companionSuite, streamNamingSuite, boundaryExtractionSuite, multimodalVisionSuite]
+const allSuites = [
+  companionSuite,
+  streamNamingSuite,
+  boundaryExtractionSuite,
+  multimodalVisionSuite,
+  memoClassifierSuite,
+  memorizerSuite,
+]
 
 function printHelp(): void {
   const suiteNames = allSuites.map((s) => s.name).join(", ")

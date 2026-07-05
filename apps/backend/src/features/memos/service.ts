@@ -15,7 +15,12 @@ import type { EmbeddingServiceLike } from "./embedding-service"
 import { memoId, eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { MemoTypes, MemoStatuses, AuthorTypes, type MemosCapturedEventPayload } from "@threa/types"
-import { MEMO_GEM_CONFIDENCE_FLOOR, MEMO_SINGLE_MESSAGE_AGE_GATE_MS, MEMO_DEDUP_DISTANCE } from "./config"
+import {
+  MEMO_GEM_CONFIDENCE_FLOOR,
+  MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
+  MEMO_DEDUP_DISTANCE,
+  MEMO_SUPERSEDE_DISTANCE,
+} from "./config"
 
 const MEMORY_CONTEXT_LIMIT = 20
 const MIN_CONVERSATION_MESSAGES = 1
@@ -67,6 +72,8 @@ interface MemoToCreate {
   tags: string[]
   status: import("@threa/types").MemoStatus
   embedding: number[]
+  /** Set at save time when this memo supersedes a prior capture from its conversation. */
+  parentMemoId?: string
 }
 
 export interface MemoServiceLike {
@@ -449,6 +456,38 @@ export class MemoService implements MemoServiceLike {
           continue
         }
 
+        // Same-conversation supersession: a revised capture of a topic
+        // replaces the conversation's earlier memo on it (paraphrases in the
+        // dedup–supersede band would otherwise stack forever — the observed
+        // prod failure). Nearest old memo becomes the parent; all matches are
+        // retired. Batch-mates are excluded so two new memos can't supersede
+        // each other.
+        const toSupersede = memoData.sourceConversationId
+          ? await MemoRepository.findSameConversationNear(client, {
+              workspaceId,
+              conversationId: memoData.sourceConversationId,
+              embedding: memoData.embedding,
+              maxDistance: MEMO_SUPERSEDE_DISTANCE,
+              excludeIds: createdMemos.map((m) => m.id),
+            })
+          : []
+        if (toSupersede.length > 0) {
+          memoData.parentMemoId = toSupersede[0].memo.id
+          await MemoRepository.markSuperseded(
+            client,
+            toSupersede.map((s) => s.memo.id),
+            `Superseded by revised capture ${memoData.id}`
+          )
+          logger.info(
+            {
+              conversationId: memoData.sourceConversationId,
+              memoId: memoData.id,
+              supersededIds: toSupersede.map((s) => s.memo.id),
+            },
+            "Revised memo superseded prior capture(s) from the same conversation"
+          )
+        }
+
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
         await MemoRepository.updateEmbedding(client, memoData.id, embedding)
@@ -554,7 +593,7 @@ export class MemoService implements MemoServiceLike {
       participantIds: memoData.participantIds,
       knowledgeType: memoData.knowledgeType,
       tags: memoData.tags,
-      parentMemoId: null,
+      parentMemoId: memoData.parentMemoId ?? null,
       status: memoData.status,
       version: 1,
       revisionReason: null,

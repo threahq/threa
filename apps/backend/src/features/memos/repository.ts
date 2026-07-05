@@ -393,6 +393,49 @@ export const MemoRepository = {
     return { memo: mapRowToMemo(row), distance: row.distance }
   },
 
+  /**
+   * Active memos from ONE conversation near an embedding — the supersession
+   * probe: a revised capture of a topic replaces the conversation's earlier
+   * memo on that topic (see MEMO_SUPERSEDE_DISTANCE). `excludeIds` keeps memos
+   * inserted earlier in the same batch from superseding each other. Ordered
+   * nearest-first so the caller can link parentMemoId to the closest match.
+   */
+  async findSameConversationNear(
+    db: Querier,
+    params: {
+      workspaceId: string
+      conversationId: string
+      embedding: number[]
+      maxDistance: number
+      excludeIds?: string[]
+    }
+  ): Promise<{ memo: Memo; distance: number }[]> {
+    const embeddingLiteral = `[${params.embedding.join(",")}]`
+    const result = await db.query<MemoRow & { distance: number }>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+             m.embedding <=> ${embeddingLiteral}::vector AS distance
+      FROM memos m
+      WHERE m.workspace_id = ${params.workspaceId}
+        AND m.source_conversation_id = ${params.conversationId}
+        AND m.status = 'active'
+        AND m.embedding IS NOT NULL
+        AND m.embedding <=> ${embeddingLiteral}::vector < ${params.maxDistance}
+        AND m.id <> ALL(${params.excludeIds ?? []}::text[])
+      ORDER BY distance ASC
+    `)
+    return result.rows.map((row) => ({ memo: mapRowToMemo(row), distance: row.distance }))
+  },
+
+  /** Mark memos superseded in one round-trip (INV-56). */
+  async markSuperseded(db: Querier, ids: string[], revisionReason: string): Promise<void> {
+    if (ids.length === 0) return
+    await db.query(sql`
+      UPDATE memos
+      SET status = 'superseded', revision_reason = ${revisionReason}, updated_at = NOW()
+      WHERE id = ANY(${ids}::text[]) AND status = 'active'
+    `)
+  },
+
   async insert(db: Querier, params: InsertMemoParams): Promise<Memo> {
     const result = await db.query<MemoRow>(sql`
       INSERT INTO memos (
