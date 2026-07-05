@@ -186,6 +186,8 @@ export { useUnreadTabIndicator } from "./use-unread-tab-indicator"
 
 export { useNotificationSweep } from "./use-notification-sweep"
 
+export { useVisibleStreams } from "./use-visible-streams"
+
 export {
   useSavedList,
   useSavedForMessage,

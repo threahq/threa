@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type LucideIcon } from "lucide-react"
@@ -11,7 +11,7 @@ import { useConversationAutoRead } from "@/components/message/use-conversation-a
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
-import { useActors } from "@/hooks"
+import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
@@ -146,6 +146,26 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     registerExplicitUnread: setExplicitUnreadListener,
     getReadTruth,
   })
+
+  // The card is a first-class reading surface (live message bodies, viewport
+  // auto-read above), so while any part of it is on screen its streams count
+  // as visible for push suppression — otherwise a push banners the exact
+  // message the user is reading on the board. Viewport-gated (not mount-gated)
+  // so off-screen cards on a long board don't suppress streams the user can't
+  // see.
+  const [cardInViewport, setCardInViewport] = useState(false)
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el || typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver(([entry]) => setCardInViewport(entry.isIntersecting))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+  const cardVisibleStreamIds = useMemo(
+    () => (cardInViewport ? [...new Set([streamId, ...(post.streamIds ?? [])])] : []),
+    [cardInViewport, streamId, post.streamIds]
+  )
+  useVisibleStreams(cardVisibleStreamIds)
 
   const renderMessage = (message: RenderableMessage, continuation: boolean) => (
     <MessageItem
