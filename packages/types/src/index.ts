@@ -71,6 +71,7 @@ export {
   CONVERSATION_STATUSES,
   type ConversationStatus,
   ConversationStatuses,
+  MAX_CONVERSATION_TOPIC_LENGTH,
   // Board lenses
   BOARD_LENSES,
   type BoardLens,

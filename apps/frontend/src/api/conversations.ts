@@ -150,4 +150,17 @@ export const conversationsApi = {
   ): Promise<{ conversation: ConversationWithStaleness; previousConversation: ConversationWithStaleness | null }> {
     return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/messages/${messageId}/reassign`)
   },
+
+  /**
+   * User edit of a conversation from the board card / panel: rename the topic
+   * (`topicSummary`) and/or mark it resolved/reopened (`status`). At least one
+   * field required; `status` is limited to `active`/`resolved`.
+   */
+  async updateConversation(
+    workspaceId: string,
+    conversationId: string,
+    body: { topicSummary?: string; status?: "active" | "resolved" }
+  ): Promise<{ conversation: ConversationWithStaleness }> {
+    return api.patch(`/api/workspaces/${workspaceId}/conversations/${conversationId}`, body)
+  },
 }

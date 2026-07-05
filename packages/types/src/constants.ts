@@ -338,6 +338,14 @@ export const ConversationStatuses = {
 } as const satisfies Record<string, ConversationStatus>
 
 /**
+ * Max length of a user-set conversation topic (the board card / panel rename).
+ * A generous cap — the LLM's own topic prompt targets ≤5 words, but a person
+ * renaming a card gets more room. Shared by the write endpoint's Zod schema and
+ * the rename dialog input (INV-33, one source of truth).
+ */
+export const MAX_CONVERSATION_TOPIC_LENGTH = 120
+
+/**
  * Structural lenses over the workspace board (board-view-design.md § "Lenses").
  * Each is a true filter over signals Threa already computes — the board gives
  * the dials, it doesn't decide what matters. `all` is the default and always

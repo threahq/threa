@@ -499,6 +499,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     conversation.getBoardMessages
   )
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/board-post", ...authed, conversation.getBoardPost)
+  app.patch("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.updateConversation)
   app.post(
     "/api/workspaces/:workspaceId/conversations/:conversationId/messages/:messageId/reassign",
     ...authed,

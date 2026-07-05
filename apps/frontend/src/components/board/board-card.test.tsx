@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPostMessage } from "@threa/types"
@@ -37,7 +38,7 @@ function openingMessage(overrides: Partial<BoardPostMessage> = {}): BoardPostMes
   }
 }
 
-function makePost(): BoardViewPost {
+function makePost(conversation: Record<string, unknown> = {}): BoardViewPost {
   const opening = openingMessage()
   return {
     id: "conv_1",
@@ -50,6 +51,7 @@ function makePost(): BoardViewPost {
       streamId: STREAM,
       messageIds: ["m_open"],
       lastActivityAt: "2026-06-22T12:00:00.000Z",
+      ...conversation,
     },
     openingMessage: opening,
     recentMessages: [],
@@ -57,16 +59,16 @@ function makePost(): BoardViewPost {
   } as unknown as BoardViewPost
 }
 
-function mountCard() {
+function mountCard(post: BoardViewPost = makePost(), conversations: Record<string, unknown> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ServicesProvider services={{ conversations: {} as never }}>
+        <ServicesProvider services={{ conversations: conversations as never }}>
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <TraceProvider>
               <PanelProvider>
-                <BoardCard workspaceId={WS} post={makePost()} contextLabel="#general" streamType="channel" />
+                <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
               </PanelProvider>
             </TraceProvider>
           </MemoryRouter>
@@ -203,5 +205,41 @@ describe("BoardCard agent activity", () => {
     mountCard()
     await screen.findByText("Opening body.")
     expect(screen.queryByText("Session complete")).toBeNull()
+  })
+})
+
+describe("BoardCard conversation actions", () => {
+  beforeEach(() => {
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+  })
+
+  it("shows the topic title when the conversation has one", async () => {
+    mountCard(makePost({ topicSummary: "Rotate the API tokens", status: "active" }))
+    expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
+  })
+
+  it("renders the resolved treatment on a resolved conversation", async () => {
+    mountCard(makePost({ topicSummary: "Shipped the redesign", status: "resolved" }))
+    await screen.findByText("Shipped the redesign")
+    expect(screen.getByLabelText("Resolved")).toBeTruthy()
+  })
+
+  it("marks the conversation resolved from the ⋯ menu", async () => {
+    const user = userEvent.setup()
+    const updateConversation = vi.fn().mockResolvedValue({
+      conversation: { id: "conv_1", status: "resolved", messageIds: ["m_open"] },
+    })
+    mountCard(makePost({ topicSummary: "Rotate the API tokens", status: "active" }), { updateConversation })
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+    await user.click(await screen.findByText("Mark resolved"))
+
+    expect(updateConversation).toHaveBeenCalledWith(WS, "conv_1", { status: "resolved" })
   })
 })

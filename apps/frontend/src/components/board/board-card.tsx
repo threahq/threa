@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Hash, FileEdit, User, MessageSquareText, ChevronDown, PanelRight, type LucideIcon } from "lucide-react"
+import {
+  Hash,
+  FileEdit,
+  User,
+  MessageSquareText,
+  ChevronDown,
+  CircleCheck,
+  PanelRight,
+  type LucideIcon,
+} from "lucide-react"
 import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
+import { cn } from "@/lib/utils"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
 import { BoardReplyComposer } from "@/components/board/board-reply-composer"
@@ -250,7 +261,34 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
               </TooltipTrigger>
               <TooltipContent side="bottom">Open conversation</TooltipContent>
             </Tooltip>
+            <ConversationActionsMenu
+              workspaceId={workspaceId}
+              conversationId={conversation.id}
+              topicSummary={conversation.topicSummary}
+              status={conversation.status}
+              triggerClassName="shrink-0"
+            />
           </div>
+
+          {/* The conversation's topic — a quiet single-line label, shown only when
+            the extractor (or a rename) set one, so a message-led card stays
+            message-led when it hasn't. A resolved topic reads muted with a small
+            marker; the card also drops out of the Active lens (its own signal). */}
+          {conversation.topicSummary && (
+            <div className="mt-2 flex items-center gap-1.5">
+              {conversation.status === "resolved" && (
+                <CircleCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Resolved" />
+              )}
+              <span
+                className={cn(
+                  "truncate text-sm font-medium",
+                  conversation.status === "resolved" && "text-muted-foreground line-through decoration-1"
+                )}
+              >
+                {conversation.topicSummary}
+              </span>
+            </div>
+          )}
 
           <div className="mt-3 [&>*:first-child]:mt-0">
             {contiguous ? (
