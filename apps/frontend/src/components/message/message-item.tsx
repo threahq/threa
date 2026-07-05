@@ -180,8 +180,11 @@ export function MessageItem({
   // Users open their profile on click (same as the timeline); other actor types
   // (persona/bot/system) are non-interactive.
   const interactiveName = message.authorType === "user" && Boolean(message.authorId)
-  // Per-actor accent + name color + badge, shared with the timeline row so an
-  // agent/bot/persona message is colorized the same on the board as in the stream.
+  // Per-actor colorization on board surfaces: the author-name color + inline badge
+  // (persona gold, bot emerald + BOT pill), shared with the timeline. The timeline's
+  // full-bleed ROW accent (gradient + inset stripe) is deliberately NOT applied here
+  // — it's designed for edge-to-edge stream rows and reads muddy/misaligned inside a
+  // padded card, where the avatar + colored name already identify the actor.
   const theme = actorRowTheme(message.authorType)
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
@@ -617,7 +620,6 @@ export function MessageItem({
           className={cn(
             "group reveal-host relative flex gap-3",
             surfaceClassName,
-            theme.rowAccent,
             longPress.isPressed && "opacity-70 transition-opacity",
             isHighlighted && "animate-highlight-flash"
           )}
@@ -666,7 +668,6 @@ export function MessageItem({
         className={cn(
           "group reveal-host relative flex items-start gap-3",
           surfaceClassName,
-          theme.rowAccent,
           longPress.isPressed && "opacity-70 transition-opacity",
           isHighlighted && "animate-highlight-flash"
         )}

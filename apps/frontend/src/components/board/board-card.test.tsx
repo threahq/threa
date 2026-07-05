@@ -227,10 +227,11 @@ describe("BoardCard conversation actions", () => {
     expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
   })
 
-  it("colorizes a bot message with its actor badge — same treatment as the timeline", async () => {
+  it("colorizes a bot message with its actor badge on the board", async () => {
     mountCard(makePost({}, { authorType: "bot", authorId: "bot_1" }))
     await screen.findByText("Opening body.")
-    // The shared ACTOR_ROW_THEME badge (BOT) renders on the board row, not just the timeline.
+    // Board colorization = the shared actor name-color + inline badge (BOT here),
+    // NOT the timeline's full-bleed row accent (which doesn't suit a padded card).
     expect(screen.getByText("BOT")).toBeTruthy()
   })
 
