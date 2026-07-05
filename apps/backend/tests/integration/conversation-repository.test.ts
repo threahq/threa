@@ -449,15 +449,29 @@ describe("ConversationRepository", () => {
       ])
     })
 
-    test("active lens surfaces every readable conversation regardless of state", async () => {
+    test("all lens (and no lens) surfaces every readable conversation regardless of state", async () => {
+      for (const lens of ["all", undefined] as const) {
+        const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+          lens,
+          limit: 100,
+        })
+        const ids = new Set(rows.map((r) => r.id))
+        for (const id of [activeConv, stalledConv, idleIncompleteConv, resolvedIdleConv, decisionConv]) {
+          expect(ids.has(id)).toBe(true)
+        }
+      }
+    })
+
+    test("active lens keeps only status-active conversations", async () => {
       const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
         lens: "active",
         limit: 100,
       })
       const ids = new Set(rows.map((r) => r.id))
-      for (const id of [activeConv, stalledConv, idleIncompleteConv, idleCompleteConv, decisionConv]) {
-        expect(ids.has(id)).toBe(true)
-      }
+      expect(ids.has(activeConv)).toBe(true)
+      expect(ids.has(idleIncompleteConv)).toBe(true)
+      expect(ids.has(stalledConv)).toBe(false)
+      expect(ids.has(resolvedIdleConv)).toBe(false)
     })
 
     test("needs-resolution lens keeps stalled and long-idle-incomplete, drops fresh and near-complete", async () => {
@@ -485,6 +499,111 @@ describe("ConversationRepository", () => {
       expect(ids.has(stalledConv)).toBe(false)
       // An archived memo doesn't count — its conversation drops off.
       expect(ids.has(archivedMemoConv)).toBe(false)
+    })
+  })
+
+  describe("findByWorkspaceForViewer — stream scope", () => {
+    let scopedChannelId: string
+    let otherChannelId: string
+    let threadId: string
+    let channelConv: string
+    let threadConv: string
+    let otherConv: string
+
+    async function seedScopedConversation(
+      client: Parameters<typeof ConversationRepository.insert>[0],
+      convStreamId: string,
+      sequence: number
+    ): Promise<string> {
+      const convId = conversationId()
+      const msgId = messageId()
+      await MessageRepository.insert(client, {
+        id: msgId,
+        streamId: convStreamId,
+        sequence: BigInt(sequence),
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("Scope message"),
+      })
+      await ConversationRepository.insert(client, {
+        id: convId,
+        streamId: convStreamId,
+        workspaceId: testWorkspaceId,
+      })
+      await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+      return convId
+    }
+
+    beforeAll(async () => {
+      scopedChannelId = streamId()
+      otherChannelId = streamId()
+      threadId = streamId()
+      await withTransaction(pool, async (client) => {
+        for (const id of [scopedChannelId, otherChannelId]) {
+          await StreamRepository.insert(client, {
+            id,
+            workspaceId: testWorkspaceId,
+            type: "channel",
+            visibility: "public",
+            companionMode: "off",
+            createdBy: testUserId,
+          })
+        }
+        channelConv = await seedScopedConversation(client, scopedChannelId, 1)
+        // A thread under the scoped channel: its conversation is thread-anchored,
+        // and must still match the CHANNEL's scope via the root rule.
+        const parentMsgId = messageId()
+        await MessageRepository.insert(client, {
+          id: parentMsgId,
+          streamId: scopedChannelId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Thread parent"),
+        })
+        await StreamRepository.insert(client, {
+          id: threadId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          parentStreamId: scopedChannelId,
+          parentMessageId: parentMsgId,
+          rootStreamId: scopedChannelId,
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        threadConv = await seedScopedConversation(client, threadId, 1)
+        otherConv = await seedScopedConversation(client, otherChannelId, 1)
+      })
+    })
+
+    test("scope keeps the channel's conversations — including thread-anchored ones — and drops the rest", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamIds: [scopedChannelId],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      expect(ids.has(threadConv)).toBe(true)
+      expect(ids.has(otherConv)).toBe(false)
+    })
+
+    test("multi-stream scope unions the scoped streams", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamIds: [scopedChannelId, otherChannelId],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      expect(ids.has(otherConv)).toBe(true)
+    })
+
+    test("no scope surfaces conversations from every readable stream", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      expect(ids.has(otherConv)).toBe(true)
     })
   })
 

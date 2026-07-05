@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
 import type { FeatureFlagService } from "../feature-flags"
-import { CONVERSATION_STATUSES, BOARD_LENSES } from "@threa/types"
+import { CONVERSATION_STATUSES, BOARD_LENSES, MAX_BOARD_SCOPE_STREAMS } from "@threa/types"
 import { validateRequest } from "../../lib/validation"
 import { HttpError } from "../../lib/errors"
 
@@ -13,9 +13,20 @@ const listConversationsSchema = z.object({
 })
 
 // The board feed adds keyset pagination (`cursor` is an opaque `"<iso>|<id>"`
-// minted by a prior page's `nextCursor`) and a structural `lens` filter.
+// minted by a prior page's `nextCursor`), a structural `lens` filter, and a
+// `streams` scope (comma-separated root-stream ids; the repo matches by
+// effective root so thread-anchored conversations stay in their channel's
+// scope). Capped so a hand-built URL can't splice an unbounded ANY() array.
 const listWorkspaceConversationsSchema = listConversationsSchema.extend({
   lens: z.enum(BOARD_LENSES).optional(),
+  streams: z
+    .string()
+    .min(1)
+    .transform((value) => value.split(",").filter((id) => id.length > 0))
+    .refine((ids) => ids.length > 0 && ids.length <= MAX_BOARD_SCOPE_STREAMS, {
+      message: `streams must name 1-${MAX_BOARD_SCOPE_STREAMS} stream ids`,
+    })
+    .optional(),
   cursor: z.string().min(1).optional(),
 })
 
@@ -73,6 +84,7 @@ export function createConversationHandlers({ conversationService, streamService,
       const result = await conversationService.listByWorkspace(workspaceId, userId, {
         status: query.status,
         lens: query.lens,
+        scopeStreamIds: query.streams,
         limit: query.limit,
         cursor: decodeBoardCursor(query.cursor),
       })

@@ -24,9 +24,16 @@ function post(overrides: {
 }
 
 describe("matchesBoardLens", () => {
-  it("active accepts everything", () => {
-    expect(matchesBoardLens(post({ status: "resolved", hasCapturedMemo: false }), "active", NOW)).toBe(true)
-    expect(matchesBoardLens(post({ hoursIdle: 0 }), "active", NOW)).toBe(true)
+  it("all accepts everything — the default home never hides", () => {
+    expect(matchesBoardLens(post({ status: "resolved", hasCapturedMemo: false }), "all", NOW)).toBe(true)
+    expect(matchesBoardLens(post({ status: "stalled" }), "all", NOW)).toBe(true)
+    expect(matchesBoardLens(post({ hoursIdle: 0 }), "all", NOW)).toBe(true)
+  })
+
+  it("active accepts only conversations still in motion", () => {
+    expect(matchesBoardLens(post({ status: "active" }), "active", NOW)).toBe(true)
+    expect(matchesBoardLens(post({ status: "stalled" }), "active", NOW)).toBe(false)
+    expect(matchesBoardLens(post({ status: "resolved" }), "active", NOW)).toBe(false)
   })
 
   it("decisions accepts only captured-memo posts", () => {

@@ -34,6 +34,33 @@ export interface CommittedView {
 
 const EMPTY_VIEW: CommittedView = { order: [], activityById: new Map() }
 
+/**
+ * The board's root-stream scope. `ids` are the selected root streams; a post
+ * matches by its anchor's effective root (`rootStreamId`, computed server-side
+ * with the same `COALESCE(root_stream_id, id)` rule the SQL scope filter uses),
+ * so a thread-anchored conversation stays in its channel's scope. `key` is the
+ * canonical serialization (sorted ids) — the view-reset key, so a re-created
+ * `ids` Set with the same selection doesn't reset the frozen view.
+ */
+export interface BoardScope {
+  key: string
+  ids: ReadonlySet<string>
+}
+
+export interface BoardViewFilter {
+  lens: BoardLens
+  /** Root-stream scope, or null when unscoped (the whole workspace). */
+  scope: BoardScope | null
+}
+
+function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean {
+  if (!scope) return true
+  // Cached rows predating `rootStreamId` fall back to the anchor itself — a
+  // top-level anchor is its own root, so only pre-field thread anchors can
+  // misclassify, and the next fetch reseeds them with the field.
+  return scope.ids.has(post.rootStreamId ?? post.conversation.streamId)
+}
+
 function postId(post: CachedBoardPost): string {
   return post.conversation.id
 }
@@ -129,21 +156,34 @@ export interface StableBoardView {
  * is React state, re-derived from the live feed without ever reordering a
  * committed card.
  *
- * The `lens` narrows the shared IDB feed to the cards that belong on the active
- * structural lens (board-view-design.md § "Lenses") — the read-side authority
- * matching the backend's seed/pagination filter (`matchesBoardLens`). One IDB
- * table holds every seeded conversation regardless of lens, so filtering here is
- * what makes each lens show its own subset live; switching lens resets the frozen
- * view so the pill and order start fresh for the new subset.
+ * The `filter` narrows the shared IDB feed to the cards that belong on the
+ * active view: the structural lens (board-view-design.md § "Lenses" —
+ * `matchesBoardLens`, the read-side authority matching the backend's
+ * seed/pagination filter) and the root-stream scope. One IDB table holds every
+ * seeded conversation regardless of filter, so filtering here is what makes each
+ * view show its own subset live; changing lens or scope resets the frozen view so
+ * the pill and order start fresh for the new subset.
+ *
+ * A card the viewer just acted on never vanishes under them: acting can change a
+ * card's lens membership (a reply makes a Needs-resolution card fresh), which
+ * drops it from the filtered live feed — but a committed card that leaves the
+ * feed keeps rendering in place from `retainedRef` until the next commit, and its
+ * body stays live off the message rails. Filters narrow what surfaces; they never
+ * yank what's on screen.
  */
-export function useStableBoardView(workspaceId: string, lens: BoardLens): StableBoardView {
+export function useStableBoardView(workspaceId: string, filter: BoardViewFilter): StableBoardView {
+  const { lens, scope } = filter
   const rawLive = useBoardPosts(workspaceId)
-  // Filter the shared feed to the lens. Recomputed when the feed or lens changes;
-  // `Date.now()` is sampled then (the staleness signal for `needs-resolution` only
-  // needs to be fresh at feed-change granularity, which is frequent on a live board).
+  // Filter the shared feed to the lens + scope. Recomputed when the feed or
+  // filter changes; `Date.now()` is sampled then (the staleness signal for
+  // `needs-resolution` only needs to be fresh at feed-change granularity, which
+  // is frequent on a live board).
   const live = useMemo(
-    () => (rawLive === undefined ? undefined : rawLive.filter((post) => matchesBoardLens(post, lens, Date.now()))),
-    [rawLive, lens]
+    () =>
+      rawLive === undefined
+        ? undefined
+        : rawLive.filter((post) => matchesBoardLens(post, lens, Date.now()) && matchesScope(post, scope)),
+    [rawLive, lens, scope]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
@@ -156,7 +196,10 @@ export function useStableBoardView(workspaceId: string, lens: BoardLens): Stable
   // instead of buffering — so the viewer's own just-posted card is revealed, not
   // hidden behind its own pill. Auto-disarms after REVEAL_ARM_MS so a post that
   // never lands a visible conversation can't leave it armed to fire on an
-  // unrelated arrival minutes later.
+  // unrelated arrival minutes later. Deliberately survives the view reset below:
+  // posting from a filtered view navigates back to the All home (the post might
+  // not match the filter), and the arm must still be live there to surface the
+  // authored card when it arrives after the fresh view's wholesale commit.
   const revealNextRef = useRef(false)
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const disarmReveal = useCallback(() => {
@@ -168,11 +211,12 @@ export function useStableBoardView(workspaceId: string, lens: BoardLens): Stable
   }, [])
   useEffect(() => disarmReveal, [disarmReveal])
 
-  // Reset the view when the workspace OR the lens changes in place (the board
-  // route keeps the same component instance across `:workspaceId` and `:lens`).
-  // React-blessed render-time reset; the ref writes are idempotent and gated by
-  // the changed key. Switching lens starts a fresh frozen order + empty pill so
-  // the new subset isn't reconciled against the previous lens's committed cards.
+  // Reset the view when the workspace OR the filter (lens/scope) changes in
+  // place (the board route keeps the same component instance across
+  // `:workspaceId`, `:lens`, and `?in=`). React-blessed render-time reset; the
+  // ref writes are idempotent and gated by the changed key. Switching filter
+  // starts a fresh frozen order + empty pill so the new subset isn't reconciled
+  // against the previous filter's committed cards.
   // The reset feeds THIS render's reconcile below, not just state. `setState`
   // during render doesn't update the `committed`/`buffered` bindings in place, so
   // reconciling the new lens's feed against the STALE (previous-lens) committed
@@ -182,7 +226,7 @@ export function useStableBoardView(workspaceId: string, lens: BoardLens): Stable
   // pill), never re-taking its wholesale-commit branch. Folding the reset into the
   // reconcile INPUT (`committedInput`/`bufferedInput`) makes the new lens start
   // from EMPTY_VIEW and commit its own feed wholesale.
-  const viewKey = `${workspaceId}|${lens}`
+  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}`
   const viewKeyRef = useRef(viewKey)
   let committedInput = committed
   let bufferedInput = buffered
@@ -190,7 +234,6 @@ export function useStableBoardView(workspaceId: string, lens: BoardLens): Stable
     viewKeyRef.current = viewKey
     retainedRef.current = new Map()
     liveRef.current = []
-    revealNextRef.current = false
     committedInput = EMPTY_VIEW
     bufferedInput = []
     if (committed !== EMPTY_VIEW) setCommitted(EMPTY_VIEW)

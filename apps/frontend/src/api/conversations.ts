@@ -15,8 +15,10 @@ export interface ListConversationsParams {
 }
 
 export interface ListWorkspaceConversationsParams extends ListConversationsParams {
-  /** Structural lens (Active / Needs-resolution / Decisions) to filter the feed by. */
+  /** Structural lens to filter the feed by (`all` = no narrowing; omitted on the wire). */
   lens?: BoardLens
+  /** Root-stream scope: only conversations under these streams. */
+  streams?: string[]
   /** Opaque keyset cursor from a prior page's `nextCursor`. */
   cursor?: string
 }
@@ -38,7 +40,9 @@ export const conversationsApi = {
   ): Promise<WorkspaceConversationsPage> {
     const searchParams = new URLSearchParams()
     if (params?.status) searchParams.set("status", params.status)
-    if (params?.lens) searchParams.set("lens", params.lens)
+    // `all` is the server default — keep the wire clean rather than sending a no-op.
+    if (params?.lens && params.lens !== "all") searchParams.set("lens", params.lens)
+    if (params?.streams && params.streams.length > 0) searchParams.set("streams", params.streams.join(","))
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     if (params?.cursor) searchParams.set("cursor", params.cursor)
     const query = searchParams.toString()

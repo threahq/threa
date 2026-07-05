@@ -736,6 +736,16 @@ export interface BoardPost {
    * accepted staleness window until a live memo→board signal lands.
    */
   hasCapturedMemo: boolean
+  /**
+   * The effective root of the conversation's anchor stream (a top-level anchor
+   * is its own root; a thread anchor resolves to its root channel/DM). The
+   * board's stream-scope filter matches on this, so a thread-anchored
+   * conversation stays in its channel's scope — mirroring the backend's
+   * `COALESCE(root_stream_id, id)` rule without the client needing the stream
+   * row. Optional because cached rows predate the field; the client falls back
+   * to `conversation.streamId`.
+   */
+  rootStreamId?: string
 }
 
 /**

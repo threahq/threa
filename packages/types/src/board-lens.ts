@@ -9,7 +9,8 @@ import type { BoardPost } from "./domain"
  * and the same thresholds (`BOARD_LENS_*`); this is the JS half, the WHERE
  * clause is the SQL half.
  *
- *  - `active` — everything, by recency (the default wall).
+ *  - `all` — everything, by recency. The default home; never hides anything.
+ *  - `active` — status `active`: still in motion, not stalled or resolved.
  *  - `needs-resolution` — explicitly stalled, or gone quiet (≥ stale hours) while
  *    still incomplete (< max completeness). Loose ends.
  *  - `decisions` — produced a captured memo (`hasCapturedMemo`). What got settled.
@@ -19,8 +20,10 @@ import type { BoardPost } from "./domain"
  */
 export function matchesBoardLens(post: BoardPost, lens: BoardLens, nowMs: number): boolean {
   switch (lens) {
-    case "active":
+    case "all":
       return true
+    case "active":
+      return post.conversation.status === "active"
     case "decisions":
       return post.hasCapturedMemo === true
     case "needs-resolution": {

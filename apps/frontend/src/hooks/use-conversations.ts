@@ -59,8 +59,10 @@ export const conversationKeys = {
   all: ["conversations"] as const,
   list: (workspaceId: string, streamId: string, options?: { status?: string; limit?: number }) =>
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
-  workspaceList: (workspaceId: string, options?: { status?: string; lens?: string; limit?: number }) =>
-    [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
+  workspaceList: (
+    workspaceId: string,
+    options?: { status?: string; lens?: string; streams?: string[]; limit?: number }
+  ) => [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
   messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
@@ -125,15 +127,20 @@ interface UseConversationsOptions {
  */
 export function useWorkspaceConversations(
   workspaceId: string,
-  options?: { status?: ConversationStatus; lens?: BoardLens; limit?: number }
+  options?: { status?: ConversationStatus; lens?: BoardLens; streams?: string[]; limit?: number }
 ) {
   const conversationService = useConversationService()
   const { status, lens, limit } = options ?? {}
+  // Canonicalize the scope for the query key: order-insensitive, and re-split so
+  // the key holds a stable primitive-derived array rather than the caller's
+  // per-render array identity.
+  const streamsKey = options?.streams && options.streams.length > 0 ? [...options.streams].sort().join(",") : undefined
+  const streams = streamsKey?.split(",")
 
   const query = useInfiniteQuery({
-    queryKey: conversationKeys.workspaceList(workspaceId, { status, lens, limit }),
+    queryKey: conversationKeys.workspaceList(workspaceId, { status, lens, streams, limit }),
     queryFn: ({ pageParam }) =>
-      conversationService.listByWorkspace(workspaceId, { status, lens, limit, cursor: pageParam }),
+      conversationService.listByWorkspace(workspaceId, { status, lens, streams, limit, cursor: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: Infinity,

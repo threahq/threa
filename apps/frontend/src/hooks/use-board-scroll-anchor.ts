@@ -47,7 +47,7 @@ function measureAnchor(viewport: HTMLElement): Anchor | null {
  * Disabled near the top so a pill-click reveal (scroll to top, then commit) lets
  * the new cards flow in rather than holding the old first card in place.
  *
- * `resetKey` identifies the current view (the board lens): when it changes the
+ * `resetKey` identifies the current view (the board's lens + scope): when it changes the
  * feed is replaced with a different subset, so drop the previous view's anchor
  * and jump to the top. Done in a layout effect — before paint — so the reset
  * lands ahead of the `ResizeObserver` firing on the swap's layout change, which

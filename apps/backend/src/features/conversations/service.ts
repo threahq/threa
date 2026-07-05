@@ -29,8 +29,10 @@ export interface ListConversationsOptions {
 }
 
 export interface ListWorkspaceConversationsOptions extends ListConversationsOptions {
-  /** Structural lens (Active / Needs-resolution / Decisions) to filter the feed by. */
+  /** Structural lens (`all` = no narrowing — the default home shows everything). */
   lens?: BoardLens
+  /** Root-stream scope: only conversations under these streams. */
+  scopeStreamIds?: string[]
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }
@@ -253,6 +255,9 @@ export class ConversationService {
         totalReplies: plan.totalReplies,
         streamIds,
         hasCapturedMemo: conversationIdsWithMemos.has(conversation.id),
+        // Effective root of the anchor — the client's stream-scope filter matches
+        // on this, mirroring the SQL `COALESCE(root_stream_id, id)` rule.
+        rootStreamId: streamById.get(conversation.streamId)?.rootStreamId ?? conversation.streamId,
       }
     })
 

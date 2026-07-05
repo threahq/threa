@@ -12,9 +12,13 @@ import {
  * The board-lens WHERE fragment — the SQL half of the seed/pagination filter,
  * kept in lockstep with `matchesBoardLens` (the client's read-side predicate) so
  * a page can't return rows the client then hides. Reads the same signals and the
- * same `BOARD_LENS_*` thresholds. `active` adds nothing (everything, by recency).
+ * same `BOARD_LENS_*` thresholds. `all` (and absent) adds nothing — the default
+ * home shows everything.
  */
 function boardLensCondSql(lens: BoardLens | undefined) {
+  if (lens === "active") {
+    return composeSql`AND status = ${ConversationStatuses.ACTIVE}`
+  }
   if (lens === "needs-resolution") {
     // A `resolved` conversation is done — never a loose end — even if its LLM
     // completeness score was never bumped up on resolution, so exclude it from the
@@ -41,6 +45,23 @@ function boardLensCondSql(lens: BoardLens | undefined) {
     )`
   }
   return sql``
+}
+
+/**
+ * The board's stream-scope WHERE fragment. Scope matches by effective ROOT
+ * (`COALESCE(root_stream_id, id)` — the same rule as `streamAccessPredicateSql`),
+ * so scoping to a channel keeps conversations anchored in threads under it; a
+ * conversation never falls out of its channel's scope just because it lives in
+ * a thread. Workspace-scoped inside the EXISTS (INV-8).
+ */
+function boardScopeCondSql(scopeStreamIds: string[] | undefined) {
+  if (!scopeStreamIds || scopeStreamIds.length === 0) return sql``
+  return composeSql`AND EXISTS (
+    SELECT 1 FROM streams scope_s
+    WHERE scope_s.id = conversations.stream_id
+      AND scope_s.workspace_id = conversations.workspace_id
+      AND COALESCE(scope_s.root_stream_id, scope_s.id) = ANY(${scopeStreamIds})
+  )`
 }
 
 interface ConversationRow {
@@ -377,6 +398,8 @@ export const ConversationRepository = {
     options?: {
       status?: ConversationStatus
       lens?: BoardLens
+      /** Root-stream scope: only conversations under these streams (see {@link boardScopeCondSql}). */
+      scopeStreamIds?: string[]
       limit?: number
       cursor?: { lastActivityAt: string; id: string }
     }
@@ -386,6 +409,7 @@ export const ConversationRepository = {
     const access = streamAccessPredicateSql(workspaceId, userId, "conversations.stream_id")
     const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
     const lensCond = boardLensCondSql(options?.lens)
+    const scopeCond = boardScopeCondSql(options?.scopeStreamIds)
     // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
     // column — because the cursor is minted from a JS Date (ms precision) while
     // timestamptz stores microseconds. Comparing the raw µs value against an
@@ -403,6 +427,7 @@ export const ConversationRepository = {
         AND cardinality(message_ids) > 0
         ${statusCond}
         ${lensCond}
+        ${scopeCond}
         ${cursorCond}
         AND ${access}
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC

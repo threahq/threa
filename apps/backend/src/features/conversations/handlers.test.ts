@@ -124,6 +124,7 @@ describe("Conversation Handlers", () => {
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {
         status: "active",
         lens: undefined,
+        scopeStreamIds: undefined,
         limit: 25,
         cursor: { lastActivityAt: "2026-06-22T12:00:00.000Z", id: "conv_9" },
       })
@@ -138,8 +139,29 @@ describe("Conversation Handlers", () => {
       )
     })
 
+    test("accepts the all lens as an explicit no-op filter", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { lens: "all" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ lens: "all" }))
+    })
+
     test("rejects an unknown lens with a 400", async () => {
       await expect(handlers.listByWorkspace(mockReq({ query: { lens: "bogus" } }), mockRes())).rejects.toMatchObject({
+        status: 400,
+      })
+    })
+
+    test("splits the comma-separated streams scope into scopeStreamIds", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { streams: "stream_a,stream_b" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith(
+        "ws_1",
+        "usr_1",
+        expect.objectContaining({ scopeStreamIds: ["stream_a", "stream_b"] })
+      )
+    })
+
+    test("rejects a streams scope past the cap with a 400", async () => {
+      const streams = Array.from({ length: 51 }, (_, i) => `stream_${i}`).join(",")
+      await expect(handlers.listByWorkspace(mockReq({ query: { streams } }), mockRes())).rejects.toMatchObject({
         status: 400,
       })
     })
@@ -149,6 +171,7 @@ describe("Conversation Handlers", () => {
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {
         status: undefined,
         lens: undefined,
+        scopeStreamIds: undefined,
         limit: undefined,
         cursor: undefined,
       })

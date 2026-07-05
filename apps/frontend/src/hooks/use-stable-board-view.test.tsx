@@ -3,7 +3,23 @@ import { act, renderHook } from "@testing-library/react"
 import type { BoardLens } from "@threa/types"
 import * as boardStoreModule from "@/stores/board-store"
 import type { CachedBoardPost } from "@/db"
-import { reconcileStableView, useStableBoardView, type CommittedView } from "./use-stable-board-view"
+import {
+  reconcileStableView,
+  useStableBoardView,
+  type BoardViewFilter,
+  type CommittedView,
+} from "./use-stable-board-view"
+
+/** The default board view: everything, unscoped. */
+const ALL: BoardViewFilter = { lens: "all", scope: null }
+
+function lensFilter(lens: BoardLens): BoardViewFilter {
+  return { lens, scope: null }
+}
+
+function scopeFilter(ids: string[], lens: BoardLens = "all"): BoardViewFilter {
+  return { lens, scope: { key: [...ids].sort().join(","), ids: new Set(ids) } }
+}
 
 function post(id: string, activityMs: number): CachedBoardPost {
   return {
@@ -111,7 +127,7 @@ describe("useStableBoardView", () => {
 
   it("reports loading until the IDB read resolves, then the empty state", () => {
     mockLive(undefined)
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
     expect(result.current.isLoading).toBe(true)
     act(() => mockLive([]))
     rerender()
@@ -121,7 +137,7 @@ describe("useStableBoardView", () => {
 
   it("holds order frozen and surfaces a fresh arrival as the new count", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
     act(() => mockLive(feed(post("new", 500), post("a", 300), post("b", 200))))
@@ -137,7 +153,7 @@ describe("useStableBoardView", () => {
 
   it("auto-reveals on the next arrival when revealNext is armed (the viewer's own post)", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
     act(() => result.current.revealNext())
     act(() => mockLive(feed(post("mine", 600), post("a", 300))))
     rerender()
@@ -149,7 +165,7 @@ describe("useStableBoardView", () => {
     vi.useFakeTimers()
     try {
       mockLive(feed(post("a", 300)))
-      const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
+      const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
       act(() => result.current.revealNext())
       // Nothing arrived within the window; the arm expires.
       act(() => vi.advanceTimersByTime(8001))
@@ -165,7 +181,7 @@ describe("useStableBoardView", () => {
 
   it("keeps a vanished committed card rendering in place until the next commit", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
-    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", "active"))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", ALL))
     // "b" loses access / is deleted — it drops out of the live feed.
     act(() => mockLive(feed(post("a", 300))))
     rerender()
@@ -178,7 +194,7 @@ describe("useStableBoardView", () => {
 
   it("resets the committed view when the workspace changes", () => {
     mockLive(feed(post("a", 300)))
-    const { result, rerender } = renderHook(({ ws }) => useStableBoardView(ws, "active"), {
+    const { result, rerender } = renderHook(({ ws }) => useStableBoardView(ws, ALL), {
       initialProps: { ws: "ws_1" },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
@@ -192,7 +208,7 @@ describe("useStableBoardView", () => {
     const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
     const without = { ...post("n", 200), hasCapturedMemo: false } as CachedBoardPost
     mockLive(feed(withMemo, without))
-    const { result } = renderHook(() => useStableBoardView("ws_1", "decisions"))
+    const { result } = renderHook(() => useStableBoardView("ws_1", lensFilter("decisions")))
     expect(result.current.posts.map((p) => p.id)).toEqual(["m"])
   })
 
@@ -200,8 +216,8 @@ describe("useStableBoardView", () => {
     const withMemo = { ...post("m", 300), hasCapturedMemo: true } as CachedBoardPost
     const plain = { ...post("a", 250), hasCapturedMemo: false } as CachedBoardPost
     mockLive(feed(withMemo, plain))
-    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lens), {
-      initialProps: { lens: "active" as BoardLens },
+    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lensFilter(lens)), {
+      initialProps: { lens: "all" as BoardLens },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["m", "a"])
     rerender({ lens: "decisions" })
@@ -220,7 +236,7 @@ describe("useStableBoardView", () => {
     const stalled = lensPost("s", 300, { status: "stalled" })
     const decision = lensPost("d", 400, { hasCapturedMemo: true })
     mockLive(feed(stalled, decision))
-    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lens), {
+    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lensFilter(lens)), {
       initialProps: { lens: "needs-resolution" as BoardLens },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
@@ -240,7 +256,7 @@ describe("useStableBoardView", () => {
     const stalled = lensPost("s", 300, { status: "stalled" }) // needs-resolution only
     const decisionLow = lensPost("x", 200, { hasCapturedMemo: true }) // decisions, below s's floor
     mockLive(feed(stalled, decisionLow))
-    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lens), {
+    const { result, rerender } = renderHook(({ lens }) => useStableBoardView("ws_1", lensFilter(lens)), {
       initialProps: { lens: "needs-resolution" as BoardLens },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
@@ -255,5 +271,95 @@ describe("useStableBoardView", () => {
     // The fresh `s` waits behind the pill; it is not absorbed in-place.
     expect(result.current.newCount).toBe(1)
     expect(result.current.posts.map((p) => p.id)).toEqual(["x"])
+  })
+
+  it("keeps an acted-on card in place when it stops matching the lens (never yanked)", () => {
+    // The steer this encodes: replying to a Needs-resolution card makes it fresh,
+    // so it stops MATCHING the lens — but a filter must never yank what's on
+    // screen. The committed card keeps rendering (retained) until the viewer
+    // commits a fresh view themselves.
+    const stalled = lensPost("s", 300, { status: "stalled" })
+    const idle = lensPost("i", 200, { status: "stalled" })
+    mockLive(feed(stalled, idle))
+    const { result, rerender } = renderHook(() => useStableBoardView("ws_1", lensFilter("needs-resolution")))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
+
+    // The viewer replies to `s`: fresh activity, status back to active — it no
+    // longer matches the lens.
+    act(() => mockLive(feed(lensPost("s", 900, { status: "active" }), idle)))
+    rerender()
+    // Still rendered in place, and not counted as "new".
+    expect(result.current.posts.map((p) => p.id)).toEqual(["s", "i"])
+    expect(result.current.newCount).toBe(0)
+
+    // An explicit commit re-snapshots the lens's own subset.
+    act(() => result.current.commit())
+    expect(result.current.posts.map((p) => p.id)).toEqual(["i"])
+  })
+
+  it("keeps the reveal arm across a filter reset — posting from a filtered view reveals on All", () => {
+    // Posting from a filtered board navigates back to the All home (the new post
+    // might not match the filter); the reveal armed by the post must survive that
+    // reset so the authored card surfaces instead of hiding behind its own pill.
+    const stalled = lensPost("s", 300, { status: "stalled" })
+    mockLive(feed(stalled))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: lensFilter("needs-resolution") },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
+
+    act(() => result.current.revealNext())
+    rerender({ filter: ALL })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["s"])
+
+    // The authored post lands after the fresh view's wholesale commit.
+    act(() => mockLive(feed(lensPost("mine", 900, { status: "active" }), stalled)))
+    rerender({ filter: ALL })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["mine", "s"])
+    expect(result.current.newCount).toBe(0)
+  })
+
+  function scopedPost(id: string, activityMs: number, rootStreamId: string): CachedBoardPost {
+    return { ...post(id, activityMs), rootStreamId } as CachedBoardPost
+  }
+
+  it("shows only posts whose root stream is in scope", () => {
+    const inScope = scopedPost("a", 300, "stream_root")
+    const threadUnderScope = scopedPost("t", 250, "stream_root")
+    const outOfScope = scopedPost("z", 400, "stream_other")
+    mockLive(feed(inScope, threadUnderScope, outOfScope))
+    const { result } = renderHook(() => useStableBoardView("ws_1", scopeFilter(["stream_root"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "t"])
+  })
+
+  it("falls back to the anchor stream id for cached rows without rootStreamId", () => {
+    const legacy = {
+      ...post("l", 300),
+      conversation: { ...post("l", 300).conversation, streamId: "stream_root" },
+    } as CachedBoardPost
+    mockLive(feed(legacy))
+    const { result } = renderHook(() => useStableBoardView("ws_1", scopeFilter(["stream_root"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["l"])
+  })
+
+  it("resets the committed view when the scope changes, not when it is re-created equal", () => {
+    const a = scopedPost("a", 300, "stream_one")
+    const b = scopedPost("b", 400, "stream_two")
+    mockLive(feed(a, b))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: scopeFilter(["stream_one"]) },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+
+    // A structurally-equal scope (same key, fresh Set identity) must NOT reset.
+    act(() => mockLive(feed(scopedPost("a2", 500, "stream_one"), a, b)))
+    rerender({ filter: scopeFilter(["stream_one"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+    expect(result.current.newCount).toBe(1)
+
+    // A different scope starts a fresh frozen view for its own subset.
+    rerender({ filter: scopeFilter(["stream_two"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+    expect(result.current.newCount).toBe(0)
   })
 })
