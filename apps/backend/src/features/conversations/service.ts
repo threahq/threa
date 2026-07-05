@@ -36,6 +36,14 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
   scopeStreamIds?: string[]
   /** Root-stream TYPE scope: only conversations whose root is one of these types. */
   scopeStreamTypes?: string[]
+  /** Stream veto: drop conversations whose anchor or effective root is named. */
+  excludeStreamIds?: string[]
+  /** Root-stream TYPE veto: drop conversations whose root is one of these types. */
+  excludeStreamTypes?: string[]
+  /** Label scope: only conversations whose anchor/root carries one of the viewer's labels. */
+  scopeLabelIds?: string[]
+  /** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
+  excludeLabelIds?: string[]
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }
@@ -509,7 +517,14 @@ export class ConversationService {
   }): Promise<{ conversation: ConversationWithStaleness }> {
     const { workspaceId, conversationId, topicSummary, status } = params
     return withTransaction(this.pool, async (client) => {
-      const updated = await ConversationRepository.update(client, workspaceId, conversationId, { topicSummary, status })
+      const updated = await ConversationRepository.update(client, workspaceId, conversationId, {
+        topicSummary,
+        status,
+        // A user-set status is authoritative — lock it so the extractor's LLM stops
+        // overriding it (user resolution wins over the AI's ruling). Only when the
+        // user actually set status; a rename alone leaves the lock untouched.
+        statusLockedByUser: status !== undefined ? true : undefined,
+      })
       if (!updated) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }

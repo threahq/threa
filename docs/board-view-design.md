@@ -858,6 +858,18 @@ Next, in order (re-sequenced 2026-07-03):
    matched client-side on the post's server-computed
    `rootStreamId`/`rootStreamType`. Stream-level board _mute_ (a persisted
    per-viewer exclusion) remains open.
+   **Extended 2026-07-05 — negative filtering + labels:** every filter
+   dimension is now include _and_ exclude — `?in=`/`?not-in=` (streams),
+   `?is=`/`?not-is=` (types), and a new label dimension
+   `?label=`/`?not-label=` over the viewer's own label assignments (a
+   conversation matches a label when its anchor or effective root stream
+   carries it; matching for the stream veto is also anchor-or-root, so a
+   thread id can be excluded without dropping its channel, while include keeps
+   root-only semantics). Include narrows, exclude vetoes, exclude wins on
+   overlap; the SQL fragments and the `use-stable-board-view` matchers stay in
+   lockstep like the positive filters. Picker rows are tri-state
+   (checkbox = include, ban toggle = exclude, "Not:" chips), and saved views
+   store all six axes.
 2. **Agent sessions visible in conversation surfaces** (section above) — small
    projection change, big perceived-liveness win when driving agents from the
    board.

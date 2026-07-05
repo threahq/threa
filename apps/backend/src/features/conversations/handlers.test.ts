@@ -212,6 +212,49 @@ describe("Conversation Handlers", () => {
       })
     })
 
+    test("splits excludeStreams into excludeStreamIds alongside an include scope", async () => {
+      await handlers.listByWorkspace(
+        mockReq({ query: { streams: "stream_a", excludeStreams: "stream_b,stream_c" } }),
+        mockRes()
+      )
+      expect(mockListByWorkspace).toHaveBeenCalledWith(
+        "ws_1",
+        "usr_1",
+        expect.objectContaining({ scopeStreamIds: ["stream_a"], excludeStreamIds: ["stream_b", "stream_c"] })
+      )
+    })
+
+    test("splits excludeTypes into excludeStreamTypes and rejects non-root grains", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { excludeTypes: "system,dm" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith(
+        "ws_1",
+        "usr_1",
+        expect.objectContaining({ excludeStreamTypes: ["system", "dm"] })
+      )
+      await expect(
+        handlers.listByWorkspace(mockReq({ query: { excludeTypes: "thread" } }), mockRes())
+      ).rejects.toMatchObject({ status: 400 })
+    })
+
+    test("splits labels/excludeLabels into the label id scopes", async () => {
+      await handlers.listByWorkspace(
+        mockReq({ query: { labels: "label_a,label_b", excludeLabels: "label_c" } }),
+        mockRes()
+      )
+      expect(mockListByWorkspace).toHaveBeenCalledWith(
+        "ws_1",
+        "usr_1",
+        expect.objectContaining({ scopeLabelIds: ["label_a", "label_b"], excludeLabelIds: ["label_c"] })
+      )
+    })
+
+    test("rejects a labels list past the cap with a 400", async () => {
+      const labels = Array.from({ length: 51 }, (_, i) => `label_${i}`).join(",")
+      await expect(handlers.listByWorkspace(mockReq({ query: { labels } }), mockRes())).rejects.toMatchObject({
+        status: 400,
+      })
+    })
+
     test("passes cursor: undefined when none is supplied", async () => {
       await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {

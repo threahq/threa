@@ -65,7 +65,17 @@ export const conversationKeys = {
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
   workspaceList: (
     workspaceId: string,
-    options?: { status?: string; lens?: string; streams?: string[]; types?: string[]; limit?: number }
+    options?: {
+      status?: string
+      lens?: string
+      streams?: string[]
+      types?: string[]
+      excludeStreams?: string[]
+      excludeTypes?: string[]
+      labels?: string[]
+      excludeLabels?: string[]
+      limit?: number
+    }
   ) => [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
@@ -136,6 +146,10 @@ export function useWorkspaceConversations(
     lens?: BoardLens
     streams?: string[]
     types?: BoardScopeStreamType[]
+    excludeStreams?: string[]
+    excludeTypes?: BoardScopeStreamType[]
+    labels?: string[]
+    excludeLabels?: string[]
     limit?: number
   }
 ) {
@@ -144,15 +158,40 @@ export function useWorkspaceConversations(
   // Canonicalize the scopes for the query key: order-insensitive, and re-split
   // so the key holds stable primitive-derived arrays rather than the caller's
   // per-render array identities.
-  const streamsKey = options?.streams && options.streams.length > 0 ? [...options.streams].sort().join(",") : undefined
-  const streams = streamsKey?.split(",")
-  const typesKey = options?.types && options.types.length > 0 ? [...options.types].sort().join(",") : undefined
-  const types = typesKey?.split(",") as BoardScopeStreamType[] | undefined
+  const canonList = (list: string[] | undefined): string[] | undefined =>
+    list && list.length > 0 ? [...list].sort().join(",").split(",") : undefined
+  const streams = canonList(options?.streams)
+  const types = canonList(options?.types) as BoardScopeStreamType[] | undefined
+  const excludeStreams = canonList(options?.excludeStreams)
+  const excludeTypes = canonList(options?.excludeTypes) as BoardScopeStreamType[] | undefined
+  const labels = canonList(options?.labels)
+  const excludeLabels = canonList(options?.excludeLabels)
 
   const query = useInfiniteQuery({
-    queryKey: conversationKeys.workspaceList(workspaceId, { status, lens, streams, types, limit }),
+    queryKey: conversationKeys.workspaceList(workspaceId, {
+      status,
+      lens,
+      streams,
+      types,
+      excludeStreams,
+      excludeTypes,
+      labels,
+      excludeLabels,
+      limit,
+    }),
     queryFn: ({ pageParam }) =>
-      conversationService.listByWorkspace(workspaceId, { status, lens, streams, types, limit, cursor: pageParam }),
+      conversationService.listByWorkspace(workspaceId, {
+        status,
+        lens,
+        streams,
+        types,
+        excludeStreams,
+        excludeTypes,
+        labels,
+        excludeLabels,
+        limit,
+        cursor: pageParam,
+      }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: Infinity,

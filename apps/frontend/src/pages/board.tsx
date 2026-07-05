@@ -12,8 +12,14 @@ import { usePanelLayout } from "@/hooks"
 import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
-import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
+import {
+  useWorkspaceStreams,
+  useWorkspaceUsers,
+  useWorkspaceDmPeers,
+  useWorkspaceLabelAssignments,
+} from "@/stores/workspace-store"
 import { useStableBoardView, type BoardViewFilter, type BoardViewPost } from "@/hooks/use-stable-board-view"
+import { selectLabeledStreamIds } from "@/hooks/use-labels"
 import { useBoardStreamSubscriptions } from "@/hooks/use-board-stream-subscriptions"
 import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-anchor"
 import {
@@ -25,18 +31,24 @@ import {
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
+import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import {
-  BoardFilterBar,
   BOARD_SCOPE_PARAM,
   BOARD_TYPE_PARAM,
+  BOARD_LABEL_PARAM,
+  BOARD_EXCLUDE_SCOPE_PARAM,
+  BOARD_EXCLUDE_TYPE_PARAM,
+  BOARD_EXCLUDE_LABEL_PARAM,
   boardHomeSearch,
-} from "@/components/board/board-filter-bar"
+  parseIdListParam,
+  parseTypeListParam,
+} from "@/components/board/board-filter-params"
 import { cn } from "@/lib/utils"
 import {
   BOARD_LENSES,
-  BOARD_SCOPE_STREAM_TYPES,
   DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
+  MAX_BOARD_SCOPE_LABELS,
   type BoardLens,
   type BoardScopeStreamType,
   type ConversationWithStaleness,
@@ -68,11 +80,11 @@ const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
   },
 }
 
-/** Copy for an empty stream-scoped view, whatever the lens — the filters, not the
+/** Copy for an empty filtered view, whatever the lens — the filters, not the
  *  board, are what's empty, and the CTA below it clears them. */
 const SCOPED_EMPTY_COPY = {
   title: "Nothing here right now",
-  body: "No conversations match the current lens and stream scope.",
+  body: "No conversations match the current filters.",
 }
 
 /**
@@ -160,61 +172,107 @@ function BoardPageGate({ workspaceId, lens }: { workspaceId: string; lens: Board
 function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   const { isMobile } = useSidebar()
   const { isPanelOpen, closePanel } = usePanel()
-  // The stream scope lives in `?in=` (INV-59) — parsed here, rewritten by the
-  // filter bar's toggles. Deduped and capped at the shared server limit so a
-  // hand-built URL can't produce a request the backend rejects.
+  // The board's filters live in the URL (INV-59) — six params, three dimensions
+  // × include/exclude, parsed here and rewritten by the filter bar's toggles.
+  // Id lists are deduped and capped at the shared server limits so a hand-built
+  // URL can't produce a request the backend rejects; type tokens outside the
+  // root grains are dropped rather than 400ing the fetch.
   const [searchParams, setSearchParams] = useSearchParams()
   const scopeParam = searchParams.get(BOARD_SCOPE_PARAM) ?? ""
-  const scopeStreamIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          scopeParam
-            .split(",")
-            .map((id) => id.trim())
-            .filter(Boolean)
-        )
-      ).slice(0, MAX_BOARD_SCOPE_STREAMS),
-    [scopeParam]
+  const scopeStreamIds = useMemo(() => parseIdListParam(scopeParam).slice(0, MAX_BOARD_SCOPE_STREAMS), [scopeParam])
+  const excludeScopeParam = searchParams.get(BOARD_EXCLUDE_SCOPE_PARAM) ?? ""
+  const excludeStreamIds = useMemo(
+    () => parseIdListParam(excludeScopeParam).slice(0, MAX_BOARD_SCOPE_STREAMS),
+    [excludeScopeParam]
+  )
+  const typeParam = searchParams.get(BOARD_TYPE_PARAM) ?? ""
+  const scopeStreamTypes = useMemo(() => parseTypeListParam(typeParam), [typeParam])
+  const excludeTypeParam = searchParams.get(BOARD_EXCLUDE_TYPE_PARAM) ?? ""
+  const excludeStreamTypes = useMemo(() => parseTypeListParam(excludeTypeParam), [excludeTypeParam])
+  const labelParam = searchParams.get(BOARD_LABEL_PARAM) ?? ""
+  const scopeLabelIds = useMemo(() => parseIdListParam(labelParam).slice(0, MAX_BOARD_SCOPE_LABELS), [labelParam])
+  const excludeLabelParam = searchParams.get(BOARD_EXCLUDE_LABEL_PARAM) ?? ""
+  const excludeLabelIds = useMemo(
+    () => parseIdListParam(excludeLabelParam).slice(0, MAX_BOARD_SCOPE_LABELS),
+    [excludeLabelParam]
   )
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
-  // The stream-TYPE scope (`?is=`), validated against the shared root grains —
-  // an unknown token in a hand-built URL is dropped rather than 400ing the fetch.
-  const typeParam = searchParams.get(BOARD_TYPE_PARAM) ?? ""
-  const scopeStreamTypes = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          typeParam
-            .split(",")
-            .map((t) => t.trim())
-            .filter((t): t is BoardScopeStreamType => (BOARD_SCOPE_STREAM_TYPES as readonly string[]).includes(t))
-        )
-      ),
-    [typeParam]
-  )
+  const excludeScopeKey = useMemo(() => [...excludeStreamIds].sort().join(","), [excludeStreamIds])
   const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
+  const excludeTypeKey = useMemo(() => [...excludeStreamTypes].sort().join(","), [excludeStreamTypes])
+  const labelKey = useMemo(() => [...scopeLabelIds].sort().join(","), [scopeLabelIds])
+  const excludeLabelKey = useMemo(() => [...excludeLabelIds].sort().join(","), [excludeLabelIds])
+
+  // Label filters resolve to the streams the viewer's own assignments cover —
+  // the client half of the server's anchor-or-root label match. Resolution is
+  // live (an assignment changing re-filters the feed) but the view-reset key is
+  // the label SELECTION, so a re-resolution never resets the frozen view.
+  const labelAssignments = useWorkspaceLabelAssignments(workspaceId)
+  const labelStreamIds = useMemo(
+    () => selectLabeledStreamIds(labelAssignments, scopeLabelIds),
+    [labelAssignments, scopeLabelIds]
+  )
+  const excludeLabelStreamIds = useMemo(
+    () => selectLabeledStreamIds(labelAssignments, excludeLabelIds),
+    [labelAssignments, excludeLabelIds]
+  )
+
   const filter = useMemo<BoardViewFilter>(
     () => ({
       lens,
       scope: scopeStreamIds.length > 0 ? { key: scopeKey, ids: new Set(scopeStreamIds) } : null,
       types: scopeStreamTypes.length > 0 ? { key: typeKey, ids: new Set(scopeStreamTypes) } : null,
+      excludeStreams: excludeStreamIds.length > 0 ? { key: excludeScopeKey, ids: new Set(excludeStreamIds) } : null,
+      excludeTypes: excludeStreamTypes.length > 0 ? { key: excludeTypeKey, ids: new Set(excludeStreamTypes) } : null,
+      labels: labelStreamIds ? { key: labelKey, streamIds: labelStreamIds } : null,
+      excludeLabels: excludeLabelStreamIds ? { key: excludeLabelKey, streamIds: excludeLabelStreamIds } : null,
     }),
-    [lens, scopeKey, scopeStreamIds, typeKey, scopeStreamTypes]
+    [
+      lens,
+      scopeKey,
+      scopeStreamIds,
+      typeKey,
+      scopeStreamTypes,
+      excludeScopeKey,
+      excludeStreamIds,
+      excludeTypeKey,
+      excludeStreamTypes,
+      labelKey,
+      labelStreamIds,
+      excludeLabelKey,
+      excludeLabelStreamIds,
+    ]
   )
-  const setParamList = (param: string, values: string[]) => {
+  // One URL write per toggle: a dimension's include/exclude params are rewritten
+  // together so moving an id between the two sides is a single history entry.
+  const setParamLists = (entries: Array<[param: string, values: string[]]>) => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        if (values.length > 0) next.set(param, values.join(","))
-        else next.delete(param)
+        for (const [param, values] of entries) {
+          if (values.length > 0) next.set(param, values.join(","))
+          else next.delete(param)
+        }
         return next
       },
       { replace: true }
     )
   }
-  const setScope = (ids: string[]) => setParamList(BOARD_SCOPE_PARAM, ids)
-  const setTypes = (types: BoardScopeStreamType[]) => setParamList(BOARD_TYPE_PARAM, types)
+  const setStreamFilter = (include: string[], exclude: string[]) =>
+    setParamLists([
+      [BOARD_SCOPE_PARAM, include],
+      [BOARD_EXCLUDE_SCOPE_PARAM, exclude],
+    ])
+  const setTypeFilter = (include: BoardScopeStreamType[], exclude: BoardScopeStreamType[]) =>
+    setParamLists([
+      [BOARD_TYPE_PARAM, include],
+      [BOARD_EXCLUDE_TYPE_PARAM, exclude],
+    ])
+  const setLabelFilter = (include: string[], exclude: string[]) =>
+    setParamLists([
+      [BOARD_LABEL_PARAM, include],
+      [BOARD_EXCLUDE_LABEL_PARAM, exclude],
+    ])
   const {
     containerRef,
     panelWidth,
@@ -234,7 +292,16 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // accumulates live changes behind the "N new" pill (INV-61, extended from the
   // timeline's insertion rule to the board's ordering).
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
-    useWorkspaceConversations(workspaceId, { lens, streams: scopeStreamIds, types: scopeStreamTypes, limit: 50 })
+    useWorkspaceConversations(workspaceId, {
+      lens,
+      streams: scopeStreamIds,
+      types: scopeStreamTypes,
+      excludeStreams: excludeStreamIds,
+      excludeTypes: excludeStreamTypes,
+      labels: scopeLabelIds,
+      excludeLabels: excludeLabelIds,
+      limit: 50,
+    })
 
   // Per-viewer hide/mute (board-view-design.md § "Hide & mute"): bootstrap the
   // exclusion sets into IDB, read them reactively, and fold them into the view.
@@ -256,12 +323,15 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     commit,
     revealNext,
     isLoading: viewLoading,
+    hasRawPosts,
   } = useStableBoardView(workspaceId, filter, exclusions)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed
-  // doesn't flash the empty state before the seed lands.
-  const seedPending = (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
+  // doesn't flash the empty state before the seed lands. `!hasRawPosts` scopes
+  // this to a genuinely-unseeded feed: once IDB has rows, filtering them all away
+  // (hide/mute/lens down to zero) is a real empty view, not a pending seed.
+  const seedPending = !hasRawPosts && (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
   // Keep the streams behind on-screen cards live + offline-first (threads and
   // public channels the viewer never joined aren't subscribed at bootstrap).
   useBoardStreamSubscriptions(posts)
@@ -282,7 +352,10 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // previous view's scroll anchor and starts the new (often much shorter)
   // subset at the top, pre-paint — otherwise a viewer scrolled down the All
   // wall who taps Decisions lands past the end of a one-card list.
-  useBoardScrollAnchor(viewport, `${lens}|${scopeKey}|${typeKey}`)
+  useBoardScrollAnchor(
+    viewport,
+    `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}`
+  )
 
   const revealNew = () => {
     // Jump to the top first so the freshly-committed cards flow in where the
@@ -295,12 +368,19 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Every route back to the unfiltered home keeps the non-filter query state
   // (an open `?panel=` must survive clearing filters).
   const boardHome = { pathname: `/w/${workspaceId}/board`, search: boardHomeSearch(searchParams.toString()) }
+  const hasFilterParams =
+    scopeStreamIds.length > 0 ||
+    scopeStreamTypes.length > 0 ||
+    excludeStreamIds.length > 0 ||
+    excludeStreamTypes.length > 0 ||
+    scopeLabelIds.length > 0 ||
+    excludeLabelIds.length > 0
   const handlePosted = () => {
     // The viewer's own post must ALWAYS surface — but a filtered view might not
     // match it (a fresh post is no Decision). Posting from a filtered board
     // returns to the All home first; the reveal arm survives the view reset, so
     // the authored card shows up top instead of hiding behind a filter.
-    if (lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0 || scopeStreamTypes.length > 0) {
+    if (lens !== DEFAULT_BOARD_LENS || hasFilterParams) {
       navigate(boardHome)
     }
     revealNext()
@@ -400,7 +480,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   } else {
     // A filtered-empty view is the FILTERS coming up empty, never the board
     // hiding things — so it always offers the one-tap way back to everything.
-    const scoped = scopeStreamIds.length > 0 || scopeStreamTypes.length > 0
+    const scoped = hasFilterParams
     const isFiltered = lens !== DEFAULT_BOARD_LENS || scoped
     const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
     content = (
@@ -435,9 +515,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         workspaceId={workspaceId}
         lens={lens}
         scopeStreamIds={scopeStreamIds}
-        onScopeChange={setScope}
+        excludeStreamIds={excludeStreamIds}
+        onStreamFilterChange={setStreamFilter}
         scopeStreamTypes={scopeStreamTypes}
-        onTypesChange={setTypes}
+        excludeStreamTypes={excludeStreamTypes}
+        onTypeFilterChange={setTypeFilter}
+        scopeLabelIds={scopeLabelIds}
+        excludeLabelIds={excludeLabelIds}
+        onLabelFilterChange={setLabelFilter}
         mutedStreamIds={muted}
         onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
       />

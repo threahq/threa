@@ -1,6 +1,6 @@
 import { STREAM_ROW_SPEC } from "@threa/types"
 import type { CachedEvent } from "@/db"
-import { getSessionId, getTriggerMessageId } from "@/components/timeline/session-grouping"
+import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/components/timeline/session-grouping"
 
 /**
  * A non-message stream event, resolved to the conversation it should draw on for
@@ -86,10 +86,25 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
     }
   }
 
+  // Collapse sessions that share a trigger slot to the latest one, mirroring the
+  // timeline's `groupTimelineItems` (event-list.tsx). A re-run after an
+  // invoking-message edit supersedes the old session — SAME triggerMessageId, NEW
+  // sessionId, no `agent_session:deleted` tombstone — so keying by raw sessionId
+  // would leave the old completed trace on the card as a duplicate that the
+  // timeline hides. Keyed by slot (trigger), newest-started wins; the row key is
+  // the slot, so a re-run updates the card in place.
+  const bySlot = new Map<string, { events: CachedEvent[]; startMs: number }>()
   for (const [sessionId, session] of sessions) {
     if (!session.trigger || !ctx.memberMessageIds.has(session.trigger)) continue
     const ordered = [...session.events].sort((a, b) => timeMs(a) - timeMs(b))
-    rows.push({ kind: "session", key: `session:${sessionId}`, sortMs: timeMs(ordered[0]), events: ordered })
+    const started = ordered.find((event) => event.eventType === "agent_session:started")
+    const startMs = started ? timeMs(started) : timeMs(ordered[0])
+    const slotKey = getSessionSlotKey(sessionId, session.trigger)
+    const existing = bySlot.get(slotKey)
+    if (!existing || startMs > existing.startMs) bySlot.set(slotKey, { events: ordered, startMs })
+  }
+  for (const [slotKey, slot] of bySlot) {
+    rows.push({ kind: "session", key: slotKey, sortMs: timeMs(slot.events[0]), events: slot.events })
   }
 
   rows.sort((a, b) => a.sortMs - b.sortMs)

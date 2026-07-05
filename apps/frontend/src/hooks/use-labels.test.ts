@@ -5,7 +5,14 @@ import { createElement, type ReactNode } from "react"
 import { LabelableResourceTypes, type Label, type LabelAssignment } from "@threa/types"
 import { db } from "@/db"
 import * as contextsModule from "@/contexts"
-import { labelKeys, reconcileLabels, selectLabelStreams, useLabelsSync, type CachedLabelAssignment } from "./use-labels"
+import {
+  labelKeys,
+  reconcileLabels,
+  selectLabelStreams,
+  selectLabeledStreamIds,
+  useLabelsSync,
+  type CachedLabelAssignment,
+} from "./use-labels"
 import type { CachedStream } from "@/db"
 
 const WORKSPACE_ID = "ws_test"
@@ -216,6 +223,28 @@ describe("selectLabelStreams", () => {
     expect(
       selectLabelStreams([cachedAssignment("label_a", "stream_1")], [cachedStream("stream_1")], "label_z")
     ).toEqual([])
+  })
+})
+
+describe("selectLabeledStreamIds", () => {
+  it("returns null when no labels are selected — no filter, not an empty match", () => {
+    expect(selectLabeledStreamIds([cachedAssignment("label_a", "stream_1")], [])).toBeNull()
+  })
+
+  it("collects the stream ids for any of the selected labels", () => {
+    const assignments = [
+      cachedAssignment("label_a", "stream_1"),
+      cachedAssignment("label_b", "stream_2"),
+      cachedAssignment("label_c", "stream_3"),
+    ]
+    expect(selectLabeledStreamIds(assignments, ["label_a", "label_b"])).toEqual(new Set(["stream_1", "stream_2"]))
+  })
+
+  it("ignores non-stream assignments and returns an empty set when nothing matches", () => {
+    const assignments = [
+      cachedAssignment("label_a", "msg_1", { resourceType: "message" as CachedLabelAssignment["resourceType"] }),
+    ]
+    expect(selectLabeledStreamIds(assignments, ["label_a"])).toEqual(new Set())
   })
 })
 

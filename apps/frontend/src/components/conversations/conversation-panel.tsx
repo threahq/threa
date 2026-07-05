@@ -404,7 +404,10 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
                 conversationId={conversation.id}
                 conversationRootStreamId={conversation.streamId}
                 isHighlighted={row.message.id === highlightMessageId}
-                surfaceClassName="bg-background"
+                // Break out of the list's px-4 and pad content back so the actor
+                // accent fills to the panel edges (stream-view look), rows aligned.
+                surfaceClassName="bg-background px-4"
+                rowInsetClassName="-mx-4"
               />
             ) : (
               <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />

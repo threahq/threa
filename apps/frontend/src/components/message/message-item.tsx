@@ -10,6 +10,7 @@ import {
   type StreamType,
 } from "@threa/types"
 import { ActorAvatar } from "@/components/actor-avatar"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { RelativeTime } from "@/components/relative-time"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { LinkPreviewProvider } from "@/lib/markdown/link-preview-context"
@@ -128,6 +129,12 @@ interface MessageItemProps {
    * content slides off it. Omitted where swipe isn't wired (the label page has no
    * quote provider, so the gesture is disabled). */
   surfaceClassName?: string
+  /** Negative horizontal margin that breaks the row OUT of its surface's padding so
+   * the actor accent (`rowAccent`) fills to the surface edges — the stream-view
+   * look — instead of a padded-in block. Pair it with matching horizontal padding
+   * on `surfaceClassName` so content stays aligned (board: `-mx-3 sm:-mx-4` +
+   * `px-3 sm:px-4`; panel: `-mx-4` + `px-4`). Omit on the label page (no accent). */
+  rowInsetClassName?: string
 }
 
 /**
@@ -152,6 +159,7 @@ export function MessageItem({
   conversationRootStreamId,
   isHighlighted,
   surfaceClassName,
+  rowInsetClassName,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const { openUserProfile } = useUserProfile()
@@ -179,6 +187,12 @@ export function MessageItem({
   // Users open their profile on click (same as the timeline); other actor types
   // (persona/bot/system) are non-interactive.
   const interactiveName = message.authorType === "user" && Boolean(message.authorId)
+  // Per-actor colorization, shared with the timeline: the author-name color + inline
+  // badge, plus the full-bleed `rowAccent` (tint + inset left stripe) on the row.
+  // `rowInsetClassName` breaks the row out to the surface edges so the accent fills
+  // to the sides and the stripe sits flush — the stream-view look — with content
+  // kept aligned by the matching padding in `surfaceClassName`.
+  const theme = actorRowTheme(message.authorType)
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
@@ -605,7 +619,10 @@ export function MessageItem({
         data-author-name={authorName}
         data-author-id={message.authorId}
         data-actor-type={message.authorType}
-        className="relative mt-0.5 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible"
+        className={cn(
+          "relative mt-0.5 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
+          rowInsetClassName
+        )}
         {...touchHandlers}
       >
         {swipeReveal}
@@ -613,6 +630,7 @@ export function MessageItem({
           className={cn(
             "group reveal-host relative flex gap-3",
             surfaceClassName,
+            theme.rowAccent,
             longPress.isPressed && "opacity-70 transition-opacity",
             isHighlighted && "animate-highlight-flash"
           )}
@@ -653,7 +671,10 @@ export function MessageItem({
       data-author-name={authorName}
       data-author-id={message.authorId}
       data-actor-type={message.authorType}
-      className="relative mt-3 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible"
+      className={cn(
+        "relative mt-3 scroll-mt-12 overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:overflow-visible",
+        rowInsetClassName
+      )}
       {...touchHandlers}
     >
       {swipeReveal}
@@ -661,6 +682,7 @@ export function MessageItem({
         className={cn(
           "group reveal-host relative flex items-start gap-3",
           surfaceClassName,
+          theme.rowAccent,
           longPress.isPressed && "opacity-70 transition-opacity",
           isHighlighted && "animate-highlight-flash"
         )}
@@ -680,13 +702,14 @@ export function MessageItem({
               <button
                 type="button"
                 onClick={() => openUserProfile(message.authorId)}
-                className="min-w-0 truncate text-left text-sm font-semibold hover:underline"
+                className={cn("min-w-0 truncate text-left text-sm font-semibold hover:underline", theme.nameClassName)}
               >
                 {authorName}
               </button>
             ) : (
-              <span className="min-w-0 truncate text-sm font-semibold">{authorName}</span>
+              <span className={cn("min-w-0 truncate text-sm font-semibold", theme.nameClassName)}>{authorName}</span>
             )}
+            {theme.badge}
             {/* Permalink to the message in its stream timeline — the body is
               interactive, so navigation lives on the timestamp instead. */}
             <Link

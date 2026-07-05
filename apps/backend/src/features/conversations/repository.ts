@@ -3,6 +3,7 @@ import { streamAccessPredicateSql } from "../streams"
 import {
   ActivityTypes,
   ConversationStatuses,
+  LabelableResourceTypes,
   type ConversationStatus,
   type BoardLens,
   BOARD_LENS_STALE_HOURS,
@@ -84,6 +85,28 @@ function boardScopeCondSql(scopeStreamIds: string[] | undefined) {
 }
 
 /**
+ * The exclusion twin of {@link boardScopeCondSql}. A conversation is vetoed when
+ * its ANCHOR or its effective ROOT is named — root matching drops a channel with
+ * everything under it, anchor matching lets one thread be excluded without
+ * dropping its channel. Exclusion always wins over an include scope (both are
+ * AND'ed). Workspace-scoped inside the EXISTS (INV-8). Mirrored client-side in
+ * `use-stable-board-view`'s `matchesExcludedStreams` — keep the anchor-or-root
+ * rule identical.
+ */
+function boardScopeExcludeCondSql(excludeStreamIds: string[] | undefined) {
+  if (!excludeStreamIds || excludeStreamIds.length === 0) return sql``
+  return composeSql`AND NOT EXISTS (
+    SELECT 1 FROM streams ex_s
+    WHERE ex_s.id = conversations.stream_id
+      AND ex_s.workspace_id = conversations.workspace_id
+      AND (
+        COALESCE(ex_s.root_stream_id, ex_s.id) = ANY(${excludeStreamIds})
+        OR ex_s.id = ANY(${excludeStreamIds})
+      )
+  )`
+}
+
+/**
  * The board's stream-TYPE filter fragment. Matches on the effective root's
  * type (joined via the same `COALESCE(root_stream_id, id)` rule), so a
  * conversation anchored in a thread counts as its root channel/DM — a `types`
@@ -98,6 +121,53 @@ function boardTypeCondSql(scopeStreamTypes: string[] | undefined) {
       AND type_s.workspace_id = conversations.workspace_id
       AND type_root.type = ANY(${scopeStreamTypes})
   )`
+}
+
+/** The exclusion twin of {@link boardTypeCondSql}: veto by effective-root type. */
+function boardTypeExcludeCondSql(excludeStreamTypes: string[] | undefined) {
+  if (!excludeStreamTypes || excludeStreamTypes.length === 0) return sql``
+  return composeSql`AND NOT EXISTS (
+    SELECT 1 FROM streams xt_s
+    JOIN streams xt_root ON xt_root.id = COALESCE(xt_s.root_stream_id, xt_s.id)
+    WHERE xt_s.id = conversations.stream_id
+      AND xt_s.workspace_id = conversations.workspace_id
+      AND xt_root.type = ANY(${excludeStreamTypes})
+  )`
+}
+
+/**
+ * EXISTS body shared by the board's label include/exclude filters: does the
+ * VIEWER have one of `labelIds` on the conversation's anchor stream or its
+ * effective root? Labels are owner-scoped, so the filter is per-viewer by
+ * construction (like mute). Assignments of an archived label are deleted inside
+ * the label-archive transaction, so no archived-label join is needed.
+ * Workspace-scoped inside the EXISTS (INV-8). Mirrored client-side in
+ * `use-stable-board-view`'s label matchers — keep the anchor-or-root rule
+ * identical.
+ */
+function boardLabelMatchSql(userId: string, labelIds: string[]) {
+  return composeSql`(
+    SELECT 1 FROM label_assignments la
+    JOIN streams lbl_s ON lbl_s.id = conversations.stream_id
+      AND lbl_s.workspace_id = conversations.workspace_id
+    WHERE la.workspace_id = conversations.workspace_id
+      AND la.user_id = ${userId}
+      AND la.resource_type = ${LabelableResourceTypes.STREAM}
+      AND la.label_id = ANY(${labelIds})
+      AND la.resource_id IN (lbl_s.id, COALESCE(lbl_s.root_stream_id, lbl_s.id))
+  )`
+}
+
+/** Label scope: only conversations whose anchor/root carries one of the viewer's labels. */
+function boardLabelCondSql(userId: string, labelIds: string[] | undefined) {
+  if (!labelIds || labelIds.length === 0) return sql``
+  return composeSql`AND EXISTS ${boardLabelMatchSql(userId, labelIds)}`
+}
+
+/** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
+function boardLabelExcludeCondSql(userId: string, labelIds: string[] | undefined) {
+  if (!labelIds || labelIds.length === 0) return sql``
+  return composeSql`AND NOT EXISTS ${boardLabelMatchSql(userId, labelIds)}`
 }
 
 /**
@@ -203,6 +273,9 @@ export interface UpdateConversationParams {
   confidence?: number
   status?: ConversationStatus
   lastActivityAt?: Date
+  /** Set true on a user's explicit resolve/reopen so the extractor stops
+   *  overriding the status (user intent wins over the LLM's ruling). */
+  statusLockedByUser?: boolean
 }
 
 function mapRowToConversation(row: ConversationRow): Conversation {
@@ -478,6 +551,14 @@ export const ConversationRepository = {
       scopeStreamIds?: string[]
       /** Root-stream TYPE scope: only conversations whose root is one of these types. */
       scopeStreamTypes?: string[]
+      /** Stream veto: drop conversations whose anchor or root is named (see {@link boardScopeExcludeCondSql}). */
+      excludeStreamIds?: string[]
+      /** Root-stream TYPE veto: drop conversations whose root is one of these types. */
+      excludeStreamTypes?: string[]
+      /** Label scope: only conversations whose anchor/root carries one of the viewer's labels. */
+      scopeLabelIds?: string[]
+      /** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
+      excludeLabelIds?: string[]
       limit?: number
       cursor?: { lastActivityAt: string; id: string }
     }
@@ -489,6 +570,10 @@ export const ConversationRepository = {
     const lensCond = boardLensCondSql(options?.lens, userId)
     const scopeCond = boardScopeCondSql(options?.scopeStreamIds)
     const typeCond = boardTypeCondSql(options?.scopeStreamTypes)
+    const scopeExcludeCond = boardScopeExcludeCondSql(options?.excludeStreamIds)
+    const typeExcludeCond = boardTypeExcludeCondSql(options?.excludeStreamTypes)
+    const labelCond = boardLabelCondSql(userId, options?.scopeLabelIds)
+    const labelExcludeCond = boardLabelExcludeCondSql(userId, options?.excludeLabelIds)
     const hiddenCond = boardHiddenExcludeSql(userId)
     // Mute is skipped when the viewer named explicit streams via `?in=`.
     const mutedCond = boardMutedExcludeSql(userId, !options?.scopeStreamIds?.length)
@@ -511,6 +596,10 @@ export const ConversationRepository = {
         ${lensCond}
         ${scopeCond}
         ${typeCond}
+        ${scopeExcludeCond}
+        ${typeExcludeCond}
+        ${labelCond}
+        ${labelExcludeCond}
         ${hiddenCond}
         ${mutedCond}
         ${cursorCond}
@@ -578,6 +667,10 @@ export const ConversationRepository = {
       updates.push(`status = $${paramIndex++}`)
       values.push(params.status)
     }
+    if (params.statusLockedByUser !== undefined) {
+      updates.push(`status_locked_by_user = $${paramIndex++}`)
+      values.push(params.statusLockedByUser)
+    }
     if (params.lastActivityAt !== undefined) {
       updates.push(`last_activity_at = $${paramIndex++}`)
       values.push(params.lastActivityAt)
@@ -609,6 +702,30 @@ export const ConversationRepository = {
     const result = await db.query<ConversationRow>(query, values)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
+  },
+
+  /**
+   * The boundary-extraction LLM's status/completeness refinement. Unlike a user
+   * edit ({@link update}), the extractor MUST NOT override a status the user set
+   * — user resolution takes precedence over the AI's ruling (Kris, 2026-07-05).
+   * `status` is applied only when the row isn't `status_locked_by_user`; the guard
+   * is in the SET (a `CASE`), so it's atomic against a concurrent user resolve —
+   * no read-then-write race (INV-20). `completeness_score` is always free to
+   * refine. Workspace-scoped (INV-8).
+   */
+  async applyExtractionUpdate(
+    db: Querier,
+    workspaceId: string,
+    id: string,
+    params: { completenessScore?: number; status?: ConversationStatus }
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations SET
+        completeness_score = COALESCE(${params.completenessScore ?? null}, completeness_score),
+        status = CASE WHEN status_locked_by_user THEN status ELSE COALESCE(${params.status ?? null}, status) END,
+        updated_at = NOW()
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+    `)
   },
 
   /**
