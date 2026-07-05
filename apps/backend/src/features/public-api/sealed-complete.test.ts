@@ -172,6 +172,26 @@ describe("completeBotInvocationSealed", () => {
     expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_reply")
   })
 
+  it("binds the reply's E2E attachment rows via attachmentIds", async () => {
+    const { handlers, createMessageInTransaction } = arrange()
+    const { res } = createResponse()
+
+    await handlers.completeBotInvocationSealed(
+      req({
+        reply: {
+          messageId: "msg_reply",
+          ciphertext: "c2VhbGVk",
+          envelope: REPLY_ENVELOPE,
+          attachmentIds: ["att_1", "att_2"],
+        },
+      }),
+      res
+    )
+
+    const createParams = createMessageInTransaction.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    expect(createParams.attachmentIds).toEqual(["att_1", "att_2"])
+  })
+
   it("completes with no reply (noResponse) without creating a message", async () => {
     const { handlers, createMessageInTransaction, completeInvocationInTransaction, insertEvent } = arrange()
     const { res, payloads } = createResponse()

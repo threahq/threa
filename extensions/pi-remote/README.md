@@ -17,10 +17,13 @@ Because the server can't read sealed step content, sealed turns default to FULL
 trace detail (real commands, file contents, tool output) instead of the
 "omitted for safety" redactions plaintext turns keep. Set `sealedFullTrace:
 false` in the config to opt sealed traces back to redacted; the toggle can never
-enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) are not
-yet supported on sealed turns — directives are stripped with a note in the
-reply. Deleting the BIK file orphans the owner's key wraps; the owner must
-re-invite the bot after it registers a fresh key.
+enable full detail on a plaintext turn. Attachments (`THREA_ATTACH:`) work on
+sealed turns too: the file is encrypted locally under a fresh single-use key,
+only ciphertext is uploaded (placeholder name/mime on the server), and the key
+rides sealed inside the reply payload — inbound attachments are likewise
+fetched as ciphertext and decrypted locally. Deleting the BIK file orphans the
+owner's key wraps; the owner must re-invite the bot after it registers a fresh
+key.
 
 ## Install locally
 

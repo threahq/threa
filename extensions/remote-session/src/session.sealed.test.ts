@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core"
@@ -9,11 +9,15 @@ import {
   buildMessageAad,
   buildWrapAad,
   bytesToBase64,
+  decryptAttachmentBytes,
+  encryptAttachmentBytes,
   openMessageAsString,
   parseSealedPayload,
   sealMessage,
   serializeSealedPayload,
+  type AttachmentRef,
   type BotRuntimeTransport,
+  type SealedPayloadExtras,
   type SealedReplyBody,
   type SealedStepFrame,
   type StreamEnvelope,
@@ -92,6 +96,9 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     sealedSteps: [],
     plainSteps: [],
   }
+  // Every upload a sealed turn makes: it must be ciphertext-only, e2e-flagged,
+  // under the placeholder filename — the assertions read these captures.
+  const uploads: Array<{ filename: string; type: string; e2e: unknown; bytes: Uint8Array }> = []
   const client = {
     claim: async () => queue.shift() ?? null,
     fail: async (id: string, body: Record<string, unknown>) => {
@@ -109,9 +116,25 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     completeSealed: async (id: string, callbackToken: string, body: Record<string, unknown>) => {
       calls.completeSealed.push({ id, callbackToken, body })
     },
-    uploadAttachment: async () => {
-      throw new Error("unexpected plaintext upload on a sealed turn")
+    uploadAttachment: async (form: FormData) => {
+      const file = form.get("file") as Blob & { name?: string }
+      uploads.push({
+        filename: file.name ?? "",
+        type: file.type,
+        e2e: form.get("e2e"),
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      })
+      if (uploads[uploads.length - 1]!.e2e !== "true") {
+        throw new Error("unexpected plaintext upload on a sealed turn")
+      }
+      return {
+        id: `att_up_${uploads.length}`,
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 1,
+      }
     },
+    getAttachmentDownloadUrl: async (id: string) => `https://signed.example/${id}`,
     listStreamMessages: async () => {
       throw new Error("unexpected plaintext message fetch on a sealed turn")
     },
@@ -137,11 +160,15 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     runtime: RUNTIME,
     transport: transport as unknown as BotRuntimeTransport,
   })
-  return { session, calls, queue }
+  return { session, calls, queue, uploads }
 }
 
 /** The owner's half of the ceremony: wrap a fresh SSK to the session's BIK and seal trigger + history under it. */
-async function ownerBuildsSealedClaim(session: RemoteSession, overrides: Partial<ClaimedInvocation> = {}) {
+async function ownerBuildsSealedClaim(
+  session: RemoteSession,
+  overrides: Partial<ClaimedInvocation> = {},
+  promptExtras?: SealedPayloadExtras
+) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bik = await (session as any).bik.ensure()
   const ssk = new Uint8Array(32)
@@ -155,11 +182,11 @@ async function ownerBuildsSealedClaim(session: RemoteSession, overrides: Partial
     ssk,
     buildWrapAad({ streamId: ROOT_STREAM, keyGeneration: 1, recipientKeyId: bik.publicKeyId })
   )
-  const sealFor = async (messageId: string, senderId: string, markdown: string) => {
+  const sealFor = async (messageId: string, senderId: string, markdown: string, extras?: SealedPayloadExtras) => {
     const sealed = await sealMessage({
       key: ssk,
       keyGeneration: 1,
-      payload: serializeSealedPayload(markdown),
+      payload: serializeSealedPayload(markdown, extras),
       aad: buildMessageAad({ streamId: ROOT_STREAM, messageId, senderId }),
     })
     return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
@@ -191,27 +218,29 @@ async function ownerBuildsSealedClaim(session: RemoteSession, overrides: Partial
         },
       ],
       history: [{ ...(await sealFor("msg_h1", "user_1", "earlier note")), role: "user", sequence: "5" }],
-      prompt: await sealFor("msg_trigger", "user_1", "Please refactor the auth module"),
+      prompt: await sealFor("msg_trigger", "user_1", "Please refactor the auth module", promptExtras),
       reply: { keyGeneration: 1, senderId: BOT_SENDER },
     },
     ...overrides,
   }
-  const openSealed = async (body: { ciphertext: string; envelope: StreamEnvelope }) =>
+  const openSealedPayload = async (body: { ciphertext: string; envelope: StreamEnvelope }) =>
     parseSealedPayload(
       await openMessageAsString({ key: ssk, envelope: body.envelope, ciphertext: base64ToBytes(body.ciphertext) })
-    ).contentMarkdown
-  return { invocation, openSealed }
+    )
+  const openSealed = async (body: { ciphertext: string; envelope: StreamEnvelope }) =>
+    (await openSealedPayload(body)).contentMarkdown
+  return { invocation, openSealed, openSealedPayload }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const drain = (session: RemoteSession) => (session as any).claimDrain() as Promise<void>
 
-async function startSealedTurn(delegate: Partial<RemoteSessionDelegate> = {}) {
+async function startSealedTurn(delegate: Partial<RemoteSessionDelegate> = {}, promptExtras?: SealedPayloadExtras) {
   const made = makeSealedSession(delegate)
-  const { invocation, openSealed } = await ownerBuildsSealedClaim(made.session)
+  const { invocation, openSealed, openSealedPayload } = await ownerBuildsSealedClaim(made.session, {}, promptExtras)
   made.queue.push(invocation)
   await drain(made.session)
-  return { ...made, openSealed }
+  return { ...made, openSealed, openSealedPayload }
 }
 
 describe("sealed claim hydration + delivery", () => {
@@ -232,6 +261,43 @@ describe("sealed claim hydration + delivery", () => {
     expect(await openSealed(calls.sealedSteps[0]!.frames[0]!)).toBe("Forwarded to the runtime.")
     expect(calls.sendMessage).toHaveLength(0)
     expect(calls.complete).toHaveLength(0)
+  })
+
+  test("inbound refs on the trigger download, decrypt, and land in the turn manifest", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "sealed-inbound-"))
+    tempDirs.push(cwd)
+    const plaintext = new TextEncoder().encode("the secret spec")
+    const encrypted = await encryptAttachmentBytes(plaintext)
+    const ref: AttachmentRef = {
+      attachmentId: "att_in_1",
+      key: encrypted.key,
+      iv: encrypted.iv,
+      filename: "spec.md",
+      mimeType: "text/markdown",
+      sizeBytes: plaintext.length,
+    }
+    const delivered: string[] = []
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(cwd)
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encrypted.ciphertext))
+    try {
+      await startSealedTurn(
+        {
+          deliverTurn: async (turn) => {
+            delivered.push(turn.content)
+          },
+        },
+        { attachmentRefs: [ref] }
+      )
+    } finally {
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+    }
+
+    expect(delivered).toHaveLength(1)
+    const localPath = join(cwd, ".threa-attachments", "binv_sealed", "spec.md")
+    expect(delivered[0]).toContain("spec.md (text/markdown, 15 bytes)")
+    expect(delivered[0]).toContain("[attached to the message you just received]")
+    expect(new TextDecoder().decode(readFileSync(localPath))).toBe("the secret spec")
   })
 
   test("a malformed sealedContext fails the invocation with a scrubbed reason", async () => {
@@ -271,18 +337,70 @@ describe("sealed output paths", () => {
     )
   })
 
-  test("sendInterim seals to /sealed-messages and strips attachment directives", async () => {
-    const { session, calls, openSealed } = await startSealedTurn()
+  test("sendInterim encrypts + uploads THREA_ATTACH files and seals the refs into the payload", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-interim-attach-"))
+    tempDirs.push(dir)
+    const filePath = join(dir, "report.html")
+    const plaintext = new TextEncoder().encode("<h1>secret report</h1>")
+    writeFileSync(filePath, plaintext)
+    const { session, calls, uploads, openSealedPayload } = await startSealedTurn()
 
-    const result = await session.sendInterim("binv_sealed", "Progress so far.\nTHREA_ATTACH: ./report.html")
+    const result = await session.sendInterim("binv_sealed", `Progress so far.\nTHREA_ATTACH: ${filePath}`)
 
     expect(result.ok).toBe(true)
     expect(calls.sendMessage).toHaveLength(0)
     expect(calls.sealedMessages).toHaveLength(1)
-    const opened = await openSealed(calls.sealedMessages[0]!.body)
-    expect(opened).toContain("Progress so far.")
-    expect(opened).not.toContain("THREA_ATTACH")
-    expect(opened).toContain("not uploaded")
+    // The upload was ciphertext-only, flagged e2e, under the placeholder name.
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0]!.e2e).toBe("true")
+    expect(uploads[0]!.filename).toBe("encrypted")
+    expect(Array.from(uploads[0]!.bytes)).not.toEqual(Array.from(plaintext))
+    // The wire body binds the row; the sealed payload carries the ref that opens it.
+    const wire = calls.sealedMessages[0]!.body as SealedReplyBody & { attachmentIds?: string[] }
+    expect(wire.attachmentIds).toEqual(["att_up_1"])
+    const payload = await openSealedPayload(calls.sealedMessages[0]!.body)
+    expect(payload.contentMarkdown).toBe("Progress so far.")
+    expect(payload.contentMarkdown).not.toContain("THREA_ATTACH")
+    expect(payload.attachmentRefs).toHaveLength(1)
+    const ref = payload.attachmentRefs[0]!
+    expect(ref).toMatchObject({ attachmentId: "att_up_1", filename: "report.html", mimeType: "text/html" })
+    const decrypted = await decryptAttachmentBytes({ ciphertext: uploads[0]!.bytes, key: ref.key, iv: ref.iv })
+    expect(new TextDecoder().decode(decrypted)).toBe("<h1>secret report</h1>")
+  })
+
+  test("reply uploads sealed attachments and binds them on /sealed-complete", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-reply-attach-"))
+    tempDirs.push(dir)
+    const filePath = join(dir, "diff.patch")
+    writeFileSync(filePath, "--- a\n+++ b\n")
+    const { session, calls, uploads, openSealedPayload } = await startSealedTurn()
+
+    const result = await session.reply("binv_sealed", `Done — patch attached.\nTHREA_ATTACH: ${filePath}`)
+
+    expect(result.ok).toBe(true)
+    expect(calls.completeSealed).toHaveLength(1)
+    const reply = calls.completeSealed[0]!.body.reply as SealedReplyBody & { attachmentIds?: string[] }
+    expect(reply.attachmentIds).toEqual(["att_up_1"])
+    expect(uploads).toHaveLength(1)
+    const payload = await openSealedPayload(reply)
+    expect(payload.contentMarkdown).toBe("Done — patch attached.")
+    expect(payload.attachmentRefs).toHaveLength(1)
+    expect(payload.attachmentRefs[0]!.filename).toBe("diff.patch")
+  })
+
+  test("a missing THREA_ATTACH file surfaces as a sealed failure note, never plaintext", async () => {
+    const { session, calls, uploads, openSealedPayload } = await startSealedTurn()
+
+    const result = await session.sendInterim("binv_sealed", "Progress.\nTHREA_ATTACH: ./does-not-exist.txt")
+
+    expect(result.ok).toBe(true)
+    expect(uploads).toHaveLength(0)
+    const payload = await openSealedPayload(calls.sealedMessages[0]!.body)
+    expect(payload.contentMarkdown).toContain("Progress.")
+    expect(payload.contentMarkdown).toContain("Attachment upload failed:")
+    expect(payload.attachmentRefs).toEqual([])
+    const wire = calls.sealedMessages[0]!.body as SealedReplyBody & { attachmentIds?: string[] }
+    expect(wire.attachmentIds).toBeUndefined()
   })
 
   test("postToStream routes through the sealed wire while a sealed turn runs in that stream", async () => {

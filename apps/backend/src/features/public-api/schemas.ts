@@ -306,6 +306,11 @@ export const startSealedInvocationStepSchema = z.object({
   envelope: sealedStreamEnvelopeSchema.optional(),
 })
 
+// E2E attachment rows bound to a sealed message. The ids are cleartext wire
+// metadata (the server already holds the placeholder rows); the per-file keys
+// and real filenames ride only inside the sealed payload's `attachmentRefs`.
+const sealedAttachmentIdsSchema = z.array(z.string().min(1).max(128)).max(16).optional()
+
 // One sealed *interim* message posted by an in-flight sealed turn (the external
 // sibling of the enclave streaming replies to its session `/messages` callback).
 // `messageId` is client-minted — it binds the seal AAD and doubles as the
@@ -315,6 +320,7 @@ export const sendSealedInvocationMessageSchema = z.object({
   messageId: z.string().min(1).max(128),
   ciphertext: z.base64().min(1),
   envelope: sealedStreamEnvelopeSchema,
+  attachmentIds: sealedAttachmentIdsSchema,
 })
 
 // The sealed variant of `completeInvocationSchema` (the external sibling of the
@@ -330,6 +336,7 @@ export const completeSealedInvocationSchema = z
         messageId: z.string().min(1).max(128),
         ciphertext: z.base64().min(1),
         envelope: sealedStreamEnvelopeSchema,
+        attachmentIds: sealedAttachmentIdsSchema,
       })
       .optional(),
     noResponse: z.boolean().optional(),

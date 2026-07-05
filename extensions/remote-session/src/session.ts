@@ -11,15 +11,18 @@ import {
   scrubSealedError,
   sealReply,
   sealStep,
+  type AttachmentRef,
   type BotRuntimeHello,
   type SealedReplyBody,
   type StepFrame,
 } from "@threa/bot-runtime-client"
 import {
   downloadInboundAttachments,
-  extractAttachmentDirectives,
+  downloadSealedInboundAttachments,
   formatInboundAttachmentManifest,
+  selectSealedInboundRefs,
   uploadReplyAttachments,
+  uploadSealedReplyAttachments,
 } from "./attachments"
 import { sanitizeId, type RemoteSessionConfig } from "./identity"
 import {
@@ -243,11 +246,12 @@ interface Inflight {
   sentCount: number
   // The reply after attachment uploads, cached when a complete() fails so the
   // retry reuses the same uploads instead of orphaning a fresh copy each time.
-  prepared?: { markdown: string; attachmentIds: string[] }
+  // On a sealed turn `attachmentRefs` carries the per-file keys to re-seal with.
+  prepared?: { markdown: string; attachmentIds: string[]; attachmentRefs?: AttachmentRef[] }
   // A sealed interim whose POST failed, cached so the retry re-sends the SAME
-  // sealed body (same message id) and the server's idempotency key dedupes it —
-  // a fresh seal per attempt would double-post on retry.
-  pendingSealedInterim?: { seq: number; body: SealedReplyBody }
+  // sealed body (same message id, same uploaded attachments) and the server's
+  // idempotency key dedupes it — a fresh seal per attempt would double-post on retry.
+  pendingSealedInterim?: { seq: number; body: SealedReplyBody; attachmentIds: string[] }
 }
 
 export interface RemoteSessionOptions {
@@ -571,11 +575,15 @@ export class RemoteSession {
         contentMarkdown: item.contentMarkdown,
         createdAt: "",
       }))
+      const historyRefs = opened.history.flatMap((item) => item.attachmentRefs)
       return {
         ...invocation,
         sealedContext: undefined,
         promptMarkdown: opened.promptMarkdown,
         sealing: opened.sealing,
+        ...(opened.promptAttachmentRefs.length > 0 || historyRefs.length > 0
+          ? { sealedAttachments: { prompt: opened.promptAttachmentRefs, history: historyRefs } }
+          : {}),
         ...(messages.length > 0 ? { context: { kind: "inline" as const, messages } } : {}),
       }
     } catch (error) {
@@ -641,12 +649,26 @@ export class RemoteSession {
    */
   private async completeTurn(
     invocation: ClaimedInvocation,
-    body: { markdown?: string; noResponse?: true; metadata?: Record<string, unknown> }
+    body: {
+      markdown?: string
+      noResponse?: true
+      metadata?: Record<string, unknown>
+      /** Sealed turns only: refs seal into the payload, ids bind the rows on the wire. */
+      attachmentRefs?: AttachmentRef[]
+      attachmentIds?: string[]
+    }
   ): Promise<void> {
     if (invocation.sealing) {
       if (body.markdown) {
-        const reply = await sealReply(invocation.sealing, body.markdown)
-        await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, { reply })
+        const extras =
+          body.attachmentRefs && body.attachmentRefs.length > 0 ? { attachmentRefs: body.attachmentRefs } : undefined
+        const reply = await sealReply(invocation.sealing, body.markdown, extras)
+        await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, {
+          reply: {
+            ...reply,
+            ...(body.attachmentIds && body.attachmentIds.length > 0 && { attachmentIds: body.attachmentIds }),
+          },
+        })
       } else {
         await this.client.completeSealed(invocation.id, invocation.sealing.callbackToken, { noResponse: true })
       }
@@ -658,18 +680,6 @@ export class RemoteSession {
       ...(body.markdown ? { finalMessageMarkdown: body.markdown } : { noResponse: true }),
       ...(body.metadata ? { metadata: body.metadata } : {}),
     })
-  }
-
-  /**
-   * Strip `THREA_ATTACH:` directives out of sealed output — uploading the bytes
-   * would push plaintext file content through the attachment store, outside the
-   * E2E boundary. A note replaces them so the user knows why the file is missing.
-   */
-  private stripSealedAttachmentDirectives(text: string): string {
-    const extracted = extractAttachmentDirectives(text)
-    if (extracted.paths.length === 0) return text
-    const note = `_${extracted.paths.length} local attachment${extracted.paths.length === 1 ? "" : "s"} not uploaded — attachments aren't supported in encrypted scratchpads yet._`
-    return [extracted.markdown, note].filter(Boolean).join("\n\n")
   }
 
   // --- Session control (steer / stop / delegated commands) -------------------
@@ -887,10 +897,27 @@ export class RemoteSession {
   /** The prompt + history the runtime reads, with any downloaded attachments appended as a manifest. */
   private async buildTurnContent(invocation: ClaimedInvocation): Promise<string> {
     const base = formatInvocationContent(invocation)
-    // A sealed turn's context is what hydration decrypted; the plaintext
-    // message list only holds ciphertext placeholders and sealed attachments
-    // aren't supported yet, so there is nothing to scan.
-    if (invocation.sealing) return base
+    // A sealed turn's attachments come from the refs hydration opened out of the
+    // sealed payloads — the plaintext message list only holds ciphertext
+    // placeholders, so there is nothing to scan there. The S3 object is opaque
+    // ciphertext; the ref's key decrypts it locally.
+    if (invocation.sealing) {
+      const refs = invocation.sealedAttachments
+      if (!refs) return base
+      try {
+        const downloaded = await downloadSealedInboundAttachments(this.client, {
+          refs: selectSealedInboundRefs(refs.prompt, refs.history),
+          invocationId: invocation.id,
+          cwd: process.cwd(),
+          log: this.log,
+        })
+        const manifest = formatInboundAttachmentManifest(downloaded)
+        return manifest ? `${base}\n\n${manifest}` : base
+      } catch (error) {
+        this.log(`sealed inbound attachment fetch failed: ${this.summarize(error)}`)
+        return base
+      }
+    }
     // Best-effort: a discovery/download failure (e.g. a key without
     // attachments:read) must never block the prompt from reaching the runtime.
     try {
@@ -927,20 +954,27 @@ export class RemoteSession {
     const seq = entry.sentCount + 1
     try {
       if (entry.invocation.sealing) {
-        // Sealed turn: seal the interim under the stream key and post it via
-        // the claim-bound sealed-messages callback. No attachment uploads —
-        // directives are stripped with a note (plaintext bytes must not leave
-        // the E2E boundary). A retry after a failed POST reuses the cached
-        // sealed body so the same message id dedupes server-side.
-        const sealedBody =
-          entry.pendingSealedInterim?.seq === seq
-            ? entry.pendingSealedInterim.body
-            : await sealReply(
-                entry.invocation.sealing,
-                this.stripSealedAttachmentDirectives(text.trim() || "(empty message)")
-              )
-        entry.pendingSealedInterim = { seq, body: sealedBody }
-        await this.client.sendSealedMessage(invocationId, entry.invocation.sealing.callbackToken, sealedBody)
+        // Sealed turn: encrypt + upload any THREA_ATTACH files (ciphertext only;
+        // the per-file keys seal into the payload's attachmentRefs), then seal
+        // the interim under the stream key and post it via the claim-bound
+        // sealed-messages callback. A retry after a failed POST reuses the
+        // cached sealed body so the same message id (and the same uploaded
+        // attachments) dedupe server-side.
+        let pending = entry.pendingSealedInterim?.seq === seq ? entry.pendingSealedInterim : undefined
+        if (!pending) {
+          const uploaded = await uploadSealedReplyAttachments(this.client, text, process.cwd())
+          const body = await sealReply(
+            entry.invocation.sealing,
+            uploaded.markdown.trim() || "(empty message)",
+            uploaded.refs.length > 0 ? { attachmentRefs: uploaded.refs } : undefined
+          )
+          pending = { seq, body, attachmentIds: uploaded.attachmentIds }
+        }
+        entry.pendingSealedInterim = pending
+        await this.client.sendSealedMessage(invocationId, entry.invocation.sealing.callbackToken, {
+          ...pending.body,
+          ...(pending.attachmentIds.length > 0 && { attachmentIds: pending.attachmentIds }),
+        })
         entry.pendingSealedInterim = undefined
       } else {
         const { markdown } = await uploadReplyAttachments(this.client, text, process.cwd())
@@ -991,11 +1025,10 @@ export class RemoteSession {
     try {
       if (!prepared) {
         if (entry.invocation.sealing) {
-          // No uploads on a sealed turn — strip directives with a note instead.
-          prepared = {
-            markdown: this.stripSealedAttachmentDirectives(text.trim() || "Done."),
-            attachmentIds: [],
-          }
+          // Encrypt + upload THREA_ATTACH files as opaque ciphertext; the refs
+          // (key/iv/real filename) seal into the reply payload below.
+          const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, text, process.cwd())
+          prepared = { markdown: markdown.trim() || "Done.", attachmentIds, attachmentRefs: refs }
         } else {
           const { markdown, uploaded } = await uploadReplyAttachments(this.client, text, process.cwd())
           prepared = { markdown, attachmentIds: uploaded.map((a) => a.id) }
@@ -1003,6 +1036,8 @@ export class RemoteSession {
       }
       await this.completeTurn(entry.invocation, {
         markdown: prepared.markdown,
+        attachmentIds: prepared.attachmentIds,
+        ...(prepared.attachmentRefs && { attachmentRefs: prepared.attachmentRefs }),
         metadata: {
           "remote.invocationId": invocationId,
           "remote.instanceId": this.config.instanceId,

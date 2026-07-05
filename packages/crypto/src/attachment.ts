@@ -1,5 +1,5 @@
 import { base64ToBytes, bytesToBase64, utf8Encode } from "./encoding"
-import { openMessage, STREAM_ENVELOPE_VERSION } from "./stream-key"
+import { generateStreamKey, openMessage, sealMessage, STREAM_ENVELOPE_VERSION } from "./stream-key"
 
 /**
  * One end-to-end-encrypted attachment, carried inside the SSK-sealed message
@@ -29,6 +29,32 @@ export interface AttachmentRef {
 export const ATTACHMENT_AAD = utf8Encode("threa-attachment-v1")
 /** Single-key scheme: attachment keys are per-file, never rotated. */
 export const ATTACHMENT_KEY_GENERATION = 0
+
+export interface EncryptedAttachment {
+  /** Ciphertext bytes to upload as the opaque file body (a valid `BlobPart`). */
+  ciphertext: Uint8Array<ArrayBuffer>
+  /** Base64 key + iv to stash in the message's `attachmentRefs`. */
+  key: string
+  iv: string
+}
+
+/**
+ * Encrypt a file's bytes under a fresh single-use key for upload to an E2E
+ * stream. Returns the ciphertext plus the key/iv the message payload must carry
+ * so a recipient can decrypt it later. Reuses the message seal primitive
+ * (AES-256-GCM) rather than a parallel raw-bytes path (INV-35). Takes raw bytes
+ * (the caller reads them off the `File`) so this stays a pure crypto function.
+ */
+export async function encryptAttachmentBytes(plaintext: Uint8Array): Promise<EncryptedAttachment> {
+  const key = generateStreamKey()
+  const { envelope, ciphertext } = await sealMessage({
+    key,
+    keyGeneration: ATTACHMENT_KEY_GENERATION,
+    payload: plaintext,
+    aad: ATTACHMENT_AAD,
+  })
+  return { ciphertext, key: bytesToBase64(key), iv: envelope.iv }
+}
 
 /**
  * Decrypt the opaque S3 ciphertext of an E2E attachment back to its bytes, using

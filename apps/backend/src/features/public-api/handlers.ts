@@ -822,15 +822,15 @@ export function createPublicApiHandlers({
         throw new HttpError("Attachment id was not generated", { status: 500, code: "INTERNAL_ERROR" })
       }
 
-      // E2E uploads are rejected here until the public API has a ciphertext
-      // message-write path to bind them to. The first-party web client uploads
-      // E2E attachments (sealing the per-file key into the message payload),
-      // but the public-API sendMessage/updateMessage only accept plaintext, so
-      // an accepted E2E row here could never be referenced by a matching
-      // message. Pi/CLI agents get this flag back in the Pi-remote-with-files
-      // slice.
-      if (parseE2eUploadFlag(req.body)) {
-        throw new HttpError("E2E attachment uploads are not supported on the public API yet", {
+      // E2E uploads are bot-only: a sealed harness turn binds the ciphertext row
+      // via the sealed-messages/sealed-complete `attachmentIds` and seals the
+      // per-file key into the payload's `attachmentRefs`, exactly like the
+      // first-party client. User API keys have no sealed message-write path on
+      // the public API, so an accepted E2E row could never be referenced by a
+      // matching message — keep rejecting those loudly.
+      const e2e = parseE2eUploadFlag(req.body)
+      if (e2e && !req.botApiKey) {
+        throw new HttpError("E2E attachment uploads require a bot API key on the public API", {
           status: 400,
           code: "E2E_UPLOAD_UNSUPPORTED",
         })
@@ -847,7 +847,7 @@ export function createPublicApiHandlers({
             sizeBytes: file.size,
             storagePath: file.key,
           },
-          false
+          e2e
         )
       )
 
@@ -1364,6 +1364,7 @@ export function createPublicApiHandlers({
         // completion reply; the client-minted id dedupes a redelivered post.
         accessibleStreamIds: [session.streamId],
         clientMessageId: data.messageId,
+        ...(data.attachmentIds && data.attachmentIds.length > 0 && { attachmentIds: data.attachmentIds }),
       })
 
       res.json({ data: { messageId: message.id } })
@@ -1415,6 +1416,7 @@ export function createPublicApiHandlers({
               // completion (one reply per invocation), mirroring the enclave reply.
               accessibleStreamIds: [session.streamId],
               clientMessageId: `bot-invocation:${session.id}`,
+              ...(reply.attachmentIds && reply.attachmentIds.length > 0 && { attachmentIds: reply.attachmentIds }),
             })
           : null
 

@@ -93,9 +93,11 @@ export class TestClient {
   async uploadFile<T = unknown>(
     path: string,
     file: { content: string | Buffer; filename: string; mimeType: string },
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    fields?: Record<string, string>
   ): Promise<{ status: number; data: T; headers: Headers }> {
     const formData = new FormData()
+    for (const [name, value] of Object.entries(fields ?? {})) formData.append(name, value)
     const blobPart: BlobPart = typeof file.content === "string" ? file.content : Uint8Array.from(file.content)
     const blob = new Blob([blobPart], { type: file.mimeType })
     formData.append("file", blob, file.filename)
@@ -872,11 +874,15 @@ export function botUploadFile<T = unknown>(
   client: TestClient,
   workspaceId: string,
   apiKey: string,
-  file: { content: string | Buffer; filename: string; mimeType: string }
+  file: { content: string | Buffer; filename: string; mimeType: string },
+  fields?: Record<string, string>
 ) {
-  return client.uploadFile<T>(`/api/v1/workspaces/${workspaceId}/attachments`, file, {
-    Authorization: `Bearer ${apiKey}`,
-  })
+  return client.uploadFile<T>(
+    `/api/v1/workspaces/${workspaceId}/attachments`,
+    file,
+    { Authorization: `Bearer ${apiKey}` },
+    fields
+  )
 }
 
 export async function getEmojis(client: TestClient, workspaceId: string): Promise<EmojiEntry[]> {

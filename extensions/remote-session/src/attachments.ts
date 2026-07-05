@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
+import { decryptAttachmentBytes, encryptAttachmentBytes, type AttachmentRef } from "@threa/bot-runtime-client"
 import type { AttachmentSummary, StreamMessageSummary, ThreaClient } from "./client"
 
 /** A reply line `THREA_ATTACH: ./out.png` tells the channel to upload that file and attach it to the reply. */
@@ -187,4 +188,136 @@ export async function uploadReplyAttachments(
   const section = buildReplyAttachmentSection(uploaded, failed)
   const finalMarkdown = [stripped, section].filter(Boolean).join("\n\n") || "Done."
   return { markdown: finalMarkdown, uploaded, failed }
+}
+
+// --- Sealed (E2E) attachments ----------------------------------------------
+
+/** Placeholder name/mime for the opaque ciphertext upload — the real values ride only in the sealed ref. */
+const SEALED_UPLOAD_FILENAME = "encrypted"
+const SEALED_UPLOAD_MIME = "application/octet-stream"
+
+async function uploadSealedFile(
+  client: Pick<ThreaClient, "uploadAttachment">,
+  path: string,
+  cwd: string
+): Promise<AttachmentRef> {
+  const absolute = resolve(cwd, path)
+  const stats = statSync(absolute)
+  if (!stats.isFile()) throw new Error(`${path} is not a file`)
+  const bytes = readFileSync(absolute)
+  const encrypted = await encryptAttachmentBytes(bytes)
+  const form = new FormData()
+  form.append("e2e", "true")
+  form.append("file", new Blob([encrypted.ciphertext], { type: SEALED_UPLOAD_MIME }), SEALED_UPLOAD_FILENAME)
+  const summary = await client.uploadAttachment(form)
+  return {
+    attachmentId: summary.id,
+    key: encrypted.key,
+    iv: encrypted.iv,
+    filename: basename(absolute),
+    mimeType: guessMimeType(absolute),
+    sizeBytes: bytes.length,
+  }
+}
+
+/**
+ * Resolve `THREA_ATTACH:` directives in SEALED output: encrypt each file under a
+ * fresh single-use key, upload only the ciphertext (`e2e=true`, placeholder
+ * name/mime), and return the refs to seal into the message payload plus the ids
+ * the wire body binds to the message row. No `attachment:<id>` links are added —
+ * an E2E viewer renders attachments from the sealed refs, not the markdown.
+ * Upload failures surface as a note (itself sealed) rather than throwing.
+ */
+export async function uploadSealedReplyAttachments(
+  client: Pick<ThreaClient, "uploadAttachment">,
+  markdown: string,
+  cwd: string
+): Promise<{ markdown: string; refs: AttachmentRef[]; attachmentIds: string[] }> {
+  const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
+  const refs: AttachmentRef[] = []
+  const failed: string[] = []
+  for (const path of paths) {
+    try {
+      refs.push(await uploadSealedFile(client, path, cwd))
+    } catch (error) {
+      failed.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  const failureNote = failed.length > 0 ? ["Attachment upload failed:", ...failed.map((f) => `- ${f}`)].join("\n") : ""
+  return {
+    markdown: [stripped, failureNote].filter(Boolean).join("\n\n"),
+    refs,
+    attachmentIds: refs.map((ref) => ref.attachmentId),
+  }
+}
+
+/** One inbound sealed attachment to fetch: the ref plus whether it rode the trigger message. */
+export interface SealedInboundRef {
+  ref: AttachmentRef
+  isSource: boolean
+}
+
+/**
+ * Dedupe the refs opened from a sealed claim (trigger payload + history
+ * payloads) by attachment id, trigger first — the sealed sibling of
+ * `selectInboundAttachments`, working from decrypted refs instead of the
+ * plaintext message list (which only holds placeholders on an E2E stream).
+ */
+export function selectSealedInboundRefs(
+  promptRefs: readonly AttachmentRef[],
+  historyRefs: readonly AttachmentRef[]
+): SealedInboundRef[] {
+  const seen = new Set<string>()
+  const selected: SealedInboundRef[] = []
+  for (const { refs, isSource } of [
+    { refs: promptRefs, isSource: true },
+    { refs: historyRefs, isSource: false },
+  ]) {
+    for (const ref of refs) {
+      if (seen.has(ref.attachmentId)) continue
+      seen.add(ref.attachmentId)
+      selected.push({ ref, isSource })
+    }
+  }
+  return selected
+}
+
+/**
+ * Download + decrypt a sealed turn's inbound attachments into
+ * `<cwd>/.threa-attachments/<invocationId>/`. The S3 object is opaque
+ * ciphertext; the ref's key/iv (opened from the sealed message payload) decrypt
+ * it locally, and the file lands under its REAL name — decrypted bytes never
+ * transit the server. A per-attachment failure is logged and skipped.
+ */
+export async function downloadSealedInboundAttachments(
+  client: Pick<ThreaClient, "getAttachmentDownloadUrl">,
+  params: {
+    refs: SealedInboundRef[]
+    invocationId: string
+    cwd: string
+    log: (message: string) => void
+  }
+): Promise<DownloadedAttachment[]> {
+  if (params.refs.length === 0) return []
+  const dir = join(params.cwd, ATTACHMENT_DIR, params.invocationId)
+  mkdirSync(dir, { recursive: true })
+  const downloaded: DownloadedAttachment[] = []
+  for (const { ref, isSource } of params.refs) {
+    try {
+      const url = await client.getAttachmentDownloadUrl(ref.attachmentId)
+      const ciphertext = await fetchAttachmentBytes(url)
+      const plaintext = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
+      const localPath = join(dir, safeFilename(ref.filename))
+      writeFileSync(localPath, plaintext)
+      downloaded.push({
+        attachment: { id: ref.attachmentId, filename: ref.filename, mimeType: ref.mimeType, sizeBytes: ref.sizeBytes },
+        messageId: "",
+        isSource,
+        localPath,
+      })
+    } catch (error) {
+      params.log(`sealed attachment ${ref.attachmentId} download failed: ${String(error)}`)
+    }
+  }
+  return downloaded
 }
