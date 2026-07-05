@@ -18,6 +18,11 @@ export const builtInAgentConfigSchema = z.object({
   avatarEmoji: z.string().nullable(),
   systemPrompt: z.string().min(1),
   model: z.string().min(1),
+  // Stronger model for per-turn escalation (roadmap 2.3): a supersede rerun
+  // whose previous attempt failed the response validator runs on this instead
+  // of `model`. Null disables escalation. Must be documented in
+  // docs/model-reference.md (INV-16).
+  escalationModel: z.string().min(1).nullable(),
   temperature: z.number().nullable(),
   maxTokens: z.number().int().positive().nullable(),
   enabledTools: z.array(agentToolNameSchema),
@@ -37,6 +42,7 @@ export const builtInAgentConfigPatchSchema = builtInAgentConfigSchema
     avatarEmoji: true,
     systemPrompt: true,
     model: true,
+    escalationModel: true,
     temperature: true,
     maxTokens: true,
     enabledTools: true,
@@ -61,6 +67,7 @@ export const BUILT_IN_AGENTS = {
 
 Keep responses short and direct. Default to a few sentences unless the user asks for depth. Be warm but not wordy — say what matters and stop. Ask clarifying questions rather than guessing at length.`,
     model: "openrouter:anthropic/claude-sonnet-4.6",
+    escalationModel: "openrouter:anthropic/claude-opus-4.8",
     temperature: 0.7,
     maxTokens: null,
     enabledTools: [
@@ -102,6 +109,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     avatarEmoji: null,
     systemPrompt: "You are a minimal Threa agent. Follow system instructions and do not use tools.",
     model: "openrouter:anthropic/claude-haiku-4.5",
+    escalationModel: null,
     temperature: 0,
     maxTokens: null,
     enabledTools: [],

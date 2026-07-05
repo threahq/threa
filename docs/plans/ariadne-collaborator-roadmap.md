@@ -42,7 +42,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
 | 2.1  | Generalized session abort                            | ☑      | #1177 |
 | 2.2  | Stop/Redirect affordances on the activity card       | ☑      | #1190 |
-| 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
+| 2.3  | Per-turn model resolution + first escalation rule    | ☑      | #1202 |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                  | ☑      | #1170 |
@@ -249,6 +249,14 @@ No new capabilities — surfacing machinery that already exists. Independent of 
 **Tests:** resolver unit tests (default; escalation on failed-validation rerun); config schema test.
 
 **Done when:** normal turns still run Sonnet; a failed-validation rerun demonstrably runs the escalation model (assert via stubbed AI capture).
+
+**Deviations (shipped):**
+
+- **The "previous attempt failed the validator" signal needed a substrate the Shape didn't enumerate.** The runtime's validation-failure terminal (kept-response after `MAX_REPEATED_INVALID_DRAFTS`) now returns a structured `responseValidationFailed` on `AgentRuntimeResult` — deliberate `keep_response` keeps and user Stops are excluded, and a salvage commit that passes late validation clears it. Dispatch persists it to a new `agent_sessions.response_validation_failed` column (`markResponseValidationFailed`, the `episode_summary` precedent: post-completion metadata of the session row, not workflow state). `resolveTurnModel` reads it off the superseded session already loaded by `loadSupersededMessagePlan` — no extra query.
+- **`escalationModel` is built-in-config only** (`builtInAgentConfigSchema`, patchable via `agent_config_overrides`; Ariadne: `openrouter:anthropic/claude-opus-4.8`). DB personas resolve `escalationModel: null` — escalation disabled, no `personas` column until workspace personas need it (INV-36); `resolveTurnModel` is the single consumer so the column slots in without touching call sites.
+- **`model_escalated` is a first-class `AgentStepType`** (constants + frontend `STEP_DISPLAY_CONFIG`, which is exhaustive-typed). Dispatch emits it via `trace.startStep` before the loop with `{fromModel, toModel, cause}` provenance. An `escalationModel` equal to `persona.model` reports `escalated: false` — no no-op step.
+- **The resolved model drives everything the model id touched:** `getLanguageModel`/`parseModel`/`modelString`, otel + telemetry metadata (plus a `model_escalated` flag), and `supportsVision` — so the toolset's vision support matches the model actually running. `models.yaml` gained `claude-opus-4.8` (text+image); without it the registry would silently strip vision on escalated turns.
+- **E2E/enclave untouched:** the message-mutation handler never dispatches reruns for E2E streams, so escalation cannot apply there.
 
 ---
 

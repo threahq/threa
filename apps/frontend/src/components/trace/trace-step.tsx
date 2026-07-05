@@ -299,6 +299,12 @@ interface AttachedContextInfo {
   refs: AttachedContextRefInfo[]
 }
 
+/** "openrouter:anthropic/claude-opus-4.8" → "claude-opus-4.8" for display. */
+function shortModelName(modelId: string): string {
+  const afterProvider = modelId.split(":").pop() ?? modelId
+  return afterProvider.split("/").pop() ?? afterProvider
+}
+
 function renderStepContent(
   stepType: AgentStepType,
   content: string,
@@ -646,6 +652,29 @@ function renderStepContent(
         )
       }
       return <span className="text-muted-foreground">Saved a digest of this turn's tool work for future turns.</span>
+    }
+
+    case "model_escalated": {
+      // Dispatch-minted escalation marker ({fromModel, toModel, cause} from
+      // resolveTurnModel) — rendered as prose, never raw wire JSON.
+      if (structured && typeof structured.toModel === "string") {
+        const from = typeof structured.fromModel === "string" ? shortModelName(structured.fromModel) : null
+        return (
+          <div className="space-y-1">
+            <span>
+              Switched to <strong>{shortModelName(structured.toModel)}</strong>
+              {from ? ` (from ${from})` : ""} for this turn.
+            </span>
+            {structured.cause === "previous_attempt_failed_validation" && (
+              <div className="text-[11px] text-muted-foreground">
+                The previous attempt could not produce a response that passed validation, so this turn runs a stronger
+                model.
+              </div>
+            )}
+          </div>
+        )
+      }
+      return <span className="text-muted-foreground">Switched to a stronger model for this turn.</span>
     }
 
     case "tool_error":

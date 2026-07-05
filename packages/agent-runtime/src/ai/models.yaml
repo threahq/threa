@@ -27,6 +27,11 @@ models:
     inputModalities: [text, image]
     outputModalities: [text]
 
+  openrouter:anthropic/claude-opus-4.8:
+    name: Claude Opus 4.8
+    inputModalities: [text, image]
+    outputModalities: [text]
+
   # Google Gemini models
   openrouter:google/gemini-2.5-flash:
     name: Gemini 2.5 Flash

@@ -15,6 +15,7 @@ const persona: Persona = {
   avatarEmoji: null,
   systemPrompt: "Base system prompt",
   model: "openai/gpt-5.4",
+  escalationModel: null,
   temperature: 0.2,
   maxTokens: 1000,
   enabledTools: null,

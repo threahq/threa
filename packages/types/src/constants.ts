@@ -555,6 +555,7 @@ export const AGENT_STEP_TYPES = [
   "rate_limited",
   "rate_limit_retry",
   "turn_digest",
+  "model_escalated",
 ] as const
 export type AgentStepType = (typeof AGENT_STEP_TYPES)[number]
 
@@ -577,6 +578,7 @@ export const AgentStepTypes = {
   RATE_LIMITED: "rate_limited",
   RATE_LIMIT_RETRY: "rate_limit_retry",
   TURN_DIGEST: "turn_digest",
+  MODEL_ESCALATED: "model_escalated",
 } as const satisfies Record<string, AgentStepType>
 
 export const AGENT_RECONSIDERATION_DECISIONS = ["kept_previous_response"] as const

@@ -6,6 +6,9 @@ export type { PersonaAgentDeps, PersonaAgentInput, PersonaAgentResult, WithSessi
 export { resolveTurnPurpose, deriveTurnFlags } from "./turn-purpose"
 export type { TurnPurpose, TurnPurposeKind } from "./turn-purpose"
 
+export { resolveTurnModel } from "./turn-model"
+export type { ResolvedTurnModel, TurnModelContext } from "./turn-model"
+
 export { defineAgentTool, toVercelToolDefs, AgentRuntime, createSessionTraceProjector, OtelObserver } from "./runtime"
 export type {
   AgentTool,

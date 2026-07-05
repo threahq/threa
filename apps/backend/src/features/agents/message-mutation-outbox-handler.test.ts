@@ -98,6 +98,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1", "msg_agent_2"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T11:59:00.000Z"),
     })
@@ -123,6 +124,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1", "msg_agent_2"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:01:00.000Z"),
     })
@@ -203,6 +205,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T11:59:00.000Z"),
     })
@@ -271,6 +274,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T11:59:00.000Z"),
     })
@@ -338,6 +342,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:02:00.000Z"),
     })
@@ -413,6 +418,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T11:59:00.000Z"),
     })
@@ -438,6 +444,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:01:00.000Z"),
     })
@@ -517,6 +524,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_1"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:05:00.000Z"),
     })
@@ -575,6 +583,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_3"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T12:01:00.000Z"),
       completedAt: new Date("2026-02-19T12:08:00.000Z"),
     })
@@ -634,6 +643,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_latest"],
       contextMessageIds: ["msg_invoke_latest", "msg_referenced_1", "msg_other_1"],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     })
@@ -659,6 +669,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_latest"],
       contextMessageIds: ["msg_invoke_latest", "msg_referenced_1", "msg_other_1"],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:11:00.000Z"),
     })
@@ -740,6 +751,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_latest"],
       contextMessageIds: ["msg_invoke_latest", "msg_recent_1", "msg_recent_2"],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     })
@@ -799,6 +811,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: ["msg_agent_latest"],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     })
@@ -923,6 +936,7 @@ describe("AgentMessageMutationHandler", () => {
         sentMessageIds: [],
         contextMessageIds: [],
         episodeSummary: null,
+        responseValidationFailed: false,
         createdAt: new Date(),
         completedAt: null,
       },
@@ -947,6 +961,7 @@ describe("AgentMessageMutationHandler", () => {
         sentMessageIds: ["msg_agent_2"],
         contextMessageIds: [],
         episodeSummary: null,
+        responseValidationFailed: false,
         createdAt: new Date(),
         completedAt: new Date("2026-02-19T11:55:00.000Z"),
       },
@@ -973,6 +988,7 @@ describe("AgentMessageMutationHandler", () => {
       sentMessageIds: [],
       contextMessageIds: [],
       episodeSummary: null,
+      responseValidationFailed: false,
       createdAt: new Date(),
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     }))
