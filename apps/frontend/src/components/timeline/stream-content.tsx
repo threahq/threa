@@ -19,7 +19,7 @@ import {
   useIsMobile,
   useNewMessageIndicator,
   useAgentActivity,
-  useAbortResearch,
+  useAbortSession,
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
   streamKeys,
@@ -54,7 +54,6 @@ import {
   type StreamBootstrap,
   type ConversationWithStaleness,
 } from "@threa/types"
-import { isAbortableStepType } from "@/lib/step-config"
 import {
   EventList,
   TimelineItemContent,
@@ -2402,7 +2401,7 @@ function TimelineMessageList({
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
-  const abortResearch = useAbortResearch(socket)
+  const abortSession = useAbortSession(socket)
 
   // Tracks whether this component has ever rendered with real timeline content.
   // Drives the empty fallback below: until the first paint, useEvents has not
@@ -2420,10 +2419,9 @@ function TimelineMessageList({
   const visibleItemsRef = useRef(visibleItems)
   visibleItemsRef.current = visibleItems
 
-  const { sessionLiveCounts, sessionLiveSubsteps, sessionCanAbort } = useMemo(() => {
+  const { sessionLiveCounts, sessionLiveSubsteps } = useMemo(() => {
     const counts = new Map<string, { stepCount: number; messageCount: number }>()
     const substeps = new Map<string, string | null>()
-    const canAbort = new Map<string, boolean>()
     if (agentActivity) {
       for (const activity of agentActivity.values()) {
         counts.set(activity.sessionId, {
@@ -2431,15 +2429,14 @@ function TimelineMessageList({
           messageCount: activity.messageCount,
         })
         substeps.set(activity.sessionId, activity.substep)
-        canAbort.set(activity.sessionId, isAbortableStepType(activity.currentStepType))
       }
     }
-    return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps, sessionCanAbort: canAbort }
+    return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps }
   }, [agentActivity])
 
-  const handleAbortResearch = useCallback(
-    (sessionId: string) => abortResearch({ sessionId, workspaceId }),
-    [abortResearch, workspaceId]
+  const handleStopSession = useCallback(
+    (sessionId: string) => abortSession({ sessionId, workspaceId }),
+    [abortSession, workspaceId]
   )
 
   // First-message lookup for the context-bag attachment badge anchor.
@@ -2462,8 +2459,7 @@ function TimelineMessageList({
       firstMessageId,
       sessionLiveCounts,
       sessionLiveSubsteps,
-      sessionCanAbort,
-      onAbortResearch: handleAbortResearch,
+      onStopSession: handleStopSession,
       cancelledFollowUpIds,
       batch,
       conversationOverlay,
@@ -2480,8 +2476,7 @@ function TimelineMessageList({
       firstMessageId,
       sessionLiveCounts,
       sessionLiveSubsteps,
-      sessionCanAbort,
-      handleAbortResearch,
+      handleStopSession,
       cancelledFollowUpIds,
       batch,
       conversationOverlay,

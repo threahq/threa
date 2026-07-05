@@ -41,7 +41,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
 | 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
 | 2.1  | Generalized session abort                            | ☑      | #1177 |
-| 2.2  | Stop/Redirect affordances on the activity card       | ☐      |       |
+| 2.2  | Stop/Redirect affordances on the activity card       | ☑      | #1190 |
 | 2.3  | Per-turn model resolution + first escalation rule    | ☐      |       |
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
@@ -226,6 +226,13 @@ No new capabilities — surfacing machinery that already exists. Independent of 
 **Tests:** component tests: buttons render only while running; Redirect focuses composer; Stop calls the abort hook.
 
 **Done when:** any member of the stream can stop or redirect a running session from the card.
+
+**Deviations (shipped):**
+
+- **Gating collapsed onto the card's own derived status.** The per-session `sessionCanAbort` map (step-type gating via `isAbortableStepType`) is deleted end-to-end — the card shows the Redirect/Stop pair whenever its derived status is `running`, so the buttons are stable for the whole run instead of popping in and out as steps change (INV-21). `isAbortableStepType`/`ABORTABLE_STEP_TYPES` had no remaining callers and were removed (INV-38).
+- **The trace dialog's in-flight step button generalizes with it.** Since 2.1 the abort halts the whole session regardless of active tool, so the per-step "Stop research" gate in `trace-step.tsx` (abortable step types only) became wrong; the Stop button now renders on any in-progress step while the session runs.
+- **`StopResearchButton` → `session-action-buttons.tsx`.** One private base button; exports `StopSessionButton` ("Stop", red hover tint — the research-purple tie no longer applies) and `RedirectSessionButton` ("Redirect", primary tint). Hook renamed `useAbortResearch` → `useAbortSession` (INV-49); the wire event stays `agent_session:research:abort`.
+- **Redirect is pure frontend, anchored to the surface's editor zone.** The click walks `closest("[data-editor-zone]")` and reuses `focusVisibleZoneEditor` (exported from `message-event.tsx`, the inline-edit restore path) so the right composer gets focus in both the main view and the thread panel. The hint ("{persona} will fold your message into the current work") borrows the card's single-line subtitle slot for 5 s — same line, no height change (INV-21) — rather than adding composer-side state threading.
 
 ### 2.3 Per-turn model resolution + first escalation rule
 

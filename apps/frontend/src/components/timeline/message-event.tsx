@@ -216,16 +216,26 @@ interface MessageLayoutProps {
   batch?: BatchTimelineState
 }
 
-function focusVisibleZoneEditor(zone: HTMLElement | null, attempt = 0) {
-  if (!zone) return
-
-  const editor = Array.from(zone.querySelectorAll<HTMLElement>('[contenteditable="true"]'))
+/**
+ * Deepest visible composer editor in the zone, skipping inline-edit editors.
+ * Shared with the agent session card's Redirect action, which needs to know
+ * whether the surface has a composer at all before promising the user their
+ * message will reach the running session.
+ */
+export function findVisibleZoneEditor(zone: HTMLElement | null): HTMLElement | null {
+  if (!zone) return null
+  return Array.from(zone.querySelectorAll<HTMLElement>('[contenteditable="true"]'))
     .filter((element) => !element.closest("[data-inline-edit]"))
     .reduceRight<HTMLElement | null>((match, element) => {
       if (match) return match
       return element.getClientRects().length > 0 ? element : null
     }, null)
+}
 
+function focusVisibleZoneEditor(zone: HTMLElement | null, attempt = 0) {
+  if (!zone) return
+
+  const editor = findVisibleZoneEditor(zone)
   if (editor) {
     focusAtEnd(editor)
     return

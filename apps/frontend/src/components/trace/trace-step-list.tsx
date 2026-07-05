@@ -18,12 +18,11 @@ interface TraceStepListProps {
    */
   streamingSubsteps?: Partial<Record<AgentStepType, StreamingSubstep[]>>
   /**
-   * Callback to gracefully abort an in-flight tool call (workspace_research
-   * in V1). When provided and a step is in-progress + of an abortable type,
-   * `TraceStep` renders a Stop research button in its header so the user can
-   * interrupt from inside the trace dialog.
+   * Callback to gracefully stop the running session. Passed only while the
+   * session is running; `TraceStep` renders a Stop button in the in-progress
+   * step's header so the user can interrupt from inside the trace dialog.
    */
-  onAbortResearch?: () => void
+  onStopSession?: () => void
 }
 
 export function TraceStepList({
@@ -33,7 +32,7 @@ export function TraceStepList({
   streamId,
   userId,
   streamingSubsteps,
-  onAbortResearch,
+  onStopSession,
 }: TraceStepListProps) {
   const highlightRef = useRef<HTMLDivElement>(null)
 
@@ -71,7 +70,7 @@ export function TraceStepList({
               streamId={streamId}
               userId={userId}
               liveSubsteps={liveSubsteps}
-              onAbortResearch={onAbortResearch}
+              onStopSession={onStopSession}
             />
           </div>
         )

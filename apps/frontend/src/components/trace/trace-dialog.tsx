@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RelativeTime } from "@/components/relative-time"
 import { useTrace, useSocket } from "@/contexts"
-import { useAbortResearch } from "@/hooks"
+import { useAbortSession } from "@/hooks"
 import { useAgentTrace } from "@/hooks/use-agent-trace"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { TraceStepList } from "./trace-step-list"
@@ -32,7 +32,7 @@ export function TraceDialog() {
   const navigate = useNavigate()
   const { sessionId, highlightMessageId, getTraceUrl, closeTraceModal } = useTrace()
   const socket = useSocket()
-  const abortResearch = useAbortResearch(socket)
+  const abortSession = useAbortSession(socket)
   // Resolved once and threaded into the step list so each step can decrypt
   // sealed (enclave) content via the viewer's E2E session.
   const userId = useWorkspaceUserId(workspaceId!)
@@ -46,10 +46,10 @@ export function TraceDialog() {
   // without needing either identifier in its own scope. Only wired when the
   // session is actively running — abort on a completed session is a no-op at
   // the server so it's cheap, but there's no reason to show the button then.
-  const handleAbortResearch = useCallback(() => {
+  const handleStopSession = useCallback(() => {
     if (!sessionId || !workspaceId) return
-    abortResearch({ sessionId, workspaceId })
-  }, [abortResearch, sessionId, workspaceId])
+    abortSession({ sessionId, workspaceId })
+  }, [abortSession, sessionId, workspaceId])
 
   if (!sessionId) return null
 
@@ -114,7 +114,7 @@ export function TraceDialog() {
           workspaceId={workspaceId!}
           streamId={session?.streamId ?? ""}
           userId={userId}
-          onAbortResearch={status === "running" ? handleAbortResearch : undefined}
+          onStopSession={status === "running" ? handleStopSession : undefined}
         />
 
         {status && <TraceFooter status={status} stepCount={steps.length} messageCount={messageCount} />}
@@ -250,7 +250,7 @@ function TraceBody({
   workspaceId,
   streamId,
   userId,
-  onAbortResearch,
+  onStopSession,
 }: {
   isLoading: boolean
   error: Error | null
@@ -260,7 +260,7 @@ function TraceBody({
   workspaceId: string
   streamId: string
   userId: string | null
-  onAbortResearch?: () => void
+  onStopSession?: () => void
 }) {
   let content = (
     <TraceStepList
@@ -270,7 +270,7 @@ function TraceBody({
       streamId={streamId}
       userId={userId}
       streamingSubsteps={streamingSubsteps}
-      onAbortResearch={onAbortResearch}
+      onStopSession={onStopSession}
     />
   )
   if (isLoading) {
