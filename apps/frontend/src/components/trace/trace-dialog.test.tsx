@@ -91,7 +91,22 @@ describe("TraceDialog", () => {
     })) as unknown as typeof useAgentTraceModule.useAgentTrace)
 
     vi.spyOn(commandsApi, "listForStream").mockResolvedValue([])
-    vi.spyOn(commandsApi, "dispatch").mockResolvedValue({ success: true, commandId: "cmd_1", command: "stop", args: "" })
+    vi.spyOn(commandsApi, "dispatch").mockResolvedValue({
+      success: true,
+      commandId: "cmd_1",
+      command: "stop",
+      args: "",
+      event: {
+        id: "event_1",
+        streamId: "stream_1",
+        sequence: "1",
+        eventType: "command_dispatched",
+        payload: {},
+        actorId: "member_1",
+        actorType: "user",
+        createdAt: "2026-07-05T00:00:00.000Z",
+      },
+    })
     vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
@@ -248,8 +263,12 @@ describe("TraceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
-    await waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/steer" }))
-    await waitFor(() => expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" }))
+    await waitFor(() =>
+      expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/steer" })
+    )
+    await waitFor(() =>
+      expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" })
+    )
   })
 
   it("falls back to local Stop and surfaces a toast when advertised runtime stop fails", async () => {
