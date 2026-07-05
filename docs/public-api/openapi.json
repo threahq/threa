@@ -1901,7 +1901,8 @@
                       "tool_error",
                       "rate_limited",
                       "rate_limit_retry",
-                      "turn_digest"
+                      "turn_digest",
+                      "model_escalated"
                     ]
                   },
                   "content": { "type": "string", "minLength": 1, "maxLength": 10000 },
@@ -2026,7 +2027,8 @@
                       "tool_error",
                       "rate_limited",
                       "rate_limit_retry",
-                      "turn_digest"
+                      "turn_digest",
+                      "model_escalated"
                     ]
                   },
                   "messageId": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -2179,7 +2181,8 @@
                       "tool_error",
                       "rate_limited",
                       "rate_limit_retry",
-                      "turn_digest"
+                      "turn_digest",
+                      "model_escalated"
                     ]
                   },
                   "messageId": { "type": "string", "minLength": 1, "maxLength": 128 },

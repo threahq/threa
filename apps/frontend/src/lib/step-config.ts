@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Hourglass,
   Brain,
+  Zap,
   type LucideIcon,
 } from "lucide-react"
 
@@ -182,6 +183,14 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     hue: 305,
     saturation: 55,
     lightness: 48,
+  },
+  model_escalated: {
+    label: "Stronger Model",
+    inlineLabel: "Switching to a stronger model...",
+    icon: Zap,
+    hue: 25,
+    saturation: 85,
+    lightness: 50,
   },
 }
 

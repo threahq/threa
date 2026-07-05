@@ -1,6 +1,6 @@
 # AI Model Reference
 
-**Last updated:** 2026-04-12
+**Last updated:** 2026-07-05
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
@@ -49,6 +49,24 @@ All models use `provider:modelPath` format:
 - Tasks where quality justifies higher cost
 
 **Use instead of:** `claude-sonnet-4.5` for improved quality
+
+---
+
+### openrouter:anthropic/claude-opus-4.8
+
+**Name:** Claude Opus 4.8
+
+**Description:** Anthropic's most capable generally available model (Opus family). Text, image, and file inputs with reasoning support and a 1M-token context window. Same per-token price as Opus 4.5/4.6/4.7 (~1.7x Sonnet input, ~1.7x output).
+
+**Typical cost:** ~$5.00 per 1M input tokens, ~$25.00 per 1M output tokens
+
+**When to use:**
+
+- Escalation model for persona turns whose previous attempt failed response validation (`escalationModel`, roadmap 2.3)
+- Hardest reasoning tasks where Sonnet demonstrably falls short
+- Low-volume, high-stakes calls where quality dominates cost
+
+**Use instead of:** `claude-opus-4.5`, `claude-opus-4.6`, `claude-opus-4.7`, or any Claude 3.x/4.0/4.1 Opus
 
 ---
 
@@ -263,7 +281,7 @@ omitted → server-configured default (`voiceConfig.defaultModel`).
 - ❌ `openrouter:anthropic/claude-3-haiku` → Use `openrouter:anthropic/claude-haiku-4.5`
 - ❌ `openrouter:anthropic/claude-3-sonnet` → Use `openrouter:anthropic/claude-sonnet-4.5`
 - ❌ `openrouter:anthropic/claude-3.5-sonnet` → Use `openrouter:anthropic/claude-sonnet-4.5`
-- ❌ `openrouter:anthropic/claude-3-opus` → Use `openrouter:anthropic/claude-opus-4.5`
+- ❌ `openrouter:anthropic/claude-3-opus` → Use `openrouter:anthropic/claude-opus-4.8`
 
 **OpenAI Legacy:**
 

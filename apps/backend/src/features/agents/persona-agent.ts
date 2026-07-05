@@ -18,7 +18,7 @@ import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
 import { PersonaRepository } from "./persona-repository"
-import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 import { StreamEventRepository } from "../streams"
 import { AttachmentRepository } from "../attachments"
 import { awaitAttachmentProcessing } from "../attachments"
@@ -36,6 +36,7 @@ import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchRe
 import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
+import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
@@ -225,6 +226,8 @@ export interface PersonaAgentResult {
 interface SupersededMessagePlan {
   messageIds: string[]
   nextIndex: number
+  /** The superseded session row — model resolution reads its validation-failure marker (roadmap 2.3). */
+  supersededSession: AgentSession
 }
 
 export class PersonaAgent {
@@ -511,6 +514,27 @@ export class PersonaAgent {
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
+        // Per-turn model resolution (roadmap 2.3), at the dispatch seam like
+        // the context-window policy: persona.model by default; a supersede
+        // rerun whose previous attempt failed the response validator runs on
+        // the persona's escalationModel. Visible as a model_escalated trace
+        // step so the trace explains why this turn cost more.
+        const turnModel = resolveTurnModel(persona, {
+          purpose: effectivePurpose,
+          supersededSession: supersededMessagePlan?.supersededSession ?? null,
+        })
+        if (turnModel.escalated) {
+          const escalationStep = await trace.startStep({
+            stepType: AgentStepTypes.MODEL_ESCALATED,
+            content: JSON.stringify({
+              fromModel: persona.model,
+              toModel: turnModel.model,
+              cause: "previous_attempt_failed_validation",
+            }),
+          })
+          await escalationStep.complete({})
+        }
+
         // The turn's conversation anchor (roadmap 3.3): the trigger message's own
         // topic, resolved via the canonical resolver (INV-35) — prefer the
         // trigger's PRIMARY conversation, else the most recently active one
@@ -755,7 +779,7 @@ export class PersonaAgent {
             followUps: followUpDeps,
             github: githubDeps,
             linear: linearDeps,
-            supportsVision: modelRegistry.supportsVision(persona.model),
+            supportsVision: modelRegistry.supportsVision(turnModel.model),
           }),
         })
 
@@ -768,8 +792,8 @@ export class PersonaAgent {
           }
         }
 
-        const model = ai.getLanguageModel(persona.model)
-        const parsed = ai.parseModel(persona.model)
+        const model = ai.getLanguageModel(turnModel.model)
+        const parsed = ai.parseModel(turnModel.model)
 
         // Collects the turn's completed tool calls (content + sources) so a
         // turn_digest step can carry the tool work into later turns (C-1).
@@ -780,7 +804,7 @@ export class PersonaAgent {
         const turnRequest: TurnRequest = {
           delivery: TurnDeliveries.PLAINTEXT,
           model,
-          modelString: persona.model,
+          modelString: turnModel.model,
           // Origin is "user" for mention-triggered runs where we can attribute
           // cost to the invoking user; otherwise fall back to "system".
           costContext: {
@@ -822,6 +846,7 @@ export class PersonaAgent {
               model_id: parsed.modelId,
               model_provider: parsed.modelProvider,
               model_name: parsed.modelName,
+              model_escalated: turnModel.escalated,
             },
           },
         }
@@ -853,6 +878,7 @@ export class PersonaAgent {
                 model_id: parsed.modelId,
                 model_provider: parsed.modelProvider,
                 model_name: parsed.modelName,
+                model_escalated: turnModel.escalated,
               },
             }),
           ],
@@ -1007,6 +1033,14 @@ export class PersonaAgent {
               },
               "Supersede rerun kept previous session messages unchanged"
             )
+          }
+
+          // The rerun could not produce a valid revision (drafts repeatedly
+          // failed the response validator). Mark the session so the NEXT rerun
+          // that supersedes it escalates to the persona's escalationModel
+          // (roadmap 2.3).
+          if (isSupersedeRerun && loopResult.responseValidationFailed) {
+            await AgentSessionRepository.markResponseValidationFailed(db, session.id)
           }
 
           if (supersededMessagePlan) {
@@ -1199,7 +1233,7 @@ export class PersonaAgent {
     const eventMessageIds = await StreamEventRepository.listMessageIdsBySession(db, streamId, supersededSession.id)
     const candidateMessageIds = dedupeMessageIds([...eventMessageIds, ...supersededSession.sentMessageIds])
     if (candidateMessageIds.length === 0) {
-      return { messageIds: [], nextIndex: 0 }
+      return { messageIds: [], nextIndex: 0, supersededSession }
     }
 
     const messagesById = await MessageRepository.findByIds(db, candidateMessageIds)
@@ -1211,7 +1245,7 @@ export class PersonaAgent {
       )
     })
 
-    return { messageIds: reusableMessageIds, nextIndex: 0 }
+    return { messageIds: reusableMessageIds, nextIndex: 0, supersededSession }
   }
 
   private async reconcileSupersededMessages(params: {

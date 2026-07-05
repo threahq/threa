@@ -127,6 +127,14 @@ export interface AgentRuntimeResult {
   lastProcessedSequence: bigint
   sources: SourceItem[]
   noMessageReason?: string
+  /**
+   * True when the run ended without a message BECAUSE repeated drafts failed
+   * `validateFinalResponse` (the MAX_REPEATED_INVALID_DRAFTS terminal) — the
+   * model could not produce a valid revision. Deliberate keeps (keep_response)
+   * and user Stops do not set this. Dispatch persists it so the next supersede
+   * rerun of the same work can escalate to a stronger model (roadmap 2.3).
+   */
+  responseValidationFailed?: boolean
 }
 
 interface PendingMessage {
@@ -258,6 +266,7 @@ export class AgentRuntime {
     let lastInvalidDraft: string | null = null
     let emptyFinalDecisionAttempts = 0
     let stoppedByUser = false
+    let validationFailureTerminal = false
 
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       const abortReason = await this.config.shouldAbort?.()
@@ -360,6 +369,7 @@ export class AgentRuntime {
             if (this.config.allowNoMessageOutput && repeatedInvalidDraftCount >= MAX_REPEATED_INVALID_DRAFTS) {
               keptResponseReason =
                 "Kept the previous response because revised drafts repeatedly failed validation after context updates."
+              validationFailureTerminal = true
               break
             }
 
@@ -565,6 +575,10 @@ export class AgentRuntime {
           lastProcessedSequence,
           sources,
           noMessageReason,
+          // Set only on this no-message exit: if the salvage above committed
+          // despite an earlier validation terminal, the turn DID produce a
+          // valid revision and the with-message return carries no marker.
+          responseValidationFailed: validationFailureTerminal,
         }
       }
 

@@ -39,6 +39,7 @@ const session: AgentSession = {
   sentMessageIds: [],
   contextMessageIds: [],
   episodeSummary: null,
+  responseValidationFailed: false,
   createdAt: new Date("2026-06-12T09:00:00.000Z"),
   completedAt: null,
 }

@@ -36,6 +36,13 @@ export interface Persona {
   avatarEmoji: string | null
   systemPrompt: string | null
   model: string
+  /**
+   * Stronger model for per-turn escalation (roadmap 2.3). Built-in personas
+   * only for now — DB personas have no column and resolve to null (escalation
+   * disabled); `resolveTurnModel` is the single consumer, so a column slots in
+   * without touching call sites when workspace personas need it.
+   */
+  escalationModel: string | null
   temperature: number | null
   maxTokens: number | null
   enabledTools: string[] | null
@@ -55,6 +62,7 @@ function mapRowToPersona(row: PersonaRow): Persona {
     avatarEmoji: row.avatar_emoji,
     systemPrompt: row.system_prompt,
     model: row.model,
+    escalationModel: null,
     temperature: row.temperature === null ? null : Number(row.temperature),
     maxTokens: row.max_tokens,
     enabledTools: row.enabled_tools,
@@ -83,6 +91,7 @@ function mapBuiltInToPersona(agent: BuiltInAgentConfig): Persona {
     avatarEmoji: agent.avatarEmoji,
     systemPrompt: agent.systemPrompt,
     model: agent.model,
+    escalationModel: agent.escalationModel,
     temperature: agent.temperature,
     maxTokens: agent.maxTokens,
     enabledTools: agent.enabledTools,

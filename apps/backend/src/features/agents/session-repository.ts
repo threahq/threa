@@ -32,6 +32,7 @@ interface SessionRow {
   sent_message_ids: string[] | null
   context_message_ids: string[] | null
   episode_summary: string | null
+  response_validation_failed: boolean
   created_at: Date
   completed_at: Date | null
 }
@@ -101,6 +102,13 @@ export interface AgentSession {
    * back into later turns as the "Previous sessions" prompt section.
    */
   episodeSummary: string | null
+  /**
+   * True when this session was a supersede rerun whose drafts repeatedly failed
+   * the response validator, so it kept the previous reply instead of revising.
+   * The next rerun superseding this session escalates to the persona's
+   * `escalationModel` (roadmap 2.3).
+   */
+  responseValidationFailed: boolean
   createdAt: Date
   completedAt: Date | null
 }
@@ -214,6 +222,7 @@ function mapRowToSession(row: SessionRow): AgentSession {
     sentMessageIds: row.sent_message_ids ?? [],
     contextMessageIds: row.context_message_ids ?? [],
     episodeSummary: row.episode_summary,
+    responseValidationFailed: row.response_validation_failed,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   }
@@ -240,7 +249,7 @@ const SESSION_SELECT_FIELDS = `
   id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   abort_requested_at, response_message_id, error, last_seen_sequence,
-  sent_message_ids, context_message_ids, episode_summary, created_at, completed_at
+  sent_message_ids, context_message_ids, episode_summary, response_validation_failed, created_at, completed_at
 `
 
 const STEP_SELECT_FIELDS = `
@@ -626,6 +635,23 @@ export const AgentSessionRepository = {
       `
     )
     return (result.rowCount ?? 0) > 0
+  },
+
+  /**
+   * Mark a running supersede-rerun session as having failed response
+   * validation (kept the previous reply because revised drafts repeatedly
+   * failed the validator). Read by the next rerun's model resolution
+   * (roadmap 2.3). Single idempotent UPDATE from the worker that owns the
+   * running session (INV-20).
+   */
+  async markResponseValidationFailed(db: Querier, id: string): Promise<void> {
+    await db.query(
+      sql`
+        UPDATE agent_sessions
+        SET response_validation_failed = TRUE
+        WHERE id = ${id}
+      `
+    )
   },
 
   /**

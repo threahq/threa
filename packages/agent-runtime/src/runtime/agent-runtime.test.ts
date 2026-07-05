@@ -54,6 +54,9 @@ describe("AgentRuntime message counting", () => {
     expect(generateTextWithTools).toHaveBeenCalledTimes(1)
     expect(result.messagesSent).toBe(0)
     expect(result.noMessageReason).toBe("The greeting edit does not change what the previous response should say.")
+    // A deliberate keep_response is not a validation failure — it must not
+    // trigger model escalation on the next rerun (roadmap 2.3).
+    expect(result.responseValidationFailed).toBe(false)
   })
 
   it("counts edited responses as sent output", async () => {
@@ -133,6 +136,9 @@ describe("AgentRuntime message counting", () => {
       "Kept the previous response because revised drafts repeatedly failed validation after context updates."
     )
     expect(events.some((event) => event.type === "response:kept")).toBe(true)
+    // The structured signal dispatch persists so the NEXT rerun of this work
+    // escalates to the persona's escalationModel (roadmap 2.3).
+    expect(result.responseValidationFailed).toBe(true)
   })
 
   it("forwards model config and cost context to generateTextWithTools", async () => {
