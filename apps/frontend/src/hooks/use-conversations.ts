@@ -7,8 +7,10 @@ import {
   useSocketReconnectCount,
   createDraftPanelId,
 } from "@/contexts"
+import { toast } from "sonner"
+import { db } from "@/db"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import { seedBoardPosts, useBoardPost } from "@/stores/board-store"
+import { seedBoardPosts, useBoardPost, mergeBoardConversation } from "@/stores/board-store"
 import type { BoardViewPost } from "./use-stable-board-view"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
@@ -585,6 +587,72 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(conversation.id) })
       if (previousConversation) {
         queryClient.invalidateQueries({ queryKey: conversationKeys.messages(previousConversation.id) })
+      }
+    },
+  })
+}
+
+/**
+ * Rename a conversation's topic and/or mark it resolved/reopened from the board
+ * card or conversation panel. Optimistic + self-reconciling: the change shows the
+ * instant it's dispatched and settles on the HTTP response, no socket wait.
+ *
+ * Patches WHICHEVER cache holds the row — the board-seeded IDB card
+ * (`db.conversations`) AND/OR the by-id `boardPost` query cache a deep-linked
+ * panel reads (that panel is deliberately not seeded into IDB, so a rename from
+ * it would otherwise show nothing until a `conversation:updated` echo that, for a
+ * private/DM/scratchpad conversation, is never broadcast workspace-wide). On
+ * success `mergeBoardConversation` runs the same idempotent authoritative write
+ * the socket echo would (clearing the optimistic `_status`); on error both caches
+ * roll back and a single `toast.error` fires (INV-63 — success is silent).
+ */
+export function useUpdateConversation(workspaceId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({
+      conversationId,
+      topicSummary,
+      status,
+    }: {
+      conversationId: string
+      topicSummary?: string
+      status?: "active" | "resolved"
+    }) => conversationService.updateConversation(workspaceId, conversationId, { topicSummary, status }),
+    onMutate: async ({ conversationId, topicSummary, status }) => {
+      const patch = {
+        ...(topicSummary !== undefined ? { topicSummary } : {}),
+        ...(status !== undefined ? { status } : {}),
+      }
+      const prevRow = await db.conversations.get(conversationId)
+      if (prevRow) {
+        await db.conversations.put({
+          ...prevRow,
+          conversation: { ...prevRow.conversation, ...patch },
+          _status: "pending",
+        })
+      }
+      const boardPostKey = conversationKeys.boardPost(conversationId)
+      const prevQuery = queryClient.getQueryData<BoardPost>(boardPostKey)
+      if (prevQuery) {
+        queryClient.setQueryData<BoardPost>(boardPostKey, {
+          ...prevQuery,
+          conversation: { ...prevQuery.conversation, ...patch },
+        })
+      }
+      return { prevRow, prevQuery, conversationId }
+    },
+    onError: (_error, _vars, ctx) => {
+      if (ctx?.prevRow) void db.conversations.put(ctx.prevRow)
+      if (ctx?.prevQuery) queryClient.setQueryData(conversationKeys.boardPost(ctx.conversationId), ctx.prevQuery)
+      toast.error("Couldn't update the conversation")
+    },
+    onSuccess: ({ conversation }, { conversationId }) => {
+      void mergeBoardConversation(conversationId, conversation)
+      const boardPostKey = conversationKeys.boardPost(conversationId)
+      if (queryClient.getQueryData(boardPostKey)) {
+        queryClient.setQueryData<BoardPost>(boardPostKey, (prev) => (prev ? { ...prev, conversation } : prev))
       }
     },
   })

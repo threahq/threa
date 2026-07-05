@@ -72,6 +72,7 @@ export interface ConversationService {
   markRead: typeof conversationsApi.markRead
   markUnread: typeof conversationsApi.markUnread
   reassignMessage: typeof conversationsApi.reassignMessage
+  updateConversation: typeof conversationsApi.updateConversation
 }
 
 export interface ActivityService {
