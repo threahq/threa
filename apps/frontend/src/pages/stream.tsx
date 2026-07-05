@@ -19,6 +19,7 @@ import {
   Layers,
   PanelRight,
   ChevronDown,
+  UserRound,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
@@ -27,11 +28,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import {
-  SidebarActionDrawer,
-  SidebarActionMenu,
-  type SidebarActionItem,
-} from "@/components/layout/sidebar/sidebar-actions"
+import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
 import {
   useStreamOrDraft,
@@ -62,28 +59,14 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
-import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
-import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threa/types"
+import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { StreamSheet } from "@/components/stream-sheet"
 import { StreamContextSurface, StreamContextGallery, useStreamGallery } from "@/components/stream-context"
 import { memoDeepLink } from "@/lib/memo-url"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
-
-function getStreamTypeLabel(type: StreamType): string {
-  switch (type) {
-    case StreamTypes.SCRATCHPAD:
-      return "Scratchpad"
-    case StreamTypes.CHANNEL:
-      return "Channel"
-    case StreamTypes.DM:
-      return "DM"
-    case StreamTypes.THREAD:
-      return "Thread"
-    default:
-      return type
-  }
-}
 
 export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
@@ -407,6 +390,44 @@ export function StreamPage() {
     )
   }
 
+  // Mobile stream sheet: view surfaces that are inline header icons on desktop
+  // (context panel, conversation views, DM profile) become sheet rows.
+  const sheetViewActions: SidebarActionItem[] = []
+  if (isMobile) {
+    if (isDm && dmPeerUserId) {
+      sheetViewActions.push({
+        id: "view-profile",
+        label: "View profile",
+        icon: UserRound,
+        onSelect: () => openUserProfile(dmPeerUserId),
+      })
+    }
+    if (!isThread) {
+      sheetViewActions.push({
+        id: "stream-context",
+        label: "In this stream",
+        description: "Links, files & memories",
+        icon: PanelRight,
+        onSelect: () => setContextOpen(true),
+      })
+    }
+    if (isChannel || isDm) {
+      sheetViewActions.push({
+        id: "conversation-overlay",
+        label: "Conversation overlay",
+        description: isConversationOverlayOn ? "On — tap to turn off" : null,
+        icon: Layers,
+        onSelect: () => setConversationOverlayOn(!isConversationOverlayOn),
+      })
+      sheetViewActions.push({
+        id: "conversations-list",
+        label: "Conversations list",
+        icon: MessageCircle,
+        onSelect: () => setConversationViewOpen(true),
+      })
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       handleSaveRename()
@@ -431,14 +452,18 @@ export function StreamPage() {
   // server-persisted on creation, with no displayName until the user names
   // them, which is exactly why we render the pill on unnamed scratchpads too:
   // for encrypted ones the lock IS the only signal of their nature.)
+  const externalConnected =
+    activeBotPresence?.presence?.status === BotRuntimeStatuses.AVAILABLE ||
+    activeBotPresence?.presence?.status === BotRuntimeStatuses.BUSY
+
+  // On mobile the pill's content lives in the stream sheet instead — the bar
+  // keeps only a tiny state glyph beside the name. Drafts keep the pill (the
+  // sheet reads live caches that have no draft entries).
   let companionModeIndicator: React.ReactNode = null
-  if (stream && isScratchpad) {
+  if (stream && isScratchpad && (!isMobile || isDraft)) {
     const isEncrypted = !!stream.e2eEnabled
     const isExternal = !isEncrypted && !!activeBotPresence
     const isOn = !isEncrypted && !isExternal && stream.companionMode === CompanionModes.ON
-    const externalConnected =
-      activeBotPresence?.presence?.status === BotRuntimeStatuses.AVAILABLE ||
-      activeBotPresence?.presence?.status === BotRuntimeStatuses.BUSY
 
     let leadingVisual: React.ReactNode
     let modeLabel: string
@@ -539,6 +564,10 @@ export function StreamPage() {
     )
   }
 
+  // Same eligibility as the ⋯ trigger: persisted streams only, and archived
+  // non-scratchpads have no actions to offer.
+  const canOpenSheet = !!stream && !isDraft && !(isArchived && !isScratchpad)
+
   let headerTitle: React.ReactNode
   if (isEditing) {
     headerTitle = (
@@ -555,6 +584,40 @@ export function StreamPage() {
     )
   } else if (isThread && stream) {
     headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} />
+  } else if (isMobile && canOpenSheet) {
+    // Mobile: the name is the hero — it takes the full remaining width and IS
+    // the sheet trigger. Live state survives as tiny glyphs beside it (lock =
+    // encrypted, dot = external agent connection, box = archived); their full
+    // affordances live in the sheet. Rename moved into the sheet's action list.
+    headerTitle = (
+      <StreamTitlePreview name={streamName}>
+        <button
+          type="button"
+          onClick={() => setIsMenuDrawerOpen(true)}
+          aria-label={`${streamName} — stream details and actions`}
+          aria-haspopup="dialog"
+          className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors active:bg-accent/50"
+        >
+          {nameDecrypting && !pendingName ? (
+            <Skeleton className="h-5 w-40" />
+          ) : (
+            <h1 className="min-w-0 truncate font-semibold">{streamName}</h1>
+          )}
+          {isEncryptedScratchpad && <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />}
+          {isScratchpad && !isEncryptedScratchpad && !!activeBotPresence && (
+            <span
+              className={cn(
+                "inline-block size-2 shrink-0 rounded-full",
+                externalConnected ? "bg-emerald-500" : "bg-muted-foreground/40"
+              )}
+              aria-hidden="true"
+            />
+          )}
+          {isArchived && <ArchiveX className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />}
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        </button>
+      </StreamTitlePreview>
+    )
   } else if (isScratchpad) {
     headerTitle = (
       <StreamTitlePreview name={streamName}>
@@ -609,37 +672,41 @@ export function StreamPage() {
           {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
               phone-width header they would otherwise overflow the flex box and
               paint under the search/panel actions — the strip scrolls instead,
-              same recipe as PageHeaderTabs' tab strip. */}
-          <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
-            {stream && !isDraft && (
-              <LabelStack
-                workspaceId={workspaceId}
-                resourceType={LabelableResourceTypes.STREAM}
-                resourceId={streamId}
-                className="shrink-0"
-              />
-            )}
-            {isEncryptedScratchpad && !isDraft && (
-              <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
-            )}
-            {stream && isScratchpad && !isDraft && (
-              <>
-                <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
-                <InviteBotButton workspaceId={workspaceId!} stream={stream} />
-              </>
-            )}
-            {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
-              <Badge variant="secondary" className="shrink-0">
-                {getStreamTypeLabel(stream.type)}
-              </Badge>
-            )}
-            {isArchived && (
-              <Badge variant="secondary" className="gap-1 shrink-0">
-                <ArchiveX className="h-3 w-3" />
-                Archived
-              </Badge>
-            )}
-          </div>
+              same recipe as PageHeaderTabs' tab strip. On mobile the chips live
+              in the stream sheet; the strip only renders when there is no sheet
+              to hold them (drafts, archived non-scratchpads). */}
+          {(!isMobile || !canOpenSheet) && (
+            <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
+              {stream && !isDraft && (
+                <LabelStack
+                  workspaceId={workspaceId}
+                  resourceType={LabelableResourceTypes.STREAM}
+                  resourceId={streamId}
+                  className="shrink-0"
+                />
+              )}
+              {isEncryptedScratchpad && !isDraft && (
+                <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
+              )}
+              {stream && isScratchpad && !isDraft && (
+                <>
+                  <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
+                  <InviteBotButton workspaceId={workspaceId!} stream={stream} />
+                </>
+              )}
+              {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
+                <Badge variant="secondary" className="shrink-0">
+                  {getStreamTypeLabel(stream.type)}
+                </Badge>
+              )}
+              {isArchived && (
+                <Badge variant="secondary" className="gap-1 shrink-0">
+                  <ArchiveX className="h-3 w-3" />
+                  Archived
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1 ml-1">
           {!isThread && !isDraft && (
@@ -653,7 +720,7 @@ export function StreamPage() {
               <Search className="h-4 w-4" />
             </Button>
           )}
-          {stream && !isThread && !isDraft && (
+          {stream && !isThread && !isDraft && !isMobile && (
             <Button
               variant="ghost"
               size="icon"
@@ -666,7 +733,7 @@ export function StreamPage() {
               <PanelRight className="h-4 w-4" />
             </Button>
           )}
-          {(isChannel || isDm) && (
+          {(isChannel || isDm) && !isMobile && (
             // Split button (the `GroupedItem` pattern from message-context-menu):
             // primary tap toggles the conversation overlay; the chevron lists
             // every conversation view — overlay first (default, font-medium),
@@ -732,20 +799,19 @@ export function StreamPage() {
                 >
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
-                <SidebarActionDrawer
+                <StreamSheet
                   open={isMenuDrawerOpen}
                   onOpenChange={setIsMenuDrawerOpen}
-                  actions={streamMenuActions}
-                  title="Stream actions"
-                  description="Choose an action for this stream."
-                  header={
-                    <div className="px-4 pt-2 pb-3">
-                      <p className="break-words text-base font-semibold text-foreground">{streamName}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {stream ? getStreamTypeLabel(stream.type) : "Stream"} actions
-                      </p>
-                    </div>
-                  }
+                  workspaceId={workspaceId}
+                  streamId={streamId}
+                  stream={stream}
+                  streamName={streamName}
+                  actions={[
+                    ...sheetViewActions,
+                    ...streamMenuActions.map((action, i) =>
+                      i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
+                    ),
+                  ]}
                 />
               </>
             ) : (

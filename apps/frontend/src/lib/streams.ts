@@ -16,6 +16,22 @@ export const STREAM_ICONS: Record<StreamType, ComponentType<{ className?: string
   [StreamTypes.SYSTEM]: Bell,
 }
 
+/** Human-readable label for a stream type ("Scratchpad", "Channel", …). */
+export function getStreamTypeLabel(type: StreamType): string {
+  switch (type) {
+    case StreamTypes.SCRATCHPAD:
+      return "Scratchpad"
+    case StreamTypes.CHANNEL:
+      return "Channel"
+    case StreamTypes.DM:
+      return "DM"
+    case StreamTypes.THREAD:
+      return "Thread"
+    default:
+      return type
+  }
+}
+
 /**
  * Returns the resolved display name for a stream, or null if the stream
  * has no name yet (draft scratchpad, new thread, etc.).

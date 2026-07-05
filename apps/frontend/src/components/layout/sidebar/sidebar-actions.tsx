@@ -357,27 +357,31 @@ export function SidebarActionDrawer({
         <DrawerTitle className="sr-only">{title}</DrawerTitle>
         <DrawerDescription className="sr-only">{description}</DrawerDescription>
 
-        {streamName && (
-          <div className="px-4 pt-2 pb-1">
-            <p className="break-words text-base font-semibold text-foreground">{streamName}</p>
-          </div>
-        )}
+        {/* min-h-0 so a tall header + action list scrolls within the 85dvh cap
+            instead of overflowing past the sheet's bottom edge. */}
+        <div className="min-h-0 overflow-y-auto">
+          {streamName && (
+            <div className="px-4 pt-2 pb-1">
+              <p className="break-words text-base font-semibold text-foreground">{streamName}</p>
+            </div>
+          )}
 
-        {resolvedHeader}
+          {resolvedHeader}
 
-        {actions.length > 0 && (
-          <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
-            {actions.map((action) => (
-              <SidebarActionDrawerEntry
-                key={action.id}
-                action={action}
-                onClose={() => {
-                  onOpenChange(false)
-                }}
-              />
-            ))}
-          </div>
-        )}
+          {actions.length > 0 && (
+            <div className="px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
+              {actions.map((action) => (
+                <SidebarActionDrawerEntry
+                  key={action.id}
+                  action={action}
+                  onClose={() => {
+                    onOpenChange(false)
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </DrawerContent>
     </Drawer>
   )
