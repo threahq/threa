@@ -25,6 +25,55 @@ import type {
 /** Maximum push subscriptions per user per workspace to bound parallel delivery calls */
 const MAX_SUBSCRIPTIONS_PER_USER = 10
 
+/**
+ * Hard cap on each web-push HTTP request. Without it the web-push library sets
+ * no socket timeout at all, so a push-service connection that accepts TLS but
+ * never responds blocks indefinitely (Node enables no TCP keepalive here) —
+ * and because the outbox handler processes events sequentially under a held
+ * cursor lock, one hung send wedges ALL push delivery for every user until
+ * the process restarts.
+ */
+const WEBPUSH_TIMEOUT_MS = 10_000
+
+/**
+ * How long the push service may queue a message push for an offline device.
+ * Bounded so a device reconnecting after days doesn't replay a backlog of
+ * stale alerts (the web-push default is 28 days).
+ */
+const MESSAGE_PUSH_TTL_SECONDS = 24 * 60 * 60
+
+/** Session-expired is not time-critical but should eventually land. */
+const SESSION_EXPIRED_TTL_SECONDS = 7 * 24 * 60 * 60
+
+/** A test push is only meaningful while the user is watching for it. */
+const TEST_PUSH_TTL_SECONDS = 60
+
+/**
+ * Delivery class for a push send. `urgency: "high"` wakes a dozing Android
+ * device — with the default "normal" FCM/autopush batch delivery until the
+ * next Doze maintenance window and a real-time message lands minutes-to-hours
+ * late. `topic` makes the push service collapse queued same-topic pushes to
+ * the newest one, so an offline device gets one alert per stream on reconnect
+ * instead of a buzz per message.
+ */
+interface PushDeliveryOptions {
+  ttlSeconds: number
+  urgency: "very-low" | "low" | "normal" | "high"
+  /** Must be ≤32 base64url characters (push-service constraint) — see pushTopic. */
+  topic?: string
+}
+
+/**
+ * Collapse key for the push service, from a prefixed ULID. The Web Push Topic
+ * header allows at most 32 base64url chars, so a 33-char id like
+ * `stream_01ABC…` can't be used verbatim — the 26-char ULID plus a short kind
+ * suffix (to keep e.g. mention pushes from collapsing into message pushes for
+ * the same stream) stays within the limit.
+ */
+function pushTopic(prefixedId: string, kindSuffix = ""): string {
+  return prefixedId.slice(prefixedId.indexOf("_") + 1) + kindSuffix
+}
+
 /** How recently a device must have sent a heartbeat to be considered "active" */
 const ACTIVE_SESSION_WINDOW_MS = 60_000
 
@@ -100,6 +149,29 @@ export function resolveSavedReminderPreview(contentMarkdown: string | null | und
   if (contentMarkdown === E2E_PLACEHOLDER_CONTENT_MARKDOWN) return ENCRYPTED_MESSAGE_PREVIEW_LABEL
   if (contentMarkdown == null) return null
   return stripMarkdownToInline(contentMarkdown).slice(0, 200)
+}
+
+/**
+ * Classify a webpush send failure. 404/410 mean the endpoint is gone — evict.
+ * 401/403 are never per-device: the push service rejected our VAPID auth, so
+ * every future send to that service fails identically — logged at error level
+ * (INV-11: a misconfig must be an alarm, not a warn-line in the noise).
+ */
+function classifySendFailure(err: unknown, subscriptionId: string): "stale" | "other" {
+  const statusCode = (err as { statusCode?: number }).statusCode
+  if (statusCode === 404 || statusCode === 410) {
+    logger.info({ subscriptionId, statusCode }, "Marking stale push subscription for removal")
+    return "stale"
+  }
+  if (statusCode === 401 || statusCode === 403) {
+    logger.error(
+      { err, subscriptionId, statusCode },
+      "Push service rejected VAPID auth — delivery to this push service is broken until VAPID config is fixed"
+    )
+    return "other"
+  }
+  logger.warn({ err, subscriptionId }, "Failed to send push notification")
+  return "other"
 }
 
 export class PushService {
@@ -200,19 +272,13 @@ export class PushService {
         try {
           await webpush.sendNotification(
             { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-            pushPayload
+            pushPayload,
+            { timeout: WEBPUSH_TIMEOUT_MS, TTL: TEST_PUSH_TTL_SECONDS, urgency: "high" }
           )
         } catch (err: unknown) {
           failed++
-          const statusCode = (err as { statusCode?: number }).statusCode
-          if (statusCode === 404 || statusCode === 410) {
-            logger.info(
-              { subscriptionId: sub.id, statusCode },
-              "Marking stale subscription for removal during test push"
-            )
+          if (classifySendFailure(err, sub.id) === "stale") {
             staleIds.push(sub.id)
-          } else {
-            logger.warn({ err, subscriptionId: sub.id }, "Test push failed")
           }
         }
       })
@@ -335,7 +401,14 @@ export class PushService {
       },
     })
 
-    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload)
+    // Topic keyed by stream + notification group: mentions display under their
+    // own tag in the SW, so they collapse separately from plain messages.
+    const isMention = activity.activityType === ActivityTypes.MENTION
+    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload, {
+      ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
+      urgency: "high",
+      topic: activity.streamId ? pushTopic(activity.streamId, isMention ? "m" : "") : undefined,
+    })
   }
 
   /**
@@ -394,7 +467,11 @@ export class PushService {
       },
     })
 
-    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload)
+    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload, {
+      ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
+      urgency: "high",
+      topic: pushTopic(savedId),
+    })
   }
 
   /**
@@ -439,7 +516,13 @@ export class PushService {
       },
     })
 
-    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload)
+    // "r" suffix keeps repeated nudges collapsing with each other, not with
+    // message pushes for the same stream.
+    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload, {
+      ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
+      urgency: "high",
+      topic: pushTopic(rootStreamId, "r"),
+    })
   }
 
   /**
@@ -470,38 +553,23 @@ export class PushService {
   }
 
   /**
-   * Sends a "clear" push to all of a user's devices so the service worker
-   * dismisses any notification for the given stream(s). Called when the user
-   * reads a stream on one device so other devices clear the notification too.
-   */
-  async deliverClearForStream(workspaceId: string, userId: string, streamId: string): Promise<void> {
-    return this.deliverClearForStreams(workspaceId, userId, [streamId])
-  }
-
-  /** Batch variant: clears notifications for multiple streams at once (e.g. mark-all-read). */
-  async deliverClearForStreams(workspaceId: string, userId: string, streamIds: string[]): Promise<void> {
-    if (!this.canSend || streamIds.length === 0) return
-
-    const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, userId)
-    if (subscriptions.length === 0) return
-
-    // Send one clear push per stream — each stream has its own notification tag in the SW
-    await Promise.all(
-      streamIds.map((streamId) => {
-        const pushPayload = JSON.stringify({ data: { action: "clear", streamId } })
-        return this.sendAndEvictStale(workspaceId, subscriptions, pushPayload)
-      })
-    )
-  }
-
-  /**
    * Sends a push payload to the given subscriptions and batch-deletes any
-   * that return 404/410 (INV-56). Shared by delivery and clear paths (INV-35).
+   * that return 404/410 (INV-56). Shared by all delivery paths (INV-35).
+   *
+   * Deliberately NO web-push "clear" fan-out exists here (it used to): a push
+   * that results in no visible notification counts against browser silent-push
+   * quotas — Firefox revokes the subscription outright when its quota hits 0,
+   * iOS revokes after 3 — so notification-less pushes actively destroy the
+   * registrations they ride on. Cross-device dismissal rides the socket
+   * instead (workspace-sync posts SW_MSG_CLEAR_NOTIFICATIONS for open apps)
+   * plus a bootstrap-time sweep for apps that were closed
+   * (lib/notification-sweep.ts).
    */
   private async sendAndEvictStale(
     workspaceId: string,
     subscriptions: PushSubscription[],
-    pushPayload: string
+    pushPayload: string,
+    options: PushDeliveryOptions
   ): Promise<void> {
     const staleIds: string[] = []
     await Promise.allSettled(
@@ -509,15 +577,17 @@ export class PushService {
         try {
           await webpush.sendNotification(
             { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-            pushPayload
+            pushPayload,
+            {
+              timeout: WEBPUSH_TIMEOUT_MS,
+              TTL: options.ttlSeconds,
+              urgency: options.urgency,
+              ...(options.topic ? { topic: options.topic } : {}),
+            }
           )
         } catch (err: unknown) {
-          const statusCode = (err as { statusCode?: number }).statusCode
-          if (statusCode === 404 || statusCode === 410) {
-            logger.info({ subscriptionId: sub.id, statusCode }, "Marking stale push subscription for removal")
+          if (classifySendFailure(err, sub.id) === "stale") {
             staleIds.push(sub.id)
-          } else {
-            logger.warn({ err, subscriptionId: sub.id }, "Failed to send push notification")
           }
         }
       })
@@ -551,7 +621,11 @@ export class PushService {
     })
 
     // Best-effort delivery — some subscriptions may already be stale
-    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload)
+    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {
+      ttlSeconds: SESSION_EXPIRED_TTL_SECONDS,
+      urgency: "normal",
+      topic: "session-expired",
+    })
 
     // Clean up remaining subscriptions so no further notifications are sent.
     // Reuse the IDs we already have rather than re-fetching (INV-20: avoids

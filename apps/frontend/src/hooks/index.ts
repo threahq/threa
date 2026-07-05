@@ -184,6 +184,8 @@ export { useComposerHeightPublish } from "./use-composer-height-publish"
 
 export { useUnreadTabIndicator } from "./use-unread-tab-indicator"
 
+export { useNotificationSweep } from "./use-notification-sweep"
+
 export {
   useSavedList,
   useSavedForMessage,

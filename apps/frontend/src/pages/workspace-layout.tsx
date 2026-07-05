@@ -52,6 +52,7 @@ import {
   useAppUpdate,
   useMessageQueue,
   useUnreadTabIndicator,
+  useNotificationSweep,
   useBackgroundBootstrapSync,
 } from "@/hooks"
 import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
@@ -338,6 +339,11 @@ function UnreadTabIndicator({ workspaceId }: { workspaceId: string }) {
   return null
 }
 
+function NotificationSweeper({ workspaceId }: { workspaceId: string }) {
+  useNotificationSweep(workspaceId)
+  return null
+}
+
 function AppUpdateChecker() {
   useAppUpdate()
   return null
@@ -441,6 +447,7 @@ export function WorkspaceLayout() {
       <SocketProvider workspaceId={workspaceId}>
         <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
           <UnreadTabIndicator workspaceId={workspaceId} />
+          <NotificationSweeper workspaceId={workspaceId} />
           <AppUpdateChecker />
           <FreshnessWatchers />
           <MessageQueueHandler />

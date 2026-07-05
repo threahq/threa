@@ -65,3 +65,64 @@ describe("PushService do-not-disturb gating", () => {
     expect(findByUserId).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("PushService delivery options", () => {
+  const subscription = {
+    id: "push_sub_1",
+    workspaceId: "ws_1",
+    userId: "usr_1",
+    endpoint: "https://push.example.com/sub",
+    p256dh: "p256dh",
+    auth: "auth",
+    deviceKey: "device1",
+    userAgent: null,
+    createdAt: new Date(),
+    updatedAt: new Date(), // fresh re-registration → passes the session-expiry check
+  }
+
+  let findByUserId: ReturnType<typeof spyOn>
+  let sendNotification: ReturnType<typeof spyOn>
+
+  beforeEach(() => {
+    findByUserId = spyOn(PushSubscriptionRepository, "findByUserId").mockResolvedValue([subscription])
+    sendNotification = spyOn(webpush, "sendNotification").mockResolvedValue({
+      statusCode: 201,
+      body: "",
+      headers: {},
+    })
+  })
+
+  afterEach(() => {
+    findByUserId.mockRestore()
+    sendNotification.mockRestore()
+  })
+
+  it("sends message pushes with a timeout, high urgency, bounded TTL, and a per-stream topic", async () => {
+    await makeService(false).deliverPushForActivity(makeActivityPayload())
+
+    expect(sendNotification).toHaveBeenCalledTimes(1)
+    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(options).toEqual({
+      timeout: 10_000,
+      TTL: 24 * 60 * 60,
+      urgency: "high",
+      topic: "1", // ULID part of stream_1; mentions get an "m" suffix
+    })
+  })
+
+  it("keeps mention pushes on a distinct topic so they don't collapse into message pushes", async () => {
+    const payload = makeActivityPayload()
+    payload.activity.activityType = ActivityTypes.MENTION
+    await makeService(false).deliverPushForActivity(payload)
+
+    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(options.topic).toBe("1m")
+  })
+
+  it("sends the diagnostic test push with a short TTL so it can't arrive stale", async () => {
+    await makeService(false).deliverTestPush("ws_1", "usr_1")
+
+    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
+    expect(options).toEqual({ timeout: 10_000, TTL: 60, urgency: "high" })
+  })
+})

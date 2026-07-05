@@ -287,9 +287,10 @@ export function useUnreadCounts(workspaceId: string) {
       // Dismiss any push notification for this stream — advancing the read pointer
       // (auto-read, manual "Mark as read", or Escape) means the user is here, so
       // the banner is noise. Centralized on this single-stream read-advance funnel
-      // so each of those paths clears locally, not just auto-read; mark-all-read is
-      // a separate path that clears via its own stream:read_all round-trip. The
-      // backend stream:read round-trip also fans a clear out to the user's other devices.
+      // so each of those paths clears locally, not just auto-read; mark-all-read
+      // clears via its stream:read_all socket echo. Other devices dismiss via
+      // their own socket echo when open, or the bootstrap sweep on next open
+      // (lib/notification-sweep.ts) — never via push, which would burn quota.
       navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
     },
     [markAsReadMutation]

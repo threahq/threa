@@ -2,8 +2,6 @@ import type { Pool } from "pg"
 import {
   type ActivityCreatedOutboxPayload,
   type OutboxEvent,
-  type StreamReadOutboxPayload,
-  type StreamsReadAllOutboxPayload,
   type SavedReminderFiredOutboxPayload,
   type EnclaveRewrapNudgeOutboxPayload,
 } from "../../lib/outbox"
@@ -24,7 +22,11 @@ interface PushNotificationHandlerDeps {
 
 /**
  * Listens for outbox events and delegates push delivery to PushService.
- * Handles activity:created (show notification) and stream:read (clear notifications).
+ * Handles activity:created, saved_reminder:fired, and enclave:rewrap_nudge —
+ * every event here results in a VISIBLE notification. stream:read events are
+ * deliberately not consumed: pushing a notification-less "clear" burns the
+ * browser's silent-push quota and gets the subscription revoked (see
+ * PushService.sendAndEvictStale); dismissal is socket + sweep instead.
  * Infrastructure-only: cursor management, batching, and error handling (INV-34).
  */
 export class PushNotificationHandler extends DebouncedOutboxHandler {
@@ -43,7 +45,7 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
   // it. Sequential stops at the first failure, ensuring the cursor never
   // advances past un-delivered events.
   //
-  // Push events are low-volume (activity:created, stream:read) so sequential
+  // Push events are low-volume (activity:created, reminders, nudges) so sequential
   // within a batch of 10 has negligible latency impact — the real throughput
   // win is the dedicated realtime pool isolating push from background workers.
   //
@@ -57,26 +59,6 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
         return
       }
       await this.pushService.deliverPushForActivity(payload)
-      return
-    }
-
-    if (event.eventType === "stream:read") {
-      const payload = event.payload as StreamReadOutboxPayload
-      if (!payload?.workspaceId || !payload?.authorId || !payload?.streamId) {
-        logger.warn({ eventId: event.id }, "Skipping malformed stream:read payload")
-        return
-      }
-      await this.pushService.deliverClearForStream(payload.workspaceId, payload.authorId, payload.streamId)
-      return
-    }
-
-    if (event.eventType === "stream:read_all") {
-      const payload = event.payload as StreamsReadAllOutboxPayload
-      if (!payload?.workspaceId || !payload?.authorId || !payload?.streamIds?.length) {
-        logger.warn({ eventId: event.id }, "Skipping malformed stream:read_all payload")
-        return
-      }
-      await this.pushService.deliverClearForStreams(payload.workspaceId, payload.authorId, payload.streamIds)
       return
     }
 
