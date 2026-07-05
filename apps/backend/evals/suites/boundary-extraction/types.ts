@@ -10,6 +10,8 @@ import type { ConversationStatus } from "@threa/types"
 export interface EvalConversationSummary {
   id: string
   topicSummary: string | null
+  /** Rolling prose summary of what the conversation covers; null/omitted = not yet summarized. */
+  summary?: string | null
   messageCount: number
   lastMessagePreview: string
   participantIds: string[]
@@ -21,12 +23,23 @@ export interface EvalConversationSummary {
    * Defaults to 5 minutes (a live conversation) when omitted.
    */
   lastActivityMinutesAgo?: number
+  /**
+   * Ids of recent messages (EvalMessage.id) this conversation owns. Renders
+   * as the conversation's in-context message ids, making ownership visible to
+   * the model — required for reassignment (merge/split) cases.
+   */
+  contextMessageIds?: string[]
 }
 
 /**
  * Simplified message for eval input.
  */
 export interface EvalMessage {
+  /**
+   * Stable id so conversations can claim the message via contextMessageIds
+   * and reassignment expectations can name it. Random when omitted.
+   */
+  id?: string
   authorId: string
   authorType: "user" | "persona"
   contentMarkdown: string
@@ -73,6 +86,7 @@ export interface BoundaryExtractionInput {
     | "reply"
     | "continuity"
     | "session-gap"
+    | "merge-resistance"
 }
 
 /**
@@ -90,6 +104,11 @@ export interface BoundaryExtractionOutput {
     conversationId: string
     score: number
     status: ConversationStatus
+  }>
+  /** Prior messages the extractor chose to move between conversations */
+  reassignments?: Array<{
+    messageId: string
+    toConversationId: string | null
   }>
   /** Confidence in classification (0-1) */
   confidence: number
@@ -118,4 +137,11 @@ export interface BoundaryExtractionExpected {
     maxScore?: number
     status?: ConversationStatus
   }[]
+  /**
+   * No prior message may be reassigned (merge-resistance: a correct
+   * classification must not come with collateral merges into a blob).
+   */
+  expectNoReassignments?: boolean
+  /** These message ids MUST be reassigned (sandwich-split correction). */
+  expectReassignedMessageIds?: string[]
 }

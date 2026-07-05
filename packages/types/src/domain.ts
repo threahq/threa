@@ -637,6 +637,13 @@ export interface Conversation {
    */
   secondaryMessageIds: string[]
   topicSummary: string | null
+  /**
+   * Rolling prose summary of what the conversation covers, maintained by the
+   * boundary extractor on every pass that touches the conversation. Richer
+   * than the 2-5 word topicSummary title; null until the extractor first
+   * revisits the conversation.
+   */
+  summary: string | null
   completenessScore: number
   confidence: number
   status: ConversationStatus

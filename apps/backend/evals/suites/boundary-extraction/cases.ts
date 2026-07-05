@@ -834,4 +834,707 @@ Any ideas what's causing this?`,
       minConfidence: 0.6,
     },
   },
+
+  // ── Live-session pivots ──────────────────────────────────────────────────
+  // Modeled on real prod failures in a long-running DM: an all-day live
+  // session drifts through many subjects, and the extractor glued every one
+  // of them onto a single conversation (79 messages / 6 days / ~8 topics).
+  // A session is not a conversation — a pivot mid-session must start a new
+  // conversation even though the last message is only minutes old.
+
+  {
+    id: "live-pivot-btw-001",
+    name: "Live pivot: 'btw' question mid-session opens a new conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "btw, hur många timmar har jag dig imorgon? :laughing:",
+      },
+      activeConversations: [
+        {
+          id: "conv_cleanup01",
+          topicSummary: "Stora deletes i monorepot",
+          messageCount: 9,
+          lastMessagePreview: "Man mår så bra av stora deletes!",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 4,
+          lastActivityMinutesAgo: 2,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "det känns som en `rm -rf *` ju haha",
+          minutesAgo: 4,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Hehe galet mycket skräp bara, mest gamla testdumpar",
+          minutesAgo: 3,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ah, men ändå, känns bra",
+          minutesAgo: 2,
+        },
+      ],
+      streamType: "dm",
+      category: "topic-shift",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["imorgon", "timmar", "träff", "planer"],
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "live-pivot-new-subject-001",
+    name: "Live pivot: pasted diff stats mid-banter opens a new conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Detta känns fint `98 files changed, 214 insertions(+), 7402 deletions(-)`",
+      },
+      activeConversations: [
+        {
+          id: "conv_fashion01",
+          topicSummary: "Absurda designerpriser",
+          messageCount: 11,
+          lastMessagePreview: "Inte ens särskilt speciell liksom",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 4,
+          lastActivityMinutesAgo: 3,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "även om man har cash, varför betala 14000 för en t-shirt? wtf",
+          minutesAgo: 6,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Ingen som helst aning om varför",
+          minutesAgo: 4,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Inte ens särskilt speciell liksom",
+          minutesAgo: 3,
+        },
+      ],
+      streamType: "dm",
+      category: "topic-shift",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["delet", "cleanup", "rensning", "files", "diff", "kod"],
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "live-pivot-mid-blob-001",
+    name: "Live pivot: new subject does not join the sprawling live conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Shit vad remote pi är nice",
+      },
+      activeConversations: [
+        {
+          id: "conv_blob01",
+          topicSummary: "Smögen imorgon eftermiddag",
+          messageCount: 72,
+          lastMessagePreview: "De har väl själva frångått det också?",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 30,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ye, de hade ju stämt någon för namnet, visste inte ens att de brydde sig",
+          minutesAgo: 35,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Helt sjukt",
+          minutesAgo: 31,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "De har väl själva frångått det också?",
+          minutesAgo: 30,
+        },
+      ],
+      streamType: "dm",
+      category: "topic-shift",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["remote pi", "pi"],
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "live-reaction-continues-001",
+    name: "Live continuity: bare ':shrug:' seconds after an exchange is not a singleton",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: ":shrug:",
+      },
+      activeConversations: [
+        {
+          id: "conv_oldpc01",
+          topicSummary: "Gamla stationära som hemmaserver",
+          messageCount: 6,
+          lastMessagePreview: "Om man bara inte startar om den så är det väl fine",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 3,
+          lastActivityMinutesAgo: 1,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Har en gammal gamingdator från typ 2016 som inte är särskilt pigg längre",
+          minutesAgo: 3,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "kör en lätt distro på den bara så puttrar den nog fint",
+          minutesAgo: 2,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Om man bara inte startar om den så är det väl fine",
+          minutesAgo: 1,
+        },
+      ],
+      streamType: "dm",
+      category: "continuity",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_oldpc01",
+      minConfidence: 0.5,
+    },
+  },
+
+  // ── Merge resistance ─────────────────────────────────────────────────────
+  // The reassignment instruction ("move the smaller one into the larger")
+  // must not let a sprawling conversation swallow a focused one just because
+  // they share a session and participants.
+
+  {
+    id: "no-merge-focused-into-blob-001",
+    name: "Merge resistance: focused conversation is not folded into the live blob",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: "Testade med lists=200 nu, recall uppe på 0.94 utan att latensen stack iväg",
+      },
+      activeConversations: [
+        {
+          id: "conv_blob02",
+          topicSummary: "Helgplaner och AI-nyheter",
+          messageCount: 64,
+          lastMessagePreview: "haha ja, vi får se på söndag",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 8,
+          contextMessageIds: ["msg_blob_001"],
+        },
+        {
+          id: "conv_pgvector01",
+          topicSummary: "pgvector index-tuning",
+          messageCount: 4,
+          lastMessagePreview: "ivfflat med fler lists borde hjälpa",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 3,
+          lastActivityMinutesAgo: 12,
+          contextMessageIds: ["msg_pgv_001", "msg_pgv_002"],
+        },
+      ],
+      recentMessages: [
+        {
+          id: "msg_pgv_001",
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "recall på embedding-sökningen ligger på typ 0.71, känns lågt",
+          minutesAgo: 20,
+        },
+        {
+          id: "msg_pgv_002",
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ivfflat med fler lists borde hjälpa",
+          minutesAgo: 12,
+        },
+        {
+          id: "msg_blob_001",
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "haha ja, vi får se på söndag",
+          minutesAgo: 8,
+        },
+      ],
+      streamType: "dm",
+      category: "merge-resistance",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_pgvector01",
+      expectNoReassignments: true,
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "split-out-sandwich-001",
+    name: "Sandwich split: follow-up reveals a mid-exchange message opened a new topic",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Ja! Deras pad thai är helt sjukt bra, tog den två gånger förra veckan",
+      },
+      activeConversations: [
+        {
+          id: "conv_deploy02",
+          topicSummary: "Staging-deployen som failar",
+          messageCount: 6,
+          lastMessagePreview: "Har någon testat nya thai-stället på Hornsgatan?",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 3,
+          lastActivityMinutesAgo: 2,
+          contextMessageIds: ["msg_dep_001", "msg_dep_002", "msg_thai_001"],
+        },
+      ],
+      recentMessages: [
+        {
+          id: "msg_dep_001",
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "staging failar fortfarande på migrations-steget",
+          minutesAgo: 6,
+        },
+        {
+          id: "msg_dep_002",
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "kolla om det är samma lock-timeout som sist",
+          minutesAgo: 5,
+        },
+        {
+          id: "msg_thai_001",
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Har någon testat nya thai-stället på Hornsgatan?",
+          minutesAgo: 2,
+        },
+      ],
+      streamType: "dm",
+      category: "merge-resistance",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["thai", "Hornsgatan", "lunch", "mat"],
+      expectReassignedMessageIds: ["msg_thai_001"],
+      minConfidence: 0.5,
+    },
+  },
+
+  // ── Session gaps against a large stale conversation ─────────────────────
+  // The prod blob absorbed messages across >24h gaps. A big candidate with a
+  // stale trip-planning title must not attract an unrelated opener; an
+  // explicit by-name resume must still find its (smaller, older) topic.
+
+  {
+    id: "gap-26h-new-opener-001",
+    name: "Session gap: new subject 26h later leaves the big trip conversation alone",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown:
+          "Är inte det här helt sjukt. Claude har alltså ätit 3.9GB data på 5G den här månaden. Det är bara text!",
+      },
+      activeConversations: [
+        {
+          id: "conv_trip01",
+          topicSummary: "Smögen imorgon eftermiddag",
+          messageCount: 16,
+          lastMessagePreview: "oh, nice",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 1560,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Inte än, men vi ska till Hälsingland idag",
+          minutesAgo: 1980,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "oh, nice",
+          minutesAgo: 1560,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["Claude", "data", "5G"],
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "gap-explicit-resume-001",
+    name: "Session gap: by-name question resumes the right stale conversation, not the blob",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Har du fortfarande opencode go?",
+      },
+      activeConversations: [
+        {
+          id: "conv_blob03",
+          topicSummary: "Smögen imorgon eftermiddag",
+          messageCount: 24,
+          lastMessagePreview: "Jag hade inte varit förvånad om de glömt slå på gzip",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 1740,
+        },
+        {
+          id: "conv_opencode01",
+          topicSummary: "opencode go setup",
+          messageCount: 9,
+          lastMessagePreview: "kör den via tmux så länge, funkar förvånansvärt bra",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 4,
+          status: "stalled",
+          lastActivityMinutesAgo: 4320,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Och jag skulle gissa att varje load drar ner ALLT också",
+          minutesAgo: 1750,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Jag hade inte varit förvånad om de glömt slå på gzip",
+          minutesAgo: 1740,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_opencode01",
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "gap-4h-topic-reference-001",
+    name: "Session gap: 4h-late reply that names the topic continues its conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "vadå, köper folk i tech de där tröjorna på riktigt?",
+      },
+      activeConversations: [
+        {
+          id: "conv_fashion02",
+          topicSummary: "Absurda designerpriser",
+          messageCount: 5,
+          lastMessagePreview: "Tänk att få gräsfläckar på en sån",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 3,
+          lastActivityMinutesAgo: 240,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Eller fuck, 14000kr https://example.com/quadrige-embroidered-t-shirt",
+          minutesAgo: 245,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Tänk att få gräsfläckar på en sån",
+          minutesAgo: 240,
+        },
+      ],
+      streamType: "dm",
+      category: "session-gap",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_fashion02",
+      minConfidence: 0.5,
+    },
+  },
+
+  // ── Summary-bearing variants ─────────────────────────────────────────────
+  // Same volatile scenarios, but candidates carry the rolling "covers:"
+  // summary the extractor now maintains. Measures whether summaries firm up
+  // the live-pivot and merge decisions the title-only variants get wrong.
+
+  {
+    id: "live-pivot-new-subject-sum-001",
+    name: "Live pivot with summaries: pasted diff stats mid-banter opens a new conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Detta känns fint `98 files changed, 214 insertions(+), 7402 deletions(-)`",
+      },
+      activeConversations: [
+        {
+          id: "conv_fashion01",
+          topicSummary: "Absurda designerpriser",
+          summary:
+            "Skämt om absurda designerpriser: en broderad t-shirt för 14000kr och vem som egentligen köper sånt. Rent skvaller, inget beslut.",
+          messageCount: 11,
+          lastMessagePreview: "Inte ens särskilt speciell liksom",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 4,
+          lastActivityMinutesAgo: 3,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "även om man har cash, varför betala 14000 för en t-shirt? wtf",
+          minutesAgo: 6,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Ingen som helst aning om varför",
+          minutesAgo: 4,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Inte ens särskilt speciell liksom",
+          minutesAgo: 3,
+        },
+      ],
+      streamType: "dm",
+      category: "topic-shift",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["delet", "cleanup", "rensning", "files", "diff", "kod"],
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "live-pivot-mid-blob-sum-001",
+    name: "Live pivot with summaries: new subject does not join the sprawling conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "Shit vad remote pi är nice",
+      },
+      activeConversations: [
+        {
+          id: "conv_blob01",
+          topicSummary: "Smögen imorgon eftermiddag",
+          summary:
+            "Började som helgplaner kring Smögen, gled över i modellnyheter och sedan AI-bolagens VD:ar och stämningen kring dem. Spretigt, inget avslut.",
+          messageCount: 72,
+          lastMessagePreview: "De har väl själva frångått det också?",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 30,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ye, de hade ju stämt någon för namnet, visste inte ens att de brydde sig",
+          minutesAgo: 35,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Helt sjukt",
+          minutesAgo: 31,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "De har väl själva frångått det också?",
+          minutesAgo: 30,
+        },
+      ],
+      streamType: "dm",
+      category: "topic-shift",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["remote pi", "pi"],
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "no-merge-focused-into-blob-sum-001",
+    name: "Merge resistance with summaries: focused conversation stays separate",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: "Testade med lists=200 nu, recall uppe på 0.94 utan att latensen stack iväg",
+      },
+      activeConversations: [
+        {
+          id: "conv_blob02",
+          topicSummary: "Helgplaner och AI-nyheter",
+          summary:
+            "Löst snack om helgplaner (söndag nämnd) blandat med reaktioner på veckans AI-nyheter. Inget konkret bestämt.",
+          messageCount: 64,
+          lastMessagePreview: "haha ja, vi får se på söndag",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 8,
+          contextMessageIds: ["msg_blob_001"],
+        },
+        {
+          id: "conv_pgvector01",
+          topicSummary: "pgvector index-tuning",
+          summary:
+            "Embedding-sökningens recall låg på 0.71; ivfflat med fler lists föreslogs som fix. Väntar på testresultat.",
+          messageCount: 4,
+          lastMessagePreview: "ivfflat med fler lists borde hjälpa",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 3,
+          lastActivityMinutesAgo: 12,
+          contextMessageIds: ["msg_pgv_001", "msg_pgv_002"],
+        },
+      ],
+      recentMessages: [
+        {
+          id: "msg_pgv_001",
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "recall på embedding-sökningen ligger på typ 0.71, känns lågt",
+          minutesAgo: 20,
+        },
+        {
+          id: "msg_pgv_002",
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "ivfflat med fler lists borde hjälpa",
+          minutesAgo: 12,
+        },
+        {
+          id: "msg_blob_001",
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "haha ja, vi får se på söndag",
+          minutesAgo: 8,
+        },
+      ],
+      streamType: "dm",
+      category: "merge-resistance",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_pgvector01",
+      expectNoReassignments: true,
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "resolution-settled-plan-sv-001",
+    name: "Resolution: agreed plan marks the conversation settled (Swedish)",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "det låter som en plan :+1:",
+      },
+      activeConversations: [
+        {
+          id: "conv_meetup01",
+          topicSummary: "Träff imorgon kväll",
+          messageCount: 7,
+          lastMessagePreview: "Och kanske vara i Slussen halv sex?",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 1,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "btw, hur många timmar har jag dig imorgon? :laughing:",
+          minutesAgo: 5,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Haha inte för sent, men kan säkert ta en buss runt nio?",
+          minutesAgo: 3,
+        },
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "Och kanske vara i Slussen halv sex?",
+          minutesAgo: 1,
+        },
+      ],
+      streamType: "dm",
+      category: "resolution",
+    },
+    expectedOutput: {
+      expectConversationId: "conv_meetup01",
+      expectCompletenessUpdate: [{ conversationId: "conv_meetup01", minScore: 6 }],
+      minConfidence: 0.6,
+    },
+  },
 ]

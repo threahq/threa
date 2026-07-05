@@ -7,6 +7,7 @@ interface ConversationRow {
   stream_id: string
   workspace_id: string
   topic_summary: string | null
+  summary: string | null
   completeness_score: number
   confidence: number
   status: string
@@ -40,6 +41,7 @@ export interface Conversation {
   participantIds: string[]
   secondaryMessageIds: string[]
   topicSummary: string | null
+  summary: string | null
   completenessScore: number
   confidence: number
   status: ConversationStatus
@@ -54,6 +56,7 @@ export interface InsertConversationParams {
   streamId: string
   workspaceId: string
   topicSummary?: string
+  summary?: string
   completenessScore?: number
   confidence?: number
   status?: ConversationStatus
@@ -62,6 +65,7 @@ export interface InsertConversationParams {
 
 export interface UpdateConversationParams {
   topicSummary?: string
+  summary?: string
   completenessScore?: number
   confidence?: number
   status?: ConversationStatus
@@ -77,6 +81,7 @@ function mapRowToConversation(row: ConversationRow): Conversation {
     participantIds: row.participant_ids,
     secondaryMessageIds: row.secondary_message_ids,
     topicSummary: row.topic_summary,
+    summary: row.summary,
     completenessScore: row.completeness_score,
     confidence: row.confidence,
     status: row.status as ConversationStatus,
@@ -90,7 +95,7 @@ function mapRowToConversation(row: ConversationRow): Conversation {
 const SELECT_FIELDS = `
   id, stream_id, workspace_id,
   message_ids, participant_ids, secondary_message_ids,
-  topic_summary, completeness_score, confidence, status, parent_conversation_id,
+  topic_summary, summary, completeness_score, confidence, status, parent_conversation_id,
   last_activity_at, created_at, updated_at
 `
 
@@ -371,13 +376,14 @@ export const ConversationRepository = {
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
         id, stream_id, workspace_id,
-        topic_summary, completeness_score, confidence, status, parent_conversation_id
+        topic_summary, summary, completeness_score, confidence, status, parent_conversation_id
       )
       VALUES (
         ${params.id},
         ${params.streamId},
         ${params.workspaceId},
         ${params.topicSummary ?? null},
+        ${params.summary ?? null},
         ${params.completenessScore ?? 1},
         ${params.confidence ?? 0.5},
         ${params.status ?? "active"},
@@ -406,6 +412,10 @@ export const ConversationRepository = {
     if (params.topicSummary !== undefined) {
       updates.push(`topic_summary = $${paramIndex++}`)
       values.push(params.topicSummary)
+    }
+    if (params.summary !== undefined) {
+      updates.push(`summary = $${paramIndex++}`)
+      values.push(params.summary)
     }
     if (params.completenessScore !== undefined) {
       updates.push(`completeness_score = $${paramIndex++}`)
