@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { matchesBoardLens, type BoardLens } from "@threa/types"
+import { matchesBoardLens, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 import { useBoardPosts } from "@/stores/board-store"
 import type { CachedBoardPost } from "@/db"
 
@@ -47,10 +47,23 @@ export interface BoardScope {
   ids: ReadonlySet<string>
 }
 
+/**
+ * Root-stream TYPE narrowing. Matches on the post's `rootStreamType` (the
+ * effective root's type, server-computed — a thread-anchored conversation
+ * counts as its channel/DM, never `thread`). Same key/ids split as
+ * {@link BoardScope}.
+ */
+export interface BoardTypeScope {
+  key: string
+  ids: ReadonlySet<BoardScopeStreamType>
+}
+
 export interface BoardViewFilter {
   lens: BoardLens
   /** Root-stream scope, or null when unscoped (the whole workspace). */
   scope: BoardScope | null
+  /** Root-stream TYPE scope, or null when every type shows. */
+  types: BoardTypeScope | null
 }
 
 function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean {
@@ -59,6 +72,14 @@ function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean 
   // top-level anchor is its own root, so only pre-field thread anchors can
   // misclassify, and the next fetch reseeds them with the field.
   return scope.ids.has(post.rootStreamId ?? post.conversation.streamId)
+}
+
+function matchesTypeScope(post: CachedBoardPost, types: BoardTypeScope | null): boolean {
+  if (!types) return true
+  // Cached rows predating `rootStreamType` fail OPEN — the board surfaces
+  // rather than hides — and the next fetch reseeds the field.
+  if (post.rootStreamType === undefined) return true
+  return types.ids.has(post.rootStreamType)
 }
 
 function postId(post: CachedBoardPost): string {
@@ -172,9 +193,9 @@ export interface StableBoardView {
  * yank what's on screen.
  */
 export function useStableBoardView(workspaceId: string, filter: BoardViewFilter): StableBoardView {
-  const { lens, scope } = filter
+  const { lens, scope, types } = filter
   const rawLive = useBoardPosts(workspaceId)
-  // Filter the shared feed to the lens + scope. Recomputed when the feed or
+  // Filter the shared feed to the lens + scopes. Recomputed when the feed or
   // filter changes; `Date.now()` is sampled then (the staleness signal for
   // `needs-resolution` only needs to be fresh at feed-change granularity, which
   // is frequent on a live board).
@@ -182,8 +203,11 @@ export function useStableBoardView(workspaceId: string, filter: BoardViewFilter)
     () =>
       rawLive === undefined
         ? undefined
-        : rawLive.filter((post) => matchesBoardLens(post, lens, Date.now()) && matchesScope(post, scope)),
-    [rawLive, lens, scope]
+        : rawLive.filter(
+            (post) =>
+              matchesBoardLens(post, lens, Date.now()) && matchesScope(post, scope) && matchesTypeScope(post, types)
+          ),
+    [rawLive, lens, scope, types]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
@@ -211,9 +235,9 @@ export function useStableBoardView(workspaceId: string, filter: BoardViewFilter)
   }, [])
   useEffect(() => disarmReveal, [disarmReveal])
 
-  // Reset the view when the workspace OR the filter (lens/scope) changes in
-  // place (the board route keeps the same component instance across
-  // `:workspaceId`, `:lens`, and `?in=`). React-blessed render-time reset; the
+  // Reset the view when the workspace OR the filter (lens/scope/types) changes
+  // in place (the board route keeps the same component instance across
+  // `:workspaceId`, `:lens`, `?in=`, and `?is=`). React-blessed render-time reset; the
   // ref writes are idempotent and gated by the changed key. Switching filter
   // starts a fresh frozen order + empty pill so the new subset isn't reconciled
   // against the previous filter's committed cards.
@@ -226,7 +250,7 @@ export function useStableBoardView(workspaceId: string, filter: BoardViewFilter)
   // pill), never re-taking its wholesale-commit branch. Folding the reset into the
   // reconcile INPUT (`committedInput`/`bufferedInput`) makes the new lens start
   // from EMPTY_VIEW and commit its own feed wholesale.
-  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}`
+  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}`
   const viewKeyRef = useRef(viewKey)
   let committedInput = committed
   let bufferedInput = buffered

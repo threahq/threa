@@ -353,6 +353,15 @@ export const DEFAULT_BOARD_LENS: BoardLens = "all"
 export const MAX_BOARD_SCOPE_STREAMS = 50
 
 /**
+ * Stream types the board's filters operate on — the ROOT-stream grains a
+ * conversation can live under (a thread's effective root is one of these, so
+ * `thread` is deliberately absent: filtering happens by root type, never by the
+ * anchor's own type). Shared by the backend validator and the frontend picker.
+ */
+export const BOARD_SCOPE_STREAM_TYPES = ["channel", "dm", "scratchpad", "system"] as const
+export type BoardScopeStreamType = (typeof BOARD_SCOPE_STREAM_TYPES)[number]
+
+/**
  * Idle hours after which a still-incomplete conversation counts as a loose end
  * for the Needs-resolution lens. 12h ≈ temporalStaleness ≥ 3 (staleness.ts), so
  * a conversation that went quiet mid-workday resurfaces the next.

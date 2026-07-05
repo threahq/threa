@@ -18,6 +18,7 @@ import { StreamTypes } from "@threa/types"
 import type {
   BoardLens,
   BoardPost,
+  BoardScopeStreamType,
   CompanionMode,
   ConversationWithStaleness,
   ConversationStatus,
@@ -61,7 +62,7 @@ export const conversationKeys = {
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
   workspaceList: (
     workspaceId: string,
-    options?: { status?: string; lens?: string; streams?: string[]; limit?: number }
+    options?: { status?: string; lens?: string; streams?: string[]; types?: string[]; limit?: number }
   ) => [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
@@ -127,20 +128,28 @@ interface UseConversationsOptions {
  */
 export function useWorkspaceConversations(
   workspaceId: string,
-  options?: { status?: ConversationStatus; lens?: BoardLens; streams?: string[]; limit?: number }
+  options?: {
+    status?: ConversationStatus
+    lens?: BoardLens
+    streams?: string[]
+    types?: BoardScopeStreamType[]
+    limit?: number
+  }
 ) {
   const conversationService = useConversationService()
   const { status, lens, limit } = options ?? {}
-  // Canonicalize the scope for the query key: order-insensitive, and re-split so
-  // the key holds a stable primitive-derived array rather than the caller's
-  // per-render array identity.
+  // Canonicalize the scopes for the query key: order-insensitive, and re-split
+  // so the key holds stable primitive-derived arrays rather than the caller's
+  // per-render array identities.
   const streamsKey = options?.streams && options.streams.length > 0 ? [...options.streams].sort().join(",") : undefined
   const streams = streamsKey?.split(",")
+  const typesKey = options?.types && options.types.length > 0 ? [...options.types].sort().join(",") : undefined
+  const types = typesKey?.split(",") as BoardScopeStreamType[] | undefined
 
   const query = useInfiniteQuery({
-    queryKey: conversationKeys.workspaceList(workspaceId, { status, lens, streams, limit }),
+    queryKey: conversationKeys.workspaceList(workspaceId, { status, lens, streams, types, limit }),
     queryFn: ({ pageParam }) =>
-      conversationService.listByWorkspace(workspaceId, { status, lens, streams, limit, cursor: pageParam }),
+      conversationService.listByWorkspace(workspaceId, { status, lens, streams, types, limit, cursor: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     staleTime: Infinity,

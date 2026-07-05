@@ -19,13 +19,20 @@ import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
-import { BoardFilterBar, BOARD_SCOPE_PARAM, boardHomeSearch } from "@/components/board/board-filter-bar"
+import {
+  BoardFilterBar,
+  BOARD_SCOPE_PARAM,
+  BOARD_TYPE_PARAM,
+  boardHomeSearch,
+} from "@/components/board/board-filter-bar"
 import { cn } from "@/lib/utils"
 import {
   BOARD_LENSES,
+  BOARD_SCOPE_STREAM_TYPES,
   DEFAULT_BOARD_LENS,
   MAX_BOARD_SCOPE_STREAMS,
   type BoardLens,
+  type BoardScopeStreamType,
   type ConversationWithStaleness,
 } from "@threa/types"
 
@@ -161,21 +168,43 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     [scopeParam]
   )
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
-  const filter = useMemo<BoardViewFilter>(
-    () => ({ lens, scope: scopeStreamIds.length > 0 ? { key: scopeKey, ids: new Set(scopeStreamIds) } : null }),
-    [lens, scopeKey, scopeStreamIds]
+  // The stream-TYPE scope (`?is=`), validated against the shared root grains —
+  // an unknown token in a hand-built URL is dropped rather than 400ing the fetch.
+  const typeParam = searchParams.get(BOARD_TYPE_PARAM) ?? ""
+  const scopeStreamTypes = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          typeParam
+            .split(",")
+            .map((t) => t.trim())
+            .filter((t): t is BoardScopeStreamType => (BOARD_SCOPE_STREAM_TYPES as readonly string[]).includes(t))
+        )
+      ),
+    [typeParam]
   )
-  const setScope = (ids: string[]) => {
+  const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
+  const filter = useMemo<BoardViewFilter>(
+    () => ({
+      lens,
+      scope: scopeStreamIds.length > 0 ? { key: scopeKey, ids: new Set(scopeStreamIds) } : null,
+      types: scopeStreamTypes.length > 0 ? { key: typeKey, ids: new Set(scopeStreamTypes) } : null,
+    }),
+    [lens, scopeKey, scopeStreamIds, typeKey, scopeStreamTypes]
+  )
+  const setParamList = (param: string, values: string[]) => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        if (ids.length > 0) next.set(BOARD_SCOPE_PARAM, ids.join(","))
-        else next.delete(BOARD_SCOPE_PARAM)
+        if (values.length > 0) next.set(param, values.join(","))
+        else next.delete(param)
         return next
       },
       { replace: true }
     )
   }
+  const setScope = (ids: string[]) => setParamList(BOARD_SCOPE_PARAM, ids)
+  const setTypes = (types: BoardScopeStreamType[]) => setParamList(BOARD_TYPE_PARAM, types)
   const {
     containerRef,
     panelWidth,
@@ -195,7 +224,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // accumulates live changes behind the "N new" pill (INV-61, extended from the
   // timeline's insertion rule to the board's ordering).
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
-    useWorkspaceConversations(workspaceId, { lens, streams: scopeStreamIds, limit: 50 })
+    useWorkspaceConversations(workspaceId, { lens, streams: scopeStreamIds, types: scopeStreamTypes, limit: 50 })
   const {
     posts,
     activityById,
@@ -229,7 +258,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // previous view's scroll anchor and starts the new (often much shorter)
   // subset at the top, pre-paint — otherwise a viewer scrolled down the All
   // wall who taps Decisions lands past the end of a one-card list.
-  useBoardScrollAnchor(viewport, `${lens}|${scopeKey}`)
+  useBoardScrollAnchor(viewport, `${lens}|${scopeKey}|${typeKey}`)
 
   const revealNew = () => {
     // Jump to the top first so the freshly-committed cards flow in where the
@@ -247,7 +276,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     // match it (a fresh post is no Decision). Posting from a filtered board
     // returns to the All home first; the reveal arm survives the view reset, so
     // the authored card shows up top instead of hiding behind a filter.
-    if (lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0) {
+    if (lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0 || scopeStreamTypes.length > 0) {
       navigate(boardHome)
     }
     revealNext()
@@ -347,8 +376,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   } else {
     // A filtered-empty view is the FILTERS coming up empty, never the board
     // hiding things — so it always offers the one-tap way back to everything.
-    const isFiltered = lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0
-    const copy = scopeStreamIds.length > 0 ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
+    const scoped = scopeStreamIds.length > 0 || scopeStreamTypes.length > 0
+    const isFiltered = lens !== DEFAULT_BOARD_LENS || scoped
+    const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
     content = (
       <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
         <LayoutGrid className="h-8 w-8 text-muted-foreground" />
@@ -377,7 +407,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         <LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />
         <h1 className="truncate font-semibold">Board</h1>
       </header>
-      <BoardFilterBar workspaceId={workspaceId} lens={lens} scopeStreamIds={scopeStreamIds} onScopeChange={setScope} />
+      <BoardFilterBar
+        workspaceId={workspaceId}
+        lens={lens}
+        scopeStreamIds={scopeStreamIds}
+        onScopeChange={setScope}
+        scopeStreamTypes={scopeStreamTypes}
+        onTypesChange={setTypes}
+      />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
       </span>

@@ -159,6 +159,22 @@ describe("Conversation Handlers", () => {
       )
     })
 
+    test("splits the comma-separated types scope into scopeStreamTypes", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { types: "dm,scratchpad" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith(
+        "ws_1",
+        "usr_1",
+        expect.objectContaining({ scopeStreamTypes: ["dm", "scratchpad"] })
+      )
+    })
+
+    test("rejects a types scope outside the root grains with a 400", async () => {
+      // `thread` is deliberately not a scope grain — filtering is by root type.
+      await expect(
+        handlers.listByWorkspace(mockReq({ query: { types: "channel,thread" } }), mockRes())
+      ).rejects.toMatchObject({ status: 400 })
+    })
+
     test("rejects a streams scope past the cap with a 400", async () => {
       const streams = Array.from({ length: 51 }, (_, i) => `stream_${i}`).join(",")
       await expect(handlers.listByWorkspace(mockReq({ query: { streams } }), mockRes())).rejects.toMatchObject({

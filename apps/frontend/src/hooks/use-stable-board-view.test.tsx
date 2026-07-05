@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
-import type { BoardLens } from "@threa/types"
+import type { BoardLens, BoardScopeStreamType } from "@threa/types"
 import * as boardStoreModule from "@/stores/board-store"
 import type { CachedBoardPost } from "@/db"
 import {
@@ -11,14 +11,18 @@ import {
 } from "./use-stable-board-view"
 
 /** The default board view: everything, unscoped. */
-const ALL: BoardViewFilter = { lens: "all", scope: null }
+const ALL: BoardViewFilter = { lens: "all", scope: null, types: null }
 
 function lensFilter(lens: BoardLens): BoardViewFilter {
-  return { lens, scope: null }
+  return { lens, scope: null, types: null }
 }
 
 function scopeFilter(ids: string[], lens: BoardLens = "all"): BoardViewFilter {
-  return { lens, scope: { key: [...ids].sort().join(","), ids: new Set(ids) } }
+  return { lens, scope: { key: [...ids].sort().join(","), ids: new Set(ids) }, types: null }
+}
+
+function typesFilter(types: BoardScopeStreamType[]): BoardViewFilter {
+  return { lens: "all", scope: null, types: { key: [...types].sort().join(","), ids: new Set(types) } }
 }
 
 function post(id: string, activityMs: number): CachedBoardPost {
@@ -340,6 +344,40 @@ describe("useStableBoardView", () => {
     mockLive(feed(legacy))
     const { result } = renderHook(() => useStableBoardView("ws_1", scopeFilter(["stream_root"])))
     expect(result.current.posts.map((p) => p.id)).toEqual(["l"])
+  })
+
+  function typedPost(id: string, activityMs: number, rootStreamType: BoardScopeStreamType): CachedBoardPost {
+    return { ...post(id, activityMs), rootStreamType } as CachedBoardPost
+  }
+
+  it("shows only posts whose ROOT stream type is in the type scope", () => {
+    const channelPost = typedPost("c", 300, "channel")
+    // A thread-anchored conversation carries its root's type — never `thread`.
+    const threadUnderChannel = typedPost("t", 250, "channel")
+    const dmPost = typedPost("d", 400, "dm")
+    mockLive(feed(channelPost, threadUnderChannel, dmPost))
+    const { result } = renderHook(() => useStableBoardView("ws_1", typesFilter(["channel"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["c", "t"])
+  })
+
+  it("fails open for cached rows without rootStreamType — the board surfaces, never hides", () => {
+    const legacy = post("l", 300) // no rootStreamType field
+    mockLive(feed(legacy))
+    const { result } = renderHook(() => useStableBoardView("ws_1", typesFilter(["dm"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["l"])
+  })
+
+  it("resets the committed view when the type scope changes", () => {
+    const channelPost = typedPost("c", 300, "channel")
+    const dmPost = typedPost("d", 400, "dm")
+    mockLive(feed(channelPost, dmPost))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: typesFilter(["channel"]) },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["c"])
+    rerender({ filter: typesFilter(["dm"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
+    expect(result.current.newCount).toBe(0)
   })
 
   it("resets the committed view when the scope changes, not when it is re-created equal", () => {

@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { BookMarked, Check, ChevronDown, CircleDashed, Hash, LayoutGrid, X, Zap } from "lucide-react"
+import { BookMarked, Check, ChevronDown, CircleDashed, Hash, Layers, LayoutGrid, X, Zap } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
-import { BOARD_LENSES, DEFAULT_BOARD_LENS, MAX_BOARD_SCOPE_STREAMS, StreamTypes, type BoardLens } from "@threa/types"
+import {
+  BOARD_LENSES,
+  BOARD_SCOPE_STREAM_TYPES,
+  DEFAULT_BOARD_LENS,
+  MAX_BOARD_SCOPE_STREAMS,
+  type BoardLens,
+  type BoardScopeStreamType,
+} from "@threa/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -46,27 +53,37 @@ export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
 /** The query param carrying the board's stream scope (`?in=<id>,<id>`). */
 export const BOARD_SCOPE_PARAM = "in"
 
+/** The query param carrying the board's stream-TYPE scope (`?is=dm,channel` —
+ *  the search syntax's `is:` vocabulary). */
+export const BOARD_TYPE_PARAM = "is"
+
 /**
  * The search string for a link back to the unfiltered board home: the current
- * query minus the scope param. Every "clear the filters" affordance (the bar's
- * Clear filters, the empty state's Show everything, the post-from-filtered-view
- * navigation) must route through this so clearing filters never has the side
- * effect of dropping unrelated URL state — an open `?panel=` must survive.
+ * query minus the filter params. Every "clear the filters" affordance (the
+ * bar's Clear filters, the empty state's Show everything, the
+ * post-from-filtered-view navigation) must route through this so clearing
+ * filters never has the side effect of dropping unrelated URL state — an open
+ * `?panel=` must survive.
  */
 export function boardHomeSearch(search: string): string {
   const params = new URLSearchParams(search)
   params.delete(BOARD_SCOPE_PARAM)
+  params.delete(BOARD_TYPE_PARAM)
   const query = params.toString()
   return query ? `?${query}` : ""
 }
 
-/** Stream types offered in the scope picker: the board's root-stream grains. */
-const SCOPE_STREAM_TYPES = new Set<string>([
-  StreamTypes.CHANNEL,
-  StreamTypes.DM,
-  StreamTypes.SCRATCHPAD,
-  StreamTypes.SYSTEM,
-])
+/** Stream types offered in the pickers: the board's root-stream grains (shared
+ *  with the backend validator). */
+const SCOPE_STREAM_TYPES = new Set<string>(BOARD_SCOPE_STREAM_TYPES)
+
+/** Picker/chip labels per root-stream type, in `BOARD_SCOPE_STREAM_TYPES` order. */
+const TYPE_LABELS: Record<BoardScopeStreamType, string> = {
+  channel: "Channels",
+  dm: "DMs",
+  scratchpad: "Scratchpads",
+  system: "System",
+}
 
 /** The lens's URL (INV-59): the default lens is the bare `/board`, others a segment.
  *  `search` rides along so switching lens keeps the scope (and an open panel). */
@@ -82,6 +99,10 @@ interface BoardFilterBarProps {
   scopeStreamIds: string[]
   /** Rewrites the scope; the page owns the URL write. */
   onScopeChange: (streamIds: string[]) => void
+  /** Selected root-stream types, in URL order. */
+  scopeStreamTypes: BoardScopeStreamType[]
+  /** Rewrites the type scope; the page owns the URL write. */
+  onTypesChange: (types: BoardScopeStreamType[]) => void
 }
 
 /**
@@ -97,14 +118,21 @@ interface BoardFilterBarProps {
  * open as popovers for mouse input and bottom drawers for touch (the
  * `SearchFilterMenu` split).
  */
-export function BoardFilterBar({ workspaceId, lens, scopeStreamIds, onScopeChange }: BoardFilterBarProps) {
+export function BoardFilterBar({
+  workspaceId,
+  lens,
+  scopeStreamIds,
+  onScopeChange,
+  scopeStreamTypes,
+  onTypesChange,
+}: BoardFilterBarProps) {
   const location = useLocation()
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
 
-  const isFiltered = lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0
+  const isFiltered = lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0 || scopeStreamTypes.length > 0
   const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
 
   const labelFor = (streamId: string) =>
@@ -119,6 +147,24 @@ export function BoardFilterBar({ workspaceId, lens, scopeStreamIds, onScopeChang
         onScopeChange={onScopeChange}
         labelFor={labelFor}
       />
+      <BoardTypePicker scopeStreamTypes={scopeStreamTypes} onTypesChange={onTypesChange} />
+      {scopeStreamTypes.map((type) => {
+        const Icon = STREAM_ICONS[type] || Layers
+        return (
+          <Badge key={type} variant="secondary" className="shrink-0 gap-1 pr-1">
+            <Icon className="h-3 w-3" />
+            {TYPE_LABELS[type]}
+            <button
+              type="button"
+              className="rounded-full p-0.5 transition-colors hover:bg-foreground/10 hover:text-foreground"
+              onClick={() => onTypesChange(scopeStreamTypes.filter((t) => t !== type))}
+              aria-label={`Remove ${TYPE_LABELS[type]} from the board scope`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        )
+      })}
       {scopeStreamIds.map((id) => {
         const type = streamById.get(id)?.type
         const Icon = (type && STREAM_ICONS[type]) || Hash
@@ -366,6 +412,68 @@ function BoardScopePicker({
 
   return (
     <FilterMenuShell title="Scope the board to streams" open={open} onOpenChange={setOpen} trigger={trigger}>
+      {content}
+    </FilterMenuShell>
+  )
+}
+
+/**
+ * Root-stream TYPE picker: a fixed multi-select over the board's root grains.
+ * Matches by the conversation's effective root — a thread under a channel
+ * counts as Channels — mirroring the stream-scope picker's root rule.
+ */
+function BoardTypePicker({
+  scopeStreamTypes,
+  onTypesChange,
+}: {
+  scopeStreamTypes: BoardScopeStreamType[]
+  onTypesChange: (types: BoardScopeStreamType[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = useMemo(() => new Set(scopeStreamTypes), [scopeStreamTypes])
+
+  const toggle = (type: BoardScopeStreamType) => {
+    if (selected.has(type)) onTypesChange(scopeStreamTypes.filter((t) => t !== type))
+    else onTypesChange([...scopeStreamTypes, type])
+  }
+
+  const content = (
+    <div className="py-1">
+      {BOARD_SCOPE_STREAM_TYPES.map((type) => {
+        const checked = selected.has(type)
+        const Icon = STREAM_ICONS[type] || Layers
+        return (
+          <button
+            key={type}
+            type="button"
+            onClick={() => toggle(type)}
+            aria-pressed={checked}
+            className="mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-item px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+          >
+            <Checkbox checked={checked} tabIndex={-1} aria-hidden className="pointer-events-none" />
+            <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="flex-1 truncate">{TYPE_LABELS[type]}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  const trigger = (
+    <Button
+      variant={scopeStreamTypes.length > 0 ? "secondary" : "outline"}
+      size="sm"
+      className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
+      aria-label="Scope the board to stream types"
+    >
+      <Layers className="h-3.5 w-3.5" />
+      Type
+      <ChevronDown className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+    </Button>
+  )
+
+  return (
+    <FilterMenuShell title="Scope the board to stream types" open={open} onOpenChange={setOpen} trigger={trigger}>
       {content}
     </FilterMenuShell>
   )

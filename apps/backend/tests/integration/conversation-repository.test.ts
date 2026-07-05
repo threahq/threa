@@ -605,6 +605,28 @@ describe("ConversationRepository", () => {
       expect(ids.has(channelConv)).toBe(true)
       expect(ids.has(otherConv)).toBe(true)
     })
+
+    test("type scope matches by ROOT type — a thread-anchored conversation counts as its channel", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamTypes: ["channel"],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      // Anchored in a thread, but its root is a channel — must match.
+      expect(ids.has(threadConv)).toBe(true)
+    })
+
+    test("type scope drops conversations whose root is another type", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamTypes: ["dm"],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(false)
+      expect(ids.has(threadConv)).toBe(false)
+      expect(ids.has(otherConv)).toBe(false)
+    })
   })
 
   describe("update", () => {

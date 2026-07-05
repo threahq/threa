@@ -64,6 +64,23 @@ function boardScopeCondSql(scopeStreamIds: string[] | undefined) {
   )`
 }
 
+/**
+ * The board's stream-TYPE filter fragment. Matches on the effective root's
+ * type (joined via the same `COALESCE(root_stream_id, id)` rule), so a
+ * conversation anchored in a thread counts as its root channel/DM — a `types`
+ * filter never sees `thread`. Workspace-scoped inside the EXISTS (INV-8).
+ */
+function boardTypeCondSql(scopeStreamTypes: string[] | undefined) {
+  if (!scopeStreamTypes || scopeStreamTypes.length === 0) return sql``
+  return composeSql`AND EXISTS (
+    SELECT 1 FROM streams type_s
+    JOIN streams type_root ON type_root.id = COALESCE(type_s.root_stream_id, type_s.id)
+    WHERE type_s.id = conversations.stream_id
+      AND type_s.workspace_id = conversations.workspace_id
+      AND type_root.type = ANY(${scopeStreamTypes})
+  )`
+}
+
 interface ConversationRow {
   id: string
   stream_id: string
@@ -400,6 +417,8 @@ export const ConversationRepository = {
       lens?: BoardLens
       /** Root-stream scope: only conversations under these streams (see {@link boardScopeCondSql}). */
       scopeStreamIds?: string[]
+      /** Root-stream TYPE scope: only conversations whose root is one of these types. */
+      scopeStreamTypes?: string[]
       limit?: number
       cursor?: { lastActivityAt: string; id: string }
     }
@@ -410,6 +429,7 @@ export const ConversationRepository = {
     const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
     const lensCond = boardLensCondSql(options?.lens)
     const scopeCond = boardScopeCondSql(options?.scopeStreamIds)
+    const typeCond = boardTypeCondSql(options?.scopeStreamTypes)
     // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
     // column — because the cursor is minted from a JS Date (ms precision) while
     // timestamptz stores microseconds. Comparing the raw µs value against an
@@ -428,6 +448,7 @@ export const ConversationRepository = {
         ${statusCond}
         ${lensCond}
         ${scopeCond}
+        ${typeCond}
         ${cursorCond}
         AND ${access}
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC

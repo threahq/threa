@@ -29,6 +29,7 @@ import type {
   ProcessingStatus,
   AttachmentSafetyStatus,
   ConversationStatus,
+  BoardScopeStreamType,
   MemoType,
   KnowledgeType,
   MemoStatus,
@@ -746,6 +747,14 @@ export interface BoardPost {
    * to `conversation.streamId`.
    */
   rootStreamId?: string
+  /**
+   * The type of that effective root (`channel`/`dm`/`scratchpad`/`system` —
+   * never `thread`). The board's stream-type filter matches on this, so a
+   * conversation anchored in a thread counts as its root's type. Optional
+   * because cached rows predate the field; the client fails OPEN (surfaces the
+   * post) until a fetch reseeds it.
+   */
+  rootStreamType?: BoardScopeStreamType
 }
 
 /**
