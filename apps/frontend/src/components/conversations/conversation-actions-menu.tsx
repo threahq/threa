@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { CircleCheck, Eye, EyeOff, EllipsisVertical, Pencil, RotateCcw } from "lucide-react"
 import { ConversationStatuses, MAX_CONVERSATION_TOPIC_LENGTH } from "@threa/types"
 import { Button } from "@/components/ui/button"
@@ -118,9 +118,13 @@ interface RenameConversationDialogProps {
 
 function RenameConversationDialog({ open, onOpenChange, initialTopic, onSave }: RenameConversationDialogProps) {
   const [value, setValue] = useState(initialTopic)
-  // Re-seed on each open (a different card, or a re-open after cancel).
+  // Re-seed only on an open transition (a different card, or a re-open after
+  // cancel) — NOT whenever `initialTopic` changes, so a concurrent rename landing
+  // via the live query while you're typing doesn't wipe your in-progress input.
+  const wasOpen = useRef(false)
   useEffect(() => {
-    if (open) setValue(initialTopic)
+    if (open && !wasOpen.current) setValue(initialTopic)
+    wasOpen.current = open
   }, [open, initialTopic])
 
   const trimmed = value.trim()

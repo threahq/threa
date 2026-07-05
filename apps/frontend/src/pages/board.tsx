@@ -256,12 +256,15 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     commit,
     revealNext,
     isLoading: viewLoading,
+    hasRawPosts,
   } = useStableBoardView(workspaceId, filter, exclusions)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed
-  // doesn't flash the empty state before the seed lands.
-  const seedPending = (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
+  // doesn't flash the empty state before the seed lands. `!hasRawPosts` scopes
+  // this to a genuinely-unseeded feed: once IDB has rows, filtering them all away
+  // (hide/mute/lens down to zero) is a real empty view, not a pending seed.
+  const seedPending = !hasRawPosts && (data?.pages.some((page) => page.posts.length > 0) ?? false) && posts.length === 0
   // Keep the streams behind on-screen cards live + offline-first (threads and
   // public channels the viewer never joined aren't subscribed at bootstrap).
   useBoardStreamSubscriptions(posts)

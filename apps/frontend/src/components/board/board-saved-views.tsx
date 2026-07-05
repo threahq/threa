@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { Bookmark, Pencil, Plus, Trash2 } from "lucide-react"
 import {
@@ -162,8 +162,12 @@ interface SaveViewDialogProps {
 
 function SaveViewDialog({ open, initialName, isRename, onOpenChange, onSubmit }: SaveViewDialogProps) {
   const [value, setValue] = useState(initialName)
+  // Re-seed only on an open transition, so a concurrent update to `initialName`
+  // (e.g. a rename landing via the live list) can't wipe in-progress typing.
+  const wasOpen = useRef(false)
   useEffect(() => {
-    if (open) setValue(initialName)
+    if (open && !wasOpen.current) setValue(initialName)
+    wasOpen.current = open
   }, [open, initialName])
 
   const trimmed = value.trim()
