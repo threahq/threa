@@ -55,6 +55,13 @@ const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
+const CLAIM_TTL_SECONDS = 120
+// Renew at a third of the lease so a single transient renew failure can't let
+// the claim expire (two misses still leaves a full interval of margin).
+// Mirrors remote-session/src/session.ts. This dedicated timer is what keeps a
+// long turn's claim alive — the claim poll only backstops at 15 min while the
+// socket is up, far past the TTL, so renewal must never ride on it.
+const CLAIM_RENEW_INTERVAL_MS = Math.floor((CLAIM_TTL_SECONDS * 1000) / 3)
 // Cadence the safety-backstop poll runs at while a `/bot` WebSocket is up.
 // Pushes deliver new invocations within a frame; the poll is only there to
 // catch the rare missed-emit / mid-flight-disconnect case (plan §5). Every
@@ -239,6 +246,7 @@ let pendingInvocationPrompt: string | undefined
 let pendingRetry: { timer: ReturnType<typeof setTimeout>; retryAt: number; attempts: number } | undefined
 let isWaitingForRetry = false
 let lastTraceHeartbeat: { text: string; at: number } | undefined
+let claimRenewTimer: ReturnType<typeof setInterval> | undefined
 let consecutivePollFailures = 0
 let lastPollFailureSummary: string | undefined
 let lastBusyHeartbeatAt = 0
@@ -1294,7 +1302,7 @@ async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void
     // The transport doesn't reject (its HTTP fallback swallows); the `.catch` is
     // the safety boundary so a renew can never abort the surrounding claim pass.
     const { notFound } = await transport
-      .renewClaim(invocation.id, invocation.claimToken, 120, getInvocationInstanceId(invocation))
+      .renewClaim(invocation.id, invocation.claimToken, CLAIM_TTL_SECONDS, getInvocationInstanceId(invocation))
       .catch(() => ({ notFound: false }))
     if (notFound) {
       console.error(`[threa-remote] renew ${invocation.id}: claim gone server-side; turn will close on completion`)
@@ -1306,7 +1314,7 @@ async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void
     body: JSON.stringify({
       instanceId: getInvocationInstanceId(invocation),
       claimToken: invocation.claimToken,
-      claimTtlSeconds: 120,
+      claimTtlSeconds: CLAIM_TTL_SECONDS,
     }),
   }).catch(() => undefined)
 }
@@ -1315,6 +1323,21 @@ async function renewActiveClaims(): Promise<void> {
   if (!pending) return
   await renewInvocationClaim(pending)
   await Promise.all(steeredInvocations.map((item) => renewInvocationClaim(item.invocation)))
+}
+
+function startClaimRenewTimer(): void {
+  if (claimRenewTimer) return
+  claimRenewTimer = setInterval(() => {
+    // Fire-and-forget: renewInvocationClaim already swallows per-call errors,
+    // and a renew failure must never surface as an unhandled rejection.
+    void renewActiveClaims().catch(() => undefined)
+  }, CLAIM_RENEW_INTERVAL_MS)
+}
+
+function stopClaimRenewTimer(): void {
+  if (!claimRenewTimer) return
+  clearInterval(claimRenewTimer)
+  claimRenewTimer = undefined
 }
 
 function isEnabled(ctx: ExtensionContext): boolean {
@@ -1658,7 +1681,7 @@ function buildClaimInvocationPayload(
     instanceId,
     runtimeSessionId,
     supportedCapabilities,
-    claimTtlSeconds: 120,
+    claimTtlSeconds: CLAIM_TTL_SECONDS,
   }
 }
 
@@ -1949,6 +1972,7 @@ async function buildInvocationPrompt(
 
 function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string): void {
   pending = invocation
+  startClaimRenewTimer()
   pendingContextCursor = cursor
   pendingAssistantTexts = []
   pendingNonAssistantTexts = []
@@ -2388,6 +2412,15 @@ async function handleSessionControlInvocation(
     return
   }
 
+  // Session-control turns run outside `pending`, so the pending-turn renew
+  // timer doesn't cover them; a slow one (/compact of a large session) can
+  // outlive the claim TTL. Renewing an invocation the pending timer also
+  // covers (/skill hands off to a pending turn) is harmless — renew just
+  // extends the expiry again.
+  const renewTimer = setInterval(
+    () => void renewInvocationClaim(invocation).catch(() => undefined),
+    CLAIM_RENEW_INTERVAL_MS
+  )
   try {
     await heartbeat("busy", `Running /${command.name}…`, ctx)
     await recordInvocationTraceStep(
@@ -2428,6 +2461,8 @@ async function handleSessionControlInvocation(
     await failInvocation(invocation, error)
     lastBusyHeartbeatAt = 0
     await heartbeat("available", undefined, ctx).catch(() => undefined)
+  } finally {
+    clearInterval(renewTimer)
   }
 }
 
@@ -3002,6 +3037,7 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   await Promise.all(steered.map((item) => completeInvocationNoResponse(item.invocation)))
   advanceStreamCursor(invocation, ctx, pendingContextCursor)
   for (const item of steered) advanceStreamCursor(item.invocation, ctx, item.cursor)
+  stopClaimRenewTimer()
   pending = undefined
   steeredInvocations = []
   pendingContextCursor = undefined
@@ -3025,6 +3061,7 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   const steered = steeredInvocations
   await failInvocation(invocation, error)
   await Promise.all(steered.map((item) => failInvocation(item.invocation, error)))
+  stopClaimRenewTimer()
   pending = undefined
   steeredInvocations = []
   pendingContextCursor = undefined
@@ -3088,6 +3125,17 @@ export const __testing = {
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
   WS_BACKSTOP_POLL_MS,
+  CLAIM_TTL_SECONDS,
+  CLAIM_RENEW_INTERVAL_MS,
+  beginPendingInvocation,
+  stopClaimRenewTimer,
+  claimRenewTimerActive: () => claimRenewTimer !== undefined,
+  renewActiveClaims,
+  clearPendingForTesting: () => {
+    stopClaimRenewTimer()
+    pending = undefined
+    steeredInvocations = []
+  },
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -3347,6 +3395,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (event, ctx) => {
     stopPolling()
+    stopClaimRenewTimer()
     teardownTransport()
     if (event.reason === "reload" && config && isEnabled(ctx)) {
       setRemoteStatus(ctx, "Threa remote: reloading…")

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { __testing } from "./threa-remote"
 
 describe("Pi remote trace safety", () => {
@@ -839,5 +839,75 @@ describe("buildPersistedConfig", () => {
       {} as never
     )
     expect(result.streamCursors).toBeUndefined()
+  })
+})
+
+describe("claim renewal during a turn", () => {
+  const invocation = {
+    id: "binv_renew_1",
+    activeStreamId: "stream_a",
+    sourceMessageId: "msg_1",
+    promptMarkdown: "do the thing",
+    claimToken: "tok_1",
+    claimedInstanceId: "pi-test-1",
+    claimExpiresAt: null,
+  }
+
+  afterEach(() => {
+    __testing.clearPendingForTesting()
+    __testing.setConfigForTesting(undefined)
+  })
+
+  test("renew interval is comfortably inside the claim TTL", () => {
+    // Two consecutive missed renews must still leave the claim alive — the
+    // regression this guards: renewal riding on the 15-min WS backstop poll
+    // while the server-side claim TTL is 120s (any turn longer than the TTL
+    // lost its claim and the completion 404'd).
+    expect(__testing.CLAIM_RENEW_INTERVAL_MS * 3).toBeLessThanOrEqual(__testing.CLAIM_TTL_SECONDS * 1000)
+    expect(__testing.CLAIM_RENEW_INTERVAL_MS).toBeLessThan(__testing.WS_BACKSTOP_POLL_MS)
+  })
+
+  test("beginPendingInvocation starts the renew timer and clearing the turn stops it", () => {
+    expect(__testing.claimRenewTimerActive()).toBe(false)
+    __testing.beginPendingInvocation(invocation as never)
+    expect(__testing.claimRenewTimerActive()).toBe(true)
+    __testing.clearPendingForTesting()
+    expect(__testing.claimRenewTimerActive()).toBe(false)
+  })
+
+  test("renewActiveClaims posts a renew with the claim TTL for the pending invocation", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+    })
+    __testing.beginPendingInvocation(invocation as never)
+    const renews: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith(`/bot-invocations/${invocation.id}/renew`)) {
+        renews.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return new Response(JSON.stringify({ data: {} }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    }) as typeof fetch)
+    try {
+      await __testing.renewActiveClaims()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+    expect(renews).toEqual([
+      {
+        instanceId: "pi-test-1",
+        claimToken: "tok_1",
+        claimTtlSeconds: __testing.CLAIM_TTL_SECONDS,
+      },
+    ])
   })
 })
