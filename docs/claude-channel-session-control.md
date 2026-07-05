@@ -127,18 +127,19 @@ actuator has no `steer` support: tmux sends `Escape`, then the steer text rides 
 normal `notifications/claude/channel` notification under the steer invocation's own id, and
 Claude answers it with `reply(steerId)`.
 
-**Steer combines all pending messages into one payload (mirrors Pi) — in both paths.** Pi drains up to
-`STEER_DRAIN_LIMIT` (10) pending invocations while busy: the first becomes `pending`, the rest go
-into `steeredInvocations[]`, and on completion the primary gets the final `reply` while **every
-swept invocation closes `noResponse`** (`threa-remote.ts:2365-2404`) — N rapid messages → **one**
-combined response, not N. The channel reproduces this without a native steer queue: on `/steer`,
-after the `Escape`, it drains all currently-pending invocations targeted at the session (plain
-messages the user queued while Claude was busy + the steer's own text), **concatenates them
-oldest→newest into a single `notifications/claude/channel` payload**, and delivers one turn. The
-triggering steer invocation is the primary (registered in `inflight`, receives Claude's `reply`);
-the interrupted turn and every swept message complete `noResponse`. Bounded by a drain limit; the
-existing `claiming` single-flight guard serialises concurrent steer handlers so rapid `/steer`s
-coalesce.
+**Steer combines all pending messages into one payload (mirrors Pi) — the sweep is shared, the
+primary differs per path.** Pi drains up to `STEER_DRAIN_LIMIT` (10) pending invocations while
+busy: the first becomes `pending`, the rest go into `steeredInvocations[]`, and on completion the
+primary gets the final `reply` while **every swept invocation closes `noResponse`**
+(`threa-remote.ts:2365-2404`) — N rapid messages → **one** combined response, not N. The SDK's
+`sweepQueuedForSteer` reproduces the drain for both paths (plain messages queued while Claude was
+busy + the steer's own text, concatenated oldest→newest), but who answers the combined payload
+depends on the path: with **native steer**, the already-running invocation stays the primary and
+receives Claude's `reply` — the /steer invocation closes `noResponse` immediately; in the
+**interrupt fallback**, the triggering steer invocation is the primary (registered in `inflight`,
+receives Claude's `reply`) and the interrupted turn closes with the supersede note. Every swept
+message completes `noResponse` in both. Bounded by a drain limit; the existing `claiming`
+single-flight guard serialises concurrent steer handlers so rapid `/steer`s coalesce.
 
 `model` / `compact` / `run` typed mid-turn are buffered by Claude Code's input queue and applied
 after the current turn — acceptable, documented. `/model` and other menu-opening commands are

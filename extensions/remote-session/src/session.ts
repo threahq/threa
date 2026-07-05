@@ -770,6 +770,9 @@ export class RemoteSession {
   ): Promise<void> {
     const { parts, swept } = await this.sweepQueuedForSteer(text)
     if (parts.length === 0) {
+      // The sweep can still have claimed foldless invocations (a queued control
+      // command in the double-command race) — close them or they hang to TTL.
+      await Promise.all(swept.map((item) => this.completeNoResponse(item)))
       await this.completeAck(invocation, "Nothing to steer with (no text, no queued messages); the turn continues.")
       return
     }

@@ -609,6 +609,47 @@ describe("steer into the running turn (native steer support)", () => {
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
+  test("empty steer still closes a swept foldless control command instead of stranding its claim", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    // A queued non-steer control command (double-command race): swept, contributes
+    // no foldable part, and must still be closed on the empty-parts return.
+    const queued = [
+      makeInvocation({
+        id: "binv_q_model",
+        trigger: "session-control",
+        promptMarkdown: "/model opus",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_q", name: "model", args: "opus" } },
+      }),
+    ]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer", "model"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation(""))
+
+    expect(steered).toEqual([])
+    const sweptClose = calls.complete.find((entry) => entry.id === "binv_q_model")
+    expect(sweptClose?.body.noResponse).toBe(true)
+    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(ack?.body.finalMessageMarkdown).toContain("Nothing to steer with")
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
   test("failed actuation leaves the running turn alone and reports the failure", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
