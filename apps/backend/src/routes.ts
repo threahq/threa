@@ -26,6 +26,7 @@ import { CommandAvailabilityService, createCommandHandlers } from "./features/co
 import { createUserPreferencesHandlers } from "./features/user-preferences"
 import { createWorkspaceSettingsHandlers } from "./features/workspace-settings"
 import { createSidebarConfigHandlers } from "./features/sidebar-config"
+import { createBoardViewHandlers, BoardViewService } from "./features/board-views"
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
 import { createAIUsageHandlers } from "./features/ai-usage"
 import type { AICostServiceLike } from "./features/ai-usage"
@@ -284,6 +285,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
   const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
+  const boardView = createBoardViewHandlers({ boardViewService: new BoardViewService(pool), featureFlagService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
   const aiUsage = createAIUsageHandlers({ pool })
   const debug = createDebugHandlers({ pool, poolMonitor })
@@ -507,6 +509,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/board-post", ...authed, conversation.getBoardPost)
   app.patch("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.updateConversation)
   app.get("/api/workspaces/:workspaceId/board/exclusions", ...authed, conversation.getBoardExclusions)
+  app.get("/api/workspaces/:workspaceId/board/views", ...authed, boardView.list)
+  app.post("/api/workspaces/:workspaceId/board/views", ...authed, boardView.create)
+  app.patch("/api/workspaces/:workspaceId/board/views/:boardViewId", ...authed, boardView.update)
+  app.delete("/api/workspaces/:workspaceId/board/views/:boardViewId", ...authed, boardView.remove)
   app.post("/api/workspaces/:workspaceId/conversations/:conversationId/hide", ...authed, conversation.hideConversation)
   app.post(
     "/api/workspaces/:workspaceId/conversations/:conversationId/unhide",

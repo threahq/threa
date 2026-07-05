@@ -72,6 +72,7 @@ export {
   type ConversationStatus,
   ConversationStatuses,
   MAX_CONVERSATION_TOPIC_LENGTH,
+  MAX_BOARD_VIEW_NAME_LENGTH,
   // Board lenses
   BOARD_LENSES,
   type BoardLens,
@@ -316,6 +317,7 @@ export type {
   Conversation,
   ConversationWithStaleness,
   BoardPost,
+  BoardView,
   BoardPostMessage,
   LabeledMessage,
   Memo,

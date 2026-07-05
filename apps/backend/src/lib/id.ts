@@ -68,4 +68,5 @@ export {
   enclaveInvocationId,
   streamE2eKeyWrapId,
   conversationFeedbackId,
+  boardViewId,
 } from "@threa/backend-common"

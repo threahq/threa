@@ -113,6 +113,7 @@ export {
   streamE2eKeyWrapId,
   waitlistId,
   conversationFeedbackId,
+  boardViewId,
 } from "./id"
 export {
   parseCookies,

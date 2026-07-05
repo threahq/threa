@@ -1,6 +1,7 @@
 export { api, ApiError } from "./client"
 export { accountsApi, ACCOUNTS_LIST_KEY, type AccountSummary } from "./accounts"
 export { workspacesApi, type WorkspaceBootstrap } from "./workspaces"
+export { boardViewsApi, type SaveBoardViewInput, type UpdateBoardViewInput } from "./board-views"
 export { streamsApi, type StreamBootstrap, type CreateStreamInput, type UpdateStreamInput } from "./streams"
 export { e2eKeyWrapsApi } from "./e2e-key-wraps"
 export { messagesApi, type CreateMessageInput, type UpdateMessageInput } from "./messages"
