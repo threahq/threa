@@ -485,7 +485,9 @@ export class BoundaryExtractionService {
             continue
           }
 
-          await ConversationRepository.update(client, workspaceId, update.conversationId, {
+          // Refine completeness freely, but never override a status the user set
+          // (Mark resolved / Reopen) — user intent wins over the LLM (guarded in SQL).
+          await ConversationRepository.applyExtractionUpdate(client, workspaceId, update.conversationId, {
             completenessScore: update.score,
             status: update.status,
           })

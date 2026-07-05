@@ -199,6 +199,9 @@ export interface UpdateConversationParams {
   confidence?: number
   status?: ConversationStatus
   lastActivityAt?: Date
+  /** Set true on a user's explicit resolve/reopen so the extractor stops
+   *  overriding the status (user intent wins over the LLM's ruling). */
+  statusLockedByUser?: boolean
 }
 
 function mapRowToConversation(row: ConversationRow): Conversation {
@@ -568,6 +571,10 @@ export const ConversationRepository = {
       updates.push(`status = $${paramIndex++}`)
       values.push(params.status)
     }
+    if (params.statusLockedByUser !== undefined) {
+      updates.push(`status_locked_by_user = $${paramIndex++}`)
+      values.push(params.statusLockedByUser)
+    }
     if (params.lastActivityAt !== undefined) {
       updates.push(`last_activity_at = $${paramIndex++}`)
       values.push(params.lastActivityAt)
@@ -599,6 +606,30 @@ export const ConversationRepository = {
     const result = await db.query<ConversationRow>(query, values)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
+  },
+
+  /**
+   * The boundary-extraction LLM's status/completeness refinement. Unlike a user
+   * edit ({@link update}), the extractor MUST NOT override a status the user set
+   * — user resolution takes precedence over the AI's ruling (Kris, 2026-07-05).
+   * `status` is applied only when the row isn't `status_locked_by_user`; the guard
+   * is in the SET (a `CASE`), so it's atomic against a concurrent user resolve —
+   * no read-then-write race (INV-20). `completeness_score` is always free to
+   * refine. Workspace-scoped (INV-8).
+   */
+  async applyExtractionUpdate(
+    db: Querier,
+    workspaceId: string,
+    id: string,
+    params: { completenessScore?: number; status?: ConversationStatus }
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations SET
+        completeness_score = COALESCE(${params.completenessScore ?? null}, completeness_score),
+        status = CASE WHEN status_locked_by_user THEN status ELSE COALESCE(${params.status ?? null}, status) END,
+        updated_at = NOW()
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
+    `)
   },
 
   /**

@@ -509,7 +509,14 @@ export class ConversationService {
   }): Promise<{ conversation: ConversationWithStaleness }> {
     const { workspaceId, conversationId, topicSummary, status } = params
     return withTransaction(this.pool, async (client) => {
-      const updated = await ConversationRepository.update(client, workspaceId, conversationId, { topicSummary, status })
+      const updated = await ConversationRepository.update(client, workspaceId, conversationId, {
+        topicSummary,
+        status,
+        // A user-set status is authoritative — lock it so the extractor's LLM stops
+        // overriding it (user resolution wins over the AI's ruling). Only when the
+        // user actually set status; a rename alone leaves the lock untouched.
+        statusLockedByUser: status !== undefined ? true : undefined,
+      })
       if (!updated) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
