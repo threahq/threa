@@ -470,6 +470,13 @@ export function useTimelineScroll({
     if (!scroller || !content) return
 
     let prevClientHeight = scroller.clientHeight
+    let pendingRecheck = 0
+    const clearPendingRecheck = () => {
+      if (pendingRecheck) {
+        window.clearTimeout(pendingRecheck)
+        pendingRecheck = 0
+      }
+    }
     const observer = new ResizeObserver((entries) => {
       const el = scrollerRef.current
       if (!el) return
@@ -482,11 +489,27 @@ export function useTimelineScroll({
         // user-scroll-driven (the composer tap lands on the floating composer,
         // not the scroller, so the gesture stamp stays stale), so keyboard-follow
         // is unaffected.
-        const userScrolling = performance.now() - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+        const elapsedSinceGesture = performance.now() - (userInteractedAtRef?.current ?? 0)
+        const userScrolling = elapsedSinceGesture < USER_SCROLL_GRACE_MS
         if (!hasViewportEntry && userScrolling) {
           prevClientHeight = el.clientHeight
+          // The resize itself is real — a message, session card, or the composer
+          // genuinely changed size — we're only holding off because a scroller
+          // gesture landed a moment ago. If that's the only resize this content
+          // change ever fires, skipping it here would miss it forever, so
+          // re-check once the grace window actually elapses and catch up if
+          // we're still following.
+          clearPendingRecheck()
+          pendingRecheck = window.setTimeout(
+            () => {
+              pendingRecheck = 0
+              if (isFollowingTailRef.current) pinToBottom()
+            },
+            Math.max(0, USER_SCROLL_GRACE_MS - elapsedSinceGesture)
+          )
           return
         }
+        clearPendingRecheck()
         pinToBottom()
         prevClientHeight = el.clientHeight
         return
@@ -526,6 +549,7 @@ export function useTimelineScroll({
 
     return () => {
       observer.disconnect()
+      clearPendingRecheck()
       vv?.removeEventListener("resize", pinIfFollowing)
       vv?.removeEventListener("scroll", pinIfFollowing)
     }
