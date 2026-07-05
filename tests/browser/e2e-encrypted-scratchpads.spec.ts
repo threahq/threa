@@ -72,9 +72,11 @@ test.describe("E2E encrypted scratchpads", () => {
     const workspaceId = page.url().match(/\/w\/(ws_[^/?#]+)/)?.[1]
     expect(workspaceId).toBeTruthy()
 
-    // A workspace bot makes the header render the "Invite agent" trigger.
-    const botRes = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
-      // Shared: the header's invite picker lists workspace-shared bots only.
+    // Workspace bots make the header render the "Invite agent" trigger. One
+    // shared and one PERSONAL: the picker reads bootstrap visibility (shared +
+    // the viewer's own personal bots) — a personal harness bot missing from the
+    // picker was a reported bug.
+    const sharedRes = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
       data: {
         type: "shared",
         name: "Smoke Harness",
@@ -82,7 +84,16 @@ test.describe("E2E encrypted scratchpads", () => {
         traits: ["active-scratchpad", "mentionable"],
       },
     })
-    expect(botRes.ok()).toBe(true)
+    expect(sharedRes.ok()).toBe(true)
+    const personalRes = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
+      data: {
+        type: "personal",
+        name: "My Own Harness",
+        slug: "my-own-harness",
+        traits: ["active-scratchpad", "mentionable"],
+      },
+    })
+    expect(personalRes.ok()).toBe(true)
 
     // Create the encrypted scratchpad at desktop width (the create menu lives
     // in the sidebar); the mobile assertions come after the viewport shrinks.
@@ -117,9 +128,11 @@ test.describe("E2E encrypted scratchpads", () => {
     expect(searchBox).not.toBeNull()
     expect(inviteBox!.x + inviteBox!.width).toBeLessThanOrEqual(searchBox!.x + 1)
 
-    // And it actually works: tapping opens the bot picker.
+    // And it actually works: tapping opens the bot picker, which lists BOTH the
+    // shared bot and the viewer's own personal bot.
     await invite.click()
     await expect(page.getByRole("menuitem", { name: /Smoke Harness/ })).toBeVisible()
+    await expect(page.getByRole("menuitem", { name: /My Own Harness/ })).toBeVisible()
   })
 
   test("creating an encrypted scratchpad while locked unlocks inline, then creates", async ({ page }) => {
