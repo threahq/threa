@@ -83,14 +83,28 @@ function makePost(
       ]),
     ],
     hasCapturedMemo: false,
+    isMine: false,
   }
 }
 
 function mountBoard(
   posts: BoardPost[],
-  opts: { nextCursor?: string | null; fail?: boolean; boardFlag?: "on" | "off"; failMessages?: boolean } = {}
+  opts: {
+    nextCursor?: string | null
+    fail?: boolean
+    boardFlag?: "on" | "off"
+    failMessages?: boolean
+    /** URL to mount at — set `/w/<ws>/board/<lens>` to exercise a lens segment. */
+    entry?: string
+  } = {}
 ) {
-  const { nextCursor = null, fail = false, boardFlag = "on", failMessages = false } = opts
+  const {
+    nextCursor = null,
+    fail = false,
+    boardFlag = "on",
+    failMessages = false,
+    entry = `/w/${WORKSPACE_ID}/board`,
+  } = opts
   const listByWorkspace = vi.fn(async () => {
     if (fail) throw new Error("boom")
     return { posts, nextCursor }
@@ -112,10 +126,10 @@ function mountBoard(
       <TooltipProvider>
         <ServicesProvider services={{ conversations: { listByWorkspace, getBoardMessages } as never }}>
           <SidebarProvider>
-            <MemoryRouter initialEntries={[`/w/${WORKSPACE_ID}/board`]}>
+            <MemoryRouter initialEntries={[entry]}>
               <PanelProvider>
                 <Routes>
-                  <Route path="/w/:workspaceId/board" element={<BoardPage />} />
+                  <Route path="/w/:workspaceId/board/:lens?" element={<BoardPage />} />
                 </Routes>
               </PanelProvider>
             </MemoryRouter>
@@ -170,6 +184,18 @@ describe("BoardPage", () => {
   it("renders the opening-message body", async () => {
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
     expect(await screen.findByText("Rotate the tokens before Friday.")).toBeTruthy()
+  })
+
+  it("shows only the viewer's own conversations on the Mine lens", async () => {
+    // Server precomputes `isMine`; the Mine lens is wired into the same
+    // client filter (`matchesBoardLens`) the other lenses ride, keyed off the
+    // `/board/mine` URL segment.
+    const mine = { ...makePost({ id: "conv_mine" }, { contentMarkdown: "My own topic." }), isMine: true }
+    const notMine = { ...makePost({ id: "conv_other" }, { contentMarkdown: "Someone else's topic." }), isMine: false }
+    mountBoard([mine, notMine], { entry: `/w/${WORKSPACE_ID}/board/mine` })
+
+    expect(await screen.findByText("My own topic.")).toBeTruthy()
+    expect(screen.queryByText("Someone else's topic.")).toBeNull()
   })
 
   it("offers an inline reply affordance on each post", async () => {

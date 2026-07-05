@@ -77,6 +77,8 @@ export interface BoardPost {
   streamIds: string[]
   /** Whether an active memo was captured from this conversation — the Decisions lens signal. */
   hasCapturedMemo: boolean
+  /** Whether the requesting viewer authored/participates in or was @-mentioned in this conversation — the Mine lens signal. */
+  isMine: boolean
   /** Effective root of the anchor (`COALESCE(root_stream_id, id)`) — the client's stream-scope filter matches on this. */
   rootStreamId: string
   /** That root's type (never `thread`) — the client's stream-type filter matches on this. */
@@ -137,7 +139,7 @@ export class ConversationService {
     })
     const conversations = rows.map(addStalenessFields)
 
-    const posts = await this.buildBoardPosts(workspaceId, conversations)
+    const posts = await this.buildBoardPosts(workspaceId, conversations, userId)
 
     // A full page means there may be more; the last row's (activity, id) is the
     // next cursor — matching the repo's `(last_activity_at, id) DESC` order.
@@ -155,10 +157,10 @@ export class ConversationService {
    * workspace or has no messages (an emptied conversation is no longer a card,
    * mirroring the board feed's `cardinality(message_ids) > 0` filter).
    */
-  async getBoardPostById(workspaceId: string, conversationId: string): Promise<BoardPost | null> {
+  async getBoardPostById(workspaceId: string, conversationId: string, userId: string): Promise<BoardPost | null> {
     const conversation = await ConversationRepository.findById(this.pool, conversationId)
     if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return null
-    const [post] = await this.buildBoardPosts(workspaceId, [addStalenessFields(conversation)])
+    const [post] = await this.buildBoardPosts(workspaceId, [addStalenessFields(conversation)], userId)
     return post ?? null
   }
 
@@ -171,7 +173,11 @@ export class ConversationService {
    * have already enforced access (SQL filter for the feed, single-root check for
    * the single fetch); this does no access work of its own.
    */
-  private async buildBoardPosts(workspaceId: string, conversations: ConversationWithStaleness[]): Promise<BoardPost[]> {
+  private async buildBoardPosts(
+    workspaceId: string,
+    conversations: ConversationWithStaleness[],
+    userId: string
+  ): Promise<BoardPost[]> {
     if (conversations.length === 0) return []
 
     // Resolve each conversation's stream so a thread post can show its true
@@ -252,6 +258,16 @@ export class ConversationService {
       conversations.map((c) => c.id)
     )
 
+    // The Mine lens signal: which of these conversations' primary messages
+    // `@`-mentioned the viewer. Participation (`participant_ids`) is checked
+    // in-memory below (zero query); only the mention set costs one batched read
+    // (INV-56). Pinned to primary `message_ids` — the SAME set the SQL half
+    // (`boardLensCondSql` mine branch) tests — so the seed boundary and the
+    // rendered `isMine` can't disagree.
+    const mentionedMessageIds = await ActivityRepository.findMentionedMessageIds(this.pool, workspaceId, userId, [
+      ...new Set(conversations.flatMap((c) => c.messageIds)),
+    ])
+
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!
       const opening = plan.originId ? hydratedById.get(plan.originId) : undefined
@@ -277,6 +293,9 @@ export class ConversationService {
         totalReplies: plan.totalReplies,
         streamIds,
         hasCapturedMemo: conversationIdsWithMemos.has(conversation.id),
+        isMine:
+          conversation.participantIds.includes(userId) ||
+          conversation.messageIds.some((id) => mentionedMessageIds.has(id)),
         // Effective root of the anchor (and its type) — the client's stream-scope
         // and stream-type filters match on these, mirroring the SQL
         // `COALESCE(root_stream_id, id)` rule.
