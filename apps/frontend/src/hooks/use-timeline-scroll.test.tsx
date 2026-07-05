@@ -49,6 +49,14 @@ function makeScrollerDiv(metrics: { scrollHeight: number; clientHeight: number; 
       scrollTop = v
     },
   })
+  // jsdom has no Element.scrollTo — the smooth dead-band dock path uses it.
+  Object.defineProperty(el, "scrollTo", {
+    configurable: true,
+    value: (options?: ScrollToOptions | number) => {
+      if (typeof options === "object" && options?.top !== undefined) el.scrollTop = options.top
+      else if (typeof options === "number") el.scrollTop = options
+    },
+  })
   return el
 }
 
@@ -529,6 +537,173 @@ describe("useTimelineScroll — deferred re-check after a resize skipped for an 
 
       act(() => vi.advanceTimersByTime(300))
       expect(el.scrollTop).toBe(800)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe("useTimelineScroll — dead-band dock (downward release short of the bottom)", () => {
+  class MockResizeObserver {
+    constructor(public cb: ResizeObserverCallback) {}
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  /** Mounts the hook with a registered scroller, cold-load settle already
+   *  converged (immediate-rAF mock), parked at the pinned bottom. */
+  function mountAtBottom(overrides: Partial<Options> = {}) {
+    const userInteractedAtRef = { current: 0 }
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(performance.now())
+      return 0
+    })
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, userInteractedAtRef, ...overrides }))
+    const content = document.createElement("div")
+    harness.current.contentRef.current = content
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    el.style.setProperty("--composer-height", "70px")
+    act(() => harness.current.registerScroller(el))
+    // First window lands: the initial pin + cold-load settle converge
+    // synchronously under the immediate-rAF mock and reveal the content —
+    // the dock must see a *settled* timeline, exactly like the real flow.
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef, ...overrides }))
+    raf.mockRestore()
+    expect(harness.current.isInitialSettling).toBe(false)
+    // The mock scroller doesn't browser-clamp the pin's scrollTop=scrollHeight
+    // write; park at the real maximum (distance 0) and re-baseline.
+    el.scrollTop = 4200
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    return { harness, el, userInteractedAtRef }
+  }
+
+  /** A user gesture moving scrollTop, as the browser delivers it: stamp + scroll. */
+  function gestureScrollTo(
+    harness: { current: HookApi },
+    el: HTMLDivElement,
+    userInteractedAtRef: { current: number },
+    top: number
+  ) {
+    userInteractedAtRef.current = performance.now()
+    el.scrollTop = top
+    act(() => harness.current.handleScroll())
+    el.dispatchEvent(new Event("scroll"))
+  }
+
+  it("docks to the bottom when a downward gesture settles inside the composer dead band", () => {
+    // The mobile overlap bug: the bottom --composer-height px of scroll range
+    // sit behind the floating pill, so a touch drag back toward the bottom
+    // that releases inside that band parks the tail clipped by the composer —
+    // and nothing corrects it (follow was disarmed by the gesture, the
+    // at-bottom re-arm band is narrower than the dead band, jump-to-latest
+    // needs 600px). Once the scroll settles, the dock must finish the gesture:
+    // ease to the true bottom and re-arm follow.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      // Scrolls up out of the band (reading history) — follow disarms.
+      gestureScrollTo(harness, el, userInteractedAtRef, 3800)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+      // Drags back down, releasing 60px short of max — inside the 70+32 band.
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+      // Scroll events go quiet — the settle window elapses.
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(5000)
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("leaves an upward nudge inside the dead band alone", () => {
+    // Nudging up a little to read context while typing is a deliberate
+    // position — docking it would scroll away exactly what the nudge revealed.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(4140)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not dock after programmatic positioning with no user gesture", () => {
+    // Divider/deep-link scrolls position the view without any gesture; a
+    // target that happens to land near the tail must stay where it was put.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el } = mountAtBottom()
+      act(() => harness.current.disableAutoScroll())
+      // Programmatic positioning into the dead band — no gesture stamp.
+      el.scrollTop = 4140
+      act(() => harness.current.handleScroll())
+      el.dispatchEvent(new Event("scroll"))
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(4140)
+      expect(harness.current.isFollowingTailRef.current).toBe(false)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("waits for the finger to lift before docking", () => {
+    // A resting finger emits no scroll events, so the quiet window alone would
+    // elapse mid-gesture and yank the content out from under the touch.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      gestureScrollTo(harness, el, userInteractedAtRef, 3800)
+      el.dispatchEvent(new Event("touchstart"))
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      // Finger still down: the settle window elapsing must not dock.
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(4140)
+      // Finger lifts → the dock completes the gesture.
+      el.dispatchEvent(Object.assign(new Event("touchend"), { touches: [] }))
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(5000)
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it("waits for the mouse button to release before docking", () => {
+    // Mouse mirror of the finger-lift case: a held button (text-selection drag,
+    // scrollbar-adjacent press) must not dock mid-gesture. The release is
+    // listened on window, not the scroller — a drag can end with the cursor
+    // outside it.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      gestureScrollTo(harness, el, userInteractedAtRef, 3800)
+      el.dispatchEvent(new Event("mousedown"))
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      // Button still held: the settle window elapsing must not dock.
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(4140)
+      // Release (on window — cursor may have left the scroller) → dock.
+      window.dispatchEvent(new Event("mouseup"))
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(5000)
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()
