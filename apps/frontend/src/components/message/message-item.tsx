@@ -180,11 +180,12 @@ export function MessageItem({
   // Users open their profile on click (same as the timeline); other actor types
   // (persona/bot/system) are non-interactive.
   const interactiveName = message.authorType === "user" && Boolean(message.authorId)
-  // Per-actor colorization on board surfaces: the author-name color + inline badge
-  // (persona gold, bot emerald + BOT pill), shared with the timeline. The timeline's
-  // full-bleed ROW accent (gradient + inset stripe) is deliberately NOT applied here
-  // — it's designed for edge-to-edge stream rows and reads muddy/misaligned inside a
-  // padded card, where the avatar + colored name already identify the actor.
+  // Per-actor colorization on board surfaces (shared theme): the author-name color
+  // + inline badge, plus `cardAccent` — a crisp rounded left bar + whisper tint on
+  // the message content, contained/aligned inside the padded card. This is the
+  // board's variant; the timeline's full-bleed `rowAccent` (gradient + inset
+  // stripe) is for edge-to-edge stream rows and is NOT applied here (it floats and
+  // reads muddy on a card).
   const theme = actorRowTheme(message.authorType)
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
@@ -633,7 +634,7 @@ export function MessageItem({
           >
             {formatTime(sentAt)}
           </div>
-          <div className="message-content min-w-0 flex-1 pr-14">
+          <div className={cn("message-content min-w-0 flex-1 pr-14", theme.cardAccent)}>
             {inlineEditing ? (
               editForm
             ) : (
