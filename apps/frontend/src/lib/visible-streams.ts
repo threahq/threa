@@ -11,12 +11,15 @@ import { PRESENCE_CACHE } from "./sw-presence"
  * render a stream register their ids here, and the SW checks membership when
  * deciding whether a push is for something the user can already see.
  *
- * The cache entry is last-writer-wins across tabs; the registering hook
- * re-publishes on window focus so the focused tab's set is authoritative. No
- * TTL: the entry only changes when the visible set changes, and the SW
- * additionally requires a currently-focused client plus recent interaction
- * (isDevicePresent) before it suppresses, so a stale entry from a closed tab
- * can't eat notifications on its own.
+ * The cache entry is last-writer-wins across tabs, so it carries a strict
+ * ownership rule (enforced in use-visible-streams.ts): only the focused tab
+ * ever writes it, and every focus gain re-publishes. That makes the entry
+ * "what the focused Threa tab is viewing" by construction — a background tab
+ * can't clobber it, and after a tab closes without cleanup the entry is
+ * rewritten the moment any Threa tab gains focus. No TTL: while no Threa tab
+ * is focused, the SW's focused-client gate (plus the isDevicePresent
+ * interaction window) keeps a stale entry inert; while one is focused, the
+ * entry is that tab's own set.
  */
 
 // Synthetic request key — never hits the network; a stable Cache lookup key.

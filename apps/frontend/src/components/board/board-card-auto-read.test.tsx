@@ -158,11 +158,12 @@ describe("BoardCard viewport auto-read (full wiring: real card, real controller,
     await act(async () => {})
     expect(screen.getByText("Opening body.")).toBeTruthy()
 
-    const io = FakeIntersectionObserver.instances.at(-1)
-    expect(io, "an IntersectionObserver should have been constructed").toBeTruthy()
     const rowEl = document.querySelector('[data-message-row][data-message-id="m_open"]')
     expect(rowEl, "the opening row should carry data-message-row").toBeTruthy()
-    expect(io!.observed.has(rowEl!), "the opening row should be observed").toBe(true)
+    // The card constructs several observers (auto-read rows, visible-streams
+    // viewport gate) — pick the one actually watching the opening row.
+    const io = FakeIntersectionObserver.instances.find((instance) => instance.observed.has(rowEl!))
+    expect(io, "an IntersectionObserver should be observing the opening row").toBeTruthy()
 
     act(() => {
       io!.fire([{ target: rowEl!, isIntersecting: true }])
