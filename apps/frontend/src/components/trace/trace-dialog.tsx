@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import {
   ResponsiveDialog,
@@ -10,13 +10,26 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RelativeTime } from "@/components/relative-time"
 import { useTrace, useSocket } from "@/contexts"
-import { useAbortSession } from "@/hooks"
+import { focusAtEnd, useAbortSession } from "@/hooks"
 import { useAgentTrace } from "@/hooks/use-agent-trace"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { TraceStepList } from "./trace-step-list"
+import { commandsApi } from "@/api"
+import { findVisibleZoneEditor } from "@/components/timeline/message-event"
 import { X } from "lucide-react"
 import { formatDuration } from "@/lib/dates"
-import type { AgentSession, AgentSessionRerunContext, AgentSessionStatus } from "@threa/types"
+import { CommandKinds, type AgentSession, type AgentSessionRerunContext, type AgentSessionStatus } from "@threa/types"
+
+type SessionControlCommand = "steer" | "stop"
+
+function collectRuntimeSessionControlCommands(commands: Awaited<ReturnType<typeof commandsApi.listForStream>>) {
+  const advertised = new Set<SessionControlCommand>()
+  for (const command of commands) {
+    if (command.kind !== CommandKinds.BOT_RUNTIME) continue
+    if (command.name === "steer" || command.name === "stop") advertised.add(command.name)
+  }
+  return advertised
+}
 
 const STATUS_TEXT: Record<AgentSessionStatus, string> = {
   pending: "Session pending",
@@ -33,6 +46,7 @@ export function TraceDialog() {
   const { sessionId, highlightMessageId, getTraceUrl, closeTraceModal } = useTrace()
   const socket = useSocket()
   const abortSession = useAbortSession(socket)
+  const [runtimeCommands, setRuntimeCommands] = useState<ReadonlySet<SessionControlCommand>>(new Set())
   // Resolved once and threaded into the step list so each step can decrypt
   // sealed (enclave) content via the viewer's E2E session.
   const userId = useWorkspaceUserId(workspaceId!)
@@ -42,14 +56,69 @@ export function TraceDialog() {
     sessionId!
   )
 
-  // Bind workspace + session once here so the in-flight step card can invoke it
-  // without needing either identifier in its own scope. Only wired when the
-  // session is actively running — abort on a completed session is a no-op at
-  // the server so it's cheap, but there's no reason to show the button then.
+  useEffect(() => {
+    if (!workspaceId || !session?.streamId || status !== "running") {
+      setRuntimeCommands(new Set())
+      return
+    }
+
+    let cancelled = false
+    void commandsApi
+      .listForStream(workspaceId, session.streamId)
+      .then((commands) => {
+        if (cancelled) return
+        setRuntimeCommands(collectRuntimeSessionControlCommands(commands))
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        console.warn("[TraceDialog] failed to load runtime session-control commands", error)
+        setRuntimeCommands(new Set())
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, session?.streamId, status])
+
+  // Bind workspace + session once here so the in-flight step card can invoke
+  // session-control without needing either identifier in its own scope.
   const handleStopSession = useCallback(() => {
     if (!sessionId || !workspaceId) return
-    abortSession({ sessionId, workspaceId })
-  }, [abortSession, sessionId, workspaceId])
+    void (async () => {
+      if (session?.streamId) {
+        let advertised = runtimeCommands
+        if (!advertised.has("stop")) {
+          advertised = await commandsApi
+            .listForStream(workspaceId, session.streamId)
+            .then(collectRuntimeSessionControlCommands)
+            .catch(() => new Set<SessionControlCommand>())
+        }
+        if (advertised.has("stop")) {
+          await commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/stop" })
+          return
+        }
+      }
+      abortSession({ sessionId, workspaceId })
+    })().catch((error: unknown) => {
+      console.warn("[TraceDialog] failed to stop session", error)
+    })
+  }, [abortSession, runtimeCommands, session?.streamId, sessionId, workspaceId])
+
+  const handleSteerSession = useCallback(() => {
+    if (workspaceId && session?.streamId && runtimeCommands.has("steer")) {
+      void commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/steer" }).catch((error: unknown) => {
+        console.warn("[TraceDialog] failed to dispatch /steer", error)
+      })
+      return
+    }
+
+    for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {
+      const editor = findVisibleZoneEditor(zone)
+      if (!editor) continue
+      focusAtEnd(editor)
+      return
+    }
+  }, [runtimeCommands, session?.streamId, workspaceId])
 
   if (!sessionId) return null
 
@@ -115,6 +184,7 @@ export function TraceDialog() {
           streamId={session?.streamId ?? ""}
           userId={userId}
           onStopSession={status === "running" ? handleStopSession : undefined}
+          onSteerSession={status === "running" ? handleSteerSession : undefined}
         />
 
         {status && <TraceFooter status={status} stepCount={steps.length} messageCount={messageCount} />}
@@ -251,6 +321,7 @@ function TraceBody({
   streamId,
   userId,
   onStopSession,
+  onSteerSession,
 }: {
   isLoading: boolean
   error: Error | null
@@ -261,6 +332,7 @@ function TraceBody({
   streamId: string
   userId: string | null
   onStopSession?: () => void
+  onSteerSession?: () => void
 }) {
   let content = (
     <TraceStepList
@@ -271,6 +343,7 @@ function TraceBody({
       userId={userId}
       streamingSubsteps={streamingSubsteps}
       onStopSession={onStopSession}
+      onSteerSession={onSteerSession}
     />
   )
   if (isLoading) {
