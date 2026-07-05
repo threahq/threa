@@ -196,9 +196,11 @@ export function StreamHeaderEncryptionAction({
 }) {
   const action = useStreamEncryptionAction(workspaceId, encrypted)
 
+  // `shrink-0`: these live in the header's scrollable chip strip — keep their
+  // size and let the strip scroll rather than squishing the label.
   if (action?.kind === "setup") {
     return (
-      <Button size="sm" variant="outline" className="h-7 gap-1 px-2" onClick={() => action.unlock.openSetup()}>
+      <Button size="sm" variant="outline" className="h-7 shrink-0 gap-1 px-2" onClick={() => action.unlock.openSetup()}>
         <ShieldPlus className="h-3.5 w-3.5" />
         Set up encryption
       </Button>
@@ -209,7 +211,7 @@ export function StreamHeaderEncryptionAction({
       <Button
         size="sm"
         variant="outline"
-        className="h-7 gap-1 px-2"
+        className="h-7 shrink-0 gap-1 px-2"
         disabled={action.pending}
         onClick={() => action.unlock.openUnlock()}
       >
@@ -234,7 +236,7 @@ function StreamHeaderRepairAction({ workspaceId, streamId }: { workspaceId: stri
     <Button
       size="sm"
       variant="outline"
-      className="h-7 gap-1 px-2"
+      className="h-7 shrink-0 gap-1 px-2"
       disabled={repair.pending}
       onClick={() => repair.repair()}
     >

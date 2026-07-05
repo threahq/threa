@@ -606,27 +606,40 @@ export function StreamPage() {
           <SidebarToggle location="page" />
           {headerTitle}
           {companionModeIndicator}
-          {stream && !isDraft && (
-            <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={streamId} />
-          )}
-          {isEncryptedScratchpad && !isDraft && (
-            <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
-          )}
-          {stream && isScratchpad && !isDraft && (
-            <>
-              <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
-              <InviteBotButton workspaceId={workspaceId!} stream={stream} />
-            </>
-          )}
-          {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
-            <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
-          )}
-          {isArchived && (
-            <Badge variant="secondary" className="gap-1">
-              <ArchiveX className="h-3 w-3" />
-              Archived
-            </Badge>
-          )}
+          {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
+              phone-width header they would otherwise overflow the flex box and
+              paint under the search/panel actions — the strip scrolls instead,
+              same recipe as PageHeaderTabs' tab strip. */}
+          <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
+            {stream && !isDraft && (
+              <LabelStack
+                workspaceId={workspaceId}
+                resourceType={LabelableResourceTypes.STREAM}
+                resourceId={streamId}
+                className="shrink-0"
+              />
+            )}
+            {isEncryptedScratchpad && !isDraft && (
+              <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
+            )}
+            {stream && isScratchpad && !isDraft && (
+              <>
+                <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
+                <InviteBotButton workspaceId={workspaceId!} stream={stream} />
+              </>
+            )}
+            {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
+              <Badge variant="secondary" className="shrink-0">
+                {getStreamTypeLabel(stream.type)}
+              </Badge>
+            )}
+            {isArchived && (
+              <Badge variant="secondary" className="gap-1 shrink-0">
+                <ArchiveX className="h-3 w-3" />
+                Archived
+              </Badge>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-1 ml-1">
           {!isThread && !isDraft && (
