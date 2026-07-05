@@ -475,6 +475,7 @@ export class MemoService implements MemoServiceLike {
           memoData.parentMemoId = toSupersede[0].memo.id
           await MemoRepository.markSuperseded(
             client,
+            workspaceId,
             toSupersede.map((s) => s.memo.id),
             `Superseded by revised capture ${memoData.id}`
           )

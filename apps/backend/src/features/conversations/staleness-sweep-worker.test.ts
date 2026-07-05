@@ -36,41 +36,46 @@ describe("createStalenessSweepWorker", () => {
     spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as typeof dbModule.withTransaction)
     spyOn(ConversationRepository, "sweepStale").mockResolvedValue(swept)
-    spyOn(StreamRepository, "findById").mockResolvedValue({
-      id: "stream_1",
-      type: "dm",
-      visibility: "private",
-    } as never)
-    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    return { worker: createStalenessSweepWorker({ pool: {} as never }), insert }
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+      {
+        id: "stream_1",
+        type: "dm",
+        visibility: "private",
+      },
+    ] as never)
+    const insertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
+    return { worker: createStalenessSweepWorker({ pool: {} as never }), insertMany }
   }
 
   it("emits a sweep-tagged conversation:updated per transitioned conversation", async () => {
-    const { worker, insert } = arrange([
+    const { worker, insertMany } = arrange([
       makeConversation({ id: "conv_a", status: ConversationStatuses.STALLED }),
       makeConversation({ id: "conv_b", status: ConversationStatuses.RESOLVED }),
     ])
 
     await worker(job)
 
-    expect(insert).toHaveBeenCalledTimes(2)
-    expect(insert.mock.calls.map((c) => c[1])).toEqual(["conversation:updated", "conversation:updated"])
-    expect(insert.mock.calls[0][2]).toEqual(
-      expect.objectContaining({
+    expect(insertMany).toHaveBeenCalledTimes(1)
+    const entries = insertMany.mock.calls[0][1]
+    expect(entries).toHaveLength(2)
+    expect(entries[0]).toEqual({
+      eventType: "conversation:updated",
+      payload: expect.objectContaining({
         workspaceId: "ws_1",
         streamId: "stream_1",
         conversationId: "conv_a",
         origin: "staleness-sweep",
         conversation: expect.objectContaining({ id: "conv_a", status: ConversationStatuses.STALLED }),
-      })
-    )
+      }),
+    })
+    expect(entries[1].payload).toEqual(expect.objectContaining({ conversationId: "conv_b" }))
   })
 
   it("emits nothing when the sweep transitions nothing", async () => {
-    const { worker, insert } = arrange([])
+    const { worker, insertMany } = arrange([])
 
     await worker(job)
 
-    expect(insert).not.toHaveBeenCalled()
+    expect(insertMany).not.toHaveBeenCalled()
   })
 })

@@ -43,27 +43,36 @@ export function createStalenessSweepWorker(
       })
       if (transitioned.length === 0) return 0
 
-      // Route each event by its conversation's own access root (INV-62). One
-      // resolve per distinct stream — sweeps often hit many conversations in
-      // the same stream.
+      // Route each event by its conversation's own access root (INV-62).
+      // Streams are batch-fetched and delivery resolved once per distinct
+      // stream; the events land in one insertMany (INV-56) so the transaction
+      // holds the connection for two round-trips plus thread-parent lookups,
+      // not one insert per row.
+      const streamIds = [...new Set(transitioned.map((c) => c.streamId))]
+      const streams = await StreamRepository.findByIds(client, streamIds)
+      const streamById = new Map(streams.map((s) => [s.id, s]))
       const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
-      for (const conv of transitioned) {
-        let delivery = deliveryByStreamId.get(conv.streamId)
-        if (!delivery) {
-          const stream = await StreamRepository.findById(client, conv.streamId)
-          delivery = await resolveConversationDelivery(client, stream)
-          deliveryByStreamId.set(conv.streamId, delivery)
-        }
-        await OutboxRepository.insert(client, "conversation:updated", {
-          workspaceId: conv.workspaceId,
-          streamId: conv.streamId,
-          conversationId: conv.id,
-          conversation: addStalenessFields(conv),
-          parentStreamId: delivery.parentStreamId,
-          streamVisibility: delivery.streamVisibility,
-          origin: "staleness-sweep",
-        })
+      for (const id of streamIds) {
+        deliveryByStreamId.set(id, await resolveConversationDelivery(client, streamById.get(id) ?? null))
       }
+      await OutboxRepository.insertMany(
+        client,
+        transitioned.map((conv) => {
+          const delivery = deliveryByStreamId.get(conv.streamId)
+          return {
+            eventType: "conversation:updated" as const,
+            payload: {
+              workspaceId: conv.workspaceId,
+              streamId: conv.streamId,
+              conversationId: conv.id,
+              conversation: addStalenessFields(conv),
+              parentStreamId: delivery?.parentStreamId,
+              streamVisibility: delivery?.streamVisibility,
+              origin: "staleness-sweep" as const,
+            },
+          }
+        })
+      )
       return transitioned.length
     })
 

@@ -110,9 +110,9 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
       toMessage(m, streamId, i + 2, now, DEFAULT_RECENT_MESSAGE_MINUTES_AGO)
     ),
     activeConversations: (input.activeConversations || []).map((c) => {
-      const { lastActivityMinutesAgo, contextMessageIds, ...summary } = c
+      const { lastActivityMinutesAgo, contextMessageIds, ...fields } = c
       return {
-        ...summary,
+        ...fields,
         summary: c.summary ?? null,
         status: c.status ?? "active",
         lastActivityAt: new Date(
