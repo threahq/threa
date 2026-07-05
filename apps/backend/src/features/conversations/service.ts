@@ -36,6 +36,14 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
   scopeStreamIds?: string[]
   /** Root-stream TYPE scope: only conversations whose root is one of these types. */
   scopeStreamTypes?: string[]
+  /** Stream veto: drop conversations whose anchor or effective root is named. */
+  excludeStreamIds?: string[]
+  /** Root-stream TYPE veto: drop conversations whose root is one of these types. */
+  excludeStreamTypes?: string[]
+  /** Label scope: only conversations whose anchor/root carries one of the viewer's labels. */
+  scopeLabelIds?: string[]
+  /** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
+  excludeLabelIds?: string[]
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }

@@ -58,12 +58,33 @@ export interface BoardTypeScope {
   ids: ReadonlySet<BoardScopeStreamType>
 }
 
+/**
+ * A label filter, resolved to the streams it currently covers. `key` is the
+ * canonical serialization of the SELECTED LABEL IDS — the view-reset key — while
+ * `streamIds` is the live resolution of those labels to the viewer's labeled
+ * streams (assignments change without changing the selection, so a re-resolution
+ * must not reset the frozen view). Matching is anchor-or-root, the same rule as
+ * the server's `boardLabelMatchSql`.
+ */
+export interface BoardLabelScope {
+  key: string
+  streamIds: ReadonlySet<string>
+}
+
 export interface BoardViewFilter {
   lens: BoardLens
   /** Root-stream scope, or null when unscoped (the whole workspace). */
   scope: BoardScope | null
   /** Root-stream TYPE scope, or null when every type shows. */
   types: BoardTypeScope | null
+  /** Stream veto (anchor-or-root), or null when nothing is excluded. */
+  excludeStreams: BoardScope | null
+  /** Root-stream TYPE veto, or null. */
+  excludeTypes: BoardTypeScope | null
+  /** Label scope, or null when labels don't narrow the view. */
+  labels: BoardLabelScope | null
+  /** Label veto, or null. */
+  excludeLabels: BoardLabelScope | null
 }
 
 /**
@@ -98,6 +119,45 @@ function matchesTypeScope(post: CachedBoardPost, types: BoardTypeScope | null): 
   // rather than hides — and the next fetch reseeds the field.
   if (post.rootStreamType === undefined) return true
   return types.ids.has(post.rootStreamType)
+}
+
+/**
+ * Stream veto: anchor-or-root, the read-side twin of the server's
+ * `boardScopeExcludeCondSql` (keep the rule identical). Root matching drops a
+ * channel with everything under it; anchor matching lets one thread be excluded
+ * without dropping its channel.
+ */
+function matchesExcludedStreams(post: CachedBoardPost, excluded: BoardScope | null): boolean {
+  if (!excluded) return true
+  return (
+    !excluded.ids.has(post.rootStreamId ?? post.conversation.streamId) && !excluded.ids.has(post.conversation.streamId)
+  )
+}
+
+/** TYPE veto. An unknown `rootStreamType` (pre-field cached row) fails OPEN,
+ *  mirroring {@link matchesTypeScope} — the next fetch reseeds the field. */
+function matchesExcludedTypes(post: CachedBoardPost, excluded: BoardTypeScope | null): boolean {
+  if (!excluded) return true
+  if (post.rootStreamType === undefined) return true
+  return !excluded.ids.has(post.rootStreamType)
+}
+
+/** Does the post sit on a stream (anchor or effective root) the label scope covers? */
+function onLabeledStream(post: CachedBoardPost, scope: BoardLabelScope): boolean {
+  return (
+    scope.streamIds.has(post.conversation.streamId) ||
+    scope.streamIds.has(post.rootStreamId ?? post.conversation.streamId)
+  )
+}
+
+function matchesLabelScope(post: CachedBoardPost, labels: BoardLabelScope | null): boolean {
+  if (!labels) return true
+  return onLabeledStream(post, labels)
+}
+
+function matchesExcludedLabels(post: CachedBoardPost, labels: BoardLabelScope | null): boolean {
+  if (!labels) return true
+  return !onLabeledStream(post, labels)
 }
 
 function postId(post: CachedBoardPost): string {
@@ -223,7 +283,7 @@ export function useStableBoardView(
   filter: BoardViewFilter,
   exclusions: BoardExclusionState = NO_EXCLUSIONS
 ): StableBoardView {
-  const { lens, scope, types } = filter
+  const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels } = filter
   const { hidden, muted, muteActive } = exclusions
   const rawLive = useBoardPosts(workspaceId)
 
@@ -253,9 +313,13 @@ export function useStableBoardView(
               matchesBoardLens(post, lens, Date.now()) &&
               matchesScope(post, scope) &&
               matchesTypeScope(post, types) &&
+              matchesExcludedStreams(post, excludeStreams) &&
+              matchesExcludedTypes(post, excludeTypes) &&
+              matchesLabelScope(post, labels) &&
+              matchesExcludedLabels(post, excludeLabels) &&
               !isExcluded(post)
           ),
-    [rawLive, lens, scope, types, isExcluded]
+    [rawLive, lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, isExcluded]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
@@ -298,7 +362,9 @@ export function useStableBoardView(
   // pill), never re-taking its wholesale-commit branch. Folding the reset into the
   // reconcile INPUT (`committedInput`/`bufferedInput`) makes the new lens start
   // from EMPTY_VIEW and commit its own feed wholesale.
-  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}`
+  // Label keys are the SELECTED ids, not the resolved streams — a live
+  // re-resolution (an assignment changing) must not reset the frozen view.
+  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}`
   const viewKeyRef = useRef(viewKey)
   let committedInput = committed
   let bufferedInput = buffered

@@ -8,6 +8,7 @@ import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
   MAX_BOARD_SCOPE_STREAMS,
+  MAX_BOARD_SCOPE_LABELS,
   MAX_BOARD_VIEW_NAME_LENGTH,
 } from "@threa/types"
 
@@ -15,12 +16,17 @@ const boardViewParamsSchema = z.object({ boardViewId: z.string().min(1) })
 
 const scopeStreamIdsSchema = z.array(z.string().min(1)).max(MAX_BOARD_SCOPE_STREAMS)
 const scopeStreamTypesSchema = z.array(z.enum(BOARD_SCOPE_STREAM_TYPES))
+const scopeLabelIdsSchema = z.array(z.string().min(1)).max(MAX_BOARD_SCOPE_LABELS)
 
 const createBoardViewSchema = z.object({
   name: z.string().trim().min(1).max(MAX_BOARD_VIEW_NAME_LENGTH),
   baseLens: z.enum(BOARD_LENSES),
   scopeStreamIds: scopeStreamIdsSchema.optional().default([]),
   scopeStreamTypes: scopeStreamTypesSchema.optional().default([]),
+  scopeLabelIds: scopeLabelIdsSchema.optional().default([]),
+  excludeStreamIds: scopeStreamIdsSchema.optional().default([]),
+  excludeStreamTypes: scopeStreamTypesSchema.optional().default([]),
+  excludeLabelIds: scopeLabelIdsSchema.optional().default([]),
 })
 
 const updateBoardViewSchema = z
@@ -29,6 +35,10 @@ const updateBoardViewSchema = z
     baseLens: z.enum(BOARD_LENSES).optional(),
     scopeStreamIds: scopeStreamIdsSchema.optional(),
     scopeStreamTypes: scopeStreamTypesSchema.optional(),
+    scopeLabelIds: scopeLabelIdsSchema.optional(),
+    excludeStreamIds: scopeStreamIdsSchema.optional(),
+    excludeStreamTypes: scopeStreamTypesSchema.optional(),
+    excludeLabelIds: scopeLabelIdsSchema.optional(),
     sortOrder: z.number().int().optional(),
   })
   .refine((body) => Object.values(body).some((v) => v !== undefined), { message: "Provide at least one field" })

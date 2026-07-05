@@ -19,9 +19,14 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { useBoardViews, useSaveBoardView, useUpdateBoardView, useDeleteBoardView } from "@/hooks/use-board-views"
-
-const BOARD_SCOPE_PARAM = "in"
-const BOARD_TYPE_PARAM = "is"
+import {
+  BOARD_SCOPE_PARAM,
+  BOARD_TYPE_PARAM,
+  BOARD_LABEL_PARAM,
+  BOARD_EXCLUDE_SCOPE_PARAM,
+  BOARD_EXCLUDE_TYPE_PARAM,
+  BOARD_EXCLUDE_LABEL_PARAM,
+} from "@/components/board/board-filter-params"
 
 /** Expand a saved view into the canonical board URL it bookmarks (INV-59). */
 export function savedViewHref(workspaceId: string, view: BoardView): string {
@@ -30,18 +35,31 @@ export function savedViewHref(workspaceId: string, view: BoardView): string {
   const params = new URLSearchParams()
   if (view.scopeStreamIds.length > 0) params.set(BOARD_SCOPE_PARAM, view.scopeStreamIds.join(","))
   if (view.scopeStreamTypes.length > 0) params.set(BOARD_TYPE_PARAM, view.scopeStreamTypes.join(","))
+  if (view.scopeLabelIds.length > 0) params.set(BOARD_LABEL_PARAM, view.scopeLabelIds.join(","))
+  if (view.excludeStreamIds.length > 0) params.set(BOARD_EXCLUDE_SCOPE_PARAM, view.excludeStreamIds.join(","))
+  if (view.excludeStreamTypes.length > 0) params.set(BOARD_EXCLUDE_TYPE_PARAM, view.excludeStreamTypes.join(","))
+  if (view.excludeLabelIds.length > 0) params.set(BOARD_EXCLUDE_LABEL_PARAM, view.excludeLabelIds.join(","))
   const qs = params.toString()
   return qs ? `${base}?${qs}` : base
+}
+
+/** Count phrase: `3 streams`, `1 label`. */
+function countOf(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`
 }
 
 /** A one-line summary of what a view filters to, under its name. */
 function summarize(view: BoardView): string {
   const parts: string[] = []
   if (view.baseLens !== DEFAULT_BOARD_LENS) parts.push(view.baseLens.replace("-", " "))
-  if (view.scopeStreamIds.length > 0) {
-    parts.push(`${view.scopeStreamIds.length} stream${view.scopeStreamIds.length === 1 ? "" : "s"}`)
-  }
+  if (view.scopeStreamIds.length > 0) parts.push(countOf(view.scopeStreamIds.length, "stream"))
   if (view.scopeStreamTypes.length > 0) parts.push(view.scopeStreamTypes.join(", "))
+  if (view.scopeLabelIds.length > 0) parts.push(countOf(view.scopeLabelIds.length, "label"))
+  const vetoes: string[] = []
+  if (view.excludeStreamIds.length > 0) vetoes.push(countOf(view.excludeStreamIds.length, "stream"))
+  if (view.excludeStreamTypes.length > 0) vetoes.push(view.excludeStreamTypes.join(", "))
+  if (view.excludeLabelIds.length > 0) vetoes.push(countOf(view.excludeLabelIds.length, "label"))
+  if (vetoes.length > 0) parts.push(`not ${vetoes.join(", ")}`)
   return parts.join(" · ") || "Everything"
 }
 
@@ -51,6 +69,10 @@ interface BoardSavedViewsProps {
   lens: BoardLens
   scopeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
+  scopeLabelIds: string[]
+  excludeStreamIds: string[]
+  excludeStreamTypes: BoardScopeStreamType[]
+  excludeLabelIds: string[]
   /** Close the enclosing lens menu after navigating to a saved view. */
   onNavigate: () => void
 }
@@ -58,15 +80,19 @@ interface BoardSavedViewsProps {
 /**
  * The "Saved views" section of the lens picker (board-view-design.md § "Lenses" —
  * "save our own lenses"). Each saved view is a `<Link>` that expands into the
- * canonical `/board/:lens?in=…&is=…` URL (INV-40/INV-59). "Save current view"
- * captures the board's live lens + scopes; rename/delete edit an existing one.
- * Success is silent — the list reflects it (INV-63).
+ * canonical board URL (INV-40/INV-59). "Save current view" captures the board's
+ * live lens + every include/exclude filter axis; rename/delete edit an existing
+ * one. Success is silent — the list reflects it (INV-63).
  */
 export function BoardSavedViews({
   workspaceId,
   lens,
   scopeStreamIds,
   scopeStreamTypes,
+  scopeLabelIds,
+  excludeStreamIds,
+  excludeStreamTypes,
+  excludeLabelIds,
   onNavigate,
 }: BoardSavedViewsProps) {
   const { data: views } = useBoardViews(workspaceId)
@@ -79,11 +105,28 @@ export function BoardSavedViews({
 
   // Only offer "save current view" when there's actually a filter to bookmark —
   // the plain All home is nothing worth saving.
-  const isFiltered = lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0 || scopeStreamTypes.length > 0
+  const isFiltered =
+    lens !== DEFAULT_BOARD_LENS ||
+    scopeStreamIds.length > 0 ||
+    scopeStreamTypes.length > 0 ||
+    scopeLabelIds.length > 0 ||
+    excludeStreamIds.length > 0 ||
+    excludeStreamTypes.length > 0 ||
+    excludeLabelIds.length > 0
 
   const submit = (name: string) => {
     if (editing?.id) update.mutate({ id: editing.id, input: { name } })
-    else save.mutate({ name, baseLens: lens, scopeStreamIds, scopeStreamTypes })
+    else
+      save.mutate({
+        name,
+        baseLens: lens,
+        scopeStreamIds,
+        scopeStreamTypes,
+        scopeLabelIds,
+        excludeStreamIds,
+        excludeStreamTypes,
+        excludeLabelIds,
+      })
     setEditing(null)
   }
 

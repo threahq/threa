@@ -8,10 +8,15 @@ interface BoardViewRow {
   base_lens: string
   scope_stream_ids: string[]
   scope_stream_types: string[]
+  scope_label_ids: string[]
+  exclude_stream_ids: string[]
+  exclude_stream_types: string[]
+  exclude_label_ids: string[]
   sort_order: number
 }
 
-const SELECT = "id, name, base_lens, scope_stream_ids, scope_stream_types, sort_order"
+const SELECT =
+  "id, name, base_lens, scope_stream_ids, scope_stream_types, scope_label_ids, exclude_stream_ids, exclude_stream_types, exclude_label_ids, sort_order"
 
 function mapRow(row: BoardViewRow): BoardView {
   return {
@@ -20,6 +25,10 @@ function mapRow(row: BoardViewRow): BoardView {
     baseLens: row.base_lens as BoardLens,
     scopeStreamIds: row.scope_stream_ids,
     scopeStreamTypes: row.scope_stream_types as BoardScopeStreamType[],
+    scopeLabelIds: row.scope_label_ids,
+    excludeStreamIds: row.exclude_stream_ids,
+    excludeStreamTypes: row.exclude_stream_types as BoardScopeStreamType[],
+    excludeLabelIds: row.exclude_label_ids,
     sortOrder: row.sort_order,
   }
 }
@@ -31,6 +40,10 @@ export interface CreateBoardViewParams {
   baseLens: BoardLens
   scopeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
+  scopeLabelIds: string[]
+  excludeStreamIds: string[]
+  excludeStreamTypes: BoardScopeStreamType[]
+  excludeLabelIds: string[]
 }
 
 export interface UpdateBoardViewParams {
@@ -38,6 +51,10 @@ export interface UpdateBoardViewParams {
   baseLens?: BoardLens
   scopeStreamIds?: string[]
   scopeStreamTypes?: BoardScopeStreamType[]
+  scopeLabelIds?: string[]
+  excludeStreamIds?: string[]
+  excludeStreamTypes?: BoardScopeStreamType[]
+  excludeLabelIds?: string[]
   sortOrder?: number
 }
 
@@ -61,10 +78,13 @@ export const BoardViewRepository = {
     // concurrent saves from a user's devices don't collide (INV-20).
     const result = await db.query<BoardViewRow>(sql`
       INSERT INTO board_views
-        (id, workspace_id, user_id, name, base_lens, scope_stream_ids, scope_stream_types, sort_order)
+        (id, workspace_id, user_id, name, base_lens, scope_stream_ids, scope_stream_types,
+         scope_label_ids, exclude_stream_ids, exclude_stream_types, exclude_label_ids, sort_order)
       VALUES (
         ${boardViewId()}, ${params.workspaceId}, ${params.userId}, ${params.name}, ${params.baseLens},
         ${params.scopeStreamIds}::text[], ${params.scopeStreamTypes}::text[],
+        ${params.scopeLabelIds}::text[], ${params.excludeStreamIds}::text[],
+        ${params.excludeStreamTypes}::text[], ${params.excludeLabelIds}::text[],
         COALESCE(
           (SELECT MAX(sort_order) + 1 FROM board_views WHERE workspace_id = ${params.workspaceId} AND user_id = ${params.userId}),
           0
@@ -94,6 +114,10 @@ export const BoardViewRepository = {
         base_lens = COALESCE(${params.baseLens ?? null}, base_lens),
         scope_stream_ids = COALESCE(${params.scopeStreamIds ?? null}::text[], scope_stream_ids),
         scope_stream_types = COALESCE(${params.scopeStreamTypes ?? null}::text[], scope_stream_types),
+        scope_label_ids = COALESCE(${params.scopeLabelIds ?? null}::text[], scope_label_ids),
+        exclude_stream_ids = COALESCE(${params.excludeStreamIds ?? null}::text[], exclude_stream_ids),
+        exclude_stream_types = COALESCE(${params.excludeStreamTypes ?? null}::text[], exclude_stream_types),
+        exclude_label_ids = COALESCE(${params.excludeLabelIds ?? null}::text[], exclude_label_ids),
         sort_order = COALESCE(${params.sortOrder ?? null}, sort_order),
         updated_at = NOW()
       WHERE id = ${id} AND workspace_id = ${workspaceId} AND user_id = ${userId}
