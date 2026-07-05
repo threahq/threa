@@ -835,6 +835,22 @@ export interface CachedBoardPost extends BoardPost {
   _status?: "pending"
 }
 
+/** A conversation the viewer hid from the board (board-view-design.md § "Hide & mute").
+ *  `id` is the conversation id; `hiddenAt` (ms) is the snooze watermark. */
+export interface CachedBoardHiddenConversation {
+  id: string
+  workspaceId: string
+  hiddenAt: number
+  _cachedAt: number
+}
+
+/** A stream the viewer muted from the board. `id` is the root stream id. */
+export interface CachedBoardMutedStream {
+  id: string
+  workspaceId: string
+  _cachedAt: number
+}
+
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
   workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
@@ -863,6 +879,8 @@ export class ThreaDatabase extends Dexie {
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
   sidebarConfigs!: EntityTable<CachedSidebarConfig, "id">
   conversations!: EntityTable<CachedBoardPost, "id">
+  boardHiddenConversations!: EntityTable<CachedBoardHiddenConversation, "id">
+  boardMutedStreams!: EntityTable<CachedBoardMutedStream, "id">
 
   constructor(name: string) {
     super(name)
@@ -1258,6 +1276,15 @@ export class ThreaDatabase extends Dexie {
     // (`streamMemberships.lastReadSequence`) are unindexed value fields on
     // existing rows, so the bump only guards the added shape — no schema delta.
     this.version(37).stores({})
+
+    // v38: per-viewer board exclusions (board-view-design.md § "Hide & mute").
+    // Keyed by the excluded id (conversationId / root streamId) so a reactive
+    // read is a single get; `[workspaceId+hiddenAt]` lets the snooze-revival
+    // check scan a viewer's hidden set without loading rows one by one.
+    this.version(38).stores({
+      boardHiddenConversations: "id, workspaceId, [workspaceId+hiddenAt]",
+      boardMutedStreams: "id, workspaceId",
+    })
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }

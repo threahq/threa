@@ -38,6 +38,16 @@ describe("Conversation Handlers", () => {
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
   const mockGetBoardPostById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockUpdateConversation = mock(() => Promise.resolve({ conversation: {} as Record<string, unknown> }))
+  const mockHideConversation = mock(() => Promise.resolve({ hiddenAt: "2026-07-05T00:00:00.000Z" }))
+  const mockUnhideConversation = mock(() => Promise.resolve())
+  const mockMuteStream = mock(() => Promise.resolve())
+  const mockUnmuteStream = mock(() => Promise.resolve())
+  const mockGetExclusions = mock(() =>
+    Promise.resolve({
+      hiddenConversations: [] as { conversationId: string; hiddenAt: string }[],
+      mutedStreamIds: [] as string[],
+    })
+  )
   const mockGetFlag = mock(() => Promise.resolve("on" as string))
 
   const handlers = createConversationHandlers({
@@ -48,6 +58,13 @@ describe("Conversation Handlers", () => {
       getMessages: mockGetMessages,
       getBoardPostById: mockGetBoardPostById,
       updateConversation: mockUpdateConversation,
+    } as never,
+    boardExclusionService: {
+      hideConversation: mockHideConversation,
+      unhideConversation: mockUnhideConversation,
+      muteStream: mockMuteStream,
+      unmuteStream: mockUnmuteStream,
+      getExclusions: mockGetExclusions,
     } as never,
     streamService: {
       validateStreamAccess: mockValidateStreamAccess,
@@ -65,10 +82,17 @@ describe("Conversation Handlers", () => {
     mockGetMessages.mockReset()
     mockGetBoardPostById.mockReset()
     mockUpdateConversation.mockReset()
+    mockHideConversation.mockReset()
+    mockUnhideConversation.mockReset()
+    mockMuteStream.mockReset()
+    mockUnmuteStream.mockReset()
+    mockGetExclusions.mockReset()
     mockGetFlag.mockReset()
     mockUpdateConversation.mockResolvedValue({
       conversation: { id: "conv_1", topicSummary: "Renamed", status: "active" },
     })
+    mockHideConversation.mockResolvedValue({ hiddenAt: "2026-07-05T00:00:00.000Z" })
+    mockGetExclusions.mockResolvedValue({ hiddenConversations: [], mutedStreamIds: [] })
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
@@ -349,6 +373,49 @@ describe("Conversation Handlers", () => {
         "Stream not found"
       )
       expect(mockUpdateConversation).not.toHaveBeenCalled()
+    })
+  })
+
+  describe("board exclusions", () => {
+    test("hideConversation gates on the board flag, checks access, then delegates", async () => {
+      const res = mockRes()
+      await handlers.hideConversation(mockReq({ params: { conversationId: "conv_1" } }), res)
+      expect(mockGetFlag).toHaveBeenCalledWith("ws_1", "usr_1", "board-view")
+      expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+      expect(mockHideConversation).toHaveBeenCalledWith({
+        workspaceId: "ws_1",
+        conversationId: "conv_1",
+        userId: "usr_1",
+      })
+      expect((res as unknown as { body: unknown }).body).toEqual({ hiddenAt: "2026-07-05T00:00:00.000Z" })
+    })
+
+    test("hideConversation 404s without the board-view flag before writing", async () => {
+      mockGetFlag.mockResolvedValue("off")
+      await expect(
+        handlers.hideConversation(mockReq({ params: { conversationId: "conv_1" } }), mockRes())
+      ).rejects.toMatchObject({ status: 404 })
+      expect(mockHideConversation).not.toHaveBeenCalled()
+    })
+
+    test("muteStream validates the target stream then delegates", async () => {
+      const res = mockRes()
+      await handlers.muteStream(mockReq({ params: { streamId: "stream_9" } }), res)
+      expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_9", "ws_1", "usr_1")
+      expect(mockMuteStream).toHaveBeenCalledWith({ workspaceId: "ws_1", streamId: "stream_9", userId: "usr_1" })
+    })
+
+    test("getBoardExclusions returns the viewer's hidden + muted sets", async () => {
+      mockGetExclusions.mockResolvedValue({
+        hiddenConversations: [{ conversationId: "conv_1", hiddenAt: "2026-07-05T00:00:00.000Z" }],
+        mutedStreamIds: ["stream_9"],
+      })
+      const res = mockRes()
+      await handlers.getBoardExclusions(mockReq({ query: {} }), res)
+      expect((res as unknown as { body: unknown }).body).toEqual({
+        hiddenConversations: [{ conversationId: "conv_1", hiddenAt: "2026-07-05T00:00:00.000Z" }],
+        mutedStreamIds: ["stream_9"],
+      })
     })
   })
 })

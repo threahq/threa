@@ -5,6 +5,10 @@ export { conversationAssigner } from "./conversation-assigner"
 export { ConversationService } from "./service"
 export type { ConversationWithStaleness, ListConversationsOptions } from "./service"
 
+export { BoardExclusionService } from "./board-exclusion-service"
+export type { BoardExclusions } from "./board-exclusion-service"
+export { BoardExclusionRepository } from "./board-exclusion-repository"
+
 export { BoundaryExtractionService } from "./boundary-extraction-service"
 
 export { LLMBoundaryExtractor } from "./boundary-extraction/llm-extractor"

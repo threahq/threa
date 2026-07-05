@@ -73,6 +73,11 @@ export interface ConversationService {
   markUnread: typeof conversationsApi.markUnread
   reassignMessage: typeof conversationsApi.reassignMessage
   updateConversation: typeof conversationsApi.updateConversation
+  hideConversation: typeof conversationsApi.hideConversation
+  unhideConversation: typeof conversationsApi.unhideConversation
+  muteStream: typeof conversationsApi.muteStream
+  unmuteStream: typeof conversationsApi.unmuteStream
+  getBoardExclusions: typeof conversationsApi.getBoardExclusions
 }
 
 export interface ActivityService {

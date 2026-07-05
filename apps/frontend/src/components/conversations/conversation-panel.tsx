@@ -28,6 +28,7 @@ import { MessageItem, type RenderableMessage } from "@/components/message/messag
 import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
+import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
 import { cn } from "@/lib/utils"
 import { ConversationReadProvider, useConversationReadController } from "@/components/message/conversation-read-context"
 import { useConversationAutoRead } from "@/components/message/use-conversation-auto-read"
@@ -73,6 +74,9 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
   const { panelId } = usePanel()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
   const { post, isLoading, notFound, refetch } = useConversationBoardPost(workspaceId, conversationId)
+  // Hidden set — the panel is reachable for a hidden conversation (deep-link,
+  // search, Saved), so it offers "Unhide" when the open one is hidden.
+  const hiddenConversations = useBoardHiddenConversations(workspaceId)
 
   // "Reply in conversation" opened this panel with the intent to reply, not just
   // read — pick up its one-shot signal (queued before this panel mounted, or
@@ -234,6 +238,7 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
             conversationId={post.conversation.id}
             topicSummary={post.conversation.topicSummary}
             status={post.conversation.status}
+            isHidden={hiddenConversations.has(post.conversation.id)}
             triggerClassName="shrink-0"
           />
         )}
