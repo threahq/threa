@@ -112,7 +112,7 @@ describe("mapTranscriptLine redaction (headline mode)", () => {
     expect(JSON.stringify(steps)).not.toContain("secret traceback")
   })
 
-  test("thinking and narration ship size only, never the body", () => {
+  test("thinking ships size only; narration ships its body (pi parity)", () => {
     const steps = mapTranscriptLine(
       assistantLine([
         { type: "thinking", thinking: "the user's token is sk-hidden, better not repeat it", signature: "x" },
@@ -123,9 +123,22 @@ describe("mapTranscriptLine redaction (headline mode)", () => {
     expect(steps).toHaveLength(2)
     const serialized = JSON.stringify(steps)
     expect(serialized).toContain("Thinking content omitted for safety. Captured locally: 51 characters.")
-    expect(serialized).toContain("Assistant narration omitted for safety.")
     expect(serialized).not.toContain("sk-hidden")
-    expect(serialized).not.toContain("check the config")
+    // Narration is stream-facing prose: the body ships even in headline mode,
+    // so a turn that ends without `reply` still reads in the trace.
+    expect(serialized).toContain("Now I'll check the config.")
+    expect(serialized).not.toContain("Assistant narration omitted")
+  })
+
+  test("narration scrubs THREA_ATTACH local paths", () => {
+    const steps = mapTranscriptLine(
+      assistantLine([{ type: "text", text: "Report attached.\nTHREA_ATTACH: /Users/k/private/report.md" }]),
+      ctx()
+    )
+    expect(steps).toHaveLength(1)
+    expect(steps[0]!.content).toContain("Report attached.")
+    expect(steps[0]!.content).toContain("THREA_ATTACH: [local path omitted]")
+    expect(steps[0]!.content).not.toContain("/Users/k/private")
   })
 
   test("the channel's own send/reply tools and their results are skipped entirely", () => {
