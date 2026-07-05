@@ -1,6 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
 import { Bot as BotIcon } from "lucide-react"
-import type { Bot } from "@threa/types"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,9 +11,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { cn } from "@/lib/utils"
-import { botsApi } from "@/api/bots"
 import { useInviteActor } from "@/hooks/use-invite-actor"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useWorkspaceBots, type CachedBot } from "@/stores/workspace-store"
 import { StreamTypes } from "@threa/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
@@ -54,12 +52,12 @@ interface InviteBotButtonProps {
 export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
   const { invite, isInviting } = useInviteActor(workspaceId, stream.id)
   const eligible = stream.type === StreamTypes.SCRATCHPAD && !stream.isDraft && stream.e2eEnabled === true
-  const { data: bots } = useQuery({
-    queryKey: ["bots", workspaceId],
-    queryFn: () => botsApi.list(workspaceId),
-    enabled: eligible,
-    staleTime: 60_000,
-  })
+  // Bootstrap-synced visibility: shared bots plus the viewer's OWN personal
+  // bots (`listVisibleTo` server-side). The `GET /bots` endpoint this used to
+  // query is deliberately shared-only (it feeds the settings tab's shared
+  // section), which silently hid personal harness bots — the primary thing an
+  // owner invites — from this picker.
+  const bots = useWorkspaceBots(workspaceId)
 
   if (!eligible) return null
 
@@ -67,8 +65,8 @@ export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
   const wrappedById = new Map(
     (stream.e2eActors ?? []).filter((a) => a.kind === "bot").map((a) => [a.actorId, Boolean(a.keyId)])
   )
-  const invited = (bots ?? []).filter((bot) => wrappedById.has(bot.id))
-  const candidates = (bots ?? []).filter((bot) => !bot.archivedAt && !wrappedById.has(bot.id))
+  const invited = bots.filter((bot) => wrappedById.has(bot.id))
+  const candidates = bots.filter((bot) => !bot.archivedAt && !wrappedById.has(bot.id))
   const visibleInvited = invited.slice(0, VISIBLE_CAP)
   const overflowInvited = invited.slice(VISIBLE_CAP)
   const canRead = (botId: string) => wrappedById.get(botId) === true
@@ -140,7 +138,7 @@ export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
  * touch and a `HoverCard` on mouse — the same input-mode branch `LabelStack`
  * uses — with a focusable `<button>` trigger for keyboard access.
  */
-function InvitedBotsOverflow({ bots, canRead }: { bots: Bot[]; canRead: (botId: string) => boolean }) {
+function InvitedBotsOverflow({ bots, canRead }: { bots: CachedBot[]; canRead: (botId: string) => boolean }) {
   const isTouch = useInputMode() === "touch"
   const names = bots.map((b) => b.name).join(", ")
   const trigger = (
