@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { BookMarked, Check, ChevronDown, CircleDashed, Hash, LayoutGrid, X, Zap } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
@@ -46,6 +46,20 @@ export const BOARD_LENS_DEFS: Record<BoardLens, BoardLensDef> = {
 /** The query param carrying the board's stream scope (`?in=<id>,<id>`). */
 export const BOARD_SCOPE_PARAM = "in"
 
+/**
+ * The search string for a link back to the unfiltered board home: the current
+ * query minus the scope param. Every "clear the filters" affordance (the bar's
+ * Clear filters, the empty state's Show everything, the post-from-filtered-view
+ * navigation) must route through this so clearing filters never has the side
+ * effect of dropping unrelated URL state — an open `?panel=` must survive.
+ */
+export function boardHomeSearch(search: string): string {
+  const params = new URLSearchParams(search)
+  params.delete(BOARD_SCOPE_PARAM)
+  const query = params.toString()
+  return query ? `?${query}` : ""
+}
+
 /** Stream types offered in the scope picker: the board's root-stream grains. */
 const SCOPE_STREAM_TYPES = new Set<string>([
   StreamTypes.CHANNEL,
@@ -91,14 +105,7 @@ export function BoardFilterBar({ workspaceId, lens, scopeStreamIds, onScopeChang
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
 
   const isFiltered = lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0
-  // Clearing filters drops the lens segment and the scope param but keeps the
-  // rest of the query string (an open `?panel=` must survive).
-  const clearedSearch = useMemo(() => {
-    const params = new URLSearchParams(location.search)
-    params.delete(BOARD_SCOPE_PARAM)
-    const query = params.toString()
-    return query ? `?${query}` : ""
-  }, [location.search])
+  const clearedSearch = useMemo(() => boardHomeSearch(location.search), [location.search])
 
   const labelFor = (streamId: string) =>
     resolveStreamName(streamId, { streams, users, dmPeers }, "generic") ?? "Unknown stream"
@@ -143,13 +150,55 @@ export function BoardFilterBar({ workspaceId, lens, scopeStreamIds, onScopeChang
 }
 
 /**
+ * Shared container for the bar's pickers: popover for mouse input, bottom
+ * drawer when a finger is active (the `SearchFilterMenu` split). One shell so
+ * the two pickers can't drift as sizing/a11y evolves.
+ */
+function FilterMenuShell({
+  title,
+  open,
+  onOpenChange,
+  trigger,
+  children,
+}: {
+  /** Screen-reader drawer title (visually hidden). */
+  title: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  trigger: ReactNode
+  children: ReactNode
+}) {
+  const isTouch = useInputMode() === "touch"
+
+  if (isTouch) {
+    return (
+      <Drawer open={open} onOpenChange={onOpenChange}>
+        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
+        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">
+          <DrawerTitle className="sr-only">{title}</DrawerTitle>
+          {children}
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange} modal={false}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <PopoverContent className="w-72 p-0" align="start">
+        {children}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
  * Lens picker. Each option is a link (lens changes are navigation, INV-40) with
  * a one-line description, so the menu doubles as the explanation of what each
  * lens means. The trigger reflects the active lens and fills in once a
  * non-default lens narrows the board.
  */
 function BoardLensMenu({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
-  const isTouch = useInputMode() === "touch"
   const [open, setOpen] = useState(false)
   const { search } = useLocation()
   const current = BOARD_LENS_DEFS[lens]
@@ -197,25 +246,10 @@ function BoardLensMenu({ workspaceId, lens }: { workspaceId: string; lens: Board
     </Button>
   )
 
-  if (isTouch) {
-    return (
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
-        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">
-          <DrawerTitle className="sr-only">Board lens</DrawerTitle>
-          {content}
-        </DrawerContent>
-      </Drawer>
-    )
-  }
-
   return (
-    <Popover open={open} onOpenChange={setOpen} modal={false}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent className="w-72 p-0" align="start">
-        {content}
-      </PopoverContent>
-    </Popover>
+    <FilterMenuShell title="Board lens" open={open} onOpenChange={setOpen} trigger={trigger}>
+      {content}
+    </FilterMenuShell>
   )
 }
 
@@ -290,6 +324,7 @@ function BoardScopePicker({
                 key={stream.id}
                 type="button"
                 onClick={() => toggle(stream.id)}
+                aria-pressed={checked}
                 disabled={!checked && atCap}
                 className="mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-item px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted disabled:opacity-50"
               >
@@ -329,24 +364,9 @@ function BoardScopePicker({
     </Button>
   )
 
-  if (isTouch) {
-    return (
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerTrigger asChild>{trigger}</DrawerTrigger>
-        <DrawerContent className="pb-[env(safe-area-inset-bottom)]">
-          <DrawerTitle className="sr-only">Scope the board to streams</DrawerTitle>
-          {content}
-        </DrawerContent>
-      </Drawer>
-    )
-  }
-
   return (
-    <Popover open={open} onOpenChange={setOpen} modal={false}>
-      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-      <PopoverContent className="w-72 p-0" align="start">
-        {content}
-      </PopoverContent>
-    </Popover>
+    <FilterMenuShell title="Scope the board to streams" open={open} onOpenChange={setOpen} trigger={trigger}>
+      {content}
+    </FilterMenuShell>
   )
 }

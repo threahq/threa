@@ -19,7 +19,7 @@ import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-
 import { useWorkspaceConversations } from "@/hooks/use-conversations"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
-import { BoardFilterBar, BOARD_SCOPE_PARAM } from "@/components/board/board-filter-bar"
+import { BoardFilterBar, BOARD_SCOPE_PARAM, boardHomeSearch } from "@/components/board/board-filter-bar"
 import { cn } from "@/lib/utils"
 import {
   BOARD_LENSES,
@@ -120,7 +120,7 @@ export function BoardPage() {
     return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }
   if (lensParam !== undefined && !VALID_LENSES.has(lensParam)) {
-    return <Navigate to={`/w/${workspaceId}/board`} replace />
+    return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }
   const lens: BoardLens = (lensParam as BoardLens | undefined) ?? DEFAULT_BOARD_LENS
   return <BoardPageGate workspaceId={workspaceId} lens={lens} />
@@ -239,13 +239,16 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   }
 
   const navigate = useNavigate()
+  // Every route back to the unfiltered home keeps the non-filter query state
+  // (an open `?panel=` must survive clearing filters).
+  const boardHome = { pathname: `/w/${workspaceId}/board`, search: boardHomeSearch(searchParams.toString()) }
   const handlePosted = () => {
     // The viewer's own post must ALWAYS surface — but a filtered view might not
     // match it (a fresh post is no Decision). Posting from a filtered board
     // returns to the All home first; the reveal arm survives the view reset, so
     // the authored card shows up top instead of hiding behind a filter.
     if (lens !== DEFAULT_BOARD_LENS || scopeStreamIds.length > 0) {
-      navigate(`/w/${workspaceId}/board`)
+      navigate(boardHome)
     }
     revealNext()
   }
@@ -352,7 +355,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         <p className="text-sm font-medium">{copy.title}</p>
         <p className="max-w-sm text-sm text-muted-foreground">{copy.body}</p>
         {isFiltered && (
-          <Link to={`/w/${workspaceId}/board`} className={cn(buttonVariants({ variant: "outline" }), "mt-1 min-h-11")}>
+          <Link to={boardHome} className={cn(buttonVariants({ variant: "outline" }), "mt-1 min-h-11")}>
             Show everything
           </Link>
         )}
