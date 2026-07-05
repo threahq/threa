@@ -10,11 +10,11 @@ import { sweepStaleStreamNotifications } from "@/lib/notification-sweep"
  * lib/notification-sweep.ts for why no push-based clear exists).
  *
  * Safe against stale data by construction: the bootstrap query cache is
- * in-memory and only ever filled by a network fetch this page load (IDB
- * hydration goes to Dexie, not this query), so `data` here always reflects the
- * server's current unread state. Reconnect invalidation (INV-53) refetches and
- * re-runs the sweep, and socket read-state updates rewrite the cached bootstrap,
- * so a stream read elsewhere while this app is open sweeps promptly too.
+ * in-memory (IDB hydration goes to Dexie, not this query) — seeded by this
+ * page load's network fetch, then patched by socket writes and by reconnect
+ * catch-up, which flushes atomically behind the sync engine's event gate. The
+ * keep-set can briefly lag the server but never reflects a previous session,
+ * and a stream read elsewhere sweeps promptly via the same cache writes.
  */
 export function useNotificationSweep(workspaceId: string): void {
   const queryClient = useQueryClient()
