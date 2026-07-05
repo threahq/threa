@@ -1,8 +1,16 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { db, type CachedEvent } from "@/db"
+import { createDraftPanelId } from "@/contexts/panel-context"
 import type { BoardViewPost } from "./use-stable-board-view"
-import { useBoardCardMessages, __clearBoardRailRegistry } from "./use-board-card-messages"
+import {
+  useBoardCardMessages,
+  useStableReplyWindow,
+  __clearBoardRailRegistry,
+  __boardRailRegistrySize,
+  type BoardCardMessages,
+} from "./use-board-card-messages"
+import type { RenderableMessage } from "@/components/message/message-item"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -418,5 +426,391 @@ describe("useBoardCardMessages", () => {
 
     await waitFor(() => expect(result.current.source).toBe("events"))
     expect(result.current.replies.map((m) => m.id)).toEqual(["r2"])
+  })
+})
+
+// Frame-recording stability suite: every committed render is captured, so a
+// transient regression (a projection flash, a reply blinking out for one frame)
+// fails the test even though a final `waitFor` would have settled past it.
+describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
+  function renderRecorded(initial: BoardViewPost, hostStreamType?: string) {
+    const frames: BoardCardMessages[] = []
+    const rendered = renderHook(
+      (p: BoardViewPost) => {
+        const view = useBoardCardMessages(p, hostStreamType)
+        frames.push(view)
+        return view
+      },
+      { initialProps: initial }
+    )
+    return { frames, ...rendered }
+  }
+
+  const shownBodies = (v: BoardCardMessages) => [...v.replies, ...v.pendingReplies].map((m) => m.contentMarkdown)
+
+  it("never regresses to the projection when streamIds widen over an already-live thread", async () => {
+    const THREAD = "stream_assign_churn"
+    await db.streams.put({
+      id: THREAD,
+      workspaceId: WS,
+      type: "thread",
+      parentMessageId: "m1",
+      rootStreamId: STREAM,
+      parentStreamId: STREAM,
+    } as never)
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "thread reply", 2, THREAD)])
+    // No recentMessages naming THREAD: the thread must enter via db.streams
+    // discovery (an EXTRA rail) so the widen below genuinely moves it into the
+    // gating set and re-subscribes — a preview row would make it gating from the
+    // first render and the test would never exercise the churn.
+    const before = makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result, rerender } = renderRecorded(before)
+    await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"]))
+    const from = frames.length
+
+    // conversation:message_assigned lands: the thread moves from a discovered
+    // (extra) rail to a server-known (gating) one. The re-subscription must not
+    // tear the live rails down and flash the stale projection bodies.
+    rerender(makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM, THREAD] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"]))
+
+    for (const frame of frames.slice(from)) {
+      expect(frame.source).toBe("events")
+      expect(frame.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"])
+      expect(frame.openingMessage?.contentMarkdown).toBe("the opening")
+    }
+  })
+
+  it("keeps the first reply and the opening visible through every frame of the convert-to-thread hand-off", async () => {
+    const THREAD = "stream_convert_thread"
+    const PANEL = createDraftPanelId(STREAM, "m1")
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const lone = makePost({ messageIds: ["m1"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result, rerender } = renderRecorded(lone, "channel")
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    // 1) The viewer's optimistic convert reply, tagged, under the draft panel.
+    await db.events.put({
+      id: "temp_c",
+      workspaceId: WS,
+      streamId: PANEL,
+      sequence: "1700000000001",
+      _sequenceNum: 1700000000001,
+      eventType: "message_created",
+      payload: { messageId: "temp_c", contentMarkdown: "my convert reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+    await waitFor(() => expect(shownBodies(result.current)).toEqual(["my convert reply"]))
+    const from = frames.length
+
+    // 2) Promotion: the real thread stream exists; the optimistic event moves from
+    //    the draft panel onto it (use-message-queue promoteDraft).
+    await db.streams.put({
+      id: THREAD,
+      workspaceId: WS,
+      type: "thread",
+      parentMessageId: "m1",
+      rootStreamId: STREAM,
+      parentStreamId: STREAM,
+    } as never)
+    const optimistic = await db.events.get("temp_c")
+    await db.events.put({ ...optimistic!, streamId: THREAD })
+    await waitFor(() => expect(shownBodies(result.current)).toEqual(["my convert reply"]))
+
+    // 3) Server echo (stream-sync swap): real event replaces the optimistic one in
+    //    one transaction, tag carried forward.
+    await db.transaction("rw", db.events, async () => {
+      await db.events.put({
+        id: "msg_real_c",
+        workspaceId: WS,
+        streamId: THREAD,
+        sequence: "2",
+        _sequenceNum: 2,
+        eventType: "message_created",
+        payload: {
+          messageId: "msg_real_c",
+          contentMarkdown: "my convert reply",
+          reactions: {},
+          conversationId: "conv_1",
+        },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: new Date(4).toISOString(),
+        _cachedAt: 4,
+      } as CachedEvent)
+      await db.events.delete("temp_c")
+    })
+    await waitFor(() =>
+      expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toEqual(["msg_real_c"])
+    )
+
+    // 4) conversation:updated widens messageIds (drops the draft panel from the
+    //    card's watched set) …
+    rerender(makePost({ messageIds: ["m1", "msg_real_c"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_real_c"]))
+
+    // 5) … then conversation:message_assigned widens streamIds over the thread.
+    rerender(makePost({ messageIds: ["m1", "msg_real_c"], openingId: "m1", streamIds: [STREAM, THREAD] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_real_c"]))
+
+    // The reply body renders in EVERY frame (exactly once — no double-render at
+    // the echo hand-off), and the opening never flashes back to the projection.
+    for (const frame of frames.slice(from)) {
+      expect(frame.source).toBe("events")
+      expect(shownBodies(frame)).toEqual(["my convert reply"])
+      expect(frame.openingMessage?.contentMarkdown).toBe("the opening")
+    }
+  })
+
+  it("shows no phantom '1 more' gap when conversation:updated beats the message echo", async () => {
+    // Live-observed order (dev repro): the server's conversation aggregate lands
+    // BEFORE the echo swaps the optimistic row, so messageIds lists a real id the
+    // rail hasn't seen while the same message is still on screen under its client
+    // id. The card must not count that id as a hidden message above the very
+    // reply it refers to.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const lone = makePost({ messageIds: ["m1"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result, rerender } = renderRecorded(lone, "channel")
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    await db.events.put({
+      id: "temp_p",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "1700000000002",
+      _sequenceNum: 1700000000002,
+      eventType: "message_created",
+      payload: { messageId: "temp_p", contentMarkdown: "my racing reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+    await waitFor(() => expect(shownBodies(result.current)).toEqual(["my racing reply"]))
+    const from = frames.length
+
+    // conversation:updated first: the real id joins messageIds, echo not yet in.
+    rerender(makePost({ messageIds: ["m1", "msg_real_p"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect(shownBodies(result.current)).toEqual(["my racing reply"]))
+
+    // Echo swap second.
+    await db.transaction("rw", db.events, async () => {
+      await db.events.put({
+        id: "msg_real_p",
+        workspaceId: WS,
+        streamId: STREAM,
+        sequence: "2",
+        _sequenceNum: 2,
+        eventType: "message_created",
+        payload: {
+          messageId: "msg_real_p",
+          contentMarkdown: "my racing reply",
+          reactions: {},
+          conversationId: "conv_1",
+        },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: new Date(4).toISOString(),
+        _cachedAt: 4,
+      } as CachedEvent)
+      await db.events.delete("temp_p")
+    })
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_real_p"]))
+
+    // In every frame: the reply renders exactly once, and nothing reads as hidden
+    // (a phantom gap would be totalReplies exceeding the rendered reply rows).
+    for (const frame of frames.slice(from)) {
+      expect(shownBodies(frame)).toEqual(["my racing reply"])
+      expect(Math.max(0, frame.totalReplies - frame.replies.length)).toBe(0)
+    }
+  })
+
+  it("keeps counting unsynced older history while a send is in flight (discount only covers episode arrivals)", async () => {
+    // The conversation has a real reply the device never synced (r_old): the card
+    // honestly shows "1 more". Sending a new reply must NOT discount r_old — only
+    // an id that JOINS messageIds during the pending episode can be the pending
+    // row's server identity.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const before = makePost({ messageIds: ["m1", "r_old"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result, rerender } = renderRecorded(before, "channel")
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.totalReplies).toBe(1)
+    const from = frames.length
+
+    // Viewer sends: optimistic pending row appears (tagged, not in messageIds).
+    await db.events.put({
+      id: "temp_q",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "1700000000003",
+      _sequenceNum: 1700000000003,
+      eventType: "message_created",
+      payload: { messageId: "temp_q", contentMarkdown: "my new reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(5).toISOString(),
+      _cachedAt: 5,
+      _status: "pending",
+    } as CachedEvent)
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_q"]))
+
+    // conversation:updated for the new reply (echo race): its real id joins
+    // messageIds while the rail hasn't seen it.
+    rerender(makePost({ messageIds: ["m1", "r_old", "msg_new_q"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect([...result.current.replies, ...result.current.pendingReplies].length).toBeGreaterThan(0))
+
+    // Echo swap.
+    await db.transaction("rw", db.events, async () => {
+      await db.events.put({
+        id: "msg_new_q",
+        workspaceId: WS,
+        streamId: STREAM,
+        sequence: "2",
+        _sequenceNum: 2,
+        eventType: "message_created",
+        payload: { messageId: "msg_new_q", contentMarkdown: "my new reply", reactions: {}, conversationId: "conv_1" },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: new Date(6).toISOString(),
+        _cachedAt: 6,
+      } as CachedEvent)
+      await db.events.delete("temp_q")
+    })
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_new_q"]))
+
+    // In every frame the unsynced older reply keeps its honest "1 more" slot:
+    // total minus rendered replies is exactly 1 (r_old) — the in-flight send
+    // never zeroes it out, and the new id never double-counts.
+    for (const frame of frames.slice(from)) {
+      expect(Math.max(0, frame.totalReplies - frame.replies.length)).toBe(1)
+    }
+  })
+
+  it("tears a drained rail down once the grace elapses (no subscription leak)", async () => {
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1)])
+    const post = makePost({ messageIds: ["m1"], openingId: "m1" })
+    const { result, unmount } = renderHook(() => useBoardCardMessages(post))
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(__boardRailRegistrySize()).toBeGreaterThan(0)
+
+    // Fake timers only around the unmount so the teardown setTimeout is
+    // controllable; the async rail setup above ran under real timers.
+    vi.useFakeTimers()
+    try {
+      unmount()
+      // The grace holds the rail briefly after the last subscriber leaves…
+      expect(__boardRailRegistrySize()).toBeGreaterThan(0)
+      // …and the deadline actually drains it (the leak half of the contract).
+      vi.advanceTimersByTime(60_000)
+      expect(__boardRailRegistrySize()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("holds the last live view (not the projection) while a brand-new gating rail loads", async () => {
+    const THREAD = "stream_fresh_gating"
+    // The thread's reply is synced, but the thread is NOT discoverable from
+    // db.streams (no stream row yet) — the card learns of it only when streamIds
+    // widen, so the widened set brings in a never-before-subscribed gating rail.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM), msgEvent("r1", "thread reply", 2, THREAD)])
+    // No recentMessages naming THREAD (that would gate it from the first render
+    // and defeat the widen): the card knows nothing of the thread until the
+    // rerender introduces it as a brand-new, never-subscribed gating rail.
+    const before = makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result, rerender } = renderRecorded(before)
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    const from = frames.length
+
+    rerender(makePost({ messageIds: ["m1", "r1"], openingId: "m1", streamIds: [STREAM, THREAD] }))
+    await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["thread reply"]))
+
+    // While the fresh thread rail resolves, the card must keep its live view —
+    // the opening body must never flash back to the stale projection copy.
+    for (const frame of frames.slice(from)) {
+      expect(frame.source).toBe("events")
+      expect(frame.openingMessage?.contentMarkdown).toBe("the opening")
+    }
+  })
+})
+
+describe("useStableReplyWindow", () => {
+  function reply(id: string): RenderableMessage {
+    return {
+      id,
+      streamId: STREAM,
+      authorId: "usr_1",
+      authorType: "user",
+      contentMarkdown: id,
+      reactions: {},
+      createdAt: new Date(0).toISOString(),
+      editedAt: null,
+    } as RenderableMessage
+  }
+  const ids = (messages: RenderableMessage[]) => messages.map((m) => m.id)
+
+  function renderWindow(convId: string, replies: RenderableMessage[]) {
+    return renderHook(
+      (p: { convId: string; replies: RenderableMessage[] }) => useStableReplyWindow(p.convId, p.replies),
+      {
+        initialProps: { convId, replies },
+      }
+    )
+  }
+
+  it("previews the trailing cap at first reveal", () => {
+    const { result } = renderWindow("conv_1", ["r1", "r2", "r3", "r4", "r5"].map(reply))
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+  })
+
+  it("grows on a new arrival instead of evicting the oldest visible reply", () => {
+    const { result, rerender } = renderWindow("conv_1", ["r1", "r2", "r3", "r4", "r5"].map(reply))
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+
+    rerender({ convId: "conv_1", replies: ["r1", "r2", "r3", "r4", "r5", "r6"].map(reply) })
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5", "r6"])
+
+    rerender({ convId: "conv_1", replies: ["r1", "r2", "r3", "r4", "r5", "r6", "r7"].map(reply) })
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5", "r6", "r7"])
+  })
+
+  it("re-anchors on the oldest surviving shown reply when the anchor is deleted", () => {
+    const { result, rerender } = renderWindow("conv_1", ["r1", "r2", "r3", "r4", "r5"].map(reply))
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+
+    rerender({ convId: "conv_1", replies: ["r1", "r2", "r4", "r5"].map(reply) })
+    expect(ids(result.current)).toEqual(["r4", "r5"])
+  })
+
+  it("keeps a late-syncing older reply under the gap instead of pushing shown rows down", () => {
+    const { result, rerender } = renderWindow("conv_1", ["r3", "r4", "r5"].map(reply))
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+
+    rerender({ convId: "conv_1", replies: ["r2", "r3", "r4", "r5"].map(reply) })
+    expect(ids(result.current)).toEqual(["r3", "r4", "r5"])
+  })
+
+  it("keeps a late-syncing mid-window reply under the gap instead of inserting between shown rows", () => {
+    const { result, rerender } = renderWindow("conv_1", ["r3", "r5", "r6"].map(reply))
+    expect(ids(result.current)).toEqual(["r3", "r5", "r6"])
+
+    // r4 syncs late, landing BETWEEN shown rows — revealing it would push r5/r6
+    // down. It stays under the "N more" gap; only rows after the last shown
+    // reply may append.
+    rerender({ convId: "conv_1", replies: ["r3", "r4", "r5", "r6"].map(reply) })
+    expect(ids(result.current)).toEqual(["r3", "r5", "r6"])
+  })
+
+  it("resets the shown window when recycled onto another conversation", () => {
+    const { result, rerender } = renderWindow("conv_1", ["r1", "r2", "r3", "r4"].map(reply))
+    expect(ids(result.current)).toEqual(["r2", "r3", "r4"])
+
+    rerender({ convId: "conv_2", replies: ["x1", "x2", "x3", "x4"].map(reply) })
+    expect(ids(result.current)).toEqual(["x2", "x3", "x4"])
   })
 })

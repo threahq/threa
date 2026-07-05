@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "r
 import { liveQuery, type Subscription } from "dexie"
 import { db, type CachedEvent } from "@/db"
 import { createDraftPanelId } from "@/contexts/panel-context"
+import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
 import type { RenderableMessage } from "@/components/message/message-item"
 import { StreamTypes, type AuthorType } from "@threa/types"
 import type { BoardViewPost } from "./use-stable-board-view"
@@ -98,7 +99,22 @@ interface StreamRailEntry {
   listeners: Set<() => void>
   subscription: Subscription
   refCount: number
+  /** Pending grace-period teardown, armed when the last subscriber leaves. */
+  teardown: ReturnType<typeof setTimeout> | null
 }
+
+/**
+ * How long a rail outlives its last subscriber. A card's stream-id set changes
+ * in place as its conversation grows (a thread is discovered, the draft panel
+ * drops once messageIds widen, `message_assigned` moves the thread into the
+ * gating set), and `useSyncExternalStore` re-subscribes by tearing the old
+ * subscription down before attaching the new one — an immediate teardown would
+ * destroy every rail at each of those steps and recreate them unresolved,
+ * flashing the card back to its stale projection while the fresh liveQueries
+ * run their first read. The grace keeps the rail (and its resolved data) alive
+ * across the swap; a genuinely abandoned rail still drains when the timer fires.
+ */
+const RAIL_TEARDOWN_GRACE_MS = 5000
 
 // INV-9 exception: one shared Dexie subscription per stream, ref-counted across
 // every board card in that stream. The board is workspace-wide and renders many
@@ -118,6 +134,7 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
       listeners: new Set(),
       refCount: 0,
       subscription: { unsubscribe() {} } as Subscription,
+      teardown: null,
     }
     // Register BEFORE subscribing so `getSnapshot` (and any synchronous first
     // emission) observes the entry consistently; the callback re-reads the live
@@ -133,6 +150,10 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
     })
     entry = created
   }
+  if (entry.teardown) {
+    clearTimeout(entry.teardown)
+    entry.teardown = null
+  }
   entry.listeners.add(listener)
   entry.refCount += 1
   return () => {
@@ -140,11 +161,23 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
     if (!current) return
     current.listeners.delete(listener)
     current.refCount -= 1
-    if (current.refCount <= 0) {
-      current.subscription.unsubscribe()
-      railRegistry.delete(streamId)
+    if (current.refCount <= 0 && !current.teardown) {
+      current.teardown = setTimeout(() => {
+        const live = railRegistry.get(streamId)
+        if (!live || live.refCount > 0) return
+        live.subscription.unsubscribe()
+        railRegistry.delete(streamId)
+      }, RAIL_TEARDOWN_GRACE_MS)
     }
   }
+}
+
+/** A card's merged view over its rails. `resolved` gates the projection fallback
+ *  (gating rails only); `allResolved` is false while ANY rail — including a
+ *  discovered thread or the draft panel — is mid-load, the window where a row the
+ *  card was showing can transiently sit in a rail that hasn't read yet. */
+interface MergedRail extends StreamRail {
+  allResolved: boolean
 }
 
 /** Union several stream rails into one. A conversation can span its root + the
@@ -154,8 +187,8 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
  *  opportunistically-discovered threads (and the optimistic draft panel) that
  *  CONTRIBUTE content but must not drag the card back to its projection while they
  *  load — otherwise discovering a new thread re-flashes an already-live card. */
-function mergeRails(rails: StreamRail[], gatingCount: number): StreamRail {
-  if (rails.length === 1) return rails[0]
+function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
+  if (rails.length === 1) return { ...rails[0], allResolved: rails[0].resolved }
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
@@ -163,8 +196,12 @@ function mergeRails(rails: StreamRail[], gatingCount: number): StreamRail {
   // doesn't count, so the card keeps its live view instead of dropping to the
   // projection the instant a thread appears.
   let resolved = true
+  let allResolved = true
   rails.forEach((rail, i) => {
-    if (i < gatingCount && !rail.resolved) resolved = false
+    if (!rail.resolved) {
+      allResolved = false
+      if (i < gatingCount) resolved = false
+    }
     for (const [id, message] of rail.messages) messages.set(id, message)
     for (const id of rail.seen) seen.add(id)
     for (const [conversationId, list] of rail.taggedByConversation) {
@@ -176,7 +213,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): StreamRail {
   for (const list of taggedByConversation.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
-  return { messages, seen, taggedByConversation, resolved }
+  return { messages, seen, taggedByConversation, resolved, allResolved }
 }
 
 /**
@@ -189,13 +226,13 @@ function mergeRails(rails: StreamRail[], gatingCount: number): StreamRail {
  * references changes — `useSyncExternalStore` requires a stable snapshot, so
  * re-merging on every read would loop.
  */
-function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]): StreamRail {
+function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]): MergedRail {
   const gatingCount = gatingStreamIds.length
   const gatingKey = gatingStreamIds.join(",")
   const extraKey = extraStreamIds.join(",")
   const streamIds = useMemo(() => [...gatingStreamIds, ...extraStreamIds], [gatingKey, extraKey])
   const key = gatingKey + "|" + extraKey
-  const cacheRef = useRef<{ inputs: StreamRail[]; merged: StreamRail } | null>(null)
+  const cacheRef = useRef<{ inputs: StreamRail[]; merged: MergedRail } | null>(null)
 
   const subscribe = useCallback(
     (onChange: () => void) => {
@@ -307,10 +344,20 @@ function useChildThreadStreamIds(workspaceId: string, parentMessageIds: string[]
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
+/** How many stream rails the registry currently holds — for tests, to prove a
+ *  drained rail is actually torn down once its grace elapses (the leak half of
+ *  the grace-teardown contract). */
+export function __boardRailRegistrySize(): number {
+  return railRegistry.size
+}
+
 /** Tear down every shared stream subscription — for tests, so a module-level
  *  registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardRailRegistry(): void {
-  for (const entry of railRegistry.values()) entry.subscription.unsubscribe()
+  for (const entry of railRegistry.values()) {
+    if (entry.teardown) clearTimeout(entry.teardown)
+    entry.subscription.unsubscribe()
+  }
   railRegistry.clear()
   for (const entry of threadIndexRegistry.values()) entry.subscription.unsubscribe()
   threadIndexRegistry.clear()
@@ -340,6 +387,8 @@ export interface BoardCardMessages {
 }
 
 const NO_PENDING: RenderableMessage[] = []
+
+type BoardCardView = BoardCardMessages & { nextRetained: RenderableMessage[] }
 
 /**
  * A board card's messages, read OFFLINE-FIRST from the same `db.events` store the
@@ -421,12 +470,36 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   // would blink out / collapse under "1 more". Holding the last-shown copy bridges
   // that window until the real row renders.
   const retainedPendingRef = useRef<RenderableMessage[]>(NO_PENDING)
+  // The last events-sourced view, held so an unresolved-rails beat re-renders
+  // exactly what was on screen instead of a shrunken derivation or the stale
+  // projection. The merged rail passes through `allResolved: false` whenever a
+  // rail is mid-first-read — the card's stream-id set changed (re-subscription),
+  // a thread was just discovered, or `message_assigned` named a fresh gating
+  // stream — all transient. A genuine cold read (rails resolved, ids unseen)
+  // still falls through to the projection.
+  const lastLiveRef = useRef<{ conversationId: string; view: BoardCardView } | null>(null)
+  // The reply ids the conversation already listed when the current in-flight
+  // send began. Only an id that JOINS `messageIds` during the episode can be the
+  // pending row's server-side identity (the echo race the phantom-gap discount
+  // below covers); an id already listed before the send is unsynced older
+  // history and must keep counting toward the "N more" gap. Snapshot on the
+  // pending 0→N transition, cleared when the episode drains.
+  const pendingEpisodeRef = useRef<{ conversationId: string; baseline: Set<string> } | null>(null)
 
   const view = useMemo(() => {
     // The retained copy is read here but written only after commit (the effect
     // below) — mutating a ref during render is unsafe under concurrent rendering,
     // where a discarded render could clear the bridge before it paints.
     const retained = retainedPendingRef.current
+
+    // Any rail mid-load — a re-subscription after the card's stream-id set
+    // changed, or a just-discovered thread running its first read — is a window
+    // where a row this card was showing can be absent from every readable rail.
+    // Hold the last live view perfectly still for that beat instead of
+    // re-deriving a shrunken one or flashing the projection (INV-61's no-motion
+    // rule, inside the card).
+    const lastLive = lastLiveRef.current
+    if (!rail.allResolved && lastLive?.conversationId === conversationId) return lastLive.view
 
     // Replies for this conversation the card knows from the rail but the server
     // `messageIds` doesn't list yet — the optimistic row, and the swapped real
@@ -492,7 +565,22 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     // below what's already on screen (a bridged reply fills its own slot, so it
     // mustn't also leave a phantom "1 more").
     const fullySynced = replyIds.every((id) => rail.seen.has(id))
-    const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal, replies.length)
+    // `conversation:updated` can land BEFORE the message echo swaps the optimistic
+    // row: `messageIds` then lists a real id the rail hasn't seen while the same
+    // message is still on screen as a pending row under its client id. Counting
+    // that id into the total would pop a phantom "1 more" gap above the very reply
+    // it refers to (and flip the run's continuation grouping) for the beat until
+    // the echo lands. Discount unseen ids that JOINED `replyIds` during the
+    // current pending episode (they can only be in-flight sends or simultaneous
+    // arrivals the pending rows visually stand in for), up to the pending row
+    // count; ids already listed when the episode began are unsynced older history
+    // and keep counting toward the gap.
+    const episode = pendingEpisodeRef.current
+    const baseline = episode && episode.conversationId === conversationId ? episode.baseline : null
+    let episodeArrivals = 0
+    if (baseline) for (const id of replyIds) if (!rail.seen.has(id) && !baseline.has(id)) episodeArrivals++
+    const covered = Math.min(pendingReplies.length, episodeArrivals)
+    const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal - covered, replies.length)
 
     // Retain a fresh pending row; keep the retained copy while it's still bridging;
     // forget it once the live rows cover it.
@@ -507,7 +595,58 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   // Commit the bridge bookkeeping after render, never during it.
   useEffect(() => {
     retainedPendingRef.current = view.nextRetained
-  }, [view])
+    if (view.source === "events") lastLiveRef.current = { conversationId, view }
+    if (view.pendingReplies.length > 0) {
+      const episode = pendingEpisodeRef.current
+      // Snapshot only on the 0→N transition — re-snapshotting mid-episode would
+      // fold the send's just-arrived id into the baseline and kill its discount.
+      if (!episode || episode.conversationId !== conversationId) {
+        pendingEpisodeRef.current = { conversationId, baseline: new Set(replyIds) }
+      }
+    } else {
+      pendingEpisodeRef.current = null
+    }
+  }, [view, conversationId, replyIds])
 
   return view
+}
+
+/**
+ * The collapsed card's reply window: the trailing `RECENT_PREVIEW_CAP` replies
+ * at first reveal, then append-only. A new arrival GROWS the window instead of
+ * sliding it, so a reply the viewer has seen never drops back under the "N
+ * more" gap and rows never move under the eye (INV-61's no-motion rule,
+ * extended inside the card). A deleted reply still leaves (a real removal, not
+ * instability). A reply that syncs in late — older than the first shown row OR
+ * landing between shown rows — stays under the gap: revealing it would push
+ * shown rows around, so only rows strictly after the last shown reply append.
+ * The shown set resets when the hook instance is recycled onto another
+ * conversation.
+ */
+export function useStableReplyWindow(conversationId: string, replies: RenderableMessage[]): RenderableMessage[] {
+  const shownRef = useRef<{ conversationId: string; ids: Set<string> }>({ conversationId, ids: new Set() })
+
+  const window = useMemo(() => {
+    const shown = shownRef.current.conversationId === conversationId ? shownRef.current.ids : null
+    if (shown) {
+      let lastShownIndex = -1
+      for (let i = 0; i < replies.length; i++) if (shown.has(replies[i].id)) lastShownIndex = i
+      if (lastShownIndex !== -1) {
+        return replies.filter((message, index) => shown.has(message.id) || index > lastShownIndex)
+      }
+    }
+    return replies.slice(-RECENT_PREVIEW_CAP)
+  }, [conversationId, replies])
+
+  // Record what's shown after commit, never during render (concurrent-safe,
+  // same discipline as the pending-reply bridge above).
+  useEffect(() => {
+    if (shownRef.current.conversationId !== conversationId) {
+      shownRef.current = { conversationId, ids: new Set(window.map((message) => message.id)) }
+      return
+    }
+    for (const message of window) shownRef.current.ids.add(message.id)
+  }, [conversationId, window])
+
+  return window
 }

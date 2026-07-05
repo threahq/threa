@@ -15,8 +15,7 @@ import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
 import { conversationKeys } from "@/hooks/use-conversations"
-import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
-import { RECENT_PREVIEW_CAP } from "@/stores/board-store"
+import { useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 interface BoardCardProps {
@@ -104,11 +103,16 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     staleTime: 60_000,
   })
 
+  // Collapsed cards preview an append-only window over the local rail: trailing
+  // replies at first reveal, growing (never sliding) as new ones land, so a
+  // visible reply is never evicted back under the "N more" gap.
+  const collapsedReplies = useStableReplyWindow(conversation.id, railReplies)
+
   // Expanded: the full conversation minus the opening (server backfill when the
-  // local rail is incomplete, else the rail itself). Collapsed: the trailing
+  // local rail is incomplete, else the rail itself). Collapsed: the stable
   // window of the local rail. Flat if-chain, not a nested ternary (INV-47).
   let replies: RenderableMessage[]
-  if (!expanded) replies = railReplies.slice(-RECENT_PREVIEW_CAP)
+  if (!expanded) replies = collapsedReplies
   // Prefer the server backfill only while the local rail is still incomplete;
   // once the rail catches up, fall through to it so live edits keep flowing (the
   // backfill's `data` lingers after `enabled` goes false).
