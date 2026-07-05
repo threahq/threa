@@ -23,6 +23,8 @@ import type {
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
+  BoardConversationHideChangedPayload,
+  BoardStreamMuteChangedPayload,
   SavedSuggestionUpsertedPayload,
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
@@ -38,6 +40,7 @@ import type {
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { mergeBoardConversation, addBoardConversationStream } from "@/stores/board-store"
+import { putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
@@ -1592,6 +1595,21 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "archived") })
   }
 
+  // Board hide/mute changed on another device — patch the exclusion store so the
+  // reactive board re-filters with no refetch (board-view-design.md § "Hide & mute").
+  const handleBoardHideChanged = (payload: BoardConversationHideChangedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    if (payload.active)
+      void putHidden(workspaceId, payload.conversationId, payload.hiddenAt ? Date.parse(payload.hiddenAt) : Date.now())
+    else void deleteHidden(payload.conversationId)
+  }
+
+  const handleBoardMuteChanged = (payload: BoardStreamMuteChangedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    if (payload.active) void putMuted(workspaceId, payload.streamId)
+    else void deleteMuted(payload.streamId)
+  }
+
   const handleSavedReminderFired = (payload: SavedReminderFiredPayload) => {
     if (payload.workspaceId !== workspaceId) return
     // Update the cached row so the badge flips to "reminded" immediately. The
@@ -1819,6 +1837,8 @@ export function registerWorkspaceSocketHandlers(
   socket.on("saved:upserted", handleSavedUpserted)
   socket.on("saved:deleted", handleSavedDeleted)
   socket.on("saved_reminder:fired", handleSavedReminderFired)
+  socket.on("board:conversation_hide_changed", handleBoardHideChanged)
+  socket.on("board:stream_mute_changed", handleBoardMuteChanged)
   socket.on("saved_suggestion:upserted", handleSavedSuggestionUpserted)
   socket.on("scheduled_message:upserted", handleScheduledUpserted)
   socket.on("scheduled_message:sent", handleScheduledSent)
@@ -1872,6 +1892,8 @@ export function registerWorkspaceSocketHandlers(
     socket.off("saved:upserted", handleSavedUpserted)
     socket.off("saved:deleted", handleSavedDeleted)
     socket.off("saved_reminder:fired", handleSavedReminderFired)
+    socket.off("board:conversation_hide_changed", handleBoardHideChanged)
+    socket.off("board:stream_mute_changed", handleBoardMuteChanged)
     socket.off("saved_suggestion:upserted", handleSavedSuggestionUpserted)
     socket.off("scheduled_message:upserted", handleScheduledUpserted)
     socket.off("scheduled_message:sent", handleScheduledSent)

@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react"
-import { CircleCheck, EllipsisVertical, Pencil, RotateCcw } from "lucide-react"
+import { CircleCheck, Eye, EyeOff, EllipsisVertical, Pencil, RotateCcw } from "lucide-react"
 import { ConversationStatuses, MAX_CONVERSATION_TOPIC_LENGTH } from "@threa/types"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   ResponsiveDialog,
@@ -13,7 +19,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
-import { useUpdateConversation } from "@/hooks/use-conversations"
+import { useUpdateConversation, useHideConversation, useUnhideConversation } from "@/hooks/use-conversations"
 
 interface ConversationActionsMenuProps {
   workspaceId: string
@@ -22,6 +28,9 @@ interface ConversationActionsMenuProps {
   topicSummary: string | null
   /** Current status — selects the resolve vs. reopen item. */
   status: string
+  /** Whether this conversation is currently hidden from the viewer's board —
+   *  selects "Unhide" vs "Hide from board". */
+  isHidden?: boolean
   /** Extra classes for the trigger, so each surface can size it to its icon cluster. */
   triggerClassName?: string
 }
@@ -38,10 +47,13 @@ export function ConversationActionsMenu({
   conversationId,
   topicSummary,
   status,
+  isHidden = false,
   triggerClassName,
 }: ConversationActionsMenuProps) {
   const [renameOpen, setRenameOpen] = useState(false)
   const update = useUpdateConversation(workspaceId)
+  const hide = useHideConversation(workspaceId)
+  const unhide = useUnhideConversation(workspaceId)
   const resolved = status === ConversationStatuses.RESOLVED
 
   return (
@@ -79,6 +91,11 @@ export function ConversationActionsMenu({
           >
             {resolved ? <RotateCcw className="h-4 w-4" /> : <CircleCheck className="h-4 w-4" />}
             {resolved ? "Reopen" : "Mark resolved"}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => (isHidden ? unhide.mutate(conversationId) : hide.mutate(conversationId))}>
+            {isHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+            {isHidden ? "Unhide from board" : "Hide from board"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

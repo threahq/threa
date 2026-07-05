@@ -16,7 +16,13 @@ import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/s
 import { useStableBoardView, type BoardViewFilter, type BoardViewPost } from "@/hooks/use-stable-board-view"
 import { useBoardStreamSubscriptions } from "@/hooks/use-board-stream-subscriptions"
 import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-anchor"
-import { useWorkspaceConversations } from "@/hooks/use-conversations"
+import {
+  useWorkspaceConversations,
+  useBoardExclusions,
+  useMuteStream,
+  useUnmuteStream,
+} from "@/hooks/use-conversations"
+import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
 import {
@@ -229,6 +235,20 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // timeline's insertion rule to the board's ordering).
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage, isFetchNextPageError } =
     useWorkspaceConversations(workspaceId, { lens, streams: scopeStreamIds, types: scopeStreamTypes, limit: 50 })
+
+  // Per-viewer hide/mute (board-view-design.md § "Hide & mute"): bootstrap the
+  // exclusion sets into IDB, read them reactively, and fold them into the view.
+  // Mute is skipped under an explicit `?in=` stream scope (the viewer named those
+  // streams), matching the server's `applyMute` rule.
+  useBoardExclusions(workspaceId)
+  const hidden = useBoardHiddenConversations(workspaceId)
+  const muted = useBoardMutedStreamIds(workspaceId)
+  const muteStream = useMuteStream(workspaceId)
+  const unmuteStream = useUnmuteStream(workspaceId)
+  const exclusions = useMemo(
+    () => ({ hidden, muted, muteActive: scopeStreamIds.length === 0 }),
+    [hidden, muted, scopeStreamIds.length]
+  )
   const {
     posts,
     activityById,
@@ -236,7 +256,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     commit,
     revealNext,
     isLoading: viewLoading,
-  } = useStableBoardView(workspaceId, filter)
+  } = useStableBoardView(workspaceId, filter, exclusions)
   // After a refetch settles, `isLoading` is already false but the seed effect
   // writes IDB on the next tick, so the IDB feed can be momentarily empty while
   // the query already holds posts. Treat that window as loading so the feed
@@ -418,6 +438,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         onScopeChange={setScope}
         scopeStreamTypes={scopeStreamTypes}
         onTypesChange={setTypes}
+        mutedStreamIds={muted}
+        onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
       />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}

@@ -11,6 +11,7 @@ import { toast } from "sonner"
 import { db } from "@/db"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { seedBoardPosts, useBoardPost, mergeBoardConversation } from "@/stores/board-store"
+import { seedBoardExclusions, putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
 import type { BoardViewPost } from "./use-stable-board-view"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
@@ -654,6 +655,98 @@ export function useUpdateConversation(workspaceId: string) {
       if (queryClient.getQueryData(boardPostKey)) {
         queryClient.setQueryData<BoardPost>(boardPostKey, (prev) => (prev ? { ...prev, conversation } : prev))
       }
+    },
+  })
+}
+
+/**
+ * Bootstrap the viewer's board exclusions (hidden cards + muted streams) into IDB
+ * (subscribe-then-fetch, INV-53; `refetchOnReconnect` closes the gap after a drop).
+ * The reactive store then drives the board filter live; socket `board:*` events
+ * (workspace-sync) patch IDB between fetches.
+ */
+export function useBoardExclusions(workspaceId: string) {
+  const conversationService = useConversationService()
+  const query = useQuery({
+    queryKey: [...conversationKeys.all, "exclusions", workspaceId] as const,
+    queryFn: () => conversationService.getBoardExclusions(workspaceId),
+    refetchOnReconnect: true,
+    staleTime: 60_000,
+  })
+  useEffect(() => {
+    if (query.data) void seedBoardExclusions(workspaceId, query.data)
+  }, [query.data, workspaceId])
+  return query
+}
+
+/**
+ * Hide a conversation card from the board (snooze until it revives). Optimistic:
+ * the exclusion store write drops the card immediately; the server `hiddenAt`
+ * reconciles the watermark on success. No success toast — the card vanishing is
+ * the signal (INV-63); errors roll back and `toast.error`.
+ */
+export function useHideConversation(workspaceId: string) {
+  const conversationService = useConversationService()
+  return useMutation({
+    mutationFn: (conversationId: string) => conversationService.hideConversation(workspaceId, conversationId),
+    onMutate: async (conversationId: string) => {
+      const prev = await db.boardHiddenConversations.get(conversationId)
+      await putHidden(workspaceId, conversationId, Date.now())
+      return { conversationId, prev }
+    },
+    onError: (_error, conversationId, ctx) => {
+      if (ctx?.prev) void putHidden(workspaceId, conversationId, ctx.prev.hiddenAt)
+      else void deleteHidden(conversationId)
+      toast.error("Couldn't hide from the board")
+    },
+    onSuccess: ({ hiddenAt }, conversationId) => {
+      void putHidden(workspaceId, conversationId, Date.parse(hiddenAt))
+    },
+  })
+}
+
+export function useUnhideConversation(workspaceId: string) {
+  const conversationService = useConversationService()
+  return useMutation({
+    mutationFn: (conversationId: string) => conversationService.unhideConversation(workspaceId, conversationId),
+    onMutate: async (conversationId: string) => {
+      const prev = await db.boardHiddenConversations.get(conversationId)
+      await deleteHidden(conversationId)
+      return { conversationId, prev }
+    },
+    onError: (_error, conversationId, ctx) => {
+      if (ctx?.prev) void putHidden(workspaceId, conversationId, ctx.prev.hiddenAt)
+      toast.error("Couldn't unhide")
+    },
+  })
+}
+
+export function useMuteStream(workspaceId: string) {
+  const conversationService = useConversationService()
+  return useMutation({
+    mutationFn: (streamId: string) => conversationService.muteStream(workspaceId, streamId),
+    onMutate: (streamId: string) => {
+      void putMuted(workspaceId, streamId)
+      return { streamId }
+    },
+    onError: (_error, streamId) => {
+      void deleteMuted(streamId)
+      toast.error("Couldn't mute the stream")
+    },
+  })
+}
+
+export function useUnmuteStream(workspaceId: string) {
+  const conversationService = useConversationService()
+  return useMutation({
+    mutationFn: (streamId: string) => conversationService.unmuteStream(workspaceId, streamId),
+    onMutate: (streamId: string) => {
+      void deleteMuted(streamId)
+      return { streamId }
+    },
+    onError: (_error, streamId) => {
+      void putMuted(workspaceId, streamId)
+      toast.error("Couldn't unmute the stream")
     },
   })
 }

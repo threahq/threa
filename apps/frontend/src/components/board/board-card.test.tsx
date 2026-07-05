@@ -242,4 +242,15 @@ describe("BoardCard conversation actions", () => {
 
     expect(updateConversation).toHaveBeenCalledWith(WS, "conv_1", { status: "resolved" })
   })
+
+  it("hides the conversation from the board via the ⋯ menu", async () => {
+    const user = userEvent.setup()
+    const hideConversation = vi.fn().mockResolvedValue({ hiddenAt: "2026-07-05T00:00:00.000Z" })
+    mountCard(makePost({ topicSummary: "Rotate the API tokens", status: "active" }), { hideConversation })
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+    await user.click(await screen.findByText("Hide from board"))
+
+    expect(hideConversation).toHaveBeenCalledWith(WS, "conv_1")
+  })
 })

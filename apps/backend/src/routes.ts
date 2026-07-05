@@ -21,7 +21,7 @@ import { createAttachmentHandlers } from "./features/attachments"
 import { createSearchHandlers } from "./features/search"
 import { createMemoHandlers } from "./features/memos"
 import { createEmojiHandlers } from "./features/emoji"
-import { createConversationHandlers } from "./features/conversations"
+import { createConversationHandlers, BoardExclusionService } from "./features/conversations"
 import { CommandAvailabilityService, createCommandHandlers } from "./features/commands"
 import { createUserPreferencesHandlers } from "./features/user-preferences"
 import { createWorkspaceSettingsHandlers } from "./features/workspace-settings"
@@ -273,7 +273,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const search = createSearchHandlers({ pool, searchService })
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
-  const conversation = createConversationHandlers({ conversationService, streamService, featureFlagService })
+  const boardExclusionService = new BoardExclusionService(pool)
+  const conversation = createConversationHandlers({
+    conversationService,
+    boardExclusionService,
+    streamService,
+    featureFlagService,
+  })
   const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
@@ -500,6 +506,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/board-post", ...authed, conversation.getBoardPost)
   app.patch("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.updateConversation)
+  app.get("/api/workspaces/:workspaceId/board/exclusions", ...authed, conversation.getBoardExclusions)
+  app.post("/api/workspaces/:workspaceId/conversations/:conversationId/hide", ...authed, conversation.hideConversation)
+  app.post(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/unhide",
+    ...authed,
+    conversation.unhideConversation
+  )
+  app.post("/api/workspaces/:workspaceId/streams/:streamId/board-mute", ...authed, conversation.muteStream)
+  app.post("/api/workspaces/:workspaceId/streams/:streamId/board-unmute", ...authed, conversation.unmuteStream)
   app.post(
     "/api/workspaces/:workspaceId/conversations/:conversationId/messages/:messageId/reassign",
     ...authed,

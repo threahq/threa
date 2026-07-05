@@ -66,6 +66,24 @@ export interface BoardViewFilter {
   types: BoardTypeScope | null
 }
 
+/**
+ * The viewer's per-board exclusions (board-view-design.md § "Hide & mute"),
+ * mirrored client-side so a hide/mute drops the card the instant it's written —
+ * the read-side twin of the server's `boardHiddenExcludeSql`/`boardMutedExcludeSql`
+ * (keep the boundaries identical to avoid SQL/JS drift). Both maps carry stable
+ * identity from the exclusions store, so they're safe in memo deps.
+ */
+export interface BoardExclusionState {
+  /** conversationId → `hiddenAt` (ms). A card revives when its activity passes it. */
+  hidden: Map<string, number>
+  /** Muted root-stream ids. */
+  muted: Set<string>
+  /** False when an explicit `?in=` scope is set — mute doesn't fight a stream the viewer named. */
+  muteActive: boolean
+}
+
+const NO_EXCLUSIONS: BoardExclusionState = { hidden: new Map(), muted: new Set(), muteActive: true }
+
 function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean {
   if (!scope) return true
   // Cached rows predating `rootStreamId` fall back to the anchor itself — a
@@ -192,11 +210,30 @@ export interface StableBoardView {
  * body stays live off the message rails. Filters narrow what surfaces; they never
  * yank what's on screen.
  */
-export function useStableBoardView(workspaceId: string, filter: BoardViewFilter): StableBoardView {
+export function useStableBoardView(
+  workspaceId: string,
+  filter: BoardViewFilter,
+  exclusions: BoardExclusionState = NO_EXCLUSIONS
+): StableBoardView {
   const { lens, scope, types } = filter
+  const { hidden, muted, muteActive } = exclusions
   const rawLive = useBoardPosts(workspaceId)
-  // Filter the shared feed to the lens + scopes. Recomputed when the feed or
-  // filter changes; `Date.now()` is sampled then (the staleness signal for
+
+  // A hidden card is excluded until it revives (activity passes its `hiddenAt`
+  // watermark — mirrors the server `<=` boundary); a muted stream's cards are
+  // excluded unless the viewer named explicit streams via `?in=` (`muteActive`).
+  const isExcluded = useCallback(
+    (post: CachedBoardPost): boolean => {
+      const hiddenAt = hidden.get(post.conversation.id)
+      if (hiddenAt !== undefined && postMs(post) <= hiddenAt) return true
+      if (muteActive && muted.has(post.rootStreamId ?? post.conversation.streamId)) return true
+      return false
+    },
+    [hidden, muted, muteActive]
+  )
+
+  // Filter the shared feed to the lens + scopes + exclusions. Recomputed when the
+  // feed or filter changes; `Date.now()` is sampled then (the staleness signal for
   // `needs-resolution` only needs to be fresh at feed-change granularity, which
   // is frequent on a live board).
   const live = useMemo(
@@ -205,9 +242,12 @@ export function useStableBoardView(workspaceId: string, filter: BoardViewFilter)
         ? undefined
         : rawLive.filter(
             (post) =>
-              matchesBoardLens(post, lens, Date.now()) && matchesScope(post, scope) && matchesTypeScope(post, types)
+              matchesBoardLens(post, lens, Date.now()) &&
+              matchesScope(post, scope) &&
+              matchesTypeScope(post, types) &&
+              !isExcluded(post)
           ),
-    [rawLive, lens, scope, types]
+    [rawLive, lens, scope, types, isExcluded]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])
@@ -306,10 +346,17 @@ export function useStableBoardView(workspaceId: string, filter: BoardViewFilter)
     const out: CachedBoardPost[] = []
     for (const id of committed.order) {
       const post = liveById.get(id) ?? retainedRef.current.get(id)
-      if (post) out.push(post)
+      if (!post) continue
+      // A committed card renders from `retainedRef` even after it leaves `live`,
+      // so an involuntary drop (lost access, re-lensed by the viewer's own reply)
+      // doesn't shift rows below it. But a VOLUNTARY hide/mute must drop NOW, not
+      // wait for the next commit — so skip excluded ids here too, not just in the
+      // `live` filter. (The retained copy is pruned on the next `commit()`.)
+      if (isExcluded(post)) continue
+      out.push(post)
     }
     return out
-  }, [committed, live])
+  }, [committed, live, isExcluded])
 
   return {
     posts,

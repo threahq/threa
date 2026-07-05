@@ -514,6 +514,8 @@ export type {
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
+  BoardConversationHideChangedPayload,
+  BoardStreamMuteChangedPayload,
   // Saved suggestions
   SavedSuggestionView,
   SavedSuggestionListResponse,

@@ -54,6 +54,8 @@ export type OutboxEventType =
   | "conversation:updated"
   | "conversation:message_assigned"
   | "conversation:message_reassigned"
+  | "board:conversation_hide_changed"
+  | "board:stream_mute_changed"
   | "memo:created"
   | "command:dispatched"
   | "command:completed"
@@ -727,6 +729,25 @@ export interface DraftDeletedOutboxPayload extends WorkspaceScopedPayload {
   draftId: string
 }
 
+// Per-viewer board exclusions (board-view-design.md § "Hide & mute"). Both are
+// user-scoped — a hide/mute is one viewer's private board state, delivered only
+// to `user:{targetUserId}` for multi-device reconcile, never a timeline row.
+export interface BoardConversationHideChangedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  conversationId: string
+  /** true = hidden, false = un-hidden. */
+  active: boolean
+  /** The snooze watermark (ISO), present only when `active`. */
+  hiddenAt?: string
+}
+
+export interface BoardStreamMuteChangedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  streamId: string
+  /** true = muted, false = un-muted. */
+  active: boolean
+}
+
 // Proactive owner re-wrap nudges. When an enclave turn can't be served because
 // no live EIK holds the stream's SSK wrap, only the owner's unlocked device can
 // re-wrap (INV-E7). `enclave:rewrap_needed` is user-scoped — it reaches the
@@ -895,6 +916,8 @@ export interface OutboxEventPayloadMap {
   "conversation:updated": ConversationUpdatedOutboxPayload
   "conversation:message_assigned": ConversationMessageAssignedOutboxPayload
   "conversation:message_reassigned": ConversationMessageReassignedOutboxPayload
+  "board:conversation_hide_changed": BoardConversationHideChangedOutboxPayload
+  "board:stream_mute_changed": BoardStreamMuteChangedOutboxPayload
   "memo:created": MemoCreatedOutboxPayload
   "command:dispatched": CommandDispatchedOutboxPayload
   "command:completed": CommandCompletedOutboxPayload
@@ -1053,6 +1076,8 @@ export type UserScopedEventType =
   | "scheduled_message:cancelled"
   | "draft:upserted"
   | "draft:deleted"
+  | "board:conversation_hide_changed"
+  | "board:stream_mute_changed"
   | "feature_flags:updated"
   | "enclave:rewrap_needed"
 
@@ -1067,6 +1092,8 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "scheduled_message:cancelled",
   "draft:upserted",
   "draft:deleted",
+  "board:conversation_hide_changed",
+  "board:stream_mute_changed",
   "feature_flags:updated",
   "enclave:rewrap_needed",
 ]
