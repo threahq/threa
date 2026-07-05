@@ -233,7 +233,21 @@ async function runPermutation<TInput, TOutput, TExpected>(
   // Create config resolver with eval overrides applied
   // Base resolver has production defaults; eval resolver applies componentOverrides
   const baseResolver = createStaticConfigResolver()
-  const configResolver = createEvalConfigResolverFromYaml(baseResolver, options.componentOverrides)
+  const yamlResolver = createEvalConfigResolverFromYaml(baseResolver, options.componentOverrides)
+  // A -m/-t permutation override must reach components that read their model
+  // from the co-located config via ConfigResolver (INV-44) — boundary
+  // extraction, memo classifier/memorizer. Without this wrap the CLI flag
+  // silently relabels the run while the production model still executes.
+  const hasCliPermutation = Boolean(options.model)
+  const configResolver: typeof yamlResolver = hasCliPermutation
+    ? {
+        resolve: async (path: string) => ({
+          ...(await yamlResolver.resolve(path)),
+          modelId: permutation.model,
+          ...(permutation.temperature !== undefined ? { temperature: permutation.temperature } : {}),
+        }),
+      }
+    : yamlResolver
 
   // Create context for this permutation
   const ctx: EvalContext = {

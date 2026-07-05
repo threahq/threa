@@ -7,6 +7,10 @@ import { z } from "zod"
 import { KNOWLEDGE_TYPES, type KnowledgeType, type StreamType } from "@threa/types"
 import { formatDate } from "../../lib/temporal"
 
+// Mini over nano is deliberate: the July 2026 re-test (after -m eval wiring
+// was fixed) showed nano classifying real knowledge as not-worthy in every
+// round (6/9 with the same three misses) — silent knowledge loss, the worst
+// GAM failure mode. See docs/model-reference.md.
 export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
 export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
