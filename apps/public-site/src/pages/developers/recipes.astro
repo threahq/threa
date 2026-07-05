@@ -160,18 +160,27 @@ const WS = "{{workspaceId}}"
 const KEY = "{{apiKey}}" // a threa_bk_ bot key
 const INSTANCE = "my-laptop-1"
 
-const auth = { Authorization: "Bearer " + KEY, "Content-Type": "application/json" }
-const api = (path, body) =>
-  fetch(BASE + "/api/v1/workspaces/" + WS + path, {
-    method: "POST", headers: auth, body: JSON.stringify(body),
+const auth = { Authorization: \u0060Bearer \${KEY}\u0060, "Content-Type": "application/json" }
+const api = (path: string, body: unknown) =>
+  fetch(\u0060\${BASE}/api/v1/workspaces/\${WS}\${path}\u0060, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify(body),
   }).then((r) => r.json())
 
 async function loop() {
   // Keep presence fresh in the background.
-  setInterval(() => api("/bot-runtime/presence", {
-    runtimeKind: "custom", instanceId: INSTANCE,
-    status: "available", acceptingInvocations: true, capabilities: {},
-  }), 20000)
+  setInterval(
+    () =>
+      api("/bot-runtime/presence", {
+        runtimeKind: "custom",
+        instanceId: INSTANCE,
+        status: "available",
+        acceptingInvocations: true,
+        capabilities: {},
+      }),
+    20000
+  )
 
   while (true) {
     const { data: inv } = await api("/bot-invocations/claim", {
@@ -180,12 +189,15 @@ async function loop() {
       supportedCapabilities: ["mentionable"],
       claimTtlSeconds: 120,
     })
-    if (!inv) { await new Promise((r) => setTimeout(r, 3000)); continue }
+    if (!inv) {
+      await new Promise((r) => setTimeout(r, 3000))
+      continue
+    }
 
     // inv.promptMarkdown is what the user said. Do real work here.
     const reply = await runYourAgent(inv.promptMarkdown)
 
-    await api("/bot-invocations/" + inv.id + "/complete", {
+    await api(\u0060/bot-invocations/\${inv.id}/complete\u0060, {
       instanceId: INSTANCE,
       claimToken: inv.claimToken,
       finalMessageMarkdown: reply,
@@ -244,20 +256,22 @@ async function loop() {
 import { DhkemX25519HkdfSha256 } from "@hpke/dhkem-x25519"
 
 const suite = new CipherSuite({
-  kem: new DhkemX25519HkdfSha256(), kdf: new HkdfSha256(), aead: new Aes256Gcm(),
+  kem: new DhkemX25519HkdfSha256(),
+  kdf: new HkdfSha256(),
+  aead: new Aes256Gcm(),
 })
 const utf8 = (s: string) => new TextEncoder().encode(s)
 const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u))
 const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
-const wrapAad = (stream: string, gen: number, keyId: string) => utf8(\`\${stream}|\${gen}|\${keyId}\`)
-const msgAad = (stream: string, id: string, sender: string) => utf8(\`\${stream}|\${id}|\${sender}\`)
+const wrapAad = (stream: string, gen: number, keyId: string) => utf8(\u0060\${stream}|\${gen}|\${keyId}\u0060)
+const msgAad = (stream: string, id: string, sender: string) => utf8(\u0060\${stream}|\${id}|\${sender}\u0060)
 
 // Your identity key (BIK): one X25519 keypair per machine, persisted 0600.
 // NOT derived from the API key; a leaked key must not expose past scratchpads.
 export async function makeBik() {
   const kp = await suite.kem.generateKeyPair()
   return {
-    publicKeyId: "bik_" + crypto.randomUUID(),
+    publicKeyId: \u0060bik_\${crypto.randomUUID()}\u0060,
     publicKey: b64(new Uint8Array(await suite.kem.serializePublicKey(kp.publicKey))),
     privateKey: kp.privateKey,
   }
@@ -269,22 +283,29 @@ export async function wrapSSK(ssk: Uint8Array, pub: string, aad: Uint8Array) {
   const s = await suite.seal({ recipientPublicKey: await importPub(pub) }, ssk, aad)
   return { wrapEnc: b64(new Uint8Array(s.enc)), wrapCt: b64(new Uint8Array(s.ct)) }
 }
-export const unwrapSSK = async (w: any, priv: CryptoKey, aad: Uint8Array) =>
-  new Uint8Array(await suite.open({ recipientKey: priv, enc: unb64(w.wrapEnc) }, unb64(w.wrapCt), aad))
+type KeyWrap = { wrapEnc: string; wrapCt: string }
+export const unwrapSSK = async (wrap: KeyWrap, priv: CryptoKey, aad: Uint8Array) =>
+  new Uint8Array(await suite.open({ recipientKey: priv, enc: unb64(wrap.wrapEnc) }, unb64(wrap.wrapCt), aad))
 
 // Open / seal an SSK-encrypted message or step.
 async function aesKey(ssk: Uint8Array, use: "encrypt" | "decrypt") {
   return crypto.subtle.importKey("raw", ssk, "AES-GCM", false, [use])
 }
-export async function open(ssk: Uint8Array, env: any, ct: string) {
+type Envelope = { iv: string; aad: string }
+export async function open(ssk: Uint8Array, env: Envelope, ct: string) {
+  const key = await aesKey(ssk, "decrypt")
   const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: unb64(env.iv), additionalData: unb64(env.aad) }, await aesKey(ssk, "decrypt"), unb64(ct))
+    { name: "AES-GCM", iv: unb64(env.iv), additionalData: unb64(env.aad) },
+    key,
+    unb64(ct)
+  )
   return new TextDecoder().decode(pt)
 }
 export async function seal(ssk: Uint8Array, stream: string, id: string, sender: string, gen: number, text: string) {
-  const iv = crypto.getRandomValues(new Uint8Array(12)), aad = msgAad(stream, id, sender)
-  const ct = new Uint8Array(await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, additionalData: aad }, await aesKey(ssk, "encrypt"), utf8(text)))
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const aad = msgAad(stream, id, sender)
+  const key = await aesKey(ssk, "encrypt")
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, key, utf8(text)))
   return { ciphertext: b64(ct), envelope: { v: 2, keyGeneration: gen, iv: b64(iv), aad: b64(aad) } }
 }`}
   />
@@ -299,9 +320,12 @@ export async function seal(ssk: Uint8Array, stream: string, id: string, sender: 
     label="presence with a key"
     code={`const bik = await loadOrMakeBik() // makeBik(), then reuse across restarts
 await api("/bot-runtime/presence", {
-  runtimeKind: "custom", instanceId: INSTANCE,
-  status: "available", acceptingInvocations: true,
-  publicKey: bik.publicKey, publicKeyId: bik.publicKeyId,
+  runtimeKind: "custom",
+  instanceId: INSTANCE,
+  status: "available",
+  acceptingInvocations: true,
+  publicKey: bik.publicKey,
+  publicKeyId: bik.publicKeyId,
 })`}
   />
 
@@ -318,19 +342,28 @@ await api("/bot-runtime/presence", {
 const { data: owner } = await get("/bot-runtime/owner-e2e-key") // { keyId, publicKey }
 
 const { data: link } = await api("/bot-runtime/sessions", {
-  runtimeKind: "custom", instanceId: INSTANCE, runtimeSessionId: SESSION,
-  displayName: "My sealed agent", e2e: { ownerKeyId: owner.keyId },
+  runtimeKind: "custom",
+  instanceId: INSTANCE,
+  runtimeSessionId: SESSION,
+  displayName: "My sealed agent",
+  e2e: { ownerKeyId: owner.keyId },
 })
 // link.e2eEnabled === true, link.rootStreamId is the stream that owns the key.
 
 const ssk = crypto.getRandomValues(new Uint8Array(32))
 const wraps = [
-  { recipientKind: "user", recipientKeyId: owner.keyId,
-    ...(await wrapSSK(ssk, owner.publicKey, wrapAad(link.rootStreamId, 0, owner.keyId))) },
-  { recipientKind: "bot", recipientKeyId: bik.publicKeyId,
-    ...(await wrapSSK(ssk, bik.publicKey, wrapAad(link.rootStreamId, 0, bik.publicKeyId))) },
+  {
+    recipientKind: "user",
+    recipientKeyId: owner.keyId,
+    ...(await wrapSSK(ssk, owner.publicKey, wrapAad(link.rootStreamId, 0, owner.keyId))),
+  },
+  {
+    recipientKind: "bot",
+    recipientKeyId: bik.publicKeyId,
+    ...(await wrapSSK(ssk, bik.publicKey, wrapAad(link.rootStreamId, 0, bik.publicKeyId))),
+  },
 ]
-await api("/streams/" + link.rootStreamId + "/e2e/key-wraps", { keyGeneration: 0, wraps })`}
+await api(\u0060/streams/\${link.rootStreamId}/e2e/key-wraps\u0060, { keyGeneration: 0, wraps })`}
   />
 
   <h3>3 · Claim, then open with your key</h3>
@@ -344,8 +377,10 @@ await api("/streams/" + link.rootStreamId + "/e2e/key-wraps", { keyGeneration: 0
     lang="ts"
     label="open a sealed claim"
     code={`const { data: inv } = await api("/bot-invocations/claim", {
-  runtimeKind: "custom", instanceId: INSTANCE,
-  supportedCapabilities: ["active-scratchpad"], claimTtlSeconds: 120,
+  runtimeKind: "custom",
+  instanceId: INSTANCE,
+  supportedCapabilities: ["active-scratchpad"],
+  claimTtlSeconds: 120,
 })
 const sc = inv.sealedContext
 const stream = inv.rootStreamId
@@ -369,22 +404,27 @@ const prompt = await open(promptSSK, sc.prompt.envelope, sc.prompt.ciphertext)
   <CodeBlock
     lang="ts"
     label="seal back"
-    code={`const gen = sc.reply.keyGeneration, sender = sc.reply.senderId
+    code={`const gen = sc.reply.keyGeneration
+const sender = sc.reply.senderId
 const ssk = ssks.get(gen)!
 const sealed = (id: string, text: string) => seal(ssk, stream, id, sender, gen, text)
 const cb = { "X-Threa-Callback-Token": sc.callbackToken, "Content-Type": "application/json" }
 const post = (path: string, body: unknown) =>
-  fetch(BASE + "/api/v1/workspaces/" + WS + path, { method: "POST", headers: cb, body: JSON.stringify(body) })
+  fetch(\u0060\${BASE}/api/v1/workspaces/\${WS}\${path}\u0060, { method: "POST", headers: cb, body: JSON.stringify(body) })
 
 // A trace step: the full command, the real output. The server can't read it.
-const stepId = "step_" + crypto.randomUUID()
-await post("/bot-invocations/" + inv.id + "/sealed-steps",
-  { stepId, stepType: "tool_call", ...(await sealed(stepId, "$ rm -rf ./build\\n" + output)) })
+const stepId = \u0060step_\${crypto.randomUUID()}\u0060
+await post(\u0060/bot-invocations/\${inv.id}/sealed-steps\u0060, {
+  stepId,
+  stepType: "tool_call",
+  ...(await sealed(stepId, \u0060$ rm -rf ./build\\n\${output}\u0060)),
+})
 
 // The final reply, then the turn is done.
-const msgId = "msg_" + crypto.randomUUID()
-await post("/bot-invocations/" + inv.id + "/sealed-complete",
-  { reply: { messageId: msgId, ...(await sealed(msgId, replyMarkdown)) } })`}
+const msgId = \u0060msg_\${crypto.randomUUID()}\u0060
+await post(\u0060/bot-invocations/\${inv.id}/sealed-complete\u0060, {
+  reply: { messageId: msgId, ...(await sealed(msgId, replyMarkdown)) },
+})`}
   />
   <div class="note">
     <strong>Steps over the socket</strong>
