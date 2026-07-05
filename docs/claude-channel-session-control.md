@@ -6,6 +6,19 @@ genuinely-novel tmux paths ($TMUX_PANE inheritance, Esc interrupt, `/model`) are
 Claude Code v2.1.193 (and live testing found + fixed two bugs — see the checklist); the full
 dispatch round-trip through a real scratchpad is still only unit-tested.
 
+> **Update 2026-07-05 (`feat/steer-correction`): steer no longer interrupts a running turn.**
+> The original interrupt-and-redeliver steer read badly in the UI: the running trace closed with
+> "Superseded by /steer", the continuation ran under the /steer invocation — which, as a
+> session-control claim, has **no agent session**, so its steps went nowhere — and the /steer
+> command spun until the whole turn ended. The corrected semantics mirror Pi's native
+> `deliverAs: "steer"`: with a turn in flight, the SDK records a `steer` step on the **running**
+> invocation's trace (carrying the folded text), injects the combined content into the running
+> turn via the connector's `steer` actuation (tmux bracketed paste + Enter — Claude Code's native
+> mid-turn steering, no Escape), closes swept queued messages no-response, and completes the
+> /steer command immediately so the command card resolves. The running invocation keeps its trace
+> and its eventual reply answers the steer. The interrupt path below remains the fallback for an
+> idle session (nothing to fold into) and for actuators without `steer` support.
+
 Implemented across: backend (`commands/availability.ts`, `commands/handlers.ts`, `commands/catalog.ts`,
 `bot-runtimes/service.ts` comment), channel (`claude-code-remote/src/tmux-control.ts` +
 `channel-server.ts`), and a harness-CLI bonus (`harness-daemon`: `interrupt`/`steer`/`keys` verbs).
@@ -99,22 +112,22 @@ Notes:
 | Command             | Key sequence                                                                                                   | Channel bookkeeping                                                                                                                                                                              |
 | ------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **stop**            | `Escape`                                                                                                       | Complete every in-flight invocation (interrupted), ack the stop invocation: "Stopped Claude."                                                                                                    |
-| **steer `<text>`**  | `Escape`, ~250 ms, then forward **one combined** payload through the **existing MCP channel path** (not typed) | Drain all pending msgs for the session + the steer text, combine into ONE turn; complete the interrupted turn + all swept msgs `noResponse`; the primary invocation gets Claude's single `reply` |
+| **steer `<text>`**  | Turn in flight: `Ctrl-U` + bracketed paste + `Enter` (Claude's native mid-turn steering, **no Escape**). Idle: the interrupt path below. | Turn in flight: record a `steer` step on the RUNNING invocation's trace, fold queued msgs + steer text into the injected block, close swept msgs `noResponse`, complete /steer immediately — the running turn keeps its trace and its `reply` answers the steer. Idle: drain + one combined turn under the /steer invocation (original semantics below) |
 | **model `<alias>`** | `typeLine("/model <alias>")`                                                                                   | Ack "Model set to `<alias>`." (best-effort)                                                                                                                                                      |
 | **compact**         | `typeLine("/compact")`                                                                                         | Ack                                                                                                                                                                                              |
 | **run `<cmd>`**     | `typeLine("/<cmd>")` (strip a leading slash if present)                                                        | Ack "Ran `/<cmd>`."                                                                                                                                                                              |
 
-**Steer is the interesting one.** Rather than blind-typing the steer text into the TUI (where the
-result would be orphaned with no invocation to reply to), we use tmux **only** for the `Escape`
-interrupt, then push the steer text through the channel's normal
-`notifications/claude/channel` notification using the steer invocation's own id. Claude treats it
-as a fresh turn and calls `reply(steerId)` → the work round-trips back into the scratchpad. This
-is exactly the user's "stop, then send another message," and it reuses the battle-tested
-reply/idle-timeout/attachment machinery instead of inventing a parallel path. (A plain follow-up
-message with no steer just queues behind the current turn as it does today — steer is the
-_interrupt-and-redirect_ variant.)
+**Steer is the interesting one.** The v1 design below treated typed-in text as unusable ("orphaned
+with no invocation to reply to") — true only when the steer is modeled as a NEW turn. The
+2026-07-05 correction models it as part of the RUNNING turn instead: the typed text folds into the
+turn Claude is already executing for an open invocation, so its eventual `reply` to that
+invocation covers the steer, nothing is orphaned, and the trace never breaks. The v1
+interrupt-and-redeliver mechanics below still apply verbatim when the session is **idle** or the
+actuator has no `steer` support: tmux sends `Escape`, then the steer text rides the channel's
+normal `notifications/claude/channel` notification under the steer invocation's own id, and
+Claude answers it with `reply(steerId)`.
 
-**Steer combines all pending messages into one turn (mirrors Pi).** Pi drains up to
+**Steer combines all pending messages into one payload (mirrors Pi) — in both paths.** Pi drains up to
 `STEER_DRAIN_LIMIT` (10) pending invocations while busy: the first becomes `pending`, the rest go
 into `steeredInvocations[]`, and on completion the primary gets the final `reply` while **every
 swept invocation closes `noResponse`** (`threa-remote.ts:2365-2404`) — N rapid messages → **one**

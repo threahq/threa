@@ -14,7 +14,7 @@ import {
 import { z } from "zod"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
 import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
-import { interrupt, killOwnWindow, submitLine, tmuxAvailable } from "./tmux-control"
+import { interrupt, killOwnWindow, steerText, submitLine, tmuxAvailable } from "./tmux-control"
 import { TranscriptTracer } from "./transcript-trace"
 
 const RUNTIME_KIND = "claude-code-channel"
@@ -85,7 +85,7 @@ export function buildInstructions(permissionRelay: boolean): string {
 /**
  * Execute an advertised session-control command by typing its Claude Code
  * slash-command equivalent into the tmux pane. `stop`/`steer` never reach this
- * — the SDK actuates those itself via `interrupt`.
+ * — the SDK actuates those itself via `interrupt`/`steer`.
  */
 export async function runClaudeCommand(name: string, args: string): Promise<{ ok: boolean; message: string }> {
   switch (name) {
@@ -141,6 +141,10 @@ export function createClaudeSessionControl(): SessionControlActuator | undefined
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
     interrupt,
+    // The prefix tells the model mid-turn text came from the scratchpad, so it
+    // folds it into the open invocation's work rather than treating it as a
+    // side conversation at the terminal.
+    steer: (text) => steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`),
     runCommand: runClaudeCommand,
   }
 }

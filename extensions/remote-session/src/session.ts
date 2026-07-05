@@ -86,8 +86,8 @@ export interface DeliveredTurn {
 /**
  * How a connector drives its runtime for session control. `stop` and `steer`
  * are actuated by the SDK itself (they manipulate SDK-owned turn state) using
- * `interrupt()`; every other advertised command is routed to `runCommand`,
- * which returns the user-facing ack markdown.
+ * `interrupt()`/`steer()`; every other advertised command is routed to
+ * `runCommand`, which returns the user-facing ack markdown.
  */
 export interface SessionControlActuator {
   /** Command names to advertise (must be Threa catalog names, e.g. "model", "thinking", "compact", "run", "reload", "steer", "stop"). */
@@ -98,6 +98,14 @@ export interface SessionControlActuator {
   thinkingLevels?: readonly string[]
   /** Interrupt the runtime's current turn. False = control lost (e.g. pane gone). */
   interrupt(): boolean
+  /**
+   * Fold text into the RUNNING turn without interrupting it — the runtime's
+   * native mid-turn steering (typing into Claude Code while it works). When
+   * present and a turn is in flight, /steer steers in place: the running
+   * invocation keeps its trace and its reply. Absent, /steer falls back to
+   * interrupt + redeliver. False = control lost.
+   */
+  steer?(text: string): Promise<boolean> | boolean
   /** Execute an advertised non-steer/stop command. Returns the ack posted to the scratchpad. */
   runCommand(name: string, args: string): Promise<{ ok: boolean; message: string }>
 }
@@ -732,12 +740,73 @@ export class RemoteSession {
   }
 
   /**
+   * Route /steer. With a turn in flight and a steer-capable actuator, fold the
+   * text into the RUNNING turn (the running invocation keeps its trace and its
+   * reply). Otherwise fall back to interrupt + redeliver — the only option for
+   * an idle session (there is no turn to fold into) or a runtime without
+   * native mid-turn steering.
+   */
+  private async runSteer(invocation: ClaimedInvocation, actuator: SessionControlActuator, text: string): Promise<void> {
+    const steer = actuator.steer?.bind(actuator)
+    if (this.inflight.size > 0 && steer) {
+      return await this.steerRunningTurn(invocation, steer, text)
+    }
+    return await this.steerByInterrupt(invocation, actuator, text)
+  }
+
+  /**
+   * Steer in place: sweep any messages queued while busy, record a `steer`
+   * step on the running turn's trace (the visible record of what was folded
+   * in), and inject the combined text via the runtime's native mid-turn
+   * steering. The running invocation stays the primary — its eventual reply
+   * answers the steer — so the /steer command itself closes immediately
+   * (command_completed resolves the card) instead of spinning until the turn
+   * ends.
+   */
+  private async steerRunningTurn(
+    invocation: ClaimedInvocation,
+    steer: (text: string) => Promise<boolean> | boolean,
+    text: string
+  ): Promise<void> {
+    const { parts, swept } = await this.sweepQueuedForSteer(text)
+    if (parts.length === 0) {
+      await this.completeAck(invocation, "Nothing to steer with (no text, no queued messages); the turn continues.")
+      return
+    }
+    const combined = buildSteerContent(parts)
+    // Step before actuation so it sits ahead of the continuation's frames in
+    // the trace; a steer is also a sign of life for the turn it redirects.
+    for (const [id] of this.inflight) {
+      await this.recordSteps(id, [{ stepType: "steer", content: combined }])
+      this.touchIdleTimeout(id)
+    }
+    if (!(await steer(combined))) {
+      // Nothing was injected: the swept messages were claimed but not
+      // delivered — fail them loudly so they don't vanish into a silent close.
+      await Promise.all(
+        swept.map((item) => this.failInvocation(item, "Steer not delivered (runtime control unavailable); resend."))
+      )
+      await this.completeAck(invocation, "Could not steer the session (runtime control unavailable).")
+      return
+    }
+    await Promise.all(swept.map((item) => this.completeNoResponse(item)))
+    await this.completeTurn(invocation, {
+      noResponse: true,
+      metadata: { "remote.invocationId": invocation.id, "remote.sessionControl": "true", "remote.steered": "true" },
+    }).catch((error) => this.log(`steer close failed: ${this.summarize(error)}`))
+  }
+
+  /**
    * Interrupt the running turn, then fold the steer text + any messages queued
    * while the runtime was busy into ONE combined turn (mirrors Pi: N messages →
    * 1 response). The interrupt is the only actuation; the combined content
    * round-trips through the normal delivery path so the runtime replies to it.
    */
-  private async runSteer(invocation: ClaimedInvocation, actuator: SessionControlActuator, text: string): Promise<void> {
+  private async steerByInterrupt(
+    invocation: ClaimedInvocation,
+    actuator: SessionControlActuator,
+    text: string
+  ): Promise<void> {
     // If the interrupt can't be sent, bail before any destructive side-effect —
     // don't close the running turn or deliver the steer as a second concurrent
     // turn against a runtime we couldn't actually interrupt.
@@ -758,6 +827,23 @@ export class RemoteSession {
       { alwaysNote: true }
     )
 
+    const { parts, swept } = await this.sweepQueuedForSteer(text)
+
+    // Close every swept message with no response — its content is folded into the
+    // single combined turn the primary (this steer invocation) will answer.
+    await Promise.all(swept.map((item) => this.completeNoResponse(item)))
+
+    if (parts.length === 0) {
+      await this.completeAck(invocation, "Interrupted the session; nothing pending to steer with.")
+      await this.syncPresence()
+      return
+    }
+
+    await this.deliverTurn(invocation, buildSteerContent(parts))
+  }
+
+  /** Claim messages queued while the runtime was busy and fold their text in (steer text last). */
+  private async sweepQueuedForSteer(text: string): Promise<{ parts: string[]; swept: ClaimedInvocation[] }> {
     const parts: string[] = []
     const swept: ClaimedInvocation[] = []
     for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
@@ -774,18 +860,7 @@ export class RemoteSession {
       }
     }
     if (text) parts.push(text)
-
-    // Close every swept message with no response — its content is folded into the
-    // single combined turn the primary (this steer invocation) will answer.
-    await Promise.all(swept.map((item) => this.completeNoResponse(item)))
-
-    if (parts.length === 0) {
-      await this.completeAck(invocation, "Interrupted the session; nothing pending to steer with.")
-      await this.syncPresence()
-      return
-    }
-
-    await this.deliverTurn(invocation, buildSteerContent(parts))
+    return { parts, swept }
   }
 
   /**

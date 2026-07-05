@@ -37,6 +37,8 @@ describe("createClaudeSessionControl", () => {
       expect(actuator!.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"])
       expect(actuator!.modelSuggestions!.map((suggestion) => suggestion.value)).toContain("opus")
       expect(actuator!.modelSuggestions!.every((suggestion) => suggestion.label)).toBe(true)
+      // Native mid-turn steering: without this the SDK falls back to interrupt+redeliver.
+      expect(typeof actuator!.steer).toBe("function")
     })
   })
 })
