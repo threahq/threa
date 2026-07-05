@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, expect, it } from "vitest"
 import { createVisibleStreamRegistry } from "./visible-streams"
 
 const flushMicrotasks = () => Promise.resolve()
