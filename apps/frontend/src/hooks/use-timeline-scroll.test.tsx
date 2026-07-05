@@ -683,6 +683,32 @@ describe("useTimelineScroll — dead-band dock (downward release short of the bo
       vi.useRealTimers()
     }
   })
+
+  it("waits for the mouse button to release before docking", () => {
+    // Mouse mirror of the finger-lift case: a held button (text-selection drag,
+    // scrollbar-adjacent press) must not dock mid-gesture. The release is
+    // listened on window, not the scroller — a drag can end with the cursor
+    // outside it.
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    vi.useFakeTimers()
+    try {
+      const { harness, el, userInteractedAtRef } = mountAtBottom()
+      gestureScrollTo(harness, el, userInteractedAtRef, 3800)
+      el.dispatchEvent(new Event("mousedown"))
+      gestureScrollTo(harness, el, userInteractedAtRef, 4140)
+      // Button still held: the settle window elapsing must not dock.
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(4140)
+      // Release (on window — cursor may have left the scroller) → dock.
+      window.dispatchEvent(new Event("mouseup"))
+      act(() => vi.advanceTimersByTime(200))
+      expect(el.scrollTop).toBe(5000)
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe("useTimelineScroll — cold-load settle across a stream switch", () => {
