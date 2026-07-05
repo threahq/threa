@@ -141,6 +141,47 @@ describe("AgentRuntime message counting", () => {
     expect(result.responseValidationFailed).toBe(true)
   })
 
+  it("stops early when send_message drafts repeatedly fail validation (tool-call finalization path)", async () => {
+    // The supersede-rerun prompt mandates finalizing via send_message /
+    // keep_response tool calls, so the invalid-draft terminal must trip on the
+    // pendingMessages path too — not only on plain assistant text.
+    const generateTextWithTools = mock(async () => ({
+      text: "",
+      toolCalls: [
+        {
+          toolCallId: "tool_1",
+          toolName: AgentToolNames.SEND_MESSAGE,
+          input: { content: "I've already sent three replies." },
+        },
+      ],
+      response: {
+        messages: [{ role: "assistant", content: "" } as any],
+      },
+    }))
+    const sendMessage = mock(async () => ({ messageId: "msg_unused", operation: "created" as const }))
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "Reply three times with numbers." }],
+      tools: [],
+      allowNoMessageOutput: true,
+      validateFinalResponse: async () => "Send the requested reply content, not an action summary.",
+      sendMessage,
+    })
+
+    const result = await runtime.run()
+
+    expect(generateTextWithTools).toHaveBeenCalledTimes(3)
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(result.messagesSent).toBe(0)
+    expect(result.noMessageReason).toBe(
+      "Kept the previous response because revised drafts repeatedly failed validation after context updates."
+    )
+    expect(result.responseValidationFailed).toBe(true)
+  })
+
   it("forwards model config and cost context to generateTextWithTools", async () => {
     const captured: Array<{
       modelString?: string

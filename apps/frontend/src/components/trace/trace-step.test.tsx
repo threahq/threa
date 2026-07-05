@@ -50,6 +50,30 @@ describe("TraceStep", () => {
     expect(screen.getByText(/didn't change the underlying request/i)).toBeInTheDocument()
   })
 
+  it("renders a model escalation step as prose, not raw JSON", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "model_escalated",
+            content: JSON.stringify({
+              fromModel: "openrouter:anthropic/claude-sonnet-4.6",
+              toModel: "openrouter:anthropic/claude-opus-4.8",
+              cause: "previous_attempt_failed_validation",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("claude-opus-4.8")).toBeInTheDocument()
+    expect(screen.getByText(/from claude-sonnet-4\.6/)).toBeInTheDocument()
+    expect(screen.getByText(/could not produce a response that passed validation/i)).toBeInTheDocument()
+    expect(screen.queryByText(/fromModel/)).not.toBeInTheDocument()
+  })
+
   it("indicates edited messages in reconsideration context", () => {
     render(
       <MemoryRouter>

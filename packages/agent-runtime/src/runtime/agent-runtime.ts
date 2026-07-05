@@ -268,6 +268,29 @@ export class AgentRuntime {
     let stoppedByUser = false
     let validationFailureTerminal = false
 
+    // Counts repeated invalid final drafts across BOTH finalization paths —
+    // plain assistant text and send_message tool calls (the path the
+    // supersede-rerun prompt mandates), so neither can loop on revision
+    // prompts past the cap. Returns true when the terminal is reached: keep
+    // the previous response and record that this turn could not produce a
+    // valid revision (the roadmap 2.3 escalation marker).
+    const registerInvalidDraft = (draft: string): boolean => {
+      if (lastInvalidDraft === draft) {
+        repeatedInvalidDraftCount += 1
+      } else {
+        lastInvalidDraft = draft
+        repeatedInvalidDraftCount = 1
+      }
+
+      if (this.config.allowNoMessageOutput && repeatedInvalidDraftCount >= MAX_REPEATED_INVALID_DRAFTS) {
+        keptResponseReason =
+          "Kept the previous response because revised drafts repeatedly failed validation after context updates."
+        validationFailureTerminal = true
+        return true
+      }
+      return false
+    }
+
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       const abortReason = await this.config.shouldAbort?.()
       if (abortReason) {
@@ -359,19 +382,7 @@ export class AgentRuntime {
             ? await this.config.validateFinalResponse(lastAssistantText)
             : null
           if (validationError) {
-            if (lastInvalidDraft === lastAssistantText) {
-              repeatedInvalidDraftCount += 1
-            } else {
-              lastInvalidDraft = lastAssistantText
-              repeatedInvalidDraftCount = 1
-            }
-
-            if (this.config.allowNoMessageOutput && repeatedInvalidDraftCount >= MAX_REPEATED_INVALID_DRAFTS) {
-              keptResponseReason =
-                "Kept the previous response because revised drafts repeatedly failed validation after context updates."
-              validationFailureTerminal = true
-              break
-            }
+            if (registerInvalidDraft(lastAssistantText)) break
 
             this.pushRuntimePrompt(
               conversation,
@@ -433,6 +444,8 @@ export class AgentRuntime {
           if (newMessages.length === 0) {
             const invalidPending = await this.findInvalidPendingMessage(execResult.pendingMessages)
             if (invalidPending) {
+              if (registerInvalidDraft(invalidPending.content)) break
+
               this.pushRuntimePrompt(
                 conversation,
                 `[Final response needs revision]\n\n` +
@@ -505,6 +518,8 @@ export class AgentRuntime {
         if (execResult.pendingMessages.length > 0) {
           const invalidPending = await this.findInvalidPendingMessage(execResult.pendingMessages)
           if (invalidPending) {
+            if (registerInvalidDraft(invalidPending.content)) break
+
             this.pushRuntimePrompt(
               conversation,
               `[Final response needs revision]\n\n` +
