@@ -651,19 +651,19 @@ export const ConversationRepository = {
   },
 
   /**
-   * Flip a resolved conversation back to active. Applied whenever a message
-   * moves into a resolved conversation — gaining a message means it has
-   * activity again, whether it was resolved by a normal workflow or
-   * auto-resolved on becoming empty (which keeps the emptied conversation
-   * usable as an undo target). Conditional in SQL (INV-20), so it no-ops for
-   * active/stalled conversations.
+   * Flip a stalled or resolved conversation back to active. Applied whenever a
+   * message moves into one — gaining a message means it has activity again,
+   * whether it was resolved by a normal workflow, auto-resolved on becoming
+   * empty (which keeps the emptied conversation usable as an undo target), or
+   * faded by the staleness sweep. Conditional in SQL (INV-20), so it no-ops
+   * for active conversations.
    */
-  async reactivateIfResolved(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
+  async reactivateIfInactive(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
     await db.query(sql`
       UPDATE conversations
       SET status = ${ConversationStatuses.ACTIVE}, updated_at = NOW()
       WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
-        AND status = ${ConversationStatuses.RESOLVED}
+        AND status IN (${ConversationStatuses.RESOLVED}, ${ConversationStatuses.STALLED})
     `)
   },
 

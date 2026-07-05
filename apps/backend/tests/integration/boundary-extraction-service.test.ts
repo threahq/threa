@@ -18,6 +18,7 @@ import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository } from "../../src/features/conversations"
 import { BoundaryExtractionService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
+import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../../src/features/conversations"
@@ -961,6 +962,55 @@ describe("BoundaryExtractionService", () => {
 
       // Extractor should never have been called
       expect(stubExtractor.extractCallCount).toBe(0)
+    })
+
+    test("reuses and reactivates a sweep-faded scratchpad conversation instead of minting a second", async () => {
+      const localStreamId = streamId()
+      const msg1Id = messageId()
+      const msg2Id = messageId()
+
+      await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: localStreamId,
+          workspaceId: testWorkspaceId,
+          type: "scratchpad",
+          displayName: "Long-lived notes",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        await MessageRepository.insert(client, {
+          id: msg1Id,
+          streamId: localStreamId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("First note"),
+        })
+      })
+
+      const result1 = await service.processMessage(msg1Id, localStreamId, testWorkspaceId)
+      const conversationId1 = result1!.id
+
+      // The staleness sweep faded the scratchpad's conversation.
+      await withTransaction(pool, async (client) => {
+        await client.query(sql`UPDATE conversations SET status = 'stalled' WHERE id = ${conversationId1}`)
+        await MessageRepository.insert(client, {
+          id: msg2Id,
+          streamId: localStreamId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Back after a week"),
+        })
+      })
+
+      const result2 = await service.processMessage(msg2Id, localStreamId, testWorkspaceId)
+
+      // Same conversation, live again — never a second same-named card.
+      expect(result2?.id).toBe(conversationId1)
+      expect(result2?.status).toBe("active")
+      expect(result2?.messageIds).toContain(msg2Id)
     })
 
     test("uses stream display name as conversation topic", async () => {

@@ -42,7 +42,7 @@ describe("conversationAssigner — threadFromMessage", () => {
   beforeEach(() => {
     insert = spyOn(ConversationRepository, "insert").mockResolvedValue({ id: "conv_new" } as never)
     addPrimaryMessage = spyOn(ConversationRepository, "addPrimaryMessage").mockResolvedValue(undefined as never)
-    spyOn(ConversationRepository, "reactivateIfResolved").mockResolvedValue(undefined as never)
+    spyOn(ConversationRepository, "reactivateIfInactive").mockResolvedValue(undefined as never)
     spyOn(ConversationRepository, "bumpActivityForIds").mockResolvedValue(undefined as never)
     emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
     findByIdForUpdate = spyOn(ConversationRepository, "findByIdForUpdate")
@@ -128,7 +128,7 @@ describe("conversationAssigner — existing (same-root guard)", () => {
 
   beforeEach(() => {
     addPrimaryMessage = spyOn(ConversationRepository, "addPrimaryMessage").mockResolvedValue(undefined as never)
-    spyOn(ConversationRepository, "reactivateIfResolved").mockResolvedValue(undefined as never)
+    spyOn(ConversationRepository, "reactivateIfInactive").mockResolvedValue(undefined as never)
     spyOn(ConversationRepository, "bumpActivityForIds").mockResolvedValue(undefined as never)
     emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
     findByIdForUpdate = spyOn(ConversationRepository, "findByIdForUpdate")

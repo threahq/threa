@@ -259,13 +259,18 @@ export class BoundaryExtractionService {
     let decision: ConversationDecision
 
     if (stream.type === StreamTypes.SCRATCHPAD) {
-      const activeConversation = scratchpadConversations?.find((c) => c.status === ConversationStatuses.ACTIVE)
-      decision = activeConversation
+      // Scratchpad = one conversation, by decision (board-view-design.md). The
+      // staleness sweep may have faded it to stalled/resolved, so fall back to
+      // the most-recently-active conversation and let the assignment
+      // reactivation flip it — never mint a second same-named conversation.
+      const existingConversation =
+        scratchpadConversations?.find((c) => c.status === ConversationStatuses.ACTIVE) ?? scratchpadConversations?.[0]
+      decision = existingConversation
         ? {
-            assignments: [{ conversationId: activeConversation.id, isPrimary: true }],
+            assignments: [{ conversationId: existingConversation.id, isPrimary: true }],
             confidence: 1.0,
             reassignments: [],
-            validUpdateTargets: new Set([activeConversation.id]),
+            validUpdateTargets: new Set([existingConversation.id]),
           }
         : {
             assignments: [{ conversationId: null, isPrimary: true }],
@@ -472,6 +477,11 @@ export class BoundaryExtractionService {
             messageId,
             message.authorId
           )
+          // A stalled/resolved conversation gaining a message is live again
+          // (sweep fades must not stick to conversations that resume). Runs
+          // before completenessUpdates, so an explicit resolve in the same
+          // pass still wins.
+          await ConversationRepository.reactivateIfInactive(client, workspaceId, a.conversationId)
         } else {
           await ConversationRepository.addSecondaryMessage(client, workspaceId, a.conversationId, messageId)
         }
@@ -609,10 +619,18 @@ export class BoundaryExtractionService {
       // conversation (mirrors the scratchpad create path's stream lock, INV-20).
       await client.query(sql`SELECT id FROM streams WHERE id = ${stream.id} FOR UPDATE`)
 
-      const active = (await ConversationRepository.findActiveByStream(client, stream.id))[0]
-      const isNew = !active
+      // Scratchpads keep one conversation for the stream's lifetime, so a
+      // sweep-faded conversation is reused (and reactivated below) rather than
+      // shadowed by a fresh mint; elsewhere a fully-faded stream means a new
+      // session and a new conversation is correct.
+      const existing =
+        (await ConversationRepository.findActiveByStream(client, stream.id))[0] ??
+        (stream.type === StreamTypes.SCRATCHPAD
+          ? (await ConversationRepository.findByStream(client, stream.id, { limit: 1 }))[0]
+          : undefined)
+      const isNew = !existing
       const conversation =
-        active ??
+        existing ??
         (await ConversationRepository.insert(client, {
           id: conversationId(),
           streamId: stream.id,
@@ -622,6 +640,7 @@ export class BoundaryExtractionService {
         }))
 
       await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)
+      await ConversationRepository.reactivateIfInactive(client, workspaceId, conversation.id)
       await ConversationRepository.bumpActivityForIds(client, workspaceId, [conversation.id])
 
       // Same per-message membership emit the declared-send path uses (INV-35/37);
