@@ -29,6 +29,7 @@ import type {
   ProcessingStatus,
   AttachmentSafetyStatus,
   ConversationStatus,
+  BoardScopeStreamType,
   MemoType,
   KnowledgeType,
   MemoStatus,
@@ -723,6 +724,37 @@ export interface BoardPost {
    * `conversation:message_assigned`.
    */
   streamIds: string[]
+  /**
+   * Whether this conversation has at least one active captured memo — the
+   * Decisions/Knowledge lens signal (board-view-design.md § "Lenses"). A
+   * board-level field, not part of the conversation aggregate, because it comes
+   * from a memos join the pure `conversation:*` event payload never carries, so
+   * the board card preserves it across live merges. It's therefore only as fresh
+   * as the last fetch: a newly-captured memo surfaces on Decisions after a refetch
+   * (board refetches on mount/reconnect), and — the reverse — a memo leaving
+   * `active` (archive/supersede, not currently user-reachable) leaves a stale
+   * `true` until a lens fetch that still returns the row reseeds it. Both are the
+   * accepted staleness window until a live memo→board signal lands.
+   */
+  hasCapturedMemo: boolean
+  /**
+   * The effective root of the conversation's anchor stream (a top-level anchor
+   * is its own root; a thread anchor resolves to its root channel/DM). The
+   * board's stream-scope filter matches on this, so a thread-anchored
+   * conversation stays in its channel's scope — mirroring the backend's
+   * `COALESCE(root_stream_id, id)` rule without the client needing the stream
+   * row. Optional because cached rows predate the field; the client falls back
+   * to `conversation.streamId`.
+   */
+  rootStreamId?: string
+  /**
+   * The type of that effective root (`channel`/`dm`/`scratchpad`/`system` —
+   * never `thread`). The board's stream-type filter matches on this, so a
+   * conversation anchored in a thread counts as its root's type. Optional
+   * because cached rows predate the field; the client fails OPEN (surfaces the
+   * post) until a fetch reseeds it.
+   */
+  rootStreamType?: BoardScopeStreamType
 }
 
 /**

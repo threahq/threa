@@ -15,8 +15,9 @@ import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository } from "../../src/features/conversations"
+import { MemoRepository } from "../../src/features/memos"
 import { setupTestDatabase, testMessageContent } from "./setup"
-import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
+import { userId, workspaceId, streamId, messageId, conversationId, memoId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
 
 describe("ConversationRepository", () => {
@@ -342,6 +343,289 @@ describe("ConversationRepository", () => {
       })
 
       expect(conversations.some((c) => c.id === convId)).toBe(true)
+    })
+  })
+
+  describe("findByWorkspaceForViewer — board lenses", () => {
+    // A public channel so the viewer reads these without a stream_members row
+    // (INV-62), keeping the lens filter — not access — the thing under test.
+    let lensStreamId: string
+    let activeConv: string
+    let stalledConv: string
+    let idleIncompleteConv: string
+    let idleCompleteConv: string
+    let resolvedIdleConv: string
+    let decisionConv: string
+    let archivedMemoConv: string
+    let seq = 1
+
+    async function seedConversation(
+      client: Parameters<typeof ConversationRepository.insert>[0],
+      opts: { status?: (typeof ConversationStatuses)[keyof typeof ConversationStatuses]; completenessScore?: number }
+    ): Promise<string> {
+      const convId = conversationId()
+      const msgId = messageId()
+      await MessageRepository.insert(client, {
+        id: msgId,
+        streamId: lensStreamId,
+        sequence: BigInt(seq++),
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("Lens message"),
+      })
+      await ConversationRepository.insert(client, {
+        id: convId,
+        streamId: lensStreamId,
+        workspaceId: testWorkspaceId,
+        status: opts.status,
+        completenessScore: opts.completenessScore,
+      })
+      await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+      return convId
+    }
+
+    beforeAll(async () => {
+      lensStreamId = streamId()
+      await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: lensStreamId,
+          workspaceId: testWorkspaceId,
+          type: "channel",
+          visibility: "public",
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        activeConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
+        stalledConv = await seedConversation(client, { status: ConversationStatuses.STALLED, completenessScore: 5 })
+        idleIncompleteConv = await seedConversation(client, {
+          status: ConversationStatuses.ACTIVE,
+          completenessScore: 2,
+        })
+        idleCompleteConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 7 })
+        // Resolved but idle + low-score: done, so it must NOT read as a loose end.
+        resolvedIdleConv = await seedConversation(client, {
+          status: ConversationStatuses.RESOLVED,
+          completenessScore: 2,
+        })
+        decisionConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
+        archivedMemoConv = await seedConversation(client, { status: ConversationStatuses.ACTIVE, completenessScore: 5 })
+
+        // A captured memo makes decisionConv a member of the Decisions lens.
+        await MemoRepository.insert(client, {
+          id: memoId(),
+          workspaceId: testWorkspaceId,
+          memoType: "conversation",
+          sourceConversationId: decisionConv,
+          title: "A decision",
+          abstract: "What got settled.",
+          keyPoints: [],
+          sourceMessageIds: [],
+          participantIds: [testUserId],
+          knowledgeType: "decision",
+          tags: [],
+          status: "active",
+        })
+        // An archived memo is no longer captured knowledge — its conversation must
+        // drop off the Decisions lens.
+        await MemoRepository.insert(client, {
+          id: memoId(),
+          workspaceId: testWorkspaceId,
+          memoType: "conversation",
+          sourceConversationId: archivedMemoConv,
+          title: "An archived note",
+          abstract: "No longer active.",
+          keyPoints: [],
+          sourceMessageIds: [],
+          participantIds: [testUserId],
+          knowledgeType: "decision",
+          tags: [],
+          status: "archived",
+        })
+      })
+      // Backdate the "idle" conversations past the staleness window; the fresh ones
+      // keep their insert-time `last_activity_at` (≈ now).
+      await pool.query(`UPDATE conversations SET last_activity_at = NOW() - INTERVAL '20 hours' WHERE id = ANY($1)`, [
+        [idleIncompleteConv, idleCompleteConv, resolvedIdleConv],
+      ])
+    })
+
+    test("all lens (and no lens) surfaces every readable conversation regardless of state", async () => {
+      for (const lens of ["all", undefined] as const) {
+        const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+          lens,
+          limit: 100,
+        })
+        const ids = new Set(rows.map((r) => r.id))
+        for (const id of [activeConv, stalledConv, idleIncompleteConv, resolvedIdleConv, decisionConv]) {
+          expect(ids.has(id)).toBe(true)
+        }
+      }
+    })
+
+    test("active lens keeps only status-active conversations", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "active",
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(activeConv)).toBe(true)
+      expect(ids.has(idleIncompleteConv)).toBe(true)
+      expect(ids.has(stalledConv)).toBe(false)
+      expect(ids.has(resolvedIdleConv)).toBe(false)
+    })
+
+    test("needs-resolution lens keeps stalled and long-idle-incomplete, drops fresh and near-complete", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "needs-resolution",
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(stalledConv)).toBe(true)
+      expect(ids.has(idleIncompleteConv)).toBe(true)
+      expect(ids.has(activeConv)).toBe(false)
+      expect(ids.has(idleCompleteConv)).toBe(false)
+      // Resolved is done — excluded even when idle + low-score.
+      expect(ids.has(resolvedIdleConv)).toBe(false)
+    })
+
+    test("decisions lens keeps only conversations with an active captured memo", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        lens: "decisions",
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(decisionConv)).toBe(true)
+      expect(ids.has(activeConv)).toBe(false)
+      expect(ids.has(stalledConv)).toBe(false)
+      // An archived memo doesn't count — its conversation drops off.
+      expect(ids.has(archivedMemoConv)).toBe(false)
+    })
+  })
+
+  describe("findByWorkspaceForViewer — stream scope", () => {
+    let scopedChannelId: string
+    let otherChannelId: string
+    let threadId: string
+    let channelConv: string
+    let threadConv: string
+    let otherConv: string
+
+    async function seedScopedConversation(
+      client: Parameters<typeof ConversationRepository.insert>[0],
+      convStreamId: string,
+      sequence: number
+    ): Promise<string> {
+      const convId = conversationId()
+      const msgId = messageId()
+      await MessageRepository.insert(client, {
+        id: msgId,
+        streamId: convStreamId,
+        sequence: BigInt(sequence),
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("Scope message"),
+      })
+      await ConversationRepository.insert(client, {
+        id: convId,
+        streamId: convStreamId,
+        workspaceId: testWorkspaceId,
+      })
+      await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+      return convId
+    }
+
+    beforeAll(async () => {
+      scopedChannelId = streamId()
+      otherChannelId = streamId()
+      threadId = streamId()
+      await withTransaction(pool, async (client) => {
+        for (const id of [scopedChannelId, otherChannelId]) {
+          await StreamRepository.insert(client, {
+            id,
+            workspaceId: testWorkspaceId,
+            type: "channel",
+            visibility: "public",
+            companionMode: "off",
+            createdBy: testUserId,
+          })
+        }
+        channelConv = await seedScopedConversation(client, scopedChannelId, 1)
+        // A thread under the scoped channel: its conversation is thread-anchored,
+        // and must still match the CHANNEL's scope via the root rule.
+        const parentMsgId = messageId()
+        await MessageRepository.insert(client, {
+          id: parentMsgId,
+          streamId: scopedChannelId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Thread parent"),
+        })
+        await StreamRepository.insert(client, {
+          id: threadId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          parentStreamId: scopedChannelId,
+          parentMessageId: parentMsgId,
+          rootStreamId: scopedChannelId,
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        threadConv = await seedScopedConversation(client, threadId, 1)
+        otherConv = await seedScopedConversation(client, otherChannelId, 1)
+      })
+    })
+
+    test("scope keeps the channel's conversations — including thread-anchored ones — and drops the rest", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamIds: [scopedChannelId],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      expect(ids.has(threadConv)).toBe(true)
+      expect(ids.has(otherConv)).toBe(false)
+    })
+
+    test("multi-stream scope unions the scoped streams", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamIds: [scopedChannelId, otherChannelId],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      expect(ids.has(otherConv)).toBe(true)
+    })
+
+    test("no scope surfaces conversations from every readable stream", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      expect(ids.has(otherConv)).toBe(true)
+    })
+
+    test("type scope matches by ROOT type — a thread-anchored conversation counts as its channel", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamTypes: ["channel"],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(true)
+      // Anchored in a thread, but its root is a channel — must match.
+      expect(ids.has(threadConv)).toBe(true)
+    })
+
+    test("type scope drops conversations whose root is another type", async () => {
+      const rows = await ConversationRepository.findByWorkspaceForViewer(pool, testWorkspaceId, testUserId, {
+        scopeStreamTypes: ["dm"],
+        limit: 100,
+      })
+      const ids = new Set(rows.map((r) => r.id))
+      expect(ids.has(channelConv)).toBe(false)
+      expect(ids.has(threadConv)).toBe(false)
+      expect(ids.has(otherConv)).toBe(false)
     })
   })
 

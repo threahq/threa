@@ -160,9 +160,24 @@ _already_ computes — so the board doesn't decide what matters, it gives you th
 dials. Your point that "what matters is a question for the person" is exactly
 right, so split the dials in two:
 
+> **Reshaped 2026-07-05 (Kris's steer, superseding the first tab-strip cut):**
+> lenses are **true filters, not pages**. The board's job is to _surface_ —
+> so the default home is **All** (everything, newest activity first, nothing
+> hidden), and a lens is an optional narrowing picked from a filter control
+> (like the search page's stream-type filter), never a mode you must opt out
+> of. The first cut rendered the lenses as header tabs with Active-as-default
+> doubling as "everything"; dogfooding killed it — acting on a card changed
+> its lens membership and _hid_ it (a reply made a Needs-resolution card
+> fresh → gone), and the tab strip read as "the intended ways to use the
+> board." Two rules came out of that: **filters never yank what's on screen**
+> (a committed card that stops matching keeps rendering, content live, until
+> the viewer commits a fresh view), and **your own action always surfaces**
+> (posting from a filtered view returns to All and reveals the card).
+
 **Structural lenses (same signal for everyone):**
 
-- **Active** (default) — `lastActivityAt` desc. The resurfacing wall.
+- **All** (default) — everything, `lastActivityAt` desc. The resurfacing wall.
+- **Active** — `status = active`: still in motion, not stalled or resolved.
 - **Needs resolution** — `status = stalled`, or high `temporalStaleness` with
   low `completenessScore`. Loose ends, things hanging.
 - **Decisions / Knowledge** — conversations with a captured memo
@@ -834,9 +849,15 @@ Next, in order (re-sequenced 2026-07-03):
 
 1. **Scope filter + structural lenses** (+ stream-level board mute, above).
    _This — not AI quality — is the promotion blocker:_ the floor data's worst
-   defect is flooding, and flooding is a WHERE clause. Active /
-   Needs-resolution / Decisions lenses are all existing signals; INV-59 route
-   segments.
+   defect is flooding, and flooding is a WHERE clause. **Shipped 2026-07-05
+   (reshaped per the Lenses section):** All-default home; Active /
+   Needs-resolution / Decisions as true filters behind a lens picker (INV-59
+   route segments, `all` canonical at bare `/board`); stream scope via `?in=`
+   and stream-TYPE scope via `?is=` (both root-resolving — a thread-anchored
+   conversation stays in its channel's scope and counts as its root's type),
+   matched client-side on the post's server-computed
+   `rootStreamId`/`rootStreamType`. Stream-level board _mute_ (a persisted
+   per-viewer exclusion) remains open.
 2. **Agent sessions visible in conversation surfaces** (section above) — small
    projection change, big perceived-liveness win when driving agents from the
    board.

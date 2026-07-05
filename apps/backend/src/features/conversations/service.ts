@@ -7,12 +7,20 @@ import { StreamRepository, applySparseRead, applySparseUnread, type ReadStateSna
 import { ActivityRepository } from "../activity"
 import { AttachmentRepository, toAttachmentSummary } from "../attachments"
 import { LinkPreviewRepository, toLinkPreviewSummary } from "../link-previews"
+import { MemoRepository } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { conversationFeedbackId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
-import { StreamTypes, type AttachmentSummary, type ConversationStatus, type LinkPreviewSummary } from "@threa/types"
+import {
+  StreamTypes,
+  type AttachmentSummary,
+  type BoardLens,
+  type BoardScopeStreamType,
+  type ConversationStatus,
+  type LinkPreviewSummary,
+} from "@threa/types"
 
 export { ConversationWithStaleness }
 
@@ -22,6 +30,12 @@ export interface ListConversationsOptions {
 }
 
 export interface ListWorkspaceConversationsOptions extends ListConversationsOptions {
+  /** Structural lens (`all` = no narrowing — the default home shows everything). */
+  lens?: BoardLens
+  /** Root-stream scope: only conversations under these streams. */
+  scopeStreamIds?: string[]
+  /** Root-stream TYPE scope: only conversations whose root is one of these types. */
+  scopeStreamTypes?: string[]
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }
@@ -61,6 +75,12 @@ export interface BoardPost {
    * root and any threads the conversation reaches under it. The client subscribes
    * to each one's rail so a cross-stream member draws live (board-view-design.md). */
   streamIds: string[]
+  /** Whether an active memo was captured from this conversation — the Decisions lens signal. */
+  hasCapturedMemo: boolean
+  /** Effective root of the anchor (`COALESCE(root_stream_id, id)`) — the client's stream-scope filter matches on this. */
+  rootStreamId: string
+  /** That root's type (never `thread`) — the client's stream-type filter matches on this. */
+  rootStreamType: BoardScopeStreamType | undefined
 }
 
 export interface ReassignMessageParams {
@@ -162,6 +182,18 @@ export class ConversationService {
     const streamById = new Map(
       (streamIds.length > 0 ? await StreamRepository.findByIds(this.pool, streamIds) : []).map((s) => [s.id, s])
     )
+    // A thread anchor's ROOT row (for `rootStreamType`) isn't among the anchors —
+    // fetch the missing roots in one extra batch (INV-56).
+    const missingRootIds = [
+      ...new Set(
+        [...streamById.values()]
+          .map((s) => s.rootStreamId)
+          .filter((id): id is string => Boolean(id) && !streamById.has(id!))
+      ),
+    ]
+    for (const root of missingRootIds.length > 0 ? await StreamRepository.findByIds(this.pool, missingRootIds) : []) {
+      streamById.set(root.id, root)
+    }
 
     // Fetch every member message row (opening + all replies) in one batch
     // (INV-56) so the recent window is chosen by `createdAt`, not by `message_ids`
@@ -211,6 +243,15 @@ export class ConversationService {
       [...hydrateIds].map((id) => messageById.get(id)).filter((m): m is Message => Boolean(m))
     )
 
+    // The Decisions/Knowledge lens signal: which of these conversations produced a
+    // captured memo. One batch presence read (INV-56); a board-level field, not on
+    // the conversation aggregate the `conversation:*` events carry.
+    const conversationIdsWithMemos = await MemoRepository.findConversationIdsWithMemos(
+      this.pool,
+      workspaceId,
+      conversations.map((c) => c.id)
+    )
+
     const posts: BoardPost[] = conversations.map((conversation) => {
       const plan = planByConversation.get(conversation.id)!
       const opening = plan.originId ? hydratedById.get(plan.originId) : undefined
@@ -228,12 +269,21 @@ export class ConversationService {
           ...recentMessages.map((m) => m.streamId),
         ]),
       ]
+      const rootStreamId = streamById.get(conversation.streamId)?.rootStreamId ?? conversation.streamId
       return {
         conversation,
         openingMessage: opening ?? null,
         recentMessages,
         totalReplies: plan.totalReplies,
         streamIds,
+        hasCapturedMemo: conversationIdsWithMemos.has(conversation.id),
+        // Effective root of the anchor (and its type) — the client's stream-scope
+        // and stream-type filters match on these, mirroring the SQL
+        // `COALESCE(root_stream_id, id)` rule.
+        rootStreamId,
+        // The root row's type is one of the scope grains by construction (a root
+        // is never a thread); the cast narrows the broader StreamType.
+        rootStreamType: streamById.get(rootStreamId)?.type as BoardScopeStreamType | undefined,
       }
     })
 

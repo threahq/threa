@@ -51,6 +51,7 @@ function makePost(id: string, lastActivityAt: string, recentMessages: BoardPostM
     recentMessages,
     totalReplies: recentMessages.length,
     streamIds: [...new Set([conversation.streamId, openingMessage.streamId, ...recentMessages.map((m) => m.streamId)])],
+    hasCapturedMemo: false,
   }
 }
 

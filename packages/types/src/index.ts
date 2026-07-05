@@ -71,6 +71,15 @@ export {
   CONVERSATION_STATUSES,
   type ConversationStatus,
   ConversationStatuses,
+  // Board lenses
+  BOARD_LENSES,
+  type BoardLens,
+  DEFAULT_BOARD_LENS,
+  MAX_BOARD_SCOPE_STREAMS,
+  BOARD_SCOPE_STREAM_TYPES,
+  type BoardScopeStreamType,
+  BOARD_LENS_STALE_HOURS,
+  BOARD_LENS_MAX_COMPLETENESS,
   CONVERSATION_INTENTS,
   type ConversationIntent,
   ConversationIntents,
@@ -264,6 +273,9 @@ export {
 
 // Markdown → plain-text stripping for preview surfaces (shared FE/BE, INV-60)
 export { stripMarkdown, stripMarkdownToInline } from "./markdown-strip"
+
+// Board lens predicate (shared FE filter / BE seed, board-view-design.md § "Lenses")
+export { matchesBoardLens } from "./board-lens"
 
 // Domain entities (wire format)
 export { getAvatarUrl, getBotAvatarUrl } from "./domain"

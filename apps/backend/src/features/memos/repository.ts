@@ -331,6 +331,30 @@ export const MemoRepository = {
     return result.rows.map(mapRowToMemo)
   },
 
+  /**
+   * Of the given conversation ids, which have produced at least one active
+   * captured memo — the Decisions/Knowledge lens signal for the board
+   * (board-view-design.md § "Lenses"). Batch (INV-56): one `SELECT DISTINCT` over
+   * `= ANY($ids)`, not a presence check per card. Workspace-scoped (INV-8) and
+   * `status = 'active'` (matching `findActiveBySourceConversation`), so an
+   * archived/superseded memo stops counting as captured knowledge. Empty input
+   * short-circuits.
+   */
+  async findConversationIdsWithMemos(
+    db: Querier,
+    workspaceId: string,
+    conversationIds: string[]
+  ): Promise<Set<string>> {
+    if (conversationIds.length === 0) return new Set()
+    const result = await db.query<{ source_conversation_id: string }>(sql`
+      SELECT DISTINCT source_conversation_id FROM memos
+      WHERE workspace_id = ${workspaceId}
+        AND status = 'active'
+        AND source_conversation_id = ANY(${conversationIds})
+    `)
+    return new Set(result.rows.map((row) => row.source_conversation_id))
+  },
+
   async findActiveBySourceConversation(db: Querier, conversationId: string): Promise<Memo[]> {
     const result = await db.query<MemoRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM memos

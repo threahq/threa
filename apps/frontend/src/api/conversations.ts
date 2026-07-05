@@ -1,5 +1,13 @@
 import { api } from "./client"
-import type { ConversationWithStaleness, ConversationStatus, Message, BoardPost, BoardPostMessage } from "@threa/types"
+import type {
+  ConversationWithStaleness,
+  ConversationStatus,
+  BoardLens,
+  BoardScopeStreamType,
+  Message,
+  BoardPost,
+  BoardPostMessage,
+} from "@threa/types"
 import type { ReadStateSnapshot } from "@/sync/read-state"
 
 export interface ListConversationsParams {
@@ -8,6 +16,12 @@ export interface ListConversationsParams {
 }
 
 export interface ListWorkspaceConversationsParams extends ListConversationsParams {
+  /** Structural lens to filter the feed by (`all` = no narrowing; omitted on the wire). */
+  lens?: BoardLens
+  /** Root-stream scope: only conversations under these streams. */
+  streams?: string[]
+  /** Root-stream TYPE scope: only conversations whose root is one of these types. */
+  types?: BoardScopeStreamType[]
   /** Opaque keyset cursor from a prior page's `nextCursor`. */
   cursor?: string
 }
@@ -29,6 +43,10 @@ export const conversationsApi = {
   ): Promise<WorkspaceConversationsPage> {
     const searchParams = new URLSearchParams()
     if (params?.status) searchParams.set("status", params.status)
+    // `all` is the server default — keep the wire clean rather than sending a no-op.
+    if (params?.lens && params.lens !== "all") searchParams.set("lens", params.lens)
+    if (params?.streams && params.streams.length > 0) searchParams.set("streams", params.streams.join(","))
+    if (params?.types && params.types.length > 0) searchParams.set("types", params.types.join(","))
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     if (params?.cursor) searchParams.set("cursor", params.cursor)
     const query = searchParams.toString()

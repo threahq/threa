@@ -337,6 +337,51 @@ export const ConversationStatuses = {
   RESOLVED: "resolved",
 } as const satisfies Record<string, ConversationStatus>
 
+/**
+ * Structural lenses over the workspace board (board-view-design.md § "Lenses").
+ * Each is a true filter over signals Threa already computes — the board gives
+ * the dials, it doesn't decide what matters. `all` is the default and always
+ * available: the board's job is to SURFACE, so the home view shows everything
+ * and a lens is an optional narrowing the viewer opts into, never a mode they
+ * must opt out of. Same signal for every viewer (personal lenses like Mine
+ * come later). Ordered as they render in the lens picker.
+ */
+export const BOARD_LENSES = ["all", "active", "needs-resolution", "decisions"] as const
+export type BoardLens = (typeof BOARD_LENSES)[number]
+
+/** The board's home view: everything, newest activity first, nothing hidden. */
+export const DEFAULT_BOARD_LENS: BoardLens = "all"
+
+/**
+ * Upper bound on the board's stream-scope selection — keeps a hand-built URL
+ * from splicing an unbounded ANY() array into the feed query. Shared by the
+ * backend validator and the frontend picker so the client can't offer a
+ * selection the server rejects.
+ */
+export const MAX_BOARD_SCOPE_STREAMS = 50
+
+/**
+ * Stream types the board's filters operate on — the ROOT-stream grains a
+ * conversation can live under (a thread's effective root is one of these, so
+ * `thread` is deliberately absent: filtering happens by root type, never by the
+ * anchor's own type). Shared by the backend validator and the frontend picker.
+ */
+export const BOARD_SCOPE_STREAM_TYPES = ["channel", "dm", "scratchpad", "system"] as const
+export type BoardScopeStreamType = (typeof BOARD_SCOPE_STREAM_TYPES)[number]
+
+/**
+ * Idle hours after which a still-incomplete conversation counts as a loose end
+ * for the Needs-resolution lens. 12h ≈ temporalStaleness ≥ 3 (staleness.ts), so
+ * a conversation that went quiet mid-workday resurfaces the next.
+ */
+export const BOARD_LENS_STALE_HOURS = 12
+
+/**
+ * Completeness (1–7, LLM-scored) below which an idle conversation reads as
+ * unresolved. 4 is the midpoint — score 1–3 is "not yet half-settled".
+ */
+export const BOARD_LENS_MAX_COMPLETENESS = 4
+
 // How a message's conversation was decided. Absent/null on a message means the
 // async boundary-extractor inferred (clustered) it — the default. A set value
 // records that the sender DECLARED the conversation at send time, so the

@@ -78,6 +78,7 @@ function makePost(): BoardPost {
     recentMessages: [makeMessage({ id: "msg_2", contentMarkdown: "Reply two body." })],
     totalReplies: 1,
     streamIds: ["stream_1"],
+    hasCapturedMemo: false,
   }
 }
 
