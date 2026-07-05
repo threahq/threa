@@ -69,7 +69,7 @@ export const conversationAssigner: ConversationAssigner = {
     }
     await ConversationRepository.addPrimaryMessage(client, workspaceId, target.id, message.id, message.authorId)
     // Attaching a message to a resolved conversation revives it — it has activity again.
-    await ConversationRepository.reactivateIfResolved(client, workspaceId, target.id)
+    await ConversationRepository.reactivateIfInactive(client, workspaceId, target.id)
     await ConversationRepository.bumpActivityForIds(client, workspaceId, [target.id])
     await emitAssignmentEvents(client, {
       workspaceId,
@@ -134,7 +134,7 @@ async function attachThreadReplyToSource(
     return false
   }
   await ConversationRepository.addPrimaryMessage(client, workspaceId, source.id, message.id, message.authorId)
-  await ConversationRepository.reactivateIfResolved(client, workspaceId, source.id)
+  await ConversationRepository.reactivateIfInactive(client, workspaceId, source.id)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [source.id])
   await emitAssignmentEvents(client, {
     workspaceId,
