@@ -471,6 +471,13 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   // stream — all transient. A genuine cold read (rails resolved, ids unseen)
   // still falls through to the projection.
   const lastLiveRef = useRef<{ conversationId: string; view: BoardCardView } | null>(null)
+  // The reply ids the conversation already listed when the current in-flight
+  // send began. Only an id that JOINS `messageIds` during the episode can be the
+  // pending row's server-side identity (the echo race the phantom-gap discount
+  // below covers); an id already listed before the send is unsynced older
+  // history and must keep counting toward the "N more" gap. Snapshot on the
+  // pending 0→N transition, cleared when the episode drains.
+  const pendingEpisodeRef = useRef<{ conversationId: string; baseline: Set<string> } | null>(null)
 
   const view = useMemo(() => {
     // The retained copy is read here but written only after commit (the effect
@@ -556,19 +563,17 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     // message is still on screen as a pending row under its client id. Counting
     // that id into the total would pop a phantom "1 more" gap above the very reply
     // it refers to (and flip the run's continuation grouping) for the beat until
-    // the echo lands. Discount unsynced ids at the TAIL of `replyIds` (in-flight /
-    // just-arrived appends) up to the pending rows standing in for them; unsynced
-    // ids BEFORE the last synced one are genuinely-missing older history and keep
-    // counting toward the gap.
-    let lastSyncedIdx = -1
-    for (let i = replyIds.length - 1; i >= 0; i--) {
-      if (rail.seen.has(replyIds[i])) {
-        lastSyncedIdx = i
-        break
-      }
-    }
-    const coveredTail = Math.min(pendingReplies.length, replyIds.length - 1 - lastSyncedIdx)
-    const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal - coveredTail, replies.length)
+    // the echo lands. Discount unseen ids that JOINED `replyIds` during the
+    // current pending episode (they can only be in-flight sends or simultaneous
+    // arrivals the pending rows visually stand in for), up to the pending row
+    // count; ids already listed when the episode began are unsynced older history
+    // and keep counting toward the gap.
+    const episode = pendingEpisodeRef.current
+    const baseline = episode && episode.conversationId === conversationId ? episode.baseline : null
+    let episodeArrivals = 0
+    if (baseline) for (const id of replyIds) if (!rail.seen.has(id) && !baseline.has(id)) episodeArrivals++
+    const covered = Math.min(pendingReplies.length, episodeArrivals)
+    const totalReplies = fullySynced ? liveReplies.length : Math.max(serverTotal - covered, replies.length)
 
     // Retain a fresh pending row; keep the retained copy while it's still bridging;
     // forget it once the live rows cover it.
@@ -584,7 +589,17 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   useEffect(() => {
     retainedPendingRef.current = view.nextRetained
     if (view.source === "events") lastLiveRef.current = { conversationId, view }
-  }, [view, conversationId])
+    if (view.pendingReplies.length > 0) {
+      const episode = pendingEpisodeRef.current
+      // Snapshot only on the 0→N transition — re-snapshotting mid-episode would
+      // fold the send's just-arrived id into the baseline and kill its discount.
+      if (!episode || episode.conversationId !== conversationId) {
+        pendingEpisodeRef.current = { conversationId, baseline: new Set(replyIds) }
+      }
+    } else {
+      pendingEpisodeRef.current = null
+    }
+  }, [view, conversationId, replyIds])
 
   return view
 }

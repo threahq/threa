@@ -637,6 +637,67 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     }
   })
 
+  it("keeps counting unsynced older history while a send is in flight (discount only covers episode arrivals)", async () => {
+    // The conversation has a real reply the device never synced (r_old): the card
+    // honestly shows "1 more". Sending a new reply must NOT discount r_old — only
+    // an id that JOINS messageIds during the pending episode can be the pending
+    // row's server identity.
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const before = makePost({ messageIds: ["m1", "r_old"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result, rerender } = renderRecorded(before, "channel")
+    await waitFor(() => expect(result.current.source).toBe("events"))
+    expect(result.current.totalReplies).toBe(1)
+    const from = frames.length
+
+    // Viewer sends: optimistic pending row appears (tagged, not in messageIds).
+    await db.events.put({
+      id: "temp_q",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "1700000000003",
+      _sequenceNum: 1700000000003,
+      eventType: "message_created",
+      payload: { messageId: "temp_q", contentMarkdown: "my new reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(5).toISOString(),
+      _cachedAt: 5,
+      _status: "pending",
+    } as CachedEvent)
+    await waitFor(() => expect(result.current.pendingReplies.map((m) => m.id)).toEqual(["temp_q"]))
+
+    // conversation:updated for the new reply (echo race): its real id joins
+    // messageIds while the rail hasn't seen it.
+    rerender(makePost({ messageIds: ["m1", "r_old", "msg_new_q"], openingId: "m1", streamIds: [STREAM] }))
+    await waitFor(() => expect([...result.current.replies, ...result.current.pendingReplies].length).toBeGreaterThan(0))
+
+    // Echo swap.
+    await db.transaction("rw", db.events, async () => {
+      await db.events.put({
+        id: "msg_new_q",
+        workspaceId: WS,
+        streamId: STREAM,
+        sequence: "2",
+        _sequenceNum: 2,
+        eventType: "message_created",
+        payload: { messageId: "msg_new_q", contentMarkdown: "my new reply", reactions: {}, conversationId: "conv_1" },
+        actorId: "usr_1",
+        actorType: "user",
+        createdAt: new Date(6).toISOString(),
+        _cachedAt: 6,
+      } as CachedEvent)
+      await db.events.delete("temp_q")
+    })
+    await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_new_q"]))
+
+    // In every frame the unsynced older reply keeps its honest "1 more" slot:
+    // total minus rendered replies is exactly 1 (r_old) — the in-flight send
+    // never zeroes it out, and the new id never double-counts.
+    for (const frame of frames.slice(from)) {
+      expect(Math.max(0, frame.totalReplies - frame.replies.length)).toBe(1)
+    }
+  })
+
   it("holds the last live view (not the projection) while a brand-new gating rail loads", async () => {
     const THREAD = "stream_fresh_gating"
     // The thread's reply is synced, but the thread is NOT discoverable from
