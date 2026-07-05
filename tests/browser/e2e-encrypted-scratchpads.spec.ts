@@ -113,13 +113,27 @@ test.describe("E2E encrypted scratchpads", () => {
 
     // Phone width + locked (reload; device untrusted). Since the mobile topbar
     // rework, the phone-width header keeps only the name-first bar — the chip
-    // strip (invite, encryption) moved into the stream sheet the name opens.
+    // strip (invite, encryption) moved into the stream sheet the name opens,
+    // so the old inline invite trigger must NOT render.
     await page.setViewportSize({ width: 412, height: 915 })
     await page.reload()
     await expect(page.getByText("This scratchpad is encrypted")).toBeVisible({ timeout: 15_000 })
 
     // The name IS the sheet trigger (aria-label "<name> — stream details and actions").
-    await page.getByRole("button", { name: /stream details and actions/ }).click()
+    const title = page.getByRole("button", { name: /stream details and actions/ })
+    await expect(title).toBeVisible()
+    await expect(page.getByRole("button", { name: "Invite an agent to this scratchpad" })).toHaveCount(0)
+
+    // Containment (the original #1184 regression, ported to the sheet-era bar):
+    // the name trigger takes the remaining width but must never paint under the
+    // header's search action, eating its tap.
+    const titleBox = await title.boundingBox()
+    const searchBox = await page.getByRole("button", { name: "Search in conversation" }).boundingBox()
+    expect(titleBox).not.toBeNull()
+    expect(searchBox).not.toBeNull()
+    expect(titleBox!.x + titleBox!.width).toBeLessThanOrEqual(searchBox!.x + 1)
+
+    await title.click()
     const sheet = page.getByRole("dialog", { name: "Stream details and actions" })
     await expect(sheet).toBeVisible({ timeout: 10_000 })
 
