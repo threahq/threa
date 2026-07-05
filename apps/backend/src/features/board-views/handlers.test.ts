@@ -66,8 +66,50 @@ describe("Board view handlers", () => {
       baseLens: "mine",
       scopeStreamIds: ["stream_1"],
       scopeStreamTypes: [],
+      scopeLabelIds: [],
+      excludeStreamIds: [],
+      excludeStreamTypes: [],
+      excludeLabelIds: [],
     })
     expect((res as unknown as { statusCode: number }).statusCode).toBe(201)
+  })
+
+  test("create accepts the exclude + label axes", async () => {
+    await handlers.create(
+      mockReq({
+        body: {
+          name: "No noise",
+          baseLens: "all",
+          excludeStreamIds: ["stream_gh"],
+          excludeStreamTypes: ["system"],
+          scopeLabelIds: ["label_digest"],
+          excludeLabelIds: ["label_coding"],
+        },
+      }),
+      mockRes()
+    )
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludeStreamIds: ["stream_gh"],
+        excludeStreamTypes: ["system"],
+        scopeLabelIds: ["label_digest"],
+        excludeLabelIds: ["label_coding"],
+      })
+    )
+  })
+
+  test("create rejects a non-root-grain exclude type with a 400", async () => {
+    await expect(
+      handlers.create(mockReq({ body: { name: "x", baseLens: "all", excludeStreamTypes: ["thread"] } }), mockRes())
+    ).rejects.toMatchObject({ status: 400 })
+  })
+
+  test("update accepts clearing an exclude axis with an empty array", async () => {
+    await handlers.update(
+      mockReq({ params: { boardViewId: "boardview_1" }, body: { excludeStreamIds: [] } }),
+      mockRes()
+    )
+    expect(mockUpdate).toHaveBeenCalledWith("ws_1", "usr_1", "boardview_1", { excludeStreamIds: [] })
   })
 
   test("create rejects an empty name with a 400", async () => {

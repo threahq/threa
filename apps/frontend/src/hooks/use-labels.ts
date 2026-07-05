@@ -342,6 +342,25 @@ export function selectLabelStreams(
 }
 
 /**
+ * The stream ids carrying ANY of `labelIds` (the viewer's own assignments —
+ * labels are owner-scoped). Pure; the board's label filters resolve their
+ * selection to streams through this, so the client predicate reads the same
+ * assignment rows the server's `boardLabelMatchSql` joins. Returns null when no
+ * labels are selected so callers can tell "no label filter" from "labels
+ * selected but nothing labeled" (which must match NOTHING, not everything).
+ */
+export function selectLabeledStreamIds(assignments: CachedLabelAssignment[], labelIds: string[]): Set<string> | null {
+  if (labelIds.length === 0) return null
+  const wanted = new Set(labelIds)
+  const streamIds = new Set<string>()
+  for (const assignment of assignments) {
+    if (assignment.resourceType !== LabelableResourceTypes.STREAM) continue
+    if (wanted.has(assignment.labelId)) streamIds.add(assignment.resourceId)
+  }
+  return streamIds
+}
+
+/**
  * Streams in a label, for the label landing page. Reads the same caches the
  * sidebar label section does (assignments ∩ workspace streams), so the page and
  * the sidebar can never disagree, and it stays live through the

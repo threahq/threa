@@ -10,19 +10,33 @@ import {
   type CommittedView,
 } from "./use-stable-board-view"
 
+/** Build a full filter from overrides — every axis off unless named. */
+function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
+  return {
+    lens: "all",
+    scope: null,
+    types: null,
+    excludeStreams: null,
+    excludeTypes: null,
+    labels: null,
+    excludeLabels: null,
+    ...over,
+  }
+}
+
 /** The default board view: everything, unscoped. */
-const ALL: BoardViewFilter = { lens: "all", scope: null, types: null }
+const ALL: BoardViewFilter = filterOf()
 
 function lensFilter(lens: BoardLens): BoardViewFilter {
-  return { lens, scope: null, types: null }
+  return filterOf({ lens })
 }
 
 function scopeFilter(ids: string[], lens: BoardLens = "all"): BoardViewFilter {
-  return { lens, scope: { key: [...ids].sort().join(","), ids: new Set(ids) }, types: null }
+  return filterOf({ lens, scope: { key: [...ids].sort().join(","), ids: new Set(ids) } })
 }
 
 function typesFilter(types: BoardScopeStreamType[]): BoardViewFilter {
-  return { lens: "all", scope: null, types: { key: [...types].sort().join(","), ids: new Set(types) } }
+  return filterOf({ types: { key: [...types].sort().join(","), ids: new Set(types) } })
 }
 
 function post(id: string, activityMs: number): CachedBoardPost {
@@ -404,6 +418,123 @@ describe("useStableBoardView", () => {
     rerender({ filter: scopeFilter(["stream_two"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
     expect(result.current.newCount).toBe(0)
+  })
+})
+
+describe("useStableBoardView — negative & label filters", () => {
+  let liveValue: CachedBoardPost[] | undefined
+  function mockLive(value: CachedBoardPost[] | undefined) {
+    liveValue = value
+    vi.spyOn(boardStoreModule, "useBoardPosts").mockImplementation(() => liveValue)
+  }
+  afterEach(() => vi.restoreAllMocks())
+
+  /** A post with distinct anchor and effective root, for anchor-or-root rules. */
+  function anchoredPost(id: string, activityMs: number, anchorId: string, rootId: string): CachedBoardPost {
+    const base = post(id, activityMs)
+    return {
+      ...base,
+      rootStreamId: rootId,
+      conversation: { ...base.conversation, streamId: anchorId },
+    } as CachedBoardPost
+  }
+
+  function excludeStreamsFilter(ids: string[]): BoardViewFilter {
+    return filterOf({ excludeStreams: { key: [...ids].sort().join(","), ids: new Set(ids) } })
+  }
+
+  function labelsFilter(key: string, streamIds: string[]): BoardViewFilter {
+    return filterOf({ labels: { key, streamIds: new Set(streamIds) } })
+  }
+
+  function excludeLabelsFilter(key: string, streamIds: string[]): BoardViewFilter {
+    return filterOf({ excludeLabels: { key, streamIds: new Set(streamIds) } })
+  }
+
+  it("vetoes by ROOT — a thread under an excluded channel drops with it", () => {
+    const inChannel = anchoredPost("a", 300, "stream_gh", "stream_gh")
+    const inThread = anchoredPost("t", 250, "thread_1", "stream_gh")
+    const other = anchoredPost("z", 400, "stream_ok", "stream_ok")
+    mockLive(feed(inChannel, inThread, other))
+    const { result } = renderHook(() => useStableBoardView("ws_1", excludeStreamsFilter(["stream_gh"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["z"])
+  })
+
+  it("vetoes by ANCHOR — one thread can be excluded without dropping its channel", () => {
+    const inChannel = anchoredPost("a", 300, "stream_c", "stream_c")
+    const inThread = anchoredPost("t", 250, "thread_1", "stream_c")
+    mockLive(feed(inChannel, inThread))
+    const { result } = renderHook(() => useStableBoardView("ws_1", excludeStreamsFilter(["thread_1"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a"])
+  })
+
+  it("exclusion wins over an include scope naming the same stream", () => {
+    const a = anchoredPost("a", 300, "stream_x", "stream_x")
+    mockLive(feed(a))
+    const filter = filterOf({
+      scope: { key: "stream_x", ids: new Set(["stream_x"]) },
+      excludeStreams: { key: "stream_x", ids: new Set(["stream_x"]) },
+    })
+    const { result } = renderHook(() => useStableBoardView("ws_1", filter))
+    expect(result.current.posts).toEqual([])
+  })
+
+  it("vetoes by ROOT type, failing open for cached rows without rootStreamType", () => {
+    const dmPost = { ...post("d", 400), rootStreamType: "dm" } as CachedBoardPost
+    const channelPost = { ...post("c", 300), rootStreamType: "channel" } as CachedBoardPost
+    const legacy = post("l", 200) // no rootStreamType
+    mockLive(feed(dmPost, channelPost, legacy))
+    const filter = filterOf({ excludeTypes: { key: "dm", ids: new Set<BoardScopeStreamType>(["dm"]) } })
+    const { result } = renderHook(() => useStableBoardView("ws_1", filter))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["c", "l"])
+  })
+
+  it("label scope keeps only posts whose anchor or root carries the label", () => {
+    const onLabeledRoot = anchoredPost("a", 300, "thread_1", "stream_lab")
+    const onLabeledAnchor = anchoredPost("b", 250, "stream_lab2", "stream_lab2")
+    const unlabeled = anchoredPost("z", 400, "stream_plain", "stream_plain")
+    mockLive(feed(onLabeledRoot, onLabeledAnchor, unlabeled))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", labelsFilter("label_x", ["stream_lab", "stream_lab2"]))
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+  })
+
+  it("a label scope that resolves to no streams matches NOTHING, not everything", () => {
+    mockLive(feed(post("a", 300)))
+    const { result } = renderHook(() => useStableBoardView("ws_1", labelsFilter("label_x", [])))
+    expect(result.current.posts).toEqual([])
+    expect(result.current.hasRawPosts).toBe(true)
+  })
+
+  it("label veto drops labeled streams' posts and keeps the rest", () => {
+    const labeled = anchoredPost("a", 300, "stream_code", "stream_code")
+    const other = anchoredPost("z", 400, "stream_ok", "stream_ok")
+    mockLive(feed(labeled, other))
+    const { result } = renderHook(() => useStableBoardView("ws_1", excludeLabelsFilter("label_code", ["stream_code"])))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["z"])
+  })
+
+  it("a label re-resolution (same selection) never resets the frozen view — the committed card is retained", () => {
+    const a = anchoredPost("a", 300, "stream_a", "stream_a")
+    const b = anchoredPost("b", 200, "stream_b", "stream_b")
+    mockLive(feed(a, b))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: excludeLabelsFilter("label_x", []) },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    // stream_a gets labeled while the view is open: same filter key, new
+    // resolution. The card leaves the live feed but keeps rendering from the
+    // retained committed view (filters narrow what surfaces, never yank), and
+    // no pill appears.
+    rerender({ filter: excludeLabelsFilter("label_x", ["stream_a"]) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+    expect(result.current.newCount).toBe(0)
+
+    // The next commit drops it.
+    act(() => result.current.commit())
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 })
 

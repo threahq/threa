@@ -22,6 +22,14 @@ export interface ListWorkspaceConversationsParams extends ListConversationsParam
   streams?: string[]
   /** Root-stream TYPE scope: only conversations whose root is one of these types. */
   types?: BoardScopeStreamType[]
+  /** Stream veto: drop conversations whose anchor or effective root is named. */
+  excludeStreams?: string[]
+  /** Root-stream TYPE veto. */
+  excludeTypes?: BoardScopeStreamType[]
+  /** Label scope: only conversations whose anchor/root carries one of the viewer's labels. */
+  labels?: string[]
+  /** Label veto. */
+  excludeLabels?: string[]
   /** Opaque keyset cursor from a prior page's `nextCursor`. */
   cursor?: string
 }
@@ -47,6 +55,13 @@ export const conversationsApi = {
     if (params?.lens && params.lens !== "all") searchParams.set("lens", params.lens)
     if (params?.streams && params.streams.length > 0) searchParams.set("streams", params.streams.join(","))
     if (params?.types && params.types.length > 0) searchParams.set("types", params.types.join(","))
+    if (params?.excludeStreams && params.excludeStreams.length > 0)
+      searchParams.set("excludeStreams", params.excludeStreams.join(","))
+    if (params?.excludeTypes && params.excludeTypes.length > 0)
+      searchParams.set("excludeTypes", params.excludeTypes.join(","))
+    if (params?.labels && params.labels.length > 0) searchParams.set("labels", params.labels.join(","))
+    if (params?.excludeLabels && params.excludeLabels.length > 0)
+      searchParams.set("excludeLabels", params.excludeLabels.join(","))
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     if (params?.cursor) searchParams.set("cursor", params.cursor)
     const query = searchParams.toString()

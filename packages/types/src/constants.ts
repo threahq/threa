@@ -372,6 +372,10 @@ export const DEFAULT_BOARD_LENS: BoardLens = "all"
  */
 export const MAX_BOARD_SCOPE_STREAMS = 50
 
+/** Upper bound on the board's label filter selections (include and exclude
+ *  lists each), for the same reason as {@link MAX_BOARD_SCOPE_STREAMS}. */
+export const MAX_BOARD_SCOPE_LABELS = 50
+
 /**
  * Stream types the board's filters operate on — the ROOT-stream grains a
  * conversation can live under (a thread's effective root is one of these, so

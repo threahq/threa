@@ -6,6 +6,10 @@ export interface SaveBoardViewInput {
   baseLens: BoardLens
   scopeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
+  scopeLabelIds: string[]
+  excludeStreamIds: string[]
+  excludeStreamTypes: BoardScopeStreamType[]
+  excludeLabelIds: string[]
 }
 
 export type UpdateBoardViewInput = Partial<SaveBoardViewInput> & { sortOrder?: number }

@@ -13,6 +13,10 @@ const view = (over: Partial<BoardView> = {}): BoardView => ({
   baseLens: "mine",
   scopeStreamIds: ["stream_1"],
   scopeStreamTypes: [],
+  scopeLabelIds: [],
+  excludeStreamIds: [],
+  excludeStreamTypes: [],
+  excludeLabelIds: [],
   sortOrder: 0,
   ...over,
 })
@@ -28,6 +32,10 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
             lens="mine"
             scopeStreamIds={["stream_1"]}
             scopeStreamTypes={[]}
+            scopeLabelIds={[]}
+            excludeStreamIds={[]}
+            excludeStreamTypes={[]}
+            excludeLabelIds={[]}
             onNavigate={() => {}}
             {...props}
           />
@@ -52,6 +60,26 @@ describe("savedViewHref", () => {
     expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }))).toBe(
       "/w/ws_1/board"
     )
+  })
+
+  it("expands the exclude and label axes into their params", () => {
+    const href = savedViewHref(
+      "ws_1",
+      view({
+        baseLens: "all",
+        scopeStreamIds: [],
+        scopeLabelIds: ["label_a"],
+        excludeStreamIds: ["s9"],
+        excludeStreamTypes: ["system"],
+        excludeLabelIds: ["label_b"],
+      })
+    )
+    const url = new URL(href, "http://x")
+    expect(url.pathname).toBe("/w/ws_1/board")
+    expect(url.searchParams.get("label")).toBe("label_a")
+    expect(url.searchParams.get("not-in")).toBe("s9")
+    expect(url.searchParams.get("not-is")).toBe("system")
+    expect(url.searchParams.get("not-label")).toBe("label_b")
   })
 })
 
@@ -83,6 +111,10 @@ describe("BoardSavedViews", () => {
       baseLens: "mine",
       scopeStreamIds: ["stream_1"],
       scopeStreamTypes: [],
+      scopeLabelIds: [],
+      excludeStreamIds: [],
+      excludeStreamTypes: [],
+      excludeLabelIds: [],
     })
   })
 

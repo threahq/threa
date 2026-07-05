@@ -11,6 +11,7 @@ import {
   BOARD_LENSES,
   BOARD_SCOPE_STREAM_TYPES,
   MAX_BOARD_SCOPE_STREAMS,
+  MAX_BOARD_SCOPE_LABELS,
 } from "@threa/types"
 import { validateRequest } from "../../lib/validation"
 import { HttpError } from "../../lib/errors"
@@ -20,31 +21,42 @@ const listConversationsSchema = z.object({
   limit: z.coerce.number().min(1).max(100).optional(),
 })
 
-// The board feed adds keyset pagination (`cursor` is an opaque `"<iso>|<id>"`
-// minted by a prior page's `nextCursor`), a structural `lens` filter, and a
-// `streams` scope (comma-separated root-stream ids; the repo matches by
-// effective root so thread-anchored conversations stay in their channel's
-// scope). Capped so a hand-built URL can't splice an unbounded ANY() array.
-const listWorkspaceConversationsSchema = listConversationsSchema.extend({
-  lens: z.enum(BOARD_LENSES).optional(),
-  streams: z
+/** Comma-separated id list, capped so a hand-built URL can't splice an
+ *  unbounded ANY() array into the feed query (INV-11 on the empty case). */
+function csvIdListSchema(max: number, noun: string) {
+  return z
     .string()
     .min(1)
     .transform((value) => value.split(",").filter((id) => id.length > 0))
-    .refine((ids) => ids.length > 0 && ids.length <= MAX_BOARD_SCOPE_STREAMS, {
-      message: `streams must name 1-${MAX_BOARD_SCOPE_STREAMS} stream ids`,
+    .refine((ids) => ids.length > 0 && ids.length <= max, {
+      message: `${noun} must name 1-${max} ids`,
     })
-    .optional(),
-  // Root-stream TYPE scope (comma-separated). Fails loudly (INV-11) on a type
-  // outside the board's root grains rather than silently matching nothing.
-  types: z
-    .string()
-    .min(1)
-    .transform((value) => value.split(",").filter((t) => t.length > 0))
-    .refine((types) => types.length > 0 && types.every((t) => BOARD_SCOPE_STREAM_TYPES.includes(t as never)), {
-      message: `types must be a comma-separated subset of: ${BOARD_SCOPE_STREAM_TYPES.join(", ")}`,
-    })
-    .optional(),
+}
+
+// Root-stream TYPE list (comma-separated). Fails loudly (INV-11) on a type
+// outside the board's root grains rather than silently matching nothing.
+const csvTypeListSchema = z
+  .string()
+  .min(1)
+  .transform((value) => value.split(",").filter((t) => t.length > 0))
+  .refine((types) => types.length > 0 && types.every((t) => BOARD_SCOPE_STREAM_TYPES.includes(t as never)), {
+    message: `types must be a comma-separated subset of: ${BOARD_SCOPE_STREAM_TYPES.join(", ")}`,
+  })
+
+// The board feed adds keyset pagination (`cursor` is an opaque `"<iso>|<id>"`
+// minted by a prior page's `nextCursor`), a structural `lens` filter, and the
+// include/exclude filter axes: `streams` scope + `excludeStreams` veto (the repo
+// matches scope by effective root, veto by anchor-or-root), `types` +
+// `excludeTypes` (root-stream grains), and `labels` + `excludeLabels` (the
+// viewer's own label assignments on the anchor/root stream).
+const listWorkspaceConversationsSchema = listConversationsSchema.extend({
+  lens: z.enum(BOARD_LENSES).optional(),
+  streams: csvIdListSchema(MAX_BOARD_SCOPE_STREAMS, "streams").optional(),
+  excludeStreams: csvIdListSchema(MAX_BOARD_SCOPE_STREAMS, "excludeStreams").optional(),
+  types: csvTypeListSchema.optional(),
+  excludeTypes: csvTypeListSchema.optional(),
+  labels: csvIdListSchema(MAX_BOARD_SCOPE_LABELS, "labels").optional(),
+  excludeLabels: csvIdListSchema(MAX_BOARD_SCOPE_LABELS, "excludeLabels").optional(),
   cursor: z.string().min(1).optional(),
 })
 
@@ -128,6 +140,10 @@ export function createConversationHandlers({
         lens: query.lens,
         scopeStreamIds: query.streams,
         scopeStreamTypes: query.types,
+        excludeStreamIds: query.excludeStreams,
+        excludeStreamTypes: query.excludeTypes,
+        scopeLabelIds: query.labels,
+        excludeLabelIds: query.excludeLabels,
         limit: query.limit,
         cursor: decodeBoardCursor(query.cursor),
       })
