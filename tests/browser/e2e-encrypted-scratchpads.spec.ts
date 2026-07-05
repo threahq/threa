@@ -67,6 +67,61 @@ test.describe("E2E encrypted scratchpads", () => {
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0, { timeout: 15_000 })
   })
 
+  test("phone-width header: the chip strip scrolls and Invite agent stays tappable (no overlap)", async ({ page }) => {
+    await loginAndCreateWorkspace(page, "e2e-mobile")
+    const workspaceId = page.url().match(/\/w\/(ws_[^/?#]+)/)?.[1]
+    expect(workspaceId).toBeTruthy()
+
+    // A workspace bot makes the header render the "Invite agent" trigger.
+    const botRes = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
+      // Shared: the header's invite picker lists workspace-shared bots only.
+      data: {
+        type: "shared",
+        name: "Smoke Harness",
+        slug: "smoke-harness",
+        traits: ["active-scratchpad", "mentionable"],
+      },
+    })
+    expect(botRes.ok()).toBe(true)
+
+    // Create the encrypted scratchpad at desktop width (the create menu lives
+    // in the sidebar); the mobile assertions come after the viewport shrinks.
+    await page.getByRole("button", { name: "New", exact: true }).click()
+    await page.getByRole("menuitem", { name: /New Encrypted Scratchpad/i }).click()
+    const setup = page.getByRole("dialog")
+    await expect(setup.getByText("Set up encrypted scratchpads")).toBeVisible({ timeout: 10_000 })
+    await setup.locator("#e2e-passphrase").fill(PASSPHRASE)
+    await setup.locator("#e2e-passphrase-confirm").fill(PASSPHRASE)
+    await setup.locator("#e2e-acknowledged").check()
+    const trustDevice = setup.locator("#e2e-setup-trust-device")
+    if (await trustDevice.isChecked()) await trustDevice.uncheck()
+    await setup.getByRole("button", { name: "Enable encryption" }).click()
+    await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
+
+    // The reported state: phone width + locked (reload; device untrusted), where
+    // the header shows Unlock + Ariadne + Invite agent all at once.
+    await page.setViewportSize({ width: 412, height: 915 })
+    await page.reload()
+    await expect(page.getByText("This scratchpad is encrypted")).toBeVisible({ timeout: 15_000 })
+
+    const invite = page.getByRole("button", { name: "Invite an agent to this scratchpad" })
+    await invite.scrollIntoViewIfNeeded()
+    await expect(invite).toBeVisible()
+
+    // Containment: the invite trigger may sit in a scrollable strip, but it must
+    // never paint under the header's search action (the regression: overflow
+    // painted the pills beneath the right-side icons, eating their taps).
+    const inviteBox = await invite.boundingBox()
+    const searchBox = await page.getByRole("button", { name: "Search in conversation" }).boundingBox()
+    expect(inviteBox).not.toBeNull()
+    expect(searchBox).not.toBeNull()
+    expect(inviteBox!.x + inviteBox!.width).toBeLessThanOrEqual(searchBox!.x + 1)
+
+    // And it actually works: tapping opens the bot picker.
+    await invite.click()
+    await expect(page.getByRole("menuitem", { name: /Smoke Harness/ })).toBeVisible()
+  })
+
   test("creating an encrypted scratchpad while locked unlocks inline, then creates", async ({ page }) => {
     await loginAndCreateWorkspace(page, "e2e-enc-locked")
 

@@ -5,7 +5,10 @@ import { useInviteActor, canInviteActor, isActorInvited, E2E_ACTOR_LABELS } from
 import type { E2eActorKind } from "@threa/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
-const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+// `shrink-0` + nowrap: these pills live in the header's scrollable chip strip —
+// they must keep their size and let the strip scroll, not squish or wrap.
+const pillBase =
+  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-semibold"
 
 interface InviteActorButtonProps {
   workspaceId: string

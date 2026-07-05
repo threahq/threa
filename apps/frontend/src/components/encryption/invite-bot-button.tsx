@@ -19,7 +19,10 @@ import { useInputMode } from "@/hooks/use-input-mode"
 import { StreamTypes } from "@threa/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
-const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+// `shrink-0` + nowrap: these pills live in the header's scrollable chip strip —
+// they must keep their size and let the strip scroll, not squish or wrap.
+const pillBase =
+  "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-semibold"
 const overflowPillClass =
   "shrink-0 border-border bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
 // Invited-bot pills share the scratchpad header row with the title, labels, and
@@ -80,7 +83,7 @@ export function InviteBotButton({ workspaceId, stream }: InviteBotButtonProps) {
               <span
                 className={cn(
                   pillBase,
-                  "min-w-0 border-border bg-secondary",
+                  "border-border bg-secondary",
                   canRead(bot.id) ? "text-foreground" : "border-dashed text-muted-foreground"
                 )}
                 aria-label={label}
