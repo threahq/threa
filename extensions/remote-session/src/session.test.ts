@@ -61,18 +61,21 @@ function makeFakeClient() {
 
 function makeFakeTransport() {
   const presence: Record<string, unknown>[] = []
+  const steps: Array<{ invocationId: string; frames: Array<{ stepType: string; content: string }> }> = []
   const transport = {
     connect: async () => {},
     disconnect: () => {},
     socketConnected: false,
     sendHello: () => {},
-    recordSteps: async () => {},
+    recordSteps: async (invocationId: string, _claimToken: string, frames: Array<{ stepType: string; content: string }>) => {
+      steps.push({ invocationId, frames })
+    },
     renewClaim: async () => ({ notFound: false }),
     updatePresence: async (body: Record<string, unknown>) => {
       presence.push(body)
     },
   }
-  return { transport: transport as unknown as BotRuntimeTransport, presence }
+  return { transport: transport as unknown as BotRuntimeTransport, presence, steps }
 }
 
 function makeSession(
@@ -449,7 +452,7 @@ describe("session control via the actuator", () => {
     expect(calls.complete[0]?.body.finalMessageMarkdown).toBe("Set model to `opus`.")
   })
 
-  test("steer always posts a supersede note carrying the steer text", async () => {
+  test("steer without native steer support interrupts and posts a supersede note carrying the steer text", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
     const delivered: string[] = []
@@ -483,5 +486,236 @@ describe("session control via the actuator", () => {
     expect(interruptedClose?.body.finalMessageMarkdown).toContain("now handling")
     expect(interruptedClose?.body.finalMessageMarkdown).toContain("look at the tests instead")
     expect(delivered).toEqual(["look at the tests instead"])
+  })
+})
+
+describe("steer into the running turn (native steer support)", () => {
+  function makeSteerInvocation(args: string): ClaimedInvocation {
+    return makeInvocation({
+      id: "binv_steer",
+      trigger: "session-control",
+      promptMarkdown: args ? `/steer ${args}` : "/steer",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_2", name: "steer", args } },
+    })
+  }
+
+  test("folds into the running turn: steer step on its trace, no interrupt, command closes immediately", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport, steps } = makeFakeTransport()
+    const steered: string[] = []
+    let interrupted = false
+    const session = makeSession(client, transport, {
+      deliverTurn: async () => {
+        throw new Error("steer must not deliver a new turn")
+      },
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => {
+          interrupted = true
+          return true
+        },
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running", responseStreamId: "stream_turn" }))
+    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation("look at the tests instead"))
+
+    expect(interrupted).toBe(false)
+    expect(steered).toEqual(["look at the tests instead"])
+    // The running turn keeps its claim — it will answer the steer with its own reply.
+    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_running")).toBe(true)
+    expect(calls.complete.find((entry) => entry.id === "binv_running")).toBeUndefined()
+    // The steer is recorded on the RUNNING invocation's trace.
+    expect(steps).toEqual([
+      { invocationId: "binv_running", frames: [{ stepType: "steer", content: "look at the tests instead" }] },
+    ])
+    // The /steer command itself closes right away, silently (the step is the signal).
+    const steerClose = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(steerClose?.body.noResponse).toBe(true)
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
+  test("folds queued messages into the injected steer and closes them no-response", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const queued = [
+      makeInvocation({ id: "binv_q1", promptMarkdown: "also bump the deps" }),
+      makeInvocation({ id: "binv_q2", promptMarkdown: "and update the docs" }),
+    ]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running", responseStreamId: "stream_turn" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation("the steer text"))
+
+    expect(steered).toHaveLength(1)
+    const combined = steered[0]!
+    expect(combined.indexOf("also bump the deps")).toBeLessThan(combined.indexOf("and update the docs"))
+    expect(combined.indexOf("and update the docs")).toBeLessThan(combined.indexOf("the steer text"))
+    const sweptCloses = calls.complete.filter((entry) => entry.id === "binv_q1" || entry.id === "binv_q2")
+    expect(sweptCloses).toHaveLength(2)
+    for (const close of sweptCloses) expect(close.body.noResponse).toBe(true)
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
+  test("acks without steering when there is no text and nothing queued", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation(""))
+
+    expect(steered).toEqual([])
+    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_running")).toBe(true)
+    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(ack?.body.finalMessageMarkdown).toContain("Nothing to steer with")
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
+  test("empty steer still closes a swept foldless control command instead of stranding its claim", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    // A queued non-steer control command (double-command race): swept, contributes
+    // no foldable part, and must still be closed on the empty-parts return.
+    const queued = [
+      makeInvocation({
+        id: "binv_q_model",
+        trigger: "session-control",
+        promptMarkdown: "/model opus",
+        metadata: { command: { executionKind: "bot-runtime", id: "cmd_q", name: "model", args: "opus" } },
+      }),
+    ]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer", "model"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation(""))
+
+    expect(steered).toEqual([])
+    const sweptClose = calls.complete.find((entry) => entry.id === "binv_q_model")
+    expect(sweptClose?.body.noResponse).toBe(true)
+    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(ack?.body.finalMessageMarkdown).toContain("Nothing to steer with")
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
+  test("failed actuation leaves the running turn alone and reports the failure", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const failed: string[] = []
+    ;(client as unknown as { fail: (id: string) => Promise<void> }).fail = async (id: string) => {
+      failed.push(id)
+    }
+    const queued = [makeInvocation({ id: "binv_q1", promptMarkdown: "queued while busy" })]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: () => false,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation("go left"))
+
+    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_running")).toBe(true)
+    expect(calls.complete.find((entry) => entry.id === "binv_running")).toBeUndefined()
+    // The swept message was claimed but never delivered — failed loudly, not silently closed.
+    expect(failed).toEqual(["binv_q1"])
+    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
+    expect(ack?.body.finalMessageMarkdown).toContain("Could not steer")
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+  })
+
+  test("steer with native support but no running turn delivers a fresh turn (interrupt path)", async () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const delivered: string[] = []
+    const steered: string[] = []
+    let interrupted = false
+    const session = makeSession(client, transport, {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.content)
+      },
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => {
+          interrupted = true
+          return true
+        },
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
+
+    await (
+      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+    ).handleSessionControl(makeSteerInvocation("start with the readme"))
+
+    // Idle session: nothing to fold into — the steer arrives as a normal turn.
+    expect(steered).toEqual([])
+    expect(interrupted).toBe(true)
+    expect(delivered).toEqual(["start with the readme"])
+    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_steer")
   })
 })

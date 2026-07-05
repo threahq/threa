@@ -63,6 +63,42 @@ export async function submitLine(text: string, opts: { settleMs?: number } = {})
 }
 
 /**
+ * Fold text into the RUNNING turn without interrupting it — Claude Code's
+ * native steering: a message submitted while it works is injected into the
+ * current turn. Pasted as one bracketed block (load-buffer + paste-buffer -p)
+ * rather than typed with `-l`, so newlines in the text don't submit
+ * mid-message and a leading `/` can't open the slash menu. Clears the input
+ * line first (Ctrl-U) so residue doesn't concatenate into the steer.
+ */
+export async function steerText(text: string, opts: { settleMs?: number } = {}): Promise<boolean> {
+  const target = paneTarget()
+  if (!target) return false
+  const settleMs = opts.settleMs ?? 150
+  if (!sendKeys(["C-u"])) return false
+  if (!pasteText(target, text)) return false
+  if (settleMs > 0) await Bun.sleep(settleMs)
+  return sendKeys(["Enter"])
+}
+
+function pasteText(target: string, text: string): boolean {
+  try {
+    const load = Bun.spawnSync(["tmux", "load-buffer", "-b", "threa-steer", "-"], {
+      stdin: new TextEncoder().encode(text),
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    if (load.exitCode !== 0) return false
+    const paste = Bun.spawnSync(["tmux", "paste-buffer", "-d", "-p", "-b", "threa-steer", "-t", target], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    return paste.exitCode === 0
+  } catch {
+    return false
+  }
+}
+
+/**
  * Kill the tmux window this channel (and its Claude Code parent) lives in —
  * deliberate self-termination for the archived-scratchpad wind-down. The
  * channel dies with the window; callers do any last writes first.
@@ -76,6 +112,3 @@ export function killOwnWindow(): boolean {
     return false
   }
 }
-
-/** Milliseconds to wait after an interrupt before delivering the steer turn, so Claude has returned to idle. */
-export const STEER_SETTLE_MS = 250
