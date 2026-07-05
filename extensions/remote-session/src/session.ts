@@ -250,8 +250,11 @@ interface Inflight {
   prepared?: { markdown: string; attachmentIds: string[]; attachmentRefs?: AttachmentRef[] }
   // A sealed interim whose POST failed, cached so the retry re-sends the SAME
   // sealed body (same message id, same uploaded attachments) and the server's
-  // idempotency key dedupes it — a fresh seal per attempt would double-post on retry.
-  pendingSealedInterim?: { seq: number; body: SealedReplyBody; attachmentIds: string[] }
+  // idempotency key dedupes it — a fresh seal per attempt would double-post on
+  // retry. `text` guards the reuse: the caller may abandon a failed send and
+  // post different content at the same seq, which must build a fresh body
+  // rather than silently replay the stale one.
+  pendingSealedInterim?: { seq: number; text: string; body: SealedReplyBody; attachmentIds: string[] }
 }
 
 export interface RemoteSessionOptions {
@@ -960,15 +963,21 @@ export class RemoteSession {
         // sealed-messages callback. A retry after a failed POST reuses the
         // cached sealed body so the same message id (and the same uploaded
         // attachments) dedupe server-side.
-        let pending = entry.pendingSealedInterim?.seq === seq ? entry.pendingSealedInterim : undefined
+        let pending =
+          entry.pendingSealedInterim?.seq === seq && entry.pendingSealedInterim.text === text
+            ? entry.pendingSealedInterim
+            : undefined
         if (!pending) {
           const uploaded = await uploadSealedReplyAttachments(this.client, text, process.cwd())
+          // An attachment-only interim keeps an empty body — the refs render as
+          // the message, exactly like a user's attachment-only sealed send.
+          const fallback = uploaded.refs.length > 0 ? "" : "(empty message)"
           const body = await sealReply(
             entry.invocation.sealing,
-            uploaded.markdown.trim() || "(empty message)",
+            uploaded.markdown.trim() || fallback,
             uploaded.refs.length > 0 ? { attachmentRefs: uploaded.refs } : undefined
           )
-          pending = { seq, body, attachmentIds: uploaded.attachmentIds }
+          pending = { seq, text, body, attachmentIds: uploaded.attachmentIds }
         }
         entry.pendingSealedInterim = pending
         await this.client.sendSealedMessage(invocationId, entry.invocation.sealing.callbackToken, {

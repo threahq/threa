@@ -248,6 +248,32 @@ describe("uploadSealedReplyAttachments", () => {
     expect(result.markdown).toContain("Done")
     expect(result.markdown).toContain("Attachment upload failed:")
   })
+
+  test("clamps to the server's 16-id cap: overflow directives become failure notes, not a 400 loop", async () => {
+    const dir = tempDir()
+    const paths: string[] = []
+    for (let i = 0; i < 17; i++) {
+      const filePath = join(dir, `file-${String(i).padStart(2, "0")}.txt`)
+      writeFileSync(filePath, `content ${i}`)
+      paths.push(filePath)
+    }
+    let uploadCount = 0
+    const client = {
+      async uploadAttachment(): Promise<AttachmentSummary> {
+        uploadCount += 1
+        return summary({ id: `att_${uploadCount}` })
+      },
+    }
+    const result = await uploadSealedReplyAttachments(
+      client,
+      ["Done", ...paths.map((p) => `THREA_ATTACH: ${p}`)].join("\n"),
+      dir
+    )
+    expect(uploadCount).toBe(16)
+    expect(result.attachmentIds).toHaveLength(16)
+    expect(result.markdown).toContain("over the 16-attachment limit")
+    expect(result.markdown).toContain("file-16.txt")
+  })
 })
 
 describe("selectSealedInboundRefs", () => {

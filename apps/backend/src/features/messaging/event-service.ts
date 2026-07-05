@@ -913,6 +913,13 @@ export class EventService {
       if (!isAttachmentSafeForSharing(a.safetyStatus)) {
         throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
       }
+      // INV-E1 backstop, mirroring the create path: only sealed messages may
+      // bind E2E rows, and edits are plaintext-only (E2E edits are blocked
+      // upstream), so an e2eOnly reference here is always wrong — it would
+      // render as an undecryptable placeholder chip.
+      if (a.e2eOnly === true) {
+        throw new Error("Invalid attachment IDs: an E2E attachment can only be bound to a sealed message")
+      }
       if (a.messageId === null) {
         // Fresh uploads aren't supported on edit — they'd need `attachToMessage`
         // claiming the row, which would orphan any other message that already

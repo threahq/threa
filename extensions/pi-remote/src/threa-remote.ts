@@ -50,6 +50,8 @@ const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
 const BIK_PATH = join(homedir(), ".pi", "agent", "threa-remote-bik.json")
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
+/** Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema` caps at 16). */
+const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
@@ -2941,7 +2943,12 @@ async function completeSealedWithMarkdown(
   }
   const refs: AttachmentRef[] = []
   const failedUploads: string[] = []
-  for (const path of extracted.paths) {
+  // Server cap on attachmentIds per sealed message (sealedAttachmentIdsSchema
+  // .max(16)) — clamp before uploading or the whole completion 400s forever.
+  for (const path of extracted.paths.slice(MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
+    failedUploads.push(`${path}: over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
+  }
+  for (const path of extracted.paths.slice(0, MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
     try {
       refs.push(await uploadSealedAttachment(path, cwd))
     } catch (error) {

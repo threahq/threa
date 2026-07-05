@@ -195,6 +195,12 @@ export async function uploadReplyAttachments(
 /** Placeholder name/mime for the opaque ciphertext upload — the real values ride only in the sealed ref. */
 const SEALED_UPLOAD_FILENAME = "encrypted"
 const SEALED_UPLOAD_MIME = "application/octet-stream"
+/**
+ * Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema`
+ * caps at 16). Clamp before uploading: sending more ids would 400 the whole
+ * completion, and the retry loop would re-send the same over-limit body forever.
+ */
+export const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 
 async function uploadSealedFile(
   client: Pick<ThreaClient, "uploadAttachment">,
@@ -236,7 +242,10 @@ export async function uploadSealedReplyAttachments(
   const { markdown: stripped, paths } = extractAttachmentDirectives(markdown)
   const refs: AttachmentRef[] = []
   const failed: string[] = []
-  for (const path of paths) {
+  for (const path of paths.slice(MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
+    failed.push(`${path}: over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
+  }
+  for (const path of paths.slice(0, MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
     try {
       refs.push(await uploadSealedFile(client, path, cwd))
     } catch (error) {

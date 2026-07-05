@@ -491,6 +491,35 @@ describe("EventService.editMessage version capture", () => {
     mock.restore()
   })
 
+  it("rejects an edit that references an E2E attachment (INV-E1 backstop, edit path)", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
+      {
+        id: "attach_e2e",
+        workspaceId: "ws_1",
+        streamId: "stream_e2e",
+        messageId: "msg_e2e",
+        safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        e2eOnly: true,
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 10,
+      },
+    ] as any)
+
+    const service = new EventService({} as any)
+    await expect(
+      service.editMessage({
+        workspaceId: "ws_1",
+        messageId: "msg_1",
+        streamId: "stream_1",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "edited",
+        actorId: "usr_1",
+        attachmentIds: ["attach_e2e"],
+      })
+    ).rejects.toThrow("an E2E attachment can only be bound to a sealed message")
+  })
+
   it("should snapshot pre-edit content as a version record", async () => {
     const service = new EventService({} as any)
 

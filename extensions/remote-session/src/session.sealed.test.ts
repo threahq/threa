@@ -99,6 +99,8 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
   // Every upload a sealed turn makes: it must be ciphertext-only, e2e-flagged,
   // under the placeholder filename — the assertions read these captures.
   const uploads: Array<{ filename: string; type: string; e2e: unknown; bytes: Uint8Array }> = []
+  // Fault injection for the sealed-messages POST (retry-path tests).
+  const control = { failNextSealedMessage: 0 }
   const client = {
     claim: async () => queue.shift() ?? null,
     fail: async (id: string, body: Record<string, unknown>) => {
@@ -111,6 +113,10 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
       calls.sendMessage.push({ streamId, body })
     },
     sendSealedMessage: async (id: string, callbackToken: string, body: SealedReplyBody) => {
+      if (control.failNextSealedMessage > 0) {
+        control.failNextSealedMessage -= 1
+        throw new Error("simulated sealed-message POST failure")
+      }
       calls.sealedMessages.push({ id, callbackToken, body })
     },
     completeSealed: async (id: string, callbackToken: string, body: Record<string, unknown>) => {
@@ -160,7 +166,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     runtime: RUNTIME,
     transport: transport as unknown as BotRuntimeTransport,
   })
-  return { session, calls, queue, uploads }
+  return { session, calls, queue, uploads, control }
 }
 
 /** The owner's half of the ceremony: wrap a fresh SSK to the session's BIK and seal trigger + history under it. */
@@ -386,6 +392,40 @@ describe("sealed output paths", () => {
     expect(payload.contentMarkdown).toBe("Done — patch attached.")
     expect(payload.attachmentRefs).toHaveLength(1)
     expect(payload.attachmentRefs[0]!.filename).toBe("diff.patch")
+  })
+
+  test("an interim retry after a failed POST reuses the sealed body and its uploads", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sealed-retry-"))
+    tempDirs.push(dir)
+    const filePath = join(dir, "log.txt")
+    writeFileSync(filePath, "retry me")
+    const { session, calls, uploads, control } = await startSealedTurn()
+    const text = `Progress.\nTHREA_ATTACH: ${filePath}`
+
+    control.failNextSealedMessage = 1
+    const first = await session.sendInterim("binv_sealed", text)
+    expect(first.ok).toBe(false)
+    const retry = await session.sendInterim("binv_sealed", text)
+    expect(retry.ok).toBe(true)
+
+    // One upload total, and the retried POST carries the same ids.
+    expect(uploads).toHaveLength(1)
+    expect(calls.sealedMessages).toHaveLength(1)
+    const wire = calls.sealedMessages[0]!.body as SealedReplyBody & { attachmentIds?: string[] }
+    expect(wire.attachmentIds).toEqual(["att_up_1"])
+  })
+
+  test("different text after a failed interim builds a fresh body instead of replaying the stale one", async () => {
+    const { session, calls, control, openSealed } = await startSealedTurn()
+
+    control.failNextSealedMessage = 1
+    const first = await session.sendInterim("binv_sealed", "message A")
+    expect(first.ok).toBe(false)
+    const second = await session.sendInterim("binv_sealed", "message B")
+    expect(second.ok).toBe(true)
+
+    expect(calls.sealedMessages).toHaveLength(1)
+    expect(await openSealed(calls.sealedMessages[0]!.body)).toBe("message B")
   })
 
   test("a missing THREA_ATTACH file surfaces as a sealed failure note, never plaintext", async () => {
