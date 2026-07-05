@@ -13,9 +13,9 @@
 -- write (including the create), so "who changed the brief and when" is always
 -- answerable and a bad edit can be recovered by hand.
 --
--- Per INV-1 no foreign keys; per INV-3 updated_by_kind is TEXT validated in
--- application code ('user' | 'persona'); per INV-8 every read/write filters by
--- workspace_id. Threads carry no brief of their own — they inherit the root
+-- Per INV-1 no foreign keys; per INV-3 updated_by_kind is TEXT constrained in
+-- application code by the BriefAuthorKind union ('user' | 'persona'); per
+-- INV-8 every read/write filters by workspace_id. Threads carry no brief of their own — they inherit the root
 -- stream's brief at prompt-assembly time, mirroring the access rule (INV-62).
 
 CREATE TABLE IF NOT EXISTS stream_briefs (

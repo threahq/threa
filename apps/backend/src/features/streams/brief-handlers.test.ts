@@ -105,6 +105,26 @@ describe("stream brief handlers", () => {
     })
   })
 
+  it("PUT rejects encrypted streams — a sealed stream's brief would be plaintext the enclave never injects", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ e2eEnabled: true }))
+    const handlers = makeHandlers({})
+
+    const req = fakeReq({ body: { content: "Goal: ship v2", version: 0 } })
+    await expect(handlers.put(req, fakeRes())).rejects.toMatchObject({
+      status: 400,
+      code: "BRIEF_E2E_UNSUPPORTED",
+    })
+  })
+
+  it("PUT rejects a version beyond pg INT4 range at validation instead of 500ing in the guard query", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    const handlers = makeHandlers({})
+
+    const req = fakeReq({ body: { content: "x", version: 3_000_000_000 } })
+    await expect(handlers.put(req, fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+
   it("PUT surfaces a lost optimistic-concurrency race as 409 carrying the fresh brief", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)

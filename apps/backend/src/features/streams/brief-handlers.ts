@@ -15,8 +15,12 @@ interface Dependencies {
 
 const putBriefSchema = z.object({
   content: z.string().max(STREAM_BRIEF_MAX_CHARS),
-  /** The version the client read; 0 when no brief existed yet. */
-  version: z.number().int().min(0),
+  /**
+   * The version the client read; 0 when no brief existed yet. Bounded to pg
+   * INT4 — an unbounded value would surface as a 500 (Postgres 22003) instead
+   * of a clean conflict.
+   */
+  version: z.number().int().min(0).max(2_147_483_647),
 })
 
 /**
@@ -49,6 +53,18 @@ export function createStreamBriefHandlers({ pool, streamBriefService }: Dependen
 
       const stream = await checkStreamAccess(pool, streamId, workspaceId, userId)
       if (!stream) throw new StreamNotFoundError()
+
+      // A sealed stream's brief would be server-stored plaintext that the
+      // enclave prompt never injects — a silent no-op attached to an E2E
+      // surface. Reject until the sealed wire supports briefs (roadmap §4.1
+      // deviation), consistent with E2E parity being deferred across the
+      // roadmap.
+      if (stream.e2eEnabled) {
+        throw new HttpError("Briefs are not supported on encrypted streams", {
+          status: 400,
+          code: "BRIEF_E2E_UNSUPPORTED",
+        })
+      }
 
       const briefStreamId = resolveBriefStreamId(stream)
       const isMember = await StreamMemberRepository.isMember(pool, briefStreamId, userId)
