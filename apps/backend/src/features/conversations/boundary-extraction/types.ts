@@ -49,6 +49,11 @@ const completenessUpdateSchema = z.object({
   conversationId: z.string(),
   score: z.number(),
   status: z.enum(CONVERSATION_STATUSES),
+  /**
+   * Refreshed rolling summary of what the conversation covers, when its
+   * content moved on this pass. Undefined leaves the stored summary untouched.
+   */
+  summary: z.string().optional(),
 })
 
 const extractionResultSchema = z.object({
@@ -59,6 +64,8 @@ const extractionResultSchema = z.object({
   assignments: z.array(messageAssignmentSchema),
   /** Topic summary; required when any assignment has `conversationId: null`. */
   newConversationTopic: z.string().optional(),
+  /** Rolling prose summary for the new conversation, set alongside the topic. */
+  newConversationSummary: z.string().optional(),
   reassignments: z.array(reassignmentSchema).optional(),
   completenessUpdates: z.array(completenessUpdateSchema).optional(),
   confidence: z.number(),
@@ -72,6 +79,12 @@ export type ExtractionResult = z.infer<typeof extractionResultSchema>
 export interface ConversationSummary {
   id: string
   topicSummary: string | null
+  /**
+   * Rolling prose summary of what the conversation covers, maintained by
+   * prior extraction passes. Null for conversations the extractor has not
+   * summarized yet (pre-migration rows, sync-assigned conversations).
+   */
+  summary: string | null
   messageCount: number
   lastMessagePreview: string
   participantIds: string[]

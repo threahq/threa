@@ -17,6 +17,7 @@ function makeConversation(overrides: Partial<ConversationWithStaleness>): Conver
     participantIds: [],
     secondaryMessageIds: [],
     topicSummary: null,
+    summary: null,
     completenessScore: 1,
     confidence: 0.5,
     status: "active",

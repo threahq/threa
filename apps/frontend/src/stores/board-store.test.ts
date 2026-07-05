@@ -15,6 +15,7 @@ function makeConversation(id: string, lastActivityAt: string): ConversationWithS
     participantIds: ["usr_1"],
     secondaryMessageIds: [],
     topicSummary: id,
+    summary: null,
     completenessScore: 4,
     confidence: 0.8,
     status: "active",

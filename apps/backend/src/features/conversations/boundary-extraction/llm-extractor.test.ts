@@ -59,6 +59,7 @@ function createMockConversation(overrides: Partial<ConversationSummary> = {}): C
   return {
     id: "conv_existing123",
     topicSummary: "Existing conversation topic",
+    summary: null,
     messageCount: 5,
     lastMessagePreview: "Last message preview",
     participantIds: ["usr_test"],

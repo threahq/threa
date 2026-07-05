@@ -37,6 +37,7 @@ import {
   topicNotContainsEvaluator,
   confidenceEvaluator,
   completenessUpdateEvaluator,
+  reassignmentEvaluator,
   accuracyEvaluator,
   decisionAccuracyEvaluator,
   averageConfidenceEvaluator,
@@ -71,7 +72,7 @@ function toMessage(
 ): Message {
   const minutesAgo = evalMsg.minutesAgo ?? defaultMinutesAgo
   return {
-    id: `msg_${ulid()}`,
+    id: evalMsg.id ?? `msg_${ulid()}`,
     streamId,
     sequence: BigInt(sequence),
     authorId: evalMsg.authorId,
@@ -109,14 +110,15 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
       toMessage(m, streamId, i + 2, now, DEFAULT_RECENT_MESSAGE_MINUTES_AGO)
     ),
     activeConversations: (input.activeConversations || []).map((c) => {
-      const { lastActivityMinutesAgo, ...summary } = c
+      const { lastActivityMinutesAgo, contextMessageIds, ...summary } = c
       return {
         ...summary,
+        summary: c.summary ?? null,
         status: c.status ?? "active",
         lastActivityAt: new Date(
           now.getTime() - (lastActivityMinutesAgo ?? DEFAULT_CONVERSATION_LAST_ACTIVITY_MINUTES_AGO) * 60_000
         ),
-        contextMessageIds: [],
+        contextMessageIds: contextMessageIds ?? [],
       }
     }),
     replyTargets: input.replyTargets,
@@ -151,6 +153,10 @@ async function runBoundaryExtractionTask(
       conversationId: primary.conversationId,
       newConversationTopic: result.newConversationTopic,
       completenessUpdates: result.completenessUpdates,
+      reassignments: result.reassignments?.map((r) => ({
+        messageId: r.messageId,
+        toConversationId: r.toConversationId,
+      })),
       confidence: result.confidence,
     }
   } catch (error) {
@@ -184,6 +190,7 @@ export const boundaryExtractionSuite: EvalSuite<
     topicNotContainsEvaluator,
     confidenceEvaluator,
     completenessUpdateEvaluator,
+    reassignmentEvaluator,
   ],
 
   runEvaluators: [accuracyEvaluator, decisionAccuracyEvaluator, averageConfidenceEvaluator],

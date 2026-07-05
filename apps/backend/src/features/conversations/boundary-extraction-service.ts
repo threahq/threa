@@ -29,6 +29,7 @@ const MESSAGES_AFTER = 2
 interface ConversationDecision {
   assignments: MessageAssignment[]
   newTopic?: string
+  newSummary?: string
   confidence: number
   reassignments: Reassignment[]
   completenessUpdates?: CompletenessUpdate[]
@@ -294,6 +295,7 @@ export class BoundaryExtractionService {
       decision = {
         assignments: result.assignments,
         newTopic: result.newConversationTopic,
+        newSummary: result.newConversationSummary,
         confidence: result.confidence,
         reassignments: result.reassignments ?? [],
         completenessUpdates: result.completenessUpdates,
@@ -332,6 +334,7 @@ export class BoundaryExtractionService {
               streamId,
               workspaceId,
               topicSummary: decision.newTopic,
+              summary: decision.newSummary,
               confidence: decision.confidence,
               status: ConversationStatuses.ACTIVE,
             })
@@ -488,6 +491,7 @@ export class BoundaryExtractionService {
           await ConversationRepository.update(client, workspaceId, update.conversationId, {
             completenessScore: update.score,
             status: update.status,
+            summary: update.summary,
           })
           touchedConversationIds.add(update.conversationId)
         }
@@ -653,6 +657,7 @@ export class BoundaryExtractionService {
       return {
         id: c.id,
         topicSummary: c.topicSummary,
+        summary: c.summary,
         messageCount: c.messageIds.length,
         lastMessagePreview: lastMessage?.contentMarkdown.slice(0, 100) ?? "",
         participantIds: c.participantIds,

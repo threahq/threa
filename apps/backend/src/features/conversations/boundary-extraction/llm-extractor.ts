@@ -127,7 +127,8 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
               const tag = c.isParent ? " [parent-thread]" : ""
               const contextIds =
                 c.contextMessageIds.length > 0 ? `, in-context messages: [${c.contextMessageIds.join(", ")}]` : ""
-              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, last active ${formatRelativeAge(c.lastActivityAt, now)}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})`
+              const summaryLine = c.summary ? `\n  covers: ${c.summary}` : ""
+              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, last active ${formatRelativeAge(c.lastActivityAt, now)}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})${summaryLine}`
             })
             .join("\n")
         : "No active conversations in this stream yet."
@@ -203,8 +204,9 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       return {
         assignments: [{ conversationId: null, isPrimary: true }],
         newConversationTopic: parsed.newConversationTopic ?? this.truncateAsTopic(context.newMessage),
+        newConversationSummary: parsed.newConversationSummary ?? undefined,
         reassignments: undefined,
-        completenessUpdates: parsed.completenessUpdates ?? undefined,
+        completenessUpdates: this.normalizeCompletenessUpdates(parsed),
         confidence: parsed.confidence,
       }
     }
@@ -274,10 +276,22 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
     return {
       assignments: validAssignments,
       newConversationTopic,
+      newConversationSummary: hasNullAssignment ? (parsed.newConversationSummary ?? undefined) : undefined,
       reassignments: validReassignments.length > 0 ? validReassignments : undefined,
-      completenessUpdates: parsed.completenessUpdates ?? undefined,
+      completenessUpdates: this.normalizeCompletenessUpdates(parsed),
       confidence: parsed.confidence,
     }
+  }
+
+  /** Wire completeness updates carry `summary: string | null`; internal shape uses optional. */
+  private normalizeCompletenessUpdates(parsed: ExtractionResponse): ExtractionResult["completenessUpdates"] {
+    if (!parsed.completenessUpdates) return undefined
+    return parsed.completenessUpdates.map((u) => ({
+      conversationId: u.conversationId,
+      score: u.score,
+      status: u.status,
+      summary: u.summary ?? undefined,
+    }))
   }
 
   private truncateAsTopic(message: Message): string {
