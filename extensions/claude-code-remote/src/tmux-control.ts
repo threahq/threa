@@ -112,6 +112,3 @@ export function killOwnWindow(): boolean {
     return false
   }
 }
-
-/** Milliseconds to wait after an interrupt before delivering the steer turn, so Claude has returned to idle. */
-export const STEER_SETTLE_MS = 250
