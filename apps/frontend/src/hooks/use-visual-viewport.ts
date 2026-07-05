@@ -327,6 +327,24 @@ export function useVisualViewport(enabled: boolean): boolean {
       pollForDuration(POLL_DURATION)
     }
 
+    // Every viewport resize report starts a short poll window, not just a
+    // single measurement. Chrome Android's keyboard-close overshoot (a report
+    // PAST the real screen height) can settle back down WITHOUT emitting a
+    // final resize — a lone per-event update() writes the overshoot and then
+    // never hears the correction, leaving `--viewport-height` taller than the
+    // screen and the bottom-anchored composer below the fold until the next
+    // keyboard/focus event happens to re-measure. Polling a beat past the last
+    // report (plus pollForDuration's trailing settle re-measure) reads the
+    // silent settle and shrinks synchronously. This also backstops the
+    // optimistic-close reconcile, which takes exactly one measurement and can
+    // itself catch the overshoot instant.
+    const onViewportResize = () => {
+      // Synchronous first measure — a keyboard-open shrink must reveal the
+      // composer this frame, not one rAF later when the poll's loop starts.
+      update()
+      pollForDuration(POLL_DURATION)
+    }
+
     // Re-measure when the page is restored (BFCache restore, tab refocus).
     // Chrome Android's dvh is routinely stale here and `resize` events may
     // not fire, so poll briefly to catch the URL bar animation too.
@@ -335,17 +353,26 @@ export function useVisualViewport(enabled: boolean): boolean {
       pollForDuration(POLL_DURATION)
     }
 
+    // Foregrounding a standalone PWA does not fire `pageshow` (the page was
+    // never in the BFCache), but Chrome resumes it with equally stale viewport
+    // state — re-measure through the same poll. update() refreshes the
+    // baseline itself once the keyboard is confirmed closed.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") pollForDuration(POLL_DURATION)
+    }
+
     update()
 
     if (vv) {
-      vv.addEventListener("resize", update)
+      vv.addEventListener("resize", onViewportResize)
       vv.addEventListener("scroll", onScroll)
     }
     // Also listen to window resize (Firefox fires this when keyboard changes innerHeight)
-    window.addEventListener("resize", update)
+    window.addEventListener("resize", onViewportResize)
     document.addEventListener("focusin", onEditableFocusChange)
     document.addEventListener("focusout", onEditableFocusChange)
     window.addEventListener("pageshow", onPageShow)
+    document.addEventListener("visibilitychange", onVisibilityChange)
 
     return () => {
       cancelAnimationFrame(pollRafId.current)
@@ -355,13 +382,14 @@ export function useVisualViewport(enabled: boolean): boolean {
       clearTimeout(reconcileTimeoutId)
       cancelPendingGrowth()
       if (vv) {
-        vv.removeEventListener("resize", update)
+        vv.removeEventListener("resize", onViewportResize)
         vv.removeEventListener("scroll", onScroll)
       }
-      window.removeEventListener("resize", update)
+      window.removeEventListener("resize", onViewportResize)
       document.removeEventListener("focusin", onEditableFocusChange)
       document.removeEventListener("focusout", onEditableFocusChange)
       window.removeEventListener("pageshow", onPageShow)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
       docEl.style.removeProperty(VIEWPORT_HEIGHT_VAR)
     }
   }, [enabled])

@@ -501,6 +501,74 @@ describe("useVisualViewport", () => {
     search.remove()
   })
 
+  it("corrects a close overshoot that settles back without a final resize event", async () => {
+    // Chrome Android's keyboard-close overshoot (753px reported on a 725px
+    // screen) can settle back to the real height WITHOUT emitting another
+    // resize. A lone per-event measurement writes the overshoot and never
+    // hears the correction — --viewport-height sticks taller than the screen
+    // and the bottom-anchored composer sits below the fold indefinitely (the
+    // "no composer at all" state). Every resize must therefore start a short
+    // poll window that reads the silent settle.
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+    // Keyboard-open steady state (resizes-content: both viewports track).
+    // No focusout is involved — this is the back-button close, where focus
+    // stays on the composer and no optimistic-restore freeze applies.
+    setInnerHeight(436)
+    fakeVV.height = 436
+    renderHook(() => useVisualViewport(true))
+    expect(getVH()).toBe("436px")
+
+    // The close reports one chunk: the overshoot — and then goes silent.
+    await act(async () => {
+      setInnerHeight(753)
+      fakeVV.height = 753
+      fakeVV.emitResize()
+      // Growth debounce elapses with the overshoot still current → written.
+      await sleep(200)
+    })
+    expect(getVH()).toBe("753px")
+
+    // The viewport settles on the real height with NO further resize event.
+    // Only the poll window started by the last resize can observe this.
+    await act(async () => {
+      setInnerHeight(725)
+      fakeVV.height = 725
+      for (let i = 0; i < 4; i++) await nextFrame()
+    })
+    expect(getVH()).toBe("725px")
+  })
+
+  it("re-measures when the app is foregrounded again (visibilitychange)", async () => {
+    // Foregrounding a standalone PWA fires no pageshow (the page never entered
+    // the BFCache), but Chrome resumes it with equally stale viewport state.
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+    fakeVV.height = 800
+    renderHook(() => useVisualViewport(true))
+    expect(getVH()).toBe("800px")
+
+    const originalVisibility = Object.getOwnPropertyDescriptor(Document.prototype, "visibilityState")
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" })
+    try {
+      await act(async () => {
+        // Viewport changed while backgrounded; no resize fires on resume.
+        setInnerHeight(712)
+        fakeVV.height = 712
+        document.dispatchEvent(new Event("visibilitychange"))
+        for (let i = 0; i < 4; i++) await nextFrame()
+        // Shrink applies synchronously in the poll; nothing else to wait out.
+      })
+      expect(getVH()).toBe("712px")
+    } finally {
+      if (originalVisibility) Object.defineProperty(Document.prototype, "visibilityState", originalVisibility)
+      Reflect.deleteProperty(document, "visibilityState")
+    }
+  })
+
   it("cleans up listeners and removes --viewport-height on unmount", () => {
     fakeVV.height = 800
     const { unmount } = renderHook(() => useVisualViewport(true))
