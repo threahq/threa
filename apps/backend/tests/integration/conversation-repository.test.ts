@@ -16,6 +16,7 @@ import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository } from "../../src/features/memos"
+import { sql } from "../../src/db"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId, memoId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
@@ -985,6 +986,72 @@ describe("ConversationRepository", () => {
       })
 
       expect(deleted).toBe(false)
+    })
+  })
+
+  describe("sweepStale", () => {
+    const DAY_SECONDS = 24 * 60 * 60
+    const WEEK_SECONDS = 7 * DAY_SECONDS
+
+    async function insertIdleConversation(status: string, idleHours: number): Promise<string> {
+      const convId = conversationId()
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          status: status as "active" | "stalled" | "resolved",
+        })
+        await client.query(sql`
+          UPDATE conversations
+          SET last_activity_at = NOW() - make_interval(hours => ${idleHours})
+          WHERE id = ${convId}
+        `)
+      })
+      return convId
+    }
+
+    function sweep() {
+      return withTransaction(pool, async (client) =>
+        ConversationRepository.sweepStale(client, {
+          stalledAfterSeconds: DAY_SECONDS,
+          resolvedAfterSeconds: WEEK_SECONDS,
+          limit: 100,
+        })
+      )
+    }
+
+    test("fades idle conversations by idle time and leaves live ones alone", async () => {
+      const liveActive = await insertIdleConversation(ConversationStatuses.ACTIVE, 1)
+      const idleActive = await insertIdleConversation(ConversationStatuses.ACTIVE, 25)
+      const longIdleActive = await insertIdleConversation(ConversationStatuses.ACTIVE, 8 * 24)
+      const longIdleStalled = await insertIdleConversation(ConversationStatuses.STALLED, 8 * 24)
+      const recentStalled = await insertIdleConversation(ConversationStatuses.STALLED, 48)
+
+      const swept = await sweep()
+      const byId = new Map(swept.map((c) => [c.id, c]))
+
+      expect(byId.get(idleActive)?.status).toBe(ConversationStatuses.STALLED)
+      expect(byId.get(longIdleActive)?.status).toBe(ConversationStatuses.RESOLVED)
+      expect(byId.get(longIdleStalled)?.status).toBe(ConversationStatuses.RESOLVED)
+      // Live and recently-stalled rows are not transitioned.
+      expect(byId.has(liveActive)).toBe(false)
+      expect(byId.has(recentStalled)).toBe(false)
+
+      const untouched = await withTransaction(pool, async (client) =>
+        ConversationRepository.findById(client, liveActive)
+      )
+      expect(untouched?.status).toBe(ConversationStatuses.ACTIVE)
+    })
+
+    test("is idempotent: a second sweep transitions nothing new", async () => {
+      await insertIdleConversation(ConversationStatuses.ACTIVE, 30)
+
+      const first = await sweep()
+      expect(first.length).toBeGreaterThan(0)
+
+      const second = await sweep()
+      expect(second).toEqual([])
     })
   })
 })

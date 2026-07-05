@@ -34,6 +34,13 @@ export type { BoundaryExtractionHandlerConfig } from "./boundary-extraction-outb
 export { createBoundaryExtractionWorker } from "./boundary-extraction-worker"
 export type { BoundaryExtractionWorkerDeps } from "./boundary-extraction-worker"
 
+export {
+  createStalenessSweepWorker,
+  SWEEP_STALLED_AFTER_SECONDS,
+  SWEEP_RESOLVED_AFTER_SECONDS,
+} from "./staleness-sweep-worker"
+export type { StalenessSweepWorkerDeps } from "./staleness-sweep-worker"
+
 export { ConversationRepository } from "./repository"
 export { ConversationFeedbackRepository } from "./feedback-repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
