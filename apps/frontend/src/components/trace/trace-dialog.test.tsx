@@ -1,5 +1,6 @@
+import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { AgentSession } from "@threa/types"
 import { TraceDialog } from "./trace-dialog"
@@ -7,10 +8,14 @@ import * as contextsModule from "@/contexts"
 import * as useAgentTraceModule from "@/hooks/use-agent-trace"
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
+import * as hooksModule from "@/hooks"
+import { commandsApi } from "@/api"
 
 let mockSessionId = "session_1"
 let mockSessionIndex = 0
-let mockSteps: Array<{ id: string; stepType: string }> = []
+let mockSteps: unknown[] = []
+let mockSession: AgentSession
+let mockRelatedSessions: AgentSession[]
 
 const relatedSessions: AgentSession[] = [
   {
@@ -45,19 +50,27 @@ const relatedSessions: AgentSession[] = [
   },
 ]
 
-function renderTrace() {
+function renderTrace(extra?: ReactNode) {
   return render(
-    <MemoryRouter initialEntries={["/w/ws_1"]}>
-      <Routes>
-        <Route path="/w/:workspaceId" element={<TraceDialog />} />
-      </Routes>
-    </MemoryRouter>
+    <div data-editor-zone="main">
+      <MemoryRouter initialEntries={["/w/ws_1"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<TraceDialog />} />
+        </Routes>
+      </MemoryRouter>
+      {extra}
+    </div>
   )
 }
 
 describe("TraceDialog", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    mockSessionId = "session_1"
+    mockSessionIndex = 0
+    mockSteps = []
+    mockSession = relatedSessions[0]!
+    mockRelatedSessions = relatedSessions
 
     vi.spyOn(contextsModule, "useTrace").mockImplementation((() => ({
       sessionId: mockSessionId,
@@ -68,13 +81,16 @@ describe("TraceDialog", () => {
 
     vi.spyOn(useAgentTraceModule, "useAgentTrace").mockImplementation((() => ({
       steps: mockSteps,
-      session: relatedSessions[mockSessionIndex],
-      relatedSessions,
+      session: mockSession,
+      relatedSessions: mockRelatedSessions,
       persona: { id: "persona_1", name: "Ariadne", avatarUrl: null, avatarEmoji: "🜃" },
-      status: relatedSessions[mockSessionIndex].status,
+      status: mockSession.status,
       isLoading: false,
       error: null,
     })) as unknown as typeof useAgentTraceModule.useAgentTrace)
+
+    vi.spyOn(commandsApi, "listForStream").mockResolvedValue([])
+    vi.spyOn(commandsApi, "dispatch").mockResolvedValue({ success: true, commandId: "cmd_1", command: "stop", args: "" })
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
       <span>just now</span>
@@ -88,6 +104,8 @@ describe("TraceDialog", () => {
   it("shows superseded-by version hint for superseded sessions", () => {
     mockSessionId = "session_1"
     mockSessionIndex = 0
+    mockSession = relatedSessions[mockSessionIndex]!
+    mockRelatedSessions = relatedSessions
     mockSteps = []
     renderTrace()
 
@@ -97,6 +115,8 @@ describe("TraceDialog", () => {
   it("shows rerun reason when session was retriggered by follow-up edit", () => {
     mockSessionId = "session_2"
     mockSessionIndex = 1
+    mockSession = relatedSessions[mockSessionIndex]!
+    mockRelatedSessions = relatedSessions
     mockSteps = []
     renderTrace()
 
@@ -109,6 +129,8 @@ describe("TraceDialog", () => {
   it("counts message edits as sent responses in footer", () => {
     mockSessionId = "session_2"
     mockSessionIndex = 1
+    mockSession = relatedSessions[mockSessionIndex]!
+    mockRelatedSessions = relatedSessions
     mockSteps = [
       { id: "step_1", stepType: "thinking" },
       { id: "step_2", stepType: "message_edited" },
@@ -118,5 +140,79 @@ describe("TraceDialog", () => {
     renderTrace()
 
     expect(screen.getByText("3 steps • 1 message sent")).toBeInTheDocument()
+  })
+
+  it("keeps Redirect visible for regular running agents and focuses the composer", () => {
+    const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
+    mockSession = {
+      id: "session_run",
+      streamId: "stream_1",
+      personaId: "persona_1",
+      triggerMessageId: "msg_1",
+      status: "running",
+      sentMessageIds: [],
+      createdAt: "2026-02-19T10:00:00.000Z",
+    }
+    mockRelatedSessions = [mockSession]
+    mockSteps = [
+      {
+        id: "step_running",
+        sessionId: "session_run",
+        stepNumber: 1,
+        stepType: "thinking",
+        startedAt: "2026-02-19T10:00:01.000Z",
+      },
+    ]
+
+    renderTrace(<div data-testid="zone-editor" contentEditable />)
+
+    const zoneEditor = screen.getByTestId("zone-editor")
+    const rects = {
+      length: 1,
+      item: (index: number) => (index === 0 ? ({ width: 1, height: 1 } as DOMRect) : null),
+      0: { width: 1, height: 1 } as DOMRect,
+    } as unknown as DOMRectList
+    vi.spyOn(zoneEditor, "getClientRects").mockReturnValue(rects)
+
+    fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
+
+    expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor)
+    expect(commandsApi.dispatch).not.toHaveBeenCalled()
+  })
+
+  it("dispatches advertised runtime stop and steer commands from the running trace", async () => {
+    mockSession = {
+      id: "session_run",
+      streamId: "stream_1",
+      personaId: "bot_1",
+      triggerMessageId: "msg_1",
+      status: "running",
+      sentMessageIds: [],
+      createdAt: "2026-02-19T10:00:00.000Z",
+    }
+    mockRelatedSessions = [mockSession]
+    mockSteps = [
+      {
+        id: "step_running",
+        sessionId: "session_run",
+        stepNumber: 1,
+        stepType: "thinking",
+        startedAt: "2026-02-19T10:00:01.000Z",
+      },
+    ]
+    vi.mocked(commandsApi.listForStream).mockResolvedValue([
+      { name: "steer", description: "Steer", kind: "bot-runtime", scope: "stream" },
+      { name: "stop", description: "Stop", kind: "bot-runtime", scope: "stream" },
+    ])
+
+    renderTrace()
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Redirect" })).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }))
+
+    expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/steer" })
+    expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" })
   })
 })

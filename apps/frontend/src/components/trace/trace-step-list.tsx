@@ -17,12 +17,9 @@ interface TraceStepListProps {
    * history and post-refresh streaming entries.
    */
   streamingSubsteps?: Partial<Record<AgentStepType, StreamingSubstep[]>>
-  /**
-   * Callback to gracefully stop the running session. Passed only while the
-   * session is running; `TraceStep` renders a Stop button in the in-progress
-   * step's header so the user can interrupt from inside the trace dialog.
-   */
+  /** Running-session controls rendered on the in-progress step. */
   onStopSession?: () => void
+  onSteerSession?: () => void
 }
 
 export function TraceStepList({
@@ -33,6 +30,7 @@ export function TraceStepList({
   userId,
   streamingSubsteps,
   onStopSession,
+  onSteerSession,
 }: TraceStepListProps) {
   const highlightRef = useRef<HTMLDivElement>(null)
 
@@ -71,6 +69,7 @@ export function TraceStepList({
               userId={userId}
               liveSubsteps={liveSubsteps}
               onStopSession={onStopSession}
+              onSteerSession={onSteerSession}
             />
           </div>
         )

@@ -29,7 +29,7 @@ import { formatContextRefLabel } from "@/lib/context-bag/format-label"
 import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
 import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
-import { StopSessionButton } from "./session-action-buttons"
+import { RedirectSessionButton, StopSessionButton } from "./session-action-buttons"
 
 interface TraceStepProps {
   step: AgentSessionStep
@@ -49,15 +49,22 @@ interface TraceStepProps {
    */
   liveSubsteps?: Array<{ text: string; at: string }>
   /**
-   * When the step is in-flight, this callback is rendered as a Stop button in
-   * the step header. The trace dialog only passes this while
-   * `status === "running"`; Stop halts the whole session gracefully regardless
-   * of which tool is active (roadmap 2.1).
+   * In-flight session controls shown in the step header. The trace dialog only
+   * passes these while `status === "running"`.
    */
   onStopSession?: () => void
+  onSteerSession?: () => void
 }
 
-export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, onStopSession }: TraceStepProps) {
+export function TraceStep({
+  step,
+  workspaceId,
+  streamId,
+  userId,
+  liveSubsteps,
+  onStopSession,
+  onSteerSession,
+}: TraceStepProps) {
   const config = STEP_DISPLAY_CONFIG[step.stepType]
   const Icon = config.icon
 
@@ -77,13 +84,12 @@ export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, o
   const hueColor = `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`
 
   // In-progress steps replace the default timestamp + duration right-slot with
-  // a spinning loader + "Running…" label + optional Stop button. The
-  // stopPropagation prop is false here because TraceStep is not wrapped in a
-  // clickable Link (the trace dialog body is scrollable content, not a link).
+  // a spinning loader + "Running…" label + available session controls.
   const rightSlot = isInProgress ? (
     <>
       <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
       <span className="text-muted-foreground">Running…</span>
+      {onSteerSession && <RedirectSessionButton onClick={onSteerSession} />}
       {onStopSession && <StopSessionButton onClick={onStopSession} />}
     </>
   ) : undefined
