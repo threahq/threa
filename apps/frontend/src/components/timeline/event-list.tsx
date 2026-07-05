@@ -1,15 +1,13 @@
 import { memo, useMemo } from "react"
 import {
   COMMAND_EVENT_TYPES,
-  AGENT_SESSION_EVENT_TYPES,
   type CommandEventType,
-  type AgentSessionEventType,
-  type AgentSessionStartedPayload,
   type StreamEvent,
   type CommandDispatchedPayload,
   type CommandCompletedPayload,
   type CommandFailedPayload,
 } from "@threa/types"
+import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import type { MessageAgentActivity } from "@/hooks"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useAbortSession } from "@/hooks"
@@ -73,24 +71,6 @@ function getCommandId(event: StreamEvent): string | null {
   if (!isCommandEvent(event)) return null
   const payload = event.payload as CommandDispatchedPayload | CommandCompletedPayload | CommandFailedPayload
   return payload.commandId
-}
-
-function isAgentSessionEvent(event: StreamEvent): boolean {
-  return AGENT_SESSION_EVENT_TYPES.includes(event.eventType as AgentSessionEventType)
-}
-
-function getSessionId(event: StreamEvent): string | null {
-  if (!isAgentSessionEvent(event)) return null
-  return (event.payload as { sessionId?: string })?.sessionId ?? null
-}
-
-function getTriggerMessageId(event: StreamEvent): string | null {
-  if (event.eventType !== "agent_session:started") return null
-  return (event.payload as AgentSessionStartedPayload).triggerMessageId ?? null
-}
-
-function getSessionSlotKey(sessionId: string, triggerMessageId: string | null): string {
-  return triggerMessageId ? `trigger:${triggerMessageId}` : `session:${sessionId}`
 }
 
 /**

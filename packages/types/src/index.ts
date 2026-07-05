@@ -271,6 +271,11 @@ export {
   LabelActorTypes,
 } from "./constants"
 
+// Single source of truth for how each stream event renders across the timeline
+// and the board/conversation projection (anti-drift spec — see stream-rows.ts).
+export { STREAM_ROW_SPEC, BOARD_EVENT_ROW_TYPES } from "./stream-rows"
+export type { StreamRowSpec, ConversationRef } from "./stream-rows"
+
 // Markdown → plain-text stripping for preview surfaces (shared FE/BE, INV-60)
 export { stripMarkdown, stripMarkdownToInline } from "./markdown-strip"
 
