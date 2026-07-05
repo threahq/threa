@@ -148,9 +148,12 @@ describe("web-search-tool", () => {
   })
 
   it("reports a graceful stop (not a timeout) when the session signal aborts", async () => {
-    const abortError = new Error("The operation was aborted")
-    abortError.name = "AbortError"
-    globalThis.fetch = mock(() => Promise.reject(abortError)) as unknown as typeof fetch
+    // Reject with the aborted signal's reason, as a real fetch does — the reason
+    // is the plain "user_abort" string, NOT an AbortError-named error, so a catch
+    // that keyed on `error.name` would miss it and fall through to a generic error.
+    globalThis.fetch = mock((_url: string, options: RequestInit) =>
+      Promise.reject(options.signal?.reason ?? new Error("aborted"))
+    ) as unknown as typeof fetch
 
     const controller = new AbortController()
     controller.abort("user_abort")

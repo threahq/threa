@@ -374,13 +374,19 @@ When to use read_url:
 
         return { output, sources }
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
-          // The session Stop aborting takes precedence over the timeout arm:
-          // report the user cancellation, not a spurious timeout.
-          if (signal?.aborted) {
-            logger.info({ url: input.url }, "URL read stopped by user")
-            return { output: JSON.stringify({ stopped: true, url: input.url }) }
-          }
+        // A user Stop (the parent session signal) takes precedence: report the
+        // cancellation, not a spurious timeout.
+        if (signal?.aborted) {
+          logger.info({ url: input.url }, "URL read stopped by user")
+          return { output: JSON.stringify({ stopped: true, url: input.url }) }
+        }
+        // The composed signal's timeout arm firing aborts the fetch. Key off the
+        // signal — `composeAbortSignal` aborts with a TimeoutError/reason, not an
+        // AbortError-named error — with a name check as a defensive fallback.
+        if (
+          fetchSignal.aborted ||
+          (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+        ) {
           logger.warn({ url: input.url }, "URL fetch timed out")
           return {
             output: JSON.stringify({ error: `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s`, url: input.url }),
