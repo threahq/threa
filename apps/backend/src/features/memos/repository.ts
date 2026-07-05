@@ -426,13 +426,13 @@ export const MemoRepository = {
     return result.rows.map((row) => ({ memo: mapRowToMemo(row), distance: row.distance }))
   },
 
-  /** Mark memos superseded in one round-trip (INV-56). */
-  async markSuperseded(db: Querier, ids: string[], revisionReason: string): Promise<void> {
+  /** Mark memos superseded in one round-trip (INV-56). Workspace-scoped (INV-8). */
+  async markSuperseded(db: Querier, workspaceId: string, ids: string[], revisionReason: string): Promise<void> {
     if (ids.length === 0) return
     await db.query(sql`
       UPDATE memos
       SET status = 'superseded', revision_reason = ${revisionReason}, updated_at = NOW()
-      WHERE id = ANY(${ids}::text[]) AND status = 'active'
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[]) AND status = 'active'
     `)
   },
 

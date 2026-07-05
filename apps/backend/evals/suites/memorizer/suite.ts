@@ -32,7 +32,7 @@ import {
 } from "./evaluators"
 import { Memorizer, MEMO_MEMORIZER_MODEL_ID, MEMO_TEMPERATURES } from "../../../src/features/memos"
 import { MessageFormatter } from "../../../src/lib/ai/message-formatter"
-import { formatEvalMessages, toMemo } from "../memo-classifier/suite"
+import { formatEvalMessages, toMemo } from "../../fixtures/memo"
 import type { Message } from "../../../src/features/messaging"
 
 /**

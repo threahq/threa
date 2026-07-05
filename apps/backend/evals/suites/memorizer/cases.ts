@@ -9,8 +9,8 @@
 import type { EvalCase } from "../../framework/types"
 import type { MemorizerInput, MemorizerExpected } from "./types"
 
-const KRIS = { authorId: "usr_eval_kris", authorType: "user" as const, authorName: "Kim" }
-const PIERRE = { authorId: "usr_eval_pierre", authorType: "user" as const, authorName: "Pelle" }
+const KRIS = { authorId: "usr_eval_a", authorType: "user" as const, authorName: "Kim" }
+const PIERRE = { authorId: "usr_eval_b", authorType: "user" as const, authorName: "Pelle" }
 
 export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   {

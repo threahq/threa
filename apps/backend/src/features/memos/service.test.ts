@@ -253,10 +253,37 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
     })
     expect(markSuperseded).toHaveBeenCalledWith(
       expect.anything(),
+      WORKSPACE_ID,
       ["memo_prior"],
       expect.stringContaining("Superseded by revised capture")
     )
     // The new memo links back to the memo it replaced.
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_prior" }))
+  })
+
+  it("supersedes every near match but links parentMemoId to the nearest", async () => {
+    const { service } = setupService({ memoContents: [memoContent] })
+
+    // Two prior captures of the same drifting topic; both retire, the new
+    // memo's lineage points at the closest one.
+    const nearest = { ...memoContent, id: "memo_nearest", sourceConversationId: CONVERSATION_ID } as never
+    const farther = { ...memoContent, id: "memo_farther", sourceConversationId: CONVERSATION_ID } as never
+    spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([
+      { memo: nearest, distance: 0.18 },
+      { memo: farther, distance: 0.31 },
+    ])
+    const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+    expect(markSuperseded).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      ["memo_nearest", "memo_farther"],
+      expect.stringContaining("Superseded by revised capture")
+    )
+    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_nearest" }))
   })
 })

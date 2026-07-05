@@ -46,7 +46,7 @@ export const coverageEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = 
     const passed = unmet.length === 0
     return {
       name: "coverage",
-      score: expected.mustCoverAny.length === 0 ? 1 : 1 - unmet.length / expected.mustCoverAny.length,
+      score: 1 - unmet.length / expected.mustCoverAny.length,
       passed,
       details: passed ? undefined : `No memo covers: ${unmet.map((g) => g.join("/")).join("; ")}`,
     }
