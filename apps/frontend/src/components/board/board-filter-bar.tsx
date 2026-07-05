@@ -32,6 +32,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceDmPeers, useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
+import { BoardSavedViews } from "@/components/board/board-saved-views"
 import { cn } from "@/lib/utils"
 
 export interface BoardLensDef {
@@ -165,7 +166,12 @@ export function BoardFilterBar({
 
   return (
     <div className="flex min-h-9 items-center gap-1.5 overflow-x-auto border-b px-3 py-1.5 scrollbar-none sm:px-4">
-      <BoardLensMenu workspaceId={workspaceId} lens={lens} />
+      <BoardLensMenu
+        workspaceId={workspaceId}
+        lens={lens}
+        scopeStreamIds={scopeStreamIds}
+        scopeStreamTypes={scopeStreamTypes}
+      />
       <BoardScopePicker
         workspaceId={workspaceId}
         scopeStreamIds={scopeStreamIds}
@@ -271,39 +277,58 @@ function FilterMenuShell({
  * lens means. The trigger reflects the active lens and fills in once a
  * non-default lens narrows the board.
  */
-function BoardLensMenu({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
+function BoardLensMenu({
+  workspaceId,
+  lens,
+  scopeStreamIds,
+  scopeStreamTypes,
+}: {
+  workspaceId: string
+  lens: BoardLens
+  scopeStreamIds: string[]
+  scopeStreamTypes: BoardScopeStreamType[]
+}) {
   const [open, setOpen] = useState(false)
   const { search } = useLocation()
   const current = BOARD_LENS_DEFS[lens]
   const CurrentIcon = current.icon
 
   const content = (
-    <nav aria-label="Board lens" className="py-1">
-      {BOARD_LENSES.map((value) => {
-        const def = BOARD_LENS_DEFS[value]
-        const Icon = def.icon
-        const selected = value === lens
-        return (
-          <Link
-            key={value}
-            to={lensHref(workspaceId, value, search)}
-            onClick={() => setOpen(false)}
-            aria-current={selected ? "true" : undefined}
-            className={cn(
-              "mx-1 flex items-start gap-2.5 rounded-item px-2.5 py-2 transition-colors hover:bg-muted",
-              selected && "bg-muted/60"
-            )}
-          >
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium">{def.label}</span>
-              <span className="block text-xs text-muted-foreground">{def.description}</span>
-            </span>
-            {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
-          </Link>
-        )
-      })}
-    </nav>
+    <>
+      <nav aria-label="Board lens" className="py-1">
+        {BOARD_LENSES.map((value) => {
+          const def = BOARD_LENS_DEFS[value]
+          const Icon = def.icon
+          const selected = value === lens
+          return (
+            <Link
+              key={value}
+              to={lensHref(workspaceId, value, search)}
+              onClick={() => setOpen(false)}
+              aria-current={selected ? "true" : undefined}
+              className={cn(
+                "mx-1 flex items-start gap-2.5 rounded-item px-2.5 py-2 transition-colors hover:bg-muted",
+                selected && "bg-muted/60"
+              )}
+            >
+              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{def.label}</span>
+                <span className="block text-xs text-muted-foreground">{def.description}</span>
+              </span>
+              {selected && <Check className="mt-1 h-4 w-4 shrink-0" />}
+            </Link>
+          )
+        })}
+      </nav>
+      <BoardSavedViews
+        workspaceId={workspaceId}
+        lens={lens}
+        scopeStreamIds={scopeStreamIds}
+        scopeStreamTypes={scopeStreamTypes}
+        onNavigate={() => setOpen(false)}
+      />
+    </>
   )
 
   const trigger = (

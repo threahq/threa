@@ -4,6 +4,7 @@ import {
   streamsApi,
   messagesApi,
   conversationsApi,
+  boardViewsApi,
   activityApi,
   savedApi,
   savedSuggestionsApi,
@@ -120,11 +121,19 @@ export interface LabelService {
   unassign: typeof labelsApi.unassign
 }
 
+export interface BoardViewService {
+  list: typeof boardViewsApi.list
+  create: typeof boardViewsApi.create
+  update: typeof boardViewsApi.update
+  remove: typeof boardViewsApi.remove
+}
+
 export interface Services {
   workspaces: WorkspaceService
   streams: StreamService
   messages: MessageService
   conversations: ConversationService
+  boardViews: BoardViewService
   activity: ActivityService
   saved: SavedService
   savedSuggestions: SavedSuggestionsService
@@ -147,6 +156,7 @@ export function ServicesProvider({ children, services: overrides }: ServicesProv
       streams: overrides?.streams ?? streamsApi,
       messages: overrides?.messages ?? messagesApi,
       conversations: overrides?.conversations ?? conversationsApi,
+      boardViews: overrides?.boardViews ?? boardViewsApi,
       activity: overrides?.activity ?? activityApi,
       saved: overrides?.saved ?? savedApi,
       savedSuggestions: overrides?.savedSuggestions ?? savedSuggestionsApi,
@@ -182,6 +192,10 @@ export function useMessageService(): MessageService {
 
 export function useConversationService(): ConversationService {
   return useServices().conversations
+}
+
+export function useBoardViewService(): BoardViewService {
+  return useServices().boardViews
 }
 
 export function useActivityService(): ActivityService {

@@ -6,6 +6,7 @@ export {
   useStreamService,
   useMessageService,
   useConversationService,
+  useBoardViewService,
   useActivityService,
   useSavedService,
   useSavedSuggestionsService,

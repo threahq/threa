@@ -345,6 +345,10 @@ export const ConversationStatuses = {
  */
 export const MAX_CONVERSATION_TOPIC_LENGTH = 120
 
+/** Max length of a user-saved board-view (custom lens) name. Shared by the create
+ *  endpoint's Zod schema and the save/rename dialog input (INV-33). */
+export const MAX_BOARD_VIEW_NAME_LENGTH = 60
+
 /**
  * Structural lenses over the workspace board (board-view-design.md § "Lenses").
  * Each is a true filter over signals Threa already computes — the board gives

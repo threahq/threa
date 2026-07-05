@@ -30,6 +30,7 @@ import type {
   AttachmentSafetyStatus,
   ConversationStatus,
   BoardScopeStreamType,
+  BoardLens,
   MemoType,
   KnowledgeType,
   MemoStatus,
@@ -765,6 +766,22 @@ export interface BoardPost {
    * post) until a fetch reseeds it.
    */
   rootStreamType?: BoardScopeStreamType
+}
+
+/**
+ * A user-saved board lens (board-view-design.md § "Lenses"): a named bookmark of
+ * the board's filter state — a base lens plus stream (`?in=`) and stream-type
+ * (`?is=`) scopes. It expands losslessly to `/board/:baseLens?in=…&is=…`, so a
+ * saved view reuses the existing filter engine rather than defining a new
+ * predicate. Per-viewer.
+ */
+export interface BoardView {
+  id: string
+  name: string
+  baseLens: BoardLens
+  scopeStreamIds: string[]
+  scopeStreamTypes: BoardScopeStreamType[]
+  sortOrder: number
 }
 
 /**
