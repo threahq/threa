@@ -67,14 +67,16 @@ test.describe("E2E encrypted scratchpads", () => {
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0, { timeout: 15_000 })
   })
 
-  test("phone-width header: the chip strip scrolls and Invite agent stays tappable (no overlap)", async ({ page }) => {
+  test("phone-width: Invite agent lives in the stream sheet and its picker lists shared + personal bots", async ({
+    page,
+  }) => {
     await loginAndCreateWorkspace(page, "e2e-mobile")
     const workspaceId = page.url().match(/\/w\/(ws_[^/?#]+)/)?.[1]
     expect(workspaceId).toBeTruthy()
 
-    // Workspace bots make the header render the "Invite agent" trigger. One
-    // shared and one PERSONAL: the picker reads bootstrap visibility (shared +
-    // the viewer's own personal bots) — a personal harness bot missing from the
+    // Workspace bots make the "Invite agent" trigger render. One shared and
+    // one PERSONAL: the picker reads bootstrap visibility (shared + the
+    // viewer's own personal bots) — a personal harness bot missing from the
     // picker was a reported bug.
     const sharedRes = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
       data: {
@@ -109,24 +111,21 @@ test.describe("E2E encrypted scratchpads", () => {
     await setup.getByRole("button", { name: "Enable encryption" }).click()
     await expect(page.getByRole("button", { name: /End-to-end encrypted/i })).toBeVisible({ timeout: 15_000 })
 
-    // The reported state: phone width + locked (reload; device untrusted), where
-    // the header shows Unlock + Ariadne + Invite agent all at once.
+    // Phone width + locked (reload; device untrusted). Since the mobile topbar
+    // rework, the phone-width header keeps only the name-first bar — the chip
+    // strip (invite, encryption) moved into the stream sheet the name opens.
     await page.setViewportSize({ width: 412, height: 915 })
     await page.reload()
     await expect(page.getByText("This scratchpad is encrypted")).toBeVisible({ timeout: 15_000 })
 
-    const invite = page.getByRole("button", { name: "Invite an agent to this scratchpad" })
+    // The name IS the sheet trigger (aria-label "<name> — stream details and actions").
+    await page.getByRole("button", { name: /stream details and actions/ }).click()
+    const sheet = page.getByRole("dialog", { name: "Stream details and actions" })
+    await expect(sheet).toBeVisible({ timeout: 10_000 })
+
+    const invite = sheet.getByRole("button", { name: "Invite an agent to this scratchpad" })
     await invite.scrollIntoViewIfNeeded()
     await expect(invite).toBeVisible()
-
-    // Containment: the invite trigger may sit in a scrollable strip, but it must
-    // never paint under the header's search action (the regression: overflow
-    // painted the pills beneath the right-side icons, eating their taps).
-    const inviteBox = await invite.boundingBox()
-    const searchBox = await page.getByRole("button", { name: "Search in conversation" }).boundingBox()
-    expect(inviteBox).not.toBeNull()
-    expect(searchBox).not.toBeNull()
-    expect(inviteBox!.x + inviteBox!.width).toBeLessThanOrEqual(searchBox!.x + 1)
 
     // And it actually works: tapping opens the bot picker, which lists BOTH the
     // shared bot and the viewer's own personal bot.
