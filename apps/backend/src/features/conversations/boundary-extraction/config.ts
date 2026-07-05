@@ -3,6 +3,10 @@
 import { z } from "zod"
 import { CONVERSATION_STATUSES } from "@threa/types"
 
+// Mini over nano is deliberate: the July 2026 re-test (after -m eval wiring
+// was fixed) showed nano failing systematically — sandwich-split and
+// gap-resume cases in every round (30-33/35 vs mini's 33-35/35). See
+// docs/model-reference.md.
 export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
 /** Low temperature for classification consistency. */

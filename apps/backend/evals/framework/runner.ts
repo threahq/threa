@@ -110,11 +110,13 @@ function createUsageTrackingAI(ai: AI, accumulator: UsageAccumulator): AI {
   return {
     ...ai,
     async generateText(options: GenerateTextOptions) {
+      accumulator.recordModel(options.model)
       const result = await ai.generateText(options)
       accumulator.recordUsage(result.usage)
       return result
     },
     async generateObject<T extends import("zod").ZodType>(options: GenerateObjectOptions<T>) {
+      accumulator.recordModel(options.model)
       const result = await ai.generateObject(options)
       accumulator.recordUsage(result.usage)
       return result
@@ -233,7 +235,21 @@ async function runPermutation<TInput, TOutput, TExpected>(
   // Create config resolver with eval overrides applied
   // Base resolver has production defaults; eval resolver applies componentOverrides
   const baseResolver = createStaticConfigResolver()
-  const configResolver = createEvalConfigResolverFromYaml(baseResolver, options.componentOverrides)
+  const yamlResolver = createEvalConfigResolverFromYaml(baseResolver, options.componentOverrides)
+  // A -m/-t permutation override must reach components that read their model
+  // from the co-located config via ConfigResolver (INV-44) — boundary
+  // extraction, memo classifier/memorizer. Without this wrap the CLI flag
+  // silently relabels the run while the production model still executes.
+  const hasCliPermutation = Boolean(options.model)
+  const configResolver: typeof yamlResolver = hasCliPermutation
+    ? {
+        resolve: async (path: string) => ({
+          ...(await yamlResolver.resolve(path)),
+          modelId: permutation.model,
+          ...(permutation.temperature !== undefined ? { temperature: permutation.temperature } : {}),
+        }),
+      }
+    : yamlResolver
 
   // Create context for this permutation
   const ctx: EvalContext = {
@@ -255,38 +271,46 @@ async function runPermutation<TInput, TOutput, TExpected>(
     await suite.setup(ctx)
   }
 
-  // Run each case sequentially
+  // Run each case sequentially; with --runs N the whole set repeats so
+  // per-case pass rates can be tallied (stochastic components flip borderline
+  // cases run-to-run — single-run green is not evidence).
+  const runs = Math.max(1, options.runs ?? 1)
   const totalCases = casesToRun.length
-  for (let i = 0; i < casesToRun.length; i++) {
-    const caseItem = casesToRun[i]
-    const caseNum = i + 1
+  for (let run = 1; run <= runs; run++) {
+    if (runs > 1) {
+      console.log(`  ${colors.cyan}— run ${run}/${runs} —${colors.reset}`)
+    }
+    for (let i = 0; i < casesToRun.length; i++) {
+      const caseItem = casesToRun[i]
+      const caseNum = i + 1
 
-    // Always show progress
-    process.stdout.write(`  ${colors.dim}[${caseNum}/${totalCases}]${colors.reset} ${caseItem.name}... `)
+      // Always show progress
+      process.stdout.write(`  ${colors.dim}[${caseNum}/${totalCases}]${colors.reset} ${caseItem.name}... `)
 
-    const result = await runCase(suite, caseItem, ctx, options)
-    cases.push(result)
+      const result = await runCase(suite, caseItem, ctx, options)
+      cases.push(result)
 
-    // Show result status
-    const passed = !result.error && result.evaluations.every((e) => e.passed)
-    const status = result.error
-      ? `${colors.red}ERROR${colors.reset}`
-      : passed
-        ? `${colors.green}PASS${colors.reset}`
-        : `${colors.red}FAIL${colors.reset}`
-    console.log(`${status} ${colors.dim}(${formatDuration(result.durationMs)})${colors.reset}`)
+      // Show result status
+      const passed = !result.error && result.evaluations.every((e) => e.passed)
+      const status = result.error
+        ? `${colors.red}ERROR${colors.reset}`
+        : passed
+          ? `${colors.green}PASS${colors.reset}`
+          : `${colors.red}FAIL${colors.reset}`
+      console.log(`${status} ${colors.dim}(${formatDuration(result.durationMs)})${colors.reset}`)
 
-    // Show inline details for failures
-    if (result.error) {
-      console.log(`    ${colors.red}${result.error.message}${colors.reset}`)
-      if (NoObjectGeneratedError.isInstance(result.error) && result.error.text) {
-        console.log(`    ${colors.dim}Raw response: ${formatValue(result.error.text, 200)}${colors.reset}`)
-      }
-    } else if (!passed) {
-      for (const evaluation of result.evaluations.filter((e) => !e.passed)) {
-        console.log(
-          `    ${colors.yellow}${evaluation.name}: ${evaluation.details || `score=${evaluation.score}`}${colors.reset}`
-        )
+      // Show inline details for failures
+      if (result.error) {
+        console.log(`    ${colors.red}${result.error.message}${colors.reset}`)
+        if (NoObjectGeneratedError.isInstance(result.error) && result.error.text) {
+          console.log(`    ${colors.dim}Raw response: ${formatValue(result.error.text, 200)}${colors.reset}`)
+        }
+      } else if (!passed) {
+        for (const evaluation of result.evaluations.filter((e) => !e.passed)) {
+          console.log(
+            `    ${colors.yellow}${evaluation.name}: ${evaluation.details || `score=${evaluation.score}`}${colors.reset}`
+          )
+        }
       }
     }
   }
@@ -301,11 +325,25 @@ async function runPermutation<TInput, TOutput, TExpected>(
 
   // Get accumulated usage
   const totalUsage = usageAccumulator.getTotal()
+  const executedModels = usageAccumulator.getModels()
+
+  // A -m override that never executed is a silently-invalid comparison (the
+  // exact bug this guard exists for) — fail loudly (INV-11). Suites whose
+  // sub-components legitimately call other models still pass as long as the
+  // requested model executed at least once.
+  if (options.model && Object.keys(executedModels).length > 0 && !(permutation.model in executedModels)) {
+    throw new Error(
+      `Model override ${permutation.model} never executed — AI calls used: ${Object.keys(executedModels).join(", ")}. ` +
+        `The comparison would be invalid; check the ConfigResolver wiring.`
+    )
+  }
 
   return {
     permutation,
     cases,
     runEvaluations,
+    runs,
+    executedModels,
     totalDurationMs: Date.now() - startTime,
     usage: {
       inputTokens: totalUsage.inputTokens,
@@ -436,6 +474,46 @@ function printSummary<TOutput, TExpected>(result: SuiteResult<TOutput, TExpected
     console.log(
       `\n  ${colors.green}Passed: ${passedCases.length}${colors.reset}  ${colors.red}Failed: ${failedCases.length}${colors.reset}  ${colors.dim}Duration: ${formatDuration(totalDurationMs)}${colors.reset}`
     )
+
+    const executedEntries = Object.entries(permResult.executedModels ?? {})
+    if (executedEntries.length > 0) {
+      console.log(
+        `  ${colors.dim}Executed: ${executedEntries.map(([m, n]) => `${m} (${n} calls)`).join(", ")}${colors.reset}`
+      )
+    }
+
+    // With repeat runs, the per-case tally is the readable unit — one line per
+    // case with its pass rate — instead of N repeated lines.
+    if (permResult.runs > 1) {
+      console.log(`\n  Cases (pass rate over ${permResult.runs} runs):`)
+      const byCase = new Map<string, { name: string; passes: number; total: number }>()
+      for (const caseResult of cases) {
+        const passed = !caseResult.error && caseResult.evaluations.every((e) => e.passed)
+        const agg = byCase.get(caseResult.caseId) ?? { name: caseResult.caseName, passes: 0, total: 0 }
+        agg.passes += passed ? 1 : 0
+        agg.total += 1
+        byCase.set(caseResult.caseId, agg)
+      }
+      for (const [caseId, agg] of byCase) {
+        const rate = agg.passes / agg.total
+        const mark =
+          rate === 1
+            ? `${colors.green}✓${colors.reset}`
+            : rate === 0
+              ? `${colors.red}✗${colors.reset}`
+              : `${colors.yellow}~${colors.reset}`
+        console.log(`    ${mark} ${agg.passes}/${agg.total} ${agg.name} ${colors.dim}(${caseId})${colors.reset}`)
+      }
+      if (permResult.runEvaluations.length > 0) {
+        console.log("\n  Run Evaluations (across all runs):")
+        for (const evaluation of permResult.runEvaluations) {
+          const status = evaluation.passed ? colors.green : colors.red
+          console.log(`    ${status}${evaluation.name}: ${evaluation.score}${colors.reset}`)
+          if (evaluation.details) console.log(`      ${colors.dim}${evaluation.details}${colors.reset}`)
+        }
+      }
+      continue
+    }
 
     // Show all cases
     console.log("\n  Cases:")
