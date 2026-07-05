@@ -58,6 +58,74 @@ describe("EventService attachment safety checks", () => {
     expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
   })
 
+  it("rejects binding a plaintext attachment to a sealed message (INV-E1 backstop)", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
+      {
+        id: "attach_plain",
+        workspaceId: "ws_1",
+        streamId: null,
+        messageId: null,
+        safetyStatus: AttachmentSafetyStatuses.CLEAN,
+        e2eOnly: false,
+        filename: "real-name-would-leak.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 10,
+      },
+    ] as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      type: "scratchpad",
+      e2eEnabled: true,
+    } as any)
+
+    const service = new EventService({} as any)
+    await expect(
+      service.createMessage({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        authorId: "usr_1",
+        authorType: "user",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+        ciphertext: Buffer.from("opaque-bytes"),
+        envelope: { v: 2, keyGeneration: 0, iv: "AAAA", aad: "AAAA" },
+        e2eVersion: 2,
+        attachmentIds: ["attach_plain"],
+      })
+    ).rejects.toThrow("a sealed message can only bind E2E attachments")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects binding an E2E attachment to a plaintext message (INV-E1 backstop)", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
+      {
+        id: "attach_e2e",
+        workspaceId: "ws_1",
+        streamId: null,
+        messageId: null,
+        safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        e2eOnly: true,
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 10,
+      },
+    ] as any)
+
+    const service = new EventService({} as any)
+    await expect(
+      service.createMessage({
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        authorId: "usr_1",
+        authorType: "user",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "hello",
+        attachmentIds: ["attach_e2e"],
+      })
+    ).rejects.toThrow("an E2E attachment can only be bound to a sealed message")
+    expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
   it("binds a fresh E2E (e2e_unscanned) ciphertext attachment to the message", async () => {
     // The opaque attachment row: placeholder name/mime, never scanned, not yet
     // owned by a message. The E2E create path must still attach it.
@@ -68,6 +136,7 @@ describe("EventService attachment safety checks", () => {
         streamId: null,
         messageId: null,
         safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        e2eOnly: true,
         filename: "encrypted",
         mimeType: "application/octet-stream",
         sizeBytes: 1234,
@@ -420,6 +489,35 @@ describe("EventService.editMessage version capture", () => {
 
   afterEach(() => {
     mock.restore()
+  })
+
+  it("rejects an edit that references an E2E attachment (INV-E1 backstop, edit path)", async () => {
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
+      {
+        id: "attach_e2e",
+        workspaceId: "ws_1",
+        streamId: "stream_e2e",
+        messageId: "msg_e2e",
+        safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        e2eOnly: true,
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 10,
+      },
+    ] as any)
+
+    const service = new EventService({} as any)
+    await expect(
+      service.editMessage({
+        workspaceId: "ws_1",
+        messageId: "msg_1",
+        streamId: "stream_1",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "edited",
+        actorId: "usr_1",
+        attachmentIds: ["attach_e2e"],
+      })
+    ).rejects.toThrow("an E2E attachment can only be bound to a sealed message")
   })
 
   it("should snapshot pre-edit content as a version record", async () => {

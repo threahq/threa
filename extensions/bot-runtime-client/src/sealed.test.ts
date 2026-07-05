@@ -12,6 +12,7 @@ import {
   openMessageAsString,
   sealMessage,
   serializeSealedPayload,
+  type SealedPayloadExtras,
 } from "./crypto"
 import {
   BikKeystore,
@@ -63,12 +64,13 @@ async function ownerSealMessage(
   keyGeneration: number,
   messageId: string,
   senderId: string,
-  markdown: string
+  markdown: string,
+  extras?: SealedPayloadExtras
 ): Promise<{ ciphertext: string; envelope: { v: number; keyGeneration: number; iv: string; aad: string } }> {
   const sealed = await sealMessage({
     key: ssk,
     keyGeneration,
-    payload: serializeSealedPayload(markdown),
+    payload: serializeSealedPayload(markdown, extras),
     aad: buildMessageAad({ streamId: STREAM_ID, messageId, senderId }),
   })
   return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
@@ -164,9 +166,10 @@ describe("openSealedTurnContext", () => {
     const opened = await openSealedTurnContext({ sealed, identity: store.current!, streamId: STREAM_ID })
 
     expect(opened.promptMarkdown).toBe("Do the thing, please")
+    expect(opened.promptAttachmentRefs).toEqual([])
     expect(opened.history).toEqual([
-      { role: "user", sequence: "10", contentMarkdown: "earlier question" },
-      { role: "assistant", sequence: "11", contentMarkdown: "earlier answer" },
+      { role: "user", sequence: "10", contentMarkdown: "earlier question", attachmentRefs: [] },
+      { role: "assistant", sequence: "11", contentMarkdown: "earlier answer", attachmentRefs: [] },
     ])
     expect(opened.sealing.callbackToken).toBe("cbtok_1")
     expect(opened.sealing.replyKeyGeneration).toBe(2)
@@ -179,7 +182,48 @@ describe("openSealedTurnContext", () => {
     // Drop the generation-1 wrap: its history row becomes unopenable.
     sealed.wraps = sealed.wraps.filter((w) => w.keyGeneration !== 1)
     const opened = await openSealedTurnContext({ sealed, identity: store.current!, streamId: STREAM_ID })
-    expect(opened.history).toEqual([{ role: "assistant", sequence: "11", contentMarkdown: "earlier answer" }])
+    expect(opened.history).toEqual([
+      { role: "assistant", sequence: "11", contentMarkdown: "earlier answer", attachmentRefs: [] },
+    ])
+  })
+
+  test("attachment refs sealed into the prompt and history payloads surface on the opened turn", async () => {
+    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
+    const bik = (await store.ensure())!
+    const ssk = randomSsk()
+    const wrap = await ownerWrapSsk(
+      ssk,
+      bik.publicKeyBase64,
+      buildWrapAad({ streamId: STREAM_ID, keyGeneration: 0, recipientKeyId: bik.publicKeyId })
+    )
+    const promptRef = {
+      attachmentId: "att_prompt",
+      key: "a2V5",
+      iv: "aXY=",
+      filename: "spec.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+    }
+    const historyRef = { ...promptRef, attachmentId: "att_history", filename: "notes.txt", mimeType: "text/plain" }
+    const prompt = await ownerSealMessage(ssk, 0, "msg_trigger", "usr_owner", "review the spec", {
+      attachmentRefs: [promptRef],
+    })
+    const history = await ownerSealMessage(ssk, 0, "msg_h1", "usr_owner", "earlier, with a file", {
+      attachmentRefs: [historyRef],
+    })
+    const opened = await openSealedTurnContext({
+      sealed: {
+        callbackToken: "cbtok_1",
+        wraps: [{ keyGeneration: 0, ...wrap }],
+        history: [{ ...history, role: "user", sequence: "10" }],
+        prompt,
+        reply: { keyGeneration: 0, senderId: SENDER_ID },
+      },
+      identity: bik,
+      streamId: STREAM_ID,
+    })
+    expect(opened.promptAttachmentRefs).toEqual([promptRef])
+    expect(opened.history[0]!.attachmentRefs).toEqual([historyRef])
   })
 
   test("a missing reply-generation wrap is fatal", async () => {

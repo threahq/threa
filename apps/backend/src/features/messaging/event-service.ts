@@ -517,6 +517,18 @@ export class EventService {
         if (!isAttachmentSafeForSharing(a.safetyStatus)) {
           throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
         }
+        // INV-E1 backstop, the attachment sibling of assertE2eContentMatch: a
+        // sealed message binds only E2E ciphertext rows (a plaintext row would
+        // surface its real filename in the E2E stream's event payload), and a
+        // plaintext message never binds an E2E row (its key/filename live only
+        // in a sealed payload no plaintext reader can open).
+        if ((a.e2eOnly === true) !== (params.ciphertext !== undefined)) {
+          throw new Error(
+            a.e2eOnly
+              ? "Invalid attachment IDs: an E2E attachment can only be bound to a sealed message"
+              : "Invalid attachment IDs: a sealed message can only bind E2E attachments"
+          )
+        }
         if (a.messageId === null) {
           attachmentsToAttach.push(a.id)
           continue
@@ -900,6 +912,13 @@ export class EventService {
       // bytes). Single source of truth with the download path.
       if (!isAttachmentSafeForSharing(a.safetyStatus)) {
         throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
+      }
+      // INV-E1 backstop, mirroring the create path: only sealed messages may
+      // bind E2E rows, and edits are plaintext-only (E2E edits are blocked
+      // upstream), so an e2eOnly reference here is always wrong — it would
+      // render as an undecryptable placeholder chip.
+      if (a.e2eOnly === true) {
+        throw new Error("Invalid attachment IDs: an E2E attachment can only be bound to a sealed message")
       }
       if (a.messageId === null) {
         // Fresh uploads aren't supported on edit — they'd need `attachToMessage`

@@ -293,3 +293,66 @@ describe("public API E2E-stream plaintext gate", () => {
     expect(createMessage).toHaveBeenCalled()
   })
 })
+
+// E2E uploads are bot-only: a sealed harness turn can bind the row via the
+// sealed-messages/sealed-complete `attachmentIds`, but a user API key has no
+// sealed message-write path, so its E2E upload could never be referenced.
+describe("public API E2E upload gate", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  function uploadRequest(extra: Partial<Request> = {}): Request {
+    return {
+      workspaceId: "ws_1",
+      attachmentId: "att_new",
+      file: { key: "s3/key", originalname: "encrypted", mimetype: "application/octet-stream", size: 21 },
+      body: { e2e: "true" },
+      ...extra,
+    } as unknown as Request
+  }
+
+  it("accepts an e2e upload from a bot API key and stores the placeholder row", async () => {
+    const createForUpload = mock(async (params: Record<string, unknown>) => ({
+      status: "created" as const,
+      attachment: {
+        id: "att_new",
+        filename: params.filename,
+        mimeType: params.mimeType,
+        sizeBytes: 21,
+        safetyStatus: "e2e_unscanned",
+        createdAt: new Date(),
+      },
+    }))
+    const handlers = createHandlers({
+      attachmentService: { createForUpload } as unknown as PublicApiDeps["attachmentService"],
+    })
+
+    await handlers.uploadAttachment(uploadRequest({ botApiKey: { botId: "bot_1" } } as never), createResponse())
+
+    // buildUploadParams forced the placeholders and the e2e flag through.
+    expect(createForUpload.mock.calls[0]?.[0]).toMatchObject({
+      e2e: true,
+      filename: "encrypted",
+      mimeType: "application/octet-stream",
+      uploadedBy: "bot_1",
+    })
+  })
+
+  it("rejects an e2e upload from a user API key with E2E_UPLOAD_UNSUPPORTED", async () => {
+    const createForUpload = mock(async () => {
+      throw new Error("should not be called")
+    })
+    const handlers = createHandlers({
+      attachmentService: { createForUpload } as unknown as PublicApiDeps["attachmentService"],
+    })
+
+    await expect(
+      handlers.uploadAttachment(
+        uploadRequest({ userApiKey: { id: "key_1" }, user: { id: "usr_1", name: "T" } } as never),
+        createResponse()
+      )
+    ).rejects.toMatchObject({ status: 400, code: "E2E_UPLOAD_UNSUPPORTED" })
+    expect(createForUpload).not.toHaveBeenCalled()
+  })
+})

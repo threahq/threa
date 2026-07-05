@@ -34,6 +34,7 @@ import {
   serializeSealedPayload,
   unwrapStreamKey,
   wrapStreamKey,
+  type AttachmentRef,
   type SealedPayloadExtras,
   type StreamEnvelope,
 } from "./crypto"
@@ -103,10 +104,14 @@ export interface DecryptedHistoryItem {
   role: "user" | "assistant"
   sequence: string
   contentMarkdown: string
+  /** Per-file keys for the message's E2E attachments — download + decrypt is the harness's job. */
+  attachmentRefs: AttachmentRef[]
 }
 
 export interface OpenedSealedTurn {
   promptMarkdown: string
+  /** Refs sealed into the trigger message's payload (the files attached to the request itself). */
+  promptAttachmentRefs: AttachmentRef[]
   history: DecryptedHistoryItem[]
   sealing: SealingState
 }
@@ -377,7 +382,7 @@ export async function openSealedTurnContext(params: {
     envelope: sealed.prompt.envelope,
     ciphertext: base64ToBytes(sealed.prompt.ciphertext),
   })
-  const promptMarkdown = parseSealedPayload(promptRaw).contentMarkdown
+  const promptPayload = parseSealedPayload(promptRaw)
 
   const replySsk = sskByGeneration.get(sealed.reply.keyGeneration)
   if (!replySsk) throw new Error("Sealed claim: no SSK wrap for the reply's key generation")
@@ -392,10 +397,12 @@ export async function openSealedTurnContext(params: {
         envelope: item.envelope,
         ciphertext: base64ToBytes(item.ciphertext),
       })
+      const payload = parseSealedPayload(raw)
       history.push({
         role: item.role,
         sequence: item.sequence,
-        contentMarkdown: parseSealedPayload(raw).contentMarkdown,
+        contentMarkdown: payload.contentMarkdown,
+        attachmentRefs: payload.attachmentRefs,
       })
     } catch {
       continue
@@ -403,7 +410,8 @@ export async function openSealedTurnContext(params: {
   }
 
   return {
-    promptMarkdown,
+    promptMarkdown: promptPayload.contentMarkdown,
+    promptAttachmentRefs: promptPayload.attachmentRefs,
     history,
     sealing: {
       streamId,

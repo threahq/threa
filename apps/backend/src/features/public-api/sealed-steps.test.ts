@@ -314,6 +314,16 @@ describe("sendBotInvocationSealedMessage", () => {
     expect((payloads[0] as { data: { messageId: string } }).data.messageId).toBe("msg_interim")
   })
 
+  it("binds the interim's E2E attachment rows via attachmentIds", async () => {
+    const { handlers, createMessage } = arrangeWithEventService()
+    const { res } = createResponse()
+
+    await handlers.sendBotInvocationSealedMessage(req({ ...sealedBody, attachmentIds: ["att_1"] }), res)
+
+    const params = createMessage.mock.calls[0]?.[0] as unknown as Record<string, unknown>
+    expect(params.attachmentIds).toEqual(["att_1"])
+  })
+
   it("rejects a missing callback token (403) before any write", async () => {
     const { handlers, createMessage } = arrangeWithEventService()
     const { res } = createResponse()

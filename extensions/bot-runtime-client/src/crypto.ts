@@ -8,7 +8,7 @@
  * only on the published `@hpke/*` packages plus WebCrypto. Both harnesses
  * (pi-remote, claude-code-remote via remote-session) consume this one copy.
  *
- * Source of truth: `packages/crypto/src/{encoding,hpke,stream-key,envelope,sealed-payload}.ts`.
+ * Source of truth: `packages/crypto/src/{encoding,hpke,stream-key,envelope,sealed-payload,attachment}.ts`.
  * `crypto.parity.test.ts` imports BOTH this module and the canonical package and
  * asserts byte-for-byte agreement on the AAD builders, envelope/payload versions,
  * and cross seal/open + wrap/unwrap round-trips — so a drift here fails loudly.
@@ -343,6 +343,64 @@ export function buildMessageAad(parts: {
     utf8Encode("|"),
     utf8Encode(parts.senderId)
   )
+}
+
+// ── E2E attachment bytes (per-file single-use key) ────────────────────────────
+
+// Domain-separation label bound as GCM AAD. The per-attachment key is random
+// and used exactly once, so relocation/confusion attacks gain nothing and the
+// AAD's only job is to satisfy the AEAD interface and pin the ciphertext to
+// this scheme. It carries no secret and is reconstructed verbatim on decrypt.
+export const ATTACHMENT_AAD = utf8Encode("threa-attachment-v1")
+/** Single-key scheme: attachment keys are per-file, never rotated. */
+export const ATTACHMENT_KEY_GENERATION = 0
+
+export interface EncryptedAttachment {
+  /** Ciphertext bytes to upload as the opaque file body (a valid `BlobPart`). */
+  ciphertext: Uint8Array<ArrayBuffer>
+  /** Base64 key + iv to stash in the message's `attachmentRefs`. */
+  key: string
+  iv: string
+}
+
+/**
+ * Encrypt a file's bytes under a fresh single-use key for upload to an E2E
+ * stream. Returns the ciphertext plus the key/iv the message payload must carry
+ * so a recipient can decrypt it later. Reuses the message seal primitive
+ * (AES-256-GCM) rather than a parallel raw-bytes path (INV-35).
+ */
+export async function encryptAttachmentBytes(plaintext: Uint8Array): Promise<EncryptedAttachment> {
+  const key = generateStreamKey()
+  const { envelope, ciphertext } = await sealMessage({
+    key,
+    keyGeneration: ATTACHMENT_KEY_GENERATION,
+    payload: plaintext,
+    aad: ATTACHMENT_AAD,
+  })
+  return { ciphertext, key: bytesToBase64(key), iv: envelope.iv }
+}
+
+/**
+ * Decrypt the opaque S3 ciphertext of an E2E attachment back to its bytes, using
+ * the `key`/`iv` carried in the message's `attachmentRef`. Reconstructs the
+ * single-key envelope (gen 0, the domain-separation AAD) and opens it. Throws if
+ * the key/iv don't match or the bytes were tampered (AES-GCM tag check).
+ */
+export async function decryptAttachmentBytes(input: {
+  ciphertext: Uint8Array
+  key: string
+  iv: string
+}): Promise<Uint8Array<ArrayBuffer>> {
+  return openMessage({
+    key: base64ToBytes(input.key),
+    envelope: {
+      v: STREAM_ENVELOPE_VERSION,
+      keyGeneration: ATTACHMENT_KEY_GENERATION,
+      iv: input.iv,
+      aad: bytesToBase64(ATTACHMENT_AAD),
+    },
+    ciphertext: input.ciphertext,
+  })
 }
 
 // ── sealed payload wrapper ────────────────────────────────────────────────────

@@ -136,4 +136,47 @@ describe("vendored crypto stays byte-compatible with @threa/crypto", () => {
     expect(parsed.contentMarkdown).toBe("body")
     expect(parsed.sources).toEqual(sources)
   })
+
+  test("attachmentRefs round-trip through the sealed-payload wrapper identically", () => {
+    const refs = [
+      {
+        attachmentId: "att_01HZC",
+        key: "a2V5",
+        iv: "aXY=",
+        filename: "report.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1234,
+      },
+    ]
+    expect(vendored.serializeSealedPayload("body", { attachmentRefs: refs })).toBe(
+      canonical.serializeSealedPayload("body", { attachmentRefs: refs })
+    )
+    const parsed = vendored.parseSealedPayload(canonical.serializeSealedPayload("body", { attachmentRefs: refs }))
+    expect(parsed.attachmentRefs).toEqual(refs)
+  })
+
+  test("attachment AAD/generation constants match canonical", () => {
+    expect(vendored.bytesToBase64(vendored.ATTACHMENT_AAD)).toBe(canonical.bytesToBase64(canonical.ATTACHMENT_AAD))
+    expect(vendored.ATTACHMENT_KEY_GENERATION).toBe(canonical.ATTACHMENT_KEY_GENERATION)
+  })
+
+  test("attachment bytes encrypted by one module decrypt with the other (both directions)", async () => {
+    const plaintext = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
+
+    const byVendored = await vendored.encryptAttachmentBytes(plaintext)
+    const openedByCanonical = await canonical.decryptAttachmentBytes({
+      ciphertext: byVendored.ciphertext,
+      key: byVendored.key,
+      iv: byVendored.iv,
+    })
+    expect(new Uint8Array(openedByCanonical)).toEqual(plaintext)
+
+    const byCanonical = await canonical.encryptAttachmentBytes(plaintext)
+    const openedByVendored = await vendored.decryptAttachmentBytes({
+      ciphertext: byCanonical.ciphertext,
+      key: byCanonical.key,
+      iv: byCanonical.iv,
+    })
+    expect(new Uint8Array(openedByVendored)).toEqual(plaintext)
+  })
 })

@@ -2,15 +2,19 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { decryptAttachmentBytes, encryptAttachmentBytes, type AttachmentRef } from "@threa/bot-runtime-client"
 import {
   buildReplyAttachmentSection,
   downloadInboundAttachments,
+  downloadSealedInboundAttachments,
   extractAttachmentDirectives,
   formatInboundAttachmentManifest,
   guessMimeType,
   safeFilename,
   selectInboundAttachments,
+  selectSealedInboundRefs,
   uploadReplyAttachments,
+  uploadSealedReplyAttachments,
   type DownloadedAttachment,
 } from "./attachments"
 import type { AttachmentSummary, StreamMessageSummary } from "./client"
@@ -189,6 +193,215 @@ describe("uploadReplyAttachments", () => {
     }
     const result = await uploadReplyAttachments(client, "plain reply", "/tmp")
     expect(result).toEqual({ markdown: "plain reply", uploaded: [], failed: [] })
+  })
+})
+
+describe("uploadSealedReplyAttachments", () => {
+  test("encrypts the file, uploads only ciphertext with e2e=true, and returns a ref that decrypts it", async () => {
+    const dir = tempDir()
+    const filePath = join(dir, "chart.png")
+    const plaintext = new Uint8Array([1, 2, 3, 4, 5])
+    writeFileSync(filePath, plaintext)
+    const uploads: Array<{ filename: string; type: string; e2e: unknown; bytes: Uint8Array }> = []
+    const client = {
+      async uploadAttachment(form: FormData): Promise<AttachmentSummary> {
+        const file = form.get("file") as Blob & { name?: string }
+        uploads.push({
+          filename: file.name ?? "",
+          type: file.type,
+          e2e: form.get("e2e"),
+          bytes: new Uint8Array(await file.arrayBuffer()),
+        })
+        return summary({ id: "att_e2e", filename: "encrypted", mimeType: "application/octet-stream", sizeBytes: 21 })
+      },
+    }
+
+    const result = await uploadSealedReplyAttachments(client, `Here you go\nTHREA_ATTACH: ${filePath}`, dir)
+
+    expect(uploads).toHaveLength(1)
+    // The wire sees the placeholder name/mime and ciphertext only.
+    expect(uploads[0]!.filename).toBe("encrypted")
+    expect(uploads[0]!.type).toBe("application/octet-stream")
+    expect(uploads[0]!.e2e).toBe("true")
+    expect(Array.from(uploads[0]!.bytes)).not.toEqual(Array.from(plaintext))
+    // The ref carries the REAL metadata and its key/iv open the uploaded bytes.
+    expect(result.refs).toHaveLength(1)
+    const ref = result.refs[0]!
+    expect(ref).toMatchObject({ attachmentId: "att_e2e", filename: "chart.png", mimeType: "image/png", sizeBytes: 5 })
+    const decrypted = await decryptAttachmentBytes({ ciphertext: uploads[0]!.bytes, key: ref.key, iv: ref.iv })
+    expect(Array.from(new Uint8Array(decrypted))).toEqual(Array.from(plaintext))
+    expect(result.attachmentIds).toEqual(["att_e2e"])
+    // No links in the body — an E2E viewer renders from the sealed refs.
+    expect(result.markdown).toBe("Here you go")
+  })
+
+  test("records a failure note for a missing file without uploading anything", async () => {
+    const dir = tempDir()
+    const client = {
+      async uploadAttachment(): Promise<AttachmentSummary> {
+        throw new Error("should not be called")
+      },
+    }
+    const result = await uploadSealedReplyAttachments(client, "Done\nTHREA_ATTACH: ./nope.txt", dir)
+    expect(result.refs).toEqual([])
+    expect(result.attachmentIds).toEqual([])
+    expect(result.markdown).toContain("Done")
+    expect(result.markdown).toContain("Attachment upload failed:")
+  })
+
+  test("clamps to the server's 16-id cap: overflow directives become failure notes, not a 400 loop", async () => {
+    const dir = tempDir()
+    const paths: string[] = []
+    for (let i = 0; i < 17; i++) {
+      const filePath = join(dir, `file-${String(i).padStart(2, "0")}.txt`)
+      writeFileSync(filePath, `content ${i}`)
+      paths.push(filePath)
+    }
+    let uploadCount = 0
+    const client = {
+      async uploadAttachment(): Promise<AttachmentSummary> {
+        uploadCount += 1
+        return summary({ id: `att_${uploadCount}` })
+      },
+    }
+    const result = await uploadSealedReplyAttachments(
+      client,
+      ["Done", ...paths.map((p) => `THREA_ATTACH: ${p}`)].join("\n"),
+      dir
+    )
+    expect(uploadCount).toBe(16)
+    expect(result.attachmentIds).toHaveLength(16)
+    expect(result.markdown).toContain("over the 16-attachment limit")
+    expect(result.markdown).toContain("file-16.txt")
+  })
+})
+
+describe("selectSealedInboundRefs", () => {
+  const ref = (attachmentId: string): AttachmentRef => ({
+    attachmentId,
+    key: "a2V5",
+    iv: "aXY=",
+    filename: `${attachmentId}.txt`,
+    mimeType: "text/plain",
+    sizeBytes: 1,
+  })
+
+  test("orders trigger refs first and marks them as source", () => {
+    const selected = selectSealedInboundRefs([ref("a_prompt")], [ref("a_hist")])
+    expect(selected.map((s) => s.ref.attachmentId)).toEqual(["a_prompt", "a_hist"])
+    expect(selected[0]!.isSource).toBe(true)
+    expect(selected[1]!.isSource).toBe(false)
+  })
+
+  test("de-duplicates by attachment id, keeping the source marker", () => {
+    const selected = selectSealedInboundRefs([ref("a_dupe")], [ref("a_dupe")])
+    expect(selected).toHaveLength(1)
+    expect(selected[0]!.isSource).toBe(true)
+  })
+})
+
+describe("downloadSealedInboundAttachments", () => {
+  test("fetches the ciphertext, decrypts with the ref's key, and writes the real filename", async () => {
+    const dir = tempDir()
+    const plaintext = new Uint8Array([42, 43, 44])
+    const encrypted = await encryptAttachmentBytes(plaintext)
+    const ref: AttachmentRef = {
+      attachmentId: "a_sealed",
+      key: encrypted.key,
+      iv: encrypted.iv,
+      filename: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 3,
+    }
+    const client = {
+      async getAttachmentDownloadUrl(id: string): Promise<string> {
+        return `https://signed.example/${id}`
+      },
+    }
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(encrypted.ciphertext))
+    try {
+      const downloaded = await downloadSealedInboundAttachments(client, {
+        refs: [{ ref, isSource: true }],
+        invocationId: "binv_s",
+        cwd: dir,
+        log: () => undefined,
+      })
+      expect(downloaded).toHaveLength(1)
+      expect(downloaded[0]!.localPath).toBe(join(dir, ".threa-attachments", "binv_s", "notes.txt"))
+      expect(Array.from(readFileSync(downloaded[0]!.localPath))).toEqual([42, 43, 44])
+      expect(downloaded[0]!.attachment).toMatchObject({ id: "a_sealed", filename: "notes.txt" })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("skips a ref whose key does not open the bytes and keeps the rest", async () => {
+    const dir = tempDir()
+    const good = await encryptAttachmentBytes(new Uint8Array([1]))
+    const bad = await encryptAttachmentBytes(new Uint8Array([2]))
+    const refs = [
+      {
+        ref: {
+          attachmentId: "a_ok",
+          key: good.key,
+          iv: good.iv,
+          filename: "ok.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        },
+        isSource: true,
+      },
+      {
+        // Wrong key for this ciphertext — the GCM tag check must reject it.
+        ref: {
+          attachmentId: "a_bad",
+          key: good.key,
+          iv: bad.iv,
+          filename: "bad.txt",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        },
+        isSource: false,
+      },
+    ]
+    const client = {
+      async getAttachmentDownloadUrl(id: string): Promise<string> {
+        return `https://signed.example/${id}`
+      },
+    }
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      return new Response(String(input).endsWith("a_ok") ? good.ciphertext : bad.ciphertext)
+    }) as typeof fetch)
+    const logs: string[] = []
+    try {
+      const downloaded = await downloadSealedInboundAttachments(client, {
+        refs,
+        invocationId: "binv_s2",
+        cwd: dir,
+        log: (m) => logs.push(m),
+      })
+      expect(downloaded.map((d) => d.attachment.id)).toEqual(["a_ok"])
+      expect(logs.join("\n")).toContain("a_bad")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("writes nothing when there are no refs", async () => {
+    const dir = tempDir()
+    const client = {
+      async getAttachmentDownloadUrl(): Promise<string> {
+        throw new Error("should not be called")
+      },
+    }
+    const downloaded = await downloadSealedInboundAttachments(client, {
+      refs: [],
+      invocationId: "binv_s3",
+      cwd: dir,
+      log: () => undefined,
+    })
+    expect(downloaded).toEqual([])
+    expect(existsSync(join(dir, ".threa-attachments"))).toBe(false)
   })
 })
 

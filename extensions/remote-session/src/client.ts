@@ -1,11 +1,19 @@
 import {
   THREA_CALLBACK_TOKEN_HEADER,
+  type AttachmentRef,
   type ProvisionedWrap,
   type SealedReplyBody,
   type SealingState,
 } from "@threa/bot-runtime-client"
 
 const FETCH_TIMEOUT_MS = 30_000
+
+/**
+ * A sealed message body on the wire: the sealed ciphertext plus the E2E
+ * attachment row ids the server binds to the message (the per-file keys ride
+ * only inside the sealed payload's `attachmentRefs`).
+ */
+export type SealedWireReply = SealedReplyBody & { attachmentIds?: string[] }
 
 export interface RuntimeSessionLink {
   linkId: string
@@ -64,6 +72,8 @@ export interface ClaimedInvocation {
   sealedAck?: unknown
   /** Derived from `sealedContext` at claim time; carries the stream key + binding for sealing replies/steps. */
   sealing?: SealingState
+  /** Attachment refs opened from the sealed trigger/history payloads at claim time — download + decrypt is the turn's job. */
+  sealedAttachments?: { prompt: AttachmentRef[]; history: AttachmentRef[] }
 }
 
 export class ThreaApiError extends Error {
@@ -181,7 +191,7 @@ export class ThreaClient {
   }
 
   /** Post one sealed interim message from an in-flight sealed claim (callback-token auth). */
-  async sendSealedMessage(invocationId: string, callbackToken: string, body: SealedReplyBody): Promise<void> {
+  async sendSealedMessage(invocationId: string, callbackToken: string, body: SealedWireReply): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-messages`), {
       method: "POST",
       headers: { [THREA_CALLBACK_TOKEN_HEADER]: callbackToken },
@@ -212,7 +222,7 @@ export class ThreaClient {
   async completeSealed(
     invocationId: string,
     callbackToken: string,
-    body: { reply: SealedReplyBody } | { noResponse: true }
+    body: { reply: SealedWireReply } | { noResponse: true }
   ): Promise<void> {
     await this.request(this.workspacePath(`/bot-invocations/${invocationId}/sealed-complete`), {
       method: "POST",

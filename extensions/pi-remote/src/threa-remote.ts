@@ -17,6 +17,8 @@ import {
   BikKeystore,
   BotRuntimeTransport,
   THREA_CALLBACK_TOKEN_HEADER,
+  decryptAttachmentBytes,
+  encryptAttachmentBytes,
   mintStreamKeyWraps,
   openSealedAck,
   openSealedTurnContext,
@@ -25,6 +27,7 @@ import {
   scrubSealedError,
   sealReply,
   sealStep,
+  type AttachmentRef,
   type BotRuntimeHello,
   type DecryptedHistoryItem,
   type SealedReplyBody,
@@ -47,6 +50,8 @@ const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
 const BIK_PATH = join(homedir(), ".pi", "agent", "threa-remote-bik.json")
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
+/** Server cap on `attachmentIds` per sealed message (`sealedAttachmentIdsSchema` caps at 16). */
+const MAX_SEALED_ATTACHMENTS_PER_MESSAGE = 16
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
@@ -1535,6 +1540,64 @@ async function downloadAttachment(
   return path
 }
 
+/**
+ * The sealed sibling of {@link downloadAttachment}: the S3 object is opaque
+ * ciphertext, so fetch it and decrypt locally with the key/iv the ref (opened
+ * from the sealed message payload) carries — the file lands under its REAL
+ * name, and decrypted bytes never transit the server.
+ */
+async function downloadSealedAttachment(
+  ref: AttachmentRef,
+  invocation: ClaimedInvocation,
+  cwd: string
+): Promise<string> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const body = await request<{ data: { url: string } }>(
+    `/api/v1/workspaces/${config.workspaceId}/attachments/${ref.attachmentId}/url`
+  )
+  const response = await fetch(body.data.url)
+  if (!response.ok) throw new Error(`download failed with ${response.status}`)
+  const ciphertext = new Uint8Array(await response.arrayBuffer())
+  const bytes = await decryptAttachmentBytes({ ciphertext, key: ref.key, iv: ref.iv })
+  const dir = join(cwd, ".threa-attachments", invocation.id)
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, safeFilename(ref.filename))
+  writeFileSync(path, bytes)
+  return path
+}
+
+/**
+ * Download + decrypt every attachment ref a sealed claim's payloads carried
+ * (trigger first, deduped by id) and return manifest lines for the context
+ * block. Per-file failures are logged and skipped, mirroring the plaintext path.
+ */
+async function downloadSealedContextAttachments(
+  promptRefs: readonly AttachmentRef[],
+  historyRefs: readonly AttachmentRef[],
+  invocation: ClaimedInvocation,
+  cwd: string
+): Promise<string[]> {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const { refs, isSource } of [
+    { refs: promptRefs, isSource: true },
+    { refs: historyRefs, isSource: false },
+  ]) {
+    for (const ref of refs) {
+      if (seen.has(ref.attachmentId)) continue
+      seen.add(ref.attachmentId)
+      try {
+        const path = await downloadSealedAttachment(ref, invocation, cwd)
+        const marker = isSource ? " [attached to the source message]" : ""
+        lines.push(`- ${ref.filename} (${ref.mimeType}, ${ref.sizeBytes} bytes) → ${path}${marker}`)
+      } catch (error) {
+        console.warn(`Failed to download sealed Threa attachment ${ref.attachmentId}: ${String(error)}`)
+      }
+    }
+  }
+  return lines
+}
+
 async function downloadContextAttachments(
   messages: StreamMessage[],
   invocation: ClaimedInvocation,
@@ -1659,13 +1722,30 @@ async function hydrateSealedClaim(
   try {
     const opened = await openSealedTurnContext({ sealed, identity: bik, streamId })
     const historyLines = opened.history.map((item: DecryptedHistoryItem) => `- ${item.role}: ${item.contentMarkdown}`)
+    // The payloads' attachment refs are the only route to a sealed turn's files
+    // (the plaintext message list holds ciphertext placeholders) — fetch +
+    // decrypt them now so the manifest rides the same context block.
+    const attachmentLines = await downloadSealedContextAttachments(
+      opened.promptAttachmentRefs,
+      opened.history.flatMap((item) => item.attachmentRefs),
+      claimed,
+      ctx.cwd
+    )
+    const contextBlocks = [
+      historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : "",
+      attachmentLines.length > 0
+        ? [
+            "Attachments saved into this session's working directory — read them from these paths:",
+            ...attachmentLines,
+          ].join("\n")
+        : "",
+    ].filter(Boolean)
     return {
       ...claimed,
       sealedContext: undefined,
       promptMarkdown: opened.promptMarkdown,
       sealing: opened.sealing,
-      sealedContextText:
-        historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : "",
+      sealedContextText: contextBlocks.join("\n\n"),
     }
   } catch (error) {
     return fail(scrubSealedError(error))
@@ -1839,8 +1919,8 @@ async function buildInvocationPrompt(
 ): Promise<{ prompt: string; cursor?: string; context: string }> {
   // A sealed turn never touches the plaintext messages API — its context is
   // what was already decrypted at claim time (the server would only return
-  // ciphertext placeholders anyway). Attachments are not supported on the
-  // sealed path yet, so the model isn't offered the directive.
+  // ciphertext placeholders anyway; inbound files were decrypted from the
+  // payload refs during hydration).
   const sealed = invocation.sealing !== undefined
   const { context, cursor } = sealed
     ? { context: invocation.sealedContextText ?? "", cursor: undefined }
@@ -1858,7 +1938,7 @@ async function buildInvocationPrompt(
       `Source message: ${invocation.sourceMessageId}`,
       "Respond normally; the extension will post your final answer back to Threa.",
       sealed
-        ? "This scratchpad is end-to-end encrypted; file attachments are not supported here yet."
+        ? "This scratchpad is end-to-end encrypted. To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension encrypts it locally and uploads only ciphertext."
         : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
@@ -2808,16 +2888,47 @@ async function failInvocation(invocation: ClaimedInvocation, error: unknown): Pr
 }
 
 /**
- * Sealed sibling of the plaintext complete: seal the final markdown under the
- * stream key and post it to `/sealed-complete` (callback-token auth). Local
- * attachment directives are STRIPPED, never uploaded — the plaintext attachment
- * store would leak file bytes out of the E2E boundary — with a one-line note so
- * the user knows why the file is missing.
+ * The sealed sibling of {@link uploadAttachment}: encrypt the file under a
+ * fresh single-use key and upload ONLY the ciphertext (`e2e=true`, placeholder
+ * name/mime). The returned ref carries the key/iv + real metadata, which seal
+ * into the reply payload — plaintext file bytes never leave the machine.
+ */
+async function uploadSealedAttachment(path: string, cwd: string): Promise<AttachmentRef> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const absolutePath = resolve(cwd, path)
+  const stats = statSync(absolutePath)
+  if (!stats.isFile()) throw new Error(`${path} is not a file`)
+  const bytes = readFileSync(absolutePath)
+  const encrypted = await encryptAttachmentBytes(bytes)
+  const form = new FormData()
+  form.append("e2e", "true")
+  form.append("file", new Blob([encrypted.ciphertext], { type: "application/octet-stream" }), "encrypted")
+  const body = await request<{ data: UploadedAttachment }>(`/api/v1/workspaces/${config.workspaceId}/attachments`, {
+    method: "POST",
+    body: form,
+  })
+  return {
+    attachmentId: body.data.id,
+    key: encrypted.key,
+    iv: encrypted.iv,
+    filename: basename(absolutePath),
+    mimeType: guessMimeType(absolutePath),
+    sizeBytes: bytes.length,
+  }
+}
+
+/**
+ * Sealed sibling of the plaintext complete: encrypt + upload any local
+ * attachment directives (ciphertext only; the per-file keys seal into the
+ * payload's `attachmentRefs`), seal the final markdown under the stream key,
+ * and post it to `/sealed-complete` (callback-token auth). No `attachment:<id>`
+ * links — an E2E viewer renders attachments from the sealed refs.
  */
 async function completeSealedWithMarkdown(
   invocation: ClaimedInvocation,
   sealing: SealingState,
-  markdown: string
+  markdown: string,
+  cwd: string
 ): Promise<void> {
   if (!config) return
   const extracted = extractAttachmentDirectives(markdown.trim())
@@ -2830,16 +2941,35 @@ async function completeSealedWithMarkdown(
     })
     return
   }
-  const attachmentNote =
-    extracted.paths.length > 0
-      ? `_${extracted.paths.length} local attachment${extracted.paths.length === 1 ? "" : "s"} not uploaded — attachments aren't supported in encrypted scratchpads yet._`
+  const refs: AttachmentRef[] = []
+  const failedUploads: string[] = []
+  // Server cap on attachmentIds per sealed message (sealedAttachmentIdsSchema
+  // .max(16)) — clamp before uploading or the whole completion 400s forever.
+  for (const path of extracted.paths.slice(MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
+    failedUploads.push(`${path}: over the ${MAX_SEALED_ATTACHMENTS_PER_MESSAGE}-attachment limit for one message`)
+  }
+  for (const path of extracted.paths.slice(0, MAX_SEALED_ATTACHMENTS_PER_MESSAGE)) {
+    try {
+      refs.push(await uploadSealedAttachment(path, cwd))
+    } catch (error) {
+      failedUploads.push(`${path}: ${String(error)}`)
+    }
+  }
+  const uploadFailureNote =
+    failedUploads.length > 0
+      ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
       : ""
-  const finalMarkdown = [extracted.markdown || "Done.", attachmentNote].filter(Boolean).join("\n\n")
-  const reply = await sealReply(sealing, finalMarkdown)
+  const finalMarkdown = [extracted.markdown || "Done.", uploadFailureNote].filter(Boolean).join("\n\n")
+  const reply = await sealReply(sealing, finalMarkdown, refs.length > 0 ? { attachmentRefs: refs } : undefined)
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/sealed-complete`, {
     method: "POST",
     headers: { [THREA_CALLBACK_TOKEN_HEADER]: sealing.callbackToken },
-    body: JSON.stringify({ reply }),
+    body: JSON.stringify({
+      reply: {
+        ...reply,
+        ...(refs.length > 0 && { attachmentIds: refs.map((ref) => ref.attachmentId) }),
+      },
+    }),
   })
 }
 
@@ -2848,7 +2978,7 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   const invocation = pending
   const steered = steeredInvocations
   if (invocation.sealing) {
-    await completeSealedWithMarkdown(invocation, invocation.sealing, markdown)
+    await completeSealedWithMarkdown(invocation, invocation.sealing, markdown, ctx.cwd)
   } else {
     const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
     const noResponse = finalMarkdown === NO_RESPONSE_MARKER
@@ -2918,6 +3048,8 @@ export const __testing = {
   formatToolResultTrace,
   fullToolArgumentSummary,
   shouldEmitFullTrace,
+  completeSealedWithMarkdown,
+  downloadSealedContextAttachments,
   setConfigForTesting: (value: unknown) => {
     config = value as Config | undefined
   },
