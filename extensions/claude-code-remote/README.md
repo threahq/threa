@@ -176,13 +176,9 @@ Sealed-turn differences: `THREA_ATTACH:` files are encrypted locally under a fre
 
 ## Limitations
 
-- A channel only sees the inbound message and Claude's `send`/`reply` calls, not its individual tool calls, so the Threa trace card shows a single "working" step rather than the per-tool trace a Pi session produces.
+- The per-tool trace comes from tailing the session transcript (`~/.claude/projects/<cwd>/<session>.jsonl`), not from lifecycle hooks like Pi's. On plaintext turns tool payloads are redacted to headlines + size telemetry and thinking bodies are withheld; Claude's own narration (the prose it writes between tool calls, including a final message on a turn that ends without `reply`) ships in full, matching Pi. Sealed turns ship full tool detail (it's ciphertext to the server; opt back out with `sealedFullTrace: false`).
 - Claude can't `send` a heartbeat while blocked on a single long tool call (e.g. a 40-minute test run). The idle timeout must exceed your longest single operation — raise `THREA_IDLE_TIMEOUT_MS` if needed. A turn that goes idle without a `reply` is force-closed (silently if it already `send`-ed something, otherwise with a short "ended without a reply" notice).
 - One turn at a time: a message sent while Claude is still working is handled after the current reply (a permission verdict is the exception and goes through immediately).
-
-## Roadmap (parity with `pi-remote`)
-
-- Per-tool trace steps — a channel can't observe Claude's tool calls, so matching Pi's rich trace needs a different mechanism than Pi's lifecycle hooks.
 
 ## Troubleshooting
 

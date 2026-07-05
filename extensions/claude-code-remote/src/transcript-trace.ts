@@ -12,15 +12,18 @@ import { basename, join } from "node:path"
  * module maps to Threa trace steps and ships through the SDK's `recordSteps`
  * (over the /bot socket) while a turn is in flight.
  *
- * Privacy model (mirrors pi-remote's, one notch stricter): in the default
- * `headline` mode nothing user-generated leaves the machine — tool calls ship
- * a category headline plus at most a file *basename*; shell commands, file
- * contents, tool outputs, and thinking bodies are replaced with "omitted for
- * safety" markers carrying only size telemetry. Thinking is withheld entirely
- * (pi ships its narration because pi's narration is stream-bound anyway;
- * Claude's thinking is internal and can quote file contents wholesale). The
- * `full` mode exists for E2EE-backed session links, where complete steps can
- * ship encrypted — nothing wires it up until then.
+ * Privacy model (mirrors pi-remote's): in the default `headline` mode no tool
+ * payload leaves the machine — tool calls ship a category headline plus at
+ * most a file *basename*; shell commands, file contents, tool outputs, and
+ * thinking bodies are replaced with "omitted for safety" markers carrying only
+ * size telemetry. Assistant narration ships in FULL in both modes, exactly as
+ * pi ships its narration: it is prose the model writes for the stream's
+ * reader, and it is the only surviving record of a turn's final message when
+ * the model ends without calling `reply` (Kris's ruling — redacting it left
+ * such turns showing nothing but an "omitted" stub). Thinking stays withheld
+ * in headline mode: it is internal and can quote file contents wholesale. The
+ * `full` mode ships everything; the channel enables it per-turn for sealed
+ * (E2EE) turns, whose steps are ciphertext to the server.
  */
 
 // Wire format shared with pi-remote and parsed by the frontend trace dialog
@@ -220,8 +223,13 @@ function summarizeToolOutput(output: string): string {
   return `Tool output omitted for safety. Captured locally: ${text.length} characters across ${lines} ${lines === 1 ? "line" : "lines"}.`
 }
 
-function withheldBody(kind: "Thinking content" | "Assistant narration", length: number): string {
-  return `${kind} omitted for safety. Captured locally: ${length} characters.`
+function withheldThinking(length: number): string {
+  return `Thinking content omitted for safety. Captured locally: ${length} characters.`
+}
+
+/** Ported from pi-remote's sanitizeTraceText: a THREA_ATTACH directive carries a local filesystem path. */
+function sanitizeNarration(text: string): string {
+  return text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
 }
 
 /** The channel's own MCP tools — their payloads land in the stream as real messages, so trace rows would be noise. */
@@ -303,15 +311,16 @@ export function mapTranscriptLine(raw: string, ctx: MapContext): MappedStep[] {
       if (!text) continue
       steps.push({
         stepType: "thinking",
-        content: ctx.mode === "full" ? truncateForTrace(text) : withheldBody("Thinking content", text.length),
+        content: ctx.mode === "full" ? truncateForTrace(text) : withheldThinking(text.length),
         statusText: "Thinking…",
       })
     } else if (type === "assistant" && part.type === "text" && typeof part.text === "string") {
       const text = part.text.trim()
       if (!text) continue
+      // Narration ships unredacted in both modes (see the privacy model above).
       steps.push({
         stepType: "thinking",
-        content: ctx.mode === "full" ? truncateForTrace(text) : withheldBody("Assistant narration", text.length),
+        content: truncateForTrace(sanitizeNarration(text)),
         statusText: "Composing response…",
       })
     } else if (type === "assistant" && part.type === "tool_use") {
