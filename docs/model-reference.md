@@ -188,7 +188,7 @@ All models use `provider:modelPath` format:
 - Cost-sensitive workloads where quality bar is low
 - Self-hosted inference on single H100
 
-**Note:** Previously used for memo classification, memorization, and researcher agent. Replaced by `claude-haiku-4.5` (researcher), `gpt-5.4-mini` (memo classifier/memorizer — see `MEMO_CLASSIFIER_MODEL_ID`/`MEMO_MEMORIZER_MODEL_ID` in `apps/backend/src/features/memos/config.ts`) due to unreliable tail latency on OpenRouter's patchwork provider backing and insufficient quality for structured extraction.
+**Note:** History: originally ran memo classification, memorization, and the researcher agent; replaced by `claude-haiku-4.5` (researcher) and `gpt-5.4-mini` (memo classifier/memorizer) in spring 2026 due to unreliable tail latency on OpenRouter's patchwork provider backing and insufficient quality for structured extraction. **Re-tested July 2026 against the boundary-extraction / memo-classifier / memorizer eval suites and rejected again**: nano systematically classified real knowledge as not-worthy (6/9 with the same three misses every round — silent knowledge loss) and failed sandwich-split/gap-resume boundary cases every round (30-33/35 vs mini's 33-35/35). The ~3.6x price gap does not buy back those failure modes. Caution for future comparisons: the eval CLI's `-m` flag did not reach ConfigResolver-backed components until the July 2026 runner fix — earlier "nano" comparisons silently ran the production model.
 
 ---
 

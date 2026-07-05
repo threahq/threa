@@ -86,6 +86,7 @@ interface ConversationRow {
   stream_id: string
   workspace_id: string
   topic_summary: string | null
+  summary: string | null
   completeness_score: number
   confidence: number
   status: string
@@ -119,6 +120,7 @@ export interface Conversation {
   participantIds: string[]
   secondaryMessageIds: string[]
   topicSummary: string | null
+  summary: string | null
   completenessScore: number
   confidence: number
   status: ConversationStatus
@@ -133,6 +135,7 @@ export interface InsertConversationParams {
   streamId: string
   workspaceId: string
   topicSummary?: string
+  summary?: string
   completenessScore?: number
   confidence?: number
   status?: ConversationStatus
@@ -141,6 +144,7 @@ export interface InsertConversationParams {
 
 export interface UpdateConversationParams {
   topicSummary?: string
+  summary?: string
   completenessScore?: number
   confidence?: number
   status?: ConversationStatus
@@ -156,6 +160,7 @@ function mapRowToConversation(row: ConversationRow): Conversation {
     participantIds: row.participant_ids,
     secondaryMessageIds: row.secondary_message_ids,
     topicSummary: row.topic_summary,
+    summary: row.summary,
     completenessScore: row.completeness_score,
     confidence: row.confidence,
     status: row.status as ConversationStatus,
@@ -169,7 +174,7 @@ function mapRowToConversation(row: ConversationRow): Conversation {
 const SELECT_FIELDS = `
   id, stream_id, workspace_id,
   message_ids, participant_ids, secondary_message_ids,
-  topic_summary, completeness_score, confidence, status, parent_conversation_id,
+  topic_summary, summary, completeness_score, confidence, status, parent_conversation_id,
   last_activity_at, created_at, updated_at
 `
 
@@ -461,13 +466,14 @@ export const ConversationRepository = {
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
         id, stream_id, workspace_id,
-        topic_summary, completeness_score, confidence, status, parent_conversation_id
+        topic_summary, summary, completeness_score, confidence, status, parent_conversation_id
       )
       VALUES (
         ${params.id},
         ${params.streamId},
         ${params.workspaceId},
         ${params.topicSummary ?? null},
+        ${params.summary ?? null},
         ${params.completenessScore ?? 1},
         ${params.confidence ?? 0.5},
         ${params.status ?? "active"},
@@ -496,6 +502,10 @@ export const ConversationRepository = {
     if (params.topicSummary !== undefined) {
       updates.push(`topic_summary = $${paramIndex++}`)
       values.push(params.topicSummary)
+    }
+    if (params.summary !== undefined) {
+      updates.push(`summary = $${paramIndex++}`)
+      values.push(params.summary)
     }
     if (params.completenessScore !== undefined) {
       updates.push(`completeness_score = $${paramIndex++}`)
@@ -641,20 +651,71 @@ export const ConversationRepository = {
   },
 
   /**
-   * Flip a resolved conversation back to active. Applied whenever a message
-   * moves into a resolved conversation — gaining a message means it has
-   * activity again, whether it was resolved by a normal workflow or
-   * auto-resolved on becoming empty (which keeps the emptied conversation
-   * usable as an undo target). Conditional in SQL (INV-20), so it no-ops for
-   * active/stalled conversations.
+   * Flip a stalled or resolved conversation back to active. Applied whenever a
+   * message moves into one — gaining a message means it has activity again,
+   * whether it was resolved by a normal workflow, auto-resolved on becoming
+   * empty (which keeps the emptied conversation usable as an undo target), or
+   * faded by the staleness sweep. Conditional in SQL (INV-20), so it no-ops
+   * for active conversations.
    */
-  async reactivateIfResolved(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
+  async reactivateIfInactive(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
     await db.query(sql`
       UPDATE conversations
       SET status = ${ConversationStatuses.ACTIVE}, updated_at = NOW()
       WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
-        AND status = ${ConversationStatuses.RESOLVED}
+        AND status IN (${ConversationStatuses.RESOLVED}, ${ConversationStatuses.STALLED})
     `)
+  },
+
+  /**
+   * Fade idle conversations: active → stalled after `stalledAfterSeconds` of
+   * silence, active/stalled → resolved after `resolvedAfterSeconds`. The LLM
+   * extractor only sees (and can only close) conversations still inside its
+   * message window, so anything that scrolls out would otherwise stay "active"
+   * forever — this sweep is the out-of-window counterpart.
+   *
+   * Set-based (INV-56) and cross-workspace by design: it is a system
+   * maintenance job like queue internals, and every returned row still carries
+   * its workspace for scoped event emission. `SKIP LOCKED` keeps the sweep
+   * from blocking on rows a live extraction holds; `limit` bounds the
+   * transaction so the first run over a large backlog drains in slices.
+   * Returns the transitioned conversations for outbox emission.
+   */
+  async sweepStale(
+    db: Querier,
+    params: { stalledAfterSeconds: number; resolvedAfterSeconds: number; limit: number }
+  ): Promise<Conversation[]> {
+    const result = await db.query<ConversationRow>(sql`
+      WITH candidates AS (
+        SELECT id,
+          CASE
+            WHEN last_activity_at < NOW() - make_interval(secs => ${params.resolvedAfterSeconds})
+              THEN ${ConversationStatuses.RESOLVED}
+            ELSE ${ConversationStatuses.STALLED}
+          END AS next_status
+        FROM conversations
+        WHERE (
+          status = ${ConversationStatuses.ACTIVE}
+            AND last_activity_at < NOW() - make_interval(secs => ${params.stalledAfterSeconds})
+        ) OR (
+          status = ${ConversationStatuses.STALLED}
+            AND last_activity_at < NOW() - make_interval(secs => ${params.resolvedAfterSeconds})
+        )
+        ORDER BY last_activity_at
+        LIMIT ${params.limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE conversations c
+      SET status = candidates.next_status, updated_at = NOW()
+      FROM candidates
+      WHERE c.id = candidates.id
+      RETURNING ${sql.raw(
+        SELECT_FIELDS.split(",")
+          .map((f) => `c.${f.trim()}`)
+          .join(", ")
+      )}
+    `)
+    return result.rows.map(mapRowToConversation)
   },
 
   /** Bump last_activity_at on many conversations in one round-trip. Workspace-scoped (INV-8). */

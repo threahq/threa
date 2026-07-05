@@ -3,6 +3,10 @@
 import { z } from "zod"
 import { CONVERSATION_STATUSES } from "@threa/types"
 
+// Mini over nano is deliberate: the July 2026 re-test (after -m eval wiring
+// was fixed) showed nano failing systematically — sandwich-split and
+// gap-resume cases in every round (30-33/35 vs mini's 33-35/35). See
+// docs/model-reference.md.
 export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-mini"
 
 /** Low temperature for classification consistency. */
@@ -42,13 +46,19 @@ Some messages above may include an indented \`[attachment <filename> (<kind>)]:\
 ## Time
 Messages carry an age like "(5m ago)" or "(2d ago)" and conversations carry "last active …", all relative to the new message ("just now" = within the last minute). Treat time as first-class evidence. Chat happens in sessions: turns minutes apart are one live exchange; a gap of several hours — an afternoon, overnight, a weekend — usually means the participants came back for a NEW conversation, even in the same stream between the same people.
 
+## Conversation summaries
+Conversations may carry a "covers:" summary of what has actually been discussed in them. Judge continuity against the summary, not just the title: continue a conversation only when the new message advances something the summary (or its recent messages) actually covers. A summary that already spans several loosely-related subjects is evidence the conversation has been over-extended — do NOT use its breadth as a reason to attach yet another subject; prefer a new conversation and let reassignment split things later.
+
 ## Choosing a conversation
 Decide in this order:
 
 1. **Explicit reply?** If the "Explicit reply" section lists a quoted conversation, assign primary to it (see the rule there). This overrides everything below.
 
 2. **Session check.** How old is the newest message in Recent Messages?
-   - **Minutes old → you are inside a LIVE session.** Judge by flow and topic. Prefer continuing the active exchange: a short reply, agreement, reaction, joke, or follow-up from EITHER participant ("samma här", "haha", "100%", ":fire:", "what?", "nice") continues it — it does not start its own conversation, and which participant sent it is irrelevant. Both sides of one live exchange belong in the SAME conversation; never split an exchange so one participant's turns sit in a different conversation than the other's. When a short or ambiguous message plausibly continues the live exchange, keep it there rather than spawning a singleton — if a later message reveals it actually began a new topic, the reassignment mechanism below will split it out then. Within a live session a message can still open a clearly distinct new topic (a new question or unrelated aside that is not the next turn of any listed exchange) — that starts a new conversation.
+   - **Minutes old → you are inside a LIVE session.** A session is NOT a conversation: one sitting routinely holds several conversations back-to-back, and the most damaging mistake is gluing a whole session into one ever-growing conversation. Recency tells you which exchange is live; it is never by itself a reason to attach a message to it. Decide by what the message DOES:
+     - **It takes the next turn of the live exchange** — answers, agrees, reacts, jokes back, or follows up on what was just said ("samma här", "haha", "100%", ":fire:", "what?", "nice") — from EITHER participant: continue that conversation. Both sides of one live exchange belong in the SAME conversation; never split an exchange so one participant's turns sit in a different conversation than the other's. When a short or ambiguous message plausibly continues the live exchange, keep it there rather than spawning a singleton — if a later message reveals it actually began a new topic, the reassignment mechanism below will split it out then.
+     - **It changes the subject** — asks about something the live exchange was not about, starts making plans, or pivots with a marker like "btw", "oh en annan grej", "unrelated but" — start a NEW conversation, even if the last message landed seconds ago. The test: would this message read as the next line of the listed exchange? If not, it is not part of it, no matter how fresh the exchange is.
+     - **Show-and-tell is a subject change.** A pasted artifact — screenshot, code block, diff output, link — wrapped in a first-person comment ("look at this", "detta känns fint", "är inte det här sjukt") opens a NEW conversation about the artifact's subject unless the artifact is about the live exchange's own topic. The comment's tone matching the banter does not make it the same conversation; judge the artifact, not the tone.
    - **Hours or days old → this message OPENS A NEW SESSION.** Default to a NEW conversation. Continue a stale conversation ONLY if the new message explicitly picks up its specific topic — answers its open question, or names its concrete subject ("do you still have X running?" resumes the days-old conversation about X). Everything else — including short excited bursts ("nice", "haha wow", a one-line observation) — is a fresh opener about something new, NOT a late reaction to a conversation that ended hours ago. Never attach to a stale conversation because it is the most recent thing on screen or the only candidate listed; between the same two people, a new session usually means a new conversation. Be decisive here: reassignment can only fix mistakes while messages are still in the recent window, so a wrong "continue" across a gap quickly becomes permanent absorption.
 
 3. **Resolved conversations stay closed.** Do not attach a message to a conversation whose status is "resolved" unless it directly reopens that exact topic.
@@ -62,7 +72,7 @@ A message can belong to more than one conversation. If this new message clearly 
 If this new message reveals that one or more of the *Recent Messages* or messages from the *Active Conversations* was placed in the wrong conversation, move them. Each move needs a one-line reason. You can ONLY move messages whose IDs appear in this prompt — never any other. Examples of when to reassign:
 - The new message reveals the prior 1-2 messages were the start of a different topic (sandwich case).
 - The new message reopens a conversation that was prematurely marked resolved.
-- The new message shows two adjacent conversations are actually the same topic — move the smaller one into the larger.
+- The new message shows two adjacent conversations are actually the same specific topic — move the smaller one into the larger. Same participants, same session, or "both are casual chat" is NOT the same topic: never fold a focused conversation into a broader or busier one, and never merge to tidy up. When in doubt, do not merge.
 
 Reassignment is *the* mechanism for fixing classification mistakes, and it works in both directions — it is how conversations settle as more context arrives:
 - MERGE: the new message shows two threads are really one topic, or that an earlier message belongs with the current exchange — move it in.
@@ -73,9 +83,11 @@ Use it whenever the new message gives you evidence the prior placement was wrong
 ## Output Requirements
 - assignments: Array of {conversationId, isPrimary}. At least one entry with isPrimary=true. conversationId=null means "create a new conversation" (set newConversationTopic).
 - newConversationTopic: Topic summary if any assignment has conversationId=null. Required in that case. See "Naming new conversations" below.
+- newConversationSummary: One sentence stating what the new conversation is about, in the conversation's own language. Required whenever newConversationTopic is set.
 - reassignments: Array of {messageId, toConversationId, reason, confidence}. messageId must be from this prompt. toConversationId=null means "move into the new conversation being created this turn" (only valid if assignments includes a conversationId=null primary).
-- completenessUpdates: Array of {conversationId, score (1-7), status} for conversations whose completeness changed.
+- completenessUpdates: Array of {conversationId, score (1-7), status, summary} for conversations whose completeness, status, or content moved on.
   - status must be one of: "active", "stalled", "resolved"
+  - summary: a refreshed "covers:" summary for the conversation — max ~40 words, plain prose in the conversation's own language, stating what has been discussed and where it landed. Include it whenever the conversation gained content this pass (at minimum for the conversation the new message joined); pass null to keep the stored summary.
 - confidence: 0.0 to 1.0 confidence in this classification overall.
 
 ## Naming new conversations
@@ -115,6 +127,12 @@ export const extractionResponseSchema = z.object({
     .describe(
       "2-5 word topic title; required when any assignment has conversationId=null. Name the topic directly with no framing ('Discussion about'), no language label ('in Swedish'), in the conversation's own language, keeping proper nouns verbatim"
     ),
+  newConversationSummary: z
+    .string()
+    .nullable()
+    .describe(
+      "One-sentence summary of what the new conversation is about, in the conversation's own language; required when any assignment has conversationId=null"
+    ),
   reassignments: z.array(reassignmentSchema).nullable().describe("Prior messages to move, or null"),
   completenessUpdates: z
     .array(
@@ -125,11 +143,17 @@ export const extractionResponseSchema = z.object({
           status: z
             .enum(CONVERSATION_STATUSES)
             .describe(`Conversation status: ${CONVERSATION_STATUSES.map((s) => `"${s}"`).join(" | ")}`),
+          summary: z
+            .string()
+            .nullable()
+            .describe(
+              "Refreshed conversation summary (max ~40 words, the conversation's own language), or null to keep the stored one"
+            ),
         })
         .strict()
     )
     .nullable()
-    .describe("Updates to completeness scores for affected conversations, or null if none"),
+    .describe("Updates to completeness/status/summary for affected conversations, or null if none"),
   confidence: z.number().min(0).max(1).describe("Overall confidence in this classification (0.0 to 1.0)"),
   reasoning: z.string().nullable().describe("Brief explanation of the classification decision"),
 })

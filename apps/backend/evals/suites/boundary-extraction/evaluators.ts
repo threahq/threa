@@ -172,6 +172,49 @@ export const completenessUpdateEvaluator: Evaluator<BoundaryExtractionOutput, Bo
 }
 
 /**
+ * Evaluator for reassignment behavior: merge-resistance cases assert no
+ * collateral moves; sandwich-split cases assert specific messages moved.
+ */
+export const reassignmentEvaluator: Evaluator<BoundaryExtractionOutput, BoundaryExtractionExpected> = {
+  name: "reassignment",
+  evaluate: (output: BoundaryExtractionOutput, expected: BoundaryExtractionExpected): EvaluatorResult => {
+    if (!expected.expectNoReassignments && !expected.expectReassignedMessageIds?.length) {
+      return { name: "reassignment", score: 1, passed: true, details: "No reassignment requirements" }
+    }
+
+    // Ignore no-op moves (target = the conversation that already owns the
+    // message); the production service skips those before persisting.
+    const ownerByMessageId = new Map<string, string>()
+    for (const conv of output.input.activeConversations ?? []) {
+      for (const id of conv.contextMessageIds ?? []) ownerByMessageId.set(id, conv.id)
+    }
+    const moves = (output.reassignments || []).filter(
+      (m) => m.toConversationId === null || ownerByMessageId.get(m.messageId) !== m.toConversationId
+    )
+
+    if (expected.expectNoReassignments && moves.length > 0) {
+      const described = moves.map((m) => `${m.messageId}→${m.toConversationId ?? "new"}`).join(", ")
+      return { name: "reassignment", score: 0, passed: false, details: `Unexpected reassignments: ${described}` }
+    }
+
+    if (expected.expectReassignedMessageIds?.length) {
+      const movedIds = new Set(moves.map((m) => m.messageId))
+      const missing = expected.expectReassignedMessageIds.filter((id) => !movedIds.has(id))
+      if (missing.length > 0) {
+        return {
+          name: "reassignment",
+          score: 0,
+          passed: false,
+          details: `Expected reassignment of: ${missing.join(", ")} (got: ${moves.map((m) => m.messageId).join(", ") || "none"})`,
+        }
+      }
+    }
+
+    return { name: "reassignment", score: 1, passed: true }
+  },
+}
+
+/**
  * Run-level evaluator that checks overall accuracy.
  */
 export const accuracyEvaluator: RunEvaluator<BoundaryExtractionOutput, BoundaryExtractionExpected> = {

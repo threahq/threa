@@ -426,6 +426,12 @@ export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
   parentStreamId?: string
   /** See {@link ConversationCreatedOutboxPayload.streamVisibility}. */
   streamVisibility?: Visibility
+  /**
+   * Set when the update is a pure status fade from the staleness sweep — no
+   * new content. The memo accumulator skips these instead of re-queueing the
+   * conversation for extraction.
+   */
+  origin?: "staleness-sweep"
 }
 
 /**

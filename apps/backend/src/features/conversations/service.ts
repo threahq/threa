@@ -399,7 +399,7 @@ export class ConversationService {
       // Deliberately unconditional, not just for the undo path: a user moving
       // a message into ANY resolved conversation is declaring it has activity
       // again, so it returns to the active lifecycle.
-      await ConversationRepository.reactivateIfResolved(client, workspaceId, target.id)
+      await ConversationRepository.reactivateIfInactive(client, workspaceId, target.id)
 
       await ConversationFeedbackRepository.insert(client, {
         id: conversationFeedbackId(),

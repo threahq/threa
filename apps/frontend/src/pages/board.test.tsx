@@ -27,6 +27,7 @@ function makeConversation(overrides: Partial<ConversationWithStaleness> = {}): C
     participantIds: ["usr_me"],
     secondaryMessageIds: [],
     topicSummary: "CC Teams tokens",
+    summary: null,
     completenessScore: 4,
     confidence: 0.8,
     status: "active",
