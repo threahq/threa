@@ -29,6 +29,7 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
   const updateMutation = useUpdateSaved(workspaceId)
   const deleteMutation = useDeleteSaved(workspaceId)
   const [customOpen, setCustomOpen] = useState(false)
+  const [durationOpen, setDurationOpen] = useState(false)
   const [customDateTime, setCustomDateTime] = useState("")
   // Grey out past times in the native picker. Computed once per open so the
   // boundary doesn't jitter as the minute rolls over mid-interaction; the
@@ -40,11 +41,17 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
       setCustomOpen(false)
       return
     }
+    setDurationOpen(false)
     // Seed with the existing reminder when present, otherwise now + 15 minutes
     // — matches the mobile sheet so both entry points feel identical.
     const baseline = saved?.remindAt ? new Date(saved.remindAt) : new Date(Date.now() + 15 * 60_000)
     setCustomDateTime(toDateTimeLocal(baseline))
     setCustomOpen(true)
+  }
+
+  const toggleDuration = () => {
+    setCustomOpen(false)
+    setDurationOpen((prev) => !prev)
   }
 
   const setReminder = (date: Date | null) => {
@@ -123,11 +130,17 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
             {preset.label}
           </PopoverMenuButton>
         ))}
-        <CustomDurationPicker
-          onSubmit={setReminder}
-          disabled={saveMutation.isPending || updateMutation.isPending}
-          submitLabel="Set reminder"
-        />
+        <PopoverMenuButton onClick={toggleDuration}>
+          <Clock className="h-3.5 w-3.5" />
+          Custom duration…
+        </PopoverMenuButton>
+        {durationOpen && (
+          <CustomDurationPicker
+            onSubmit={setReminder}
+            disabled={saveMutation.isPending || updateMutation.isPending}
+            submitLabel="Set reminder"
+          />
+        )}
         <PopoverMenuButton onClick={openCustom}>
           <Bell className="h-3.5 w-3.5" />
           Pick a time…

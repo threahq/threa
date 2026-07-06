@@ -72,12 +72,13 @@ describe("ScheduledMessagesPicker", () => {
     expect(mousedown.defaultPrevented).toBe(false)
   })
 
-  it("schedules with the inline custom duration", async () => {
+  it("schedules with the custom duration", async () => {
     const before = Date.now()
     const { onSchedule } = renderPicker()
 
     await userEvent.click(screen.getByRole("button", { name: /scheduled/i }))
     await userEvent.click(screen.getByRole("button", { name: /schedule send/i }))
+    await userEvent.click(screen.getByRole("button", { name: /custom duration/i }))
     await userEvent.clear(screen.getByRole("spinbutton", { name: /custom duration/i }))
     await userEvent.type(screen.getByRole("spinbutton", { name: /custom duration/i }), "30")
     await userEvent.click(screen.getByRole("button", { name: /^schedule$/i }))

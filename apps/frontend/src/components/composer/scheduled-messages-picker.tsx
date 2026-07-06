@@ -76,6 +76,7 @@ export function ScheduledMessagesPicker({
   const [customTime, setCustomTime] = useState<string>("")
   const [customMinDate, setCustomMinDate] = useState<string>("")
   const [showCustom, setShowCustom] = useState(false)
+  const [showDuration, setShowDuration] = useState(false)
   const [editing, setEditing] = useState<ScheduledMessageView | null>(null)
   // Lifted out of the row so the drawer stacks above the popover. Local
   // state inside `ScheduledRow` only worked when the popover stayed open,
@@ -119,6 +120,7 @@ export function ScheduledMessagesPicker({
   const resetToList = () => {
     setMode("list")
     setShowCustom(false)
+    setShowDuration(false)
     setCustomDate("")
     setCustomTime("")
   }
@@ -135,6 +137,7 @@ export function ScheduledMessagesPicker({
   const enterPickingMode = () => {
     setMode("picking")
     setShowCustom(false)
+    setShowDuration(false)
   }
 
   const handlePreset = (preset: ReminderPreset, overrideTz?: string) => {
@@ -249,6 +252,7 @@ export function ScheduledMessagesPicker({
               prefTimezone={prefTimezone}
               workSchedule={workSchedule}
               showCustom={showCustom}
+              showDuration={showDuration}
               customDate={customDate}
               customTime={customTime}
               customMinDate={customMinDate}
@@ -256,6 +260,7 @@ export function ScheduledMessagesPicker({
               onBack={resetToList}
               onPreset={handlePreset}
               onDurationSubmit={handleDurationSubmit}
+              onToggleDuration={() => setShowDuration((prev) => !prev)}
               onShowCustom={() => {
                 // Built fresh each time — the composer is mounted for the
                 // lifetime of a session, so a memoized seed would go stale.
@@ -263,6 +268,7 @@ export function ScheduledMessagesPicker({
                 setCustomMinDate(toDateInputValue(new Date()))
                 setCustomDate(toDateInputValue(seed))
                 setCustomTime(toTimeInputValue(seed))
+                setShowDuration(false)
                 setShowCustom(true)
               }}
               onCustomDateChange={setCustomDate}
@@ -387,6 +393,7 @@ interface PickingModeProps {
   prefTimezone: string | null
   workSchedule: WorkSchedule
   showCustom: boolean
+  showDuration: boolean
   customDate: string
   customTime: string
   customMinDate: string
@@ -394,6 +401,7 @@ interface PickingModeProps {
   onBack: () => void
   onPreset: (preset: ReminderPreset, overrideTz?: string) => void
   onDurationSubmit: (when: Date) => void
+  onToggleDuration: () => void
   onShowCustom: () => void
   onCustomDateChange: (value: string) => void
   onCustomTimeChange: (value: string) => void
@@ -405,6 +413,7 @@ function PickingMode({
   prefTimezone,
   workSchedule,
   showCustom,
+  showDuration,
   customDate,
   customTime,
   customMinDate,
@@ -412,6 +421,7 @@ function PickingMode({
   onBack,
   onPreset,
   onDurationSubmit,
+  onToggleDuration,
   onShowCustom,
   onCustomDateChange,
   onCustomTimeChange,
@@ -442,13 +452,24 @@ function PickingMode({
               onPreset={onPreset}
             />
           ))}
-          <CustomDurationPicker
-            onSubmit={onDurationSubmit}
-            submitLabel="Schedule"
-            preview={(date) => formatFutureTime(date, new Date(), { timezone })}
-            controlClassName="h-11"
-            buttonClassName="h-11"
-          />
+          <button
+            type="button"
+            onClick={onToggleDuration}
+            aria-expanded={showDuration}
+            className="rounded-md mx-1 px-2 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            Custom duration…
+          </button>
+          {showDuration && (
+            <CustomDurationPicker
+              onSubmit={onDurationSubmit}
+              submitLabel="Schedule"
+              preview={(date) => formatFutureTime(date, new Date(), { timezone })}
+              className="mx-1"
+              controlClassName="h-11"
+              buttonClassName="h-11"
+            />
+          )}
           <button
             type="button"
             onClick={onShowCustom}

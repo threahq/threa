@@ -34,13 +34,15 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
   )
 
   const [customOpen, setCustomOpen] = useState(false)
+  const [durationOpen, setDurationOpen] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
 
-  // Reset the custom-time editor each time the dialog opens.
+  // Reset the custom editors each time the dialog opens.
   useEffect(() => {
     if (!open) return
     setCustomOpen(false)
+    setDurationOpen(false)
     const inAnHour = new Date(Date.now() + 60 * 60 * 1000)
     setCustomDate(toDateInputValue(inAnHour))
     setCustomTime(toTimeInputValue(inAnHour))
@@ -100,15 +102,30 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
               {timedOptions.map((option) => (
                 <PauseOptionRow key={option.id} label={option.label} disabled={busy} onClick={() => pauseFor(option)} />
               ))}
-              <CustomDurationPicker
-                onSubmit={pauseUntilDate}
+              <PauseOptionRow
+                label="Custom duration…"
                 disabled={busy}
-                submitLabel="Pause"
-                className="px-3"
-                controlClassName="h-11"
-                buttonClassName="h-11"
+                expanded={durationOpen}
+                onClick={() => setDurationOpen((prev) => !prev)}
               />
-              <PauseOptionRow label="Until a specific time…" disabled={busy} onClick={() => setCustomOpen(true)} />
+              {durationOpen && (
+                <CustomDurationPicker
+                  onSubmit={pauseUntilDate}
+                  disabled={busy}
+                  submitLabel="Pause"
+                  className="px-3"
+                  controlClassName="h-11"
+                  buttonClassName="h-11"
+                />
+              )}
+              <PauseOptionRow
+                label="Until a specific time…"
+                disabled={busy}
+                onClick={() => {
+                  setDurationOpen(false)
+                  setCustomOpen(true)
+                }}
+              />
               {indefiniteOptions.map((option) => (
                 <PauseOptionRow key={option.id} label={option.label} disabled={busy} onClick={() => pauseFor(option)} />
               ))}
@@ -120,12 +137,23 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
   )
 }
 
-function PauseOptionRow({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
+function PauseOptionRow({
+  label,
+  disabled,
+  onClick,
+  expanded,
+}: {
+  label: string
+  disabled: boolean
+  onClick: () => void
+  expanded?: boolean
+}) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
+      aria-expanded={expanded}
       className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50 disabled:opacity-50"
     >
       {label}
