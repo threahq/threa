@@ -32,14 +32,17 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
   const savedValue = settings?.maxPendingFollowUps ?? DEFAULT_MAX_PENDING_FOLLOW_UPS
 
   const [draft, setDraft] = useState(String(savedValue))
-  const editingRef = useRef(false)
-  // Reconverge on the stored value when it changes (another admin's edit — or
-  // our own second tab — broadcasts through the bootstrap cache via
-  // `workspace_settings:updated`). Skip while this input is focused so an
-  // incoming broadcast can't silently overwrite keystrokes mid-edit; `commit`
-  // reconciles against the freshest `savedValue` on blur.
+  // Tracks whether the user has actually edited since the last commit — not mere
+  // focus. Guards the reconverge effect and gates the save: only unsaved
+  // keystrokes must survive a concurrent broadcast; a focused-but-untouched field
+  // should still reflect the new value and must never save the stale one.
+  const dirtyRef = useRef(false)
+  // Reconverge on the stored value when it changes (another admin's edit — or our
+  // own second tab — broadcasts through the bootstrap cache via
+  // `workspace_settings:updated`). Skip only while there are unsaved keystrokes so
+  // the broadcast can't overwrite them mid-edit; `commit` reconciles on blur.
   useEffect(() => {
-    if (editingRef.current) return
+    if (dirtyRef.current) return
     setDraft(String(savedValue))
   }, [savedValue])
 
@@ -73,10 +76,17 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
     },
   })
 
-  // Save on blur. Out-of-range or non-numeric input reverts to the stored value
-  // rather than snapping to a boundary the user didn't type — matching the
-  // sibling admin numeric inputs in `pages/ai-usage-admin.tsx`.
+  // Save on blur, but only a real edit. A focused-but-untouched field never saves
+  // (else a concurrent broadcast that moved `savedValue` would be stomped by the
+  // stale draft). Out-of-range or non-numeric input reverts to the stored value
+  // rather than snapping to a boundary the user didn't type — matching the sibling
+  // admin numeric inputs in `pages/ai-usage-admin.tsx`.
   const commit = () => {
+    if (!dirtyRef.current) {
+      setDraft(String(savedValue))
+      return
+    }
+    dirtyRef.current = false
     const parsed = Number.parseInt(draft, 10)
     if (Number.isNaN(parsed) || parsed < MAX_PENDING_FOLLOW_UPS_MIN || parsed > MAX_PENDING_FOLLOW_UPS_MAX) {
       setDraft(String(savedValue))
@@ -107,14 +117,11 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
           className="mt-2 w-24"
           value={draft}
           disabled={settings == null || mutation.isPending}
-          onChange={(e) => setDraft(e.target.value)}
-          onFocus={() => {
-            editingRef.current = true
+          onChange={(e) => {
+            dirtyRef.current = true
+            setDraft(e.target.value)
           }}
-          onBlur={() => {
-            editingRef.current = false
-            commit()
-          }}
+          onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur()
           }}

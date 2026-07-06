@@ -92,6 +92,27 @@ describe("FollowUpLimitSection", () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { maxPendingFollowUps: 25 }))
   })
 
+  it("reflects a broadcast on a focused-but-unedited field without saving the stale value", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 10)
+    const update = vi.spyOn(workspaceSettingsApi, "update")
+    const user = userEvent.setup()
+
+    renderSection(queryClient)
+    const input = screen.getByLabelText("Assistant follow-ups")
+    await user.click(input) // focus, no keystrokes
+
+    // Another admin's save lands while the field is merely focused. An unedited
+    // field reflects the new value (a focus-only guard would freeze it at 10).
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 30)
+    await waitFor(() => expect(input).toHaveValue(30))
+
+    await user.tab()
+    // Blurring an untouched field must not stomp the concurrent change back to 10.
+    expect(update).not.toHaveBeenCalled()
+    expect(input).toHaveValue(30)
+  })
+
   it("does not save when the value is unchanged", async () => {
     const queryClient = new QueryClient()
     seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 10)
