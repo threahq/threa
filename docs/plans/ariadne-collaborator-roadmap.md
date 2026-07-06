@@ -46,7 +46,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                  | ☑      | #1170 |
-| 4.1  | `stream_briefs` storage + endpoints + injection      | ☑      | #TBD  |
+| 4.1  | `stream_briefs` storage + endpoints + injection      | ☑      | #1214 |
 | 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
 | 4.3  | Brief UI: settings editor + timeline event           | ☐      |       |
 | 4.4  | Brief correction eval                                | ☐      |       |
