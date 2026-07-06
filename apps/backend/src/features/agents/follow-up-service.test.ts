@@ -43,8 +43,11 @@ function fakeFollowUp(overrides: Partial<AgentFollowUp> = {}): AgentFollowUp {
   }
 }
 
-function makeService() {
-  return new AgentFollowUpService({ pool: {} as Pool })
+function makeService(maxPendingFollowUps: number = DEFAULT_MAX_PENDING_FOLLOW_UPS) {
+  return new AgentFollowUpService({
+    pool: {} as Pool,
+    workspaceSettingsService: { getSettings: async () => ({ maxPendingFollowUps }) },
+  })
 }
 
 const scheduleParams = {
@@ -128,6 +131,23 @@ describe("AgentFollowUpService.schedule", () => {
       limit: DEFAULT_MAX_PENDING_FOLLOW_UPS,
     })
     expect(queueInsert).not.toHaveBeenCalled()
+  })
+
+  it("resolves the cap from the workspace setting, not the code default (roadmap 1.4)", async () => {
+    const workspaceLimit = 25
+    spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+    spyOn(AgentFollowUpRepository, "acquireStreamCapLock").mockResolvedValue(undefined)
+    const insertIfUnderCap = spyOn(AgentFollowUpRepository, "insertIfUnderCap").mockResolvedValue(fakeFollowUp())
+    spyOn(AgentFollowUpRepository, "setQueueMessageId").mockResolvedValue(undefined)
+    spyOn(AgentFollowUpRepository, "countPending").mockResolvedValue(1)
+    spyOn(QueueRepository, "insert").mockResolvedValue({} as never)
+    stubEventAppend()
+
+    const result = await makeService(workspaceLimit).schedule(scheduleParams)
+
+    expect(result).toMatchObject({ ok: true, limit: workspaceLimit })
+    // The guarded insert enforces the resolved cap, not DEFAULT_MAX_PENDING_FOLLOW_UPS.
+    expect(insertIfUnderCap.mock.calls[0]?.[2]).toBe(workspaceLimit)
   })
 })
 

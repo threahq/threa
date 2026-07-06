@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { DEFAULT_WORK_SCHEDULE, type WorkSchedule } from "@threa/types"
+import { DEFAULT_WORK_SCHEDULE, DEFAULT_MAX_PENDING_FOLLOW_UPS, type WorkSchedule } from "@threa/types"
 import { WorkspaceSettingsService } from "./service"
 import { WorkspaceSettingsRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -82,6 +82,35 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     await service.updateSettings(WORKSPACE_ID, { defaultWorkSchedule: DEFAULT_WORK_SCHEDULE })
 
     expect(deleteOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "defaultWorkSchedule")
+    expect(setOverride).not.toHaveBeenCalled()
+  })
+
+  it("stores a raised follow-up cap as an override (roadmap 1.4)", async () => {
+    setupTransaction()
+    const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
+    const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
+    spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([{ key: "maxPendingFollowUps", value: 25 }])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new WorkspaceSettingsService({} as any)
+
+    const settings = await service.updateSettings(WORKSPACE_ID, { maxPendingFollowUps: 25 })
+
+    expect(setOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "maxPendingFollowUps", 25)
+    expect(deleteOverride).not.toHaveBeenCalled()
+    expect(settings.maxPendingFollowUps).toBe(25)
+  })
+
+  it("clears the follow-up cap override when reset to the default (roadmap 1.4)", async () => {
+    setupTransaction()
+    const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
+    const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
+    spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new WorkspaceSettingsService({} as any)
+
+    await service.updateSettings(WORKSPACE_ID, { maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS })
+
+    expect(deleteOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "maxPendingFollowUps")
     expect(setOverride).not.toHaveBeenCalled()
   })
 })

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ \"$CLAUDE_CODE_REMOTE\" = \"true\" ] && { [ -f .env.remote-dev ] || { echo \"Missing .env.remote-dev\" >&2; exit 1; }; cp -n .env.remote-dev .env; docker compose up -d --wait; rm -rf node_modules; bun install; }; exit 0",
+            "command": "[ \"$CLAUDE_CODE_REMOTE\" = \"true\" ] && { [ -f .env.remote-dev ] || { echo \"Missing .env.remote-dev\" >&2; exit 1; }; cp -n .env.remote-dev .env; docker compose up -d --wait; rm -rf node_modules; bun install; bash scripts/ensure-xlsx.sh || true; }; exit 0",
             "timeout": 180
           }
         ]

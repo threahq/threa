@@ -1,6 +1,11 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { VOICE_STEERING_WORDS_MAX, VOICE_STEERING_WORD_MAX_LENGTH } from "@threa/types"
+import {
+  VOICE_STEERING_WORDS_MAX,
+  VOICE_STEERING_WORD_MAX_LENGTH,
+  MAX_PENDING_FOLLOW_UPS_MIN,
+  MAX_PENDING_FOLLOW_UPS_MAX,
+} from "@threa/types"
 import type { WorkspaceSettingsService } from "./service"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
@@ -16,6 +21,8 @@ const updateWorkspaceSettingsSchema = z.object({
     .array(z.string().trim().min(1).max(VOICE_STEERING_WORD_MAX_LENGTH))
     .max(VOICE_STEERING_WORDS_MAX)
     .optional(),
+  // Per-stream pending follow-up cap the assistant self-regulates against (roadmap 1.4).
+  maxPendingFollowUps: z.number().int().min(MAX_PENDING_FOLLOW_UPS_MIN).max(MAX_PENDING_FOLLOW_UPS_MAX).optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

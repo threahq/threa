@@ -5,6 +5,18 @@
 import { type WorkSchedule, DEFAULT_WORK_SCHEDULE } from "./work-schedule"
 import { type StatusPreset, SYSTEM_DEFAULT_STATUSES } from "./user-status"
 
+/**
+ * Code default for the per-stream pending-follow-up cap (roadmap 1.1/1.4). The
+ * single source of truth for the number: `DEFAULT_WORKSPACE_SETTINGS` seeds the
+ * workspace-tunable setting from it, and the backend re-exports it from
+ * `agents/config.ts` so the follow-up service resolver still imports the name it
+ * always has (INV-33 — one number, not two that can drift).
+ */
+export const DEFAULT_MAX_PENDING_FOLLOW_UPS = 10
+/** Bounds on the workspace-tunable follow-up cap, shared by the API validator and the settings input. */
+export const MAX_PENDING_FOLLOW_UPS_MIN = 1
+export const MAX_PENDING_FOLLOW_UPS_MAX = 100
+
 /** Full workspace settings (wire format). */
 export interface WorkspaceSettings {
   workspaceId: string
@@ -36,6 +48,12 @@ export interface WorkspaceSettings {
    * Admin-managed. Empty by default.
    */
   voiceSteeringWords: string[]
+  /**
+   * Cap on the number of pending follow-ups the assistant may hold per stream
+   * (roadmap 1.4). Resolves `workspace override ?? DEFAULT_MAX_PENDING_FOLLOW_UPS`
+   * in the follow-up service; a per-stream column is deferred until asked for.
+   */
+  maxPendingFollowUps: number
   createdAt: string
   updatedAt: string
 }
@@ -46,6 +64,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   userStatusPresets: SYSTEM_DEFAULT_STATUSES,
   memoLanguage: null,
   voiceSteeringWords: [],
+  maxPendingFollowUps: DEFAULT_MAX_PENDING_FOLLOW_UPS,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -54,6 +73,7 @@ export interface UpdateWorkspaceSettingsInput {
   userStatusPresets?: StatusPreset[]
   memoLanguage?: string | null
   voiceSteeringWords?: string[]
+  maxPendingFollowUps?: number
 }
 
 /** Valid top-level settings keys that can be overridden. */

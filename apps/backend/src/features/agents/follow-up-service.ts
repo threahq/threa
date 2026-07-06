@@ -12,7 +12,6 @@ import {
   type AgentFollowUpCancelledEventPayload,
 } from "@threa/types"
 import { StreamEventRepository } from "../streams"
-import { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "./config"
 import { AgentFollowUpRepository, type AgentFollowUp } from "./follow-up-repository"
 
 /** The outbox event type that carries each follow-up timeline event to the stream room. */
@@ -21,8 +20,14 @@ const FOLLOW_UP_OUTBOX_EVENT_TYPE = {
   "agent:follow_up_cancelled": "stream:agent_follow_up_cancelled",
 } as const
 
+/** Resolves the per-workspace follow-up cap (roadmap 1.4). Narrowed so tests can stub it. */
+export interface FollowUpLimitResolver {
+  getSettings(workspaceId: string): Promise<{ maxPendingFollowUps: number }>
+}
+
 interface AgentFollowUpServiceDeps {
   pool: Pool
+  workspaceSettingsService: FollowUpLimitResolver
 }
 
 export interface ScheduleFollowUpParams {
@@ -58,18 +63,23 @@ export type UpdateFollowUpResult =
  */
 export class AgentFollowUpService {
   private readonly pool: Pool
+  private readonly workspaceSettingsService: FollowUpLimitResolver
 
   constructor(deps: AgentFollowUpServiceDeps) {
     this.pool = deps.pool
+    this.workspaceSettingsService = deps.workspaceSettingsService
   }
 
   /**
-   * The per-stream pending cap. Reads only the code default today; the seam
-   * exists so roadmap 1.4's workspace override slots in here without touching
-   * the cap check at the insert site.
+   * The per-stream pending cap: the workspace override, or the code default when
+   * unset (roadmap 1.4). `getSettings` always returns a resolved
+   * `maxPendingFollowUps` — sparse override merged onto `DEFAULT_WORKSPACE_SETTINGS`
+   * — so the caller never falls back here. Resolved before the insert transaction
+   * so no DB connection is held across it (INV-41).
    */
-  private async resolveFollowUpLimit(_workspaceId: string): Promise<number> {
-    return DEFAULT_MAX_PENDING_FOLLOW_UPS
+  private async resolveFollowUpLimit(workspaceId: string): Promise<number> {
+    const settings = await this.workspaceSettingsService.getSettings(workspaceId)
+    return settings.maxPendingFollowUps
   }
 
   /**

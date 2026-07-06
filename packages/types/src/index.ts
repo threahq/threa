@@ -766,6 +766,9 @@ export {
 export {
   type WorkspaceSettings,
   DEFAULT_WORKSPACE_SETTINGS,
+  DEFAULT_MAX_PENDING_FOLLOW_UPS,
+  MAX_PENDING_FOLLOW_UPS_MIN,
+  MAX_PENDING_FOLLOW_UPS_MAX,
   type UpdateWorkspaceSettingsInput,
   type WorkspaceSettingKey,
 } from "./workspace-settings"
