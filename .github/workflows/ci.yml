@@ -36,11 +36,29 @@ jobs:
       - name: Lint enclave
         run: bun run --cwd apps/enclave lint
 
-      - name: Typecheck enclave
-        run: bun run --cwd apps/enclave typecheck
-
       - name: Check Dockerfile workspace COPY lines
         run: bun run check:dockerfiles
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # Full monorepo tsc, not just the enclave: catches cross-workspace type
+      # drift (e.g. squash-merge collisions) at PR time, before it can reach the
+      # Deploy Cloudflare build — which is the only other place `tsc` runs.
+      - name: Typecheck all workspaces
+        run: bun run typecheck
 
   test:
     name: Tests
