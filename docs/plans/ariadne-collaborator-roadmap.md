@@ -37,7 +37,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.1  | `schedule_follow_up` tool + follow-up infra           | ☑      | #1138 |
 | 1.2  | Follow-up turn invocation (context + prompt)          | ☑      | #1142 |
 | 1.3  | Follow-up visibility: timeline card + cancel          | ☑      | #1176 |
-| 1.4  | Configurable follow-up limits (workspace setting)     | ☑      | #TBD  |
+| 1.4  | Configurable follow-up limits (workspace setting)     | ☑      | #1223 |
 | 1.5  | Turn-purpose consolidation (invocation variants)      | ☑      | #1155 |
 | 1.6  | Follow-up admin tools (list/cancel/update)            | ☑      | #1159 |
 | 2.1  | Generalized session abort                             | ☑      | #1177 |
