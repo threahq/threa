@@ -173,7 +173,7 @@ export function BranchGroup({ branch, renderBranchMessage, renderBranchTail, ren
             Continue this thread
           </Link>
         )}
-        {!branch.pending && renderBranchTail?.(branch)}
+        {renderBranchTail?.(branch)}
       </div>
     </div>
   )

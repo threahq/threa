@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
+import { CornerDownRight } from "lucide-react"
 import { toast } from "sonner"
 import { MessageComposer, type ComposerControlHandle } from "@/components/composer"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
@@ -36,6 +37,10 @@ interface InlineComposerFormProps {
   /** Draft persistence key (per target), so an escaped draft survives a reopen. */
   draftKey: string
   placeholder: string
+  /** Chip above the editor naming the reply target (e.g. "Replying in GPU
+   *  budget") — the inline forms all look alike, so the target must be legible
+   *  at the composer itself, not inferred from indentation. */
+  contextChip?: string
   autoFocus?: boolean
   pendingQuote?: QuoteReplyData | null
   onQuoteConsumed?: () => void
@@ -66,6 +71,7 @@ export function InlineComposerForm({
   memoAnchorStreamId,
   draftKey,
   placeholder,
+  contextChip,
   autoFocus = true,
   pendingQuote,
   onQuoteConsumed,
@@ -158,6 +164,12 @@ export function InlineComposerForm({
 
   return (
     <div ref={containerRef} className="mt-3" onBlur={handleBlur}>
+      {contextChip && (
+        <div className="mb-1 flex w-fit max-w-full items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          <CornerDownRight className="h-3 w-3 shrink-0" />
+          <span className="truncate">{contextChip}</span>
+        </div>
+      )}
       <MessageComposer
         composerRef={composerControlRef}
         content={composer.content}

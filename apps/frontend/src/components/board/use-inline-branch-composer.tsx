@@ -152,7 +152,11 @@ export function useInlineBranchComposer(params: {
     [pendingSubtopics, index]
   )
 
-  const submitNewSubtopic = useCallback(
+  // The declared sub-topic send, shared by the opening gesture and a reply on a
+  // still-pending branch: the thread find-or-creates (`insertThreadOrFind`) and
+  // the conversation mints-or-attaches (INV-20), so repeated sends through this
+  // path converge on one child no matter which echo lands first.
+  const queueSubtopicSend = useCallback(
     async (streamId: string, messageId: string, input: InlineComposerSubmit) => {
       const draftPanelId = createDraftPanelId(streamId, messageId)
       await queueDraftMessage(input, {
@@ -162,20 +166,42 @@ export function useInlineBranchComposer(params: {
         draftId: draftPanelId,
         conversation: { intent: "newSubtopic" },
       })
-      setPendingSubtopics((prev) => [...prev, { streamId, messageId }])
     },
     [queueDraftMessage, workspaceId]
   )
 
+  const submitNewSubtopic = useCallback(
+    async (streamId: string, messageId: string, input: InlineComposerSubmit) => {
+      await queueSubtopicSend(streamId, messageId, input)
+      setPendingSubtopics((prev) => [...prev, { streamId, messageId }])
+    },
+    [queueSubtopicSend]
+  )
+
+  const pendingEntryFor = useCallback(
+    (branch: BranchConversationView) =>
+      branch.pending ? pendingSubtopics.find((p) => p.messageId === branch.forkMessageId) : undefined,
+    [pendingSubtopics]
+  )
+
   const submitBranchReply = useCallback(
     async (branch: BranchConversationView, input: InlineComposerSubmit) => {
+      // A pending branch's child conversation id isn't known yet (its echo
+      // hasn't landed — possibly never will on a dropped socket), so an
+      // `existing` directive has nothing real to name. Route through the
+      // sub-topic path instead; it converges on the same child.
+      const pendingEntry = pendingEntryFor(branch)
+      if (pendingEntry) {
+        await queueSubtopicSend(pendingEntry.streamId, pendingEntry.messageId, input)
+        return
+      }
       await queueDraftMessage(input, {
         workspaceId,
         streamId: branch.threadStreamId,
         conversation: { intent: "existing", conversationId: branch.conversationId },
       })
     },
-    [queueDraftMessage, workspaceId]
+    [queueDraftMessage, workspaceId, pendingEntryFor, queueSubtopicSend]
   )
 
   const renderAfterMessage = useCallback(
@@ -201,13 +227,17 @@ export function useInlineBranchComposer(params: {
   const renderBranchTail = useCallback(
     (branch: BranchConversationView): ReactNode => {
       if (openComposer?.kind === "branch-reply" && openComposer.conversationId === branch.conversationId) {
+        // A pending branch's thread may not exist yet — host the composer on the
+        // parent stream (mention context + E2E gate), like the opening gesture.
+        const hostStreamId = pendingEntryFor(branch)?.streamId ?? branch.threadStreamId
         return (
           <InlineComposerForm
             workspaceId={workspaceId}
-            streamId={branch.threadStreamId}
-            memoAnchorStreamId={branch.threadStreamId}
+            streamId={hostStreamId}
+            memoAnchorStreamId={hostStreamId}
             draftKey={`board:branch-reply:${branch.conversationId}`}
             placeholder="Reply…"
+            contextChip={`Replying in ${branch.title}`}
             rejectE2e={E2E_REPLY_MESSAGE}
             onSubmit={(sendInput) => submitBranchReply(branch, sendInput)}
             onClose={closeComposer}
@@ -225,7 +255,7 @@ export function useInlineBranchComposer(params: {
         </button>
       )
     },
-    [openComposer, workspaceId, submitBranchReply, closeComposer, openBranchReply]
+    [openComposer, workspaceId, submitBranchReply, closeComposer, openBranchReply, pendingEntryFor]
   )
 
   return {

@@ -249,7 +249,9 @@ export interface BranchConversationView {
   /** Nested grandchild branches (each `displayDepth + 1`). */
   children: BranchConversationView[]
   /** A just-sent inline sub-topic whose child conversation hasn't echoed yet:
-   *  `conversationId` is the synthetic draft-panel id, so the header doesn't link
-   *  and the tail offers no reply until the real conversation takes over. */
+   *  `conversationId` is the synthetic draft-panel id, so the header doesn't
+   *  link. The tail still offers a reply — it queues through the idempotent
+   *  sub-topic path (find-or-create thread, mint-or-attach conversation), so a
+   *  slow or dropped echo never blocks continuing the branch. */
   pending?: boolean
 }

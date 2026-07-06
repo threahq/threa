@@ -165,9 +165,11 @@ beforeEach(async () => {
   // gesture hook, not the editor mechanics.
   spyOnExport(inlineComposerModule, "InlineComposerForm").mockReturnValue(((props: {
     placeholder: string
+    contextChip?: string
     onSubmit: (input: { contentJson: unknown }) => Promise<void>
   }) => (
     <div>
+      {props.contextChip && <span>{props.contextChip}</span>}
       <span>{props.placeholder}</span>
       <button type="button" onClick={() => void props.onSubmit({ contentJson: SENT_DOC })}>
         Send inline
@@ -283,6 +285,8 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
 
     await user.click(screen.getByRole("button", { name: "Reply" }))
     expect(await screen.findByText("Reply…")).toBeTruthy()
+    // The chip names the reply target — the inline forms all look alike.
+    expect(screen.getByText("Replying in GPU budget")).toBeTruthy()
 
     await user.click(screen.getByRole("button", { name: "Send inline" }))
     expect(queueDraftMessage).toHaveBeenCalledWith(
@@ -291,6 +295,47 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
         workspaceId: WS,
         streamId: "thread_child",
         conversation: { intent: "existing", conversationId: "conv_child" },
+      }
+    )
+  })
+
+  it("offers Reply on a pending branch and queues it through the idempotent sub-topic path", async () => {
+    // The child conversation echo hasn't landed (or was dropped by a flaky
+    // socket): the pending branch must still let the author continue — routed
+    // as another newSubtopic send, which mints-or-attaches server-side.
+    await db.streams.bulkPut([cachedStream("stream_1", StreamTypes.CHANNEL)])
+    const post = makePost({
+      id: "conv_parent",
+      streamId: "stream_1",
+      messageIds: ["m_open"],
+      topicSummary: "Hardware refresh",
+      streamIds: ["stream_1"],
+    })
+    await db.conversations.bulkPut([post])
+
+    const user = userEvent.setup()
+    mount(post)
+    await screen.findByText("Hardware refresh opening.")
+    await user.click(screen.getByRole("button", { name: "Message actions" }))
+    await user.click(screen.getByText("New sub-topic"))
+    await user.click(await screen.findByRole("button", { name: "Send inline" }))
+
+    // Simulate the queue's optimistic write so the pending branch renders.
+    await db.events.put(messageEvent("pend_1", createDraftPanelId("stream_1", "m_open"), 30, "Pending sub-topic body."))
+    await screen.findByText("Pending sub-topic body.")
+
+    await user.click(await screen.findByRole("button", { name: "Reply" }))
+    expect(await screen.findByText("Replying in New sub-topic")).toBeTruthy()
+    await user.click(screen.getByRole("button", { name: "Send inline" }))
+
+    expect(queueDraftMessage).toHaveBeenLastCalledWith(
+      { contentJson: SENT_DOC },
+      {
+        workspaceId: WS,
+        streamId: createDraftPanelId("stream_1", "m_open"),
+        streamCreation: { type: StreamTypes.THREAD, parentStreamId: "stream_1", parentMessageId: "m_open" },
+        draftId: createDraftPanelId("stream_1", "m_open"),
+        conversation: { intent: "newSubtopic" },
       }
     )
   })
