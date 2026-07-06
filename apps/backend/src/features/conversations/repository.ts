@@ -717,12 +717,13 @@ export const ConversationRepository = {
     db: Querier,
     workspaceId: string,
     id: string,
-    params: { completenessScore?: number; status?: ConversationStatus }
+    params: { completenessScore?: number; status?: ConversationStatus; summary?: string }
   ): Promise<void> {
     await db.query(sql`
       UPDATE conversations SET
         completeness_score = COALESCE(${params.completenessScore ?? null}, completeness_score),
         status = CASE WHEN status_locked_by_user THEN status ELSE COALESCE(${params.status ?? null}, status) END,
+        summary = COALESCE(${params.summary ?? null}, summary),
         updated_at = NOW()
       WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
