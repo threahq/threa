@@ -121,6 +121,7 @@ export const EVENT_TYPES = [
   "memos:captured",
   "agent:follow_up_scheduled",
   "agent:follow_up_cancelled",
+  "brief_updated",
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
@@ -161,6 +162,11 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   "messages:moved",
   "memos:captured",
   "agent:follow_up_scheduled",
+  // The stream's durable brief changed (roadmap 4.2): every member sees the row,
+  // so it takes a broadcast slot like `description_set`. Emitted for user edits
+  // and persona `update_stream_brief` writes alike — brief changes are never
+  // silent (INV-62 spirit).
+  "brief_updated",
   // `agent:follow_up_cancelled` is deliberately NOT here: it's a patch on the
   // scheduled card (it flips that row to "Cancelled" via correlation), not a
   // visible row of its own — so, like edits/reactions, it takes no broadcast
@@ -478,6 +484,7 @@ export const AGENT_TOOL_NAMES = [
   "list_follow_ups",
   "cancel_follow_up",
   "update_follow_up",
+  "update_stream_brief",
   "github_repos",
   "github_commits",
   "github_pulls",
@@ -509,6 +516,7 @@ export const AgentToolNames = {
   LIST_FOLLOW_UPS: "list_follow_ups",
   CANCEL_FOLLOW_UP: "cancel_follow_up",
   UPDATE_FOLLOW_UP: "update_follow_up",
+  UPDATE_STREAM_BRIEF: "update_stream_brief",
   GITHUB_REPOS: "github_repos",
   GITHUB_COMMITS: "github_commits",
   GITHUB_PULLS: "github_pulls",

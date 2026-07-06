@@ -7,6 +7,7 @@ import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
 import { MemoCapturedEvent } from "./memo-captured-event"
 import { FollowUpScheduledEvent } from "./follow-up-event"
+import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { SystemEvent } from "./system-event"
 
@@ -160,6 +161,13 @@ export function EventItem({
         </div>
       )
     }
+
+    case "brief_updated":
+      return (
+        <div data-event-id={event.id}>
+          <BriefUpdatedEvent event={event} workspaceId={workspaceId} streamId={streamId} />
+        </div>
+      )
 
     case "agent:follow_up_cancelled":
       // Patch, not a row: it flips the matching scheduled card to "Cancelled"

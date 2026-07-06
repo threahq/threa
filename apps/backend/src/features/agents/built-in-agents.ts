@@ -81,6 +81,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.LIST_FOLLOW_UPS,
       AgentToolNames.CANCEL_FOLLOW_UP,
       AgentToolNames.UPDATE_FOLLOW_UP,
+      AgentToolNames.UPDATE_STREAM_BRIEF,
       AgentToolNames.SEARCH_ATTACHMENTS,
       AgentToolNames.READ_ATTACHMENT,
       AgentToolNames.GITHUB_REPOS,

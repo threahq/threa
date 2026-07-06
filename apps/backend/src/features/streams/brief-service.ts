@@ -1,8 +1,10 @@
-import type { Pool } from "pg"
-import { STREAM_BRIEF_MAX_CHARS } from "@threa/types"
-import { streamBriefId, streamBriefRevisionId } from "../../lib/id"
+import type { Pool, PoolClient } from "pg"
+import { STREAM_BRIEF_MAX_CHARS, type BriefUpdatedEventPayload } from "@threa/types"
+import { streamBriefId, streamBriefRevisionId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
+import { OutboxRepository } from "../../lib/outbox"
+import { StreamEventRepository } from "./event-repository"
 import { StreamBriefRepository, type BriefAuthorKind, type StreamBrief } from "./brief-repository"
 
 /**
@@ -28,6 +30,12 @@ export interface UpdateBriefParams {
   expectedVersion: number
   updatedByKind: BriefAuthorKind
   updatedById: string
+  /**
+   * Why the brief changed. The persona `update_stream_brief` tool (roadmap 4.2)
+   * supplies this; member edits via the settings editor leave it undefined and
+   * the timeline row carries a null reason.
+   */
+  reason?: string
 }
 
 export type UpdateBriefResult =
@@ -56,7 +64,7 @@ export class StreamBriefService {
    * miss an accepted version.
    */
   async update(params: UpdateBriefParams): Promise<UpdateBriefResult> {
-    const { workspaceId, streamId, content, expectedVersion, updatedByKind, updatedById } = params
+    const { workspaceId, streamId, content, expectedVersion, updatedByKind, updatedById, reason } = params
     if (content.length > STREAM_BRIEF_MAX_CHARS) {
       throw new HttpError(`Brief exceeds ${STREAM_BRIEF_MAX_CHARS} characters`, {
         status: 400,
@@ -101,7 +109,48 @@ export class StreamBriefService {
         updatedById,
       })
 
+      await this.appendBriefUpdatedEvent(client, {
+        workspaceId,
+        streamId,
+        payload: { briefId: brief.id, version: brief.version, reason: reason ?? null },
+        actorId: updatedById,
+        actorType: updatedByKind,
+      })
+
       return { outcome: "updated", brief }
+    })
+  }
+
+  /**
+   * Append a `brief_updated` timeline broadcast row (+ its outbox row) in the
+   * caller's transaction (INV-4/7), so a brief change is never silent (INV-62
+   * spirit) and every member sees who changed it and why. Same envelope as the
+   * memos/description capture events — the full stream event rides the outbox
+   * payload so clients append it without a fetch. The row lands on the effective
+   * root (`streamId` is already resolved) where the brief lives.
+   */
+  private async appendBriefUpdatedEvent(
+    client: PoolClient,
+    params: {
+      workspaceId: string
+      streamId: string
+      payload: BriefUpdatedEventPayload
+      actorId: string
+      actorType: BriefAuthorKind
+    }
+  ): Promise<void> {
+    const event = await StreamEventRepository.insert(client, {
+      id: eventId(),
+      streamId: params.streamId,
+      eventType: "brief_updated",
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+    })
+    await OutboxRepository.insert(client, "stream:brief_updated", {
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      event,
     })
   }
 }

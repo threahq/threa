@@ -60,6 +60,13 @@ export const TOOL_CATEGORIES_BY_NAME = {
   list_follow_ups: ["messaging"],
   cancel_follow_up: ["messaging"],
   update_follow_up: ["messaging"],
+  // Maintaining the stream's own durable brief is in-product self-administration
+  // (the agent curating the standing context of the stream it participates in),
+  // not data egress or a workspace read. It rides the always-allowed `messaging`
+  // class — a private scratchpad that grants no tools still lets its companion
+  // keep the brief current, and the write is bounded by the 4k content cap and
+  // the stream's own membership, not a privacy grant.
+  update_stream_brief: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],

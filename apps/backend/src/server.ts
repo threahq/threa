@@ -43,6 +43,7 @@ import {
   StreamService,
   StreamNamingService,
   StubStreamNamingService,
+  StreamBriefService,
   NamingHandler,
   createNamingWorker,
 } from "./features/streams"
@@ -180,7 +181,7 @@ import {
   type VideoTranscodeCheckJobData,
   type AgentFollowUpFireJobData,
 } from "./lib/queue"
-import { ProcessingStatuses, resolveNotificationPause } from "@threa/types"
+import { AuthorTypes, ProcessingStatuses, resolveNotificationPause } from "@threa/types"
 import { AttachmentRepository } from "./features/attachments"
 import { ulid } from "ulid"
 import { loadConfig } from "./lib/env"
@@ -493,6 +494,7 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const agentFollowUpService = new AgentFollowUpService({ pool })
+  const streamBriefService = new StreamBriefService({ pool })
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
@@ -829,6 +831,25 @@ export async function startServer(): Promise<ServerInstance> {
         : { ok: false, reason: result.reason }
     },
     loadFollowUp: ({ workspaceId, followUpId }) => agentFollowUpService.getById({ workspaceId, followUpId }),
+    updateBrief: async ({ workspaceId, streamId, personaId, content, reason, expectedVersion }) => {
+      const result = await streamBriefService.update({
+        workspaceId,
+        streamId,
+        content,
+        expectedVersion,
+        updatedByKind: AuthorTypes.PERSONA,
+        updatedById: personaId,
+        reason,
+      })
+      return result.outcome === "updated"
+        ? { ok: true, version: result.brief.version }
+        : {
+            ok: false,
+            reason: "version_conflict",
+            currentContent: result.current?.content ?? null,
+            currentVersion: result.current?.version ?? 0,
+          }
+    },
   })
   // Tier assignments (see QueueManager `tiers` config above):
   //  - INTERACTIVE: user-facing work that must drain quickly (agent responses,

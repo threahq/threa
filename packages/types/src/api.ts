@@ -1210,6 +1210,23 @@ export interface DescriptionSetEventPayload {
 }
 
 /**
+ * Payload for `brief_updated` timeline events (roadmap 4.2): appended when a
+ * stream's durable brief is written — by a persona via `update_stream_brief`, or
+ * by a member via the settings editor — in the same transaction as the brief
+ * write (INV-4/7). Brief changes are never silent (INV-62 spirit): the row names
+ * who changed it (the event's `actorId`/`actorType`), the resulting `version`,
+ * and, for a persona write, the `reason` it gave. `version === 1` marks the
+ * brief's creation ("created" vs "updated"); `reason` is `null` for member edits
+ * (the editor collects no reason). The current content is one fetch away via the
+ * brief endpoint, so it is deliberately not snapshotted onto every event.
+ */
+export interface BriefUpdatedEventPayload {
+  briefId: string
+  version: number
+  reason: string | null
+}
+
+/**
  * Provenance stamped onto a relocated `message_created` event payload by
  * the move flow. Surfaces a per-message origin badge in the destination
  * timeline without a join. Re-moves overwrite earlier provenance — we

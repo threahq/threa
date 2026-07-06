@@ -3,7 +3,12 @@ import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threa/a
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
-import type { FollowUpToolDeps, ReactionToolDeps, WorkspaceToolDeps } from "../tools/tool-deps"
+import type {
+  FollowUpToolDeps,
+  ReactionToolDeps,
+  UpdateStreamBriefToolDeps,
+  WorkspaceToolDeps,
+} from "../tools/tool-deps"
 import { logger } from "../../../lib/logger"
 import {
   createGeneralResearchTool,
@@ -19,6 +24,7 @@ import {
   createListFollowUpsTool,
   createCancelFollowUpTool,
   createUpdateFollowUpTool,
+  createUpdateStreamBriefTool,
   createWorkspaceResearchTool,
   createGithubReposTool,
   createGithubCommitsTool,
@@ -56,6 +62,18 @@ export interface ToolSetConfig {
    * never schedules durable work.
    */
   followUps?: FollowUpToolDeps
+  /**
+   * Brief-maintenance callback bound to the running persona/stream, gating the
+   * `update_stream_brief` tool. Present only on the live companion turn (not the
+   * researcher sub-agent — it reads/searches, it never curates durable state).
+   */
+  brief?: UpdateStreamBriefToolDeps
+  /**
+   * The brief's version as read at context time — seeds the tool's optimistic
+   * write so a concurrent human edit surfaces as a conflict rather than a silent
+   * clobber. Defaults to 0 (no brief yet → create).
+   */
+  briefVersion?: number
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -77,6 +95,8 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     workspace,
     reactions,
     followUps,
+    brief,
+    briefVersion,
     github,
     linear,
     supportsVision,
@@ -151,6 +171,9 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
     followUps && isToolEnabled(enabledTools, AgentToolNames.UPDATE_FOLLOW_UP)
       ? createUpdateFollowUpTool(followUps, { timezone, currentTime })
+      : null,
+    brief && isToolEnabled(enabledTools, AgentToolNames.UPDATE_STREAM_BRIEF)
+      ? createUpdateStreamBriefTool(brief, { currentVersion: briefVersion ?? 0 })
       : null,
 
     // GitHub tools (workspace-scoped via installed GitHub App; read-only)

@@ -157,6 +157,10 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   member_added: CHROME_BROADCAST,
   member_left: CHROME_BROADCAST,
   description_set: CHROME_BROADCAST,
+  // A durable-brief change (roadmap 4.2): a broadcast row in the timeline, never
+  // a board/topic row — the brief is stream-level standing context, not anchored
+  // to a conversation.
+  brief_updated: CHROME_BROADCAST,
   stream_archived: CHROME_BROADCAST,
   stream_unarchived: CHROME_BROADCAST,
   // Source-side tombstone for a move; the board does not surface move notices.

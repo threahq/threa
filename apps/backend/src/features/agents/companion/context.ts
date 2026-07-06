@@ -9,7 +9,13 @@ import { UserRepository, type User } from "../../workspaces"
 import type { Persona } from "../persona-repository"
 import { resolveActorNames } from "../actor-names"
 import { AttachmentRepository } from "../../attachments"
-import { StreamRepository, StreamBriefRepository, resolveBriefStreamId, type Stream } from "../../streams"
+import {
+  StreamRepository,
+  StreamBriefRepository,
+  resolveBriefStreamId,
+  type Stream,
+  type StreamBrief,
+} from "../../streams"
 import { awaitAttachmentProcessing } from "../../attachments"
 import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ContextWindowPolicy } from "../context-window-policy"
@@ -86,6 +92,13 @@ export interface AgentContext {
    * semantics.
    */
   accessibleStreamIds: Set<string> | null
+  /**
+   * The stream's durable brief as read for this turn (roadmap 4.2), off the
+   * effective root (threads inherit — INV-62). `null` when none exists yet. The
+   * `update_stream_brief` tool writes against its `version` so a concurrent human
+   * edit surfaces as a conflict instead of a silent clobber.
+   */
+  streamBrief: StreamBrief | null
 }
 
 async function resolveScratchpadCustomPrompt(
@@ -434,5 +447,6 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     authorNames,
     streamContext,
     accessibleStreamIds,
+    streamBrief,
   }
 }
