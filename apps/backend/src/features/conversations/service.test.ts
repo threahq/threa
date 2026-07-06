@@ -17,6 +17,7 @@ function fakeConversation(over: Partial<Conversation> = {}): Conversation {
     participantIds: [],
     secondaryMessageIds: [],
     topicSummary: "Topic",
+    summary: null,
     completenessScore: 3,
     confidence: 0.5,
     status: "resolved",

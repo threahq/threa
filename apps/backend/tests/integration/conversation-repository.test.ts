@@ -687,6 +687,62 @@ describe("ConversationRepository", () => {
     })
   })
 
+  describe("applyExtractionUpdate", () => {
+    test("persists score, status, and summary; a user-locked status is never overridden", async () => {
+      const convId = conversationId()
+
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          completenessScore: 2,
+          status: ConversationStatuses.ACTIVE,
+        })
+      })
+
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.applyExtractionUpdate(client, testWorkspaceId, convId, {
+          completenessScore: 5,
+          status: ConversationStatuses.STALLED,
+          summary: "Rolling summary from the extractor",
+        })
+      })
+
+      const afterExtraction = await withTransaction(pool, async (client) =>
+        ConversationRepository.findById(client, convId)
+      )
+      expect(afterExtraction).toMatchObject({
+        completenessScore: 5,
+        status: ConversationStatuses.STALLED,
+        summary: "Rolling summary from the extractor",
+      })
+
+      // The user resolves the conversation (locking status); a later extraction
+      // pass may refine score/summary but must not reopen it.
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.update(client, testWorkspaceId, convId, {
+          status: ConversationStatuses.RESOLVED,
+          statusLockedByUser: true,
+        })
+        await ConversationRepository.applyExtractionUpdate(client, testWorkspaceId, convId, {
+          completenessScore: 7,
+          status: ConversationStatuses.ACTIVE,
+          summary: "Refined summary",
+        })
+      })
+
+      const afterLockedPass = await withTransaction(pool, async (client) =>
+        ConversationRepository.findById(client, convId)
+      )
+      expect(afterLockedPass).toMatchObject({
+        completenessScore: 7,
+        status: ConversationStatuses.RESOLVED,
+        summary: "Refined summary",
+      })
+    })
+  })
+
   describe("assignments + bumpActivity", () => {
     test("derives messageIds from assignments and bumpActivity updates lastActivityAt", async () => {
       const convId = conversationId()
