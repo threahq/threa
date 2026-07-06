@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoCapturedEvent } from "./memo-captured-event"
 import type { MemosCapturedEventPayload, StreamEvent } from "@threa/types"
 
@@ -19,15 +21,19 @@ function createEvent(payload: MemosCapturedEventPayload): StreamEvent {
 }
 
 function renderEvent(payload: MemosCapturedEventPayload) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter>
-      <MemoCapturedEvent event={createEvent(payload)} workspaceId="ws_1" />
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <MemoCapturedEvent event={createEvent(payload)} workspaceId="ws_1" />
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
 describe("MemoCapturedEvent", () => {
-  it("renders each captured memo title as a link into the memory explorer", () => {
+  it("renders each captured memo title as a button that opens the memo preview in place", async () => {
+    const user = userEvent.setup()
     renderEvent({
       conversationId: "conv_1",
       memos: [
@@ -37,14 +43,16 @@ describe("MemoCapturedEvent", () => {
     })
 
     expect(screen.getByText(/Saved to memory:/)).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Use prefixed ULIDs" })).toHaveAttribute(
-      "href",
-      "/w/ws_1/memory?memo=memo_1"
-    )
-    expect(screen.getByRole("link", { name: "Deploy via Railway" })).toHaveAttribute(
-      "href",
-      "/w/ws_1/memory?memo=memo_2"
-    )
+    // Titles are buttons (open the preview), not links away to the explorer.
+    expect(screen.queryByRole("link", { name: "Use prefixed ULIDs" })).toBeNull()
+    const trigger = screen.getByRole("button", { name: "Use prefixed ULIDs" })
+    expect(trigger).toHaveAttribute("aria-haspopup", "dialog")
+
+    await user.click(trigger)
+
+    // The preview dialog opens in place; its footer offers the explorer link.
+    const explorerLink = await waitFor(() => screen.getByRole("link", { name: /Open in memory/i }))
+    expect(explorerLink).toHaveAttribute("href", "/w/ws_1/memory?memo=memo_1")
   })
 
   it("renders nothing for an empty capture payload", () => {

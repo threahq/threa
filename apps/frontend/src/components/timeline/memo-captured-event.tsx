@@ -1,7 +1,8 @@
-import { Link } from "react-router-dom"
+import { useState } from "react"
 import { Sparkles } from "lucide-react"
 import type { MemosCapturedEventPayload, StreamEvent } from "@threa/types"
-import { memoDeepLink } from "@/lib/memo-url"
+import { cn } from "@/lib/utils"
+import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 
 interface MemoCapturedEventProps {
   event: StreamEvent
@@ -13,11 +14,15 @@ interface MemoCapturedEventProps {
  * knowledge from this stream (INV-62). The event is appended when the memo
  * batch commits, which per-stream debouncing places just after the source
  * conversation, so the row reads as a small "Threa kept this" gift moment
- * rather than an out-of-place system log line. Each title deep-links to the
- * memory explorer (`?memo=` is the canonical memo deep-link, see memo-url.ts).
+ * rather than an out-of-place system log line. Each title opens the memo in an
+ * in-place preview (`MemoPreviewDialog`) — a modal on desktop, a drawer on
+ * mobile — rather than navigating away to the memory explorer, which was
+ * disruptive mid-conversation. The dialog footer still links through to the
+ * full explorer for anyone who wants it.
  */
 export function MemoCapturedEvent({ event, workspaceId }: MemoCapturedEventProps) {
   const payload = event.payload as MemosCapturedEventPayload | undefined
+  const [openMemo, setOpenMemo] = useState<{ memoId: string; title: string } | null>(null)
   if (!payload?.memos?.length) return null
 
   return (
@@ -28,15 +33,29 @@ export function MemoCapturedEvent({ event, workspaceId }: MemoCapturedEventProps
         {payload.memos.map((memo, index) => (
           <span key={memo.memoId}>
             {index > 0 && ", "}
-            <Link
-              to={memoDeepLink(workspaceId, memo.memoId)}
-              className="font-medium text-foreground/80 underline-offset-2 hover:underline"
+            <button
+              type="button"
+              onClick={() => setOpenMemo({ memoId: memo.memoId, title: memo.title })}
+              aria-haspopup="dialog"
+              className={cn(
+                "font-medium text-foreground/80 underline-offset-2 hover:underline",
+                "rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              )}
             >
               {memo.title}
-            </Link>
+            </button>
           </span>
         ))}
       </p>
+      <MemoPreviewDialog
+        open={openMemo !== null}
+        onOpenChange={(open) => {
+          if (!open) setOpenMemo(null)
+        }}
+        workspaceId={workspaceId}
+        memoId={openMemo?.memoId ?? ""}
+        fallbackTitle={openMemo?.title ?? ""}
+      />
     </div>
   )
 }
