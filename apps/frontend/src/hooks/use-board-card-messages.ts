@@ -29,6 +29,12 @@ interface MessageCreatedPayloadShape {
   /** Set only on an optimistic board reply, naming the conversation it attaches
    *  to so a card can surface the pending row before the server echo lands. */
   conversationId?: string
+  /** On a server echo: the optimistic (client) id this message confirms. The
+   *  swap deletes that temp row, but a card merges several independent rails —
+   *  one can still hold a stale snapshot with the temp row while another already
+   *  shows the echo, doubling the reply for a frame. This is the precise link
+   *  that lets the card suppress the superseded copy. */
+  clientMessageId?: string
 }
 
 /** Project a `message_created` event row into the shared render shape the timeline
@@ -66,6 +72,12 @@ interface StreamRail {
    *  hand-off); once it's in `messageIds` the card dedups it. Only board replies
    *  carry the tag, so this stays proportional to the stream's reply count. */
   taggedByConversation: Map<string, RenderableMessage[]>
+  /** The optimistic (client) ids confirmed by a real row on this stream —
+   *  `payload.clientMessageId` of every synced message. A temp row with its id
+   *  here is superseded: it may linger in another rail's stale snapshot (or in
+   *  IDB until the swap's delete lands), and rendering it beside its confirmed
+   *  twin doubles the reply for a frame. */
+  supersededClientIds: Set<string>
   /** Spec-eligible non-message rows on this stream (agent sessions, memo captures,
    *  follow-up scheduled/cancelled), in read order — resolved to conversation rows
    *  by `resolveBoardEventRows`. Render-only: none is a member or bumps activity. */
@@ -78,6 +90,7 @@ const LOADING_RAIL: StreamRail = {
   messages: new Map(),
   seen: new Set(),
   taggedByConversation: new Map(),
+  supersededClientIds: new Set(),
   events: [],
   resolved: false,
 }
@@ -86,6 +99,7 @@ function buildRail(events: CachedEvent[]): StreamRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
+  const supersededClientIds = new Set<string>()
   const eventRows: CachedEvent[] = []
   for (const event of events) {
     // The rail reads message_created + the board's non-message row types; anything
@@ -96,6 +110,9 @@ function buildRail(events: CachedEvent[]): StreamRail {
     }
     const payload = (event.payload ?? {}) as MessageCreatedPayloadShape
     if (payload.messageId) seen.add(payload.messageId)
+    // Only a real (synced) row supersedes: the optimistic row itself carries no
+    // clientMessageId, so a pending row can never suppress anything.
+    if (payload.clientMessageId && !event._status) supersededClientIds.add(payload.clientMessageId)
     const message = eventToRenderable(event)
     if (!message) continue
     messages.set(message.id, message)
@@ -112,7 +129,7 @@ function buildRail(events: CachedEvent[]): StreamRail {
   for (const list of taggedByConversation.values()) {
     list.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   }
-  return { messages, seen, taggedByConversation, events: eventRows, resolved: true }
+  return { messages, seen, taggedByConversation, supersededClientIds, events: eventRows, resolved: true }
 }
 
 interface StreamRailEntry {
@@ -216,6 +233,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
   const messages = new Map<string, RenderableMessage>()
   const seen = new Set<string>()
   const taggedByConversation = new Map<string, RenderableMessage[]>()
+  const supersededClientIds = new Set<string>()
   const eventsById = new Map<string, CachedEvent>()
   // Resolved once every GATING rail has read — a still-loading discovered thread
   // doesn't count, so the card keeps its live view instead of dropping to the
@@ -229,6 +247,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
     }
     for (const [id, message] of rail.messages) messages.set(id, message)
     for (const id of rail.seen) seen.add(id)
+    for (const id of rail.supersededClientIds) supersededClientIds.add(id)
     for (const event of rail.events) eventsById.set(event.id, event)
     for (const [conversationId, list] of rail.taggedByConversation) {
       const existing = taggedByConversation.get(conversationId)
@@ -242,7 +261,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
   const events = [...eventsById.values()].sort(
     (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
   )
-  return { messages, seen, taggedByConversation, events, resolved, allResolved }
+  return { messages, seen, taggedByConversation, supersededClientIds, events, resolved, allResolved }
 }
 
 /**
@@ -539,9 +558,15 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     // `messageIds` doesn't list yet — the optimistic row, and the swapped real
     // row in the window before `conversation:updated` lands. Exclude ids already
     // in `replyIds` so a confirmed reply renders once (via `replies`), not twice.
+    // Exclude superseded optimistic rows too: the echo swap deletes the temp row,
+    // but a merged rail can pair one rail's fresh snapshot (echo present) with
+    // another's stale one (temp still there) — without this the reply renders
+    // doubled for that frame.
     const replyIdSet = new Set(replyIds)
     const tagged = rail.taggedByConversation.get(conversationId)
-    const unconfirmed = tagged ? tagged.filter((m) => !replyIdSet.has(m.id)) : NO_PENDING
+    const unconfirmed = tagged
+      ? tagged.filter((m) => !replyIdSet.has(m.id) && !rail.supersededClientIds.has(m.id))
+      : NO_PENDING
     const pendingReplies = unconfirmed.length > 0 ? unconfirmed : NO_PENDING
 
     // The server's count excludes `messageIds[0]` for a flat conversation even
