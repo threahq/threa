@@ -31,6 +31,15 @@ export const BOARD_LABEL_PARAM = "label"
 /** Label veto (`?not-label=`). */
 export const BOARD_EXCLUDE_LABEL_PARAM = "not-label"
 
+/** Archived opt-in (`?archived=true`). Unlike the other axes this BROADENS the
+ *  feed — including cards under archived streams instead of the default hide —
+ *  so its on-value is `"true"`, not an id list. */
+export const BOARD_ARCHIVED_PARAM = "archived"
+
+/** The `?archived=` value that opts into archived cards (matches the backend
+ *  `showArchived` flag). */
+export const BOARD_ARCHIVED_ON = "true"
+
 /** Every board filter param, for clear-all sweeps. */
 export const BOARD_FILTER_PARAMS = [
   BOARD_SCOPE_PARAM,
@@ -39,6 +48,7 @@ export const BOARD_FILTER_PARAMS = [
   BOARD_EXCLUDE_TYPE_PARAM,
   BOARD_LABEL_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
+  BOARD_ARCHIVED_PARAM,
 ] as const
 
 /**

@@ -107,9 +107,25 @@ export interface BoardExclusionState {
   muted: Set<string>
   /** False when an explicit `?in=` scope is set — mute doesn't fight a stream the viewer named. */
   muteActive: boolean
+  /**
+   * Archived root-stream ids, resolved live from the workspace streams store —
+   * the read-side twin of the server's `boardArchivedExcludeSql` (match by
+   * effective root, INV-62). A card whose root is archived drops unless the
+   * viewer opted into `showArchived`; because this is resolved live, archiving a
+   * channel drops its cards the instant the row updates, without a refetch.
+   */
+  archivedRootStreamIds: ReadonlySet<string>
+  /** Viewer opted into seeing archived cards (`?archived=true`); bypasses the archived drop. */
+  showArchived: boolean
 }
 
-const NO_EXCLUSIONS: BoardExclusionState = { hidden: new Map(), muted: new Set(), muteActive: true }
+const NO_EXCLUSIONS: BoardExclusionState = {
+  hidden: new Map(),
+  muted: new Set(),
+  muteActive: true,
+  archivedRootStreamIds: new Set(),
+  showArchived: false,
+}
 
 function matchesScope(post: CachedBoardPost, scope: BoardScope | null): boolean {
   if (!scope) return true
@@ -290,20 +306,24 @@ export function useStableBoardView(
   exclusions: BoardExclusionState = NO_EXCLUSIONS
 ): StableBoardView {
   const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels } = filter
-  const { hidden, muted, muteActive } = exclusions
+  const { hidden, muted, muteActive, archivedRootStreamIds, showArchived } = exclusions
   const rawLive = useBoardPosts(workspaceId)
 
   // A hidden card is excluded until it revives (activity passes its `hiddenAt`
   // watermark — mirrors the server `<=` boundary); a muted stream's cards are
-  // excluded unless the viewer named explicit streams via `?in=` (`muteActive`).
+  // excluded unless the viewer named explicit streams via `?in=` (`muteActive`);
+  // a card under an archived root is excluded unless the viewer opted into
+  // `showArchived` (mirrors the server `boardArchivedExcludeSql`).
   const isExcluded = useCallback(
     (post: CachedBoardPost): boolean => {
       const hiddenAt = hidden.get(post.conversation.id)
       if (hiddenAt !== undefined && postMs(post) <= hiddenAt) return true
-      if (muteActive && muted.has(post.rootStreamId ?? post.conversation.streamId)) return true
+      const root = post.rootStreamId ?? post.conversation.streamId
+      if (muteActive && muted.has(root)) return true
+      if (!showArchived && archivedRootStreamIds.has(root)) return true
       return false
     },
-    [hidden, muted, muteActive]
+    [hidden, muted, muteActive, archivedRootStreamIds, showArchived]
   )
 
   // The branch relationship for one-card-per-root suppression (below) derives

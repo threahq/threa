@@ -188,6 +188,27 @@ function boardHiddenExcludeSql(userId: string) {
 }
 
 /**
+ * Archived-stream exclusion, matched by effective ROOT
+ * (`COALESCE(root_stream_id, id)`, mirroring `boardScopeCondSql`). Archiving
+ * marks only the root row — a thread inherits its root's lifecycle (INV-62) — so
+ * a conversation is archived exactly when its effective root is. Skipped when
+ * `showArchived` is true (the viewer opted into seeing archived cards);
+ * otherwise the board's default hides them. Mirrored client-side in
+ * `use-stable-board-view` (the `archivedRootStreamIds` exclusion) — keep the
+ * effective-root rule identical.
+ */
+function boardArchivedExcludeSql(showArchived: boolean) {
+  if (showArchived) return sql``
+  return composeSql`AND NOT EXISTS (
+    SELECT 1 FROM streams arch_s
+    JOIN streams arch_root ON arch_root.id = COALESCE(arch_s.root_stream_id, arch_s.id)
+    WHERE arch_s.id = conversations.stream_id
+      AND arch_s.workspace_id = conversations.workspace_id
+      AND arch_root.archived_at IS NOT NULL
+  )`
+}
+
+/**
  * Per-viewer stream mute exclusion, matched by effective ROOT
  * (`COALESCE(root_stream_id, id)`, mirroring `boardScopeCondSql`). Skipped when
  * `applyMute` is false: an explicit `?in=` stream scope names streams the viewer
@@ -559,6 +580,8 @@ export const ConversationRepository = {
       scopeLabelIds?: string[]
       /** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
       excludeLabelIds?: string[]
+      /** Include conversations under archived streams; defaults to hiding them. */
+      showArchived?: boolean
       limit?: number
       cursor?: { lastActivityAt: string; id: string }
     }
@@ -575,6 +598,7 @@ export const ConversationRepository = {
     const labelCond = boardLabelCondSql(userId, options?.scopeLabelIds)
     const labelExcludeCond = boardLabelExcludeCondSql(userId, options?.excludeLabelIds)
     const hiddenCond = boardHiddenExcludeSql(userId)
+    const archivedCond = boardArchivedExcludeSql(options?.showArchived ?? false)
     // Mute is skipped when the viewer named explicit streams via `?in=`.
     const mutedCond = boardMutedExcludeSql(userId, !options?.scopeStreamIds?.length)
     // Keyset on `date_trunc('milliseconds', last_activity_at)` — NOT the raw
@@ -601,6 +625,7 @@ export const ConversationRepository = {
         ${labelCond}
         ${labelExcludeCond}
         ${hiddenCond}
+        ${archivedCond}
         ${mutedCond}
         ${cursorCond}
         AND ${access}

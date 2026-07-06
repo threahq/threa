@@ -7,6 +7,7 @@ import type { CachedBoardPost } from "@/db"
 import {
   reconcileStableView,
   useStableBoardView,
+  type BoardExclusionState,
   type BoardViewFilter,
   type CommittedView,
 } from "./use-stable-board-view"
@@ -632,7 +633,19 @@ describe("useStableBoardView — hide & mute exclusions", () => {
   }
   afterEach(() => vi.restoreAllMocks())
 
-  const NO_EXCL = { hidden: new Map<string, number>(), muted: new Set<string>(), muteActive: true }
+  /** Build a full exclusion state from overrides — nothing excluded unless named. */
+  function exclOf(over: Partial<BoardExclusionState> = {}): BoardExclusionState {
+    return {
+      hidden: new Map(),
+      muted: new Set(),
+      muteActive: true,
+      archivedRootStreamIds: new Set(),
+      showArchived: false,
+      ...over,
+    }
+  }
+
+  const NO_EXCL = exclOf()
 
   it("drops a hidden card immediately — even after it was committed and retained (the crux)", () => {
     mockLive(feed(post("a", 300), post("b", 200)))
@@ -644,12 +657,12 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     // Hide "a" (watermark above its activity). It stays in the committed order and
     // in `retainedRef`, so a filter that only touched `live` would keep rendering
     // it — it must drop NOW, without a commit.
-    rerender({ excl: { hidden: new Map([["a", 400]]), muted: new Set<string>(), muteActive: true } })
+    rerender({ excl: exclOf({ hidden: new Map([["a", 400]]) }) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 
   it("revives a hidden card once its activity passes the watermark", () => {
-    const excl = { hidden: new Map([["a", 350]]), muted: new Set<string>(), muteActive: true }
+    const excl = exclOf({ hidden: new Map([["a", 350]]) })
     mockLive(feed(post("a", 300)))
     const { result, rerender } = renderHook(({ e }) => useStableBoardView("ws_1", ALL, e), {
       initialProps: { e: excl },
@@ -663,27 +676,52 @@ describe("useStableBoardView — hide & mute exclusions", () => {
 
   it("drops a muted stream's cards when mute is active", () => {
     mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, { hidden: new Map(), muted: new Set(["stream_x"]), muteActive: true })
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, exclOf({ muted: new Set(["stream_x"]) })))
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 
   it("keeps a muted stream's cards when mute is inactive (an explicit ?in= scope)", () => {
     mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
     const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, { hidden: new Map(), muted: new Set(["stream_x"]), muteActive: false })
+      useStableBoardView("ws_1", ALL, exclOf({ muted: new Set(["stream_x"]), muteActive: false }))
     )
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+  })
+
+  it("drops a card under an archived root while showArchived is off", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", ALL, exclOf({ archivedRootStreamIds: new Set(["stream_x"]) }))
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
+  })
+
+  it("keeps a card under an archived root once showArchived opts in", () => {
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result } = renderHook(() =>
+      useStableBoardView("ws_1", ALL, exclOf({ archivedRootStreamIds: new Set(["stream_x"]), showArchived: true }))
+    )
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+  })
+
+  it("drops an archived card immediately — even after it was committed and retained", () => {
+    // A channel archived while its card is on the board: the card is committed and
+    // in `retainedRef`, so it must drop NOW (not wait for a commit), mirroring mute.
+    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result, rerender } = renderHook(({ excl }) => useStableBoardView("ws_1", ALL, excl), {
+      initialProps: { excl: NO_EXCL },
+    })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
+
+    rerender({ excl: exclOf({ archivedRootStreamIds: new Set(["stream_x"]) }) })
+    expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 
   it("reports hasRawPosts when the feed is seeded but every card is excluded (empty view, not loading)", () => {
     // Hiding the only card → posts empty, but the raw IDB feed is seeded, so the
     // board can show its empty state instead of a perpetual seed skeleton.
     mockLive(feed(post("a", 300)))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, { hidden: new Map([["a", 400]]), muted: new Set(), muteActive: true })
-    )
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL, exclOf({ hidden: new Map([["a", 400]]) })))
     expect(result.current.posts).toEqual([])
     expect(result.current.isLoading).toBe(false)
     expect(result.current.hasRawPosts).toBe(true)

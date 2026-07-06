@@ -45,6 +45,8 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
   scopeLabelIds?: string[]
   /** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
   excludeLabelIds?: string[]
+  /** Include conversations under archived streams; defaults to hiding them. */
+  showArchived?: boolean
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }

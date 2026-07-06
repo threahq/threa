@@ -42,6 +42,8 @@ import {
   BOARD_EXCLUDE_SCOPE_PARAM,
   BOARD_EXCLUDE_TYPE_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
+  BOARD_ARCHIVED_PARAM,
+  BOARD_ARCHIVED_ON,
   boardHomeSearch,
   parseIdListParam,
   parseTypeListParam,
@@ -205,6 +207,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     () => parseIdListParam(excludeLabelParam).slice(0, MAX_BOARD_SCOPE_LABELS),
     [excludeLabelParam]
   )
+  // Archived is a broadening opt-in (`?archived=true`), not an id-list narrowing.
+  const showArchived = searchParams.get(BOARD_ARCHIVED_PARAM) === BOARD_ARCHIVED_ON
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
   const excludeScopeKey = useMemo(() => [...excludeStreamIds].sort().join(","), [excludeStreamIds])
   const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
@@ -282,6 +286,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       [BOARD_LABEL_PARAM, include],
       [BOARD_EXCLUDE_LABEL_PARAM, exclude],
     ])
+  const setShowArchived = (next: boolean) => setParamLists([[BOARD_ARCHIVED_PARAM, next ? [BOARD_ARCHIVED_ON] : []]])
   const {
     containerRef,
     panelWidth,
@@ -309,6 +314,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeTypes: excludeStreamTypes,
       labels: scopeLabelIds,
       excludeLabels: excludeLabelIds,
+      showArchived,
       limit: 50,
     })
 
@@ -321,9 +327,22 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const muted = useBoardMutedStreamIds(workspaceId)
   const muteStream = useMuteStream(workspaceId)
   const unmuteStream = useUnmuteStream(workspaceId)
+  const streams = useWorkspaceStreams(workspaceId)
+  // Archived root streams, resolved live from the workspace store — the client
+  // half of the server's `boardArchivedExcludeSql`. A card under one drops unless
+  // `showArchived` is on; resolving live means archiving a channel drops its
+  // cards at once (no refetch). Archiving marks only the root row (INV-62), so
+  // this set is exactly the archived roots.
+  const archivedRootStreamIds = useMemo(() => new Set(streams.filter((s) => s.archivedAt).map((s) => s.id)), [streams])
   const exclusions = useMemo(
-    () => ({ hidden, muted, muteActive: scopeStreamIds.length === 0 }),
-    [hidden, muted, scopeStreamIds.length]
+    () => ({
+      hidden,
+      muted,
+      muteActive: scopeStreamIds.length === 0,
+      archivedRootStreamIds,
+      showArchived,
+    }),
+    [hidden, muted, scopeStreamIds.length, archivedRootStreamIds, showArchived]
   )
   const {
     posts,
@@ -373,7 +392,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     const timer = setTimeout(() => setSkeletonVisible(true), SKELETON_DELAY_MS)
     return () => clearTimeout(timer)
   }, [loading])
-  const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
@@ -567,6 +585,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         onLabelFilterChange={setLabelFilter}
         mutedStreamIds={muted}
         onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
+        showArchived={showArchived}
+        onToggleArchived={setShowArchived}
       />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}

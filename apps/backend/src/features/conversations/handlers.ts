@@ -57,6 +57,11 @@ const listWorkspaceConversationsSchema = listConversationsSchema.extend({
   excludeTypes: csvTypeListSchema.optional(),
   labels: csvIdListSchema(MAX_BOARD_SCOPE_LABELS, "labels").optional(),
   excludeLabels: csvIdListSchema(MAX_BOARD_SCOPE_LABELS, "excludeLabels").optional(),
+  // Absent = the board's default (hide archived). `?archived=true` opts in.
+  showArchived: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true"),
   cursor: z.string().min(1).optional(),
 })
 
@@ -148,6 +153,7 @@ export function createConversationHandlers({
         excludeStreamTypes: query.excludeTypes,
         scopeLabelIds: query.labels,
         excludeLabelIds: query.excludeLabels,
+        showArchived: query.showArchived,
         limit: query.limit,
         cursor: decodeBoardCursor(query.cursor),
       })
