@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
@@ -19,10 +19,6 @@ interface FollowUpLimitSectionProps {
   workspaceId: string
 }
 
-function clamp(value: number): number {
-  return Math.min(MAX_PENDING_FOLLOW_UPS_MAX, Math.max(MAX_PENDING_FOLLOW_UPS_MIN, value))
-}
-
 /**
  * Workspace cap on the assistant's pending follow-ups per stream (roadmap 1.4).
  * Editing is gated to admins; others see the current value read-only. The tool's
@@ -36,9 +32,16 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
   const savedValue = settings?.maxPendingFollowUps ?? DEFAULT_MAX_PENDING_FOLLOW_UPS
 
   const [draft, setDraft] = useState(String(savedValue))
-  // Reconverge on the stored value when it changes (another admin's edit
-  // broadcasts through the bootstrap cache).
-  useEffect(() => setDraft(String(savedValue)), [savedValue])
+  const editingRef = useRef(false)
+  // Reconverge on the stored value when it changes (another admin's edit — or
+  // our own second tab — broadcasts through the bootstrap cache via
+  // `workspace_settings:updated`). Skip while this input is focused so an
+  // incoming broadcast can't silently overwrite keystrokes mid-edit; `commit`
+  // reconciles against the freshest `savedValue` on blur.
+  useEffect(() => {
+    if (editingRef.current) return
+    setDraft(String(savedValue))
+  }, [savedValue])
 
   const mutation = useMutation({
     mutationFn: (maxPendingFollowUps: number) => workspaceSettingsApi.update(workspaceId, { maxPendingFollowUps }),
@@ -70,19 +73,21 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
     },
   })
 
+  // Save on blur. Out-of-range or non-numeric input reverts to the stored value
+  // rather than snapping to a boundary the user didn't type — matching the
+  // sibling admin numeric inputs in `pages/ai-usage-admin.tsx`.
   const commit = () => {
     const parsed = Number.parseInt(draft, 10)
-    if (Number.isNaN(parsed)) {
+    if (Number.isNaN(parsed) || parsed < MAX_PENDING_FOLLOW_UPS_MIN || parsed > MAX_PENDING_FOLLOW_UPS_MAX) {
       setDraft(String(savedValue))
       return
     }
-    const next = clamp(parsed)
-    if (next === savedValue) {
-      setDraft(String(next))
+    if (parsed === savedValue) {
+      setDraft(String(savedValue))
       return
     }
-    setDraft(String(next))
-    mutation.mutate(next)
+    setDraft(String(parsed))
+    mutation.mutate(parsed)
   }
 
   return (
@@ -103,7 +108,13 @@ export function FollowUpLimitSection({ workspaceId }: FollowUpLimitSectionProps)
           value={draft}
           disabled={settings == null || mutation.isPending}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
+          onFocus={() => {
+            editingRef.current = true
+          }}
+          onBlur={() => {
+            editingRef.current = false
+            commit()
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur()
           }}

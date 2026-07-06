@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
@@ -53,12 +53,10 @@ describe("FollowUpLimitSection", () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { maxPendingFollowUps: 25 }))
   })
 
-  it("clamps an out-of-range value before saving", async () => {
+  it("reverts an out-of-range value to the saved value without saving", async () => {
     const queryClient = new QueryClient()
     seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 10)
-    const update = vi
-      .spyOn(workspaceSettingsApi, "update")
-      .mockResolvedValue({ maxPendingFollowUps: 100 } as WorkspaceSettings)
+    const update = vi.spyOn(workspaceSettingsApi, "update")
     const user = userEvent.setup()
 
     renderSection(queryClient)
@@ -67,7 +65,31 @@ describe("FollowUpLimitSection", () => {
     await user.type(input, "9999")
     await user.tab()
 
-    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { maxPendingFollowUps: 100 }))
+    expect(update).not.toHaveBeenCalled()
+    expect(input).toHaveValue(10)
+  })
+
+  it("does not clobber an in-progress edit when a settings broadcast lands", async () => {
+    const queryClient = new QueryClient()
+    seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 10)
+    const update = vi
+      .spyOn(workspaceSettingsApi, "update")
+      .mockResolvedValue({ maxPendingFollowUps: 25 } as WorkspaceSettings)
+    const user = userEvent.setup()
+
+    renderSection(queryClient)
+    const input = screen.getByLabelText("Assistant follow-ups")
+    await user.clear(input)
+    await user.type(input, "25")
+
+    // A concurrent admin's save arrives while this field is focused mid-edit;
+    // act() flushes the cache-driven re-render so the guard is actually exercised.
+    act(() => seedBootstrap(queryClient, [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], 30))
+
+    // Keystrokes survive the broadcast; blur commits the user's own value.
+    expect(input).toHaveValue(25)
+    await user.tab()
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { maxPendingFollowUps: 25 }))
   })
 
   it("does not save when the value is unchanged", async () => {
