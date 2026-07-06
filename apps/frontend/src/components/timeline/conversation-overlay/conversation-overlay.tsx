@@ -32,13 +32,14 @@ export function ConversationOverlayPanel({
   overlay,
   inViewConversations,
   onClose,
-  searchBarOpen = false,
+  topBarOpen = false,
 }: {
   overlay: ConversationOverlayContext
   inViewConversations: ConversationWithStaleness[]
   onClose: () => void
-  /** Stream search renders a full-width bar at the container top; drop below it. */
-  searchBarOpen?: boolean
+  /** A full-width strip (stream search, or the split-selection bar) occupies the
+   *  container top; drop the panel below it so it doesn't cover the bar's actions. */
+  topBarOpen?: boolean
 }) {
   const isMobile = useIsMobile()
   // Collapsed by default on mobile; the user's explicit choice wins once made.
@@ -49,7 +50,7 @@ export function ConversationOverlayPanel({
   return (
     <div
       data-testid="conversation-overlay-panel"
-      className={cn("absolute right-2 z-20 flex justify-end", !isMobile && (searchBarOpen ? "top-14" : "top-2"))}
+      className={cn("absolute right-2 z-20 flex justify-end", !isMobile && (topBarOpen ? "top-14" : "top-2"))}
       // --composer-height measures the floating pill itself; the pill also
       // floats above the container bottom and has the send-hint line under
       // it, so a plain +0.5rem (what Jump-to-latest uses, which sits flush

@@ -754,6 +754,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     const onToggleMessage = () => {}
     const batchWith = (selected: string[]) => ({
       enabled: true,
+      dragSelect: true,
       selectedMessageIds: new Set(selected),
       invalidTargetIds: new Set<string>(),
       hoveredTargetId: null,

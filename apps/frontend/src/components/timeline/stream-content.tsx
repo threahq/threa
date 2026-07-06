@@ -848,12 +848,13 @@ export function StreamContent({
   const batchState = useMemo<BatchTimelineState | undefined>(
     () => ({
       enabled: batchMode,
+      dragSelect: batchIntent === "moveToThread",
       selectedMessageIds,
       invalidTargetIds: invalidBatchTargetIds,
       hoveredTargetId: hoveredBatchTargetId,
       onToggleMessage: toggleBatchMessage,
     }),
-    [batchMode, selectedMessageIds, invalidBatchTargetIds, hoveredBatchTargetId, toggleBatchMessage]
+    [batchMode, batchIntent, selectedMessageIds, invalidBatchTargetIds, hoveredBatchTargetId, toggleBatchMessage]
   )
 
   const findMessageIdFromPoint = useCallback((x: number, y: number) => {
@@ -953,7 +954,10 @@ export function StreamContent({
   const moveMessageCount = moveAttempt?.messageIds.length ?? 0
   const moveMessageCountLabel = `${moveMessageCount} selected message${moveMessageCount === 1 ? "" : "s"}`
 
-  const batchPointerHandlers = batchMode
+  // The drag-onto-a-target gesture belongs to move-to-thread only. Split mode
+  // attaches nothing here: each row toggles via its own `onClick`, so native
+  // touch scrolling stays intact (see BatchTimelineState.dragSelect).
+  const batchPointerHandlers = batchMode && batchIntent === "moveToThread"
     ? {
         onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
           const target = event.target as HTMLElement
@@ -978,9 +982,6 @@ export function StreamContent({
           if (!pointer || pointer.id !== event.pointerId) return
           const distance = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y)
           if (!pointer.dragging && distance < 6) return
-          // Split mode has no drop target — dragging is meaningless, so never
-          // enter the drag branch; every gesture resolves as a tap toggle.
-          if (batchIntent === "splitConversation") return
           event.preventDefault()
           if (!pointer.dragging && !selectedMessageIds.has(pointer.messageId)) {
             setSelectedMessageIds((prev) => new Set(prev).add(pointer.messageId))
@@ -2075,7 +2076,10 @@ export function StreamContent({
                         overlay={activeConversationOverlay}
                         inViewConversations={inViewConversations}
                         onClose={closeConversationOverlay}
-                        searchBarOpen={isSearchOpen}
+                        // Split mode keeps the overlay panel mounted while the
+                        // SplitSelectionBar occupies the flush-top strip; drop the
+                        // panel below it so it doesn't cover the bar's actions.
+                        topBarOpen={isSearchOpen || (batchMode && batchIntent === "splitConversation")}
                       />
                     )}
                     {isDraft && (
@@ -3042,7 +3046,18 @@ function SplitSelectionBar({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onCancel} aria-label="Cancel selection">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          // Disabled mid-request: the reassign can't be aborted (cancelBatchMode
+          // only resets local UI), and letting the bar vanish while the mutation
+          // still lands would silently reassign after an apparent cancel. Matches
+          // the move-to-thread dialog's Cancel guard.
+          disabled={busy}
+          onClick={onCancel}
+          aria-label="Cancel selection"
+        >
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>

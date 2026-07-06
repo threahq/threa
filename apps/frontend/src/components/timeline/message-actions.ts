@@ -15,6 +15,7 @@ import {
   Share2,
   CornerDownRight,
   Layers,
+  ListChecks,
   CheckCheck,
   CircleDot,
   Tag,
@@ -480,8 +481,8 @@ export const messageActions: MessageAction[] = [
     // messages, then reassign them to another conversation or split them into a
     // new one. Also overlay-gated (needs the conversation list to pick a target).
     id: "split-conversation",
-    label: "Select messages to move…",
-    icon: Layers,
+    label: "Move messages to conversation…",
+    icon: ListChecks,
     when: (ctx) => !!ctx.onSplitConversation,
     action: (ctx) => ctx.onSplitConversation?.(),
   },

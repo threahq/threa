@@ -749,18 +749,18 @@ export class ConversationService {
    * — no message events move, so broadcast sequences and INV-61 contiguity are
    * untouched (the messages stay in their stream).
    *
-   * Concurrency: the message rows are locked first (INV-20) — the serialization
-   * point against a concurrent reassign/extraction of the same messages, as in
-   * {@link reassignMessage} — so `findPrimariesByMessageIds` is stable. Each touched
-   * source and an existing destination are then locked before their membership is
-   * read and their `participant_ids` recomputed, so a concurrent extraction can't
-   * clobber the arrays we SET. Locks are taken messages-then-conversations here;
-   * {@link splitThreadIntoConversation} takes them the other way, so two of these
-   * racing the same rows can deadlock — Postgres aborts one cleanly (no
-   * corruption), acceptable for a rare same-user correction. All member/feedback
-   * writes and the outbox events commit in one transaction (INV-6/7), delivered via
-   * the outbox (INV-4). A minted destination follows the fresh-mint precedent (no
-   * `topicSummary` — the extractor fills it), never copying a source title.
+   * Concurrency (INV-20): conversation rows are locked BEFORE the message rows —
+   * the same order {@link splitThreadIntoConversation} uses — so two corrections
+   * racing the same conversation + messages can't form a lock cycle (no deadlock).
+   * The lock set is chosen from an unlocked peek at current membership, then the
+   * grouping is re-read authoritatively once the message rows are pinned; a source
+   * a message raced into between the two is late-locked (the messages are already
+   * held, so that can't loop). Holding each source lock lets its `participant_ids`
+   * be recomputed without a concurrent extraction clobbering the array. All
+   * member/feedback writes and the outbox events commit in one transaction
+   * (INV-6/7), delivered via the outbox (INV-4). A minted destination follows the
+   * fresh-mint precedent (no `topicSummary` — the extractor fills it), never
+   * copying a source title.
    */
   async reassignMessagesToConversation(params: ReassignMessagesParams): Promise<ReassignMessagesResult> {
     const { workspaceId, streamId, messageIds, target, actorUserId } = params
@@ -768,9 +768,43 @@ export class ConversationService {
     return withTransaction(this.pool, async (client) => {
       const uniqueIds = [...new Set(messageIds)]
 
-      // Lock the moving rows first (INV-20); `findByIdsForUpdate` returns them in
-      // `sequence` order — also the timeline order we preserve when appending to
-      // the destination.
+      // Conversation-before-message lock ordering (see the method doc). Sources
+      // are locked idempotently and in a deterministic order; `lockSource` skips
+      // the destination and anything already held.
+      const sourceRows = new Map<string, Conversation>()
+
+      // Unlocked peek: chooses the source lock set only. The authoritative
+      // grouping is re-read below once the messages are pinned.
+      const preReadPrimaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, uniqueIds)
+
+      // Lock the destination first: an existing target is locked now; a mint is
+      // deferred until after message validation so a bad request leaves no orphan.
+      let destination: Conversation | null = null
+      if (target.kind === "existing") {
+        const existing = await ConversationRepository.findByIdForUpdate(client, workspaceId, target.conversationId)
+        if (!existing) {
+          throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+        }
+        if (existing.streamId !== streamId) {
+          throw new HttpError("Conversation is not in this stream", {
+            status: 400,
+            code: "CONVERSATION_NOT_IN_STREAM",
+          })
+        }
+        destination = existing
+      }
+
+      const lockSource = async (id: string) => {
+        if (id === destination?.id || sourceRows.has(id)) return
+        const row = await ConversationRepository.findByIdForUpdate(client, workspaceId, id)
+        if (row) sourceRows.set(id, row)
+      }
+      for (const id of [...new Set([...preReadPrimaries.values()].map((c) => c.id))].sort()) {
+        await lockSource(id)
+      }
+
+      // Now lock the moving rows; `findByIdsForUpdate` returns them in `sequence`
+      // order — also the timeline order we preserve when appending to the dest.
       const lockedMessages = await MessageRepository.findByIdsForUpdate(client, uniqueIds)
       if (lockedMessages.length !== uniqueIds.length) {
         throw new HttpError("Some selected messages were not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
@@ -788,24 +822,8 @@ export class ConversationService {
       }
       const orderedIds = lockedMessages.map((m) => m.id)
 
-      // Where each moving message currently lives (primary). Stable now that the
-      // message rows are locked — nothing can reassign them out from under us.
-      const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, orderedIds)
-
-      let destination: Conversation
-      if (target.kind === "existing") {
-        const existing = await ConversationRepository.findByIdForUpdate(client, workspaceId, target.conversationId)
-        if (!existing) {
-          throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
-        }
-        if (existing.streamId !== streamId) {
-          throw new HttpError("Conversation is not in this stream", {
-            status: 400,
-            code: "CONVERSATION_NOT_IN_STREAM",
-          })
-        }
-        destination = existing
-      } else {
+      // Request validated — mint the destination now (no orphan on an early throw).
+      if (!destination) {
         destination = await ConversationRepository.insert(client, {
           id: generateConversationId(),
           streamId,
@@ -814,12 +832,23 @@ export class ConversationService {
           status: ConversationStatuses.ACTIVE,
         })
       }
+      // Non-null past the mint; bind it so the closures below keep the narrowing.
+      const dest = destination
+
+      // Authoritative grouping, stable now the message rows are pinned. A source a
+      // message raced into after the peek is late-locked here — the messages are
+      // already held, so this can't loop.
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, orderedIds)
+      for (const id of orderedIds) {
+        const sourceId = primaries.get(id)?.id
+        if (sourceId) await lockSource(sourceId)
+      }
 
       // Skip messages already primary in the destination (a no-op reassign — e.g.
       // re-running the same split).
-      const moveIds = orderedIds.filter((id) => primaries.get(id)?.id !== destination.id)
+      const moveIds = orderedIds.filter((id) => primaries.get(id)?.id !== dest.id)
       if (moveIds.length === 0) {
-        const fresh = await ConversationRepository.findById(client, destination.id)
+        const fresh = await ConversationRepository.findById(client, dest.id)
         if (!fresh) throw new Error(`Conversation ${destination.id} disappeared during reassignment`)
         return { conversation: addStalenessFields(fresh), sourceConversations: [] }
       }
@@ -834,15 +863,6 @@ export class ConversationService {
         const list = movedBySource.get(sourceId)
         if (list) list.push(id)
         else movedBySource.set(sourceId, [id])
-      }
-
-      // Lock each source row (INV-20), sorted for a deterministic order across
-      // concurrent batches, so its membership can be read and its participants
-      // recomputed without a concurrent extraction racing the write.
-      const sourceRows = new Map<string, Conversation>()
-      for (const sourceId of [...movedBySource.keys()].sort()) {
-        const row = await ConversationRepository.findByIdForUpdate(client, workspaceId, sourceId)
-        if (row) sourceRows.set(sourceId, row)
       }
 
       // Hydrate the authors of every message that stays in a source and every
@@ -880,7 +900,7 @@ export class ConversationService {
           streamId: messageById.get(id)!.streamId,
           messageId: id,
           fromConversationId: primaries.get(id)?.id ?? null,
-          toConversationId: destination.id,
+          toConversationId: dest.id,
           userId: actorUserId,
         }))
       )
