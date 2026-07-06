@@ -48,7 +48,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 3.3  | Conversation-anchored agent replies                   | ☑      | #1170 |
 | 4.1  | `stream_briefs` storage + endpoints + injection       | ☑      | #1214 |
 | 4.2  | `update_stream_brief` tool + timeline event           | ☐      |       |
-| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #TBD  |
+| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
 | 4.4  | Brief correction eval                                 | ☐      |       |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-64  | ☐      |       |
 | 5.2  | Delegation card UI                                    | ☐      |       |
