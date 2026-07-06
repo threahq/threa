@@ -18,6 +18,14 @@ export const DM_PARTICIPANT_COUNT = 2
  */
 export const STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH = 10_000
 
+/**
+ * Hard cap on a stream brief's markdown (roadmap 4.1). The brief is a prompt
+ * insert carried verbatim into every companion turn, not a document store, so
+ * the cap keeps it from eating the context budget. Shared source of truth for
+ * the backend service/Zod schema and the settings-editor char counter (INV-33).
+ */
+export const STREAM_BRIEF_MAX_CHARS = 4000
+
 export const VISIBILITY_OPTIONS = ["public", "private"] as const
 export type Visibility = (typeof VISIBILITY_OPTIONS)[number]
 

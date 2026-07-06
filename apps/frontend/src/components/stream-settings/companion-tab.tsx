@@ -13,6 +13,7 @@ import {
 } from "@threa/types"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 import { ExternalAgentIndicator } from "./external-agent-indicator"
+import { BriefSection } from "./brief-section"
 
 interface CompanionTabProps {
   workspaceId: string
@@ -103,6 +104,10 @@ export function CompanionTab({
           e2e={isE2e}
         />
       )}
+
+      {/* Briefs are server-stored plaintext the enclave prompt never injects, so
+          they are unsupported on encrypted streams (roadmap §4.1 deviation). */}
+      {!isE2e && <BriefSection workspaceId={workspaceId} stream={stream} />}
     </div>
   )
 }

@@ -32,39 +32,39 @@ Two concurrent efforts share primitives with this work; steps below reference th
 
 ## Status
 
-| Step | Deliverable                                          | Status | PR    |
-| ---- | ---------------------------------------------------- | ------ | ----- |
-| 1.1  | `schedule_follow_up` tool + follow-up infra          | ☑      | #1138 |
-| 1.2  | Follow-up turn invocation (context + prompt)         | ☑      | #1142 |
-| 1.3  | Follow-up visibility: timeline card + cancel         | ☑      | #1176 |
-| 1.4  | Configurable follow-up limits (workspace setting)    | ☐      |       |
-| 1.5  | Turn-purpose consolidation (invocation variants)     | ☑      | #1155 |
-| 1.6  | Follow-up admin tools (list/cancel/update)           | ☑      | #1159 |
-| 2.1  | Generalized session abort                            | ☑      | #1177 |
-| 2.2  | Stop/Redirect affordances on the activity card       | ☑      | #1190 |
-| 2.3  | Per-turn model resolution + first escalation rule    | ☑      | #1202 |
-| 3.1  | Persisted episode summaries                          | ☑      | #1162 |
-| 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
-| 3.3  | Conversation-anchored agent replies                  | ☑      | #1170 |
-| 4.1  | `stream_briefs` storage + endpoints + injection      | ☑      | #1214 |
-| 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
-| 4.3  | Brief UI: settings editor + timeline event           | ☐      |       |
-| 4.4  | Brief correction eval                                | ☐      |       |
-| 5.1  | `delegate_task` tool + delegation substrate + INV-64 | ☐      |       |
-| 5.2  | Delegation card UI                                   | ☐      |       |
-| 5.3  | Delegation public API (claim/status/complete)        | ☐      |       |
-| 5.4  | claude-code-remote delegation support                | ☐      |       |
-| 5.5  | `@threa/mcp` server                                  | ☐      |       |
-| 6.1  | Memo edit/archive endpoints + explorer UI            | ☐      |       |
-| 6.2  | `save_memo` tool                                     | ☐      |       |
-| 6.3  | Reflective capture at session completion             | ☐      |       |
-| 6.4  | `memoScope` (user/stream/workspace)                  | ☐      |       |
-| 6.5  | Retrieval feedback decay                             | ☐      |       |
-| 7.1  | Workspace persona CRUD API                           | ☐      |       |
-| 7.2  | Persona picker UI                                    | ☐      |       |
-| 8.1  | Ambient classifier on settled conversations          | ☐      |       |
-| 8.2  | "Ariadne noticed" card + budget + toggle             | ☐      |       |
-| 8.3  | Ambient precision eval                               | ☐      |       |
+| Step | Deliverable                                           | Status | PR    |
+| ---- | ----------------------------------------------------- | ------ | ----- |
+| 1.1  | `schedule_follow_up` tool + follow-up infra           | ☑      | #1138 |
+| 1.2  | Follow-up turn invocation (context + prompt)          | ☑      | #1142 |
+| 1.3  | Follow-up visibility: timeline card + cancel          | ☑      | #1176 |
+| 1.4  | Configurable follow-up limits (workspace setting)     | ☐      |       |
+| 1.5  | Turn-purpose consolidation (invocation variants)      | ☑      | #1155 |
+| 1.6  | Follow-up admin tools (list/cancel/update)            | ☑      | #1159 |
+| 2.1  | Generalized session abort                             | ☑      | #1177 |
+| 2.2  | Stop/Redirect affordances on the activity card        | ☑      | #1190 |
+| 2.3  | Per-turn model resolution + first escalation rule     | ☑      | #1202 |
+| 3.1  | Persisted episode summaries                           | ☑      | #1162 |
+| 3.2  | Per-thread session concurrency                        | ☑      | #1167 |
+| 3.3  | Conversation-anchored agent replies                   | ☑      | #1170 |
+| 4.1  | `stream_briefs` storage + endpoints + injection       | ☑      | #1214 |
+| 4.2  | `update_stream_brief` tool + timeline event           | ☐      |       |
+| 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
+| 4.4  | Brief correction eval                                 | ☐      |       |
+| 5.1  | `delegate_task` tool + delegation substrate + INV-64  | ☐      |       |
+| 5.2  | Delegation card UI                                    | ☐      |       |
+| 5.3  | Delegation public API (claim/status/complete)         | ☐      |       |
+| 5.4  | claude-code-remote delegation support                 | ☐      |       |
+| 5.5  | `@threa/mcp` server                                   | ☐      |       |
+| 6.1  | Memo edit/archive endpoints + explorer UI             | ☐      |       |
+| 6.2  | `save_memo` tool                                      | ☐      |       |
+| 6.3  | Reflective capture at session completion              | ☐      |       |
+| 6.4  | `memoScope` (user/stream/workspace)                   | ☐      |       |
+| 6.5  | Retrieval feedback decay                              | ☐      |       |
+| 7.1  | Workspace persona CRUD API                            | ☐      |       |
+| 7.2  | Persona picker UI                                     | ☐      |       |
+| 8.1  | Ambient classifier on settled conversations           | ☐      |       |
+| 8.2  | "Ariadne noticed" card + budget + toggle              | ☐      |       |
+| 8.3  | Ambient precision eval                                | ☐      |       |
 
 Suggested order: Phase 1 → 2 → 4 → 5, with 3/6/7 interleavable anytime and 8 strictly last (it depends on 1, 1.5, and 4). Pull **3.1 forward to right after Phase 1** — fired follow-up turns consume episode summaries (see 3.1), and until it lands the 1.2 prompt hint is compensating for their absence.
 
@@ -386,6 +386,16 @@ Tag's channel memory / Claude Code's CLAUDE.md: a persistent, human-auditable, c
 **Tests:** component tests for editor save/conflict and event rendering (INV-39: real components, observable behavior).
 
 **Done when:** a user can read, correct, and audit the brief entirely from the UI.
+
+**Deviations (shipped):**
+
+- **Shipped the settings editor; the timeline renderer moves to 4.2.** 4.3 landed ahead of 4.2 (in-app visibility was the priority), so the `stream:brief_updated` event it would render does not exist yet. Building a renderer for an event nothing emits is speculative (INV-36), so `brief-updated-event.tsx` + its `event-item.tsx` dispatch + deep-link ship in **4.2**, the step that introduces the event. 4.3's deliverable is the read/correct surface against 4.1's existing `GET/PUT` endpoints — a complete, observable user-facing surface on its own.
+- **Section lives inside the Companion tab, not a new tab.** `BriefSection` renders at the bottom of `companion-tab.tsx` ("AI instructions and behavior" — the brief _is_ standing AI instructions), matching the Shape's "adjacent to `companion-tab.tsx`". No new settings tab/registration. Hidden on E2E streams (the PUT rejects them — §4.1 `BRIEF_E2E_UNSUPPORTED`), so the editor never offers a write that 400s.
+- **Plain textarea + rendered-markdown view, not the rich editor.** The brief is markdown `TEXT` with no `content_json` twin (§4.1), so the editor is a `Textarea` (Shadcn, INV-14) and the view renders via `MarkdownContent` — unlike `description-section.tsx`, which round-trips ProseMirror JSON. If 4.3's editor ever goes rich-text, that's the §4.1 `content_json` follow-up.
+- **Conflict UX keeps the user's text.** A 409 refreshes the known row to the writer's version (cache write) and shows an inline amber banner (no toast, INV-63) while keeping the editor open with the in-progress draft — saving again overwrites at the fresh version, or "load their changes" seeds the editor from the other version. Nothing is lost silently.
+- **`STREAM_BRIEF_MAX_CHARS` moved to `@threa/types`** (from `brief-service.ts`) so the editor's char counter and the backend Zod cap share one source (INV-33); the service re-exports it so existing backend importers are untouched.
+- **Author attribution + full revision-history browser deferred.** The read view shows the current version's freshness (`Updated <relative>`); per-change authorship (who + reason + diff) is the 4.2 timeline event's job, and a revisions-list browser would need a new endpoint over `stream_brief_revisions` (not built speculatively, INV-36). "Audit" in v1 = the current version is visible and correctable; richer audit arrives with 4.2's event.
+- **New surfaces:** `api/stream-briefs.ts` (`streamBriefsApi` + `StreamBrief` wire type), `hooks/use-stream-brief.ts` (`useStreamBrief` query + `useUpdateStreamBrief` mutation, `streamKeys.brief`), `components/stream-settings/brief-section.tsx` (+ test). The brief is fetched on demand when settings open — it's not on the stream bootstrap envelope.
 
 ### 4.4 Brief correction eval
 

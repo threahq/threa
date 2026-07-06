@@ -30,6 +30,7 @@ export const streamKeys = {
   bootstrap: (workspaceId: string, streamId: string) =>
     [...streamKeys.all, "bootstrap", workspaceId, streamId] as const,
   events: (workspaceId: string, streamId: string) => [...streamKeys.all, "events", workspaceId, streamId] as const,
+  brief: (workspaceId: string, streamId: string) => [...streamKeys.all, "brief", workspaceId, streamId] as const,
 }
 
 export function useStreams(workspaceId: string, filters?: { type?: StreamType }) {

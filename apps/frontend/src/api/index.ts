@@ -60,3 +60,4 @@ export { e2eKeysApi, type E2eKeyResponse, type SetE2eKeyInput, type SetE2eKeyRes
 export { labelsApi, type CreateLabelInput, type UpdateLabelInput } from "./labels"
 export { draftsApi } from "./drafts"
 export { agentFollowUpsApi } from "./agent-follow-ups"
+export { streamBriefsApi, type StreamBrief } from "./stream-briefs"
