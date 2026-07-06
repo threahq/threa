@@ -60,9 +60,9 @@ export function CustomDurationPicker({
   }
 
   const handleUnitChange = (value: string) => {
-    const nextUnit = value as CustomDurationUnit
-    setUnit(nextUnit)
-    onDurationChange?.(parsedAmount, nextUnit)
+    if (value !== "minutes" && value !== "hours") return
+    setUnit(value)
+    onDurationChange?.(parsedAmount, value)
   }
 
   const submit = () => {

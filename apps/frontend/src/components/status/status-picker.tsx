@@ -63,8 +63,12 @@ function customDurationState(duration: StatusPreset["defaultDuration"]): { amoun
 }
 
 function customStatusDuration(amount: number, unit: CustomDurationUnit): StatusPreset["defaultDuration"] {
-  if (!Number.isFinite(amount) || amount <= 0) return null
-  return { kind: "duration", minutes: unit === "hours" ? amount * 60 : amount }
+  const minutes = unit === "hours" ? amount * 60 : amount
+  // Reject anything that can't produce a valid expiry (overflow/non-finite),
+  // mirroring the customDurationToDate guard the set-status path already uses —
+  // otherwise a huge hours value persists an unusable preset duration.
+  if (!Number.isFinite(minutes) || minutes <= 0 || !customDurationToDate(amount, unit)) return null
+  return { kind: "duration", minutes }
 }
 
 /** Human label for a preset's default duration, shown beside it in the list. */
