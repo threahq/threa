@@ -76,6 +76,7 @@ export type OutboxEventType =
   | "stream:description_set"
   | "stream:agent_follow_up_scheduled"
   | "stream:agent_follow_up_cancelled"
+  | "stream:brief_updated"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -127,6 +128,7 @@ export type StreamScopedEventType =
   | "stream:description_set"
   | "stream:agent_follow_up_scheduled"
   | "stream:agent_follow_up_cancelled"
+  | "stream:brief_updated"
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
@@ -298,6 +300,17 @@ export interface StreamAgentFollowUpScheduledOutboxPayload extends StreamScopedP
 }
 
 export interface StreamAgentFollowUpCancelledOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+/**
+ * Carries a `brief_updated` timeline event (roadmap 4.2) to the stream's room.
+ * Same envelope shape as the memos/description events: the full stream event
+ * rides along so clients append it without a fetch. Routed on the effective root
+ * stream — the brief keys on the root (threads inherit), so the row lands where
+ * the brief lives.
+ */
+export interface StreamBriefUpdatedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -902,6 +915,7 @@ export interface OutboxEventPayloadMap {
   "stream:description_set": StreamDescriptionSetOutboxPayload
   "stream:agent_follow_up_scheduled": StreamAgentFollowUpScheduledOutboxPayload
   "stream:agent_follow_up_cancelled": StreamAgentFollowUpCancelledOutboxPayload
+  "stream:brief_updated": StreamBriefUpdatedOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -1012,6 +1026,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:description_set",
   "stream:agent_follow_up_scheduled",
   "stream:agent_follow_up_cancelled",
+  "stream:brief_updated",
   "stream:activity",
   "conversation:created",
   "conversation:updated",

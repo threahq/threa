@@ -492,6 +492,7 @@ export type {
   AgentFollowUpScheduledEventPayload,
   AgentFollowUpCancelledEventPayload,
   DescriptionSetEventPayload,
+  BriefUpdatedEventPayload,
   // Workspaces
   CreateWorkspaceInput,
   WorkspaceBootstrap,

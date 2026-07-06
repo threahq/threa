@@ -90,3 +90,31 @@ export interface UpdateFollowUpToolDeps {
 }
 export interface FollowUpToolDeps
   extends ScheduleFollowUpToolDeps, ListFollowUpsToolDeps, CancelFollowUpToolDeps, UpdateFollowUpToolDeps {}
+
+/**
+ * Result of the `update_stream_brief` tool's callback (roadmap 4.2). On success
+ * it echoes the new `version`. `version_conflict` means a concurrent write (a
+ * member editing in settings mid-turn) moved the brief past the version the turn
+ * read at context time — the callback returns the fresh content + version so the
+ * tool can hand them to the model to re-apply on top (retry-once).
+ */
+export type UpdateStreamBriefToolResult =
+  | { ok: true; version: number }
+  | { ok: false; reason: "version_conflict"; currentContent: string | null; currentVersion: number }
+
+/**
+ * Callback for the `update_stream_brief` tool, bound to the running
+ * persona/stream by the caller (like `ReactionToolDeps`). The tool supplies the
+ * replacement `content`, the model's `reason`, and the `expectedVersion` it is
+ * writing against (seeded from the brief read at context time, advanced by the
+ * tool after each write so a retry writes at the fresh version). Workspace,
+ * effective-root stream, and persona identity are fixed at bind time. Absent
+ * when briefs aren't wired (some test harnesses), which disables the tool.
+ */
+export interface UpdateStreamBriefToolDeps {
+  updateBrief: (params: {
+    content: string
+    reason: string
+    expectedVersion: number
+  }) => Promise<UpdateStreamBriefToolResult>
+}

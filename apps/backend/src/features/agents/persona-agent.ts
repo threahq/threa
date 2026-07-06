@@ -13,7 +13,7 @@ import {
 } from "@threa/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
-import { StreamPoliciesRepository, StreamRepository } from "../streams"
+import { StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
@@ -192,6 +192,21 @@ export interface PersonaAgentDeps {
     workspaceId: string
     followUpId: string
   }) => Promise<{ note: string; scheduledFor: Date } | null>
+  /**
+   * Write the stream's durable brief (roadmap 4.2), bound to the
+   * `StreamBriefService` in server.ts. The turn supplies the effective-root
+   * stream, the persona identity, the model's reason, and the version it read at
+   * context time. Absent in harnesses that don't wire briefs, which disables the
+   * `update_stream_brief` tool.
+   */
+  updateBrief?: (params: {
+    workspaceId: string
+    streamId: string
+    personaId: string
+    content: string
+    reason: string
+    expectedVersion: number
+  }) => Promise<import("./tools/tool-deps").UpdateStreamBriefToolResult>
 }
 
 export interface PersonaAgentInput {
@@ -271,6 +286,7 @@ export class PersonaAgent {
       cancelFollowUp,
       updateFollowUp,
       loadFollowUp,
+      updateBrief,
     } = this.deps
     const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime } = input
     // Supersede-rerun payload, extracted once from the purpose (roadmap 1.5) and
@@ -699,6 +715,26 @@ export class PersonaAgent {
               }
             : undefined
 
+        // Brief maintenance for the update_stream_brief tool (roadmap 4.2), bound
+        // to this persona and the brief's effective root (threads inherit the
+        // root's brief — INV-62, same key the context read used). The version the
+        // tool writes against is the one read at context time (below), so a
+        // concurrent human edit surfaces as a conflict, not a silent clobber.
+        const briefStreamId = resolveBriefStreamId(stream)
+        const briefDeps: import("./tools/tool-deps").UpdateStreamBriefToolDeps | undefined = updateBrief
+          ? {
+              updateBrief: ({ content, reason, expectedVersion }) =>
+                updateBrief({
+                  workspaceId,
+                  streamId: briefStreamId,
+                  personaId: persona.id,
+                  content,
+                  reason,
+                  expectedVersion,
+                }),
+            }
+          : undefined
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -777,6 +813,8 @@ export class PersonaAgent {
             workspace: workspaceDeps,
             reactions: reactionDeps,
             followUps: followUpDeps,
+            brief: briefDeps,
+            briefVersion: agentContext.streamBrief?.version ?? 0,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(turnModel.model),

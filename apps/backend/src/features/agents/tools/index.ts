@@ -10,6 +10,8 @@ export {
   type CancelFollowUpToolResult,
   type UpdateFollowUpToolResult,
   type FollowUpSummary,
+  type UpdateStreamBriefToolDeps,
+  type UpdateStreamBriefToolResult,
 } from "./tool-deps"
 // Web + send tools live in @threa/agent-runtime (shared with the enclave).
 // Re-exported here so backend imports (`../tools`) keep working.
@@ -51,6 +53,7 @@ export { createScheduleFollowUpTool, type ScheduleFollowUpInput } from "./schedu
 export { createListFollowUpsTool, type ListFollowUpsInput } from "./list-follow-ups-tool"
 export { createCancelFollowUpTool, type CancelFollowUpInput } from "./cancel-follow-up-tool"
 export { createUpdateFollowUpTool, type UpdateFollowUpInput } from "./update-follow-up-tool"
+export { createUpdateStreamBriefTool, type UpdateStreamBriefInput } from "./update-stream-brief-tool"
 export {
   createWorkspaceResearchTool,
   WORKSPACE_RESEARCH_TOOL_NAME,

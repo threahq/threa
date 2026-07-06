@@ -47,7 +47,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 3.2  | Per-thread session concurrency                        | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                   | ☑      | #1170 |
 | 4.1  | `stream_briefs` storage + endpoints + injection       | ☑      | #1214 |
-| 4.2  | `update_stream_brief` tool + timeline event           | ☐      |       |
+| 4.2  | `update_stream_brief` tool + timeline event           | ☑      | #TBD  |
 | 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
 | 4.4  | Brief correction eval                                 | ☐      |       |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-64  | ☐      |       |
@@ -374,6 +374,15 @@ Tag's channel memory / Claude Code's CLAUDE.md: a persistent, human-auditable, c
 **Tests:** tool happy path + version-conflict retry; event presence in txn.
 
 **Done when:** "actually, we decided X" leads to a brief update visible as a timeline row, and the next turn's prompt carries the new content.
+
+**Deviations (shipped):**
+
+- **One append site — the event fires for member edits AND persona writes.** The `brief_updated` timeline row is appended inside `StreamBriefService.update` (the 4.1 write path both the settings PUT and the tool go through), not only on the tool path — so a member correcting the brief in settings is just as visible as a persona write (INV-35 one append site, INV-7 same-txn atomicity, "never silent" for members too). This is where 4.3's deferred author attribution lands: the row carries `actorId`/`actorType` for user edits as well. `UpdateBriefParams` gained an optional `reason` (the persona tool supplies it; member edits leave it `null`).
+- **Event/wire split follows the `description_set` precedent.** `EventType` is `brief_updated` (added to `TIMELINE_BROADCAST_EVENT_TYPES` and to `STREAM_ROW_SPEC` as `CHROME_BROADCAST` — a broadcast timeline row, never a board/topic row, so it consumes a dense broadcast slot per INV-61); the outbox/wire type is `stream:brief_updated`, routed via the generic `isStreamScopedEvent` path (`STREAM_SCOPED_EVENTS`, no bespoke dispatcher entry), and the frontend `stream-sync.ts` subscribes it to `handleAppendEvent` like the memos/description/follow-up rows.
+- **Payload is `{ briefId, version, reason }` — no content/diff snapshot.** The row names who (event actor), the resulting `version` (`=== 1` renders "created" vs "updated"), and the persona's `reason`. The "short diff summary" (before/after) is **deferred with the revision-history browser** (needs the `stream_brief_revisions` list endpoint 4.3 also deferred, INV-36); the current text is one fetch away via the brief endpoint and the row deep-links to it, so no 4k-char content is snapshotted onto every event.
+- **Optimistic concurrency: the tool tracks a per-turn `knownVersion`.** It's seeded from the brief version read at context time (exposed on `AgentContext.streamBrief`, threaded to `buildToolSet` as `briefVersion`), advanced after each write and on conflict. A concurrent member edit yields a `version_conflict` carrying the current content + fresh version; the tool surfaces that to the model (with the fresh version already armed) so its retry re-applies on top instead of clobbering an edit it never saw. "Retry once" = the model re-calling `update_stream_brief` after the conflict result.
+- **Deep-link opens the Companion tab** (where 4.3's `BriefSection` lives) via `openStreamSettings(streamId, "companion")` — a settings-overlay action, so a button not a link (INV-40). No per-section anchor exists yet; the brief sits at the bottom of that tab.
+- **Wired plaintext-only.** `server.ts` binds `updateBrief` to `StreamBriefService`; the tool rides the always-allowed `messaging` privacy class (in-product self-administration, bounded by the 4k cap + stream membership, not a privacy grant). Enclave/E2E parity omitted, consistent with `schedule_follow_up` — the enclave turn path never binds `updateBrief`, so the tool is simply absent there.
 
 ### 4.3 Brief UI: settings editor + timeline event renderer
 
