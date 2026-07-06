@@ -26,7 +26,7 @@ interface CustomDurationPickerProps {
   initialAmount?: number
   initialUnit?: CustomDurationUnit
   onDurationChange?: (amount: number, unit: CustomDurationUnit) => void
-  preview?: false | ((date: Date) => ReactNode)
+  preview?: (date: Date) => ReactNode
 }
 
 export function CustomDurationPicker({
@@ -49,7 +49,7 @@ export function CustomDurationPicker({
   const validDuration = previewDate !== null
   const canSubmit = !disabled && validDuration
   let previewContent: ReactNode = null
-  if (previewDate && preview !== false) {
+  if (previewDate) {
     previewContent = preview ? preview(previewDate) : formatFutureTime(previewDate, new Date())
   }
 
@@ -103,8 +103,11 @@ export function CustomDurationPicker({
           {submitLabel}
         </Button>
       )}
-      {previewContent && <span className="text-xs text-muted-foreground">{previewContent}</span>}
-      {!validDuration && <span className="text-xs text-destructive">Enter a positive duration</span>}
+      {/* Own full-width line (basis-full) so the message swapping preview<->error
+          as the user types never reflows the control row above it (INV-21). */}
+      <span className={cn("basis-full text-xs", validDuration ? "text-muted-foreground" : "text-destructive")}>
+        {validDuration ? previewContent : "Enter a positive duration"}
+      </span>
     </div>
   )
 }

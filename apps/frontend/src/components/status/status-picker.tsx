@@ -372,14 +372,13 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
                 onSubmit={() => {
                   void handleSet()
                 }}
+                showSubmit={false}
                 disabled={busy}
-                submitLabel="Set status"
                 initialAmount={customDurationAmount}
                 initialUnit={customDurationUnit}
                 onDurationChange={handleCustomDurationChange}
                 className="px-0"
                 controlClassName="h-11"
-                buttonClassName="h-11"
               />
             )}
             {durationId === CUSTOM_OPTION_ID && (

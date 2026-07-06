@@ -446,6 +446,8 @@ function PickingMode({
             onSubmit={onDurationSubmit}
             submitLabel="Schedule"
             preview={(date) => formatFutureTime(date, new Date(), { timezone })}
+            controlClassName="h-11"
+            buttonClassName="h-11"
           />
           <button
             type="button"
