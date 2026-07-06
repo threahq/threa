@@ -71,6 +71,8 @@ interface Spies {
 function setup(options: {
   conversations: Record<string, Conversation>
   primaries: Record<string, string>
+  /** Membership returned by the authoritative (2nd) read, if it differs (a race). */
+  authoritativePrimaries?: Record<string, string>
   existingTargetId?: string
 }): Spies {
   const fakeClient = { query: mock(async () => ({ rows: [] })) } as unknown as PoolClient
@@ -82,11 +84,21 @@ function setup(options: {
   spyOn(ConversationRepository, "findByIdForUpdate").mockImplementation(
     async (_c: unknown, _ws: string, id: string) => options.conversations[id] ?? null
   )
+  // Two calls happen: an unlocked peek, then the authoritative re-read once
+  // messages are pinned. `authoritativePrimaries`, when set, models a race by
+  // returning different membership on the second (authoritative) call.
+  let primariesCall = 0
   spyOn(ConversationRepository, "findPrimariesByMessageIds").mockImplementation(async (_c, _ws, ids: string[]) => {
+    primariesCall++
+    const table =
+      options.authoritativePrimaries && primariesCall >= 2 ? options.authoritativePrimaries : options.primaries
     const map = new Map<string, Conversation>()
     for (const id of ids) {
-      const convId = options.primaries[id]
+      const convId = table[id]
+      // A conversation the peek never saw isn't in `conversations`, so it's never
+      // locked — exactly the "raced into an un-pre-locked conversation" case.
       if (convId && options.conversations[convId]) map.set(id, options.conversations[convId])
+      else if (convId) map.set(id, makeConversation({ id: convId, streamId: "chan_1" }))
     }
     return map
   })
@@ -280,6 +292,25 @@ describe("ConversationService.reassignMessagesToConversation", () => {
     expect(spies.removePrimaryMessages).not.toHaveBeenCalled()
     expect(spies.outboxInsert).not.toHaveBeenCalled()
     expect(result.sourceConversations).toEqual([])
+  })
+
+  test("mints no orphan conversation when a new-target selection all races away", async () => {
+    // Peek sees m2 in conv_a; by the authoritative re-read a concurrent op has
+    // moved it into conv_raced, which was never peeked (so never locked).
+    const spies = setup({
+      conversations: { conv_a: makeConversation() },
+      primaries: { m2: "conv_a" },
+      authoritativePrimaries: { m2: "conv_raced" },
+    })
+
+    await expect(reassign(["m2"], { kind: "new" })).rejects.toMatchObject({
+      code: "NO_MESSAGES_TO_MOVE",
+      status: 409,
+    })
+    // The mint is deferred past the no-op check, so nothing was inserted.
+    expect(spies.insert).not.toHaveBeenCalled()
+    expect(spies.addPrimaryMessages).not.toHaveBeenCalled()
+    expect(spies.outboxInsert).not.toHaveBeenCalled()
   })
 
   test("rejects a selection with a message from another stream (400)", async () => {

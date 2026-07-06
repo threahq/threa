@@ -760,10 +760,15 @@ export class ConversationService {
    * that could still cycle) — a message whose primary raced into an un-pre-locked
    * conversation is simply left where it is. Holding each source lock lets its
    * `participant_ids` be recomputed without a concurrent extraction clobbering the
-   * array. All member/feedback writes and the outbox events commit in one
-   * transaction (INV-6/7), delivered via the outbox (INV-4). A minted destination
-   * follows the fresh-mint precedent (no `topicSummary` — the extractor fills it),
-   * never copying a source title.
+   * array. (This total order is deadlock-free against itself and against
+   * {@link splitThreadIntoConversation}, also conversation-first. The singular
+   * {@link reassignMessage} takes locks the other way — message row first, then the
+   * conversation rows via its UPDATEs — the same pre-existing cross-order those two
+   * already have; a rare cross-path cycle there is transient, since `withTransaction`
+   * retries 40P01 with backoff.) All member/feedback writes and the outbox events
+   * commit in one transaction (INV-6/7), delivered via the outbox (INV-4). A minted
+   * destination follows the fresh-mint precedent (no `topicSummary` — the extractor
+   * fills it), never copying a source title.
    */
   async reassignMessagesToConversation(params: ReassignMessagesParams): Promise<ReassignMessagesResult> {
     const { workspaceId, streamId, messageIds, target, actorUserId } = params
@@ -831,7 +836,39 @@ export class ConversationService {
       }
       const orderedIds = lockedMessages.map((m) => m.id)
 
-      // Request validated — mint the destination now (no orphan on an early throw).
+      // Authoritative grouping, stable now the message rows are pinned. NO further
+      // conversation lock is taken here — a message already primary in the (existing)
+      // dest is a no-op, and one whose primary raced into a conversation we didn't
+      // pre-lock is left where it is (locking it now would be a conv lock after a
+      // message lock, the one ordering that could still cycle). Nothing is ever
+      // already primary in a not-yet-minted destination, so the "already there"
+      // exclusion only applies to an existing target.
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, orderedIds)
+      const existingDestId = destination?.id ?? null
+      const moveIds = orderedIds.filter((id) => {
+        const currentId = primaries.get(id)?.id
+        if (existingDestId !== null && currentId === existingDestId) return false
+        return currentId == null || sourceRows.has(currentId)
+      })
+      if (moveIds.length === 0) {
+        if (destination) {
+          // Existing target: a legitimate no-op (everything already lives there).
+          const fresh = await ConversationRepository.findById(client, destination.id)
+          if (!fresh) throw new Error(`Conversation ${destination.id} disappeared during reassignment`)
+          return { conversation: addStalenessFields(fresh), sourceConversations: [] }
+        }
+        // New target with nothing left to move — every selected message was
+        // reassigned out from under us between the peek and the lock. The mint is
+        // deferred to exactly here, so we never created an orphan empty conversation
+        // (INV-57-adjacent: no dangling row); surface a conflict instead.
+        throw new HttpError("The selected messages are no longer available to move", {
+          status: 409,
+          code: "NO_MESSAGES_TO_MOVE",
+        })
+      }
+
+      // Something to move — mint the destination now for a new target (deferred to
+      // here so an all-raced-away selection above leaves no orphan row).
       if (!destination) {
         destination = await ConversationRepository.insert(client, {
           id: generateConversationId(),
@@ -843,23 +880,6 @@ export class ConversationService {
       }
       // Non-null past the mint; bind it so the closures below keep the narrowing.
       const dest = destination
-
-      // Authoritative grouping, stable now the message rows are pinned. NO further
-      // conversation lock is taken here — a message already primary in the dest is a
-      // no-op, and one whose primary raced into a conversation we didn't pre-lock is
-      // left where it is (locking it now would be a conv lock after a message lock,
-      // the one ordering that could still cycle).
-      const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, orderedIds)
-      const moveIds = orderedIds.filter((id) => {
-        const currentId = primaries.get(id)?.id
-        if (currentId === dest.id) return false
-        return currentId == null || sourceRows.has(currentId)
-      })
-      if (moveIds.length === 0) {
-        const fresh = await ConversationRepository.findById(client, dest.id)
-        if (!fresh) throw new Error(`Conversation ${dest.id} disappeared during reassignment`)
-        return { conversation: addStalenessFields(fresh), sourceConversations: [] }
-      }
 
       // Group the move set by its current source (a selection can span more than
       // one). Ids with no primary yet (extraction hasn't assigned them) carry no
