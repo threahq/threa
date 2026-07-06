@@ -185,11 +185,15 @@ export function ConversationOverlayRow({
   overlay,
   annotation,
   messageId,
+  selectionActive = false,
   children,
 }: {
   overlay: ConversationOverlayContext
   annotation: ConversationRowAnnotation
   messageId: string
+  /** While a split selection is active the row is a selection toggle; the
+   *  single-message correction swatch is hidden so it can't intercept the tap. */
+  selectionActive?: boolean
   children: ReactNode
 }) {
   const { model, focusedConversationId, onReassignMessage, pendingMessageIds, observeRow } = overlay
@@ -257,6 +261,7 @@ export function ConversationOverlayRow({
             <span className="truncate">{conversation.topicSummary || "Untitled conversation"}</span>
           </span>
         )}
+        {!selectionActive && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -312,6 +317,7 @@ export function ConversationOverlayRow({
             })}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
       </div>
     </div>
   )

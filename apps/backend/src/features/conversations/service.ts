@@ -749,18 +749,21 @@ export class ConversationService {
    * — no message events move, so broadcast sequences and INV-61 contiguity are
    * untouched (the messages stay in their stream).
    *
-   * Concurrency (INV-20): conversation rows are locked BEFORE the message rows —
-   * the same order {@link splitThreadIntoConversation} uses — so two corrections
-   * racing the same conversation + messages can't form a lock cycle (no deadlock).
-   * The lock set is chosen from an unlocked peek at current membership, then the
-   * grouping is re-read authoritatively once the message rows are pinned; a source
-   * a message raced into between the two is late-locked (the messages are already
-   * held, so that can't loop). Holding each source lock lets its `participant_ids`
-   * be recomputed without a concurrent extraction clobbering the array. All
-   * member/feedback writes and the outbox events commit in one transaction
-   * (INV-6/7), delivered via the outbox (INV-4). A minted destination follows the
-   * fresh-mint precedent (no `topicSummary` — the extractor fills it), never
-   * copying a source title.
+   * Concurrency (INV-20): conversation rows are locked BEFORE the message rows,
+   * and EVERY one of them — an existing destination and all sources — in a single
+   * globally sorted order, so no two callers can take the same pair of rows in
+   * opposite orders (the AB-BA cycle a "destination first, then sources" order
+   * would allow when two calls target each other's conversations). The lock set is
+   * chosen from an unlocked peek at current membership; the grouping is re-read
+   * authoritatively once the messages are pinned, and no further conversation lock
+   * is ever taken after that (a conv lock after a message lock is the one ordering
+   * that could still cycle) — a message whose primary raced into an un-pre-locked
+   * conversation is simply left where it is. Holding each source lock lets its
+   * `participant_ids` be recomputed without a concurrent extraction clobbering the
+   * array. All member/feedback writes and the outbox events commit in one
+   * transaction (INV-6/7), delivered via the outbox (INV-4). A minted destination
+   * follows the fresh-mint precedent (no `topicSummary` — the extractor fills it),
+   * never copying a source title.
    */
   async reassignMessagesToConversation(params: ReassignMessagesParams): Promise<ReassignMessagesResult> {
     const { workspaceId, streamId, messageIds, target, actorUserId } = params
@@ -768,20 +771,29 @@ export class ConversationService {
     return withTransaction(this.pool, async (client) => {
       const uniqueIds = [...new Set(messageIds)]
 
-      // Conversation-before-message lock ordering (see the method doc). Sources
-      // are locked idempotently and in a deterministic order; `lockSource` skips
-      // the destination and anything already held.
-      const sourceRows = new Map<string, Conversation>()
-
-      // Unlocked peek: chooses the source lock set only. The authoritative
+      // Unlocked peek: chooses the conversation lock set only. The authoritative
       // grouping is re-read below once the messages are pinned.
       const preReadPrimaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, uniqueIds)
 
-      // Lock the destination first: an existing target is locked now; a mint is
-      // deferred until after message validation so a bad request leaves no orphan.
+      // Lock the destination + every source in ONE globally sorted order (see the
+      // method doc) — the destination is not special-cased first, so two calls
+      // targeting each other's conversations can't deadlock.
+      const existingDestinationId = target.kind === "existing" ? target.conversationId : null
+      const lockOrder = [
+        ...new Set([
+          ...(existingDestinationId ? [existingDestinationId] : []),
+          ...[...preReadPrimaries.values()].map((c) => c.id),
+        ]),
+      ].sort()
+      const lockedConversations = new Map<string, Conversation>()
+      for (const id of lockOrder) {
+        const row = await ConversationRepository.findByIdForUpdate(client, workspaceId, id)
+        if (row) lockedConversations.set(id, row)
+      }
+
       let destination: Conversation | null = null
-      if (target.kind === "existing") {
-        const existing = await ConversationRepository.findByIdForUpdate(client, workspaceId, target.conversationId)
+      if (existingDestinationId) {
+        const existing = lockedConversations.get(existingDestinationId)
         if (!existing) {
           throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
         }
@@ -794,13 +806,10 @@ export class ConversationService {
         destination = existing
       }
 
-      const lockSource = async (id: string) => {
-        if (id === destination?.id || sourceRows.has(id)) return
-        const row = await ConversationRepository.findByIdForUpdate(client, workspaceId, id)
-        if (row) sourceRows.set(id, row)
-      }
-      for (const id of [...new Set([...preReadPrimaries.values()].map((c) => c.id))].sort()) {
-        await lockSource(id)
+      // Sources = every locked conversation that isn't the destination.
+      const sourceRows = new Map<string, Conversation>()
+      for (const [id, row] of lockedConversations) {
+        if (id !== destination?.id) sourceRows.set(id, row)
       }
 
       // Now lock the moving rows; `findByIdsForUpdate` returns them in `sequence`
@@ -835,21 +844,20 @@ export class ConversationService {
       // Non-null past the mint; bind it so the closures below keep the narrowing.
       const dest = destination
 
-      // Authoritative grouping, stable now the message rows are pinned. A source a
-      // message raced into after the peek is late-locked here — the messages are
-      // already held, so this can't loop.
+      // Authoritative grouping, stable now the message rows are pinned. NO further
+      // conversation lock is taken here — a message already primary in the dest is a
+      // no-op, and one whose primary raced into a conversation we didn't pre-lock is
+      // left where it is (locking it now would be a conv lock after a message lock,
+      // the one ordering that could still cycle).
       const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, orderedIds)
-      for (const id of orderedIds) {
-        const sourceId = primaries.get(id)?.id
-        if (sourceId) await lockSource(sourceId)
-      }
-
-      // Skip messages already primary in the destination (a no-op reassign — e.g.
-      // re-running the same split).
-      const moveIds = orderedIds.filter((id) => primaries.get(id)?.id !== dest.id)
+      const moveIds = orderedIds.filter((id) => {
+        const currentId = primaries.get(id)?.id
+        if (currentId === dest.id) return false
+        return currentId == null || sourceRows.has(currentId)
+      })
       if (moveIds.length === 0) {
         const fresh = await ConversationRepository.findById(client, dest.id)
-        if (!fresh) throw new Error(`Conversation ${destination.id} disappeared during reassignment`)
+        if (!fresh) throw new Error(`Conversation ${dest.id} disappeared during reassignment`)
         return { conversation: addStalenessFields(fresh), sourceConversations: [] }
       }
 

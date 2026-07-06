@@ -528,9 +528,11 @@ export function StreamContent({
   // correction swatch) — batch turns every row into a selection toggle, and the
   // overlay's swatch would compete for the same clicks. Split-conversation batch
   // mode KEEPS the overlay on: the coloring is what tells the user which topic
-  // each message currently belongs to while they pick what to move (the row is
-  // `inert` in batch mode, so the swatch can't compete anyway). The URL param is
-  // kept, so the overlay returns when move-to-thread batch mode ends.
+  // each message currently belongs to while they pick what to move. The overlay
+  // row hides its own correction swatch while a selection is active (the swatch
+  // renders outside the row's `inert` slot, so it needs its own gate — see
+  // `ConversationOverlayRow.selectionActive`). The URL param is kept, so the
+  // overlay returns when move-to-thread batch mode ends.
   const activeConversationOverlay = batchMode && batchIntent === "moveToThread" ? undefined : conversationOverlay
   const parentStreamId = stream?.parentStreamId
   const parentMessageId = stream?.parentMessageId
