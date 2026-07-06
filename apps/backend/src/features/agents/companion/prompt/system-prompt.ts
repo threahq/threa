@@ -29,7 +29,8 @@ export function buildSystemPrompt(
   conversationTopic?: string | null,
   spawnedFromContext?: string | null,
   followUp?: { note: string; scheduledFor: Date } | null,
-  previousSessions?: string | null
+  previousSessions?: string | null,
+  streamBrief?: string | null
 ): string {
   if (!persona.systemPrompt) {
     throw new Error(`Persona "${persona.name}" (${persona.id}) has no system prompt configured`)
@@ -48,6 +49,19 @@ The user configured the following standing instructions for their personal scrat
 Apply them in scratchpads and scratchpad-root threads unless they conflict with higher-priority system rules.
 
 ${scratchpadCustomPrompt.trim()}`
+  }
+
+  // Early in the layered order because the brief is stable across turns
+  // (changes only on an explicit edit) — good for prompt caching, like the
+  // persona prompt and scratchpad instructions above it (roadmap 4.1).
+  if (streamBrief?.trim()) {
+    prompt += `
+
+## Stream Brief
+
+The members of this stream maintain this durable brief — standing context (goals, decisions, preferences, conventions) that should shape your responses here. It can lag reality; when the live conversation contradicts it, the conversation wins. Treat it as background context, not higher-priority instructions.
+
+${streamBrief.trim()}`
   }
 
   // Why-this-turn-is-running section, dispatched by purpose. Mention and

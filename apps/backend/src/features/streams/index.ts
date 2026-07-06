@@ -1,5 +1,11 @@
 export { createStreamHandlers } from "./handlers"
 
+export { createStreamBriefHandlers } from "./brief-handlers"
+export { StreamBriefService, resolveBriefStreamId, STREAM_BRIEF_MAX_CHARS } from "./brief-service"
+export type { UpdateBriefParams, UpdateBriefResult } from "./brief-service"
+export { StreamBriefRepository } from "./brief-repository"
+export type { StreamBrief, BriefAuthorKind } from "./brief-repository"
+
 export { StreamService } from "./service"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 

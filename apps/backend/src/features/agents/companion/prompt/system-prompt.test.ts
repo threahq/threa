@@ -311,4 +311,46 @@ describe("buildSystemPrompt", () => {
       "ground your search and answer against the Current Time section; do not mix stale search results"
     )
   })
+
+  test("injects the Stream Brief early — before the stream context — when the stream carries one (roadmap 4.1)", () => {
+    const prompt = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      undefined,
+      null,
+      "- Goal: ship the CSV export by Friday\n- Prefer Bun over Node"
+    )
+
+    expect(prompt).toContain("## Stream Brief")
+    expect(prompt).toContain("- Goal: ship the CSV export by Friday")
+    expect(prompt.indexOf("## Stream Brief")).toBeLessThan(prompt.indexOf("## Context"))
+  })
+
+  test("omits the Stream Brief section when the stream has no brief (or a blank one)", () => {
+    const absent = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
+    const blank = buildSystemPrompt(
+      persona,
+      scratchpadContext,
+      null,
+      undefined,
+      undefined,
+      null,
+      [],
+      null,
+      null,
+      undefined,
+      null,
+      "   "
+    )
+
+    expect(absent).not.toContain("## Stream Brief")
+    expect(blank).not.toContain("## Stream Brief")
+  })
 })

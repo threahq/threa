@@ -15,7 +15,7 @@ import { createAuthHandlers } from "./auth/handlers"
 import { createWorkspaceHandlers, WorkspaceRepository } from "./features/workspaces"
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
 import type { ControlPlaneClient } from "./lib/control-plane-client"
-import { createStreamHandlers } from "./features/streams"
+import { createStreamHandlers, createStreamBriefHandlers, StreamBriefService } from "./features/streams"
 import { createMessageHandlers } from "./features/messaging"
 import { createAttachmentHandlers } from "./features/attachments"
 import { createSearchHandlers } from "./features/search"
@@ -254,6 +254,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workosOrgService,
     pool,
   })
+  const streamBriefService = new StreamBriefService({ pool })
+  const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })
   const stream = createStreamHandlers({
     pool,
     streamService,
@@ -438,6 +440,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.get)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.update)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/bootstrap", ...authed, stream.bootstrap)
+  app.get("/api/workspaces/:workspaceId/streams/:streamId/brief", ...authed, streamBrief.get)
+  app.put("/api/workspaces/:workspaceId/streams/:streamId/brief", ...authed, streamBrief.put)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId/companion", ...authed, stream.updateCompanionMode)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId/tool-policy", ...authed, stream.updateToolPolicy)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/notification-level", ...authed, stream.setNotificationLevel)

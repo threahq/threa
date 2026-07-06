@@ -46,7 +46,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 3.1  | Persisted episode summaries                          | ☑      | #1162 |
 | 3.2  | Per-thread session concurrency                       | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                  | ☑      | #1170 |
-| 4.1  | `stream_briefs` storage + endpoints + injection      | ☐      |       |
+| 4.1  | `stream_briefs` storage + endpoints + injection      | ☑      | #1214 |
 | 4.2  | `update_stream_brief` tool + timeline event          | ☐      |       |
 | 4.3  | Brief UI: settings editor + timeline event           | ☐      |       |
 | 4.4  | Brief correction eval                                | ☐      |       |
@@ -351,6 +351,13 @@ Tag's channel memory / Claude Code's CLAUDE.md: a persistent, human-auditable, c
 **Tests:** version-conflict rejection; access gating (non-member 403; thread inherits root access per INV-62); size cap; prompt assembly includes the brief; thread turn carries the root's brief.
 
 **Done when:** a brief PUT via API observably changes the next companion turn's behavior in that stream.
+
+**Deviations (shipped):**
+
+- **The brief keys on the effective root for writes too, not just reads.** GET and PUT on a thread both resolve `rootStreamId ?? id` (`resolveBriefStreamId`, exported from the streams barrel) before touching the row, so a thread PUT edits the root's brief rather than 404ing or forking a thread-local one — "threads inherit" with a single row per root. PUT membership is likewise checked against the effective root.
+- **Access-denial codes follow the codebase convention, not the step's test list:** a caller who can't see the stream gets 404 (`STREAM_NOT_FOUND`, hiding existence — same as the follow-up cancel endpoint), not 403; 403 (`BRIEF_MEMBERSHIP_REQUIRED`) is reserved for the reader-but-not-member PUT on a public stream.
+- **Wire shape:** PUT body is `{ content, version }` where `version` is what the client read (`0` = creating); the 409 carries the fresh row in `details.current` so the client (and the 4.2 tool) can merge and retry. Create-vs-create races collapse into the same conflict outcome via `INSERT … ON CONFLICT (stream_id) DO NOTHING` (INV-20 single-statement, no advisory lock needed).
+- **E2E streams have no briefs in v1.** `buildEnclaveSystemPrompt` is untouched AND the PUT rejects `e2eEnabled` streams (400 `BRIEF_E2E_UNSUPPORTED`) — a sealed stream's brief would be server-stored plaintext the enclave prompt never injects, i.e. a silent no-op attached to an encrypted surface (caught in pre-PR review). Consistent with E2E parity being deferred across this roadmap (follow-ups, delegations); revisit with the sealed wire. The brief content column is markdown TEXT only (no `content_json` twin) — fine for a prompt insert consumed verbatim, but if the 4.3 editor goes rich-text it will want a `content_json` column like stream descriptions have (append-only migration, cheap).
 
 ### 4.2 `update_stream_brief` tool + timeline event
 
