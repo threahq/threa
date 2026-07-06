@@ -922,6 +922,12 @@ export function StreamContent({
   // conversation (`targetConversationId`) or a new one (null). Membership-only —
   // no confirm dialog, unlike move-to-thread, since it's reversible by moving the
   // messages back. Exits batch mode on success; the overlay recolors from cache.
+  //
+  // `streamId`, not `rootStreamId`: split is only reachable while the conversation
+  // overlay is active, which is CHANNEL/DM-only (`supportsConversationOverlay`) —
+  // never a thread — so `streamId` here IS the conversation root, matches the
+  // overlay's `useConversations` cache key, and is the stream the selected rows
+  // actually live in (the backend requires `message.streamId === streamId`).
   const reassignMessages = useReassignMessagesToConversation(workspaceId, streamId)
   const [isSplitting, setIsSplitting] = useState(false)
   const runSplit = useCallback(
