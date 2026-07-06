@@ -1488,6 +1488,133 @@ Any ideas what's causing this?`,
     },
   },
 
+  // ── Entity-magnet resistance ─────────────────────────────────────────────
+  // The reported prod failure: several distinct conversations that all mention
+  // the model "Fable" (peripherally) collapsed into one conversation titled
+  // "Fable". A shared named entity is a subject, not a topic — a different
+  // question about the same name is a new conversation, and a fresh topic about
+  // a recurring name must be titled by its aspect, not the bare name.
+
+  {
+    id: "entity-magnet-distinct-aspect-001",
+    name: "Entity magnet: a different question about the same model opens a new conversation",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown: "Btw, hur bra är Fable på svenska egentligen? Funderar på att köra den för kundmejlen",
+      },
+      activeConversations: [
+        {
+          id: "conv_fable_pris",
+          topicSummary: "Fable-priser",
+          summary:
+            "Jämför Fable:s token-priser mot GPT för batch-jobb; output billigare, input dyrare. Öppen fråga exakt hur mycket dyrare input är.",
+          messageCount: 9,
+          lastMessagePreview: "ja input-priset är det enda som skaver",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 3,
+          contextMessageIds: ["msg_fpris_001", "msg_fpris_002"],
+        },
+      ],
+      recentMessages: [
+        {
+          id: "msg_fpris_001",
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "output-priset är typ halva GPT:s iallafall",
+          minutesAgo: 5,
+        },
+        {
+          id: "msg_fpris_002",
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "ja input-priset är det enda som skaver",
+          minutesAgo: 3,
+        },
+      ],
+      streamType: "dm",
+      category: "merge-resistance",
+    },
+    expectedOutput: {
+      // Same entity (Fable), different aspect (Swedish quality for support email)
+      // → a new conversation, and no collateral merge of the pricing thread.
+      expectNewConversation: true,
+      topicContains: ["svenska", "kundmejl", "kvalitet", "ton"],
+      expectNoReassignments: true,
+      minConfidence: 0.5,
+    },
+  },
+
+  {
+    id: "entity-magnet-name-aspect-001",
+    name: "Entity magnet: fresh topic about a recurring model is named by its aspect, not the bare name",
+    input: {
+      newMessage: {
+        authorId: "user_kris",
+        authorType: "user",
+        contentMarkdown:
+          "Fable verkar ha extremt lång kontext nu, typ 2M tokens. Undrar hur bra recall den har på riktigt",
+      },
+      activeConversations: [],
+      streamType: "dm",
+      category: "new-topic",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      // Title must carry the aspect (context/recall), not just "Fable".
+      topicContains: ["kontext", "context", "recall", "token"],
+      minConfidence: 0.6,
+    },
+  },
+
+  {
+    id: "entity-magnet-same-aspect-continues-001",
+    name: "Entity continuity: a message advancing the same aspect stays in the conversation",
+    input: {
+      newMessage: {
+        authorId: "user_pierre",
+        authorType: "user",
+        contentMarkdown: "kollade nyss, input ligger på 3x GPT faktiskt, inte 2x",
+      },
+      activeConversations: [
+        {
+          id: "conv_fable_pris",
+          topicSummary: "Fable-priser",
+          summary:
+            "Jämför Fable:s token-priser mot GPT för batch-jobb; output billigare, input dyrare — exakt hur mycket dyrare är en öppen fråga.",
+          messageCount: 9,
+          lastMessagePreview: "input-priset är det enda som skaver",
+          participantIds: ["user_kris", "user_pierre"],
+          completenessScore: 5,
+          lastActivityMinutesAgo: 2,
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_kris",
+          authorType: "user",
+          contentMarkdown: "output-priset är typ halva GPT:s",
+          minutesAgo: 4,
+        },
+        {
+          authorId: "user_pierre",
+          authorType: "user",
+          contentMarkdown: "input-priset är det enda som skaver",
+          minutesAgo: 2,
+        },
+      ],
+      streamType: "dm",
+      category: "continue-existing",
+    },
+    expectedOutput: {
+      // Directly advances the same open pricing question → continues, no split.
+      expectConversationId: "conv_fable_pris",
+      minConfidence: 0.6,
+    },
+  },
+
   {
     id: "resolution-settled-plan-sv-001",
     name: "Resolution: agreed plan marks the conversation settled (Swedish)",
