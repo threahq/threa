@@ -1213,7 +1213,15 @@ function SentMessageEvent({
       // and on archived streams to match the stream-header menu's gating.
       onMoveToThread:
         !batch?.enabled && !isThreadParentProp && !currentStream?.archivedAt
-          ? () => dispatchStartBatchSelect(streamId, payload.messageId)
+          ? () => dispatchStartBatchSelect(streamId, "moveToThread", payload.messageId)
+          : undefined,
+      // Multi-select entry into the conversation-split flow: reassign several
+      // messages' conversation membership at once. Only meaningful with the
+      // overlay on (it needs the conversation list to pick a target) and hidden
+      // during batch mode itself.
+      onSplitConversation:
+        conversationOverlayRow && !batch?.enabled && !currentStream?.archivedAt
+          ? () => dispatchStartBatchSelect(streamId, "splitConversation", payload.messageId)
           : undefined,
       // Destination-side discovery for moved messages. The drawer only
       // renders once the tombstone hydrates from IDB, so gate the menu

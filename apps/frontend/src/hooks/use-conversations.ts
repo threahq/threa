@@ -633,6 +633,45 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
 }
 
 /**
+ * Batch counterpart of {@link useReassignConversationMessage}: reassign a set of
+ * selected messages to another conversation, or split them into a new one
+ * (`targetConversationId` omitted). The response carries the destination and
+ * every source that lost messages; they're written straight into the list cache
+ * so the overlay recolors immediately — a minted destination is appended if it
+ * isn't already present. The `conversation:*` socket events that follow are
+ * idempotent overwrites of the same rows.
+ */
+export function useReassignMessagesToConversation(workspaceId: string, streamId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({
+      messageIds,
+      targetConversationId,
+    }: {
+      messageIds: string[]
+      targetConversationId?: string | null
+    }) => conversationService.reassignMessages(workspaceId, { streamId, messageIds, targetConversationId }),
+    onSuccess: ({ conversation, sourceConversations }) => {
+      const updatedById = new Map([conversation, ...sourceConversations].map((c) => [c.id, c]))
+      queryClient.setQueryData(
+        conversationKeys.list(workspaceId, streamId, {}),
+        (old: ConversationWithStaleness[] | undefined) => {
+          if (!old) return old
+          const merged = old.map((c) => updatedById.get(c.id) ?? c)
+          // A minted destination isn't in the list yet — append it.
+          return old.some((c) => c.id === conversation.id) ? merged : [...merged, conversation]
+        }
+      )
+      for (const id of [conversation.id, ...sourceConversations.map((c) => c.id)]) {
+        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(id) })
+      }
+    },
+  })
+}
+
+/**
  * Rename a conversation's topic and/or mark it resolved/reopened from the board
  * card or conversation panel. Optimistic + self-reconciling: the change shows the
  * instant it's dispatched and settles on the HTTP response, no socket wait.

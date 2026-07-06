@@ -126,6 +126,30 @@ export interface SplitThreadResult {
   sourceConversation: ConversationWithStaleness
 }
 
+/** Where a batch reassignment lands: an existing conversation in the stream, or
+ *  a freshly minted one (the "split into its own topic" gesture). */
+export type ReassignMessagesTarget = { kind: "existing"; conversationId: string } | { kind: "new" }
+
+export interface ReassignMessagesParams {
+  workspaceId: string
+  /** The stream the selected messages live in — the anchor for a minted
+   *  conversation, and the stream every selected message must belong to. */
+  streamId: string
+  /** The messages to reassign (1..N). Deduped; order is re-derived from `sequence`. */
+  messageIds: string[]
+  /** Destination: an existing conversation in the stream, or a fresh mint. */
+  target: ReassignMessagesTarget
+  /** The correcting user — recorded with each moved message's feedback row. */
+  actorUserId: string
+}
+
+export interface ReassignMessagesResult {
+  /** The destination conversation (minted or existing) with final membership. */
+  conversation: ConversationWithStaleness
+  /** Every source conversation that lost members, with final membership. */
+  sourceConversations: ConversationWithStaleness[]
+}
+
 /**
  * Public interface for querying conversations.
  * Computes temporal staleness on read.
@@ -714,6 +738,242 @@ export class ConversationService {
         conversation: addStalenessFields(newConversation),
         sourceConversation: addStalenessFields(updatedSource),
       }
+    })
+  }
+
+  /**
+   * User correction from the timeline conversation overlay: reassign a hand-picked
+   * SET of messages to another conversation — an existing one, or a freshly minted
+   * one (the "these should be their own topic" split). The batch counterpart to
+   * {@link reassignMessage}; membership-only, like {@link splitThreadIntoConversation}
+   * — no message events move, so broadcast sequences and INV-61 contiguity are
+   * untouched (the messages stay in their stream).
+   *
+   * Concurrency: the message rows are locked first (INV-20) — the serialization
+   * point against a concurrent reassign/extraction of the same messages, as in
+   * {@link reassignMessage} — so `findPrimariesByMessageIds` is stable. Each touched
+   * source and an existing destination are then locked before their membership is
+   * read and their `participant_ids` recomputed, so a concurrent extraction can't
+   * clobber the arrays we SET. Locks are taken messages-then-conversations here;
+   * {@link splitThreadIntoConversation} takes them the other way, so two of these
+   * racing the same rows can deadlock — Postgres aborts one cleanly (no
+   * corruption), acceptable for a rare same-user correction. All member/feedback
+   * writes and the outbox events commit in one transaction (INV-6/7), delivered via
+   * the outbox (INV-4). A minted destination follows the fresh-mint precedent (no
+   * `topicSummary` — the extractor fills it), never copying a source title.
+   */
+  async reassignMessagesToConversation(params: ReassignMessagesParams): Promise<ReassignMessagesResult> {
+    const { workspaceId, streamId, messageIds, target, actorUserId } = params
+
+    return withTransaction(this.pool, async (client) => {
+      const uniqueIds = [...new Set(messageIds)]
+
+      // Lock the moving rows first (INV-20); `findByIdsForUpdate` returns them in
+      // `sequence` order — also the timeline order we preserve when appending to
+      // the destination.
+      const lockedMessages = await MessageRepository.findByIdsForUpdate(client, uniqueIds)
+      if (lockedMessages.length !== uniqueIds.length) {
+        throw new HttpError("Some selected messages were not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
+      }
+      const messageById = new Map(lockedMessages.map((m) => [m.id, m]))
+      // A primary membership always lives in the message's own stream, and a mint
+      // anchors on `streamId`; so every selected message must be in this stream.
+      for (const message of lockedMessages) {
+        if (message.streamId !== streamId) {
+          throw new HttpError("All selected messages must belong to the same stream", {
+            status: 400,
+            code: "MESSAGE_NOT_IN_STREAM",
+          })
+        }
+      }
+      const orderedIds = lockedMessages.map((m) => m.id)
+
+      // Where each moving message currently lives (primary). Stable now that the
+      // message rows are locked — nothing can reassign them out from under us.
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, orderedIds)
+
+      let destination: Conversation
+      if (target.kind === "existing") {
+        const existing = await ConversationRepository.findByIdForUpdate(client, workspaceId, target.conversationId)
+        if (!existing) {
+          throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+        }
+        if (existing.streamId !== streamId) {
+          throw new HttpError("Conversation is not in this stream", {
+            status: 400,
+            code: "CONVERSATION_NOT_IN_STREAM",
+          })
+        }
+        destination = existing
+      } else {
+        destination = await ConversationRepository.insert(client, {
+          id: generateConversationId(),
+          streamId,
+          workspaceId,
+          confidence: 1,
+          status: ConversationStatuses.ACTIVE,
+        })
+      }
+
+      // Skip messages already primary in the destination (a no-op reassign — e.g.
+      // re-running the same split).
+      const moveIds = orderedIds.filter((id) => primaries.get(id)?.id !== destination.id)
+      if (moveIds.length === 0) {
+        const fresh = await ConversationRepository.findById(client, destination.id)
+        if (!fresh) throw new Error(`Conversation ${destination.id} disappeared during reassignment`)
+        return { conversation: addStalenessFields(fresh), sourceConversations: [] }
+      }
+
+      // Group the move set by its current source (a selection can span more than
+      // one). Ids with no primary yet (extraction hasn't assigned them) carry no
+      // source — pure adds, recorded with a null `fromConversationId`.
+      const movedBySource = new Map<string, string[]>()
+      for (const id of moveIds) {
+        const sourceId = primaries.get(id)?.id
+        if (!sourceId) continue
+        const list = movedBySource.get(sourceId)
+        if (list) list.push(id)
+        else movedBySource.set(sourceId, [id])
+      }
+
+      // Lock each source row (INV-20), sorted for a deterministic order across
+      // concurrent batches, so its membership can be read and its participants
+      // recomputed without a concurrent extraction racing the write.
+      const sourceRows = new Map<string, Conversation>()
+      for (const sourceId of [...movedBySource.keys()].sort()) {
+        const row = await ConversationRepository.findByIdForUpdate(client, workspaceId, sourceId)
+        if (row) sourceRows.set(sourceId, row)
+      }
+
+      // Hydrate the authors of every message that stays in a source and every
+      // message already in the destination — needed to recompute the
+      // `participant_ids` we SET on the arrays below.
+      const authorLookupIds = new Set<string>(moveIds)
+      for (const row of sourceRows.values()) for (const id of row.messageIds) authorLookupIds.add(id)
+      for (const id of destination.messageIds) authorLookupIds.add(id)
+      const memberMessages = await MessageRepository.findByIds(client, [...authorLookupIds])
+
+      // Remove moved ids from each source, recomputing that source's remaining
+      // participants; resolve a source the move empties.
+      for (const [sourceId, movedFromSource] of movedBySource) {
+        const source = sourceRows.get(sourceId)
+        if (!source) continue
+        const movedSet = new Set(movedFromSource)
+        const remainingIds = source.messageIds.filter((id) => !movedSet.has(id))
+        await ConversationRepository.removePrimaryMessages(
+          client,
+          workspaceId,
+          sourceId,
+          movedFromSource,
+          distinctAuthors(remainingIds, memberMessages)
+        )
+        await ConversationRepository.resolveIfEmpty(client, workspaceId, sourceId)
+      }
+
+      // One feedback row per moved message (parity with the other correction
+      // paths), each recording its own source (or null) and stream (INV-56).
+      await ConversationFeedbackRepository.insertMany(
+        client,
+        moveIds.map((id) => ({
+          id: conversationFeedbackId(),
+          workspaceId,
+          streamId: messageById.get(id)!.streamId,
+          messageId: id,
+          fromConversationId: primaries.get(id)?.id ?? null,
+          toConversationId: destination.id,
+          userId: actorUserId,
+        }))
+      )
+
+      // Add the whole move set to the destination, recomputing its FULL participant
+      // list (existing members + arrivals) — `addPrimaryMessages` SETs participants,
+      // so an incomplete union would drop the existing ones.
+      await ConversationRepository.addPrimaryMessages(
+        client,
+        workspaceId,
+        destination.id,
+        moveIds,
+        distinctAuthors([...destination.messageIds, ...moveIds], memberMessages)
+      )
+      await ConversationRepository.reactivateIfInactive(client, workspaceId, destination.id)
+
+      const touchedIds = [destination.id, ...sourceRows.keys()]
+      await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
+
+      // Re-read every touched row post-write so the events carry final membership.
+      const finalById = new Map(
+        (await ConversationRepository.findByIds(client, workspaceId, touchedIds)).map((c) => [c.id, c])
+      )
+      const finalDestination = finalById.get(destination.id)
+      if (!finalDestination) {
+        throw new Error(`Conversation ${destination.id} disappeared during reassignment`)
+      }
+
+      // Every message, source, and destination shares one stream (guarded above),
+      // so one delivery resolution covers all of them (INV-62), as in
+      // {@link reassignMessage}.
+      const stream = await StreamRepository.findById(client, streamId)
+      const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
+
+      if (target.kind === "new") {
+        await OutboxRepository.insert(client, "conversation:created", {
+          workspaceId,
+          streamId: finalDestination.streamId,
+          conversationId: finalDestination.id,
+          conversation: addStalenessFields(finalDestination),
+          parentStreamId,
+          streamVisibility,
+        })
+      }
+
+      for (const id of touchedIds) {
+        // A minted destination is carried by the `conversation:created` above;
+        // emit `conversation:updated` for the existing rows only.
+        if (id === destination.id && target.kind === "new") continue
+        const conv = finalById.get(id)
+        if (!conv) continue
+        await OutboxRepository.insert(client, "conversation:updated", {
+          workspaceId,
+          streamId: conv.streamId,
+          conversationId: conv.id,
+          conversation: addStalenessFields(conv),
+          parentStreamId,
+          streamVisibility,
+        })
+      }
+
+      // Per-message move events route to each message's own stream (for the
+      // timeline membership map + extraction feedback), mirroring the other paths.
+      for (const id of moveIds) {
+        const fromConversationId = primaries.get(id)?.id ?? null
+        if (fromConversationId) {
+          await OutboxRepository.insert(client, "conversation:message_reassigned", {
+            workspaceId,
+            streamId: messageById.get(id)!.streamId,
+            messageId: id,
+            fromConversationId,
+            toConversationId: destination.id,
+            reason: "user_correction",
+          })
+        } else {
+          await OutboxRepository.insert(client, "conversation:message_assigned", {
+            workspaceId,
+            streamId: messageById.get(id)!.streamId,
+            parentStreamId,
+            messageId: id,
+            conversationId: destination.id,
+            isPrimary: true,
+            reason: "user_correction",
+          })
+        }
+      }
+
+      const sourceConversations = [...sourceRows.keys()]
+        .map((id) => finalById.get(id))
+        .filter((c): c is Conversation => c !== undefined)
+        .map(addStalenessFields)
+
+      return { conversation: addStalenessFields(finalDestination), sourceConversations }
     })
   }
 

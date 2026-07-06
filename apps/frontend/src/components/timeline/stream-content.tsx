@@ -1,7 +1,7 @@
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
-import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check } from "lucide-react"
+import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -81,7 +81,15 @@ import { buildMessageConversationMap } from "./conversation-overlay/model"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageConversationProvider } from "./conversation-overlay/message-conversation-context"
 import { useConversationMembershipHeal } from "./conversation-overlay/use-conversation-membership-heal"
-import { useConversations } from "@/hooks/use-conversations"
+import { useConversations, useReassignMessagesToConversation } from "@/hooks/use-conversations"
+import { conversationColor } from "./conversation-overlay/model"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { MessageInput } from "./message-input"
 import { StreamDateHeader } from "./stream-date-header"
 import { JoinChannelBar } from "./join-channel-bar"
@@ -96,7 +104,7 @@ import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { localStartOfDayMs } from "@/lib/dates"
-import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
+import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch-selection-events"
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
 import { useReadMessageIds } from "@/hooks/use-unread-counts"
@@ -391,6 +399,10 @@ export function StreamContent({
   const user = useUser()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
+  // What the current batch selection is for. `moveToThread` (default) drags the
+  // selection onto a target message; `splitConversation` reassigns the selection's
+  // conversation membership via the footer target picker (no drag, no drop target).
+  const [batchIntent, setBatchIntent] = useState<BatchSelectIntent>("moveToThread")
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(() => new Set())
   const [hoveredBatchTargetId, setHoveredBatchTargetId] = useState<string | null>(null)
   const [dragGhost, setDragGhost] = useState<{ x: number; y: number } | null>(null)
@@ -512,11 +524,14 @@ export function StreamContent({
       { replace: true }
     )
   }, [setSearchParams])
-  // Batch-selection mode suspends the whole overlay (legend, rails, chips,
-  // correction swatch) — batch turns every row into a selection toggle, and
-  // the overlay's swatch would compete for the same clicks. The URL param is
-  // kept, so the overlay returns when batch mode ends.
-  const activeConversationOverlay = batchMode ? undefined : conversationOverlay
+  // Move-to-thread batch mode suspends the whole overlay (legend, rails, chips,
+  // correction swatch) — batch turns every row into a selection toggle, and the
+  // overlay's swatch would compete for the same clicks. Split-conversation batch
+  // mode KEEPS the overlay on: the coloring is what tells the user which topic
+  // each message currently belongs to while they pick what to move (the row is
+  // `inert` in batch mode, so the swatch can't compete anyway). The URL param is
+  // kept, so the overlay returns when move-to-thread batch mode ends.
+  const activeConversationOverlay = batchMode && batchIntent === "moveToThread" ? undefined : conversationOverlay
   const parentStreamId = stream?.parentStreamId
   const parentMessageId = stream?.parentMessageId
   const parentCachedEvents = useStreamEvents(parentStreamId ?? undefined)
@@ -774,8 +789,9 @@ export function StreamContent({
   )
 
   const startBatchSelect = useCallback(
-    (preselectedMessageId?: string) => {
+    (intent: BatchSelectIntent, preselectedMessageId?: string) => {
       setBatchMode(true)
+      setBatchIntent(intent)
       setSelectedMessageIds(preselectedMessageId ? new Set([preselectedMessageId]) : new Set())
       setHoveredBatchTargetId(null)
       setDragGhost(null)
@@ -820,7 +836,7 @@ export function StreamContent({
   useEffect(() => {
     return addStartBatchSelectListener((detail) => {
       if (detail.streamId !== streamId) return
-      startBatchSelect(detail.preselectedMessageId)
+      startBatchSelect(detail.intent, detail.preselectedMessageId)
     })
   }, [startBatchSelect, streamId])
 
@@ -899,6 +915,30 @@ export function StreamContent({
     setMoveAttempt(null)
   }, [isMoveConfirming])
 
+  // Split-conversation batch action: reassign the current selection to another
+  // conversation (`targetConversationId`) or a new one (null). Membership-only —
+  // no confirm dialog, unlike move-to-thread, since it's reversible by moving the
+  // messages back. Exits batch mode on success; the overlay recolors from cache.
+  const reassignMessages = useReassignMessagesToConversation(workspaceId, streamId)
+  const [isSplitting, setIsSplitting] = useState(false)
+  const runSplit = useCallback(
+    (targetConversationId: string | null) => {
+      const messageIds = Array.from(selectedMessageIds)
+      if (messageIds.length === 0 || isSplitting) return
+      setIsSplitting(true)
+      reassignMessages.mutate(
+        { messageIds, targetConversationId },
+        {
+          onSuccess: () => cancelBatchMode(),
+          onError: (error) =>
+            toast.error(error instanceof Error ? error.message : "Couldn't move the selected messages"),
+          onSettled: () => setIsSplitting(false),
+        }
+      )
+    },
+    [cancelBatchMode, isSplitting, reassignMessages, selectedMessageIds]
+  )
+
   // Phase derived from the single source of truth. Drives the inline status
   // row in the footer and the disabled/aria-busy state of the Move button.
   let movePhase: MovePhase
@@ -938,6 +978,9 @@ export function StreamContent({
           if (!pointer || pointer.id !== event.pointerId) return
           const distance = Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y)
           if (!pointer.dragging && distance < 6) return
+          // Split mode has no drop target — dragging is meaningless, so never
+          // enter the drag branch; every gesture resolves as a tap toggle.
+          if (batchIntent === "splitConversation") return
           event.preventDefault()
           if (!pointer.dragging && !selectedMessageIds.has(pointer.messageId)) {
             setSelectedMessageIds((prev) => new Set(prev).add(pointer.messageId))
@@ -2013,7 +2056,20 @@ export function StreamContent({
                         onNavigate={handleSearchNavigate}
                       />
                     )}
-                    {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
+                    {batchMode &&
+                      (batchIntent === "splitConversation" ? (
+                        <SplitSelectionBar
+                          count={selectedMessageIds.size}
+                          conversations={conversationOverlay?.model.conversations ?? streamConversations}
+                          colorIndexById={conversationOverlay?.model.colorIndexById}
+                          busy={isSplitting}
+                          onMoveToExisting={runSplit}
+                          onCreateNew={() => runSplit(null)}
+                          onCancel={cancelBatchMode}
+                        />
+                      ) : (
+                        <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />
+                      ))}
                     {activeConversationOverlay && (
                       <ConversationOverlayPanel
                         overlay={activeConversationOverlay}
@@ -2890,6 +2946,106 @@ function BatchSelectionBar({ count, onCancel }: { count: number; onCancel: () =>
       <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={onCancel} aria-label="Cancel selection">
         <X className="h-3.5 w-3.5" />
       </Button>
+    </div>
+  )
+}
+
+/**
+ * The split-conversation twin of {@link BatchSelectionBar}. Same flush-top strip,
+ * but instead of the drag-to-target hint it offers a target picker: reassign the
+ * selection into an existing conversation, or split it into a new one. No drag,
+ * no confirm dialog — membership moves are reversible.
+ */
+function SplitSelectionBar({
+  count,
+  conversations,
+  colorIndexById,
+  busy,
+  onMoveToExisting,
+  onCreateNew,
+  onCancel,
+}: {
+  count: number
+  conversations: ConversationWithStaleness[]
+  colorIndexById?: ReadonlyMap<string, number>
+  busy: boolean
+  onMoveToExisting: (conversationId: string) => void
+  onCreateNew: () => void
+  onCancel: () => void
+}) {
+  const disabled = count === 0 || busy
+
+  return (
+    <div
+      className={cn(
+        "absolute top-0 left-0 right-0 z-20",
+        "flex items-center gap-2 px-2 py-1.5 sm:px-4 sm:py-2",
+        "bg-background/95 backdrop-blur-sm border-b shadow-sm"
+      )}
+      style={{ userSelect: "none" }}
+    >
+      <div className="flex items-center gap-2 shrink-0">
+        <span
+          className={cn(
+            "inline-flex items-center justify-center h-6 min-w-6 px-1.5 rounded-full",
+            "text-xs font-medium tabular-nums tracking-tight transition-colors",
+            count > 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+          )}
+          aria-live="polite"
+        >
+          {count}
+        </span>
+        <span className="hidden sm:inline text-sm font-medium">
+          {count === 1 ? "message selected" : "messages selected"}
+        </span>
+      </div>
+
+      <div className="ml-auto flex items-center gap-1.5 shrink-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              className="h-7 gap-1.5"
+              disabled={disabled}
+              aria-label="Move selected messages to a conversation"
+            >
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Move className="h-3.5 w-3.5" aria-hidden />
+              )}
+              <span>Move to…</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-h-[50dvh] w-64 overflow-y-auto">
+            <DropdownMenuItem onSelect={() => onCreateNew()} className="gap-2">
+              <Plus className="h-4 w-4 shrink-0" aria-hidden />
+              <span>New conversation</span>
+            </DropdownMenuItem>
+            {conversations.length > 0 && <DropdownMenuSeparator />}
+            {conversations.map((conversation) => (
+              <DropdownMenuItem
+                key={conversation.id}
+                onSelect={() => onMoveToExisting(conversation.id)}
+                className="gap-2"
+              >
+                <span
+                  aria-hidden
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: conversationColor(colorIndexById?.get(conversation.id) ?? 0) }}
+                />
+                <span className="min-w-0 flex-1 truncate">{conversation.topicSummary || "Untitled conversation"}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {conversation.messageIds.length}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onCancel} aria-label="Cancel selection">
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      </div>
     </div>
   )
 }

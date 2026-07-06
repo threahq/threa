@@ -161,6 +161,14 @@ export interface MessageActionContext {
    */
   onReassignConversation?: () => void
   /**
+   * Enter multi-select mode to reassign a SET of messages' conversation
+   * membership — into another conversation or a new one (the split gesture),
+   * seeded with this message. Set only while the conversation overlay is active
+   * (it supplies the target list). The batch counterpart to
+   * {@link onReassignConversation}.
+   */
+  onSplitConversation?: () => void
+  /**
    * Jump to where this message actually lives — its own stream timeline,
    * `?m=` highlighted. Set only on surfaces that render a message OUTSIDE its
    * home stream (the board card, the conversation panel, the label page), so
@@ -466,6 +474,16 @@ export const messageActions: MessageAction[] = [
     icon: Layers,
     when: (ctx) => !!ctx.onReassignConversation,
     action: (ctx) => ctx.onReassignConversation?.(),
+  },
+  {
+    // Multi-select counterpart of "Move to conversation…": select several
+    // messages, then reassign them to another conversation or split them into a
+    // new one. Also overlay-gated (needs the conversation list to pick a target).
+    id: "split-conversation",
+    label: "Select messages to move…",
+    icon: Layers,
+    when: (ctx) => !!ctx.onSplitConversation,
+    action: (ctx) => ctx.onSplitConversation?.(),
   },
   {
     // Destination-side discovery for messages that arrived via a move.

@@ -317,7 +317,7 @@ export function StreamPage() {
   }
 
   const handleSelectMessages = () => {
-    dispatchStartBatchSelect(streamId)
+    dispatchStartBatchSelect(streamId, "moveToThread")
   }
 
   // System streams are read-only on the backend (e.g. activity/notification

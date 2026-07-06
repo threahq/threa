@@ -241,7 +241,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
 
   const handleSelectMessages = useCallback(() => {
     if (!panelId) return
-    dispatchStartBatchSelect(panelId)
+    dispatchStartBatchSelect(panelId, "moveToThread")
   }, [panelId])
 
   const panelMenuActions: SidebarActionItem[] = []
