@@ -121,6 +121,90 @@ describe("conversationAssigner — threadFromMessage", () => {
   })
 })
 
+describe("conversationAssigner — newSubtopic (declared branch, stream-locked mint)", () => {
+  // The assigner locks the thread stream row before find-or-mint, so the client
+  // needs a `query` that resolves (the real path runs `SELECT … FOR UPDATE`).
+  const LOCK_CLIENT = { query: mock(async () => ({ rows: [] })) } as never
+  let insert: ReturnType<typeof spyOn>
+  let addPrimaryMessage: ReturnType<typeof spyOn>
+  let bumpActivityForIds: ReturnType<typeof spyOn>
+  let emitAssignmentEvents: ReturnType<typeof spyOn>
+  let findActiveByStream: ReturnType<typeof spyOn>
+
+  beforeEach(() => {
+    insert = spyOn(ConversationRepository, "insert").mockResolvedValue({ id: "conv_new" } as never)
+    addPrimaryMessage = spyOn(ConversationRepository, "addPrimaryMessage").mockResolvedValue(undefined as never)
+    bumpActivityForIds = spyOn(ConversationRepository, "bumpActivityForIds").mockResolvedValue(undefined as never)
+    emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
+    findActiveByStream = spyOn(ConversationRepository, "findActiveByStream")
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  async function newSubtopic(reply = makeReply("thr_1")): Promise<void> {
+    await conversationAssigner.assignInTransaction(LOCK_CLIENT, {
+      workspaceId: WORKSPACE_ID,
+      message: reply,
+      directive: { intent: "newSubtopic" },
+    })
+  }
+
+  test("mints a fresh conversation anchored to the thread stream when none is active there", async () => {
+    findActiveByStream.mockResolvedValue([])
+
+    await newSubtopic()
+
+    // Locks the thread stream row before deciding (INV-20), then mints anchored to
+    // the thread — the branch relationship (thr_1.parentMessageId ∈ the parent
+    // conversation) is derivable from the graph, so no parent id is written.
+    expect((LOCK_CLIENT as { query: ReturnType<typeof mock> }).query).toHaveBeenCalled()
+    expect(insert).toHaveBeenCalledTimes(1)
+    expect(insert.mock.calls[0][1]).toMatchObject({ streamId: "thr_1", workspaceId: WORKSPACE_ID })
+    // The mint generates its own id; the reply joins that same conversation.
+    const mintedId = insert.mock.calls[0][1].id as string
+    expect(addPrimaryMessage).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, mintedId, "msg_reply", "usr_1")
+    expect(bumpActivityForIds).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, [mintedId])
+    expect(emitAssignmentEvents.mock.calls[0][1]).toMatchObject({
+      conversationId: mintedId,
+      created: true,
+      reason: "declared",
+    })
+  })
+
+  test("the minted child anchors to a thread whose fork message is a member of the parent conversation", async () => {
+    findActiveByStream.mockResolvedValue([])
+
+    await newSubtopic()
+
+    // The child is anchored to `message.streamId` (thr_1). The parent card renders
+    // the stub because thr_1's `parentMessageId` (msg_open) is a member message of
+    // the parent conversation — the graph link the PR1 renderer derives.
+    const mintedAnchor = insert.mock.calls[0][1].streamId as string
+    const thread = STREAMS[mintedAnchor] as { parentMessageId: string }
+    const parentConversation = makeSource() // messageIds: ["msg_open"]
+    expect(parentConversation.messageIds).toContain(thread.parentMessageId)
+  })
+
+  test("a second newSubtopic into the same thread attaches to the existing conversation (no double-mint)", async () => {
+    // The two-users race: the loser sees the winner's conversation via the
+    // stream lock + findActiveByStream and attaches instead of minting again.
+    findActiveByStream.mockResolvedValue([{ id: "conv_sub", streamId: "thr_1" } as unknown as Conversation])
+
+    await newSubtopic()
+
+    expect(insert).not.toHaveBeenCalled()
+    expect(addPrimaryMessage).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, "conv_sub", "msg_reply", "usr_1")
+    expect(bumpActivityForIds).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, ["conv_sub"])
+    expect(emitAssignmentEvents.mock.calls[0][1]).toMatchObject({
+      conversationId: "conv_sub",
+      created: false,
+      reason: "declared",
+    })
+  })
+})
+
 describe("conversationAssigner — existing (same-root guard)", () => {
   let addPrimaryMessage: ReturnType<typeof spyOn>
   let emitAssignmentEvents: ReturnType<typeof spyOn>

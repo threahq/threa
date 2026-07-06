@@ -201,4 +201,19 @@ export const conversationsApi = {
   ): Promise<{ hiddenConversations: { conversationId: string; hiddenAt: string }[]; mutedStreamIds: string[] }> {
     return api.get(`/api/workspaces/${workspaceId}/board/exclusions`)
   },
+
+  /**
+   * Split a soft thread out of a conversation into its own topic — the board
+   * gesture that heals a sub-topic that outgrew its parent. The backend moves the
+   * thread's member messages (and any deeper sub-topics') to a freshly minted
+   * conversation anchored to the thread and records the correction as
+   * boundary-extraction feedback.
+   */
+  async splitThread(
+    workspaceId: string,
+    conversationId: string,
+    threadStreamId: string
+  ): Promise<{ conversation: ConversationWithStaleness; sourceConversation: ConversationWithStaleness }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/split-thread`, { threadStreamId })
+  },
 }

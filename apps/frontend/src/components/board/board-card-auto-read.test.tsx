@@ -14,6 +14,7 @@ import * as messageReactionsModule from "@/hooks/use-message-reactions"
 import * as userProfileModule from "@/components/user-profile"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
+import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -130,6 +131,12 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+  // BoardCard hosts the inline branch composer, whose queue hook needs the
+  // pending-messages provider — stub the hook so the harness stays lean.
+  vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+    queueDraftMessage: vi.fn().mockResolvedValue({ clientId: "client_1" }),
+    currentUserId: "usr_me",
+  } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
   vi.spyOn(messageReactionsModule, "useMessageReactions").mockReturnValue({
     addReaction: vi.fn(),
     removeReaction: vi.fn(),

@@ -135,6 +135,12 @@ interface MessageItemProps {
    * on `surfaceClassName` so content stays aligned (board: `-mx-3 sm:-mx-4` +
    * `px-3 sm:px-4`; panel: `-mx-4` + `px-4`). Omit on the label page (no accent). */
   rowInsetClassName?: string
+  /** Open a thread under this message and mint its child conversation (the declared
+   * "New sub-topic" branch gesture). Passed already-guarded by the conversation
+   * surfaces — set only when no thread yet exists under the message (adjustment D)
+   * — so the action shows exactly where a fresh branch is valid; other surfaces
+   * leave it undefined and the action hides. */
+  onNewSubtopic?: () => void
 }
 
 /**
@@ -160,6 +166,7 @@ export function MessageItem({
   isHighlighted,
   surfaceClassName,
   rowInsetClassName,
+  onNewSubtopic,
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const { openUserProfile } = useUserProfile()
@@ -408,6 +415,7 @@ export function MessageItem({
       label: viewInStreamLabel(rowStream?.type),
     },
     onLabelMessage: () => setLabelPickerOpen(true),
+    onNewSubtopic,
     onMarkReadUpToHere:
       conversationRead && rowRead !== "read" ? () => conversationRead.markReadUpToHere(message.id) : undefined,
     onMarkUnread: conversationRead && rowRead !== "unread" ? () => conversationRead.markUnread(message.id) : undefined,

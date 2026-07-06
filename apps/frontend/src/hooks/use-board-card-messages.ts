@@ -392,6 +392,31 @@ function useChildThreadStreamIds(workspaceId: string, parentMessageIds: string[]
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
+/**
+ * Pre-warm the rails behind `streamIds` and report when every one has completed
+ * its first IDB read. The board page holds its first card paint on this (plus the
+ * conversation graph) so a card's first frame is its FINAL frame — bodies, branch
+ * groups, and event rows all present at once instead of resolving in over the
+ * next few hundred milliseconds (the refresh pop-in Kris rejected, 2026-07-05).
+ * Subscribing here creates the shared registry entries, so cards mounting after
+ * the reveal reuse already-resolved rails.
+ */
+export function useBoardRailsReady(streamIds: string[]): boolean {
+  const key = streamIds.join(",")
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const unsubscribes = streamIds.map((id) => subscribeStreamRail(id, onChange))
+      return () => {
+        for (const unsubscribe of unsubscribes) unsubscribe()
+      }
+    },
+    // `key` captures the set; the closure over `streamIds` is consistent with it.
+    [key]
+  )
+  const getSnapshot = useCallback(() => streamIds.every((id) => railRegistry.get(id)?.rail.resolved ?? false), [key])
+  return useSyncExternalStore(subscribe, getSnapshot)
+}
+
 /** How many stream rails the registry currently holds — for tests, to prove a
  *  drained rail is actually torn down once its grace elapses (the leak half of
  *  the grace-teardown contract). */
@@ -437,11 +462,37 @@ export interface BoardCardMessages {
    *  `resolveBoardEventRows` to filter+group them to this conversation. Always the
    *  live rail's rows (empty on a cold projection open, filled once synced). */
   events: CachedEvent[]
+  /** The merged rail's renderable message rows by id — the card resolves a nested
+   *  branch conversation's own messages through this (its `messageIds` ∪ the rows
+   *  tagged with its id). Live off the same `db.events` rail. */
+  messagesById: Map<string, RenderableMessage>
+  /** Rail rows tagged by the conversation they attach to — a just-sent branch reply
+   *  shows in its branch through its echo window before the branch's server
+   *  `messageIds` lists it, the same union the card does for its own replies. */
+  taggedByConversation: Map<string, RenderableMessage[]>
+}
+
+/** Extra rails a board card subscribes to beyond its conversation's own streams:
+ *  the branch conversations it renders nested, and the draft-thread panels of any
+ *  in-flight "new sub-topic" gestures. Both are content-only (non-gating), so a
+ *  branch rail that's mid-load never drags the card back to its projection. */
+export interface BoardCardExtraRails {
+  /** Thread streams of the branch conversations the card renders (direct + nested).
+   *  Routed to EXTRA even though the suppression folds them into `post.streamIds`
+   *  for the board-page subscription, so they don't gate the parent card. */
+  branchStreamIds?: string[]
+  /** Draft-panel ids (`createDraftPanelId`) of open/pending inline "new sub-topic"
+   *  composers, so their optimistic message renders before the thread echo lands. */
+  extraDraftPanelIds?: string[]
 }
 
 const NO_PENDING: RenderableMessage[] = []
 
-type BoardCardView = BoardCardMessages & { nextRetained: RenderableMessage[] }
+// The memoized per-render derivation below; the rail's message maps are appended
+// at the return boundary (they come straight off the merged rail, not the view).
+type BoardCardView = Omit<BoardCardMessages, "messagesById" | "taggedByConversation"> & {
+  nextRetained: RenderableMessage[]
+}
 
 /**
  * A board card's messages, read OFFLINE-FIRST from the same `db.events` store the
@@ -456,10 +507,18 @@ type BoardCardView = BoardCardMessages & { nextRetained: RenderableMessage[] }
  * which catches them up + joins their rooms, so the fallback resolves to the live
  * rail once that sync lands — the projection just covers the cold-open window.
  */
-export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: string): BoardCardMessages {
+export function useBoardCardMessages(
+  post: BoardViewPost,
+  hostStreamType?: string,
+  extraRails?: BoardCardExtraRails
+): BoardCardMessages {
   const streamId = post.conversation.streamId
   const messageIds = post.conversation.messageIds
   const openingId = post.openingMessage?.id ?? null
+  const branchStreamIds = extraRails?.branchStreamIds ?? EMPTY_THREAD_IDS
+  const branchStreamKey = branchStreamIds.join(",")
+  const extraDraftPanelIds = extraRails?.extraDraftPanelIds ?? EMPTY_THREAD_IDS
+  const extraDraftPanelKey = extraDraftPanelIds.join(",")
 
   // Flat conversation: the opening is `messageIds[0]`, replies are the rest. A
   // thread's opening is the parent message (not a member), so every messageId is a
@@ -496,23 +555,32 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
   // never flips the card back to its projection). Keyed on stable primitives, not
   // the post.* objects (which a parent re-render would re-create, churning subs).
   const gatingStreamIds = useMemo(() => {
+    // Branch conversation streams the suppression folded into `post.streamIds` (for
+    // the board-page subscription) must NOT gate this card — they're a separate
+    // conversation the card only renders; route them to EXTRA below instead.
+    const branchSet = new Set(branchStreamIds)
     const set = new Set<string>([streamId])
-    for (const id of post.streamIds ?? []) set.add(id)
+    for (const id of post.streamIds ?? []) if (!branchSet.has(id)) set.add(id)
     if (openingStreamId) set.add(openingStreamId)
     for (const message of post.recentMessages) if (message.streamId) set.add(message.streamId)
     return [...set].sort()
-  }, [streamId, streamIdsKey, openingStreamId, recentStreamsKey])
+  }, [streamId, streamIdsKey, openingStreamId, recentStreamsKey, branchStreamKey])
   const gatingKey = gatingStreamIds.join(",")
   const extraStreamIds = useMemo(() => {
     const gating = new Set(gatingStreamIds)
     const set = new Set<string>()
     for (const id of childThreadIds) if (!gating.has(id)) set.add(id)
+    // The branch conversations the card renders nested, and any open/pending
+    // inline "new sub-topic" draft panels — content-only, so a mid-load branch
+    // rail never flips the parent card back to its projection.
+    for (const id of branchStreamIds) if (!gating.has(id)) set.add(id)
+    for (const id of extraDraftPanelIds) if (!gating.has(id)) set.add(id)
     if (threadable && messageIds.length <= 1 && openingId) {
       const panel = createDraftPanelId(streamId, openingId)
       if (!gating.has(panel)) set.add(panel)
     }
     return [...set].sort()
-  }, [childThreadKey, gatingKey, threadable, messageIdsKey, openingId, streamId])
+  }, [childThreadKey, gatingKey, threadable, messageIdsKey, openingId, streamId, branchStreamKey, extraDraftPanelKey])
 
   const rail = useMergedStreamRail(gatingStreamIds, extraStreamIds)
   const conversationId = post.conversation.id
@@ -676,7 +744,14 @@ export function useBoardCardMessages(post: BoardViewPost, hostStreamType?: strin
     }
   }, [view, conversationId, replyIds])
 
-  return view
+  // Expose the merged rail's message maps so the card can resolve its nested
+  // branch conversations' bodies through the same rail (kept off the `view` memo
+  // above, whose branches build the card's OWN messages — the rail identity is
+  // stable per snapshot, so the branch derivation memoizes on it downstream).
+  return useMemo(
+    () => ({ ...view, messagesById: rail.messages, taggedByConversation: rail.taggedByConversation }),
+    [view, rail.messages, rail.taggedByConversation]
+  )
 }
 
 /**

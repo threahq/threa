@@ -49,6 +49,9 @@ describe("Conversation Handlers", () => {
     })
   )
   const mockGetFlag = mock(() => Promise.resolve("on" as string))
+  const mockSplitThread = mock(() =>
+    Promise.resolve({ conversation: { id: "conv_new" }, sourceConversation: { id: "conv_1" } })
+  )
 
   const handlers = createConversationHandlers({
     conversationService: {
@@ -58,6 +61,7 @@ describe("Conversation Handlers", () => {
       getMessages: mockGetMessages,
       getBoardPostById: mockGetBoardPostById,
       updateConversation: mockUpdateConversation,
+      splitThreadIntoConversation: mockSplitThread,
     } as never,
     boardExclusionService: {
       hideConversation: mockHideConversation,
@@ -93,6 +97,8 @@ describe("Conversation Handlers", () => {
     })
     mockHideConversation.mockResolvedValue({ hiddenAt: "2026-07-05T00:00:00.000Z" })
     mockGetExclusions.mockResolvedValue({ hiddenConversations: [], mutedStreamIds: [] })
+    mockSplitThread.mockReset()
+    mockSplitThread.mockResolvedValue({ conversation: { id: "conv_new" }, sourceConversation: { id: "conv_1" } })
 
     mockValidateStreamAccess.mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" })
     mockListByStream.mockResolvedValue([])
@@ -315,6 +321,51 @@ describe("Conversation Handlers", () => {
       await handlers.getMessages(mockReq({ params: { conversationId: "conv_1" } }), res)
 
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+    })
+  })
+
+  describe("splitThread", () => {
+    const req = (overrides: Record<string, unknown> = {}) =>
+      mockReq({ params: { conversationId: "conv_1" }, body: { threadStreamId: "thr_1" }, ...overrides })
+
+    test("rejects a missing threadStreamId with a 400 (Zod)", async () => {
+      await expect(handlers.splitThread(req({ body: {} }), mockRes())).rejects.toMatchObject({ status: 400 })
+      expect(mockSplitThread).not.toHaveBeenCalled()
+    })
+
+    test("gates on the conversation's root via validateStreamAccess (INV-62)", async () => {
+      await handlers.splitThread(req(), mockRes())
+      expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+    })
+
+    test("propagates a stream-access rejection", async () => {
+      mockValidateStreamAccess.mockRejectedValue(new StreamNotFoundError())
+      await expect(handlers.splitThread(req(), mockRes())).rejects.toThrow("Stream not found")
+      expect(mockSplitThread).not.toHaveBeenCalled()
+    })
+
+    test("404s when the conversation is in another workspace", async () => {
+      mockGetById.mockResolvedValue({ id: "conv_1", streamId: "stream_1", workspaceId: "ws_other" })
+      const res = mockRes()
+      await handlers.splitThread(req(), res)
+      expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
+      expect(mockValidateStreamAccess).not.toHaveBeenCalled()
+      expect(mockSplitThread).not.toHaveBeenCalled()
+    })
+
+    test("delegates to the service and returns its result", async () => {
+      const res = mockRes()
+      await handlers.splitThread(req(), res)
+      expect(mockSplitThread).toHaveBeenCalledWith({
+        workspaceId: "ws_1",
+        conversationId: "conv_1",
+        threadStreamId: "thr_1",
+        actorUserId: "usr_1",
+      })
+      expect((res as unknown as { body: unknown }).body).toEqual({
+        conversation: { id: "conv_new" },
+        sourceConversation: { id: "conv_1" },
+      })
     })
   })
 

@@ -78,6 +78,10 @@ const reassignMessageParamsSchema = z.object({
   messageId: z.string().min(1),
 })
 
+const splitThreadSchema = z.object({
+  threadStreamId: z.string().min(1),
+})
+
 const markReadSchema = z.object({
   throughMessageId: z.string().min(1),
 })
@@ -302,6 +306,37 @@ export function createConversationHandlers({
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const result = await conversationService.updateConversation({ workspaceId, conversationId, topicSummary, status })
+      res.json(result)
+    },
+
+    /**
+     * Split a soft thread out of its conversation into its own topic: move the
+     * thread's member messages (and any deeper sub-topics') to a freshly minted
+     * conversation anchored to the thread, recording each move as boundary
+     * feedback. Gated by the source conversation's single root (INV-62), matching
+     * {@link reassignMessage}.
+     */
+    async splitThread(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId } = req.params
+
+      const { threadStreamId } = validateRequest(splitThreadSchema, req.body)
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.splitThreadIntoConversation({
+        workspaceId,
+        conversationId,
+        threadStreamId,
+        actorUserId: userId,
+      })
       res.json(result)
     },
 

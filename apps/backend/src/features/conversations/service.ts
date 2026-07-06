@@ -11,9 +11,10 @@ import { MemoRepository } from "../memos"
 import { OutboxRepository } from "../../lib/outbox"
 import { addStalenessFields, type ConversationWithStaleness } from "./staleness"
 import { resolveConversationDelivery } from "./conversation-delivery"
-import { conversationFeedbackId } from "../../lib/id"
+import { conversationFeedbackId, conversationId as generateConversationId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import {
+  ConversationStatuses,
   StreamTypes,
   type AttachmentSummary,
   type BoardLens,
@@ -106,6 +107,23 @@ export interface ReassignMessageResult {
   conversation: ConversationWithStaleness
   /** The conversation the message left, or null if it had no primary before. */
   previousConversation: ConversationWithStaleness | null
+}
+
+export interface SplitThreadParams {
+  workspaceId: string
+  /** The source conversation the thread is being split out of. */
+  conversationId: string
+  /** The thread stream to promote into its own conversation. */
+  threadStreamId: string
+  /** The correcting user — recorded with each moved message's feedback row. */
+  actorUserId: string
+}
+
+export interface SplitThreadResult {
+  /** The freshly minted conversation now anchoring the thread. */
+  conversation: ConversationWithStaleness
+  /** The source conversation the thread was split out of. */
+  sourceConversation: ConversationWithStaleness
 }
 
 /**
@@ -543,6 +561,163 @@ export class ConversationService {
   }
 
   /**
+   * User correction from the board: split a soft thread out of its parent
+   * conversation into its own topic. Reassigns the thread's member messages —
+   * and any deeper sub-topic thread's — to a freshly minted conversation
+   * anchored to the thread. The source keeps its opener and stays active; the
+   * board card re-forms the split-off thread as a nested branch group.
+   *
+   * Mirrors {@link reassignMessage}'s discipline: the source row is locked
+   * before its membership is read (INV-20), the moving message rows are locked
+   * in a deterministic order, and the membership move + feedback + outbox events
+   * all commit in one transaction (INV-6/7), delivered via the outbox (INV-4).
+   * The minted conversation follows the fresh-mint title precedent (no
+   * topicSummary — the extractor fills it), never copying the parent's title.
+   */
+  async splitThreadIntoConversation(params: SplitThreadParams): Promise<SplitThreadResult> {
+    const { workspaceId, conversationId, threadStreamId, actorUserId } = params
+
+    return withTransaction(this.pool, async (client) => {
+      // Lock the source: any op that removes a primary from it must UPDATE this
+      // row, so holding the lock keeps `messageIds` stable through the split and
+      // serializes a concurrent split (the loser re-reads an empty move set).
+      const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
+      if (!source) {
+        throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
+      }
+
+      const threadStream = await StreamRepository.findById(client, threadStreamId)
+      if (!threadStream || threadStream.type !== StreamTypes.THREAD) {
+        throw new HttpError("Split target is not a thread", { status: 400, code: "NOT_A_THREAD" })
+      }
+
+      // One-root invariant (INV-62): the thread being promoted must share the
+      // source anchor's effective root — a thread is same-root by construction,
+      // so this only rejects a foreign/crafted `threadStreamId`.
+      const sourceStream = await StreamRepository.findById(client, source.streamId)
+      const threadRoot = threadStream.rootStreamId ?? threadStream.id
+      const sourceRoot = sourceStream?.rootStreamId ?? source.streamId
+      if (threadRoot !== sourceRoot) {
+        throw new HttpError("Thread is in a different root stream", {
+          status: 400,
+          code: "CONVERSATION_NOT_IN_ROOT",
+        })
+      }
+
+      // The thread's fork message must be a member of the source — it's the
+      // branch point the split heals into its own topic.
+      if (!threadStream.parentMessageId || !source.messageIds.includes(threadStream.parentMessageId)) {
+        throw new HttpError("Thread's fork message is not in the conversation", {
+          status: 400,
+          code: "FORK_MESSAGE_NOT_MEMBER",
+        })
+      }
+
+      // Move set: source members whose stream is the thread or one of its
+      // descendant threads (deeper sub-topics move with it). One recursive query
+      // for the subtree (INV-56), then filter members by their own stream.
+      const subtreeIds = new Set(await StreamRepository.listSelfAndDescendantIds(client, threadStreamId))
+      const memberMessages = await MessageRepository.findByIds(client, source.messageIds)
+      const moveIds = source.messageIds.filter((id) => {
+        const streamId = memberMessages.get(id)?.streamId
+        return streamId != null && subtreeIds.has(streamId)
+      })
+      if (moveIds.length === 0) {
+        throw new HttpError("Thread has no messages in this conversation", {
+          status: 400,
+          code: "NO_THREAD_MEMBERS",
+        })
+      }
+
+      // Lock the moving rows (INV-20) in a deterministic order — the batch
+      // counterpart to reassign's single-row `FOR UPDATE`.
+      await MessageRepository.findByIdsForUpdate(client, moveIds)
+
+      const movedSet = new Set(moveIds)
+      const remainingIds = source.messageIds.filter((id) => !movedSet.has(id))
+      const movedAuthors = distinctAuthors(moveIds, memberMessages)
+      const remainingAuthors = distinctAuthors(remainingIds, memberMessages)
+
+      const newId = generateConversationId()
+      await ConversationRepository.insert(client, {
+        id: newId,
+        streamId: threadStreamId,
+        workspaceId,
+        confidence: 1,
+        status: ConversationStatuses.ACTIVE,
+      })
+
+      await ConversationRepository.removePrimaryMessages(client, workspaceId, source.id, moveIds, remainingAuthors)
+      await ConversationRepository.addPrimaryMessages(client, workspaceId, newId, moveIds, movedAuthors)
+      await ConversationRepository.bumpActivityForIds(client, workspaceId, [source.id, newId])
+
+      // Feedback ground truth — one row per moved message (parity with
+      // {@link reassignMessage}), batched (INV-56).
+      await ConversationFeedbackRepository.insertMany(
+        client,
+        moveIds.map((messageId) => ({
+          id: conversationFeedbackId(),
+          workspaceId,
+          streamId: memberMessages.get(messageId)!.streamId,
+          messageId,
+          fromConversationId: source.id,
+          toConversationId: newId,
+          userId: actorUserId,
+        }))
+      )
+
+      // Re-read both rows post-write so the aggregate events carry final membership.
+      const newConversation = await ConversationRepository.findById(client, newId)
+      const updatedSource = await ConversationRepository.findById(client, source.id)
+      if (!newConversation || !updatedSource) {
+        // A row we just wrote vanished under our own transaction — fail loud (INV-11).
+        throw new Error(`Conversation vanished during split of ${source.id}`)
+      }
+
+      // Each aggregate event routes by its OWN access root (INV-62): the new
+      // conversation lives in the thread (parent-channel discoverability), the
+      // source in its anchor.
+      const threadDelivery = await resolveConversationDelivery(client, threadStream)
+      await OutboxRepository.insert(client, "conversation:created", {
+        workspaceId,
+        streamId: newConversation.streamId,
+        conversationId: newConversation.id,
+        conversation: addStalenessFields(newConversation),
+        parentStreamId: threadDelivery.parentStreamId,
+        streamVisibility: threadDelivery.streamVisibility,
+      })
+
+      const sourceDelivery = await resolveConversationDelivery(client, sourceStream)
+      await OutboxRepository.insert(client, "conversation:updated", {
+        workspaceId,
+        streamId: updatedSource.streamId,
+        conversationId: updatedSource.id,
+        conversation: addStalenessFields(updatedSource),
+        parentStreamId: sourceDelivery.parentStreamId,
+        streamVisibility: sourceDelivery.streamVisibility,
+      })
+
+      // Per-message move events route to each message's own stream (the thread),
+      // for the timeline membership map + extraction feedback.
+      for (const messageId of moveIds) {
+        await OutboxRepository.insert(client, "conversation:message_reassigned", {
+          workspaceId,
+          streamId: memberMessages.get(messageId)!.streamId,
+          messageId,
+          fromConversationId: source.id,
+          toConversationId: newId,
+          reason: "user_correction",
+        })
+      }
+
+      return {
+        conversation: addStalenessFields(newConversation),
+        sourceConversation: addStalenessFields(updatedSource),
+      }
+    })
+  }
+
+  /**
    * Mark a conversation read through `throughMessageId` (inclusive). Read truth is
    * message-granular and stream-anchored (docs/sparse-read-overlay-design.md):
    * the conversation's member messages are snapshotted to concrete ids at write
@@ -676,6 +851,21 @@ export class ConversationService {
     // Map keys are unique, so a strict less-than comparator totally orders them.
     return [...groups.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
   }
+}
+
+/** Distinct non-null author ids of `ids`, in first-appearance order — the
+ *  recomputed `participant_ids` for a membership move. */
+function distinctAuthors(ids: string[], messages: Map<string, Message>): string[] {
+  const seen = new Set<string>()
+  const authors: string[] = []
+  for (const id of ids) {
+    const authorId = messages.get(id)?.authorId
+    if (authorId && !seen.has(authorId)) {
+      seen.add(authorId)
+      authors.push(authorId)
+    }
+  }
+  return authors
 }
 
 /** Project a full message + its hydrated rich content down to a board post message. */

@@ -11,9 +11,9 @@ import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "@/componen
  * `bumps: false` contract in STREAM_ROW_SPEC).
  */
 export type BoardEventRow =
-  | { kind: "session"; key: string; sortMs: number; events: CachedEvent[] }
-  | { kind: "memo"; key: string; sortMs: number; event: CachedEvent }
-  | { kind: "followUp"; key: string; sortMs: number; event: CachedEvent; cancelled: boolean }
+  | { kind: "session"; key: string; sortMs: number; streamId: string; events: CachedEvent[] }
+  | { kind: "memo"; key: string; sortMs: number; streamId: string; event: CachedEvent }
+  | { kind: "followUp"; key: string; sortMs: number; streamId: string; event: CachedEvent; cancelled: boolean }
 
 export interface ResolveBoardEventRowsCtx {
   /** The conversation the card renders. */
@@ -72,13 +72,14 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
       const target = payload?.conversationId ?? payload?.sourceConversationId ?? null
       if (target !== ctx.conversationId) continue
       if (event.eventType === "memos:captured") {
-        rows.push({ kind: "memo", key: event.id, sortMs: timeMs(event), event })
+        rows.push({ kind: "memo", key: event.id, sortMs: timeMs(event), streamId: event.streamId, event })
       } else if (event.eventType === "agent:follow_up_scheduled") {
         const followUpId = (event.payload as { followUpId?: string })?.followUpId
         rows.push({
           kind: "followUp",
           key: event.id,
           sortMs: timeMs(event),
+          streamId: event.streamId,
           event,
           cancelled: followUpId ? cancelledFollowUpIds.has(followUpId) : false,
         })
@@ -104,7 +105,13 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
     if (!existing || startMs > existing.startMs) bySlot.set(slotKey, { events: ordered, startMs })
   }
   for (const [slotKey, slot] of bySlot) {
-    rows.push({ kind: "session", key: slotKey, sortMs: timeMs(slot.events[0]), events: slot.events })
+    rows.push({
+      kind: "session",
+      key: slotKey,
+      sortMs: timeMs(slot.events[0]),
+      streamId: slot.events[0].streamId,
+      events: slot.events,
+    })
   }
 
   rows.sort((a, b) => a.sortMs - b.sortMs)

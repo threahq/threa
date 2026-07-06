@@ -79,6 +79,7 @@ export interface ConversationService {
   muteStream: typeof conversationsApi.muteStream
   unmuteStream: typeof conversationsApi.unmuteStream
   getBoardExclusions: typeof conversationsApi.getBoardExclusions
+  splitThread: typeof conversationsApi.splitThread
 }
 
 export interface ActivityService {

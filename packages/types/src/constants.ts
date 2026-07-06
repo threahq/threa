@@ -403,15 +403,18 @@ export const BOARD_LENS_MAX_COMPLETENESS = 4
 // records that the sender DECLARED the conversation at send time, so the
 // extractor must not re-cluster it: 'new' minted a fresh conversation seeded
 // with the message; 'existing' attached it to a caller-named conversation;
-// 'threadFromMessage' minted the thread's conversation seeded with this reply
-// and retired the lone source conversation it threaded off (board reply path).
-export const CONVERSATION_INTENTS = ["new", "existing", "threadFromMessage"] as const
+// 'threadFromMessage' attached this reply to the SAME source conversation as a
+// cross-stream member so one conversation spans root + thread (board reply path);
+// 'newSubtopic' minted a fresh child conversation anchored to the message's
+// thread stream (the board branch gesture).
+export const CONVERSATION_INTENTS = ["new", "existing", "threadFromMessage", "newSubtopic"] as const
 export type ConversationIntent = (typeof CONVERSATION_INTENTS)[number]
 
 export const ConversationIntents = {
   NEW: "new",
   EXISTING: "existing",
   THREAD_FROM_MESSAGE: "threadFromMessage",
+  NEW_SUBTOPIC: "newSubtopic",
 } as const satisfies Record<string, ConversationIntent>
 
 // Memo types (GAM)

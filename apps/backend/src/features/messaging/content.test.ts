@@ -99,6 +99,15 @@ describe("createMessageSchema conversation directive", () => {
     expect(result.success).toBe(false)
   })
 
+  it("accepts a 'newSubtopic' directive with no id", () => {
+    const parsed = createMessageSchema.parse({
+      streamId: "stream_1",
+      contentJson: benignDoc,
+      conversation: { intent: "newSubtopic" },
+    })
+    expect(parsed).toMatchObject({ conversation: { intent: "newSubtopic" } })
+  })
+
   it("rejects an unknown intent", () => {
     const result = createMessageSchema.safeParse({
       streamId: "stream_1",

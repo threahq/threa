@@ -526,6 +526,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     conversation.reassignMessage
   )
+  app.post(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/split-thread",
+    ...authed,
+    conversation.splitThread
+  )
   app.post("/api/workspaces/:workspaceId/conversations/:conversationId/read", ...authed, conversation.markRead)
   app.post("/api/workspaces/:workspaceId/conversations/:conversationId/unread", ...authed, conversation.markUnread)
 

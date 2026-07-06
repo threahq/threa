@@ -14,6 +14,7 @@ import * as messageReactionsModule from "@/hooks/use-message-reactions"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
+import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -152,6 +153,12 @@ beforeEach(() => {
   // BoardCard reads the viewer id for reaction state; sourced from auth, which
   // isn't mounted in this harness.
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+  // BoardCard hosts the inline branch composer, whose queue hook needs the
+  // pending-messages provider — stub the hook so the harness stays lean.
+  vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+    queueDraftMessage: vi.fn().mockResolvedValue({ clientId: "client_1" }),
+    currentUserId: "usr_me",
+  } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
   // Reactions reuse the timeline's <MessageReactions>, whose toggle hook reaches
   // for the SyncEngine. Stub the hook so the real component still renders.
   vi.spyOn(messageReactionsModule, "useMessageReactions").mockReturnValue({
