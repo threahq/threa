@@ -47,7 +47,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 3.2  | Per-thread session concurrency                        | ☑      | #1167 |
 | 3.3  | Conversation-anchored agent replies                   | ☑      | #1170 |
 | 4.1  | `stream_briefs` storage + endpoints + injection       | ☑      | #1214 |
-| 4.2  | `update_stream_brief` tool + timeline event           | ☑      | #TBD  |
+| 4.2  | `update_stream_brief` tool + timeline event           | ☑      | #1220 |
 | 4.3  | Brief UI: settings editor (+ timeline renderer → 4.2) | ☑      | #1218 |
 | 4.4  | Brief correction eval                                 | ☐      |       |
 | 5.1  | `delegate_task` tool + delegation substrate + INV-64  | ☐      |       |
