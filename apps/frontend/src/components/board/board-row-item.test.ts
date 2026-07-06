@@ -99,7 +99,7 @@ describe("buildBranchedBoardRows continuation", () => {
       streams,
       conversation: { streamId: "root" },
     })
-    const rows = buildBranchedBoardRows(grouping, [], new Map())
+    const rows = buildBranchedBoardRows(grouping, [], new Map(), "a")
     expect(rows.map((r) => r.kind)).toEqual(["message", "message"])
     const reply = rows[1]
     expect(reply.kind === "message" && reply.continuation).toBe(true)
@@ -122,8 +122,42 @@ describe("buildBranchedBoardRows continuation", () => {
       ],
       { streams, conversation: { streamId: "root" } }
     )
-    const rows = buildBranchedBoardRows(grouping, [], new Map())
+    const rows = buildBranchedBoardRows(grouping, [], new Map(), "a")
     expect(rows.map((r) => r.kind)).toEqual(["message", "message", "message", "message"])
+  })
+
+  it("keeps the seam when the pre-boundary run is a single reply that isn't the opener (collapsed window)", () => {
+    // A migrated flat discussion, collapsed so the flattener sees only a trailing
+    // reply-only window that happens to start with one channel reply. The single
+    // pre-boundary message is NOT the conversation opener, so this is the same
+    // migration the expanded card seams — not a convert-to-thread. The seam must
+    // survive the windowing (else it flickers between collapsed and expanded).
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", "r2")],
+    ])
+    const grouping = groupBranches([msg("r2", "u1", 5, "root"), msg("t1", "u1", 6, "thread")], {
+      streams,
+      conversation: { streamId: "root" },
+    })
+    // The real opener (`r1`) sits in the hidden middle, absent from the window.
+    const rows = buildBranchedBoardRows(grouping, [], new Map(), "r1")
+    expect(rows.map((r) => r.kind)).toEqual(["message", "seam", "message"])
+  })
+
+  it("without an opening id a lone down-crossing keeps its seam (no suppression hint)", () => {
+    // The suppression is opt-in via the opener id; a caller that can't vouch the
+    // run starts at the opener gets the conservative seam, never a dropped one.
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", "a")],
+    ])
+    const grouping = groupBranches([msg("a", "u1", 0, "root"), msg("b", "u1", 1, "thread")], {
+      streams,
+      conversation: { streamId: "root" },
+    })
+    const rows = buildBranchedBoardRows(grouping, [], new Map())
+    expect(rows.map((r) => r.kind)).toEqual(["message", "seam", "message"])
   })
 
   it("an up-seam keeps its seam even when the first run is a single message", () => {

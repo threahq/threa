@@ -233,7 +233,8 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     buildBranchedBoardRows(
       groupBranches(messages, { streams: structuralIndex.streamsById, conversation: { streamId } }),
       eventRows,
-      branchesByForkMessageId
+      branchesByForkMessageId,
+      openingMessage?.id
     )
   // A spanning-overflow row from a card opens the whole conversation in the panel.
   const continueThreadTo = () => getPanelUrl(createConversationPanelId(conversation.id))

@@ -325,7 +325,9 @@ describe("BoardCard — inline sub-topic + branch reply", () => {
     await screen.findByText("Pending sub-topic body.")
 
     await user.click(await screen.findByRole("button", { name: "Reply" }))
-    expect(await screen.findByText("Replying in New sub-topic")).toBeTruthy()
+    // The pending branch has no extracted topic yet, so the chip names the target
+    // generically rather than echoing the "New sub-topic" placeholder back.
+    expect(await screen.findByText("Replying in this sub-topic")).toBeTruthy()
     await user.click(screen.getByRole("button", { name: "Send inline" }))
 
     expect(queueDraftMessage).toHaveBeenLastCalledWith(
