@@ -1,16 +1,16 @@
 import type { Pool } from "pg"
+import { STREAM_BRIEF_MAX_CHARS } from "@threa/types"
 import { streamBriefId, streamBriefRevisionId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { StreamBriefRepository, type BriefAuthorKind, type StreamBrief } from "./brief-repository"
 
 /**
- * The brief is a prompt insert, not a document store — every companion turn in
- * the stream carries it verbatim, so the cap keeps it from eating the context
- * budget. Enforced here (not only in the endpoint's Zod schema) so the agent
- * tool path (roadmap 4.2) hits the same wall.
+ * The cap is enforced here (not only in the endpoint's Zod schema) so the agent
+ * tool path (roadmap 4.2) hits the same wall. Re-exported so existing importers
+ * keep their `./brief-service` source; the value lives in `@threa/types` (INV-33).
  */
-export const STREAM_BRIEF_MAX_CHARS = 4000
+export { STREAM_BRIEF_MAX_CHARS }
 
 /**
  * Threads carry no brief of their own — a thread reads and writes its root

@@ -9,6 +9,7 @@ export {
   StreamTypes,
   DM_PARTICIPANT_COUNT,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
+  STREAM_BRIEF_MAX_CHARS,
   // Visibility
   VISIBILITY_OPTIONS,
   type Visibility,
