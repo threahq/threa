@@ -67,7 +67,11 @@ function makeFakeTransport() {
     disconnect: () => {},
     socketConnected: false,
     sendHello: () => {},
-    recordSteps: async (invocationId: string, _claimToken: string, frames: Array<{ stepType: string; content: string }>) => {
+    recordSteps: async (
+      invocationId: string,
+      _claimToken: string,
+      frames: Array<{ stepType: string; content: string }>
+    ) => {
       steps.push({ invocationId, frames })
     },
     renewClaim: async () => ({ notFound: false }),
@@ -717,5 +721,32 @@ describe("steer into the running turn (native steer support)", () => {
     expect(interrupted).toBe(true)
     expect(delivered).toEqual(["start with the readme"])
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_steer")
+  })
+})
+
+describe("no-socket poll backoff", () => {
+  test("doubles empty socketless ticks to the cap; claim, socket, or reconnect resets", () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport) as unknown as {
+      nextPollDelay: (claimed: boolean) => number
+    }
+
+    expect(session.nextPollDelay(false)).toBe(3000)
+    expect(session.nextPollDelay(false)).toBe(6000)
+    expect(session.nextPollDelay(false)).toBe(12000)
+    for (let i = 0; i < 10; i++) session.nextPollDelay(false)
+    expect(session.nextPollDelay(false)).toBe(120_000)
+
+    // Claimed work while socketless → back to the fast cadence.
+    expect(session.nextPollDelay(true)).toBe(3000)
+    expect(session.nextPollDelay(false)).toBe(3000)
+
+    // Socket up → slow backstop, and the backoff restarts fresh on the next outage.
+    for (let i = 0; i < 5; i++) session.nextPollDelay(false)
+    ;(transport as unknown as { socketConnected: boolean }).socketConnected = true
+    expect(session.nextPollDelay(false)).toBe(15 * 60 * 1000)
+    ;(transport as unknown as { socketConnected: boolean }).socketConnected = false
+    expect(session.nextPollDelay(false)).toBe(3000)
   })
 })

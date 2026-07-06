@@ -79,5 +79,12 @@ export interface BotRuntimeTransportOptions {
   reconnectionDelayMaxMs?: number
   /** HTTP fallback request timeout. Default 30s. */
   fetchTimeoutMs?: number
+  /**
+   * How long a socket may sit disconnected before `connect()` tears it down and
+   * redials from a fresh ws hint. Default 3 min. Socket.IO's own retry loop
+   * handles brief drops; this backstop catches the wedged states it can't — a
+   * stale ws hint after the backend moved, or a client stuck post-kick.
+   */
+  staleSocketRedialMs?: number
   log?: (message: string) => void
 }

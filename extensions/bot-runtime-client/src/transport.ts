@@ -1,4 +1,7 @@
-import { io as openSocket, type Socket } from "socket.io-client"
+// Namespace import so tests can spyOn the `io` factory (INV-48) — the transport
+// is otherwise untestable without dialing a real Socket.IO server.
+import * as socketIoClient from "socket.io-client"
+import type { Socket } from "socket.io-client"
 import { THREA_CALLBACK_TOKEN_HEADER, type SealedStepFrame } from "./sealed"
 import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint"
 import type {
@@ -12,6 +15,7 @@ import type {
 const DEFAULT_WS_ACK_TIMEOUT_MS = 5_000
 const DEFAULT_RECONNECTION_DELAY_MAX_MS = 30_000
 const DEFAULT_FETCH_TIMEOUT_MS = 30_000
+const DEFAULT_STALE_SOCKET_REDIAL_MS = 3 * 60 * 1000
 
 /**
  * Owns the `/bot` WebSocket and the routing for a runtime's background writes.
@@ -41,12 +45,15 @@ export class BotRuntimeTransport {
   private readonly wsAckTimeoutMs: number
   private readonly reconnectionDelayMaxMs: number
   private readonly fetchTimeoutMs: number
+  private readonly staleSocketRedialMs: number
   private readonly logFn: (message: string) => void
 
   private socket: Socket | undefined
   private connected = false
   private connecting = false
   private stopped = false
+  /** When the current outage started: set at attach and on disconnect, cleared on connect. */
+  private disconnectedAt: number | undefined
   /** The cursor echoed by the last hello ack; re-sent on the next hello so the bootstrap only replays unseen events. */
   private cursor: string | undefined
 
@@ -59,6 +66,7 @@ export class BotRuntimeTransport {
     this.wsAckTimeoutMs = opts.wsAckTimeoutMs ?? DEFAULT_WS_ACK_TIMEOUT_MS
     this.reconnectionDelayMaxMs = opts.reconnectionDelayMaxMs ?? DEFAULT_RECONNECTION_DELAY_MAX_MS
     this.fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
+    this.staleSocketRedialMs = opts.staleSocketRedialMs ?? DEFAULT_STALE_SOCKET_REDIAL_MS
     this.logFn = opts.log ?? (() => {})
   }
 
@@ -74,9 +82,23 @@ export class BotRuntimeTransport {
    * call and the first poll tick from opening two). The hint resolve is the only
    * HTTP the transport does on the hot path; a failure leaves the socket closed
    * and the caller keeps polling/HTTP-writing until the next `connect()`.
+   *
+   * An existing-but-disconnected socket is normally left to Socket.IO's own
+   * retry loop, EXCEPT when the outage has outlived `staleSocketRedialMs`: then
+   * the socket is wedged in a state retries can't fix (a stale ws hint after the
+   * backend moved, a dead retry loop) and the only cure is a teardown + fresh
+   * dial. Without this, one wedged socket leaves the runtime on the fast HTTP
+   * poll forever — the exact Cloudflare-quota burn the transport exists to avoid.
    */
   async connect(): Promise<void> {
-    if (this.socket || this.connecting || this.stopped) return
+    if (this.connecting || this.stopped) return
+    if (this.socket) {
+      if (this.connected) return
+      const outageMs = Date.now() - (this.disconnectedAt ?? Date.now())
+      if (outageMs < this.staleSocketRedialMs) return
+      this.logFn(`socket disconnected for ${Math.round(outageMs / 1000)}s; redialing from a fresh hint`)
+      this.teardownSocket()
+    }
     this.connecting = true
     try {
       let hint: WsHint | undefined
@@ -95,7 +117,7 @@ export class BotRuntimeTransport {
     if (this.socket || this.stopped) return
     let socket: Socket
     try {
-      socket = openSocket(buildBotSocketUrl(hint), {
+      socket = socketIoClient.io(buildBotSocketUrl(hint), {
         path: hint.path,
         auth: { token: this.apiKey },
         transports: ["websocket"],
@@ -107,15 +129,24 @@ export class BotRuntimeTransport {
       return
     }
     this.socket = socket
+    this.disconnectedAt = Date.now()
     socket.on("connect", () => {
       this.connected = true
+      this.disconnectedAt = undefined
       this.sendHello()
     })
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason: string) => {
       this.connected = false
+      this.disconnectedAt ??= Date.now()
+      // Socket.IO's auto-reconnect covers every disconnect reason EXCEPT a
+      // server-initiated one (deploy drain, kick) — there the client stays down
+      // until someone calls connect(). Redial immediately; a flap lands on the
+      // normal reconnection backoff.
+      if (reason === "io server disconnect") socket.connect()
     })
     socket.on("connect_error", (error: unknown) => {
       this.connected = false
+      this.disconnectedAt ??= Date.now()
       this.logFn(`socket connect_error: ${summarize(error)}`)
     })
     socket.on("bot_invocation:available", () => this.callbacks.onInvocationAvailable?.())
@@ -154,7 +185,13 @@ export class BotRuntimeTransport {
   /** Tear the socket down (idempotent). After this the transport is HTTP-only and won't reconnect. */
   disconnect(): void {
     this.stopped = true
+    this.teardownSocket()
+  }
+
+  /** Drop the current socket without stopping the transport — the next `connect()` dials fresh. */
+  private teardownSocket(): void {
     this.connected = false
+    this.disconnectedAt = undefined
     const socket = this.socket
     this.socket = undefined
     if (socket) {

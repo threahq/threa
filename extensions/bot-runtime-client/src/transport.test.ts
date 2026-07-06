@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, mock } from "bun:test"
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import * as socketIoClient from "socket.io-client"
 import { BotRuntimeTransport } from "./transport"
 import { buildBotSocketUrl, parseWsHint } from "./ws-hint"
 
@@ -184,6 +185,97 @@ describe("WS frame sent but ack timed out (idempotency)", () => {
     })
 
     expect(calls.some((c) => c.url.includes("/bot-runtime/presence"))).toBe(true)
+  })
+})
+
+describe("socket self-heal (the wedge that burns the edge quota)", () => {
+  interface FakeSocket {
+    handlers: Record<string, (...args: unknown[]) => void>
+    connect: ReturnType<typeof mock>
+    disconnect: ReturnType<typeof mock>
+    removeAllListeners: ReturnType<typeof mock>
+    on: (event: string, cb: (...args: unknown[]) => void) => FakeSocket
+    emit: (...args: unknown[]) => void
+    timeout: () => { emit: (...args: unknown[]) => void }
+  }
+
+  function makeFakeSocket(): FakeSocket {
+    const socket: FakeSocket = {
+      handlers: {},
+      connect: mock(() => {}),
+      disconnect: mock(() => {}),
+      removeAllListeners: mock(() => {}),
+      on(event, cb) {
+        socket.handlers[event] = cb
+        return socket
+      },
+      emit: () => {},
+      timeout: () => ({ emit: () => {} }),
+    }
+    return socket
+  }
+
+  function stubHintFetch(): CapturedRequest[] {
+    return stubFetch(() => new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }), { status: 200 }))
+  }
+
+  function makeSelfHealTransport(staleSocketRedialMs: number): BotRuntimeTransport {
+    return new BotRuntimeTransport({
+      baseUrl: "https://app.example.test",
+      workspaceId: "ws_1",
+      apiKey: "threa_bk_test",
+      hello: HELLO,
+      staleSocketRedialMs,
+    })
+  }
+
+  it("redials after a server-initiated disconnect (Socket.IO won't reconnect on its own)", async () => {
+    const fake = makeFakeSocket()
+    const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const transport = makeSelfHealTransport(3 * 60 * 1000)
+      await transport.connect()
+      fake.handlers.connect!()
+      expect(transport.socketConnected).toBe(true)
+
+      fake.handlers.disconnect!("io server disconnect")
+      expect(transport.socketConnected).toBe(false)
+      expect(fake.connect).toHaveBeenCalledTimes(1)
+
+      // Client-side drops are left to Socket.IO's own retry loop.
+      fake.handlers.disconnect!("transport close")
+      expect(fake.connect).toHaveBeenCalledTimes(1)
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
+  it("connect() leaves a fresh outage to Socket.IO but tears down and redials a stale one", async () => {
+    const first = makeFakeSocket()
+    const second = makeFakeSocket()
+    const ioSpy = spyOn(socketIoClient, "io")
+      .mockReturnValueOnce(first as unknown as ReturnType<typeof socketIoClient.io>)
+      .mockReturnValueOnce(second as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      // Stale threshold 0: any disconnected socket counts as wedged immediately.
+      const transport = makeSelfHealTransport(0)
+      await transport.connect()
+      expect(ioSpy).toHaveBeenCalledTimes(1)
+
+      await transport.connect()
+      expect(first.removeAllListeners).toHaveBeenCalledTimes(1)
+      expect(first.disconnect).toHaveBeenCalledTimes(1)
+      expect(ioSpy).toHaveBeenCalledTimes(2)
+
+      // A connected socket is never redialed.
+      second.handlers.connect!()
+      await transport.connect()
+      expect(ioSpy).toHaveBeenCalledTimes(2)
+    } finally {
+      ioSpy.mockRestore()
+    }
   })
 })
 
