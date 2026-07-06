@@ -14,6 +14,9 @@ import {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
+  BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
+  DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
   type Theme,
   type MessageDisplay,
   type LabelRemoveOnMove,
@@ -55,6 +58,7 @@ export function AppearanceSettings() {
   const labelRemoveOnMove = preferences?.labelRemoveOnMove ?? "ask"
   const codeBlockThreshold = preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
+  const boardCardThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
 
   // Local input state so users can type freely without each keystroke
   // hitting the preferences mutation. We commit on blur / Enter only.
@@ -67,6 +71,11 @@ export function AppearanceSettings() {
   useEffect(() => {
     setBlockquoteThresholdDraft(String(blockquoteThreshold))
   }, [blockquoteThreshold])
+
+  const [boardCardThresholdDraft, setBoardCardThresholdDraft] = useState<string>(String(boardCardThreshold))
+  useEffect(() => {
+    setBoardCardThresholdDraft(String(boardCardThreshold))
+  }, [boardCardThreshold])
 
   const commitCodeThreshold = () => {
     const parsed = Number.parseInt(codeThresholdDraft, 10)
@@ -94,6 +103,20 @@ export function AppearanceSettings() {
       return
     }
     void updatePreference("blockquoteCollapseThreshold", clamped)
+  }
+
+  const commitBoardCardThreshold = () => {
+    const parsed = Number.parseInt(boardCardThresholdDraft, 10)
+    if (!Number.isFinite(parsed)) {
+      setBoardCardThresholdDraft(String(boardCardThreshold))
+      return
+    }
+    const clamped = Math.min(BOARD_CARD_COLLAPSE_THRESHOLD_MAX, Math.max(BOARD_CARD_COLLAPSE_THRESHOLD_MIN, parsed))
+    if (clamped === boardCardThreshold) {
+      setBoardCardThresholdDraft(String(clamped))
+      return
+    }
+    void updatePreference("boardCardCollapseThreshold", clamped)
   }
 
   return (
@@ -219,6 +242,45 @@ export function AppearanceSettings() {
               if (event.key === "Enter") {
                 event.preventDefault()
                 commitBlockquoteThreshold()
+              }
+            }}
+            className="w-24"
+          />
+        </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Board Cards</h3>
+          <p className="text-sm text-muted-foreground">
+            Collapse long conversations to their header on the board so short and new ones stand out
+          </p>
+        </div>
+        <div className="flex items-start gap-4">
+          <div className="grid gap-1 flex-1">
+            <Label htmlFor="board-card-collapse-threshold" className="cursor-pointer">
+              Collapse threshold
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Conversations with more than this many messages start collapsed on the board. You can always expand or
+              collapse an individual card. Set to 0 to collapse every card by default.
+            </p>
+          </div>
+          <Input
+            id="board-card-collapse-threshold"
+            type="number"
+            inputMode="numeric"
+            min={BOARD_CARD_COLLAPSE_THRESHOLD_MIN}
+            max={BOARD_CARD_COLLAPSE_THRESHOLD_MAX}
+            value={boardCardThresholdDraft}
+            onChange={(event) => setBoardCardThresholdDraft(event.target.value)}
+            onBlur={commitBoardCardThreshold}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                commitBoardCardThreshold()
               }
             }}
             className="w-24"

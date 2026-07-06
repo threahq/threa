@@ -19,6 +19,8 @@ import {
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
+  BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
+  BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
 } from "@threa/types"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 import { validateRequest } from "../../lib/validation"
@@ -47,6 +49,12 @@ const updatePreferencesSchema = z.object({
     .int()
     .min(BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN)
     .max(BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX)
+    .optional(),
+  boardCardCollapseThreshold: z
+    .number()
+    .int()
+    .min(BOARD_CARD_COLLAPSE_THRESHOLD_MIN)
+    .max(BOARD_CARD_COLLAPSE_THRESHOLD_MAX)
     .optional(),
   // Model id like "elevenlabs:scribe-v2-realtime". Validated against the model
   // registry server-side when a session opens; this layer only bounds length.

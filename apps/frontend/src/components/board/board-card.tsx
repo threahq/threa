@@ -7,10 +7,12 @@ import {
   User,
   MessageSquareText,
   ChevronDown,
+  ChevronRight,
   CircleCheck,
   PanelRight,
   type LucideIcon,
 } from "lucide-react"
+import { DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD } from "@threa/types"
 import { RelativeTime } from "@/components/relative-time"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -34,7 +36,8 @@ import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
 import { useActors, useVisibleStreams } from "@/hooks"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { useConversationService, usePanel, createConversationPanelId } from "@/contexts"
+import { useConversationService, usePanel, createConversationPanelId, usePreferences } from "@/contexts"
+import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
 import { useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
@@ -113,6 +116,20 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
 
   const streamId = conversation.streamId
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
+
+  // Whole-card fold: an established conversation (more messages than the
+  // threshold) starts collapsed to its header so short/new cards stand out; a
+  // per-card toggle persists the override. Counted over the conversation's full
+  // size (opening + all replies), not the on-screen preview window — the fold is
+  // about "how big is this conversation", the reply window is a separate axis.
+  const { preferences } = usePreferences()
+  const collapseThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
+  const messageCount = totalReplies + (openingMessage ? 1 : 0)
+  const collapsible = messageCount > collapseThreshold
+  const { collapsed: bodyCollapsed, toggle: toggleBodyCollapsed } = useBoardCardCollapse(conversation.id, collapsible)
+  // A card persisted-collapsed while long keeps its toggle even if it later
+  // drops below the threshold — otherwise a folded short card would strand.
+  const showCollapseToggle = collapsible || bodyCollapsed
 
   // Conversation read state: per-row gating + actions for the message rows, plus
   // the card's effectively-unread signal for the header dot. Both derive live
@@ -396,143 +413,186 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
         <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
         <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {/* The stream the post lives in — a real link back into it (INV-40). */}
-            <Link
-              to={`/w/${workspaceId}/s/${streamId}`}
-              className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
-            >
-              <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate font-medium">{contextLabel}</span>
-            </Link>
-            {/* Quiet unread dot: the conversation holds an effectively-unread member
+          {/* Header pins to the scroll-viewport top while the card's messages
+              scroll under it (bg-card covers them), so the locator + topic stay
+              legible in a long card. The negative margins + re-padding fill the
+              header to the card edges; at rest it looks identical to an unpinned
+              header. */}
+          <div className="sticky top-0 z-10 -mx-3 -mt-3 rounded-t-xl bg-card px-3 pt-3 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              {showCollapseToggle && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={toggleBodyCollapsed}
+                      aria-expanded={!bodyCollapsed}
+                      aria-label={bodyCollapsed ? "Expand conversation" : "Collapse conversation"}
+                      className="-ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:text-foreground"
+                    >
+                      {bodyCollapsed ? (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{bodyCollapsed ? "Expand" : "Collapse"}</TooltipContent>
+                </Tooltip>
+              )}
+              {/* The stream the post lives in — a real link back into it (INV-40). */}
+              <Link
+                to={`/w/${workspaceId}/s/${streamId}`}
+                className="flex min-w-0 items-center gap-1.5 transition-colors hover:text-foreground"
+              >
+                <ContextGlyph className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate font-medium">{contextLabel}</span>
+              </Link>
+              {/* Quiet unread dot: the conversation holds an effectively-unread member
               message. Reserved fixed footprint (no layout shift, INV-21); clears
               live as read state changes. */}
-            <span
-              className="ml-auto flex h-2 w-2 shrink-0 items-center justify-center"
-              aria-label={cardHasUnread ? "Unread" : undefined}
-            >
-              {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
-            </span>
-            <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
-            {/* Open the whole conversation in the side panel (Mechanism B) — reads it
+              <span
+                className="ml-auto flex h-2 w-2 shrink-0 items-center justify-center"
+                aria-label={cardHasUnread ? "Unread" : undefined}
+              >
+                {cardHasUnread && <span className="h-2 w-2 rounded-full bg-primary" />}
+              </span>
+              <RelativeTime date={conversation.lastActivityAt} terse className="shrink-0" />
+              {/* Open the whole conversation in the side panel (Mechanism B) — reads it
             coherently and replies scoped to it, peer to a thread. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-                  aria-label="Open conversation"
-                  onClick={() => openPanel(createConversationPanelId(conversation.id))}
-                >
-                  <PanelRight className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Open conversation</TooltipContent>
-            </Tooltip>
-            <ConversationActionsMenu
-              workspaceId={workspaceId}
-              conversationId={conversation.id}
-              topicSummary={conversation.topicSummary}
-              status={conversation.status}
-              triggerClassName="shrink-0"
-            />
-          </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    aria-label="Open conversation"
+                    onClick={() => openPanel(createConversationPanelId(conversation.id))}
+                  >
+                    <PanelRight className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Open conversation</TooltipContent>
+              </Tooltip>
+              <ConversationActionsMenu
+                workspaceId={workspaceId}
+                conversationId={conversation.id}
+                topicSummary={conversation.topicSummary}
+                status={conversation.status}
+                triggerClassName="shrink-0"
+              />
+            </div>
 
-          {/* The conversation's topic — a quiet single-line label, shown only when
+            {/* The conversation's topic — a quiet single-line label, shown only when
             the extractor (or a rename) set one, so a message-led card stays
             message-led when it hasn't. A resolved topic reads muted with a small
             marker; the card also drops out of the Active lens (its own signal). */}
-          {conversation.topicSummary && (
-            <div className="mt-2 flex items-center gap-1.5">
-              {conversation.status === "resolved" && (
-                <CircleCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Resolved" />
-              )}
-              <span
-                className={cn(
-                  "truncate text-sm font-medium",
-                  conversation.status === "resolved" && "text-muted-foreground line-through decoration-1"
+            {conversation.topicSummary && (
+              <div className="mt-2 flex items-center gap-1.5">
+                {conversation.status === "resolved" && (
+                  <CircleCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Resolved" />
                 )}
-              >
-                {conversation.topicSummary}
-              </span>
-            </div>
-          )}
-
-          <div className="mt-3 [&>*:first-child]:mt-0">
-            {provenance && (
-              <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+                <span
+                  className={cn(
+                    "truncate text-sm font-medium",
+                    conversation.status === "resolved" && "text-muted-foreground line-through decoration-1"
+                  )}
+                >
+                  {conversation.topicSummary}
+                </span>
+              </div>
             )}
-            {contiguous ? (
-              <BranchedBoardRows
-                rows={branchRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies)}
-                workspaceId={workspaceId}
-                renderMessage={renderMessage}
-                continueThreadTo={continueThreadTo}
-                onSplitThread={onSplitThread}
-                renderBranchMessage={renderBranchMessage}
-                renderBranchTail={inlineComposer.renderBranchTail}
-                renderAfterMessage={inlineComposer.renderAfterMessage}
-              />
-            ) : (
-              <>
-                {openingMessage && renderMessage(openingMessage, false)}
-                {/* The opening renders outside the row builder here, so its inline
-                    "new sub-topic" composer slot must be placed explicitly. */}
-                {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
-                {!expanded && hiddenCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(true)}
-                    className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <ChevronDown className="h-3.5 w-3.5" />
-                    {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
-                  </button>
-                )}
-                {loadingMore && (
-                  <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
-                )}
-                {/* The backfill loads the older/full window; the recent replies the
-                rail carried are already shown above, so the error names "older"
-                rather than contradicting visible content. */}
-                {expanded && expandFailed && (
-                  <button
-                    type="button"
-                    onClick={() => void refetchMessages()}
-                    className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-                  >
-                    Couldn't load older messages. Retry.
-                  </button>
-                )}
-                <BranchedBoardRows
-                  rows={branchRows(displayedReplies)}
-                  workspaceId={workspaceId}
-                  renderMessage={renderMessage}
-                  continueThreadTo={continueThreadTo}
-                  onSplitThread={onSplitThread}
-                  renderBranchMessage={renderBranchMessage}
-                  renderBranchTail={inlineComposer.renderBranchTail}
-                  renderAfterMessage={inlineComposer.renderAfterMessage}
-                />
-              </>
+
+            {/* Collapsed: the header stands alone; the message count names how much
+              is folded so scale is legible without unfolding. */}
+            {bodyCollapsed && (
+              <button
+                type="button"
+                onClick={toggleBodyCollapsed}
+                className="mt-2 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {messageCount} {messageCount === 1 ? "message" : "messages"}
+              </button>
             )}
           </div>
 
-          <BoardReplyComposer
-            workspaceId={workspaceId}
-            post={post}
-            hostStreamType={streamType}
-            // The conversation's most-recently-active stream — the latest displayed
-            // reply's own stream (a thread under the root), INCLUDING the viewer's own
-            // pending reply and any expand-backfilled rows, so a continuation follows
-            // the conversation into the thread it moved to instead of re-interleaving
-            // the channel. `displayedReplies` is chronological; its last entry is the
-            // freshest activity. Falls back to the conversation's own stream — NOT the
-            // opening message's, which for a thread post is the parent-stream message.
-            lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
-          />
+          {!bodyCollapsed && (
+            <>
+              <div className="mt-3 [&>*:first-child]:mt-0">
+                {provenance && (
+                  <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+                )}
+                {contiguous ? (
+                  <BranchedBoardRows
+                    rows={branchRows(openingMessage ? [openingMessage, ...displayedReplies] : displayedReplies)}
+                    workspaceId={workspaceId}
+                    renderMessage={renderMessage}
+                    continueThreadTo={continueThreadTo}
+                    onSplitThread={onSplitThread}
+                    renderBranchMessage={renderBranchMessage}
+                    renderBranchTail={inlineComposer.renderBranchTail}
+                    renderAfterMessage={inlineComposer.renderAfterMessage}
+                  />
+                ) : (
+                  <>
+                    {openingMessage && renderMessage(openingMessage, false)}
+                    {/* The opening renders outside the row builder here, so its inline
+                    "new sub-topic" composer slot must be placed explicitly. */}
+                    {openingMessage && inlineComposer.renderAfterMessage(openingMessage.id)}
+                    {!expanded && hiddenCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setExpanded(true)}
+                        className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                        {hiddenCount} more {hiddenCount === 1 ? "message" : "messages"}
+                      </button>
+                    )}
+                    {loadingMore && (
+                      <span className="mt-3 block text-xs text-muted-foreground">Loading older messages…</span>
+                    )}
+                    {/* The backfill loads the older/full window; the recent replies the
+                rail carried are already shown above, so the error names "older"
+                rather than contradicting visible content. */}
+                    {expanded && expandFailed && (
+                      <button
+                        type="button"
+                        onClick={() => void refetchMessages()}
+                        className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+                      >
+                        Couldn't load older messages. Retry.
+                      </button>
+                    )}
+                    <BranchedBoardRows
+                      rows={branchRows(displayedReplies)}
+                      workspaceId={workspaceId}
+                      renderMessage={renderMessage}
+                      continueThreadTo={continueThreadTo}
+                      onSplitThread={onSplitThread}
+                      renderBranchMessage={renderBranchMessage}
+                      renderBranchTail={inlineComposer.renderBranchTail}
+                      renderAfterMessage={inlineComposer.renderAfterMessage}
+                    />
+                  </>
+                )}
+              </div>
+
+              <BoardReplyComposer
+                workspaceId={workspaceId}
+                post={post}
+                hostStreamType={streamType}
+                // The conversation's most-recently-active stream — the latest displayed
+                // reply's own stream (a thread under the root), INCLUDING the viewer's own
+                // pending reply and any expand-backfilled rows, so a continuation follows
+                // the conversation into the thread it moved to instead of re-interleaving
+                // the channel. `displayedReplies` is chronological; its last entry is the
+                // freshest activity. Falls back to the conversation's own stream — NOT the
+                // opening message's, which for a thread post is the parent-stream message.
+                lastActiveStreamId={displayedReplies.at(-1)?.streamId ?? streamId}
+              />
+            </>
+          )}
         </div>
       </QuoteReplyProvider>
     </ConversationReadProvider>

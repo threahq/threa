@@ -81,6 +81,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       scratchpadCustomPrompt: null,
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,
+      boardCardCollapseThreshold: 12,
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
       voiceSteeringWords: [],

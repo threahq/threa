@@ -10,6 +10,7 @@ import { ServicesProvider, PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
+import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db, type CachedEvent } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -110,6 +111,7 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 beforeEach(async () => {
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
+  __resetCollapseCacheForTests()
   await db.events.clear()
   await db.conversations.clear()
   await db.streams.clear()
@@ -286,5 +288,55 @@ describe("BoardCard conversation actions", () => {
     await user.click(await screen.findByText("Hide from board"))
 
     await waitFor(() => expect(hideConversation).toHaveBeenCalledWith(WS, "conv_1"))
+  })
+})
+
+describe("BoardCard collapse", () => {
+  beforeEach(() => {
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+  })
+
+  /** Drive collapsibility off the threshold: 0 makes any card foldable. */
+  function withThreshold(threshold: number) {
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardCardCollapseThreshold: threshold },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  }
+
+  it("starts folded to its header when the conversation exceeds the threshold", async () => {
+    withThreshold(0)
+    mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+    // Header (topic + fold count) shows; the body does not.
+    expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
+    expect(screen.getByText("1 message")).toBeTruthy()
+    expect(screen.getByLabelText("Expand conversation")).toBeTruthy()
+    expect(screen.queryByText("Opening body.")).toBeNull()
+  })
+
+  it("stays expanded with no fold control when under the threshold", async () => {
+    withThreshold(12)
+    mountCard()
+    await screen.findByText("Opening body.")
+    expect(screen.queryByLabelText("Expand conversation")).toBeNull()
+    expect(screen.queryByLabelText("Collapse conversation")).toBeNull()
+  })
+
+  it("expands from the header control, revealing the body", async () => {
+    withThreshold(0)
+    const user = userEvent.setup()
+    mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+
+    await user.click(await screen.findByLabelText("Expand conversation"))
+
+    expect(await screen.findByText("Opening body.")).toBeTruthy()
+    // The control flips to collapse, and the fold-count line is gone.
+    expect(screen.getByLabelText("Collapse conversation")).toBeTruthy()
+    expect(screen.queryByText("1 message")).toBeNull()
   })
 })
