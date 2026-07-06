@@ -239,6 +239,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeTypes: excludeStreamTypes.length > 0 ? { key: excludeTypeKey, ids: new Set(excludeStreamTypes) } : null,
       labels: labelStreamIds ? { key: labelKey, streamIds: labelStreamIds } : null,
       excludeLabels: excludeLabelStreamIds ? { key: excludeLabelKey, streamIds: excludeLabelStreamIds } : null,
+      showArchived,
     }),
     [
       lens,
@@ -254,6 +255,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       labelStreamIds,
       excludeLabelKey,
       excludeLabelStreamIds,
+      showArchived,
     ]
   )
   // One URL write per toggle: a dimension's include/exclude params are rewritten
@@ -327,22 +329,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const muted = useBoardMutedStreamIds(workspaceId)
   const muteStream = useMuteStream(workspaceId)
   const unmuteStream = useUnmuteStream(workspaceId)
-  const streams = useWorkspaceStreams(workspaceId)
-  // Archived root streams, resolved live from the workspace store — the client
-  // half of the server's `boardArchivedExcludeSql`. A card under one drops unless
-  // `showArchived` is on; resolving live means archiving a channel drops its
-  // cards at once (no refetch). Archiving marks only the root row (INV-62), so
-  // this set is exactly the archived roots.
-  const archivedRootStreamIds = useMemo(() => new Set(streams.filter((s) => s.archivedAt).map((s) => s.id)), [streams])
   const exclusions = useMemo(
-    () => ({
-      hidden,
-      muted,
-      muteActive: scopeStreamIds.length === 0,
-      archivedRootStreamIds,
-      showArchived,
-    }),
-    [hidden, muted, scopeStreamIds.length, archivedRootStreamIds, showArchived]
+    () => ({ hidden, muted, muteActive: scopeStreamIds.length === 0 }),
+    [hidden, muted, scopeStreamIds.length]
   )
   const {
     posts,
@@ -392,6 +381,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     const timer = setTimeout(() => setSkeletonVisible(true), SKELETON_DELAY_MS)
     return () => clearTimeout(timer)
   }, [loading])
+  const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
@@ -410,7 +400,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // wall who taps Decisions lands past the end of a one-card list.
   useBoardScrollAnchor(
     viewport,
-    `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}`
+    `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}`
   )
 
   const revealNew = () => {

@@ -193,9 +193,10 @@ function boardHiddenExcludeSql(userId: string) {
  * marks only the root row — a thread inherits its root's lifecycle (INV-62) — so
  * a conversation is archived exactly when its effective root is. Skipped when
  * `showArchived` is true (the viewer opted into seeing archived cards);
- * otherwise the board's default hides them. Mirrored client-side in
- * `use-stable-board-view` (the `archivedRootStreamIds` exclusion) — keep the
- * effective-root rule identical.
+ * otherwise the board's default hides them. The projection stamps each surviving
+ * card's effective-root archived state onto `BoardPost.rootArchived`, which the
+ * client's `use-stable-board-view` reads to re-hide archived cards the instant
+ * the viewer toggles archived back off — keep the effective-root rule identical.
  */
 function boardArchivedExcludeSql(showArchived: boolean) {
   if (showArchived) return sql``

@@ -57,11 +57,14 @@ const listWorkspaceConversationsSchema = listConversationsSchema.extend({
   excludeTypes: csvTypeListSchema.optional(),
   labels: csvIdListSchema(MAX_BOARD_SCOPE_LABELS, "labels").optional(),
   excludeLabels: csvIdListSchema(MAX_BOARD_SCOPE_LABELS, "excludeLabels").optional(),
-  // Absent = the board's default (hide archived). `?archived=true` opts in.
-  showArchived: z
+  // `?archived=true` opts into archived cards; absent = the board's default
+  // (hide archived), which the service reads as `?? false`. Kept
+  // undefined-when-absent (not coerced to `false`) so the options object stays
+  // uniform with the other optional axes.
+  archived: z
     .enum(["true", "false"])
     .optional()
-    .transform((value) => value === "true"),
+    .transform((value) => (value === undefined ? undefined : value === "true")),
   cursor: z.string().min(1).optional(),
 })
 
@@ -153,7 +156,7 @@ export function createConversationHandlers({
         excludeStreamTypes: query.excludeTypes,
         scopeLabelIds: query.labels,
         excludeLabelIds: query.excludeLabels,
-        showArchived: query.showArchived,
+        showArchived: query.archived,
         limit: query.limit,
         cursor: decodeBoardCursor(query.cursor),
       })

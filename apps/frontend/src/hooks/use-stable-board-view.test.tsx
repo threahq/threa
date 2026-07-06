@@ -22,6 +22,7 @@ function filterOf(over: Partial<BoardViewFilter> = {}): BoardViewFilter {
     excludeTypes: null,
     labels: null,
     excludeLabels: null,
+    showArchived: false,
     ...over,
   }
 }
@@ -635,14 +636,12 @@ describe("useStableBoardView — hide & mute exclusions", () => {
 
   /** Build a full exclusion state from overrides — nothing excluded unless named. */
   function exclOf(over: Partial<BoardExclusionState> = {}): BoardExclusionState {
-    return {
-      hidden: new Map(),
-      muted: new Set(),
-      muteActive: true,
-      archivedRootStreamIds: new Set(),
-      showArchived: false,
-      ...over,
-    }
+    return { hidden: new Map(), muted: new Set(), muteActive: true, ...over }
+  }
+
+  /** A post whose effective root the server flagged archived (`rootArchived`). */
+  function archivedPost(id: string, activityMs: number, rootStreamId: string): CachedBoardPost {
+    return { ...streamPost(id, activityMs, rootStreamId), rootArchived: true } as unknown as CachedBoardPost
   }
 
   const NO_EXCL = exclOf()
@@ -688,32 +687,29 @@ describe("useStableBoardView — hide & mute exclusions", () => {
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
 
-  it("drops a card under an archived root while showArchived is off", () => {
-    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, exclOf({ archivedRootStreamIds: new Set(["stream_x"]) }))
-    )
+  it("drops a `rootArchived` card while showArchived is off", () => {
+    mockLive(feed(archivedPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL))
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 
-  it("keeps a card under an archived root once showArchived opts in", () => {
-    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result } = renderHook(() =>
-      useStableBoardView("ws_1", ALL, exclOf({ archivedRootStreamIds: new Set(["stream_x"]), showArchived: true }))
-    )
+  it("keeps a `rootArchived` card once showArchived opts in", () => {
+    mockLive(feed(archivedPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result } = renderHook(() => useStableBoardView("ws_1", filterOf({ showArchived: true })))
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
   })
 
-  it("drops an archived card immediately — even after it was committed and retained", () => {
-    // A channel archived while its card is on the board: the card is committed and
-    // in `retainedRef`, so it must drop NOW (not wait for a commit), mirroring mute.
-    mockLive(feed(streamPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
-    const { result, rerender } = renderHook(({ excl }) => useStableBoardView("ws_1", ALL, excl), {
-      initialProps: { excl: NO_EXCL },
+  it("re-hides a `rootArchived` card the instant showArchived toggles back off — even once committed", () => {
+    // The crux of the archived filter: a card seeded under `?archived=true` is
+    // committed and retained; toggling archived off must drop it NOW (the server
+    // won't re-seed it to evict it from IDB), driven purely by `post.rootArchived`.
+    mockLive(feed(archivedPost("a", 300, "stream_x"), streamPost("b", 200, "stream_y")))
+    const { result, rerender } = renderHook(({ filter }) => useStableBoardView("ws_1", filter), {
+      initialProps: { filter: filterOf({ showArchived: true }) },
     })
     expect(result.current.posts.map((p) => p.id)).toEqual(["a", "b"])
 
-    rerender({ excl: exclOf({ archivedRootStreamIds: new Set(["stream_x"]) }) })
+    rerender({ filter: ALL })
     expect(result.current.posts.map((p) => p.id)).toEqual(["b"])
   })
 
