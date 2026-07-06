@@ -51,7 +51,7 @@ TARBALL="$(mktemp)"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$TARBALL" "$STAGE"' EXIT
 
-curl -sSL --max-time 120 -o "$TARBALL" "$XLSX_URL"
+curl -fsSL --max-time 120 -o "$TARBALL" "$XLSX_URL"
 tar -xzf "$TARBALL" -C "$STAGE" --strip-components=1
 if [ ! -f "$STAGE/package.json" ]; then
   echo "[ensure-xlsx] extracted tarball has no package.json — aborting" >&2
