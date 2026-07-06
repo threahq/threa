@@ -131,8 +131,15 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const bodyRef = useRef<HTMLDivElement>(null)
   const [tall, setTall] = useState(false)
   const tallDecidedRef = useRef(false)
+  // Hold the fold decision until preferences hydrate, so a card that mounts
+  // before the workspace preferences load doesn't lock in DEFAULT_… and fold
+  // against the wrong threshold. Re-runs (resetting the latch) when the real
+  // threshold arrives or later changes; gated on the boolean, not the object, so
+  // an unrelated preference edit can't re-fold a card the user is looking at.
+  const preferencesLoaded = preferences != null
   useLayoutEffect(() => {
     tallDecidedRef.current = false
+    if (!preferencesLoaded) return
     const measure = () => {
       if (tallDecidedRef.current) return
       const el = bodyRef.current
@@ -150,7 +157,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
     const observer = new ResizeObserver(measure)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [collapseThreshold])
+  }, [collapseThreshold, preferencesLoaded])
   const { collapsed: bodyCollapsed, toggle: toggleBodyCollapsed } = useBoardCardCollapse(conversation.id, tall)
 
   // Conversation read state: per-row gating + actions for the message rows, plus
