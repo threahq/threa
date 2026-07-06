@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -271,7 +271,10 @@ describe("BoardCard conversation actions", () => {
     await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
     await user.click(await screen.findByText("Mark resolved"))
 
-    expect(updateConversation).toHaveBeenCalledWith(WS, "conv_1", { status: "resolved" })
+    // The menu item's onClick fires the mutation on a microtask after the click
+    // resolves, so assert via waitFor — a bare synchronous expect races the
+    // dispatch and flakes under CI load (still asserting the exact call args).
+    await waitFor(() => expect(updateConversation).toHaveBeenCalledWith(WS, "conv_1", { status: "resolved" }))
   })
 
   it("hides the conversation from the board via the ⋯ menu", async () => {
@@ -282,6 +285,6 @@ describe("BoardCard conversation actions", () => {
     await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
     await user.click(await screen.findByText("Hide from board"))
 
-    expect(hideConversation).toHaveBeenCalledWith(WS, "conv_1")
+    await waitFor(() => expect(hideConversation).toHaveBeenCalledWith(WS, "conv_1"))
   })
 })
