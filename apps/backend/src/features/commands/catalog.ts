@@ -16,6 +16,7 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "steer",
   "stop",
   "run",
+  "carry-on",
 ] as const
 export type SessionControlCommandName = (typeof SESSION_CONTROL_COMMAND_NAMES)[number]
 
@@ -111,6 +112,13 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "command", required: true, description: "Slash command to run, e.g. /compact" }],
+    },
+    {
+      name: "carry-on",
+      description: "Queue a message for when the session's provider quota resets",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "message", required: false, description: "Instruction to deliver when the session resumes" }],
     },
   ]
 }

@@ -96,7 +96,7 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
     })
   })
 
@@ -394,6 +394,14 @@ describe("Pi remote trace safety", () => {
   test("formatRetryNotice mentions the attempt number once past the first try", () => {
     expect(__testing.formatRetryNotice(60_000, 1)).not.toContain("attempt")
     expect(__testing.formatRetryNotice(60_000, 2)).toContain(`attempt 2 of ${__testing.MAX_RETRY_ATTEMPTS}`)
+  })
+
+  test("buildRetryPrompt folds queued carry-on texts into the retry (oldest first)", () => {
+    expect(__testing.buildRetryPrompt("original prompt", [])).toBe("original prompt")
+    const folded = __testing.buildRetryPrompt("original prompt", ["first", "second"])
+    expect(folded).toContain("original prompt")
+    expect(folded).toContain("queued while the session was rate-limited")
+    expect(folded.indexOf("1. first")).toBeLessThan(folded.indexOf("2. second"))
   })
 
   test("formatDuration rounds reasonably across minute/hour boundaries", () => {

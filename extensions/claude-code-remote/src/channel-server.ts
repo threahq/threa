@@ -12,6 +12,7 @@ import {
   type SessionControlActuator,
 } from "@threa/remote-session"
 import { z } from "zod"
+import { CarryOnController } from "./carry-on"
 import { THINKING_LEVELS, modelSuggestions } from "./model-catalog"
 import { pushBranchAndScheduleRemoval } from "./archive-cleanup"
 import { interrupt, killOwnWindow, steerText, submitLine, tmuxAvailable } from "./tmux-control"
@@ -25,8 +26,9 @@ export const CHANNEL_SOURCE = "threa"
 // (e.g. /remote-control); `compact` is sugar for `run /compact`; `reload` maps
 // to Claude Code's `/reload-skills` (pick up skills + custom commands added on
 // disk this session — `/reload-plugins` is reachable via `run` for the plugin
-// case); Threa's canonical `thinking` maps to Claude Code's `/effort`.
-const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "thinking", "compact", "run", "reload"] as const
+// case); Threa's canonical `thinking` maps to Claude Code's `/effort`;
+// `carry-on` queues text for the quota carry-on resume (see carry-on.ts).
+const SESSION_CONTROL_COMMANDS = ["stop", "steer", "model", "thinking", "compact", "run", "reload", "carry-on"] as const
 // Model options for the composer's arg picker: built-in /model aliases plus
 // whatever the local client's own picker cache discovers (see model-catalog).
 // Resolved once at startup — new models arrive with the next spawned session.
@@ -87,8 +89,16 @@ export function buildInstructions(permissionRelay: boolean): string {
  * slash-command equivalent into the tmux pane. `stop`/`steer` never reach this
  * — the SDK actuates those itself via `interrupt`/`steer`.
  */
-export async function runClaudeCommand(name: string, args: string): Promise<{ ok: boolean; message: string }> {
+export async function runClaudeCommand(
+  name: string,
+  args: string,
+  carryOn?: CarryOnController
+): Promise<{ ok: boolean; message: string }> {
   switch (name) {
+    case "carry-on": {
+      if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
+      return carryOn.enqueue(args)
+    }
     case "model": {
       const alias = args.trim()
       if (!alias) return { ok: false, message: "Usage: `/model <name>` (e.g. fable, opus, sonnet, haiku, default)." }
@@ -133,19 +143,36 @@ async function runSlash(slash: string): Promise<{ ok: boolean; message: string }
   return { ok, message: ok ? `Ran \`${slash}\` in Claude Code.` : `Could not send \`${slash}\` (no tmux control).` }
 }
 
-/** The tmux actuator, present only when we can actually drive the TUI (fail-safe: no control → no commands offered). */
-export function createClaudeSessionControl(): SessionControlActuator | undefined {
+/**
+ * The tmux actuator, present only when we can actually drive the TUI
+ * (fail-safe: no control → no commands offered). `carryOn` is late-bound: the
+ * controller needs the constructed session, which needs this actuator first.
+ */
+export function createClaudeSessionControl(
+  carryOn: () => CarryOnController | undefined = () => undefined
+): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
     commands: [...SESSION_CONTROL_COMMANDS],
     modelSuggestions: MODEL_SUGGESTIONS,
     thinkingLevels: [...THINKING_LEVELS],
-    interrupt,
+    interrupt: () => {
+      // A /stop is about to close the held turn — drop the hold (and surface
+      // any queued carry-on texts) before the interrupt lands.
+      carryOn()?.onInterrupt()
+      return interrupt()
+    },
     // The prefix tells the model mid-turn text came from the scratchpad, so it
     // folds it into the open invocation's work rather than treating it as a
     // side conversation at the terminal.
-    steer: (text) => steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`),
-    runCommand: runClaudeCommand,
+    steer: (text) => {
+      // While blocked on quota the session is idle at a dead prompt — pasting
+      // would submit a fresh turn that dies the same way. Queue it instead.
+      const absorbed = carryOn()?.absorbSteer(text)
+      if (absorbed !== undefined) return true
+      return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
+    },
+    runCommand: (name, args) => runClaudeCommand(name, args, carryOn()),
   }
 }
 
@@ -165,6 +192,7 @@ export class ChannelServer {
   private readonly mcp: Server
   readonly session: RemoteSession
   private readonly tracer: TranscriptTracer
+  private readonly carryOn: CarryOnController | undefined
   private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
 
   constructor(
@@ -197,17 +225,33 @@ export class ChannelServer {
       },
       delegate: {
         deliverTurn: (turn) => this.deliverToClaude(turn),
-        sessionControl: createClaudeSessionControl(),
+        sessionControl: createClaudeSessionControl(() => this.carryOn),
         onArchived: () => this.windDownForArchive(),
         ...(config.permissionRelay
           ? { interceptClaimed: (invocation: ClaimedInvocation) => this.interceptVerdict(invocation) }
           : {}),
       },
     })
+    // Quota carry-on needs the tmux pane to type the resume into — without it
+    // a detected quota hit changes nothing (the turn idles out as before).
+    this.carryOn = tmuxAvailable()
+      ? new CarryOnController({
+          isInflight: (invocationId) => this.session.isInflight(invocationId),
+          keepAlive: (streamId) => this.session.keepAlive(streamId),
+          postNotice: (streamId, text) => this.session.postToStream(streamId, { content: text }),
+          closeTurn: async (invocationId, text) => {
+            const result = await this.session.reply(invocationId, text)
+            if (!result.ok) throw new Error(result.message)
+          },
+          inject: (text) => steerText(text),
+          log,
+        })
+      : undefined
     // Steps ship only while the SDK holds the turn in flight — recordSteps
     // returns false once the invocation closes, which stops the tail.
     this.tracer = new TranscriptTracer({
       emit: (invocationId, frames, statusText) => this.session.recordSteps(invocationId, frames, statusText),
+      onApiError: (invocationId, text) => this.carryOn?.onApiError(invocationId, text),
       log,
     })
     this.registerHandlers()
@@ -224,6 +268,7 @@ export class ChannelServer {
 
   async shutdown(): Promise<void> {
     this.tracer.stop()
+    this.carryOn?.stop()
     for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
     this.openPermissions.clear()
     await this.session.shutdown()
@@ -254,6 +299,7 @@ export class ChannelServer {
     // A sealed turn's steps are ciphertext to the server, so the tracer may
     // run full-detail (the owner opted back to redacted via sealedFullTrace=false).
     this.tracer.beginTurn(turn.invocationId, turn.sealed && this.config.sealedFullTrace ? "full" : undefined)
+    this.carryOn?.onTurnStarted(turn.invocationId, turn.streamId)
     await this.notify("notifications/claude/channel", {
       content: turn.content,
       meta: {
@@ -321,7 +367,10 @@ export class ChannelServer {
         req.params.name === "send"
           ? await this.session.sendInterim(invocationId, text)
           : await this.session.reply(invocationId, text)
-      if (req.params.name === "reply" && result.ok) this.tracer.endTurn(invocationId)
+      if (req.params.name === "reply" && result.ok) {
+        this.tracer.endTurn(invocationId)
+        this.carryOn?.onTurnClosed(invocationId)
+      }
       return toToolResult(result)
     })
 

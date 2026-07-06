@@ -33,7 +33,7 @@ describe("createClaudeSessionControl", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       const actuator = createClaudeSessionControl()
       expect(actuator).toBeDefined()
-      expect(actuator!.commands).toEqual(["stop", "steer", "model", "thinking", "compact", "run", "reload"])
+      expect(actuator!.commands).toEqual(["stop", "steer", "model", "thinking", "compact", "run", "reload", "carry-on"])
       expect(actuator!.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"])
       expect(actuator!.modelSuggestions!.map((suggestion) => suggestion.value)).toContain("opus")
       expect(actuator!.modelSuggestions!.every((suggestion) => suggestion.label)).toBe(true)
@@ -66,5 +66,11 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand("skill", "whatever")
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toContain("Unsupported")
+  })
+
+  it("reports /carry-on as unavailable when no controller is wired (no tmux)", async () => {
+    const outcome = await runClaudeCommand("carry-on", "later please")
+    expect(outcome.ok).toBe(false)
+    expect(outcome.message).toContain("unavailable")
   })
 })
