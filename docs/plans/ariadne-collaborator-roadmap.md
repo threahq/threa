@@ -37,7 +37,7 @@ Two concurrent efforts share primitives with this work; steps below reference th
 | 1.1  | `schedule_follow_up` tool + follow-up infra           | ☑      | #1138 |
 | 1.2  | Follow-up turn invocation (context + prompt)          | ☑      | #1142 |
 | 1.3  | Follow-up visibility: timeline card + cancel          | ☑      | #1176 |
-| 1.4  | Configurable follow-up limits (workspace setting)     | ☐      |       |
+| 1.4  | Configurable follow-up limits (workspace setting)     | ☑      | #TBD  |
 | 1.5  | Turn-purpose consolidation (invocation variants)      | ☑      | #1155 |
 | 1.6  | Follow-up admin tools (list/cancel/update)            | ☑      | #1159 |
 | 2.1  | Generalized session abort                             | ☑      | #1177 |
@@ -149,6 +149,13 @@ The cheapest team-member behavior ("I'll check back tomorrow") and the pathfinde
 **Tests:** resolution precedence (override set vs absent); settings round-trip incl. reset-to-default deletes the override row.
 
 **Done when:** a workspace admin can raise the follow-up cap from settings and the tool's self-reported limit reflects it.
+
+**Deviations (shipped):**
+
+- **The default value lives in `@threa/types`, not `agents/config.ts`.** `DEFAULT_MAX_PENDING_FOLLOW_UPS` moved to `packages/types/src/workspace-settings.ts` (the source `DEFAULT_WORKSPACE_SETTINGS.maxPendingFollowUps` seeds from) and `agents/config.ts` re-exports it, so the code default and the setting default are one number, not two that drift (INV-33) — same pattern as `STREAM_BRIEF_MAX_CHARS` in 4.3. Backend importers of the name are untouched.
+- **`resolveFollowUpLimit()` reads the setting via an injected resolver.** `AgentFollowUpService` gains a `workspaceSettingsService` dep (narrowed to `FollowUpLimitResolver = { getSettings }` so tests stub it) and resolves `(await getSettings(ws)).maxPendingFollowUps` before the insert transaction (INV-41). `getSettings` always returns a merged value, so there's no fallback branch at the call site.
+- **UI lands in the General tab, not a new "Assistant" tab.** A single numeric field doesn't warrant its own tab (INV-36). `FollowUpLimitSection` (`components/workspace-settings/follow-up-limit-section.tsx`) renders under workspace identity/region: an admin-gated number input (save-on-blur, clamped to `[MAX_PENDING_FOLLOW_UPS_MIN, MAX_PENDING_FOLLOW_UPS_MAX]`, optimistic bootstrap-cache write, no success toast per INV-63), read-only value for non-admins. Bounds constants are shared from `@threa/types` by the API Zod validator and the input.
+- Per-stream override still deferred (INV-36); the resolver seam keeps it a small follow-up.
 
 ### 1.5 Turn-purpose consolidation (invocation variants)
 

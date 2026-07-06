@@ -493,7 +493,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedItemCreator: savedMessagesService,
   })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
-  const agentFollowUpService = new AgentFollowUpService({ pool })
+  const agentFollowUpService = new AgentFollowUpService({ pool, workspaceSettingsService })
   const streamBriefService = new StreamBriefService({ pool })
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })

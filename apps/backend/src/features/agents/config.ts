@@ -18,12 +18,14 @@ export const TURN_DIGEST_MODEL_ID = "openrouter:anthropic/claude-haiku-4.5"
  * Follow-up scheduling bounds (`schedule_follow_up` tool, roadmap 1.1).
  *
  * `DEFAULT_MAX_PENDING_FOLLOW_UPS` is the code default cap on pending follow-ups
- * per stream. It is read through `resolveFollowUpLimit()` in the follow-up
- * service so 1.4's workspace override slots in without touching the cap check.
+ * per stream, re-exported from `@threa/types` where `DEFAULT_WORKSPACE_SETTINGS`
+ * seeds the workspace-tunable setting from the same number (INV-33). The
+ * follow-up service's `resolveFollowUpLimit()` resolves the workspace override
+ * against this default (roadmap 1.4).
  *
  * `MAX_FOLLOW_UP_HORIZON_DAYS` bounds how far out a follow-up may be scheduled —
  * these are minutes-to-days "check back later" nudges, not long-horizon jobs
  * (the anti-goal behind proposed INV-64).
  */
-export const DEFAULT_MAX_PENDING_FOLLOW_UPS = 10
+export { DEFAULT_MAX_PENDING_FOLLOW_UPS } from "@threa/types"
 export const MAX_FOLLOW_UP_HORIZON_DAYS = 30
