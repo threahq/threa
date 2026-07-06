@@ -522,7 +522,9 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     await waitFor(() => expect(shownBodies(result.current)).toEqual(["my convert reply"]))
 
     // 3) Server echo (stream-sync swap): real event replaces the optimistic one in
-    //    one transaction, tag carried forward.
+    //    one transaction, tag carried forward. The echo names its optimistic twin
+    //    via clientMessageId — that's how handleMessageCreated finds the temp row,
+    //    and how the card suppresses a stale rail's leftover copy of it.
     await db.transaction("rw", db.events, async () => {
       await db.events.put({
         id: "msg_real_c",
@@ -536,6 +538,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
           contentMarkdown: "my convert reply",
           reactions: {},
           conversationId: "conv_1",
+          clientMessageId: "temp_c",
         },
         actorId: "usr_1",
         actorType: "user",
@@ -563,6 +566,73 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       expect(frame.source).toBe("events")
       expect(shownBodies(frame)).toEqual(["my convert reply"])
       expect(frame.openingMessage?.contentMarkdown).toBe("the opening")
+    }
+  })
+
+  it("never doubles a reply while its optimistic row and server echo are both visible", async () => {
+    // The deterministic form of a race the liveQuery rails can produce: the echo
+    // swap (put real + delete temp, one transaction) is atomic PER RAIL, but a
+    // card merges several independent rails — the draft-panel rail can still be
+    // on its pre-swap snapshot (temp row present) when the reply stream's rail
+    // already shows the echo. Model that window literally: both rows in IDB at
+    // once. The echo's clientMessageId names the temp row, so the card must
+    // render the reply exactly once throughout.
+    const PANEL = createDraftPanelId(STREAM, "m1")
+    await db.events.bulkPut([msgEvent("m1", "the opening", 1, STREAM)])
+    const lone = makePost({ messageIds: ["m1"], openingId: "m1", streamIds: [STREAM] })
+    const { frames, result } = renderRecorded(lone, "channel")
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    await db.events.put({
+      id: "temp_d",
+      workspaceId: WS,
+      streamId: PANEL,
+      sequence: "1700000000003",
+      _sequenceNum: 1700000000003,
+      eventType: "message_created",
+      payload: { messageId: "temp_d", contentMarkdown: "my doubled reply", reactions: {}, conversationId: "conv_1" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(3).toISOString(),
+      _cachedAt: 3,
+      _status: "pending",
+    } as CachedEvent)
+    await waitFor(() => expect(shownBodies(result.current)).toEqual(["my doubled reply"]))
+    const from = frames.length
+
+    // Echo lands on the anchor stream while the temp row still exists.
+    await db.events.put({
+      id: "msg_real_d",
+      workspaceId: WS,
+      streamId: STREAM,
+      sequence: "2",
+      _sequenceNum: 2,
+      eventType: "message_created",
+      payload: {
+        messageId: "msg_real_d",
+        contentMarkdown: "my doubled reply",
+        reactions: {},
+        conversationId: "conv_1",
+        clientMessageId: "temp_d",
+      },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(4).toISOString(),
+      _cachedAt: 4,
+    } as CachedEvent)
+    await waitFor(() =>
+      expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toEqual(["msg_real_d"])
+    )
+
+    // The swap's delete finally lands; nothing on screen may move.
+    await db.events.delete("temp_d")
+    await waitFor(() =>
+      expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toEqual(["msg_real_d"])
+    )
+
+    for (const frame of frames.slice(from)) {
+      expect(frame.source).toBe("events")
+      expect(shownBodies(frame)).toEqual(["my doubled reply"])
     }
   })
 
