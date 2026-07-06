@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { DateTimeField } from "@/components/forms/date-time-field"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
@@ -305,22 +306,32 @@ function resolveStatusInfo(args: {
  * this section also surfaces a status-driven pause and explains it.
  */
 function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
-  // The "Custom…" path reveals an inline date/time field rather than pausing
-  // immediately, mirroring the status picker's custom expiry.
+  // The custom paths reveal inline fields rather than pausing immediately,
+  // mirroring the status picker's custom expiry.
   const [customOpen, setCustomOpen] = useState(false)
+  const [customDurationOpen, setCustomDurationOpen] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
 
-  const { active, statusOnly, busy, pauseFor, pauseUntilLocal, resume } = useNotificationPauseControls(
+  const { active, statusOnly, busy, pauseFor, pauseUntilDate, pauseUntilLocal, resume } = useNotificationPauseControls(
     workspaceId,
-    () => setCustomOpen(false)
+    () => {
+      setCustomOpen(false)
+      setCustomDurationOpen(false)
+    }
   )
 
   const openCustom = () => {
+    setCustomDurationOpen(false)
     const inAnHour = new Date(Date.now() + 60 * 60 * 1000)
     setCustomDate(toDateInputValue(inAnHour))
     setCustomTime(toTimeInputValue(inAnHour))
     setCustomOpen(true)
+  }
+
+  const openCustomDuration = () => {
+    setCustomOpen(false)
+    setCustomDurationOpen(true)
   }
 
   const handleCustomPause = () => {
@@ -331,12 +342,13 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   // trigger and the "Change" trigger on an active pause. Timed options first,
   // then the custom-time path, then the indefinite option.
   const pauseMenuContent = (
-    <DropdownMenuContent align="start">
+    <DropdownMenuContent align="start" className="min-w-[260px]">
       {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration !== null).map((option) => (
         <DropdownMenuItem key={option.id} onSelect={() => pauseFor(option)}>
           {option.label}
         </DropdownMenuItem>
       ))}
+      <DropdownMenuItem onSelect={openCustomDuration}>Custom duration…</DropdownMenuItem>
       <DropdownMenuItem onSelect={openCustom}>Until a specific time…</DropdownMenuItem>
       {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null).map((option) => (
         <DropdownMenuItem key={option.id} onSelect={() => pauseFor(option)}>
@@ -347,9 +359,26 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   )
 
   // One ternary level (INV-47): pick the control via if/else, render it once.
-  // `customOpen` wins so the picker can adjust an already-active pause in place.
   let control: ReactNode
-  if (customOpen) {
+  if (customDurationOpen) {
+    control = (
+      <div className="space-y-3 rounded-lg border bg-card p-4">
+        <CustomDurationPicker
+          onSubmit={pauseUntilDate}
+          disabled={busy}
+          submitLabel="Pause"
+          className="px-0"
+          controlClassName="h-11"
+          buttonClassName="h-11"
+        />
+        <div className="flex justify-end">
+          <Button variant="ghost" size="sm" onClick={() => setCustomDurationOpen(false)} disabled={busy}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    )
+  } else if (customOpen) {
     control = (
       <div className="space-y-3 rounded-lg border bg-card p-4">
         <DateTimeField

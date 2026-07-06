@@ -14,6 +14,8 @@ export interface NotificationPauseControls {
   busy: boolean
   /** Pause for a preset option (a relative/calendar duration, or `null` for indefinite). */
   pauseFor: (option: NotificationPauseOption) => void
+  /** Pause until a concrete date; returns false (and toasts) when the time is invalid or past. */
+  pauseUntilDate: (date: Date) => boolean
   /** Pause until a specific local date/time; returns false (and toasts) when the time is invalid or past. */
   pauseUntilLocal: (date: string, time: string) => boolean
   /** Resume notifications, clearing the manual pause. */
@@ -51,14 +53,18 @@ export function useNotificationPauseControls(workspaceId: string, onDone?: () =>
     void pauseUntil(option.duration ? statusDurationToExpiry(option.duration, timezone, schedule) : null)
   }
 
-  const pauseUntilLocal = (date: string, time: string): boolean => {
-    const when = parseLocalDateTime(date, time)
-    if (!when || when.getTime() <= Date.now()) {
+  const pauseUntilDate = (date: Date): boolean => {
+    if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) {
       toast.error("Pick a time in the future")
       return false
     }
-    void pauseUntil(when.toISOString())
+    void pauseUntil(date.toISOString())
     return true
+  }
+
+  const pauseUntilLocal = (date: string, time: string): boolean => {
+    const when = parseLocalDateTime(date, time)
+    return when ? pauseUntilDate(when) : pauseUntilDate(new Date(Number.NaN))
   }
 
   const handleResume = async () => {
@@ -70,5 +76,5 @@ export function useNotificationPauseControls(workspaceId: string, onDone?: () =>
     }
   }
 
-  return { active, statusOnly, busy, pauseFor, pauseUntilLocal, resume: handleResume }
+  return { active, statusOnly, busy, pauseFor, pauseUntilDate, pauseUntilLocal, resume: handleResume }
 }

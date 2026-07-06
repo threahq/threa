@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Bell, BellOff, Calendar as CalendarIcon, ChevronLeft } from "lucide-react"
+import { Bell, BellOff, Calendar as CalendarIcon, ChevronLeft, Clock } from "lucide-react"
 import { toast } from "sonner"
 import type { SavedMessageView } from "@threa/types"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
@@ -10,6 +10,7 @@ import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 import { DateTimeField } from "@/components/forms/date-time-field"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 
 interface ReminderPickerSheetProps {
@@ -52,6 +53,7 @@ export function ReminderPickerSheet({
   const saveMutation = useSaveMessage(workspaceId)
   const updateMutation = useUpdateSaved(workspaceId)
   const [mode, setMode] = useState<"presets" | "custom">("presets")
+  const [durationOpen, setDurationOpen] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
 
@@ -61,6 +63,7 @@ export function ReminderPickerSheet({
   const minDate = useMemo(() => toDateInputValue(new Date()), [open, mode])
 
   const openCustom = () => {
+    setDurationOpen(false)
     // If a reminder is already set, pre-populate with that; otherwise default
     // to now + 15 minutes so the picker opens on a sensible seed.
     const baseline = saved?.remindAt ? new Date(saved.remindAt) : new Date(Date.now() + 15 * 60_000)
@@ -71,6 +74,7 @@ export function ReminderPickerSheet({
 
   const resetAndClose = () => {
     setMode("presets")
+    setDurationOpen(false)
     setCustomDate("")
     setCustomTime("")
     onOpenChange(false)
@@ -114,6 +118,7 @@ export function ReminderPickerSheet({
     if (!nextOpen) {
       // Reset mode when drawer closes so the next open starts on the preset list.
       setMode("presets")
+      setDurationOpen(false)
       setCustomDate("")
       setCustomTime("")
     }
@@ -122,7 +127,7 @@ export function ReminderPickerSheet({
 
   return (
     <Drawer open={open} onOpenChange={handleOpenChange}>
-      <DrawerContent className="max-h-[85vh]">
+      <DrawerContent className="max-h-[85dvh] overflow-y-auto">
         <div className="flex flex-col px-5 pt-3 pb-6 pb-safe">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
@@ -155,6 +160,20 @@ export function ReminderPickerSheet({
                   {preset.label}
                 </SheetMenuButton>
               ))}
+              <SheetMenuButton onClick={() => setDurationOpen((prev) => !prev)}>
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                Custom duration…
+              </SheetMenuButton>
+              {durationOpen && (
+                <CustomDurationPicker
+                  onSubmit={setReminder}
+                  disabled={saveMutation.isPending || updateMutation.isPending}
+                  submitLabel="Set reminder"
+                  className="flex-wrap px-3 py-1.5"
+                  controlClassName="h-11"
+                  buttonClassName="h-11"
+                />
+              )}
               <SheetMenuButton onClick={openCustom}>
                 <CalendarIcon className="h-4 w-4 text-muted-foreground" />
                 Pick a time…

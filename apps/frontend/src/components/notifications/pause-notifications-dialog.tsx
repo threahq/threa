@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { Button } from "@/components/ui/button"
 import { DateTimeField } from "@/components/forms/date-time-field"
+import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
 import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
@@ -27,19 +28,21 @@ interface PauseNotificationsDialogProps {
  * surface; only the chrome (a dialog vs. a settings section) differs.
  */
 export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: PauseNotificationsDialogProps) {
-  const { active, statusOnly, busy, pauseFor, pauseUntilLocal, resume } = useNotificationPauseControls(
+  const { active, statusOnly, busy, pauseFor, pauseUntilDate, pauseUntilLocal, resume } = useNotificationPauseControls(
     workspaceId,
     () => onOpenChange(false)
   )
 
   const [customOpen, setCustomOpen] = useState(false)
+  const [durationOpen, setDurationOpen] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
 
-  // Reset the custom-time editor each time the dialog opens.
+  // Reset the custom editors each time the dialog opens.
   useEffect(() => {
     if (!open) return
     setCustomOpen(false)
+    setDurationOpen(false)
     const inAnHour = new Date(Date.now() + 60 * 60 * 1000)
     setCustomDate(toDateInputValue(inAnHour))
     setCustomTime(toTimeInputValue(inAnHour))
@@ -49,7 +52,7 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
   const indefiniteOptions = NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null)
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
       <ResponsiveDialogContent desktopClassName="sm:max-w-sm">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Pause notifications</ResponsiveDialogTitle>
@@ -99,7 +102,30 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
               {timedOptions.map((option) => (
                 <PauseOptionRow key={option.id} label={option.label} disabled={busy} onClick={() => pauseFor(option)} />
               ))}
-              <PauseOptionRow label="Until a specific time…" disabled={busy} onClick={() => setCustomOpen(true)} />
+              <PauseOptionRow
+                label="Custom duration…"
+                disabled={busy}
+                expanded={durationOpen}
+                onClick={() => setDurationOpen((prev) => !prev)}
+              />
+              {durationOpen && (
+                <CustomDurationPicker
+                  onSubmit={pauseUntilDate}
+                  disabled={busy}
+                  submitLabel="Pause"
+                  className="px-3"
+                  controlClassName="h-11"
+                  buttonClassName="h-11"
+                />
+              )}
+              <PauseOptionRow
+                label="Until a specific time…"
+                disabled={busy}
+                onClick={() => {
+                  setDurationOpen(false)
+                  setCustomOpen(true)
+                }}
+              />
               {indefiniteOptions.map((option) => (
                 <PauseOptionRow key={option.id} label={option.label} disabled={busy} onClick={() => pauseFor(option)} />
               ))}
@@ -111,12 +137,23 @@ export function PauseNotificationsDialog({ workspaceId, open, onOpenChange }: Pa
   )
 }
 
-function PauseOptionRow({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
+function PauseOptionRow({
+  label,
+  disabled,
+  onClick,
+  expanded,
+}: {
+  label: string
+  disabled: boolean
+  onClick: () => void
+  expanded?: boolean
+}) {
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
+      aria-expanded={expanded}
       className="flex w-full items-center rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50 disabled:opacity-50"
     >
       {label}
