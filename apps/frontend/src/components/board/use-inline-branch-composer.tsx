@@ -237,7 +237,10 @@ export function useInlineBranchComposer(params: {
             memoAnchorStreamId={hostStreamId}
             draftKey={`board:branch-reply:${branch.conversationId}`}
             placeholder="Reply…"
-            contextChip={`Replying in ${branch.title}`}
+            // A pending branch's `title` is the "New sub-topic" placeholder (the
+            // real topic isn't extracted until the echo), so name the target
+            // generically rather than echoing the placeholder back.
+            contextChip={branch.pending ? "Replying in this sub-topic" : `Replying in ${branch.title}`}
             rejectE2e={E2E_REPLY_MESSAGE}
             onSubmit={(sendInput) => submitBranchReply(branch, sendInput)}
             onClose={closeComposer}

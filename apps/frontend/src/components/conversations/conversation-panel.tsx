@@ -473,7 +473,8 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   const rows = buildBranchedBoardRows(
     groupBranches(all, { streams: structuralIndex.streamsById, conversation: { streamId: conversation.streamId } }),
     eventRows,
-    branchesByForkMessageId
+    branchesByForkMessageId,
+    openingMessage?.id
   )
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
     // Each row renders against its own stream so reactions and the permalink

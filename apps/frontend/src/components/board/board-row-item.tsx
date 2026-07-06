@@ -137,7 +137,8 @@ function branchAnchorMs(branch: BranchConversationView): number {
 export function buildBranchedBoardRows(
   grouping: BranchGrouping,
   eventRows: BoardEventRow[],
-  branchesByForkMessageId: Map<string, BranchConversationView[]>
+  branchesByForkMessageId: Map<string, BranchConversationView[]>,
+  openingMessageId?: string
 ): BoardRow[] {
   const firstMs = earliestMessageMs(grouping.roots)
   const renderedForkIds = new Set<string>()
@@ -244,10 +245,17 @@ export function buildBranchedBoardRows(
   // convert-to-thread signature (a first reply to a lone post files into a
   // thread): the thread IS the conversation, so no seam ever — not a size
   // threshold; the run stays opener-only however large the thread grows.
+  // The single pre-boundary message must be the conversation's actual opener:
+  // on a collapsed card the flattener sees a trailing reply-only window, so a
+  // migrated discussion whose window happens to start with one channel reply
+  // would otherwise misfire as "converted" here and drop the seam it shows once
+  // expanded. Matching the opener id keeps the classification window-independent.
   const convertedOpener =
     grouping.kind === "soft" &&
     grouping.softSeam?.direction === "down" &&
-    (grouping.roots[0]?.messages.length ?? 0) <= 1
+    grouping.roots[0]?.messages.length === 1 &&
+    openingMessageId != null &&
+    grouping.roots[0]?.messages[0]?.id === openingMessageId
 
   if (grouping.kind === "soft" && grouping.softSeam && !convertedOpener) {
     const [runA, runB] = grouping.roots
