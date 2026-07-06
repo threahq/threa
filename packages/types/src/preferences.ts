@@ -117,6 +117,17 @@ export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 // user preference (no slider), so a single default rather than a stored value.
 export const DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD = 8
 
+// Board-card collapse threshold - rendered card height (CSS px) above which a
+// board card starts collapsed to just its header (locator + topic), so a tall
+// conversation folds away and compact ones stay open. Measured by the card
+// body's actual pixel height, not message count — one long composed message
+// warrants folding as much as a long back-and-forth, and a barrage of one-line
+// messages that stays short does not. A user can always toggle an individual
+// card; this preference only sets the initial folded state. 0 folds every card.
+export const BOARD_CARD_COLLAPSE_THRESHOLD_MIN = 0
+export const BOARD_CARD_COLLAPSE_THRESHOLD_MAX = 4000
+export const DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD = 600
+
 // Voice polish level: how aggressively the polish model rewrites a finalized
 // dictation transcript. The id flows through the wire format and is mirrored
 // by the backend prompt builder.
@@ -243,6 +254,11 @@ export interface UserPreferences {
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
   /**
+   * Rendered card height (px) above which a board card starts collapsed to its
+   * header. A per-card toggle overrides it; this only sets the initial state.
+   */
+  boardCardCollapseThreshold: number
+  /**
    * Preferred voice dictation model id (e.g. "elevenlabs:scribe-v2-realtime",
    * "deepgram:nova-3"). When null, the backend falls back to the configured
    * default. The string is validated server-side against the model registry.
@@ -304,6 +320,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
   voiceSteeringWords: [],
@@ -332,6 +349,7 @@ export interface UpdateUserPreferencesInput {
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
+  boardCardCollapseThreshold?: number
   voiceTranscriptionModel?: string | null
   voicePolishLevel?: VoicePolishLevel
   voiceSteeringWords?: string[]

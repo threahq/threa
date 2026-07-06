@@ -10,6 +10,7 @@ import { ServicesProvider, PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
+import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db, type CachedEvent } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -110,6 +111,7 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 beforeEach(async () => {
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
+  __resetCollapseCacheForTests()
   await db.events.clear()
   await db.conversations.clear()
   await db.streams.clear()
@@ -286,5 +288,74 @@ describe("BoardCard conversation actions", () => {
     await user.click(await screen.findByText("Hide from board"))
 
     await waitFor(() => expect(hideConversation).toHaveBeenCalledWith(WS, "conv_1"))
+  })
+})
+
+describe("BoardCard collapse", () => {
+  beforeEach(() => {
+    vi.spyOn(conversationReadModule, "useConversationReadController").mockReturnValue({
+      value: readValue,
+      hasUnread: () => false,
+      markReadSilently: () => Promise.resolve(),
+      setExplicitUnreadListener: () => {},
+      getReadTruth: () => ({ lastReadSequence: null, readMessageIds: [] }),
+    })
+  })
+
+  function withThreshold(px: number) {
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: { timezone: "UTC", locale: "en-US", boardCardCollapseThreshold: px },
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  }
+
+  /** JSDOM reports `scrollHeight` 0 (no layout), so the height-driven default
+   *  never fires on its own. Force a rendered height to exercise it, restoring
+   *  the prototype descriptor after. */
+  function mockScrollHeight(px: number): () => void {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight")
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => px })
+    return () => {
+      if (original) Object.defineProperty(HTMLElement.prototype, "scrollHeight", original)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight
+    }
+  }
+
+  it("offers the fold control on every card, expanded by default when the body isn't tall", async () => {
+    mountCard()
+    await screen.findByText("Opening body.")
+    // The control is always present (any card is foldable); a short body reads
+    // "Collapse" (expanded).
+    expect(screen.getByLabelText("Collapse conversation")).toBeTruthy()
+    expect(screen.queryByLabelText("Expand conversation")).toBeNull()
+  })
+
+  it("folds from the header control and names the folded message count", async () => {
+    const user = userEvent.setup()
+    mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+    await screen.findByText("Opening body.")
+
+    await user.click(screen.getByLabelText("Collapse conversation"))
+
+    // Header (topic + count) stays; the body is gone.
+    expect(screen.getByText("Rotate the API tokens")).toBeTruthy()
+    expect(screen.getByText("1 message")).toBeTruthy()
+    expect(screen.queryByText("Opening body.")).toBeNull()
+
+    await user.click(screen.getByLabelText("Expand conversation"))
+    expect(await screen.findByText("Opening body.")).toBeTruthy()
+    expect(screen.queryByText("1 message")).toBeNull()
+  })
+
+  it("starts folded when the rendered body is taller than the threshold", async () => {
+    withThreshold(500)
+    const restore = mockScrollHeight(800)
+    try {
+      mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+      expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
+      expect(screen.getByLabelText("Expand conversation")).toBeTruthy()
+      expect(screen.queryByText("Opening body.")).toBeNull()
+    } finally {
+      restore()
+    }
   })
 })
