@@ -310,6 +310,41 @@ describe("BoardCard branches", () => {
     expect(container.querySelector(".border-l-2")).toBeNull()
   })
 
+  it("renders a convert-to-thread continuation with no seam or split chrome", async () => {
+    // A lone post whose first reply filed into a thread: the thread carries the
+    // whole conversation by design, so the reply is inline — no "continued in"
+    // seam, no split affordance, no indent.
+    await db.streams.bulkPut([
+      cachedStream("stream_1", StreamTypes.CHANNEL),
+      cachedStream("thread_conv", StreamTypes.THREAD, {
+        parentStreamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentMessageId: "cr1",
+      }),
+    ])
+    await db.events.bulkPut([
+      messageEvent("cr1", "stream_1", 10, "Lone post in channel."),
+      messageEvent("ct1", "thread_conv", 11, "First plain reply."),
+    ])
+    const post = makePost({
+      id: "conv_converted",
+      streamId: "stream_1",
+      messageIds: ["cr1", "ct1"],
+      opening: { id: "cr1", streamId: "stream_1", content: "Lone post in channel." },
+      streamIds: ["stream_1", "thread_conv"],
+      totalReplies: 1,
+      rootStreamId: "stream_1",
+      topicSummary: "Converted opener",
+    })
+    await db.conversations.bulkPut([post])
+
+    const { container } = mount(post)
+    await screen.findByText("First plain reply.")
+    expect(screen.queryByText(/continued in/)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Split into its own topic" })).toBeNull()
+    expect(container.querySelector(".border-l-2")).toBeNull()
+  })
+
   it("shows neither stub nor provenance for a thread-anchored conversation with no live source", async () => {
     await db.streams.bulkPut([
       cachedStream("stream_1", StreamTypes.CHANNEL),

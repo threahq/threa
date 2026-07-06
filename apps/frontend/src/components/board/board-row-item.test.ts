@@ -72,8 +72,25 @@ describe("buildBranchedBoardRows continuation", () => {
   }
 
   it("a soft seam breaks a same-author continuation run", () => {
-    // Same author within the grouping window, but split across a soft thread
-    // boundary: the seam sits between the runs and the second run doesn't group.
+    // A flat two-message discussion migrated into a thread: the seam sits
+    // between the runs and the post-seam message doesn't group.
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", "b")],
+    ])
+    const grouping = groupBranches(
+      [msg("a", "u1", 0, "root"), msg("b", "u1", 1, "root"), msg("c", "u1", 2, "thread")],
+      { streams, conversation: { streamId: "root" } }
+    )
+    const rows = buildBranchedBoardRows(grouping, [], new Map())
+    expect(rows.map((r) => r.kind)).toEqual(["message", "message", "seam", "message"])
+    const afterSeam = rows[3]
+    expect(afterSeam.kind === "message" && afterSeam.continuation).toBe(false)
+  })
+
+  it("a lone opener continuing into a thread renders seamlessly (convert-to-thread)", () => {
+    // The first reply to a lone post files into a thread by design — the thread
+    // IS the conversation, so no seam row and continuation flows across.
     const streams = new Map([
       ["root", streamNode(null, null, null)],
       ["thread", streamNode("root", "root", "a")],
@@ -83,9 +100,45 @@ describe("buildBranchedBoardRows continuation", () => {
       conversation: { streamId: "root" },
     })
     const rows = buildBranchedBoardRows(grouping, [], new Map())
+    expect(rows.map((r) => r.kind)).toEqual(["message", "message"])
+    const reply = rows[1]
+    expect(reply.kind === "message" && reply.continuation).toBe(true)
+    expect(reply.kind === "message" && reply.displayDepth).toBe(0)
+  })
+
+  it("a converted opener stays seamless however large the thread grows", () => {
+    // Not a size threshold: the pre-boundary run stays opener-only, so the
+    // whole discussion renders as one flat run even with real back-and-forth.
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", "a")],
+    ])
+    const grouping = groupBranches(
+      [
+        msg("a", "u1", 0, "root"),
+        msg("b", "u2", 1, "thread"),
+        msg("c", "u1", 2, "thread"),
+        msg("d", "u2", 3, "thread"),
+      ],
+      { streams, conversation: { streamId: "root" } }
+    )
+    const rows = buildBranchedBoardRows(grouping, [], new Map())
+    expect(rows.map((r) => r.kind)).toEqual(["message", "message", "message", "message"])
+  })
+
+  it("an up-seam keeps its seam even when the first run is a single message", () => {
+    // Thread→root: the lone-opener rule is the convert-to-thread signature,
+    // which only exists on a down crossing — an up crossing always seams.
+    const streams = new Map([
+      ["root", streamNode(null, null, null)],
+      ["thread", streamNode("root", "root", null)],
+    ])
+    const grouping = groupBranches([msg("a", "u1", 0, "thread"), msg("b", "u1", 1, "root")], {
+      streams,
+      conversation: { streamId: "thread" },
+    })
+    const rows = buildBranchedBoardRows(grouping, [], new Map())
     expect(rows.map((r) => r.kind)).toEqual(["message", "seam", "message"])
-    const second = rows[2]
-    expect(second.kind === "message" && second.continuation).toBe(false)
   })
 
   it("a branch group lands after its fork message and breaks a same-author continuation run", () => {
@@ -152,12 +205,12 @@ describe("buildBranchedBoardRows continuation", () => {
   it("splits orphan events across a soft seam by time", () => {
     const streams = new Map([
       ["root", streamNode(null, null, null)],
-      ["thread", streamNode("root", "root", "a")],
+      ["thread", streamNode("root", "root", "b")],
     ])
-    const grouping = groupBranches([msg("a", "u1", 0, "root"), msg("b", "u2", 4, "thread")], {
-      streams,
-      conversation: { streamId: "root" },
-    })
+    const grouping = groupBranches(
+      [msg("a", "u1", 0, "root"), msg("b", "u2", 2, "root"), msg("c", "u2", 4, "thread")],
+      { streams, conversation: { streamId: "root" } }
+    )
     const rows = buildBranchedBoardRows(
       grouping,
       [memoEventRow("early", 1, "elsewhere"), memoEventRow("late", 5, "elsewhere")],
@@ -166,6 +219,7 @@ describe("buildBranchedBoardRows continuation", () => {
     expect(rows.map((r) => (r.kind === "event" ? r.row.key : r.kind))).toEqual([
       "message",
       "early",
+      "message",
       "seam",
       "message",
       "late",

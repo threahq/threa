@@ -754,6 +754,16 @@ invisible and unnamed today):
   migrate-to-thread continuation, quote-reply spillover, convert-to-thread.
   Same conversation, same card. Renders as continuation — at most a subtle
   "moved to thread" seam, **no indent**, because topically nothing branched.
+
+  _Refined 2026-07-06 (Kris)._ Convert-to-thread gets **no seam at all**: when
+  the pre-boundary run is just the lone opener (the first reply to a lone post
+  files into a thread), the thread carries the whole conversation by design, so
+  it renders seamlessly forever — regardless of how large the thread grows.
+  The seam (and its "split into its own topic" heal) marks only a discussion
+  that ran flat in the channel/DM and then migrated into a thread
+  mid-conversation. The signal is the pre-boundary run (opener-only vs ≥2
+  messages), never thread size or author count.
+
 - **True thread** — the thread is a _sub-topic_. Own conversation in the data
   model, but **rendered nested inside the parent card** (corrected 2026-07-05,
   below): a branch group at the fork point — "↳ _GPU budget_" header plus the

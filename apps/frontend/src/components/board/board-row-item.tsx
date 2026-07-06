@@ -112,7 +112,11 @@ function branchAnchorMs(branch: BranchConversationView): number {
  * Flatten a {@link BranchGrouping} into ordered board rows, interleaving event
  * rows into the group whose stream owns them and inserting branch chrome:
  *
- * - `soft` → the two runs with one `seam` row between them (no indent).
+ * - `soft` → the two runs with one `seam` row between them (no indent). A
+ *   down-seam whose first run is just the opener is convert-to-thread transport
+ *   — the whole discussion lives in the thread by design — so it renders
+ *   seamlessly as one run: no seam row, no split chrome, regardless of thread
+ *   size. The seam marks only a flat discussion that migrated mid-conversation.
  * - `spanning` → base messages chronological; each occupied thread rendered as
  *   one contiguous group placed after its fork message's row (or anchored
  *   chronologically when its fork message isn't rendered), indented by
@@ -236,7 +240,16 @@ export function buildBranchedBoardRows(
     }
   }
 
-  if (grouping.kind === "soft" && grouping.softSeam) {
+  // A down-crossing whose pre-boundary run is the lone opener is the
+  // convert-to-thread signature (a first reply to a lone post files into a
+  // thread): the thread IS the conversation, so no seam ever — not a size
+  // threshold; the run stays opener-only however large the thread grows.
+  const convertedOpener =
+    grouping.kind === "soft" &&
+    grouping.softSeam?.direction === "down" &&
+    (grouping.roots[0]?.messages.length ?? 0) <= 1
+
+  if (grouping.kind === "soft" && grouping.softSeam && !convertedOpener) {
     const [runA, runB] = grouping.roots
     // Orphan events split at the seam so each lands in its chronological run.
     const runBStart = runB && runB.messages.length > 0 ? messageMs(runB.messages[0]) : Number.POSITIVE_INFINITY
