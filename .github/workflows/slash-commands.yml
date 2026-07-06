@@ -5,6 +5,178 @@ on:
     types: [created]
 
 jobs:
+  eval:
+    name: Run AI evals
+    # PR comments starting with `/eval` only. startsWith tolerates the trailing
+    # whitespace/newline GitHub appends to comment bodies.
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/eval')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Serialise eval requests per PR. Do NOT cancel in-progress — an eval spends
+    # real money on model calls, so let a running one finish rather than kill it.
+    concurrency:
+      group: eval-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: threa
+          POSTGRES_PASSWORD: threa
+          POSTGRES_DB: threa
+        ports:
+          - 5454:5432
+        options: >-
+          --health-cmd "pg_isready -U threa -d threa"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Check write permission
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.comment.user.login,
+            });
+            if (!['write', 'admin'].includes(data.permission)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `⛔ @${context.payload.comment.user.login} — you need write access to run evals.`,
+              });
+              core.setFailed('Insufficient permissions');
+            }
+
+      - name: Resolve PR head
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            });
+            // The job checks out and runs the PR head with the OPENROUTER secret
+            // in scope. Refuse fork PRs — running fork code with secrets is a
+            // token-exfiltration vector. Internal branches (claude/*) are fine.
+            if (pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: '⛔ `/eval` runs the PR head with repo secrets, so it is limited to branches in this repository — not forks.',
+              });
+              core.setFailed('Refusing to run eval on a fork PR');
+              return;
+            }
+            core.setOutput('sha', pr.head.sha);
+            core.setOutput('ref', pr.head.ref);
+
+      - name: Acknowledge
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      # Check out the PR's head so evals run against the code under review, not
+      # the default branch. Only write-access users reach this point.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Validate the command into a safe argv (allowlisted flags, charset-checked
+      # values). continue-on-error so a bad command posts a helpful reply rather
+      # than a bare red X.
+      - name: Parse command
+        id: parse
+        continue-on-error: true
+        env:
+          EVAL_COMMAND: ${{ github.event.comment.body }}
+        run: |
+          cd apps/backend
+          bun run evals/slash/parse-args.ts > /tmp/eval_args 2> /tmp/eval_error
+
+      - name: Report invalid command
+        if: steps.parse.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const err = (fs.readFileSync('/tmp/eval_error', 'utf8') || 'Invalid command.').trim();
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `⛔ **Eval command rejected:** ${err}\n\n` +
+                'Usage: `/eval [-s <suite>] [-c <case,ids>] [-m <model,ids>] [-r <runs>] [-t <temp>] [--min-pass-rate <n>]`\n' +
+                'Suites: `boundary-extraction` (default), `memo-classifier`, `memorizer`, `stream-naming`, `multimodal-vision`, `companion`.',
+            });
+            core.setFailed('Invalid /eval command');
+
+      # Run the eval. set +e captures the exit code (non-zero = a case missed its
+      # pass-rate threshold) without failing the step, so the report still posts.
+      - name: Run evals
+        id: run
+        if: steps.parse.outcome == 'success'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+        run: |
+          cd apps/backend
+          ARGS=$(cat /tmp/eval_args)
+          set +e
+          # ARGS is charset-validated (no spaces/quotes/globs) — safe to word-split.
+          bun run evals/run.ts $ARGS --no-langfuse --json /tmp/eval_results.json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Format report
+        if: steps.parse.outcome == 'success'
+        env:
+          EVAL_RESULTS_JSON: /tmp/eval_results.json
+          EVAL_SHA: ${{ steps.pr.outputs.sha }}
+          EVAL_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EVAL_EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+        run: |
+          cd apps/backend
+          EVAL_COMMAND="/eval $(cat /tmp/eval_args)" bun run evals/slash/format-report.ts > /tmp/eval_comment.md
+
+      - name: Post report
+        if: steps.parse.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/eval_comment.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body,
+            });
+
   staging-reset-db:
     name: Reset PR staging database
     # Only run when the comment is on a PR (not a plain issue) and matches the command.
