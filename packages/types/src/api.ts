@@ -343,17 +343,22 @@ export interface SyncHeartbeatPayload {
  * boundary-extractor infers the conversation (default). Present → the sender
  * declares it, and the send assigns it synchronously in the message's
  * transaction: `new` mints a fresh conversation seeded with the message;
- * `existing` attaches to `conversationId`; `threadFromMessage` mints the
- * conversation for this message (a thread's first reply) and retires the lone
- * `sourceConversationId` it threaded off, so the board shows one card — the
- * thread — instead of the source post plus the thread. The id is a sibling of
- * the discriminant (not folded into one field) so a missing/garbage id on
- * `existing`/`threadFromMessage` is a validation error, distinct from `new`.
+ * `existing` attaches to `conversationId`; `threadFromMessage` attaches this
+ * message (a thread's first reply) to the SAME `sourceConversationId` as a
+ * cross-stream member, so one conversation spans the root opener + the thread
+ * reply and the board card renders in place with no swap; `newSubtopic` mints a
+ * fresh child conversation anchored to the message's (thread) stream — the
+ * declared branch gesture from the board — attaching to the conversation already
+ * anchored there when two users branch the same message concurrently. The id is a
+ * sibling of the discriminant (not folded into one field) so a missing/garbage id
+ * on `existing`/`threadFromMessage` is a validation error, distinct from `new`
+ * and `newSubtopic`.
  */
 export type ConversationDirective =
   | { intent: "new" }
   | { intent: "existing"; conversationId: string }
   | { intent: "threadFromMessage"; sourceConversationId: string }
+  | { intent: "newSubtopic" }
 
 /**
  * JSON input format - used by rich clients sending ProseMirror JSON directly.

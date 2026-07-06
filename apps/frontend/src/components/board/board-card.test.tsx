@@ -9,6 +9,7 @@ import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { ServicesProvider, PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
+import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db, type CachedEvent } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -18,6 +19,7 @@ import * as messageReactionsModule from "@/hooks/use-message-reactions"
 import * as userProfileModule from "@/components/user-profile"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
+import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -107,7 +109,10 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 
 beforeEach(async () => {
   __clearBoardRailRegistry()
+  __clearConversationGraphRegistry()
   await db.events.clear()
+  await db.conversations.clear()
+  await db.streams.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([] as never)
@@ -115,6 +120,12 @@ beforeEach(async () => {
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+  // BoardCard hosts the inline branch composer, whose queue hook needs the
+  // pending-messages provider — stub the hook so the harness stays lean.
+  vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+    queueDraftMessage: vi.fn().mockResolvedValue({ clientId: "client_1" }),
+    currentUserId: "usr_me",
+  } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
   vi.spyOn(messageReactionsModule, "useMessageReactions").mockReturnValue({
     addReaction: vi.fn(),
     removeReaction: vi.fn(),

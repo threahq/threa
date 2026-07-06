@@ -20,6 +20,7 @@ import {
   Tag,
   ArrowUpRight,
   PanelRight,
+  GitBranch,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -89,6 +90,16 @@ export interface MessageActionContext {
    * in the flat timeline with an instant provenance chip.
    */
   onReplyInConversation?: () => void
+  /**
+   * The declared branch gesture (board-view-design.md): open a real thread under
+   * this message and mint a child conversation for it (the first reply carries a
+   * `newSubtopic` directive; no reply = nothing created). Set ONLY by the
+   * conversation surfaces (board card / conversation panel), and only when no
+   * thread yet exists under the message — a populated thread would create mixed
+   * membership, so "Split this thread" is the gesture there instead (adjustment
+   * D). The plain timeline never sets it.
+   */
+  onNewSubtopic?: () => void
   /**
    * Share-to-root fast path: queue a pointer share into the top-level non-thread
    * ancestor (channel/dm/scratchpad) and navigate there. Always preferred over
@@ -339,6 +350,17 @@ export const messageActions: MessageAction[] = [
     groupId: "reply",
     when: (ctx) => !!ctx.onReplyInConversation,
     action: (ctx) => ctx.onReplyInConversation?.(),
+  },
+  {
+    // Declared branch: open a thread under this message and mint its child
+    // conversation. The conversation surfaces (board card / panel) set the handler,
+    // and only when no thread yet exists under the message (adjustment D) — the
+    // plain timeline and populated-thread rows leave it unset.
+    id: "new-subtopic",
+    label: "New sub-topic",
+    icon: GitBranch,
+    when: (ctx) => !!ctx.onNewSubtopic,
+    action: (ctx) => ctx.onNewSubtopic?.(),
   },
   {
     // In-stream → conversation panel (the mirror of "View in channel"). Only

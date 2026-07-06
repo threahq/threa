@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
 import type { BoardLens, BoardScopeStreamType } from "@threa/types"
 import * as boardStoreModule from "@/stores/board-store"
+import * as graphModule from "./use-conversation-graph"
 import type { CachedBoardPost } from "@/db"
 import {
   reconcileStableView,
@@ -397,6 +398,91 @@ describe("useStableBoardView", () => {
     rerender({ filter: typesFilter(["dm"]) })
     expect(result.current.posts.map((p) => p.id)).toEqual(["d"])
     expect(result.current.newCount).toBe(0)
+  })
+
+  it("folds a branch conversation into its visible parent — one card, effective activity, folded streams", () => {
+    // parent (anchor "root", member m1) is forked by child (anchor thread "t1"
+    // off m1). The child is newer (900) than the unrelated "other" (500).
+    const base = post("parent", 300)
+    const parent = {
+      ...base,
+      streamIds: ["root"],
+      conversation: { ...base.conversation, streamId: "root", messageIds: ["m1"] },
+    } as CachedBoardPost
+    const childBase = post("child", 900)
+    const child = {
+      ...childBase,
+      streamIds: ["t1"],
+      conversation: { ...childBase.conversation, streamId: "t1", messageIds: ["c1"] },
+    } as CachedBoardPost
+    const other = post("other", 500)
+
+    const threadRow = { id: "t1", type: "thread", parentStreamId: "root", parentMessageId: "m1", rootStreamId: "root" }
+    vi.spyOn(graphModule, "useStreamStructuralIndex").mockReturnValue({
+      streamsById: new Map([["t1", threadRow]]),
+      threadsByParentMessageId: new Map([["m1", threadRow]]),
+    } as unknown as ReturnType<typeof graphModule.useStreamStructuralIndex>)
+    vi.spyOn(graphModule, "useConversationGraph").mockReturnValue({
+      conversationByAnchorStreamId: new Map([["t1", child]]),
+      conversationIdByMemberMessageId: new Map([
+        ["m1", "parent"],
+        ["c1", "child"],
+      ]),
+      conversationById: new Map([
+        ["parent", parent],
+        ["child", child],
+        ["other", other],
+      ]),
+    } as unknown as ReturnType<typeof graphModule.useConversationGraph>)
+
+    mockLive(feed(child, other, parent))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL))
+    // One card per root discussion: the child folds into the parent, whose
+    // effective activity (900) now outranks "other" (500).
+    expect(result.current.posts.map((p) => p.id)).toEqual(["parent", "other"])
+    expect(result.current.newCount).toBe(0)
+    // The rendered parent copy declares the folded child's streams (so the board
+    // page's subscriptions still cover them) without mutating the cached post.
+    expect(result.current.posts[0].streamIds).toEqual(expect.arrayContaining(["root", "t1"]))
+    expect(parent.streamIds).toEqual(["root"])
+    expect(parent._lastActivityMs).toBe(300)
+  })
+
+  it("keeps a branch standalone when its parent is filtered out of the view", () => {
+    const childBase = post("child", 900)
+    const child = {
+      ...childBase,
+      streamIds: ["t1"],
+      conversation: { ...childBase.conversation, streamId: "t1", messageIds: ["c1"] },
+    } as CachedBoardPost
+    const base = post("parent", 300)
+    const parent = {
+      ...base,
+      streamIds: ["root"],
+      conversation: { ...base.conversation, streamId: "root", messageIds: ["m1"] },
+    } as CachedBoardPost
+    const threadRow = { id: "t1", type: "thread", parentStreamId: "root", parentMessageId: "m1", rootStreamId: "root" }
+    vi.spyOn(graphModule, "useStreamStructuralIndex").mockReturnValue({
+      streamsById: new Map([["t1", threadRow]]),
+      threadsByParentMessageId: new Map([["m1", threadRow]]),
+    } as unknown as ReturnType<typeof graphModule.useStreamStructuralIndex>)
+    vi.spyOn(graphModule, "useConversationGraph").mockReturnValue({
+      conversationByAnchorStreamId: new Map([["t1", child]]),
+      conversationIdByMemberMessageId: new Map([
+        ["m1", "parent"],
+        ["c1", "child"],
+      ]),
+      conversationById: new Map([
+        ["parent", parent],
+        ["child", child],
+      ]),
+    } as unknown as ReturnType<typeof graphModule.useConversationGraph>)
+
+    // The live feed holds only the child (its parent didn't match the filters):
+    // never vanish content — the child stays a standalone card.
+    mockLive(feed(child))
+    const { result } = renderHook(() => useStableBoardView("ws_1", ALL))
+    expect(result.current.posts.map((p) => p.id)).toEqual(["child"])
   })
 
   it("resets the committed view when the scope changes, not when it is re-created equal", () => {

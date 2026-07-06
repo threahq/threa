@@ -1,4 +1,5 @@
 import type { PoolClient } from "pg"
+import { sql } from "../../db"
 import { ConversationRepository } from "./repository"
 import type { ConversationAssigner, Message } from "../messaging"
 import { checkStreamAccess, StreamRepository } from "../streams"
@@ -28,6 +29,12 @@ import { HttpError } from "../../lib/errors"
  *    reply, one root). Stable conversation id, no card swap. Falls back to a
  *    fresh mint only when the source can't be verified, so the reply is never
  *    orphaned.
+ *  - `newSubtopic`: the declared branch gesture from the board — a fresh thread
+ *    was opened under a member message and this is its first reply. Mint a child
+ *    conversation anchored to the message's (thread) stream, or attach to the one
+ *    already anchored there when two users branch the same message concurrently
+ *    (INV-20). The branch relationship is derivable from the graph (the thread's
+ *    parentMessageId ∈ the parent conversation), so no parent id is written.
  */
 export const conversationAssigner: ConversationAssigner = {
   async assignInTransaction(client, { workspaceId, message, directive }) {
@@ -36,6 +43,11 @@ export const conversationAssigner: ConversationAssigner = {
         return
       }
       await mintConversationForMessage(client, workspaceId, message)
+      return
+    }
+
+    if (directive.intent === ConversationIntents.NEW_SUBTOPIC) {
+      await mintOrAttachSubtopicConversation(client, workspaceId, message)
       return
     }
 
@@ -98,6 +110,37 @@ async function mintConversationForMessage(client: PoolClient, workspaceId: strin
     message,
     conversationId: newId,
     created: true,
+    reason: "declared",
+  })
+}
+
+/**
+ * `newSubtopic` (board branch gesture): mint a child conversation anchored to the
+ * message's thread stream, or attach to the one already anchored there. Lock the
+ * thread stream row first (mirrors the agent-reply mint's stream lock, INV-20) so
+ * two users branching the same parent message — both landing in the one thread
+ * `insertThreadOrFind` returned — don't both mint: the loser waits on the lock and
+ * then sees the winner's conversation via `findActiveByStream`. No reactivate: a
+ * resolved conversation on the thread is left as-is and a fresh active one minted.
+ */
+async function mintOrAttachSubtopicConversation(
+  client: PoolClient,
+  workspaceId: string,
+  message: Message
+): Promise<void> {
+  await client.query(sql`SELECT id FROM streams WHERE id = ${message.streamId} FOR UPDATE`)
+  const active = (await ConversationRepository.findActiveByStream(client, message.streamId))[0]
+  if (!active) {
+    await mintConversationForMessage(client, workspaceId, message)
+    return
+  }
+  await ConversationRepository.addPrimaryMessage(client, workspaceId, active.id, message.id, message.authorId)
+  await ConversationRepository.bumpActivityForIds(client, workspaceId, [active.id])
+  await emitAssignmentEvents(client, {
+    workspaceId,
+    message,
+    conversationId: active.id,
+    created: false,
     reason: "declared",
   })
 }

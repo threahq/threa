@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { toast } from "sonner"
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   useConversationService,
@@ -7,7 +8,6 @@ import {
   useSocketReconnectCount,
   createDraftPanelId,
 } from "@/contexts"
-import { toast } from "sonner"
 import { db } from "@/db"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { seedBoardPosts, useBoardPost, mergeBoardConversation } from "@/stores/board-store"
@@ -786,6 +786,30 @@ export function useUnmuteStream(workspaceId: string) {
     onError: (_error, streamId) => {
       void putMuted(workspaceId, streamId)
       toast.error("Couldn't unmute the stream")
+    },
+  })
+}
+
+/**
+ * Split a soft thread out of its parent conversation into its own topic (the
+ * board seam gesture). The card visibly re-forms into a nested branch group, so
+ * no success toast (INV-63); the board feed is invalidated so the new
+ * conversation and the shrunken source re-project, and the
+ * `conversation:created`/`updated` sync events converge the card in place. A
+ * failure surfaces as an error toast — the gesture has no other on-screen signal.
+ */
+export function useSplitThread(workspaceId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ conversationId, threadStreamId }: { conversationId: string; threadStreamId: string }) =>
+      conversationService.splitThread(workspaceId, conversationId, threadStreamId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [...conversationKeys.all, "workspaceList", workspaceId] })
+    },
+    onError: () => {
+      toast.error("Couldn't split the thread. Try again.")
     },
   })
 }

@@ -339,6 +339,24 @@ export const StreamRepository = {
   },
 
   /**
+   * `streamId` plus every stream nested beneath it (any depth), walking down
+   * `parent_stream_id` in one recursive CTE. Used by the thread-split flow to
+   * find the member messages that move with a thread: its own plus any deeper
+   * sub-topic threads. Always includes `streamId` itself.
+   */
+  async listSelfAndDescendantIds(db: Querier, streamId: string): Promise<string[]> {
+    const result = await db.query<{ id: string }>(sql`
+      WITH RECURSIVE subtree AS (
+        SELECT id FROM streams WHERE id = ${streamId}
+        UNION ALL
+        SELECT s.id FROM streams s JOIN subtree t ON s.parent_stream_id = t.id
+      )
+      SELECT id FROM subtree
+    `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
    * Active thread ids whose top-level root is `rootStreamId` (any nesting
    * depth — `root_stream_id` points at the non-thread ancestor, INV-62).
    * Used to route root lifecycle events (`stream:archived` / `stream:unarchived`)

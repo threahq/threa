@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { matchesBoardLens, type BoardLens, type BoardScopeStreamType } from "@threa/types"
 import { useBoardPosts } from "@/stores/board-store"
+import { projectNestedBoardView } from "@/lib/board/nested-board-view"
+import {
+  buildConversationGraph,
+  useStreamStructuralIndex,
+  branchParentConversationId,
+} from "@/hooks/use-conversation-graph"
 import type { CachedBoardPost } from "@/db"
 
 /** How long `revealNext` stays armed after the viewer posts. Bounds the auto-
@@ -300,26 +306,43 @@ export function useStableBoardView(
     [hidden, muted, muteActive]
   )
 
-  // Filter the shared feed to the lens + scopes + exclusions. Recomputed when the
-  // feed or filter changes; `Date.now()` is sampled then (the staleness signal for
-  // `needs-resolution` only needs to be fresh at feed-change granularity, which
-  // is frequent on a live board).
+  // The branch relationship for one-card-per-root suppression (below) derives
+  // from the SAME posts array being filtered, not the shared graph registry: the
+  // registry is a second liveQuery over the same table, and racing it means the
+  // first commit can paint a child card standalone only to fold it away a beat
+  // later — a card vanishing on refresh. Building from `rawLive` makes
+  // suppression consistent with its input by construction; cards keep the
+  // registry hook (they mount without the board list) and both build the same
+  // index shape.
+  const graph = useMemo(() => (rawLive ? buildConversationGraph(rawLive) : null), [rawLive])
+  const index = useStreamStructuralIndex(workspaceId)
+  // Filter the shared feed to the lens + scopes + exclusions, then fold branch
+  // conversations into their parent's card (one card per root discussion — a child
+  // whose parent survives the same filters is suppressed and bumps the parent's
+  // effective activity; a child whose parent is filtered out stays standalone). The
+  // fold runs BEFORE reconcile, so the committed-view machinery only ever sees the
+  // projected list. Recomputed when the feed or filter changes; `Date.now()` is
+  // sampled then (the staleness signal for `needs-resolution` only needs to be
+  // fresh at feed-change granularity, which is frequent on a live board).
   const live = useMemo(
     () =>
-      rawLive === undefined
+      rawLive === undefined || graph === null
         ? undefined
-        : rawLive.filter(
-            (post) =>
-              matchesBoardLens(post, lens, Date.now()) &&
-              matchesScope(post, scope) &&
-              matchesTypeScope(post, types) &&
-              matchesExcludedStreams(post, excludeStreams) &&
-              matchesExcludedTypes(post, excludeTypes) &&
-              matchesLabelScope(post, labels) &&
-              matchesExcludedLabels(post, excludeLabels) &&
-              !isExcluded(post)
+        : projectNestedBoardView(
+            rawLive.filter(
+              (post) =>
+                matchesBoardLens(post, lens, Date.now()) &&
+                matchesScope(post, scope) &&
+                matchesTypeScope(post, types) &&
+                matchesExcludedStreams(post, excludeStreams) &&
+                matchesExcludedTypes(post, excludeTypes) &&
+                matchesLabelScope(post, labels) &&
+                matchesExcludedLabels(post, excludeLabels) &&
+                !isExcluded(post)
+            ),
+            (conversationId) => branchParentConversationId(conversationId, index, graph)
           ),
-    [rawLive, lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, isExcluded]
+    [rawLive, lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, isExcluded, graph, index]
   )
   const [committed, setCommitted] = useState<CommittedView>(EMPTY_VIEW)
   const [buffered, setBuffered] = useState<string[]>([])

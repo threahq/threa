@@ -29,6 +29,9 @@ import {
   useUnmuteStream,
 } from "@/hooks/use-conversations"
 import { useBoardHiddenConversations, useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
+import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
+import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
+import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
 import { BoardCard } from "@/components/board/board-card"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
@@ -55,6 +58,12 @@ import {
 } from "@threa/types"
 
 const VALID_LENSES = new Set<string>(BOARD_LENSES)
+
+/** How many leading cards' rails the reveal gate pre-warms before first paint.
+ *  Covers the viewport with margin; cards past it mount against already-warm or
+ *  fast-resolving rails below the fold, where late resolution can't shift
+ *  anything the viewer sees. */
+const REVEAL_PREWARM_CARDS = 12
 
 /** Empty-state copy per lens — an empty Decisions view isn't "nothing on the board". */
 const LENS_EMPTY_COPY: Record<BoardLens, { title: string; body: string }> = {
@@ -335,6 +344,35 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // Keep the streams behind on-screen cards live + offline-first (threads and
   // public channels the viewer never joined aren't subscribed at bootstrap).
   useBoardStreamSubscriptions(posts)
+  // Coordinated reveal: hold the first card paint until the above-fold cards'
+  // rails AND the conversation graph have completed their first IDB read, so a
+  // card's first frame is its final frame — no skeleton→card swap, no branch
+  // replies or agent rows resolving in afterwards (content never shifts unless
+  // content actually changed — Kris's refresh ruling, 2026-07-05). Warm-device
+  // holds are one IDB round-trip; the skeleton appears only past the same delay
+  // the timeline uses, so the common path is blank-for-a-beat → complete board.
+  const prewarmStreamIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const post of posts.slice(0, REVEAL_PREWARM_CARDS)) {
+      set.add(post.conversation.streamId)
+      for (const id of post.streamIds ?? []) set.add(id)
+    }
+    return [...set].sort()
+  }, [posts])
+  const railsReady = useBoardRailsReady(prewarmStreamIds)
+  const graphReady = useConversationGraphReady(workspaceId)
+  const revealReady = railsReady && graphReady
+  const holding = posts.length > 0 && !revealReady
+  const loading = isLoading || viewLoading || seedPending || holding
+  const [skeletonVisible, setSkeletonVisible] = useState(false)
+  useEffect(() => {
+    if (!loading) {
+      setSkeletonVisible(false)
+      return
+    }
+    const timer = setTimeout(() => setSkeletonVisible(true), SKELETON_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [loading])
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
@@ -405,10 +443,12 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   else if (isFetchNextPageError) loadMoreLabel = "Retry"
 
   // Prefer cached/live content: a transient refetch error never hides a feed we
-  // already have. Skeleton only before the first IDB read resolves AND nothing
-  // is cached; empty state only once IDB has resolved to genuinely nothing.
+  // already have. Cards render only once the reveal gate clears (rails + graph
+  // resolved) so the first paint is complete; the skeleton earns its slot only
+  // past SKELETON_DELAY_MS of genuine loading (cold device), never as a flash on
+  // a warm refresh. Empty state only once IDB has resolved to genuinely nothing.
   let content
-  if (posts.length > 0) {
+  if (posts.length > 0 && revealReady) {
     content = (
       <div className="flex flex-col">
         {sections.map((section) => (
@@ -448,8 +488,10 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         )}
       </div>
     )
-  } else if (isError) {
-    // A failed fetch must read as a failure, not as the empty state's upbeat copy.
+  } else if (isError && posts.length === 0) {
+    // A failed fetch must read as a failure, not as the empty state's upbeat
+    // copy — but cached content mid-reveal still outranks it (the hold above
+    // resolves in one IDB round-trip; erroring over a full cache would flash).
     content = (
       <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
         <AlertCircle className="h-8 w-8 text-destructive" />
@@ -460,8 +502,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         </Button>
       </div>
     )
-  } else if (isLoading || viewLoading || seedPending) {
-    content = (
+  } else if (loading) {
+    content = skeletonVisible ? (
       <div className="flex flex-col gap-3">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="rounded-xl border bg-card p-4">
@@ -476,7 +518,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           </div>
         ))}
       </div>
-    )
+    ) : null
   } else {
     // A filtered-empty view is the FILTERS coming up empty, never the board
     // hiding things — so it always offers the one-tap way back to everything.

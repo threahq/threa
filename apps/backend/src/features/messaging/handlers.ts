@@ -35,6 +35,7 @@ export const conversationDirectiveSchema = z.discriminatedUnion("intent", [
   z.object({ intent: z.literal("new") }),
   z.object({ intent: z.literal("existing"), conversationId: z.string().min(1) }),
   z.object({ intent: z.literal("threadFromMessage"), sourceConversationId: z.string().min(1) }),
+  z.object({ intent: z.literal("newSubtopic") }),
 ])
 
 // INV-31: this runtime schema is the wire guard; `ConversationDirective` in

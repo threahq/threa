@@ -25,8 +25,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
-import { buildBoardRows, BoardEventRowItem } from "@/components/board/board-row-item"
+import { buildBranchedBoardRows } from "@/components/board/board-row-item"
+import { BranchedBoardRows, BranchProvenanceRow } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
+import {
+  useConversationGraph,
+  useStreamStructuralIndex,
+  deriveBranchConversations,
+  collectBranchThreadStreamIds,
+  deriveBranchProvenance,
+} from "@/hooks/use-conversation-graph"
+import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
 import { ConversationActionsMenu } from "@/components/conversations/conversation-actions-menu"
 import { useBoardHiddenConversations } from "@/stores/board-exclusions-store"
 import { cn } from "@/lib/utils"
@@ -43,7 +53,7 @@ import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationService, usePanel, parseConversationPanel, useSidebar } from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
-import { conversationKeys, useConversationBoardPost } from "@/hooks/use-conversations"
+import { conversationKeys, useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
 import { useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
@@ -96,11 +106,21 @@ export function ConversationPanel({ workspaceId, onClose }: ConversationPanelPro
 
   // Keep the conversation's streams (root + threads) caught up + joined while the
   // panel is open, so the rail is live and offline-first. Its own SyncEngine slot,
-  // so it composes with the board feed rather than clobbering it.
-  const panelStreamIds = useMemo(
-    () => (post ? [...new Set([post.conversation.streamId, ...(post.streamIds ?? [])])] : []),
-    [post]
-  )
+  // so it composes with the board feed rather than clobbering it. The nested
+  // branch conversations' threads are folded in too — the panel renders their
+  // bodies inline, so they must sync like any other rendered stream.
+  const conversationGraph = useConversationGraph(workspaceId)
+  const structuralIndex = useStreamStructuralIndex(workspaceId)
+  const panelStreamIds = useMemo(() => {
+    if (!post) return []
+    const branchIds = collectBranchThreadStreamIds({
+      conversationId: post.conversation.id,
+      memberMessageIds: post.conversation.messageIds,
+      index: structuralIndex,
+      graph: conversationGraph,
+    })
+    return [...new Set([post.conversation.streamId, ...(post.streamIds ?? []), ...branchIds])]
+  }, [post, structuralIndex, conversationGraph])
   usePanelStreamSubscriptions(panelStreamIds)
   // The panel's streams aren't in the URL (`?panel=conv:…`), so the SW's push
   // suppression can only know they're on screen if we register them here.
@@ -284,6 +304,7 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
   const conversationService = useConversationService()
+  const splitThread = useSplitThread(workspaceId)
   const { conversation } = post
   // Per-row read state + the mark-read/unread actions for this conversation's
   // rows (docs/sparse-read-overlay-design.md). The panel has no unread dot, so
@@ -302,6 +323,20 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
   const [searchParams] = useSearchParams()
   const highlightMessageId = searchParams.get("m")
 
+  // Shared graph + structural index, needed before the rail hook: the inline
+  // branch composer derives the branch thread streams (and pending sub-topic
+  // draft rails) the panel subscribes to as extra rails.
+  const conversationGraph = useConversationGraph(workspaceId)
+  const structuralIndex = useStreamStructuralIndex(workspaceId)
+  const inlineComposer = useInlineBranchComposer({
+    workspaceId,
+    conversationId: conversation.id,
+    memberMessageIds: conversation.messageIds,
+    index: structuralIndex,
+    graph: conversationGraph,
+  })
+  const { derivePendingBranches } = inlineComposer
+
   const {
     openingMessage,
     replies: railReplies,
@@ -309,7 +344,12 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     pendingReplies,
     source,
     events: railEvents,
-  } = useBoardCardMessages(post, hostStreamType)
+    messagesById,
+    taggedByConversation,
+  } = useBoardCardMessages(post, hostStreamType, {
+    branchStreamIds: inlineComposer.branchStreamIds,
+    extraDraftPanelIds: inlineComposer.extraDraftPanelIds,
+  })
 
   // Backfill the full window when the local rail is missing older replies (or the
   // stream isn't synced yet); the live rail shows immediately, this only fills the
@@ -355,7 +395,138 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
     () => resolveBoardEventRows(railEvents, { conversationId: conversation.id, memberMessageIds }),
     [railEvents, conversation.id, memberMessageIds]
   )
-  const rows = buildBoardRows(all, eventRows)
+
+  // Per-thread-boundary grouping — same derivation as the board card (the panel
+  // is the always-expanded peer). Overflow rows link into the thread's own stream
+  // panel here rather than back to this conversation.
+  const { getPanelUrl } = usePanel()
+  const occupiedStreamIds = useMemo(() => {
+    const set = new Set<string>([conversation.streamId])
+    for (const message of all) if (message.streamId) set.add(message.streamId)
+    return set
+  }, [conversation.streamId, all])
+  // A nested branch's bodies resolve through the panel's merged rail — its server
+  // `messageIds` unioned with the rows tagged with its id (a just-sent branch
+  // reply rides the tag through its echo window). The panel is always expanded,
+  // so every locally-available branch message shows; only unsynced members count
+  // toward the "N more replies" link.
+  const resolveBranchMessages = useCallback(
+    (branchConversationId: string, branchMemberIds: string[]) => {
+      const rows: RenderableMessage[] = []
+      const seen = new Set<string>()
+      for (const id of branchMemberIds) {
+        const message = messagesById.get(id)
+        if (!message) continue
+        rows.push(message)
+        seen.add(id)
+      }
+      for (const tagged of taggedByConversation.get(branchConversationId) ?? []) {
+        if (!seen.has(tagged.id)) rows.push(tagged)
+      }
+      rows.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      const knownTotal = Math.max(branchMemberIds.length, rows.length)
+      return { messages: rows, hiddenCount: Math.max(0, knownTotal - rows.length) }
+    },
+    [messagesById, taggedByConversation]
+  )
+  const branchesByForkMessageId = useMemo(() => {
+    const branches = deriveBranchConversations({
+      conversationId: conversation.id,
+      memberMessageIds: conversation.messageIds,
+      index: structuralIndex,
+      graph: conversationGraph,
+      resolveMessages: resolveBranchMessages,
+      excludeThreadStreamIds: occupiedStreamIds,
+    })
+    const byFork = new Map<string, BranchConversationView[]>()
+    for (const branch of branches) {
+      const list = byFork.get(branch.forkMessageId)
+      if (list) list.push(branch)
+      else byFork.set(branch.forkMessageId, [branch])
+    }
+    // In-flight sub-topic sends render as synthetic pending branches until the
+    // graph takes over (one thread per fork, so a graph-covered fork wins).
+    for (const branch of derivePendingBranches(messagesById)) {
+      if (!byFork.has(branch.forkMessageId)) byFork.set(branch.forkMessageId, [branch])
+    }
+    return byFork
+  }, [
+    conversation.id,
+    conversation.messageIds,
+    structuralIndex,
+    conversationGraph,
+    resolveBranchMessages,
+    occupiedStreamIds,
+    derivePendingBranches,
+    messagesById,
+  ])
+  const provenance = useMemo(
+    () =>
+      deriveBranchProvenance({
+        conversationId: conversation.id,
+        anchorStreamId: conversation.streamId,
+        index: structuralIndex,
+        graph: conversationGraph,
+      }),
+    [conversation.id, conversation.streamId, structuralIndex, conversationGraph]
+  )
+  const rows = buildBranchedBoardRows(
+    groupBranches(all, { streams: structuralIndex.streamsById, conversation: { streamId: conversation.streamId } }),
+    eventRows,
+    branchesByForkMessageId
+  )
+  const renderMessage = (message: RenderableMessage, continuation: boolean) => {
+    // Each row renders against its own stream so reactions and the permalink
+    // target where the message actually lives (one root, many streams); fall
+    // back to the anchor.
+    const rowStreamId = message.streamId ?? conversation.streamId
+    // Hide "New sub-topic" once a thread already exists under the message (a
+    // populated thread would mix membership — "Split this thread" is the gesture
+    // there, adjustment D).
+    const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    return (
+      <MessageItem
+        key={message.id}
+        workspaceId={workspaceId}
+        streamId={rowStreamId}
+        message={message}
+        authorName={getActorName(message.authorId, message.authorType)}
+        currentUserId={currentUserId}
+        continuation={continuation}
+        conversationId={conversation.id}
+        conversationRootStreamId={conversation.streamId}
+        isHighlighted={message.id === highlightMessageId}
+        surfaceClassName="bg-background"
+        onNewSubtopic={canBranch ? () => inlineComposer.openNewSubtopic(rowStreamId, message.id) : undefined}
+      />
+    )
+  }
+  // A nested branch's rows are OUTSIDE this conversation: render-only (null read
+  // provider — no mark-read/unread here) and identified as the CHILD conversation
+  // so copy-link opens its panel. Same shape as the board card's.
+  const renderBranchMessage = (branch: BranchConversationView, message: RenderableMessage, continuation: boolean) => {
+    const canBranch = !structuralIndex.threadsByParentMessageId.has(message.id)
+    return (
+      <ConversationReadProvider value={null}>
+        <MessageItem
+          workspaceId={workspaceId}
+          streamId={message.streamId ?? branch.threadStreamId}
+          message={message}
+          authorName={getActorName(message.authorId, message.authorType)}
+          currentUserId={currentUserId}
+          continuation={continuation}
+          conversationId={branch.conversationId}
+          conversationRootStreamId={branch.threadStreamId}
+          surfaceClassName="bg-background"
+          onNewSubtopic={
+            canBranch
+              ? () => inlineComposer.openNewSubtopic(message.streamId ?? branch.threadStreamId, message.id)
+              : undefined
+          }
+        />
+      </ConversationReadProvider>
+    )
+  }
   // The conversation's most-recently-active stream — the latest reply's own stream
   // (a thread under the root), so a continuation follows the conversation there
   // instead of re-interleaving the channel (board-view-design.md). Falls back to
@@ -388,31 +559,19 @@ function ConversationPanelBody({ workspaceId, post, hostStreamType, openReplySig
         {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
         <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [&>*:first-child]:mt-0">
-          {rows.map((row) =>
-            row.kind === "message" ? (
-              <MessageItem
-                key={row.message.id}
-                workspaceId={workspaceId}
-                // Each row renders against its own stream so reactions and the
-                // permalink target where the message actually lives (one root, many
-                // streams); fall back to the anchor.
-                streamId={row.message.streamId ?? conversation.streamId}
-                message={row.message}
-                authorName={getActorName(row.message.authorId, row.message.authorType)}
-                currentUserId={currentUserId}
-                continuation={row.continuation}
-                conversationId={conversation.id}
-                conversationRootStreamId={conversation.streamId}
-                isHighlighted={row.message.id === highlightMessageId}
-                // Break out of the list's px-4 and pad content back so the actor
-                // accent fills to the panel edges (stream-view look), rows aligned.
-                surfaceClassName="bg-background px-4"
-                rowInsetClassName="-mx-4"
-              />
-            ) : (
-              <BoardEventRowItem key={row.key} row={row.row} workspaceId={workspaceId} />
-            )
+          {provenance && (
+            <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
           )}
+          <BranchedBoardRows
+            rows={rows}
+            workspaceId={workspaceId}
+            renderMessage={renderMessage}
+            continueThreadTo={(streamId) => getPanelUrl(streamId)}
+            onSplitThread={(threadStreamId) => splitThread.mutate({ conversationId: conversation.id, threadStreamId })}
+            renderBranchMessage={renderBranchMessage}
+            renderBranchTail={inlineComposer.renderBranchTail}
+            renderAfterMessage={inlineComposer.renderAfterMessage}
+          />
           {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
           {backfillFailed && (
             <button

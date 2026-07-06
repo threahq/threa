@@ -245,7 +245,10 @@ export function useQueueDraftMessage(workspaceId: string) {
  *  on the real `message_created` payload — so the sender's own flat-timeline
  *  provenance chip (Mechanism C) renders on the optimistic row and stays put when
  *  the echo swaps in. A `threadFromMessage` reply is an opener the timeline chip
- *  ignores, so it tags the board card (`conversationId`) only. */
+ *  ignores, so it tags the board card (`conversationId`) only. `newSubtopic` mints
+ *  its child conversation server-side, so the id is unknown here — the optimistic
+ *  reply renders in the new thread rail by `streamId` and the parent-card stub
+ *  lands once the `conversation:created` echo caches the child (untagged, default). */
 export function conversationTag(directive: ConversationDirective | undefined): {
   conversationId?: string
   declaredConversationId?: string

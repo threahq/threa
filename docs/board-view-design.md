@@ -754,11 +754,41 @@ invisible and unnamed today):
   migrate-to-thread continuation, quote-reply spillover, convert-to-thread.
   Same conversation, same card. Renders as continuation — at most a subtle
   "moved to thread" seam, **no indent**, because topically nothing branched.
-- **True thread** — the thread is a _sub-topic_. Own conversation, own card,
-  linked both ways: a **branch stub** at the fork point on the parent card
-  ("↳ _GPU budget_") and "branched from _Hardware refresh_" provenance on the
-  child. Nesting survives **between** cards instead of inside one — the
-  conversation-grain mirror of the message-grain provenance chip.
+
+  _Refined 2026-07-06 (Kris)._ Convert-to-thread gets **no seam at all**: when
+  the pre-boundary run is just the lone opener (the first reply to a lone post
+  files into a thread), the thread carries the whole conversation by design, so
+  it renders seamlessly forever — regardless of how large the thread grows.
+  The seam (and its "split into its own topic" heal) marks only a discussion
+  that ran flat in the channel/DM and then migrated into a thread
+  mid-conversation. The signal is the pre-boundary run (opener-only vs ≥2
+  messages), never thread size or author count.
+
+- **True thread** — the thread is a _sub-topic_. Own conversation in the data
+  model, but **rendered nested inside the parent card** (corrected 2026-07-05,
+  below): a branch group at the fork point — "↳ _GPU budget_" header plus the
+  child's messages indented under it — not a separate card. "Branched from
+  _Hardware refresh_" provenance still renders on the child's own panel view.
+
+  _Corrected 2026-07-05 (Kris, dogfooding over tailscale)._ The first ship
+  rendered true threads **between** cards — child = own board card, parent gets
+  a "↳ stub" link. Verdict: "I tried creating a new subtopic which then opened
+  a thread which creates two separate cards in the board. Not what I expected.
+  I expected Facebook/Instagram-like nested comments effectively. Or like,
+  reddit style." The rule that replaces it: **one card per root discussion** —
+  a conversation whose anchor thread forks off another conversation's member
+  message is folded into that parent's card as an indented branch group
+  (recursively, same depth cap as spanning); it is suppressed from the
+  top-level board list **iff its parent card is itself visible in the same
+  view** (no access / filtered-out parent ⇒ the child stays standalone rather
+  than vanishing). A branch reply counts toward the parent card's effective
+  activity for ordering. The child conversation keeps existing in the data
+  model exactly as before — classification, memos, split, and the panel all
+  operate on it; only the board projection changed. The same session's second
+  ruling: **replying happens inline on the card** — a branch tail (and the
+  "new sub-topic" gesture itself) expands a composer in place; it must not
+  bounce into a thread/panel view (mobile especially).
+
 - **Spanning case** (one conversation genuinely across nested threads with
   back-and-forth in several) — Reddit-style but bounded: indent per **thread
   boundary** only (never per reply; Threa's tree is structural, not

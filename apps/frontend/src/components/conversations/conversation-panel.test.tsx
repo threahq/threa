@@ -23,6 +23,7 @@ import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as discussModule from "@/hooks/use-discuss-with-ariadne"
 import * as shareHandoffModule from "@/stores/share-handoff-store"
 import * as boardReplyComposerModule from "@/components/board/board-reply-composer"
+import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import {
   requestConversationReplyOpen,
   resetConversationReplyOpenStoreCache,
@@ -131,6 +132,12 @@ beforeEach(() => {
   // The panel resolves its host stream type from the synced IDB row.
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue({ id: "stream_1", type: "channel" } as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+  // BoardCard hosts the inline branch composer, whose queue hook needs the
+  // pending-messages provider — stub the hook so the harness stays lean.
+  vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({
+    queueDraftMessage: vi.fn().mockResolvedValue({ clientId: "client_1" }),
+    currentUserId: "usr_me",
+  } as unknown as ReturnType<typeof queueDraftModule.useQueueDraftMessage>)
   vi.spyOn(messageReactionsModule, "useMessageReactions").mockReturnValue({
     addReaction: vi.fn(),
     removeReaction: vi.fn(),

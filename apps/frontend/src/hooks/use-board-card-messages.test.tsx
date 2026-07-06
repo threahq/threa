@@ -5,6 +5,7 @@ import { createDraftPanelId } from "@/contexts/panel-context"
 import type { BoardViewPost } from "./use-stable-board-view"
 import {
   useBoardCardMessages,
+  useBoardRailsReady,
   useStableReplyWindow,
   __clearBoardRailRegistry,
   __boardRailRegistrySize,
@@ -882,5 +883,29 @@ describe("useStableReplyWindow", () => {
 
     rerender({ convId: "conv_2", replies: ["x1", "x2", "x3", "x4"].map(reply) })
     expect(ids(result.current)).toEqual(["x2", "x3", "x4"])
+  })
+})
+
+describe("useBoardRailsReady", () => {
+  it("is false until every rail's first IDB read lands, then true — the reveal gate", async () => {
+    await db.events.bulkPut([msgEvent("m1", "hello", 1, "stream_a"), msgEvent("m2", "there", 2, "stream_b")])
+
+    const { result } = renderHook(() => useBoardRailsReady(["stream_a", "stream_b"]))
+    // First snapshot precedes the rails' async first read.
+    expect(result.current).toBe(false)
+    await waitFor(() => expect(result.current).toBe(true))
+  })
+
+  it("is true for an empty stream set (nothing to wait for)", () => {
+    const { result } = renderHook(() => useBoardRailsReady([]))
+    expect(result.current).toBe(true)
+  })
+
+  it("pre-warms the shared registry so a later card mount reads resolved rails", async () => {
+    await db.events.bulkPut([msgEvent("m1", "warm", 1, "stream_warm")])
+    const { result } = renderHook(() => useBoardRailsReady(["stream_warm"]))
+    await waitFor(() => expect(result.current).toBe(true))
+    // The registry entry the gate created is the same one a mounting card uses.
+    expect(__boardRailRegistrySize()).toBeGreaterThan(0)
   })
 })

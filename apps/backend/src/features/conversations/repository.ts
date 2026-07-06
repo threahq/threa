@@ -812,6 +812,71 @@ export const ConversationRepository = {
   },
 
   /**
+   * Batch primary-membership move-out (INV-56): drop every id in `messageIds`
+   * from `message_ids` in one order-preserving statement, and SET
+   * `participant_ids` to the caller-recomputed set. Unlike the single-message
+   * {@link removePrimaryMessage} the caller here knows exactly who remains (it
+   * holds the full member→author map), so participants are recomputed rather
+   * than left stale. Workspace-scoped (INV-8).
+   */
+  async removePrimaryMessages(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageIds: string[],
+    participantIds: string[]
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET message_ids = ARRAY(
+            SELECT e FROM unnest(message_ids) WITH ORDINALITY AS t(e, ord)
+            WHERE e <> ALL(${messageIds}::text[])
+            ORDER BY ord
+          ),
+          participant_ids = ${participantIds}::text[],
+          updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /**
+   * Batch primary-membership move-in (INV-56): append every id in `messageIds`
+   * to `message_ids` (idempotent — a dedup keeps first-occurrence order),
+   * clear them from `secondary_message_ids` (primary wins over secondary, as in
+   * {@link addPrimaryMessage}), and SET `participant_ids` to the caller-recomputed
+   * set. The caller must pass the FULL intended participant list. Workspace-scoped
+   * (INV-8); the target's prior primary in another conversation must already be
+   * removed (`removePrimaryMessages`).
+   */
+  async addPrimaryMessages(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageIds: string[],
+    participantIds: string[]
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET message_ids = ARRAY(
+            SELECT e FROM (
+              SELECT e, MIN(ord) AS ord
+              FROM unnest(message_ids || ${messageIds}::text[]) WITH ORDINALITY AS t(e, ord)
+              GROUP BY e
+            ) deduped
+            ORDER BY ord
+          ),
+          participant_ids = ${participantIds}::text[],
+          secondary_message_ids = ARRAY(
+            SELECT e FROM unnest(secondary_message_ids) WITH ORDINALITY AS t(e, ord)
+            WHERE e <> ALL(${messageIds}::text[])
+            ORDER BY ord
+          ),
+          updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /**
    * Resolve a conversation that no longer owns any primary messages. The
    * emptiness check runs inside the UPDATE (INV-20): a concurrent extraction
    * appending to `message_ids` between the caller's read and this write makes
