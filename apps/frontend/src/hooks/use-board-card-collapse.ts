@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react"
+import { useCallback } from "react"
 import { composeBlockCollapseKey } from "@/lib/markdown/markdown-block-context"
 import { setBlockCollapse, useBlockCollapseStore } from "@/lib/markdown/collapse-cache"
 
@@ -14,16 +14,14 @@ export interface BoardCardCollapseState {
  * `board-card` block kind; there's no content hash — a card is one fold, not
  * per-block.
  *
- * The default (no persisted override) is captured once at first render, so a
- * card that grows past the threshold while on screen does NOT retroactively fold
- * under the eye — only a fresh mount re-reads the default. An explicit toggle
- * always wins over the default.
+ * `collapsedByDefault` is the caller's measured "this card is tall" decision (see
+ * `BoardCard`), used only when the user hasn't toggled this card. An explicit
+ * toggle persists an override that always wins over the default.
  */
 export function useBoardCardCollapse(conversationId: string, collapsedByDefault: boolean): BoardCardCollapseState {
   const key = composeBlockCollapseKey(conversationId, "board-card", "")
   const persisted = useBlockCollapseStore(key)
-  const initialDefaultRef = useRef(collapsedByDefault)
-  const collapsed = persisted ?? initialDefaultRef.current
+  const collapsed = persisted ?? collapsedByDefault
 
   const toggle = useCallback(() => {
     setBlockCollapse(key, conversationId, "board-card", !collapsed)

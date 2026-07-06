@@ -117,15 +117,16 @@ export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 // user preference (no slider), so a single default rather than a stored value.
 export const DEFAULT_DESCRIPTION_COLLAPSE_THRESHOLD = 8
 
-// Board-card collapse threshold - message count above which a board card starts
-// collapsed to just its header (locator + topic), so an established conversation
-// folds away and short/new ones stand out. Measured in messages (opening +
-// replies), not rendered lines — a card folds by whole message rows, not text
-// height. A user can always toggle an individual card; this preference only sets
-// the initial folded state. 0 folds every card by default.
+// Board-card collapse threshold - rendered card height (CSS px) above which a
+// board card starts collapsed to just its header (locator + topic), so a tall
+// conversation folds away and compact ones stay open. Measured by the card
+// body's actual pixel height, not message count — one long composed message
+// warrants folding as much as a long back-and-forth, and a barrage of one-line
+// messages that stays short does not. A user can always toggle an individual
+// card; this preference only sets the initial folded state. 0 folds every card.
 export const BOARD_CARD_COLLAPSE_THRESHOLD_MIN = 0
-export const BOARD_CARD_COLLAPSE_THRESHOLD_MAX = 500
-export const DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD = 12
+export const BOARD_CARD_COLLAPSE_THRESHOLD_MAX = 4000
+export const DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD = 600
 
 // Voice polish level: how aggressively the polish model rewrites a finalized
 // dictation transcript. The id flows through the wire format and is mirrored
@@ -253,8 +254,8 @@ export interface UserPreferences {
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
   /**
-   * Message count above which a board card starts collapsed to its header. A
-   * per-card toggle overrides it; this only sets the initial folded state.
+   * Rendered card height (px) above which a board card starts collapsed to its
+   * header. A per-card toggle overrides it; this only sets the initial state.
    */
   boardCardCollapseThreshold: number
   /**

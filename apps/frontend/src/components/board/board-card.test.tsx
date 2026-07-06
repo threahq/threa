@@ -302,41 +302,60 @@ describe("BoardCard collapse", () => {
     })
   })
 
-  /** Drive collapsibility off the threshold: 0 makes any card foldable. */
-  function withThreshold(threshold: number) {
+  function withThreshold(px: number) {
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
-      preferences: { timezone: "UTC", locale: "en-US", boardCardCollapseThreshold: threshold },
+      preferences: { timezone: "UTC", locale: "en-US", boardCardCollapseThreshold: px },
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
   }
 
-  it("starts folded to its header when the conversation exceeds the threshold", async () => {
-    withThreshold(0)
-    mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
-    // Header (topic + fold count) shows; the body does not.
-    expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
-    expect(screen.getByText("1 message")).toBeTruthy()
-    expect(screen.getByLabelText("Expand conversation")).toBeTruthy()
-    expect(screen.queryByText("Opening body.")).toBeNull()
-  })
+  /** JSDOM reports `scrollHeight` 0 (no layout), so the height-driven default
+   *  never fires on its own. Force a rendered height to exercise it, restoring
+   *  the prototype descriptor after. */
+  function mockScrollHeight(px: number): () => void {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight")
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get: () => px })
+    return () => {
+      if (original) Object.defineProperty(HTMLElement.prototype, "scrollHeight", original)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight
+    }
+  }
 
-  it("stays expanded with no fold control when under the threshold", async () => {
-    withThreshold(12)
+  it("offers the fold control on every card, expanded by default when the body isn't tall", async () => {
     mountCard()
     await screen.findByText("Opening body.")
+    // The control is always present (any card is foldable); a short body reads
+    // "Collapse" (expanded).
+    expect(screen.getByLabelText("Collapse conversation")).toBeTruthy()
     expect(screen.queryByLabelText("Expand conversation")).toBeNull()
-    expect(screen.queryByLabelText("Collapse conversation")).toBeNull()
   })
 
-  it("expands from the header control, revealing the body", async () => {
-    withThreshold(0)
+  it("folds from the header control and names the folded message count", async () => {
     const user = userEvent.setup()
     mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+    await screen.findByText("Opening body.")
 
-    await user.click(await screen.findByLabelText("Expand conversation"))
+    await user.click(screen.getByLabelText("Collapse conversation"))
 
+    // Header (topic + count) stays; the body is gone.
+    expect(screen.getByText("Rotate the API tokens")).toBeTruthy()
+    expect(screen.getByText("1 message")).toBeTruthy()
+    expect(screen.queryByText("Opening body.")).toBeNull()
+
+    await user.click(screen.getByLabelText("Expand conversation"))
     expect(await screen.findByText("Opening body.")).toBeTruthy()
-    // The control flips to collapse, and the fold-count line is gone.
-    expect(screen.getByLabelText("Collapse conversation")).toBeTruthy()
     expect(screen.queryByText("1 message")).toBeNull()
+  })
+
+  it("starts folded when the rendered body is taller than the threshold", async () => {
+    withThreshold(500)
+    const restore = mockScrollHeight(800)
+    try {
+      mountCard(makePost({ topicSummary: "Rotate the API tokens" }))
+      expect(await screen.findByText("Rotate the API tokens")).toBeTruthy()
+      expect(screen.getByLabelText("Expand conversation")).toBeTruthy()
+      expect(screen.queryByText("Opening body.")).toBeNull()
+    } finally {
+      restore()
+    }
   })
 })

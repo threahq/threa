@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import {
@@ -117,19 +117,41 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const streamId = conversation.streamId
   const ContextGlyph = (streamType && TYPE_GLYPH[streamType]) || MessageSquareText
 
-  // Whole-card fold: an established conversation (more messages than the
-  // threshold) starts collapsed to its header so short/new cards stand out; a
-  // per-card toggle persists the override. Counted over the conversation's full
-  // size (opening + all replies), not the on-screen preview window — the fold is
-  // about "how big is this conversation", the reply window is a separate axis.
+  // Whole-card fold: every card can be folded to its header from the chevron; the
+  // threshold only decides whether a TALL conversation starts folded so it doesn't
+  // dominate the feed. The trigger is the card body's rendered height, not a
+  // message count — one long composed message warrants folding as much as a long
+  // back-and-forth, and a run of one-line messages that stays short does not.
+  // Measured pre-paint and latched at the first real measurement (per threshold)
+  // so a card that grows tall while on screen never folds under the eye; a
+  // per-card toggle persists an override that wins over the measured default.
   const { preferences } = usePreferences()
   const collapseThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
   const messageCount = totalReplies + (openingMessage ? 1 : 0)
-  const collapsible = messageCount > collapseThreshold
-  const { collapsed: bodyCollapsed, toggle: toggleBodyCollapsed } = useBoardCardCollapse(conversation.id, collapsible)
-  // A card persisted-collapsed while long keeps its toggle even if it later
-  // drops below the threshold — otherwise a folded short card would strand.
-  const showCollapseToggle = collapsible || bodyCollapsed
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const [tall, setTall] = useState(false)
+  const tallDecidedRef = useRef(false)
+  useLayoutEffect(() => {
+    tallDecidedRef.current = false
+    const measure = () => {
+      if (tallDecidedRef.current) return
+      const el = bodyRef.current
+      if (!el) return
+      const height = el.scrollHeight
+      // No layout engine yet (first paint / JSDOM / detached) — stay undecided so
+      // the card renders expanded rather than folding on a zero measurement.
+      if (height <= 0) return
+      tallDecidedRef.current = true
+      setTall(height > collapseThreshold)
+    }
+    measure()
+    const el = bodyRef.current
+    if (!el) return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [collapseThreshold])
+  const { collapsed: bodyCollapsed, toggle: toggleBodyCollapsed } = useBoardCardCollapse(conversation.id, tall)
 
   // Conversation read state: per-row gating + actions for the message rows, plus
   // the card's effectively-unread signal for the header dot. Both derive live
@@ -348,6 +370,21 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   )
   useVisibleStreams(cardVisibleStreamIds)
 
+  // Elevate the sticky header once it pins: a zero-height sentinel at the card
+  // top drives it — when the sentinel scrolls out of the board viewport the
+  // header is stuck, so a hairline + shadow separate it from the messages sliding
+  // under it (otherwise the pinned header reads flat against them).
+  const stuckSentinelRef = useRef<HTMLDivElement>(null)
+  const [headerStuck, setHeaderStuck] = useState(false)
+  useEffect(() => {
+    const sentinel = stuckSentinelRef.current
+    if (!sentinel || typeof IntersectionObserver === "undefined") return
+    const root = sentinel.closest("[data-radix-scroll-area-viewport]")
+    const observer = new IntersectionObserver(([entry]) => setHeaderStuck(!entry.isIntersecting), { root })
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [])
+
   const renderMessage = (message: RenderableMessage, continuation: boolean) => {
     // A conversation can span its root + threads (one root); render each row
     // against its own stream so reactions and the permalink target where the
@@ -413,33 +450,37 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
         {/* Desktop text-selection → floating "Quote" button, scoped to this card. */}
         <TextSelectionQuote streamId={streamId} containerRef={cardRef} />
         <div ref={cardRef} className="rounded-xl border bg-card p-3 sm:p-4">
+          {/* Zero-height marker at the card top: drives the header's stuck state
+              (see the observer above). In flow but h-0, so it shifts nothing. */}
+          <div ref={stuckSentinelRef} aria-hidden className="h-0" />
           {/* Header pins to the scroll-viewport top while the card's messages
               scroll under it (bg-card covers them), so the locator + topic stay
               legible in a long card. The negative margins + re-padding fill the
               header to the card edges; at rest it looks identical to an unpinned
-              header. */}
-          <div className="sticky top-0 z-10 -mx-3 -mt-3 rounded-t-xl bg-card px-3 pt-3 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4">
+              header. A hairline + shadow fade in once pinned (headerStuck) to lift
+              it off the messages; the border is always present but transparent so
+              the elevation never shifts layout (INV-21). */}
+          <div
+            className={cn(
+              "sticky top-0 z-10 -mx-3 -mt-3 rounded-t-xl border-b border-transparent bg-card px-3 pt-3 pb-2 transition-[box-shadow,border-color] duration-200 sm:-mx-4 sm:-mt-4 sm:px-4 sm:pt-4",
+              headerStuck && "border-border/60 shadow-[0_4px_12px_-6px_rgb(0_0_0/0.4)]"
+            )}
+          >
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              {showCollapseToggle && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={toggleBodyCollapsed}
-                      aria-expanded={!bodyCollapsed}
-                      aria-label={bodyCollapsed ? "Expand conversation" : "Collapse conversation"}
-                      className="-ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded transition-colors hover:text-foreground"
-                    >
-                      {bodyCollapsed ? (
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      ) : (
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{bodyCollapsed ? "Expand" : "Collapse"}</TooltipContent>
-                </Tooltip>
-              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={toggleBodyCollapsed}
+                    aria-expanded={!bodyCollapsed}
+                    aria-label={bodyCollapsed ? "Expand conversation" : "Collapse conversation"}
+                    className="-ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
+                  >
+                    {bodyCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{bodyCollapsed ? "Expand" : "Collapse"}</TooltipContent>
+              </Tooltip>
               {/* The stream the post lives in — a real link back into it (INV-40). */}
               <Link
                 to={`/w/${workspaceId}/s/${streamId}`}
@@ -518,7 +559,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
 
           {!bodyCollapsed && (
             <>
-              <div className="mt-3 [&>*:first-child]:mt-0">
+              <div ref={bodyRef} className="mt-3 [&>*:first-child]:mt-0">
                 {provenance && (
                   <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
                 )}

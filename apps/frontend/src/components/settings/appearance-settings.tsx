@@ -255,17 +255,18 @@ export function AppearanceSettings() {
         <div>
           <h3 className="text-sm font-medium">Board Cards</h3>
           <p className="text-sm text-muted-foreground">
-            Collapse long conversations to their header on the board so short and new ones stand out
+            Collapse tall conversations to their header on the board so compact ones stay open
           </p>
         </div>
         <div className="flex items-start gap-4">
           <div className="grid gap-1 flex-1">
             <Label htmlFor="board-card-collapse-threshold" className="cursor-pointer">
-              Collapse threshold
+              Collapse height (px)
             </Label>
             <p className="text-sm text-muted-foreground">
-              Conversations with more than this many messages start collapsed on the board. You can always expand or
-              collapse an individual card. Set to 0 to collapse every card by default.
+              Conversations taller than this many pixels start collapsed on the board — a long message folds as readily
+              as a long back-and-forth. You can always expand or collapse an individual card. Set to 0 to collapse every
+              card by default.
             </p>
           </div>
           <Input
