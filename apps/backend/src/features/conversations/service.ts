@@ -1139,13 +1139,23 @@ export class ConversationService {
       const movingSet = new Set(movingIds)
       const remainingSourceIds = source.messageIds.filter((id) => !movingSet.has(id))
 
+      // Re-title the source to the kept group ONLY when the proposal accounted for
+      // the whole source. A proposal can cover a subset — the split window caps how
+      // many messages the model sees (see MAX_SPLIT_MESSAGES), or a message arrived
+      // after the proposal — leaving un-analyzed messages in the source; the kept
+      // group's title describes only the analyzed slice, so it would misdescribe the
+      // remainder. In that case keep the source's existing title.
+      const analyzedIds = new Set(groups.flatMap((g) => g.messageIds))
+      const sourceFullyAnalyzed = source.messageIds.every((id) => analyzedIds.has(id))
+
       // Authors for the participant recompute: everything staying in the source
       // plus every moved message (each mint SETs its own participant list).
       const authorLookupIds = new Set<string>([...source.messageIds, ...movingIds])
       const memberMessages = await MessageRepository.findByIds(client, [...authorLookupIds])
 
       // Strip movers from the source, recompute its remaining participants, and
-      // re-title it to the kept group; resolve it if the split emptied it.
+      // (when the whole source was analyzed) re-title it to the kept group; resolve
+      // it if the split emptied it.
       await ConversationRepository.removePrimaryMessages(
         client,
         workspaceId,
@@ -1153,10 +1163,12 @@ export class ConversationService {
         movingIds,
         distinctAuthors(remainingSourceIds, memberMessages)
       )
-      await ConversationRepository.update(client, workspaceId, source.id, {
-        topicSummary: keepGroup.title,
-        summary: keepGroup.summary,
-      })
+      if (sourceFullyAnalyzed) {
+        await ConversationRepository.update(client, workspaceId, source.id, {
+          topicSummary: keepGroup.title,
+          summary: keepGroup.summary,
+        })
+      }
       await ConversationRepository.resolveIfEmpty(client, workspaceId, source.id)
 
       // Mint one titled conversation per moved group, tracking where each id lands

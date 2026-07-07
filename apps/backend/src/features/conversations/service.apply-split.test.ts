@@ -218,6 +218,50 @@ describe("ConversationService.applySplit", () => {
     ).toEqual(["m3", "m4"])
   })
 
+  test("re-titles the source when the split covered the whole conversation", async () => {
+    const spies = setup({
+      source: makeConversation(),
+      primaries: { m1: "conv_a", m2: "conv_a", m3: "conv_a", m4: "conv_a" },
+    })
+
+    await applySplit("conv_a", [
+      { title: "Kept", messageIds: ["m1", "m2"] },
+      { title: "Moved", messageIds: ["m3", "m4"] },
+    ])
+
+    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", {
+      topicSummary: "Kept",
+      summary: undefined,
+    })
+  })
+
+  test("leaves the source title untouched when un-analyzed messages remain", async () => {
+    // m4 stays in the source but isn't in any proposed group (older than the split
+    // window / arrived after the proposal) — the kept group's title would misdescribe
+    // it, so the source keeps its existing title.
+    const spies = setup({
+      source: makeConversation({ messageIds: ["m1", "m2", "m3", "m4"] }),
+      primaries: { m1: "conv_a", m2: "conv_a", m3: "conv_a", m4: "conv_a" },
+    })
+
+    await applySplit("conv_a", [
+      { title: "Kept", messageIds: ["m1", "m2"] },
+      { title: "Moved", messageIds: ["m3"] },
+    ])
+
+    // m3 still moves out into a new conversation…
+    expect(spies.insert).toHaveBeenCalledTimes(1)
+    expect(spies.addPrimaryMessages).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      expect.any(String),
+      ["m3"],
+      ["usr_1"]
+    )
+    // …but the source is NOT re-titled (m4 was never analyzed).
+    expect(spies.update).not.toHaveBeenCalled()
+  })
+
   test("skips a message that raced out of the source between propose and apply", async () => {
     const spies = setup({
       source: makeConversation({ messageIds: ["m1", "m2", "m3"] }),
