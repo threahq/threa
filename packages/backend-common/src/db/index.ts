@@ -106,11 +106,12 @@ export function createDatabasePools(connectionString: string): DatabasePools {
 
   // Steady state this pool holds ~2 LISTEN connections: the OutboxDispatcher's
   // single fan-out LISTEN (it dispatches to every registered handler over one
-  // connection — the handlers do their work on the main pool when woken, they
-  // don't each hold a connection) plus EnclaveClaimNudge's LISTEN when enclave
-  // is configured. Default 12 is mostly reconnect headroom. Env-configurable via
-  // DATABASE_LISTEN_POOL_MAX so shared-DB deploys (PR previews on the same
-  // Postgres as main staging) can shrink to ~4 without starving.
+  // connection — each handler does its work on its own transactional pool
+  // (main or realtime) when woken, none holds a LISTEN connection of its own)
+  // plus EnclaveClaimNudge's LISTEN when enclave is configured. Default 12 is
+  // mostly reconnect headroom. Env-configurable via DATABASE_LISTEN_POOL_MAX so
+  // shared-DB deploys (PR previews on the same Postgres as main staging) can
+  // shrink to ~4 without starving.
   const listen = createDatabasePool(connectionString, {
     max: Number(process.env.DATABASE_LISTEN_POOL_MAX) || 12,
     // LISTEN connections are held indefinitely - longer idle timeout

@@ -248,10 +248,11 @@ export async function startServer(): Promise<ServerInstance> {
   // the pool max so a misconfig can't wedge boot) so shared-DB PR deploys, which
   // see no real startup herd, warm just a couple instead of grabbing 15 at once
   // and colliding on the shared server's connection cap.
-  const warmCount = Math.min(
-    Number(process.env.DATABASE_WARM_POOL_COUNT) || 15,
-    Number(process.env.DATABASE_POOL_MAX) || 30
-  )
+  // Test presence, not truthiness: `Number(x) || 15` would turn an explicit
+  // "0" (operator disabling warm-up) into 15. A non-empty string is truthy, so
+  // "0" → 0 while unset/"" → 15.
+  const configuredWarm = process.env.DATABASE_WARM_POOL_COUNT
+  const warmCount = Math.min(configuredWarm ? Number(configuredWarm) : 15, Number(process.env.DATABASE_POOL_MAX) || 30)
   logger.info({ warmCount }, "Pre-warming connection pool...")
   await warmPool(pools.main, warmCount)
   logger.info("Connection pool pre-warmed")
