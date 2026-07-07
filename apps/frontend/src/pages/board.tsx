@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ThreadPanelSlot } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
-import { usePanel, useSidebar } from "@/contexts"
+import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
 import { usePanelLayout } from "@/hooks"
 import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { resolveStreamName } from "@/lib/streams"
@@ -145,27 +145,28 @@ function groupByRecency(posts: BoardViewPost[], activityById: Map<string, number
  * The board: a cross-stream feed of posts (each conversation surfaced as a
  * message-led post) ordered by recent activity, grouped into recency sections.
  *
- * Route is `/w/:workspaceId/board/:lens?` — bare `/board` is **All**, the
- * default home: everything, always, never hidden behind a filter. The lens
- * segments (`/board/active`, `/board/needs-resolution`, `/board/decisions`)
- * are optional narrowings picked from the filter bar
+ * Route is `/w/:workspaceId/board/:lens?`. Bare `/board` rests on the viewer's
+ * **home lens** — the `boardDefaultLens` preference, `all` for everyone who
+ * hasn't changed it (everything, newest activity first, nothing hidden). The
+ * other lenses (`/board/active`, `/board/needs-resolution`, `/board/decisions`,
+ * `/board/mine`) are optional narrowings picked from the filter bar
  * (board-view-design.md § "Lenses"); the stream scope rides `?in=`. Refreshes,
- * back/forward, and shared links land on the same view (INV-59). `all`
- * canonicalises to the unsegmented URL (keeping the query string) so there
- * aren't two URLs for the default; an unknown segment redirects to it.
+ * back/forward, and shared links land on the same view (INV-59). Whichever lens
+ * is home canonicalises to the unsegmented URL (keeping the query string) so
+ * there aren't two URLs for it — so `all` takes the `/board/all` segment for a
+ * viewer whose home is some other lens. An unknown segment redirects to home.
  */
 export function BoardPage() {
   const { workspaceId, lens: lensParam } = useParams<{ workspaceId: string; lens?: string }>()
   const location = useLocation()
+  const preferences = usePreferencesOptional()
+  const homeLens = preferences?.preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
   if (!workspaceId) return null
-  if (lensParam === DEFAULT_BOARD_LENS) {
+  if (lensParam === homeLens || (lensParam !== undefined && !VALID_LENSES.has(lensParam))) {
     return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
   }
-  if (lensParam !== undefined && !VALID_LENSES.has(lensParam)) {
-    return <Navigate to={{ pathname: `/w/${workspaceId}/board`, search: location.search }} replace />
-  }
-  const lens: BoardLens = (lensParam as BoardLens | undefined) ?? DEFAULT_BOARD_LENS
-  return <BoardPageGate workspaceId={workspaceId} lens={lens} />
+  const lens: BoardLens = (lensParam as BoardLens | undefined) ?? homeLens
+  return <BoardPageGate workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
 }
 
 /**
@@ -175,14 +176,22 @@ export function BoardPage() {
  * refreshes on /board before the bootstrap cache is populated. The backend
  * endpoint 404s without the flag too, so this is the UX half of the gate.
  */
-function BoardPageGate({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
+function BoardPageGate({ workspaceId, lens, homeLens }: { workspaceId: string; lens: BoardLens; homeLens: BoardLens }) {
   const boardFlag = useFeatureFlagWhenKnown(workspaceId, "board-view")
   if (boardFlag === null) return null
   if (boardFlag !== "on") return <Navigate to={`/w/${workspaceId}`} replace />
-  return <BoardPageInner workspaceId={workspaceId} lens={lens} />
+  return <BoardPageInner workspaceId={workspaceId} lens={lens} homeLens={homeLens} />
 }
 
-function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
+function BoardPageInner({
+  workspaceId,
+  lens,
+  homeLens,
+}: {
+  workspaceId: string
+  lens: BoardLens
+  homeLens: BoardLens
+}) {
   const { isMobile } = useSidebar()
   const { isPanelOpen, closePanel } = usePanel()
   // The board's filters live in the URL (INV-59) — six params, three dimensions
@@ -439,9 +448,15 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   }
 
   const navigate = useNavigate()
-  // Every route back to the unfiltered home keeps the non-filter query state
-  // (an open `?panel=` must survive clearing filters).
-  const boardHome = { pathname: `/w/${workspaceId}/board`, search: boardHomeSearch(searchParams.toString()) }
+  // The surfacing baseline is **All**, not the home lens: a fresh post is no
+  // Decision (and needn't be Active), so only the widest lens guarantees the
+  // author's own card appears (design § "your own action always surfaces"). All
+  // rests at bare `/board` unless the viewer's home is another lens, in which
+  // case All takes the `/board/all` segment. The non-filter query state (an open
+  // `?panel=`) rides along so it survives clearing filters.
+  const allPathname =
+    homeLens === DEFAULT_BOARD_LENS ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${DEFAULT_BOARD_LENS}`
+  const boardHome = { pathname: allPathname, search: boardHomeSearch(searchParams.toString()) }
   const hasFilterParams =
     scopeStreamIds.length > 0 ||
     scopeStreamTypes.length > 0 ||
@@ -635,6 +650,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       <BoardFilterBar
         workspaceId={workspaceId}
         lens={lens}
+        homeLens={homeLens}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
         onStreamFilterChange={setStreamFilter}

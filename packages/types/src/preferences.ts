@@ -1,5 +1,6 @@
 import type { WorkSchedule } from "./work-schedule"
 import type { StatusPreset } from "./user-status"
+import { DEFAULT_BOARD_LENS, type BoardLens } from "./constants"
 
 // Workspace-scoped preferences that sync across devices.
 
@@ -275,6 +276,12 @@ export interface UserPreferences {
    */
   boardCardCollapseThreshold: number
   /**
+   * The lens the board lands on when the URL names no lens segment (bare
+   * `/board`). Defaults to `all`. This only picks the home; every lens still has
+   * its own URL, and `all` stays the surfacing baseline a fresh post returns to.
+   */
+  boardDefaultLens: BoardLens
+  /**
    * Preferred voice dictation model id (e.g. "elevenlabs:scribe-v2-realtime",
    * "deepgram:nova-3"). When null, the backend falls back to the configured
    * default. The string is validated server-side against the model registry.
@@ -338,6 +345,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
   messageCollapseThreshold: DEFAULT_MESSAGE_COLLAPSE_THRESHOLD,
   boardCardCollapseThreshold: DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
+  boardDefaultLens: DEFAULT_BOARD_LENS,
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
   voiceSteeringWords: [],
@@ -368,6 +376,7 @@ export interface UpdateUserPreferencesInput {
   blockquoteCollapseThreshold?: number
   messageCollapseThreshold?: number
   boardCardCollapseThreshold?: number
+  boardDefaultLens?: BoardLens
   voiceTranscriptionModel?: string | null
   voicePolishLevel?: VoicePolishLevel
   voiceSteeringWords?: string[]

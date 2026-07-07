@@ -26,3 +26,17 @@ describe("updatePreferencesSchema voiceSteeringWords", () => {
     expect(updatePreferencesSchema.parse({}).voiceSteeringWords).toBeUndefined()
   })
 })
+
+describe("updatePreferencesSchema boardDefaultLens", () => {
+  it("accepts a known lens", () => {
+    expect(updatePreferencesSchema.parse({ boardDefaultLens: "mine" }).boardDefaultLens).toBe("mine")
+  })
+
+  it("rejects an unknown lens", () => {
+    expect(updatePreferencesSchema.safeParse({ boardDefaultLens: "everything" }).success).toBe(false)
+  })
+
+  it("treats the field as optional", () => {
+    expect(updatePreferencesSchema.parse({}).boardDefaultLens).toBeUndefined()
+  })
+})

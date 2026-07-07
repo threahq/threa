@@ -93,10 +93,12 @@ const TYPE_LABELS: Record<BoardScopeStreamType, string> = {
   system: "System",
 }
 
-/** The lens's URL (INV-59): the default lens is the bare `/board`, others a segment.
- *  `search` rides along so switching lens keeps the scope (and an open panel). */
-function lensHref(workspaceId: string, lens: BoardLens, search: string): string {
-  const base = lens === DEFAULT_BOARD_LENS ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
+/** The lens's URL (INV-59): the viewer's home lens rests at the bare `/board`,
+ *  every other lens takes a segment (so `all` gets `/board/all` when it isn't
+ *  home). `search` rides along so switching lens keeps the scope (and an open
+ *  panel). */
+function lensHref(workspaceId: string, lens: BoardLens, search: string, homeLens: BoardLens): string {
+  const base = lens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${lens}`
   return `${base}${search}`
 }
 
@@ -109,6 +111,9 @@ type FilterIcon = ComponentType<{ className?: string }>
 interface BoardFilterBarProps {
   workspaceId: string
   lens: BoardLens
+  /** The viewer's home lens (bare `/board`) — decides which lens is segment-less
+   *  and where "Clear filters" returns (the All surfacing baseline). */
+  homeLens: BoardLens
   /** Included scope stream ids (root streams), in URL order. */
   scopeStreamIds: string[]
   /** Excluded stream ids (anchor-or-root veto), in URL order. */
@@ -159,6 +164,7 @@ interface BoardFilterBarProps {
 export function BoardFilterBar({
   workspaceId,
   lens,
+  homeLens,
   scopeStreamIds,
   excludeStreamIds,
   onStreamFilterChange,
@@ -213,6 +219,7 @@ export function BoardFilterBar({
       <BoardLensMenu
         workspaceId={workspaceId}
         lens={lens}
+        homeLens={homeLens}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
         scopeStreamTypes={scopeStreamTypes}
@@ -345,7 +352,7 @@ export function BoardFilterBar({
       ))}
       {isFiltered && (
         <Link
-          to={`/w/${workspaceId}/board${clearedSearch}`}
+          to={lensHref(workspaceId, DEFAULT_BOARD_LENS, clearedSearch, homeLens)}
           className="shrink-0 px-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
         >
           Clear filters
@@ -474,6 +481,7 @@ function ExcludeToggle({ excluded, onToggle, subject }: { excluded: boolean; onT
 function BoardLensMenu({
   workspaceId,
   lens,
+  homeLens,
   scopeStreamIds,
   excludeStreamIds,
   scopeStreamTypes,
@@ -483,6 +491,7 @@ function BoardLensMenu({
 }: {
   workspaceId: string
   lens: BoardLens
+  homeLens: BoardLens
   scopeStreamIds: string[]
   excludeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
@@ -505,7 +514,7 @@ function BoardLensMenu({
           return (
             <Link
               key={value}
-              to={lensHref(workspaceId, value, search)}
+              to={lensHref(workspaceId, value, search, homeLens)}
               onClick={() => setOpen(false)}
               aria-current={selected ? "true" : undefined}
               className={cn(
@@ -526,6 +535,7 @@ function BoardLensMenu({
       <BoardSavedViews
         workspaceId={workspaceId}
         lens={lens}
+        homeLens={homeLens}
         scopeStreamIds={scopeStreamIds}
         excludeStreamIds={excludeStreamIds}
         scopeStreamTypes={scopeStreamTypes}

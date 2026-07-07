@@ -176,6 +176,14 @@ right, so split the dials in two:
 
 **Structural lenses (same signal for everyone):**
 
+> **Per-user home lens (shipped):** which lens the bare `/board` opens on is the
+> `boardDefaultLens` preference — **All** for everyone who hasn't changed it. It
+> only moves the landing: every lens keeps its own URL (the home lens is the
+> segment-less one, so **All** takes `/board/all` for a viewer who homes
+> elsewhere), and **All** stays the surfacing baseline a fresh post returns to
+> (a brand-new post is no Decision and needn't be Active, so only the widest lens
+> guarantees the author sees their own card).
+
 - **All** (default) — everything, `lastActivityAt` desc. The resurfacing wall.
 - **Active** — `status = active`: still in motion, not stalled or resolved.
 - **Needs resolution** — `status = stalled`, or high `temporalStaleness` with

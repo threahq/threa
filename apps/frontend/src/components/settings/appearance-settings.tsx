@@ -20,9 +20,12 @@ import {
   BOARD_CARD_COLLAPSE_THRESHOLD_MIN,
   BOARD_CARD_COLLAPSE_THRESHOLD_MAX,
   DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD,
+  BOARD_LENSES,
+  DEFAULT_BOARD_LENS,
   type Theme,
   type MessageDisplay,
   type LabelRemoveOnMove,
+  type BoardLens,
 } from "@threa/types"
 
 const THEME_LABELS: Record<Theme, string> = {
@@ -53,6 +56,22 @@ const LABEL_REMOVE_DESCRIPTIONS: Record<LabelRemoveOnMove, string> = {
   never: "Leave labels alone — a moved stream keeps every label it had",
 }
 
+const BOARD_LENS_LABELS: Record<BoardLens, string> = {
+  all: "All",
+  active: "Active",
+  "needs-resolution": "Needs resolution",
+  decisions: "Decisions",
+  mine: "Mine",
+}
+
+const BOARD_LENS_DESCRIPTIONS: Record<BoardLens, string> = {
+  all: "Everything, newest activity first",
+  active: "Still in motion — not stalled or resolved",
+  "needs-resolution": "Stalled or gone quiet while unresolved",
+  decisions: "Settled — captured as a memo",
+  mine: "Conversations you're in or mentioned in",
+}
+
 export function AppearanceSettings() {
   const { preferences, updatePreference } = usePreferences()
 
@@ -63,6 +82,7 @@ export function AppearanceSettings() {
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
   const messageThreshold = preferences?.messageCollapseThreshold ?? DEFAULT_MESSAGE_COLLAPSE_THRESHOLD
   const boardCardThreshold = preferences?.boardCardCollapseThreshold ?? DEFAULT_BOARD_CARD_COLLAPSE_THRESHOLD
+  const boardDefaultLens = preferences?.boardDefaultLens ?? DEFAULT_BOARD_LENS
 
   // Local input state so users can type freely without each keystroke
   // hitting the preferences mutation. We commit on blur / Enter only.
@@ -349,6 +369,34 @@ export function AppearanceSettings() {
             className="w-24"
           />
         </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Board home</h3>
+          <p className="text-sm text-muted-foreground">
+            The lens the board opens on. Every lens still has its own view — this only picks where you land
+          </p>
+        </div>
+        <RadioGroup
+          value={boardDefaultLens}
+          onValueChange={(value) => updatePreference("boardDefaultLens", value as BoardLens)}
+          className="space-y-3"
+        >
+          {BOARD_LENSES.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`board-lens-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`board-lens-${option}`} className="cursor-pointer">
+                  {BOARD_LENS_LABELS[option]}
+                </Label>
+                <p className="text-sm text-muted-foreground">{BOARD_LENS_DESCRIPTIONS[option]}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
       </section>
 
       <Separator />

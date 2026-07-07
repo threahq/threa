@@ -28,10 +28,11 @@ import {
   BOARD_EXCLUDE_LABEL_PARAM,
 } from "@/components/board/board-filter-params"
 
-/** Expand a saved view into the canonical board URL it bookmarks (INV-59). */
-export function savedViewHref(workspaceId: string, view: BoardView): string {
-  const base =
-    view.baseLens === DEFAULT_BOARD_LENS ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${view.baseLens}`
+/** Expand a saved view into the canonical board URL it bookmarks (INV-59). The
+ *  viewer's home lens is the segment-less one, so a saved All view addresses
+ *  `/board/all` for anyone whose home is another lens. */
+export function savedViewHref(workspaceId: string, view: BoardView, homeLens: BoardLens): string {
+  const base = view.baseLens === homeLens ? `/w/${workspaceId}/board` : `/w/${workspaceId}/board/${view.baseLens}`
   const params = new URLSearchParams()
   if (view.scopeStreamIds.length > 0) params.set(BOARD_SCOPE_PARAM, view.scopeStreamIds.join(","))
   if (view.scopeStreamTypes.length > 0) params.set(BOARD_TYPE_PARAM, view.scopeStreamTypes.join(","))
@@ -67,6 +68,8 @@ interface BoardSavedViewsProps {
   workspaceId: string
   /** The board's live filter state — captured when saving "the current view". */
   lens: BoardLens
+  /** The viewer's home lens — the segment-less one when addressing a saved view. */
+  homeLens: BoardLens
   scopeStreamIds: string[]
   scopeStreamTypes: BoardScopeStreamType[]
   scopeLabelIds: string[]
@@ -87,6 +90,7 @@ interface BoardSavedViewsProps {
 export function BoardSavedViews({
   workspaceId,
   lens,
+  homeLens,
   scopeStreamIds,
   scopeStreamTypes,
   scopeLabelIds,
@@ -143,7 +147,7 @@ export function BoardSavedViews({
               className="group mx-1 flex items-center rounded-item pr-1 transition-colors hover:bg-muted"
             >
               <Link
-                to={savedViewHref(workspaceId, view)}
+                to={savedViewHref(workspaceId, view, homeLens)}
                 onClick={onNavigate}
                 className="flex min-w-0 flex-1 items-start gap-2.5 px-2.5 py-2"
               >

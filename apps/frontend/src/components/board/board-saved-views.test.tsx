@@ -30,6 +30,7 @@ function mount(boardViews: Record<string, unknown>, props: Partial<Parameters<ty
           <BoardSavedViews
             workspaceId="ws_1"
             lens="mine"
+            homeLens="all"
             scopeStreamIds={["stream_1"]}
             scopeStreamTypes={[]}
             scopeLabelIds={[]}
@@ -49,16 +50,24 @@ afterEach(() => vi.restoreAllMocks())
 
 describe("savedViewHref", () => {
   it("expands a saved view into its canonical board URL", () => {
-    const href = savedViewHref("ws_1", view({ scopeStreamIds: ["s1", "s2"], scopeStreamTypes: ["channel"] }))
+    const href = savedViewHref("ws_1", view({ scopeStreamIds: ["s1", "s2"], scopeStreamTypes: ["channel"] }), "all")
     const url = new URL(href, "http://x")
     expect(url.pathname).toBe("/w/ws_1/board/mine")
     expect(url.searchParams.get("in")).toBe("s1,s2")
     expect(url.searchParams.get("is")).toBe("channel")
   })
 
-  it("uses the bare board path for the All lens with no scope", () => {
-    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }))).toBe(
+  it("uses the bare board path for the home lens with no scope", () => {
+    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }), "all")).toBe(
       "/w/ws_1/board"
+    )
+  })
+
+  it("segments the All lens when the viewer's home lens is something else", () => {
+    // Home is Active, so bare `/board` is Active; a saved All view must address
+    // its own `/board/all` segment to reproduce, not collapse to the home.
+    expect(savedViewHref("ws_1", view({ baseLens: "all", scopeStreamIds: [], scopeStreamTypes: [] }), "active")).toBe(
+      "/w/ws_1/board/all"
     )
   })
 
@@ -72,7 +81,8 @@ describe("savedViewHref", () => {
         excludeStreamIds: ["s9"],
         excludeStreamTypes: ["system"],
         excludeLabelIds: ["label_b"],
-      })
+      }),
+      "all"
     )
     const url = new URL(href, "http://x")
     expect(url.pathname).toBe("/w/ws_1/board")
