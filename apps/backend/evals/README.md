@@ -38,6 +38,24 @@ bun run eval -- --config evals/example-config.yaml
 | `memo-classifier`     | Knowledge-worthiness classification |
 | `memorizer`           | Memo generation from messages       |
 
+## Run from a PR comment (`/eval`)
+
+Comment `/eval` on any PR to run a suite against that PR's code and get the
+results posted back as a comment (an at-a-glance table + per-case `<details>`,
+in the code-review report style). Requires write access. The `Slash Commands`
+workflow spins up postgres+pgvector, runs the eval, and posts the report.
+
+```
+/eval                                             # boundary-extraction, production config
+/eval -s memo-classifier -r 6 --min-pass-rate 0.8 # 6 runs, per-case pass rates
+/eval -m openrouter:openai/gpt-5.4-mini,openrouter:openai/gpt-5.4-nano  # compare models
+```
+
+Accepted flags mirror the CLI: `-s/--suite`, `-c/--case`, `-m/--model` (≤4),
+`-r/--runs` (≤12), `-p/--parallel` (≤8), `-t/--temperature`, `--min-pass-rate`.
+Values are allowlist-validated (`evals/slash/parse-args.ts`) — Langfuse is off
+and cost/latency are capped. Needs the `OPENROUTER_API_KEY` repo secret.
+
 ## Variance: tune against tallies, not single runs
 
 The components under test are stochastic even at low temperature — borderline
