@@ -36,9 +36,9 @@ function attachmentKey(a: PendingAttachment): string {
 // (a ref is present → resolved via decrypt in E2eImageChip instead). Restore
 // fires only after a draft decrypts, so a present ref means "E2E, unlocked";
 // its absence here means non-E2E, where the content URL is a real image.
-function staticImageSrc(a: PendingAttachment, workspaceId: string): { thumb: string; full: string } | null {
+function staticImageSrc(a: PendingAttachment, workspaceId: string | undefined): { thumb: string; full: string } | null {
   if (a.previewUrl) return { thumb: a.previewUrl, full: a.previewUrl }
-  if (!isImageAttachment(a) || getAttachmentRef(a.id)) return null
+  if (!isImageAttachment(a) || !workspaceId || getAttachmentRef(a.id)) return null
   return {
     thumb: attachmentContentUrl(workspaceId, a.id, { variant: "thumbnail" }),
     full: attachmentContentUrl(workspaceId, a.id),
@@ -104,7 +104,7 @@ function ChipView({ attachment, thumbnailSrc, fullSrc, decrypting, onRemove, onO
 /** Chip whose preview needs no decrypt: local object URL, non-E2E thumbnail, or icon. */
 function StaticChip(props: {
   attachment: PendingAttachment
-  workspaceId: string
+  workspaceId: string | undefined
   onRemove: (id: string) => void
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
@@ -140,7 +140,13 @@ interface PendingAttachmentsProps {
    * to this message," not two stacked rows.
    */
   beforePills?: ReactNode
-  /** Anchors the lightbox; download stays gated for previews regardless. */
+  /**
+   * Anchors every preview source (non-E2E server thumbnail, E2E decrypt,
+   * lightbox). Optional because the composer's own `workspaceId` is; every URL
+   * path is guarded on its presence so a missing value yields an icon, never a
+   * malformed `/api/workspaces//…` request (INV-11) — local previews and remove
+   * still work without it.
+   */
   workspaceId?: string
 }
 
@@ -152,7 +158,6 @@ interface PendingAttachmentsProps {
  * their type icon. Renders nothing when both lists are empty.
  */
 export function PendingAttachments({ attachments, onRemove, beforePills, workspaceId }: PendingAttachmentsProps) {
-  const ws = workspaceId ?? ""
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
@@ -200,23 +205,27 @@ export function PendingAttachments({ attachments, onRemove, beforePills, workspa
       <div className="flex flex-wrap items-center gap-2 mb-3 max-h-[120px] overflow-y-auto">
         {beforePills}
         {attachments.map((attachment) => {
-          const ref = !attachment.previewUrl && isImageAttachment(attachment) ? getAttachmentRef(attachment.id) : undefined
-          const shared = { attachment, workspaceId: ws, onRemove, onOpen: setOpenKey, onResolveSrc }
-          return ref ? (
-            <E2eImageChip key={attachmentKey(attachment)} attachmentRef={ref} {...shared} />
+          const key = attachmentKey(attachment)
+          const ref =
+            workspaceId && !attachment.previewUrl && isImageAttachment(attachment)
+              ? getAttachmentRef(attachment.id)
+              : undefined
+          const shared = { attachment, onRemove, onOpen: setOpenKey, onResolveSrc }
+          return ref && workspaceId ? (
+            <E2eImageChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
           ) : (
-            <StaticChip key={attachmentKey(attachment)} {...shared} />
+            <StaticChip key={key} workspaceId={workspaceId} {...shared} />
           )
         })}
       </div>
 
-      {galleryItems.length > 0 && (
+      {workspaceId && galleryItems.length > 0 && (
         <MediaGallery
           isOpen={galleryIndex !== -1}
           onClose={() => setOpenKey(null)}
           items={galleryItems}
           initialIndex={Math.max(0, galleryIndex)}
-          workspaceId={ws}
+          workspaceId={workspaceId}
         />
       )}
     </>
