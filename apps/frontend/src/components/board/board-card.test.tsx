@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import type { Socket } from "socket.io-client"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPostMessage } from "@threa/types"
@@ -106,6 +107,23 @@ function sessionEvent(
   }
 }
 
+/** A socket that records its listeners so a test can fire an ephemeral event
+ *  (`agent_session:progress`) the way the backend's trace-emitter does. */
+function fakeSocket() {
+  const handlers = new Map<string, (payload: unknown) => void>()
+  const socket = {
+    on: (event: string, handler: (payload: unknown) => void) => {
+      handlers.set(event, handler)
+      return socket
+    },
+    off: (event: string) => {
+      handlers.delete(event)
+      return socket
+    },
+  } as unknown as Socket
+  return { socket, handlers }
+}
+
 const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), markUnread: vi.fn() }
 
 beforeEach(async () => {
@@ -202,6 +220,42 @@ describe("BoardCard agent activity", () => {
     ])
     mountCard()
     expect(await screen.findByText("Session complete")).toBeTruthy()
+  })
+
+  it("live-updates a running session's step count from agent_session:progress", async () => {
+    // A session started from the card's opening message but not yet terminal: its
+    // events carry no counts, so the card rides the same ephemeral progress rail
+    // the timeline does (useAgentActivity). Without it the card sat at "0 steps"
+    // for the whole run.
+    const { socket, handlers } = fakeSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    await db.events.bulkPut([
+      sessionEvent("agent_session:started", 30, {
+        sessionId: "sess_C",
+        triggerMessageId: "m_open",
+        personaName: "Ariadne",
+        stepCount: 0,
+        messageCount: 0,
+      }),
+    ])
+    mountCard()
+
+    expect(await screen.findByText(/0 steps/)).toBeTruthy()
+
+    act(() => {
+      handlers.get("agent_session:progress")?.({
+        workspaceId: WS,
+        streamId: STREAM,
+        sessionId: "sess_C",
+        triggerMessageId: "m_open",
+        personaName: "Ariadne",
+        stepCount: 3,
+        messageCount: 1,
+        currentStepType: "tool_call",
+      })
+    })
+
+    expect(await screen.findByText(/3 steps/)).toBeTruthy()
   })
 
   it("does NOT render a session whose invoking message is not a conversation member", async () => {
