@@ -1,18 +1,33 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
-import { Loader2, FileText, Image as ImageIcon, File as FileIcon, AlertCircle } from "lucide-react"
+import { Loader2, FileText, Image as ImageIcon, File as FileIcon, Film, Globe, AlertCircle } from "lucide-react"
 import { AttachmentPill, type AttachmentPillStatus } from "@/components/composer/attachment-pill"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { pendingGalleryId } from "@/components/gallery/pending-gallery-id"
+import { buildPendingGalleryItem, uploadGalleryType, type UploadGalleryType } from "@/components/gallery/upload-preview"
 import { useDecryptedAttachment } from "@/hooks/use-decrypted-attachment"
 import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { attachmentContentUrl } from "@/api"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 import { formatFileSize } from "@/lib/file-size"
 
-function getFileIcon(mimeType: string): typeof FileIcon {
-  if (mimeType.startsWith("image/")) return ImageIcon
-  if (mimeType.startsWith("text/") || mimeType === "application/pdf") return FileText
-  return FileIcon
+// Leading-slot icon for a previewable type, matching the gallery's own glyphs
+// (Globe for html, FileText for docs, Film for video). Non-previewable files
+// (type null — a zip, an unknown binary) fall back to the generic file icon.
+function iconForType(type: UploadGalleryType | null): typeof FileIcon {
+  switch (type) {
+    case "image":
+      return ImageIcon
+    case "video":
+      return Film
+    case "pdf":
+    case "markdown":
+    case "text":
+      return FileText
+    case "html":
+      return Globe
+    default:
+      return FileIcon
+  }
 }
 
 const STATUS_MAP: Record<PendingAttachment["status"], AttachmentPillStatus> = {
@@ -21,24 +36,28 @@ const STATUS_MAP: Record<PendingAttachment["status"], AttachmentPillStatus> = {
   error: "error",
 }
 
-function isImageAttachment(a: PendingAttachment): boolean {
-  return a.mimeType.startsWith("image/")
-}
-
 /** Stable identity across the temp→server id flip: the object URL never changes. */
 function attachmentKey(a: PendingAttachment): string {
   return a.previewUrl ?? a.id
 }
 
-// The preview source for an image without a decrypt step: local bytes win;
-// otherwise the deterministic non-E2E content URL (thumbnail variant for the
-// chip, full for the lightbox). Returns null for non-images and for E2E images
-// (a ref is present → resolved via decrypt in E2eImageChip instead). Restore
-// fires only after a draft decrypts, so a present ref means "E2E, unlocked";
-// its absence here means non-E2E, where the content URL is a real image.
-function staticImageSrc(a: PendingAttachment, workspaceId: string | undefined): { thumb: string; full: string } | null {
-  if (a.previewUrl) return { thumb: a.previewUrl, full: a.previewUrl }
-  if (!isImageAttachment(a) || !workspaceId || getAttachmentRef(a.id)) return null
+// Preview source for a chip that needs no decrypt: local bytes win for every
+// previewable type (image/video/pdf/markdown/html/text) and double as the image
+// thumbnail; otherwise a non-E2E image resolves to its deterministic content URL
+// (thumbnail variant for the chip, full for the lightbox). Returns null for
+// non-previewable files and for anything with no local bytes but a decryptable
+// ref (routed to E2eChip). A present ref means "E2E, unlocked"; its absence here
+// means non-E2E, where the content URL is real image bytes. Non-image types with
+// no local bytes (a reloaded draft) have no static source — their server bytes
+// sit behind a presign/decrypt this path doesn't reach, so they show a type icon
+// until re-picked.
+function staticSrc(
+  a: PendingAttachment,
+  type: UploadGalleryType | null,
+  workspaceId: string | undefined
+): { thumb?: string; full: string } | null {
+  if (a.previewUrl) return { thumb: type === "image" ? a.previewUrl : undefined, full: a.previewUrl }
+  if (type !== "image" || !workspaceId || getAttachmentRef(a.id)) return null
   return {
     thumb: attachmentContentUrl(workspaceId, a.id, { variant: "thumbnail" }),
     full: attachmentContentUrl(workspaceId, a.id),
@@ -47,18 +66,29 @@ function staticImageSrc(a: PendingAttachment, workspaceId: string | undefined): 
 
 interface ChipViewProps {
   attachment: PendingAttachment
+  /** Which gallery type this file previews as (drives the icon), or null. */
+  galleryType: UploadGalleryType | null
   /** Leading-slot preview image; falls back to the type icon when absent/failed. */
   thumbnailSrc?: string
   /** Full-resolution URL for the lightbox, or null when not previewable. */
   fullSrc: string | null
-  /** True while an E2E image's bytes are still decrypting. */
+  /** True while an E2E file's bytes are still decrypting. */
   decrypting?: boolean
   onRemove: (id: string) => void
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
 }
 
-function ChipView({ attachment, thumbnailSrc, fullSrc, decrypting, onRemove, onOpen, onResolveSrc }: ChipViewProps) {
+function ChipView({
+  attachment,
+  galleryType,
+  thumbnailSrc,
+  fullSrc,
+  decrypting,
+  onRemove,
+  onOpen,
+  onResolveSrc,
+}: ChipViewProps) {
   const key = attachmentKey(attachment)
 
   // Publish the full-res URL so the parent can build the lightbox item list.
@@ -78,7 +108,7 @@ function ChipView({ attachment, thumbnailSrc, fullSrc, decrypting, onRemove, onO
   if (isGenericError) tooltip = "We couldn't upload this file. Please remove it and try again."
   else if (isError) tooltip = attachment.error
 
-  let Icon = getFileIcon(attachment.mimeType)
+  let Icon = iconForType(galleryType)
   if (isUploading || decrypting) Icon = Loader2
   else if (isError) Icon = AlertCircle
 
@@ -102,7 +132,7 @@ function ChipView({ attachment, thumbnailSrc, fullSrc, decrypting, onRemove, onO
   )
 }
 
-/** Chip whose preview needs no decrypt: local object URL, non-E2E thumbnail, or icon. */
+/** Chip whose preview needs no decrypt: local object URL, non-E2E image thumbnail, or icon. */
 function StaticChip(props: {
   attachment: PendingAttachment
   workspaceId: string | undefined
@@ -110,12 +140,13 @@ function StaticChip(props: {
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
 }) {
-  const src = staticImageSrc(props.attachment, props.workspaceId)
-  return <ChipView {...props} thumbnailSrc={src?.thumb} fullSrc={src?.full ?? null} />
+  const type = uploadGalleryType(props.attachment)
+  const src = staticSrc(props.attachment, type, props.workspaceId)
+  return <ChipView {...props} galleryType={type} thumbnailSrc={src?.thumb} fullSrc={src?.full ?? null} />
 }
 
-/** Chip for an E2E image: decrypts the bytes in memory (no server thumbnail exists). */
-function E2eImageChip({
+/** Chip for an E2E file: decrypts the bytes in memory (no server thumbnail exists). */
+function E2eChip({
   attachmentRef,
   ...props
 }: {
@@ -126,9 +157,18 @@ function E2eImageChip({
   onOpen: (key: string) => void
   onResolveSrc: (key: string, src: string | null) => void
 }) {
+  const type = uploadGalleryType(props.attachment)
   const decrypted = useDecryptedAttachment(props.workspaceId, attachmentRef)
   const url = decrypted.status === "ready" ? decrypted.url : null
-  return <ChipView {...props} thumbnailSrc={url ?? undefined} fullSrc={url} decrypting={decrypted.status === "pending"} />
+  return (
+    <ChipView
+      {...props}
+      galleryType={type}
+      thumbnailSrc={type === "image" ? (url ?? undefined) : undefined}
+      fullSrc={url}
+      decrypting={decrypted.status === "pending"}
+    />
+  )
 }
 
 interface PendingAttachmentsProps {
@@ -153,17 +193,19 @@ interface PendingAttachmentsProps {
 
 /**
  * Composer attachment row: every attachment renders as one uniform chip
- * (filename + size + remove ×). Image chips show a preview thumbnail in the
- * leading slot — from local bytes, the non-E2E server thumbnail, or an in-memory
- * E2E decrypt — and tap/click to open the shared lightbox; other types keep
- * their type icon. Renders nothing when both lists are empty.
+ * (filename + size + remove ×). Previewable files (image/video/pdf/markdown/
+ * html/text — decided by the same {@link uploadGalleryType} the timeline uses)
+ * tap/click to open the shared lightbox; images also show a preview thumbnail in
+ * the leading slot (from local bytes, the non-E2E server thumbnail, or an
+ * in-memory E2E decrypt). Non-previewable files keep a plain type-icon chip.
+ * Renders nothing when both lists are empty.
  */
 export function PendingAttachments({ attachments, onRemove, beforePills, workspaceId }: PendingAttachmentsProps) {
   // Open lightbox tracked by the stable attachment key, not the id (which flips
   // temp→server on upload completion), so an open preview survives its upload.
   const [openKey, setOpenKey] = useState<string | null>(null)
-  // Full-res URL per image chip, published by each chip (a chip owns the E2E
-  // decrypt / object-URL lifecycle), so the lightbox item list has every source.
+  // Preview URL per previewable chip, published by each chip (a chip owns the
+  // E2E decrypt / object-URL lifecycle), so the lightbox item list has every source.
   const [srcByKey, setSrcByKey] = useState<Map<string, string>>(new Map())
 
   const onResolveSrc = useCallback((key: string, src: string | null) => {
@@ -176,25 +218,19 @@ export function PendingAttachments({ attachments, onRemove, beforePills, workspa
     })
   }, [])
 
-  const imageAttachments = useMemo(() => attachments.filter(isImageAttachment), [attachments])
-
   const galleryItems = useMemo<GalleryItem[]>(
     () =>
-      imageAttachments
+      attachments
         .map((a): GalleryItem | null => {
+          const type = uploadGalleryType(a)
+          if (!type) return null
           const key = attachmentKey(a)
           const url = srcByKey.get(key)
           if (!url) return null
-          return {
-            type: "image",
-            url,
-            thumbnailUrl: url,
-            filename: a.filename,
-            attachmentId: pendingGalleryId(key),
-          }
+          return buildPendingGalleryItem(type, url, a.filename, key)
         })
         .filter((item): item is GalleryItem => item !== null),
-    [imageAttachments, srcByKey]
+    [attachments, srcByKey]
   )
 
   if (attachments.length === 0 && !beforePills) return null
@@ -208,12 +244,12 @@ export function PendingAttachments({ attachments, onRemove, beforePills, workspa
         {attachments.map((attachment) => {
           const key = attachmentKey(attachment)
           const ref =
-            workspaceId && !attachment.previewUrl && isImageAttachment(attachment)
+            workspaceId && !attachment.previewUrl && uploadGalleryType(attachment) != null
               ? getAttachmentRef(attachment.id)
               : undefined
           const shared = { attachment, onRemove, onOpen: setOpenKey, onResolveSrc }
           return ref && workspaceId ? (
-            <E2eImageChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
+            <E2eChip key={key} attachmentRef={ref} workspaceId={workspaceId} {...shared} />
           ) : (
             <StaticChip key={key} workspaceId={workspaceId} {...shared} />
           )

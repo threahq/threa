@@ -1,20 +1,23 @@
 import { useState, useCallback, useEffect, useRef, type ChangeEvent, type RefObject } from "react"
 import { attachmentsApi } from "@/api"
 import { encryptAttachmentBytes, rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { uploadGalleryType } from "@/components/gallery/upload-preview"
 
 /** The placeholder name/mime the server forces for E2E ciphertext uploads. */
 const E2E_CIPHERTEXT_FILENAME = "encrypted"
 const E2E_CIPHERTEXT_MIME = "application/octet-stream"
 
 /**
- * Object URL for the local bytes of a picked/pasted image, so the composer can
- * preview the actual image before send. Reading from the local File means the
- * preview is available immediately (even mid-upload) and works for E2E streams
- * where the server only ever holds ciphertext. Best-effort: environments
- * without object-URL support (jsdom) get `undefined` and fall back to a pill.
+ * Object URL for the local bytes of a picked/pasted file the gallery can preview
+ * (image, video, pdf, markdown, html, text — decided by the same
+ * {@link uploadGalleryType} the timeline uses), so the composer can preview the
+ * actual file before send. Reading from the local File means the preview is
+ * available immediately (even mid-upload) and works for E2E streams where the
+ * server only ever holds ciphertext. Best-effort: environments without
+ * object-URL support (jsdom) get `undefined` and fall back to a plain chip.
  */
-function createImagePreviewUrl(file: File): string | undefined {
-  if (!file.type.startsWith("image/")) return undefined
+function createPreviewUrl(file: File): string | undefined {
+  if (!uploadGalleryType({ mimeType: file.type, filename: file.name })) return undefined
   try {
     return URL.createObjectURL(file)
   } catch {
@@ -27,7 +30,7 @@ function revokePreviewUrl(url: string | undefined): void {
   try {
     URL.revokeObjectURL(url)
   } catch {
-    // no-op — see createImagePreviewUrl
+    // no-op — see createPreviewUrl
   }
 }
 
@@ -56,9 +59,10 @@ export interface PendingAttachment {
   status: "uploading" | "uploaded" | "error"
   error?: string
   /**
-   * Local object URL for image files, for the in-composer preview
-   * (thumbnail + lightbox). Undefined for non-images and for restored drafts,
-   * which carry no local bytes. Revoked on remove/clear/unmount.
+   * Local object URL for previewable files (image/video/pdf/markdown/html/text),
+   * for the in-composer preview (thumbnail + lightbox). Undefined for
+   * non-previewable files and for restored drafts, which carry no local bytes.
+   * Revoked on remove/clear/unmount.
    */
   previewUrl?: string
 }
@@ -161,7 +165,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
 
       for (const file of files) {
         const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
-        const previewUrl = createImagePreviewUrl(file)
+        const previewUrl = createPreviewUrl(file)
 
         updatePendingAttachments((prev) => [
           ...prev,
@@ -217,7 +221,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         setImageCount(assignedImageIndex)
       }
 
-      const previewUrl = createImagePreviewUrl(file)
+      const previewUrl = createPreviewUrl(file)
       const pendingAttachment: PendingAttachment = {
         id: tempId,
         filename: file.name,

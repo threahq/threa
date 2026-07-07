@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react"
 import { PendingAttachments } from "./pending-attachments"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 
-function imageAttachment(overrides: Partial<PendingAttachment> = {}): PendingAttachment {
+function attachment(overrides: Partial<PendingAttachment> = {}): PendingAttachment {
   return {
     id: "attach_img",
     filename: "screenshot.png",
@@ -18,7 +18,7 @@ function imageAttachment(overrides: Partial<PendingAttachment> = {}): PendingAtt
 describe("PendingAttachments", () => {
   it("renders an image upload as a chip with a preview thumbnail", () => {
     const { container } = render(
-      <PendingAttachments attachments={[imageAttachment()]} onRemove={vi.fn()} workspaceId="ws_1" />
+      <PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />
     )
 
     // Filename stays visible as chip text; the leading slot shows the thumbnail.
@@ -27,22 +27,85 @@ describe("PendingAttachments", () => {
     expect(container.querySelector('img[src="blob:preview-1"]')).toBeTruthy()
   })
 
-  it("falls back to a plain chip (no preview) for non-image files", () => {
+  it("makes a pdf upload previewable from local bytes", () => {
+    render(
+      <PendingAttachments
+        attachments={[
+          attachment({ id: "attach_pdf", filename: "report.pdf", mimeType: "application/pdf", previewUrl: "blob:pdf" }),
+        ]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("report.pdf")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Preview report.pdf" })).toBeInTheDocument()
+  })
+
+  it("makes a text upload previewable from local bytes", () => {
+    render(
+      <PendingAttachments
+        attachments={[
+          attachment({ id: "attach_txt", filename: "notes.txt", mimeType: "text/plain", previewUrl: "blob:txt" }),
+        ]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByRole("button", { name: "Preview notes.txt" })).toBeInTheDocument()
+  })
+
+  it("opens the lightbox when a video chip is activated", () => {
+    render(
+      <PendingAttachments
+        attachments={[
+          attachment({ id: "attach_vid", filename: "clip.mp4", mimeType: "video/mp4", previewUrl: "blob:vid" }),
+        ]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Preview clip.mp4" }))
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+  })
+
+  it("keeps a plain, non-previewable chip for an unsupported file type", () => {
+    render(
+      <PendingAttachments
+        attachments={[
+          attachment({ id: "attach_zip", filename: "archive.zip", mimeType: "application/zip", previewUrl: undefined }),
+        ]}
+        onRemove={vi.fn()}
+        workspaceId="ws_1"
+      />
+    )
+
+    expect(screen.getByText("archive.zip")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Preview / })).not.toBeInTheDocument()
+  })
+
+  it("shows a non-image doc without local bytes as a plain chip (reloaded draft)", () => {
+    // No previewUrl and no decrypt ref: the server bytes sit behind a presign the
+    // static path doesn't reach, so a reloaded non-image draft attachment falls
+    // back to a type icon rather than a broken preview.
     const file: PendingAttachment = {
       id: "attach_doc",
-      filename: "notes.txt",
-      mimeType: "text/plain",
+      filename: "spec.pdf",
+      mimeType: "application/pdf",
       sizeBytes: 1024,
       status: "uploaded",
     }
     render(<PendingAttachments attachments={[file]} onRemove={vi.fn()} workspaceId="ws_1" />)
 
-    expect(screen.getByText("notes.txt")).toBeInTheDocument()
+    expect(screen.getByText("spec.pdf")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /^Preview / })).not.toBeInTheDocument()
   })
 
   it("opens the lightbox when the image chip is activated", () => {
-    render(<PendingAttachments attachments={[imageAttachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
+    render(<PendingAttachments attachments={[attachment()]} onRemove={vi.fn()} workspaceId="ws_1" />)
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Preview screenshot.png" }))
@@ -51,7 +114,7 @@ describe("PendingAttachments", () => {
 
   it("removes an image via its remove control without opening the lightbox", () => {
     const onRemove = vi.fn()
-    render(<PendingAttachments attachments={[imageAttachment()]} onRemove={onRemove} workspaceId="ws_1" />)
+    render(<PendingAttachments attachments={[attachment()]} onRemove={onRemove} workspaceId="ws_1" />)
 
     fireEvent.click(screen.getByRole("button", { name: "Remove screenshot.png" }))
     expect(onRemove).toHaveBeenCalledWith("attach_img")
@@ -60,11 +123,7 @@ describe("PendingAttachments", () => {
 
   it("shows the preview while an image is still uploading (no remove control yet)", () => {
     render(
-      <PendingAttachments
-        attachments={[imageAttachment({ status: "uploading" })]}
-        onRemove={vi.fn()}
-        workspaceId="ws_1"
-      />
+      <PendingAttachments attachments={[attachment({ status: "uploading" })]} onRemove={vi.fn()} workspaceId="ws_1" />
     )
 
     expect(screen.getByRole("button", { name: "Preview screenshot.png" })).toBeInTheDocument()
