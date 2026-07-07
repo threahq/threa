@@ -1,10 +1,35 @@
-import { useState, useCallback, useRef, type ChangeEvent, type RefObject } from "react"
+import { useState, useCallback, useEffect, useRef, type ChangeEvent, type RefObject } from "react"
 import { attachmentsApi } from "@/api"
 import { encryptAttachmentBytes, rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
 
 /** The placeholder name/mime the server forces for E2E ciphertext uploads. */
 const E2E_CIPHERTEXT_FILENAME = "encrypted"
 const E2E_CIPHERTEXT_MIME = "application/octet-stream"
+
+/**
+ * Object URL for the local bytes of a picked/pasted image, so the composer can
+ * preview the actual image before send. Reading from the local File means the
+ * preview is available immediately (even mid-upload) and works for E2E streams
+ * where the server only ever holds ciphertext. Best-effort: environments
+ * without object-URL support (jsdom) get `undefined` and fall back to a pill.
+ */
+function createImagePreviewUrl(file: File): string | undefined {
+  if (!file.type.startsWith("image/")) return undefined
+  try {
+    return URL.createObjectURL(file)
+  } catch {
+    return undefined
+  }
+}
+
+function revokePreviewUrl(url: string | undefined): void {
+  if (!url) return
+  try {
+    URL.revokeObjectURL(url)
+  } catch {
+    // no-op — see createImagePreviewUrl
+  }
+}
 
 interface UploadOptions {
   /**
@@ -30,6 +55,12 @@ export interface PendingAttachment {
   sizeBytes: number
   status: "uploading" | "uploaded" | "error"
   error?: string
+  /**
+   * Local object URL for image files, for the in-composer preview
+   * (thumbnail + lightbox). Undefined for non-images and for restored drafts,
+   * which carry no local bytes. Revoked on remove/clear/unmount.
+   */
+  previewUrl?: string
 }
 
 export interface UploadResult {
@@ -130,6 +161,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
 
       for (const file of files) {
         const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        const previewUrl = createImagePreviewUrl(file)
 
         updatePendingAttachments((prev) => [
           ...prev,
@@ -139,6 +171,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
             mimeType: file.type || "application/octet-stream",
             sizeBytes: file.size,
             status: "uploading",
+            previewUrl,
           },
         ])
 
@@ -146,7 +179,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
           const facts = await uploadOne(file)
 
           updatePendingAttachments((prev) =>
-            prev.map((a) => (a.id === tempId ? { ...facts, status: "uploaded" as const } : a))
+            prev.map((a) => (a.id === tempId ? { ...facts, status: "uploaded" as const, previewUrl } : a))
           )
         } catch (err) {
           updatePendingAttachments((prev) =>
@@ -184,12 +217,14 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         setImageCount(assignedImageIndex)
       }
 
+      const previewUrl = createImagePreviewUrl(file)
       const pendingAttachment: PendingAttachment = {
         id: tempId,
         filename: file.name,
         mimeType: file.type || "application/octet-stream",
         sizeBytes: file.size,
         status: "uploading",
+        previewUrl,
       }
 
       updatePendingAttachments((prev) => [...prev, pendingAttachment])
@@ -200,6 +235,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
         const uploadedAttachment: PendingAttachment = {
           ...facts,
           status: "uploaded",
+          previewUrl,
         }
 
         updatePendingAttachments((prev) => prev.map((a) => (a.id === tempId ? uploadedAttachment : a)))
@@ -233,6 +269,7 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
       const attachment = pendingAttachmentsRef.current.find((a) => a.id === attachmentId)
       if (!attachment) return
 
+      revokePreviewUrl(attachment.previewUrl)
       updatePendingAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
 
       if (attachment.status === "uploaded" && !attachmentId.startsWith("temp_")) {
@@ -247,14 +284,25 @@ export function useAttachments(workspaceId: string, options?: UploadOptions): Us
   )
 
   const clear = useCallback(() => {
+    for (const a of pendingAttachmentsRef.current) revokePreviewUrl(a.previewUrl)
     pendingAttachmentsRef.current = []
     setPendingAttachments([])
     setImageCount(0)
     imageCountRef.current = 0
   }, [])
 
+  // Backstop for previews still live when the composer unmounts (navigating away
+  // with a draft mid-upload) — the happy path revokes via clear() on send.
+  useEffect(
+    () => () => {
+      for (const a of pendingAttachmentsRef.current) revokePreviewUrl(a.previewUrl)
+    },
+    []
+  )
+
   const restore = useCallback(
     (attachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }>) => {
+      for (const a of pendingAttachmentsRef.current) revokePreviewUrl(a.previewUrl)
       const restoredAttachments = attachments.map((a) => ({
         ...a,
         status: "uploaded" as const,
