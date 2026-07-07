@@ -856,6 +856,7 @@ export function MessageComposer({
                     <PendingAttachments
                       attachments={pendingAttachments}
                       onRemove={onRemoveAttachment}
+                      workspaceId={workspaceId}
                       beforePills={
                         contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
                           <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />
@@ -1037,6 +1038,7 @@ export function MessageComposer({
         <PendingAttachments
           attachments={pendingAttachments}
           onRemove={onRemoveAttachment}
+          workspaceId={workspaceId}
           beforePills={
             contextRefs && contextRefs.length > 0 && streamId && workspaceId ? (
               <ContextRefStrip workspaceId={workspaceId} streamId={streamId} draftRefs={contextRefs} />

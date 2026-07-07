@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react"
+import { useState, type ComponentType, type KeyboardEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { X } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
@@ -19,11 +19,31 @@ export interface AttachmentPillProps {
   secondary?: ReactNode
   status?: AttachmentPillStatus
   tooltip?: ReactNode
+  /**
+   * Small preview image shown in the leading slot in place of `icon` (e.g. an
+   * image attachment's thumbnail). Falls back to `icon` if it fails to load —
+   * the E2E-locked case, where the deterministic content URL serves ciphertext.
+   */
+  thumbnailSrc?: string
+  /**
+   * Spin the leading icon. Defaults to the `pending` status; pass explicitly for
+   * a loading state the status enum doesn't capture (an E2E image decrypting
+   * while its status is already `uploaded`).
+   */
+  spinning?: boolean
   /** When provided renders a small × button at the trailing edge. */
   onRemove?: () => void
+  /**
+   * Makes the pill activate (open a preview) on click / Enter / Space. The pill
+   * becomes a `role="button"` so a nested `onRemove` button can still live
+   * inside it — a real `<button>` can't nest another button.
+   */
+  onActivate?: () => void
   /** Internal route — turns the pill into a `<Link>`. */
   href?: string
   removeLabel?: string
+  /** Accessible name for the activate affordance (defaults to `label`). */
+  activateLabel?: string
   labelMaxWidth?: string
   className?: string
 }
@@ -46,6 +66,36 @@ const SECONDARY_TONE: Record<AttachmentPillStatus, string> = {
   error: "text-destructive/80",
 }
 
+// Fixed 20px slot so swapping the thumbnail (20px) for the icon (14px) — on an
+// onError fallback or an E2E decrypt landing — never changes the chip's width
+// and shifts its neighbours in the flex row (INV-21).
+function PillLeading({
+  icon: Icon,
+  thumbnailSrc,
+  spin,
+}: {
+  icon: ComponentType<{ className?: string }>
+  thumbnailSrc?: string
+  spin: boolean
+}) {
+  const [failed, setFailed] = useState(false)
+  return (
+    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      {thumbnailSrc && !failed ? (
+        <img
+          src={thumbnailSrc}
+          alt=""
+          draggable={false}
+          onError={() => setFailed(true)}
+          className="h-5 w-5 rounded object-cover"
+        />
+      ) : (
+        <Icon className={cn("h-3.5 w-3.5", spin && "animate-spin")} />
+      )}
+    </span>
+  )
+}
+
 /**
  * Canonical pill primitive used by the composer attachment row and the
  * timeline message context-ref badge. Keeps file uploads and context refs
@@ -53,14 +103,18 @@ const SECONDARY_TONE: Record<AttachmentPillStatus, string> = {
  * remove + link affordances.
  */
 export function AttachmentPill({
-  icon: Icon,
+  icon,
   label,
   secondary,
   status = "default",
   tooltip,
+  thumbnailSrc,
+  spinning,
   onRemove,
+  onActivate,
   href,
   removeLabel,
+  activateLabel,
   labelMaxWidth = "max-w-[160px]",
   className,
 }: AttachmentPillProps) {
@@ -72,7 +126,7 @@ export function AttachmentPill({
 
   const inner = (
     <>
-      <Icon className={cn("h-3.5 w-3.5 shrink-0", status === "pending" && "animate-spin")} />
+      <PillLeading icon={icon} thumbnailSrc={thumbnailSrc} spin={spinning ?? status === "pending"} />
       <span className={cn("truncate", labelMaxWidth)}>{label}</span>
       {secondary != null && <span className={SECONDARY_TONE[status]}>{secondary}</span>}
       {onRemove && (
@@ -84,7 +138,10 @@ export function AttachmentPill({
             onRemove()
           }}
           className={cn(
-            "ml-0.5 rounded-full p-0.5 opacity-60 hover:opacity-100 transition-opacity",
+            // p-1 (not p-0.5) enlarges the touch target: the chip itself is now
+            // tappable (opens the preview), so a near-miss on the × shouldn't
+            // land on the chip and open the lightbox instead of removing.
+            "ml-0.5 rounded-full p-1 opacity-60 hover:opacity-100 transition-opacity",
             STATUS_REMOVE_HOVER[status]
           )}
           aria-label={removeLabel ?? "Remove"}
@@ -95,16 +152,47 @@ export function AttachmentPill({
     </>
   )
 
-  const pill = href ? (
-    <Link
-      to={href}
-      className={cn(baseStyles, statusStyles, "cursor-pointer hover:brightness-110 transition-[filter]", className)}
-    >
-      {inner}
-    </Link>
-  ) : (
-    <div className={cn(baseStyles, statusStyles, className)}>{inner}</div>
-  )
+  let pill: ReactNode
+  if (href) {
+    pill = (
+      <Link
+        to={href}
+        className={cn(baseStyles, statusStyles, "cursor-pointer hover:brightness-110 transition-[filter]", className)}
+      >
+        {inner}
+      </Link>
+    )
+  } else if (onActivate) {
+    // role=button (not a real <button>) so the nested remove <button> is valid —
+    // buttons can't nest. The keydown guard keeps the nested button's own
+    // Enter/Space activation from also firing this activate.
+    const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault()
+        onActivate()
+      }
+    }
+    pill = (
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={activateLabel ?? label}
+        onClick={onActivate}
+        onKeyDown={handleKeyDown}
+        className={cn(
+          baseStyles,
+          statusStyles,
+          "cursor-pointer hover:brightness-110 transition-[filter] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+          className
+        )}
+      >
+        {inner}
+      </div>
+    )
+  } else {
+    pill = <div className={cn(baseStyles, statusStyles, className)}>{inner}</div>
+  }
 
   if (!tooltip) return pill
 

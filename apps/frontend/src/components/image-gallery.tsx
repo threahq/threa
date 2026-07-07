@@ -31,6 +31,7 @@ import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
 import { isGiphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { isLinkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-id"
+import { isPendingGalleryId } from "@/components/gallery/pending-gallery-id"
 import { buildEmbedPlaybackSrc } from "@/components/gallery/video-embed"
 import type { VideoPreviewProvider } from "@threa/types"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
@@ -657,7 +658,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // serve them, and copy fetches the bytes so a site without CORS would only
   // toast an error — hide both, leaving view/zoom (which need no fetch).
   const isLinkPreviewImage = current ? isLinkPreviewGalleryId(current.attachmentId) : false
-  const canDownload = !isGiphy && !isLinkPreviewImage
+  // Composer preview images have no server-servable bytes (local object URL /
+  // E2E ciphertext), so the download API can't fetch them; copy still works
+  // straight from the object URL.
+  const isPending = current ? isPendingGalleryId(current.attachmentId) : false
+  const canDownload = !isGiphy && !isLinkPreviewImage && !isPending
   const canCopy =
     !isLinkPreviewImage &&
     (current?.type === "image" || current?.type === "markdown" || current?.type === "html" || current?.type === "text")

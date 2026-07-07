@@ -282,6 +282,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
             <PendingAttachments
               attachments={attachmentsHook.pendingAttachments}
               onRemove={attachmentsHook.removeAttachment}
+              workspaceId={workspaceId}
             />
           </div>
         ) : null
