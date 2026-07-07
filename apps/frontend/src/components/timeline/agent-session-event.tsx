@@ -7,6 +7,7 @@ import type {
   AgentSessionStartedPayload,
   AgentSessionCompletedPayload,
   AgentSessionFailedPayload,
+  AgentSessionInterruptedPayload,
   AgentSessionDeletedPayload,
 } from "@threa/types"
 import { useTrace } from "@/contexts"
@@ -33,7 +34,7 @@ interface AgentSessionEventProps {
   onStopSession?: (sessionId: string) => void
 }
 
-type SessionStatus = "running" | "completed" | "failed" | "deleted"
+type SessionStatus = "running" | "retrying" | "completed" | "failed" | "deleted"
 
 interface StatusConfig {
   title: string
@@ -52,11 +53,13 @@ function deriveStatus(events: StreamEvent[]): {
   startedPayload: AgentSessionStartedPayload | null
   completedPayload: AgentSessionCompletedPayload | null
   failedPayload: AgentSessionFailedPayload | null
+  interruptedPayload: AgentSessionInterruptedPayload | null
   deletedPayload: AgentSessionDeletedPayload | null
 } {
   let startedPayload: AgentSessionStartedPayload | null = null
   let completedPayload: AgentSessionCompletedPayload | null = null
   let failedPayload: AgentSessionFailedPayload | null = null
+  let interruptedPayload: AgentSessionInterruptedPayload | null = null
   let deletedPayload: AgentSessionDeletedPayload | null = null
   let sessionId = ""
 
@@ -74,14 +77,21 @@ function deriveStatus(events: StreamEvent[]): {
       case "agent_session:failed":
         failedPayload = event.payload as AgentSessionFailedPayload
         break
+      case "agent_session:interrupted":
+        // Last one wins — a later attempt's interrupt supersedes the prior.
+        interruptedPayload = event.payload as AgentSessionInterruptedPayload
+        break
       case "agent_session:deleted":
         deletedPayload = event.payload as AgentSessionDeletedPayload
         break
     }
   }
 
-  // Deleted takes precedence over completed/failed because it is a terminal superseding action.
-  // Completed takes precedence over failed (intermediate failures can be recovered).
+  // Precedence, terminal first: deleted (superseding) › completed › failed. A
+  // terminal event always wins over `interrupted`, which is non-terminal — a
+  // retryable attempt emits it, then the retry's own completed/failed supersedes
+  // it. With only started + interrupted present (mid-retry, incl. after a refresh)
+  // the session reads as "retrying"; a bare started with none of these is "running".
   let status: SessionStatus
   if (deletedPayload) {
     status = "deleted"
@@ -89,11 +99,13 @@ function deriveStatus(events: StreamEvent[]): {
     status = "completed"
   } else if (failedPayload) {
     status = "failed"
+  } else if (interruptedPayload) {
+    status = "retrying"
   } else {
     status = "running"
   }
 
-  return { status, sessionId, startedPayload, completedPayload, failedPayload, deletedPayload }
+  return { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload }
 }
 
 function buildStatusConfig(
@@ -101,6 +113,7 @@ function buildStatusConfig(
   startedPayload: AgentSessionStartedPayload | null,
   completedPayload: AgentSessionCompletedPayload | null,
   failedPayload: AgentSessionFailedPayload | null,
+  interruptedPayload: AgentSessionInterruptedPayload | null,
   deletedPayload: AgentSessionDeletedPayload | null,
   liveCounts: { stepCount: number; messageCount: number } | undefined
 ): StatusConfig {
@@ -179,6 +192,34 @@ function buildStatusConfig(
         timestamp: failedPayload?.failedAt ?? startedPayload?.startedAt ?? null,
       }
     }
+    case "retrying": {
+      // Non-terminal: a turn attempt failed and the queue is retrying the same
+      // session. Amber (not the red terminal-fail) and a spinner, so it reads as
+      // "in progress, hang on" rather than "done, broken". The step count is the
+      // interrupted payload's snapshot (steps reached before the failure) — the
+      // live rail reports 0 during backoff (the synthetic started-event entry) and
+      // restarts from 0 on the retry, so the snapshot is the stable, honest number.
+      const steps = interruptedPayload?.stepCount ?? 0
+      const parts: string[] = []
+      if (rerunReasonLabel) {
+        parts.push(rerunReasonLabel)
+      }
+      parts.push(`${steps} ${steps === 1 ? "step" : "steps"}`)
+      return {
+        title: "Interrupted, retrying…",
+        subtitle: parts.join(" • "),
+        icon: (
+          <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(38_92%_50%/0.15)]">
+            <Loader2 className="w-3.5 h-3.5 text-[hsl(38,92%,50%)] animate-spin" />
+          </div>
+        ),
+        borderColor: "hsl(38 92% 50% / 0.3)",
+        bgColor: "hsl(38 92% 50% / 0.05)",
+        hoverBgColor: "hsl(38 92% 50% / 0.08)",
+        titleColor: "hsl(38 92% 50%)",
+        timestamp: interruptedPayload?.interruptedAt ?? startedPayload?.startedAt ?? null,
+      }
+    }
     case "running": {
       const personaName = startedPayload?.personaName ?? "Agent"
       const stepCount = liveCounts?.stepCount ?? 0
@@ -241,9 +282,18 @@ export function AgentSessionEvent({
   onStopSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
-  const { status, sessionId, startedPayload, completedPayload, failedPayload, deletedPayload } = deriveStatus(events)
+  const { status, sessionId, startedPayload, completedPayload, failedPayload, interruptedPayload, deletedPayload } =
+    deriveStatus(events)
 
-  const config = buildStatusConfig(status, startedPayload, completedPayload, failedPayload, deletedPayload, liveCounts)
+  const config = buildStatusConfig(
+    status,
+    startedPayload,
+    completedPayload,
+    failedPayload,
+    interruptedPayload,
+    deletedPayload,
+    liveCounts
+  )
 
   const [redirectHintVisible, setRedirectHintVisible] = useState(false)
   const redirectHintTimer = useRef<number | null>(null)

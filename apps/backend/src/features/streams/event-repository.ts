@@ -1,6 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import {
+  AGENT_SESSION_EVENT_TYPES,
   COMMAND_EVENT_TYPES,
   isTimelineBroadcastEventType,
   type AgentSessionRerunContext,
@@ -528,7 +529,7 @@ export const StreamEventRepository = {
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
       WHERE stream_id = ${streamId}
-        AND event_type = ANY(${["agent_session:started", "agent_session:completed", "agent_session:failed", "agent_session:deleted"]})
+        AND event_type = ANY(${[...AGENT_SESSION_EVENT_TYPES]})
         AND payload->>'sessionId' = ANY(${sessionIds})
       ORDER BY sequence ASC
       FOR UPDATE

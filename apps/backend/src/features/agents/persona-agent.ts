@@ -225,6 +225,14 @@ export interface PersonaAgentInput {
   purpose: TurnPurpose
   /** Invocation time override for deterministic evals/tests. Production leaves this unset. */
   currentTime?: Date
+  /**
+   * Queue retry accounting, forwarded to {@link withCompanionSession} so a
+   * failed-but-retryable attempt emits a non-terminal `agent_session:interrupted`
+   * instead of a terminal `agent_session:failed`. Absent when the caller isn't the
+   * queue worker (evals/tests), in which case a failure is treated as terminal.
+   */
+  attempt?: number
+  maxAttempts?: number
 }
 
 export interface PersonaAgentResult {
@@ -288,7 +296,7 @@ export class PersonaAgent {
       loadFollowUp,
       updateBrief,
     } = this.deps
-    const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime } = input
+    const { workspaceId, streamId, messageId, personaId, serverId, purpose, currentTime, attempt, maxAttempts } = input
     // Supersede-rerun payload, extracted once from the purpose (roadmap 1.5) and
     // threaded through the session setup, reconciliation, trace, and validator.
     const supersedesSessionId = purpose.kind === "supersede_rerun" ? purpose.supersedesSessionId : undefined
@@ -385,6 +393,8 @@ export class PersonaAgent {
         triggerMessageRevision,
         supersedesSessionId,
         rerunContext,
+        attempt,
+        maxAttempts,
       },
       async (session, db) => {
         const trace = traceEmitter.forSession({
@@ -1145,7 +1155,10 @@ export class PersonaAgent {
       })
       if (result.status === "completed") {
         trace.notifyCompleted()
-      } else if (result.status === "failed") {
+      } else if (result.status === "failed" && !result.willRetry) {
+        // A retryable attempt isn't terminal — don't flash the trace dialog red
+        // (the retry resumes this session). notifyActivityEnded still fires to stop
+        // the live ticker; the retry re-emits notifyActivityStarted.
         trace.notifyFailed()
       }
       trace.notifyActivityEnded()

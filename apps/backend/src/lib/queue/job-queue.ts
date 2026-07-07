@@ -4,6 +4,17 @@ export interface Job<T = unknown> {
   id: string
   name: string
   data: T
+  /**
+   * Zero-based count of prior failed attempts (`failedCount`) for this message —
+   * 0 on the first run. Set by the queue manager on dispatch. A handler that wants
+   * to distinguish "will retry" from "last chance" combines this with
+   * {@link maxAttempts}: the message goes to the DLQ when `attempt + 1 >= maxAttempts`.
+   * Absent only on synthetic jobs constructed outside the dispatch loop (e.g. the
+   * onDLQ hook), where the retry budget is already spent.
+   */
+  attempt?: number
+  /** Retry budget for this queue (manager-wide default or per-queue override). */
+  maxAttempts?: number
 }
 
 export const JobQueues = {

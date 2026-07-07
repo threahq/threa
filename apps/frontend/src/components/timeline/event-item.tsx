@@ -189,6 +189,7 @@ export function EventItem({
     case "agent_session:started":
     case "agent_session:completed":
     case "agent_session:failed":
+    case "agent_session:interrupted":
     case "agent_session:deleted":
       // Agent session events are grouped and rendered in EventList, not here
       return null

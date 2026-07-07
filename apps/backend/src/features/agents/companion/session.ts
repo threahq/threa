@@ -10,7 +10,7 @@ import { logger } from "../../../lib/logger"
 export type WithSessionResult =
   | { status: "skipped"; sessionId: string | null; reason: string }
   | { status: "completed"; sessionId: string; messagesSent: number; sentMessageIds: string[]; lastSeenSequence: bigint }
-  | { status: "failed"; sessionId: string }
+  | { status: "failed"; sessionId: string; willRetry: boolean }
 
 /**
  * Manages the complete lifecycle of an agent session.
@@ -38,6 +38,15 @@ export async function withCompanionSession(
     triggerMessageRevision?: number | null
     supersedesSessionId?: string | null
     rerunContext?: AgentSessionRerunContext
+    /**
+     * Queue retry accounting. When a turn throws and `attempt + 1 < maxAttempts`,
+     * the queue will retry the SAME session, so we emit a non-terminal
+     * `agent_session:interrupted` ("Interrupted, retrying…") instead of the
+     * terminal `agent_session:failed` — the card must not flash red before the
+     * retry lands. Absent (evals/tests/non-queue callers) → a failure is terminal.
+     */
+    attempt?: number
+    maxAttempts?: number
   },
   work: (
     session: AgentSession,
@@ -56,6 +65,8 @@ export async function withCompanionSession(
     triggerMessageRevision,
     supersedesSessionId,
     rerunContext,
+    attempt,
+    maxAttempts,
   } = params
 
   // Phase 1: Session setup (short-lived transaction)
@@ -227,6 +238,14 @@ export async function withCompanionSession(
       }
     }
 
+    // The queue will retry the same session while attempts remain, so a failure
+    // here is only *terminal* on the last attempt. On a retryable attempt we still
+    // mark the row FAILED (orphan cleanup scans RUNNING only, and the retry resumes
+    // FAILED→RUNNING) but emit a non-terminal `agent_session:interrupted` so the
+    // card shows "Interrupted, retrying…" instead of flashing red. When retry
+    // accounting is absent (non-queue callers), treat the failure as terminal.
+    const willRetry = attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
+
     await withTransaction(pool, async (db) => {
       const failed = await AgentSessionRepository.updateStatus(db, session.id, SessionStatuses.FAILED, {
         error: String(err),
@@ -234,29 +253,52 @@ export async function withCompanionSession(
       if (failed) {
         const steps = await AgentSessionRepository.findStepsBySession(db, session.id)
 
-        const streamEvent = await StreamEventRepository.insert(db, {
-          id: eventId(),
-          streamId,
-          eventType: "agent_session:failed",
-          payload: {
-            sessionId: session.id,
-            stepCount: steps.length,
-            error: String(err),
-            traceId: session.id,
-            failedAt: new Date().toISOString(),
-          },
-          actorId: personaId,
-          actorType: "persona",
-        })
-        await OutboxRepository.insert(db, "agent_session:failed", {
-          workspaceId,
-          streamId,
-          event: streamEvent,
-        })
+        if (willRetry) {
+          const streamEvent = await StreamEventRepository.insert(db, {
+            id: eventId(),
+            streamId,
+            eventType: "agent_session:interrupted",
+            payload: {
+              sessionId: session.id,
+              stepCount: steps.length,
+              attempt: attempt!,
+              maxAttempts: maxAttempts!,
+              error: String(err),
+              interruptedAt: new Date().toISOString(),
+            },
+            actorId: personaId,
+            actorType: "persona",
+          })
+          await OutboxRepository.insert(db, "agent_session:interrupted", {
+            workspaceId,
+            streamId,
+            event: streamEvent,
+          })
+        } else {
+          const streamEvent = await StreamEventRepository.insert(db, {
+            id: eventId(),
+            streamId,
+            eventType: "agent_session:failed",
+            payload: {
+              sessionId: session.id,
+              stepCount: steps.length,
+              error: String(err),
+              traceId: session.id,
+              failedAt: new Date().toISOString(),
+            },
+            actorId: personaId,
+            actorType: "persona",
+          })
+          await OutboxRepository.insert(db, "agent_session:failed", {
+            workspaceId,
+            streamId,
+            event: streamEvent,
+          })
+        }
       }
     }).catch((e) => logger.error({ err: e }, "Failed to mark session as failed"))
 
-    return { status: "failed" as const, sessionId: session.id }
+    return { status: "failed" as const, sessionId: session.id, willRetry }
   } finally {
     if (heartbeatInterval) clearInterval(heartbeatInterval)
   }

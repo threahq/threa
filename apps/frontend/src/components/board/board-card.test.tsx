@@ -88,7 +88,7 @@ function mountCard(post: BoardViewPost = makePost(), conversations: Record<strin
 /** A minimal cached agent-session event on the card's stream, seeded into IDB so
  *  the card's rail picks it up like the timeline does. */
 function sessionEvent(
-  eventType: "agent_session:started" | "agent_session:completed",
+  eventType: "agent_session:started" | "agent_session:completed" | "agent_session:interrupted",
   seconds: number,
   payload: Record<string, unknown>
 ): CachedEvent {
@@ -256,6 +256,32 @@ describe("BoardCard agent activity", () => {
     })
 
     expect(await screen.findByText(/3 steps/)).toBeTruthy()
+  })
+
+  it("shows 'Interrupted, retrying…' from a persisted interrupted event (survives refresh)", async () => {
+    // A retryable attempt failed: the backend persisted a non-terminal
+    // `agent_session:interrupted` event. Seeded into IDB with no live socket, it
+    // stands in for a page reload mid-retry — the card must read the persisted
+    // event as "retrying", never flash the terminal red "Session failed".
+    await db.events.bulkPut([
+      sessionEvent("agent_session:started", 30, {
+        sessionId: "sess_R",
+        triggerMessageId: "m_open",
+        personaName: "Ariadne",
+      }),
+      sessionEvent("agent_session:interrupted", 35, {
+        sessionId: "sess_R",
+        stepCount: 2,
+        attempt: 0,
+        maxAttempts: 5,
+        error: "Error: boom",
+      }),
+    ])
+    mountCard()
+
+    expect(await screen.findByText("Interrupted, retrying…")).toBeTruthy()
+    expect(screen.queryByText("Session failed")).toBeNull()
+    expect(await screen.findByText(/2 steps/)).toBeTruthy()
   })
 
   it("does NOT render a session whose invoking message is not a conversation member", async () => {

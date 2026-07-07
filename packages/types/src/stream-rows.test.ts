@@ -60,6 +60,7 @@ describe("STREAM_ROW_SPEC", () => {
         "agent_session:started",
         "agent_session:completed",
         "agent_session:failed",
+        "agent_session:interrupted",
         "agent_session:deleted",
         "memos:captured",
         "agent:follow_up_scheduled",

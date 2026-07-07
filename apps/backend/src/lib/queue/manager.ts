@@ -720,11 +720,15 @@ export class QueueManager {
     const startTime = process.hrtime.bigint()
     queueMessagesInFlight.inc({ queue: message.queueName })
 
+    const maxRetries = this.handlerMaxRetries.get(message.queueName) ?? this.maxRetries
+
     try {
       await handler({
         id: message.id,
         name: message.queueName,
         data: message.payload,
+        attempt: message.failedCount,
+        maxAttempts: maxRetries,
       })
 
       await this.completeMessage(message.id, workerId)
@@ -746,7 +750,6 @@ export class QueueManager {
       logger.warn({ messageId: message.id, queueName: message.queueName, err: error }, "Message processing failed")
 
       const newFailedCount = message.failedCount + 1
-      const maxRetries = this.handlerMaxRetries.get(message.queueName) ?? this.maxRetries
 
       if (newFailedCount >= maxRetries) {
         await this.moveMessageToDlq(message, workerId, error)

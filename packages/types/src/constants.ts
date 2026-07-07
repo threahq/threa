@@ -116,6 +116,7 @@ export const EVENT_TYPES = [
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",
+  "agent_session:interrupted",
   "agent_session:deleted",
   "messages:moved",
   "memos:captured",
@@ -158,6 +159,11 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",
+  // Non-terminal "Interrupted, retrying…" between queue retries. Like its sibling
+  // lifecycle events it is appended and delivered to every member (grouped into the
+  // session card, not a standalone row), so it takes a dense slot — a later
+  // completed/failed for the same session supersedes it (deriveStatus precedence).
+  "agent_session:interrupted",
   "agent_session:deleted",
   "messages:moved",
   "memos:captured",
@@ -566,6 +572,7 @@ export const AGENT_SESSION_EVENT_TYPES = [
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",
+  "agent_session:interrupted",
   "agent_session:deleted",
 ] as const
 export type AgentSessionEventType = (typeof AGENT_SESSION_EVENT_TYPES)[number]

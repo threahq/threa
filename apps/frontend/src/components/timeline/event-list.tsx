@@ -311,6 +311,7 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",
+  "agent_session:interrupted",
   "agent_session:deleted",
   // Cancellation is a patch on the scheduled card (flips it to "Cancelled" via
   // collectCancelledFollowUpIds), not a row of its own — renders null.
