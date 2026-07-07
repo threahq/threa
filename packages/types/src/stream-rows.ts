@@ -183,6 +183,7 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   "agent_session:started": AGENT_SESSION,
   "agent_session:completed": AGENT_SESSION,
   "agent_session:failed": AGENT_SESSION,
+  "agent_session:interrupted": AGENT_SESSION,
   "agent_session:deleted": AGENT_SESSION,
 
   // GAM memory capture — provenance carries the source `conversationId`.

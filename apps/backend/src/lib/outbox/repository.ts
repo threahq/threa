@@ -63,6 +63,7 @@ export type OutboxEventType =
   | "agent_session:started"
   | "agent_session:completed"
   | "agent_session:failed"
+  | "agent_session:interrupted"
   | "agent_session:deleted"
   | "user_preferences:updated"
   | "sidebar_config:updated"
@@ -137,6 +138,7 @@ export type StreamScopedEventType =
   | "agent_session:started"
   | "agent_session:completed"
   | "agent_session:failed"
+  | "agent_session:interrupted"
   | "agent_session:deleted"
   | "link_preview:ready"
   | "command:dispatched"
@@ -507,6 +509,10 @@ export interface AgentSessionCompletedOutboxPayload extends StreamScopedPayload 
 }
 
 export interface AgentSessionFailedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface AgentSessionInterruptedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -939,6 +945,7 @@ export interface OutboxEventPayloadMap {
   "agent_session:started": AgentSessionStartedOutboxPayload
   "agent_session:completed": AgentSessionCompletedOutboxPayload
   "agent_session:failed": AgentSessionFailedOutboxPayload
+  "agent_session:interrupted": AgentSessionInterruptedOutboxPayload
   "agent_session:deleted": AgentSessionDeletedOutboxPayload
   "user_preferences:updated": UserPreferencesUpdatedOutboxPayload
   "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
@@ -1035,6 +1042,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",
+  "agent_session:interrupted",
   "agent_session:deleted",
   "link_preview:ready",
   "command:dispatched",

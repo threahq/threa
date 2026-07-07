@@ -49,6 +49,11 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
       personaId,
       serverId,
       purpose: resolveTurnPurpose(job.data),
+      // Retry accounting so a failed-but-retryable turn emits a non-terminal
+      // "Interrupted, retrying…" event instead of a terminal `failed` that would
+      // flash red on the card before the retry completes.
+      attempt: job.attempt,
+      maxAttempts: job.maxAttempts,
     })
 
     if (result.status === "failed") {

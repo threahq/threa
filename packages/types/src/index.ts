@@ -903,6 +903,7 @@ export {
   type AgentSessionStartedPayload,
   type AgentSessionCompletedPayload,
   type AgentSessionFailedPayload,
+  type AgentSessionInterruptedPayload,
   type AgentSessionDeletedPayload,
   type AgentSessionProgressPayload,
   type AgentSessionSubstepPayload,

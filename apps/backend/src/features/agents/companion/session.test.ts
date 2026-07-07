@@ -210,6 +210,74 @@ describe("withCompanionSession", () => {
     expect(insertEventSpy).not.toHaveBeenCalled()
     expect(insertOutboxSpy).not.toHaveBeenCalled()
   })
+
+  async function runFailingSession(retryAccounting?: { attempt: number; maxAttempts: number }) {
+    const session = makeRunningSession()
+    mockTransactions()
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(session)
+    // The catch checks the latest status (not DELETED/SUPERSEDED) before failing.
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(session)
+    spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
+      makeRunningSession({ status: SessionStatuses.FAILED })
+    )
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
+    const insertEventSpy = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_fail" } as any)
+    const insertOutboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await withCompanionSession(
+      {
+        pool: {} as any,
+        triggerMessageId: "msg_trigger_1",
+        streamId: "stream_1",
+        personaId: "persona_1",
+        personaName: "Ariadne",
+        workspaceId: "ws_1",
+        serverId: "server_1",
+        initialSequence: 10n,
+        ...retryAccounting,
+      },
+      async () => {
+        throw new Error("boom")
+      }
+    )
+    return { result, insertEventSpy, insertOutboxSpy }
+  }
+
+  it("emits a non-terminal agent_session:interrupted on a retryable failure", async () => {
+    const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 0, maxAttempts: 5 })
+
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: true })
+    expect(insertEventSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        eventType: "agent_session:interrupted",
+        payload: expect.objectContaining({ sessionId: "session_1", attempt: 0, maxAttempts: 5, error: "Error: boom" }),
+      })
+    )
+    expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:interrupted", expect.anything())
+  })
+
+  it("emits terminal agent_session:failed on the last attempt", async () => {
+    const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 4, maxAttempts: 5 })
+
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false })
+    expect(insertEventSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "agent_session:failed" })
+    )
+    expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:failed", expect.anything())
+  })
+
+  it("treats a failure as terminal when retry accounting is absent (non-queue callers)", async () => {
+    const { result, insertEventSpy } = await runFailingSession()
+
+    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false })
+    expect(insertEventSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: "agent_session:failed" })
+    )
+  })
 })
 
 // The running-session slot is the partial unique index on

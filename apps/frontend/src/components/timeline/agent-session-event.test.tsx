@@ -106,6 +106,88 @@ describe("AgentSessionEvent", () => {
     expect(screen.getByText("Rerun after follow-up message edit • 1 step • 1.0s • 1 message sent")).toBeInTheDocument()
   })
 
+  describe("Interrupted / retrying", () => {
+    const startedEvent = createSessionEvent("agent_session:started", {
+      sessionId: "session_int",
+      personaId: "persona_1",
+      personaName: "Ariadne",
+      triggerMessageId: "msg_1",
+      startedAt: "2026-02-19T18:00:00.000Z",
+    })
+    const interruptedEvent = createSessionEvent("agent_session:interrupted", {
+      sessionId: "session_int",
+      stepCount: 2,
+      attempt: 0,
+      maxAttempts: 5,
+      error: "Error: boom",
+      interruptedAt: "2026-02-19T18:00:05.000Z",
+    })
+
+    it("renders the retrying state with the interrupted snapshot step count", () => {
+      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent]} />)
+
+      expect(screen.getByText("Interrupted, retrying…")).toBeInTheDocument()
+      expect(screen.getByText("2 steps")).toBeInTheDocument()
+      expect(screen.queryByText("Session failed")).not.toBeInTheDocument()
+    })
+
+    it("follows the live count while the retry is actively progressing", () => {
+      // Active retry ticking (its counter restarts from 1) → show the live count so
+      // it moves every step instead of freezing at the snapshot and reading as a hang.
+      renderEvent(
+        <AgentSessionEvent events={[startedEvent, interruptedEvent]} liveCounts={{ stepCount: 1, messageCount: 0 }} />
+      )
+
+      expect(screen.getByText("Interrupted, retrying…")).toBeInTheDocument()
+      expect(screen.getByText("1 step")).toBeInTheDocument()
+    })
+
+    it("falls back to the snapshot when the live rail reports 0 (backoff)", () => {
+      renderEvent(
+        <AgentSessionEvent events={[startedEvent, interruptedEvent]} liveCounts={{ stepCount: 0, messageCount: 0 }} />
+      )
+
+      expect(screen.getByText("2 steps")).toBeInTheDocument()
+    })
+
+    it("shows no Stop/Redirect actions while retrying (not running)", () => {
+      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent]} onStopSession={vi.fn()} />)
+
+      expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Redirect" })).not.toBeInTheDocument()
+    })
+
+    it("a later completed supersedes the interrupt (the successful retry wins)", () => {
+      const completedEvent = createSessionEvent("agent_session:completed", {
+        sessionId: "session_int",
+        stepCount: 3,
+        messageCount: 1,
+        duration: 1000,
+        completedAt: "2026-02-19T18:00:09.000Z",
+      })
+
+      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent, completedEvent]} />)
+
+      expect(screen.getByText("Session complete")).toBeInTheDocument()
+      expect(screen.queryByText("Interrupted, retrying…")).not.toBeInTheDocument()
+    })
+
+    it("a terminal failed supersedes the interrupt (retries exhausted)", () => {
+      const failedEvent = createSessionEvent("agent_session:failed", {
+        sessionId: "session_int",
+        stepCount: 2,
+        error: "Error: boom",
+        traceId: "session_int",
+        failedAt: "2026-02-19T18:00:09.000Z",
+      })
+
+      renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent, failedEvent]} />)
+
+      expect(screen.getByText("Session failed")).toBeInTheDocument()
+      expect(screen.queryByText("Interrupted, retrying…")).not.toBeInTheDocument()
+    })
+  })
+
   describe("Stop / Redirect actions", () => {
     const runningEvents: StreamEvent[] = [
       createSessionEvent("agent_session:started", {

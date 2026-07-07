@@ -159,6 +159,25 @@ export interface AgentSessionFailedPayload {
   failedAt: string
 }
 
+/**
+ * A turn attempt failed but the queue will retry it, so the session is NOT
+ * terminal (INV-57: transient retry state lives in the event log, not a column).
+ * Persisted + delivered like its sibling lifecycle events (a broadcast timeline
+ * row that groups into the session card) so the card shows "Interrupted, retrying…"
+ * both live and after a refresh. Overridden by a later `completed`/`failed` for the
+ * same session (deriveStatus precedence).
+ */
+export interface AgentSessionInterruptedPayload {
+  sessionId: string
+  stepCount: number
+  /** Zero-based attempt index that just failed (`failedCount`). */
+  attempt: number
+  /** Retry budget; the terminal `failed` fires when `attempt + 1 >= maxAttempts`. */
+  maxAttempts: number
+  error: string
+  interruptedAt: string
+}
+
 export interface AgentSessionDeletedPayload {
   sessionId: string
   deletedAt: string
