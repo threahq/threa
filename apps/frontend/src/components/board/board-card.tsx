@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import type { RefObject } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
+import type { VirtualizerHandle } from "virtua"
 import {
   Hash,
   FileEdit,
@@ -41,6 +43,7 @@ import { useBoardCardCollapse } from "@/hooks/use-board-card-collapse"
 import { conversationKeys, useSplitThread } from "@/hooks/use-conversations"
 import { useBoardCardMessages, useStableReplyWindow } from "@/hooks/use-board-card-messages"
 import { useInlineBranchComposer } from "@/components/board/use-inline-branch-composer"
+import { useBoardCardRevealAnchor } from "@/hooks/use-board-card-reveal-anchor"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 interface BoardCardProps {
@@ -50,6 +53,12 @@ interface BoardCardProps {
   contextLabel: string
   /** Resolved stream type, selecting the context glyph. */
   streamType: string | undefined
+  /** The board's owned scroll viewport — lets a middle-gap expand hold the newest
+   *  replies still instead of shoving them down (`useBoardCardRevealAnchor`).
+   *  Absent when the card renders outside the virtualized board (tests). */
+  scrollerRef?: RefObject<HTMLDivElement | null>
+  /** virtua's imperative handle for the board feed, paired with `scrollerRef`. */
+  listRef?: RefObject<VirtualizerHandle | null>
 }
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
@@ -70,7 +79,7 @@ const BRANCH_PREVIEW_CAP = 2
  * conversation (no reply indentation); a collapsed "N more messages" gap fills
  * in on click. The stream it lives in is the header locator, not a topic line.
  */
-export function BoardCard({ workspaceId, post, contextLabel, streamType }: BoardCardProps) {
+export function BoardCard({ workspaceId, post, contextLabel, streamType, scrollerRef, listRef }: BoardCardProps) {
   const { conversation } = post
   const { getActorName } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
@@ -86,6 +95,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   // Scopes text-selection quoting to this card so a selection routes into this
   // card's composer, not a sibling card's provider.
   const cardRef = useRef<HTMLDivElement>(null)
+  // Revealing the hidden middle ("N more messages") grows this card from OLDER
+  // content above the trailing replies; hold the card bottom fixed so the newest
+  // replies the reader is on don't jump (the board's `shift`, see the hook).
+  const beginReveal = useBoardCardRevealAnchor({ cardRef, scrollerRef, listRef })
 
   // Shared graph + structural index, needed BEFORE the rail hook: the inline
   // branch composer derives the branch thread streams (and any pending
@@ -601,7 +614,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                     {!expanded && hiddenCount > 0 && (
                       <button
                         type="button"
-                        onClick={() => setExpanded(true)}
+                        onClick={() => {
+                          beginReveal()
+                          setExpanded(true)
+                        }}
                         className="mt-3 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                       >
                         <ChevronDown className="h-3.5 w-3.5" />

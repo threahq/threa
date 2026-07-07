@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import type { VirtualizerHandle } from "virtua"
 import { AlertCircle, ArrowLeft, ArrowUp, LayoutGrid } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -396,6 +397,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // virtua then maintains scroll position across item measurement and above-fold
   // reflow, which is what the hand-rolled `useBoardScrollAnchor` used to do.
   const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<VirtualizerHandle | null>(null)
   const registerScroller = useCallback((node: HTMLDivElement | null) => {
     scrollerRef.current = node
   }, [])
@@ -545,7 +547,14 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         const { contextLabel, streamType } = labelsFor(row.post.conversation)
         return (
           <div key={row.key} className="pb-3">
-            <BoardCard workspaceId={workspaceId} post={row.post} contextLabel={contextLabel} streamType={streamType} />
+            <BoardCard
+              workspaceId={workspaceId}
+              post={row.post}
+              contextLabel={contextLabel}
+              streamType={streamType}
+              scrollerRef={scrollerRef}
+              listRef={listRef}
+            />
           </div>
         )
       }),
@@ -682,7 +691,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
               <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
             </div>
             {showFeed ? (
-              <BoardFeedList scrollRef={scrollerRef} startMargin={startMargin}>
+              <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
                 {renderedRows}
               </BoardFeedList>
             ) : (

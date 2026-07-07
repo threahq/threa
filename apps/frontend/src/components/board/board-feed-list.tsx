@@ -1,4 +1,4 @@
-import { Virtualizer } from "virtua"
+import { Virtualizer, type VirtualizerHandle } from "virtua"
 import type { ReactNode, RefObject } from "react"
 
 /**
@@ -16,6 +16,9 @@ import type { ReactNode, RefObject } from "react"
 export interface BoardFeedListProps {
   /** The scroller the board owns; virtua reads native scroll metrics off it. */
   scrollRef: RefObject<HTMLDivElement | null>
+  /** virtua's imperative handle, so a card can hold its scroll position across a
+   *  middle-gap expand via `scrollBy` (`useBoardCardRevealAnchor`). */
+  listRef?: RefObject<VirtualizerHandle | null>
   /** Height (px) of the composer sitting above the rows in the same scroller, so
    *  virtua's item offsets stay aligned. */
   startMargin: number
@@ -27,9 +30,9 @@ export interface BoardFeedListProps {
 // stays modest — raise only after profiling on a low-end device.
 const BUFFER_SIZE_PX = 800
 
-export function BoardFeedList({ scrollRef, startMargin, children }: BoardFeedListProps) {
+export function BoardFeedList({ scrollRef, listRef, startMargin, children }: BoardFeedListProps) {
   return (
-    <Virtualizer scrollRef={scrollRef} startMargin={startMargin} bufferSize={BUFFER_SIZE_PX}>
+    <Virtualizer ref={listRef} scrollRef={scrollRef} startMargin={startMargin} bufferSize={BUFFER_SIZE_PX}>
       {children}
     </Virtualizer>
   )
