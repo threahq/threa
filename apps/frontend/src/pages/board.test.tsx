@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
+import { Fragment, createElement } from "react"
+import * as boardFeedListModule from "@/components/board/board-feed-list"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threa/types"
@@ -143,6 +145,13 @@ function mountBoard(
 }
 
 beforeEach(() => {
+  // `virtua` renders zero items under jsdom's zero-height, no-op-ResizeObserver
+  // layout, so swap the board's virtualization seam for a passthrough that renders
+  // every child — these integration tests exercise the real cards; the windowing
+  // itself is verified in a browser.
+  vi.spyOn(boardFeedListModule, "BoardFeedList").mockImplementation(({ children }) =>
+    createElement(Fragment, null, children)
+  )
   // BoardCard resolves the stream label + author + emoji via the workspace caches.
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
@@ -267,13 +276,19 @@ describe("BoardPage", () => {
       ),
     ])
 
-    const todaySection = (await screen.findByText("Today")).closest("section")
-    const weekSection = screen.getByText("Earlier this week").closest("section")
-    expect(todaySection).not.toBeNull()
-    expect(weekSection).not.toBeNull()
-    // Each post sits under its own recency header.
-    expect(within(todaySection as HTMLElement).getByText("Fresh body")).toBeTruthy()
-    expect(within(weekSection as HTMLElement).getByText("Older body")).toBeTruthy()
+    // The feed is one flat virtualized row list, so recency headers and cards are
+    // siblings ordered by document position rather than nested in <section>s. Each
+    // card sits directly under its own header: Today → Fresh body → Earlier this
+    // week → Older body, in that order.
+    const todayHeader = await screen.findByText("Today")
+    const freshBody = screen.getByText("Fresh body")
+    const weekHeader = screen.getByText("Earlier this week")
+    const olderBody = screen.getByText("Older body")
+    const precedes = (a: HTMLElement, b: HTMLElement) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(precedes(todayHeader, freshBody)).toBe(true)
+    expect(precedes(freshBody, weekHeader)).toBe(true)
+    expect(precedes(weekHeader, olderBody)).toBe(true)
   })
 
   it("shows an error state with a retry, not the empty state, when the fetch fails", async () => {
