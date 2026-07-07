@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { AlertCircle, ArrowLeft, ArrowUp, LayoutGrid } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThreadPanelSlot } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
@@ -21,7 +20,6 @@ import {
 import { useStableBoardView, type BoardViewFilter, type BoardViewPost } from "@/hooks/use-stable-board-view"
 import { selectLabeledStreamIds } from "@/hooks/use-labels"
 import { useBoardStreamSubscriptions } from "@/hooks/use-board-stream-subscriptions"
-import { BOARD_CARD_ATTR, useBoardScrollAnchor } from "@/hooks/use-board-scroll-anchor"
 import {
   useWorkspaceConversations,
   useBoardExclusions,
@@ -33,6 +31,7 @@ import { useBoardRailsReady } from "@/hooks/use-board-card-messages"
 import { useConversationGraphReady } from "@/hooks/use-conversation-graph"
 import { SKELETON_DELAY_MS } from "@/contexts/coordinated-loading-context"
 import { BoardCard } from "@/components/board/board-card"
+import { BoardFeedList } from "@/components/board/board-feed-list"
 import { BoardComposer } from "@/components/board/board-composer"
 import { BoardFilterBar } from "@/components/board/board-filter-bar"
 import {
@@ -387,26 +386,45 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const streamById = useMemo(() => new Map(streams.map((s) => [s.id, s])), [streams])
   const sections = useMemo(() => groupByRecency(posts, activityById, Date.now()), [posts, activityById])
 
-  // Resolve the Radix scroll viewport (the scroller) once it mounts, for the
-  // scroll anchor and the pill's scroll-to-top reveal.
-  const scrollRootRef = useRef<HTMLDivElement>(null)
-  const [viewport, setViewport] = useState<HTMLElement | null>(null)
-  useEffect(() => {
-    setViewport(scrollRootRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]") ?? null)
+  // The board feed is virtualized (`virtua`): ~430 active cards each mount
+  // multiple ref-counted liveQueries + observers, so windowing to the visible
+  // set is the perf floor. We own the scroller (a plain overflow div) and hand
+  // its ref to the Virtualizer via `scrollRef`, exactly like the timeline —
+  // virtua then maintains scroll position across item measurement and above-fold
+  // reflow, which is what the hand-rolled `useBoardScrollAnchor` used to do.
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const registerScroller = useCallback((node: HTMLDivElement | null) => {
+    scrollerRef.current = node
   }, [])
-  // Pass the whole filter as the reset key so changing lens OR scope drops the
-  // previous view's scroll anchor and starts the new (often much shorter)
-  // subset at the top, pre-paint — otherwise a viewer scrolled down the All
-  // wall who taps Decisions lands past the end of a one-card list.
-  useBoardScrollAnchor(
-    viewport,
-    `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}`
-  )
+
+  // The composer sits above the virtualized rows inside the same scroller, so
+  // virtua must know how much space it occupies (`startMargin`) or its item
+  // offsets are off by the composer's height. Measured live — the composer grows
+  // when opened/typed — via a ResizeObserver on its wrapper.
+  const composerRef = useRef<HTMLDivElement>(null)
+  const [startMargin, setStartMargin] = useState(0)
+  useLayoutEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    const measure = () => setStartMargin(el.offsetHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  // Changing lens OR scope replaces the feed with a different (often much
+  // shorter) subset, so jump to the top pre-paint — otherwise a viewer scrolled
+  // down the All wall who taps Decisions lands past the end of a one-card list.
+  const resetKey = `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}`
+  useLayoutEffect(() => {
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0
+  }, [resetKey])
 
   const revealNew = () => {
     // Jump to the top first so the freshly-committed cards flow in where the
-    // viewer can see them; the anchor stays out of the way near the top.
-    if (viewport) viewport.scrollTop = 0
+    // viewer can see them, then commit the buffered order.
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0
     commit()
   }
 
@@ -455,96 +473,120 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // resolved) so the first paint is complete; the skeleton earns its slot only
   // past SKELETON_DELAY_MS of genuine loading (cold device), never as a flash on
   // a warm refresh. Empty state only once IDB has resolved to genuinely nothing.
-  let content
-  if (posts.length > 0 && revealReady) {
-    content = (
-      <div className="flex flex-col">
-        {sections.map((section) => (
-          <section key={section.label} className="mb-4">
-            <h2 className="px-1 pb-1.5 pt-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              {section.label}
-            </h2>
-            <div className="flex flex-col gap-3">
-              {section.posts.map((post) => {
-                const { contextLabel, streamType } = labelsFor(post.conversation)
-                return (
-                  <div key={post.conversation.id} {...{ [BOARD_CARD_ATTR]: post.conversation.id }}>
-                    <BoardCard
-                      workspaceId={workspaceId}
-                      post={post}
-                      contextLabel={contextLabel}
-                      streamType={streamType}
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-        ))}
-        {hasNextPage && (
-          <div className="mt-1 flex flex-col items-center gap-1">
-            {isFetchNextPageError && <p className="text-xs text-destructive">Couldn't load more.</p>}
-            <Button
-              variant="ghost"
-              onClick={() => fetchNextPage()}
-              disabled={isFetchingNextPage}
-              className="min-h-11 px-6"
-            >
-              {loadMoreLabel}
-            </Button>
-          </div>
-        )}
+  const showFeed = posts.length > 0 && revealReady
+
+  // The virtualized feed is ONE flat row list — recency-section headers
+  // interleaved with their cards, plus a trailing load-more — so the whole board
+  // is a single <Virtualizer> instead of one per section (a section can hold
+  // hundreds of cards, so per-section virtualization would defeat the purpose).
+  // Inter-card spacing and section separation live on the rows themselves (a
+  // flat list has no per-section flex-gap to lean on).
+  type FeedRow =
+    | { kind: "header"; key: string; label: string; first: boolean }
+    | { kind: "card"; key: string; post: BoardViewPost }
+    | { kind: "load-more"; key: string }
+  const feedRows = useMemo<FeedRow[]>(() => {
+    if (!showFeed) return []
+    const rows: FeedRow[] = []
+    sections.forEach((section, i) => {
+      rows.push({ kind: "header", key: `h:${section.label}`, label: section.label, first: i === 0 })
+      for (const post of section.posts) rows.push({ kind: "card", key: post.conversation.id, post })
+    })
+    if (hasNextPage) rows.push({ kind: "load-more", key: "load-more" })
+    return rows
+  }, [showFeed, sections, hasNextPage])
+
+  const renderFeedRow = (row: FeedRow): ReactNode => {
+    if (row.kind === "header") {
+      return (
+        <h2
+          key={row.key}
+          className={cn(
+            "px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+            row.first ? "pt-2" : "pt-6"
+          )}
+        >
+          {row.label}
+        </h2>
+      )
+    }
+    if (row.kind === "load-more") {
+      return (
+        <div key={row.key} className="mt-1 flex flex-col items-center gap-1 pb-3">
+          {isFetchNextPageError && <p className="text-xs text-destructive">Couldn't load more.</p>}
+          <Button
+            variant="ghost"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+            className="min-h-11 px-6"
+          >
+            {loadMoreLabel}
+          </Button>
+        </div>
+      )
+    }
+    const { contextLabel, streamType } = labelsFor(row.post.conversation)
+    return (
+      <div key={row.key} className="pb-3">
+        <BoardCard workspaceId={workspaceId} post={row.post} contextLabel={contextLabel} streamType={streamType} />
       </div>
     )
-  } else if (isError && posts.length === 0) {
-    // A failed fetch must read as a failure, not as the empty state's upbeat
-    // copy — but cached content mid-reveal still outranks it (the hold above
-    // resolves in one IDB round-trip; erroring over a full cache would flash).
-    content = (
-      <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-        <AlertCircle className="h-8 w-8 text-destructive" />
-        <p className="text-sm font-medium">Couldn't load the board</p>
-        <p className="max-w-sm text-sm text-muted-foreground">Something went wrong fetching your conversations.</p>
-        <Button variant="outline" onClick={() => refetch()} className="min-h-11">
-          Try again
-        </Button>
-      </div>
-    )
-  } else if (loading) {
-    content = skeletonVisible ? (
-      <div className="flex flex-col gap-3">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="rounded-xl border bg-card p-4">
-            <Skeleton className="h-3 w-1/3" />
-            <div className="mt-3 flex items-start gap-2">
-              <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
-              <div className="min-w-0 flex-1 space-y-2">
-                <Skeleton className="h-3.5 w-1/4" />
-                <Skeleton className="h-3 w-4/5" />
+  }
+
+  // Non-feed states (error / skeleton / empty) render as a single centered block
+  // below the composer — nothing to virtualize.
+  let stateContent: ReactNode = null
+  if (!showFeed) {
+    if (isError && posts.length === 0) {
+      // A failed fetch must read as a failure, not as the empty state's upbeat
+      // copy — but cached content mid-reveal still outranks it (the hold above
+      // resolves in one IDB round-trip; erroring over a full cache would flash).
+      stateContent = (
+        <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+          <AlertCircle className="h-8 w-8 text-destructive" />
+          <p className="text-sm font-medium">Couldn't load the board</p>
+          <p className="max-w-sm text-sm text-muted-foreground">Something went wrong fetching your conversations.</p>
+          <Button variant="outline" onClick={() => refetch()} className="min-h-11">
+            Try again
+          </Button>
+        </div>
+      )
+    } else if (loading) {
+      stateContent = skeletonVisible ? (
+        <div className="flex flex-col gap-3 pt-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="rounded-xl border bg-card p-4">
+              <Skeleton className="h-3 w-1/3" />
+              <div className="mt-3 flex items-start gap-2">
+                <Skeleton className="h-8 w-8 shrink-0 rounded-[8px]" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-3.5 w-1/4" />
+                  <Skeleton className="h-3 w-4/5" />
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
-    ) : null
-  } else {
-    // A filtered-empty view is the FILTERS coming up empty, never the board
-    // hiding things — so it always offers the one-tap way back to everything.
-    const scoped = hasFilterParams
-    const isFiltered = lens !== DEFAULT_BOARD_LENS || scoped
-    const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
-    content = (
-      <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-        <LayoutGrid className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm font-medium">{copy.title}</p>
-        <p className="max-w-sm text-sm text-muted-foreground">{copy.body}</p>
-        {isFiltered && (
-          <Link to={boardHome} className={cn(buttonVariants({ variant: "outline" }), "mt-1 min-h-11")}>
-            Show everything
-          </Link>
-        )}
-      </div>
-    )
+          ))}
+        </div>
+      ) : null
+    } else {
+      // A filtered-empty view is the FILTERS coming up empty, never the board
+      // hiding things — so it always offers the one-tap way back to everything.
+      const scoped = hasFilterParams
+      const isFiltered = lens !== DEFAULT_BOARD_LENS || scoped
+      const copy = scoped ? SCOPED_EMPTY_COPY : LENS_EMPTY_COPY[lens]
+      stateContent = (
+        <div className="flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+          <LayoutGrid className="h-8 w-8 text-muted-foreground" />
+          <p className="text-sm font-medium">{copy.title}</p>
+          <p className="max-w-sm text-sm text-muted-foreground">{copy.body}</p>
+          {isFiltered && (
+            <Link to={boardHome} className={cn(buttonVariants({ variant: "outline" }), "mt-1 min-h-11")}>
+              Show everything
+            </Link>
+          )}
+        </div>
+      )
+    }
   }
 
   const boardColumn = (
@@ -582,30 +624,51 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}
       </span>
       <div className="relative flex-1 overflow-hidden">
-        <ScrollArea ref={scrollRootRef} className="h-full [&>div>div]:!block [&>div>div]:!w-full">
-          <main className="mx-auto w-full max-w-[800px] px-2 py-3 sm:px-4">
-            <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
-            {/* Sticky banner row between the composer and the feed: an in-flow
-                row (its own height, so it never overlaps the first card's tap
-                targets) that sticks to the top edge once scrolled in, keeping the
-                reveal reachable. The transparent row lets the feed scroll behind
-                it; only the centered button takes taps. */}
-            {newCount > 0 && (
-              <div className="pointer-events-none sticky top-2 z-10 mb-1 flex min-h-11 items-center justify-center">
-                <Button
-                  size="sm"
-                  onClick={revealNew}
-                  aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
-                  className="pointer-events-auto min-h-11 gap-1.5 rounded-full px-4 shadow-md"
-                >
-                  <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-                  {newCount} new
-                </Button>
-              </div>
+        {/* Owned scroller (a plain overflow div, like the timeline): virtua drives
+            it via `scrollRef`, so scroll decisions read native metrics with no
+            library tug-of-war. `overflowAnchor: none` keeps the browser's own
+            scroll anchoring from fighting virtua. `data-board-scroll-viewport` is
+            the IntersectionObserver root the cards' sticky-header sentinel reads. */}
+        <div
+          ref={registerScroller}
+          data-board-scroll-viewport
+          className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
+          style={{ overflowAnchor: "none" }}
+        >
+          <main className="mx-auto w-full max-w-[800px] px-2 sm:px-4">
+            {/* Composer sits above the virtualized rows in the same scroller; its
+                measured height feeds virtua's `startMargin` so item offsets stay
+                aligned. It is not virtualized, so its open/draft state survives a
+                scroll away and back. */}
+            <div ref={composerRef} className="pt-3">
+              <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
+            </div>
+            {showFeed ? (
+              <BoardFeedList scrollRef={scrollerRef} startMargin={startMargin}>
+                {feedRows.map(renderFeedRow)}
+              </BoardFeedList>
+            ) : (
+              stateContent
             )}
-            {content}
           </main>
-        </ScrollArea>
+        </div>
+        {/* The "N new" pill floats over the top of the scroller — outside it, so it
+            can't be swallowed as a virtualized row — and stays reachable while
+            cards accumulate behind it. Clicking scrolls to the top and commits the
+            buffered order (revealNew). Transparent row; only the button takes taps. */}
+        {newCount > 0 && (
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+            <Button
+              size="sm"
+              onClick={revealNew}
+              aria-label={`Show ${newCount} new ${newCount === 1 ? "post" : "posts"}`}
+              className="pointer-events-auto min-h-11 gap-1.5 rounded-full px-4 shadow-md"
+            >
+              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+              {newCount} new
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )

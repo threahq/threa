@@ -386,7 +386,10 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   useEffect(() => {
     const sentinel = stuckSentinelRef.current
     if (!sentinel || typeof IntersectionObserver === "undefined") return
-    const root = sentinel.closest("[data-radix-scroll-area-viewport]")
+    // The board feed scroller (`data-board-scroll-viewport`, virtualized) or a
+    // Radix scroll viewport (the conversation panel). Match either so the pinned-
+    // header elevation resolves against the real scroll root in both surfaces.
+    const root = sentinel.closest("[data-board-scroll-viewport],[data-radix-scroll-area-viewport]")
     const observer = new IntersectionObserver(([entry]) => setHeaderStuck(!entry.isIntersecting), { root })
     observer.observe(sentinel)
     return () => observer.disconnect()
