@@ -77,6 +77,12 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
   const conversationService = useConversationService()
   const { openPanel, getPanelUrl } = usePanel()
   const [expanded, setExpanded] = useState(false)
+  // A running session's Redirect bumps this nonce to expand + focus the card's
+  // reply composer in place (its editor is collapsed until opened, so there's no
+  // DOM zone to walk to). A counter, not a boolean, so a repeat Redirect re-opens
+  // it after a manual collapse.
+  const [openReplySignal, setOpenReplySignal] = useState(0)
+  const openReplyComposer = useCallback(() => setOpenReplySignal((n) => n + 1), [])
   // Scopes text-selection quoting to this card so a selection routes into this
   // card's composer, not a sibling card's provider.
   const cardRef = useRef<HTMLDivElement>(null)
@@ -584,6 +590,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                     renderBranchMessage={renderBranchMessage}
                     renderBranchTail={inlineComposer.renderBranchTail}
                     renderAfterMessage={inlineComposer.renderAfterMessage}
+                    onRedirectSession={openReplyComposer}
                   />
                 ) : (
                   <>
@@ -625,6 +632,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                       renderBranchMessage={renderBranchMessage}
                       renderBranchTail={inlineComposer.renderBranchTail}
                       renderAfterMessage={inlineComposer.renderAfterMessage}
+                      onRedirectSession={openReplyComposer}
                     />
                   </>
                 )}
@@ -634,6 +642,7 @@ export function BoardCard({ workspaceId, post, contextLabel, streamType }: Board
                 workspaceId={workspaceId}
                 post={post}
                 hostStreamType={streamType}
+                openReplySignal={openReplySignal}
                 // The conversation's most-recently-active stream — the latest displayed
                 // reply's own stream (a thread under the root), INCLUDING the viewer's own
                 // pending reply and any expand-backfilled rows, so a continuation follows

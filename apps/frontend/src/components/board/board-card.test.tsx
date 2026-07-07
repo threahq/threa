@@ -22,6 +22,8 @@ import * as userProfileModule from "@/components/user-profile"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
+import * as inlineComposerModule from "@/components/board/board-inline-composer"
+import { spyOnExport } from "@/test/spy"
 
 const WS = "ws_1"
 const STREAM = "stream_1"
@@ -282,6 +284,43 @@ describe("BoardCard agent activity", () => {
     expect(await screen.findByText("Interrupted, retrying…")).toBeTruthy()
     expect(screen.queryByText("Session failed")).toBeNull()
     expect(await screen.findByText(/2 steps/)).toBeTruthy()
+  })
+
+  it("shows Stop + Redirect on a running session, and Redirect opens the card composer in place", async () => {
+    const user = userEvent.setup()
+    // A running session's row mounts the live progress rail (useAgentActivity),
+    // which reads the socket — give it a fake one.
+    const { socket } = fakeSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    // Prevent the real editor mounting when Redirect opens the composer — the
+    // wiring under test is Redirect → open card composer, not editor mechanics.
+    spyOnExport(inlineComposerModule, "InlineComposerForm").mockReturnValue(((props: { placeholder: string }) => (
+      <div data-testid="reply-composer-open">{props.placeholder}</div>
+    )) as never)
+
+    // A running session (started, no terminal event) triggered by the card's
+    // opening message: the board card must expose the same Stop/Redirect pair the
+    // timeline card does.
+    await db.events.bulkPut([
+      sessionEvent("agent_session:started", 30, {
+        sessionId: "sess_run",
+        triggerMessageId: "m_open",
+        personaName: "Ariadne",
+      }),
+    ])
+    mountCard()
+
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy()
+    expect(screen.getByRole("button", { name: "Redirect" })).toBeTruthy()
+    // Composer starts collapsed to its resting affordance.
+    expect(screen.queryByTestId("reply-composer-open")).toBeNull()
+
+    await user.click(screen.getByRole("button", { name: "Redirect" }))
+
+    // Redirect opened the card's own composer in place (no navigation) and the
+    // fold-in hint confirms the running session will absorb the next message.
+    expect(await screen.findByTestId("reply-composer-open")).toBeTruthy()
+    expect(screen.getByText("Ariadne will fold your message into the current work")).toBeTruthy()
   })
 
   it("does NOT render a session whose invoking message is not a conversation member", async () => {
