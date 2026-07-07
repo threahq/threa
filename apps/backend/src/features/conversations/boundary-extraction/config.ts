@@ -49,6 +49,9 @@ Messages carry an age like "(5m ago)" or "(2d ago)" and conversations carry "las
 ## Conversation summaries
 Conversations may carry a "covers:" summary of what has actually been discussed in them. Judge continuity against the summary, not just the title: continue a conversation only when the new message advances something the summary (or its recent messages) actually covers. A summary that already spans several loosely-related subjects is evidence the conversation has been over-extended — do NOT use its breadth as a reason to attach yet another subject; prefer a new conversation and let reassignment split things later.
 
+## A shared name is not a shared topic
+A person, product, model, project, or place named in the message is a SUBJECT the conversation is about — not the conversation itself. Two messages that both mention the same name are not the same conversation on that basis alone. "Fable is cheaper than GPT now", "does Fable handle Swedish well?", and "Fable is down again" are three separate conversations that merely share the word "Fable". Continue a conversation only when the new message advances the SAME question or aspect its summary and recent messages are actually about; a different question about the same recurring name OPENS A NEW conversation. This is the entity-magnet trap: a conversation whose title is a bare recurring name silently absorbs every later mention of that name, exactly like a catch-all label — resist it the same way you resist a busy live blob swallowing a focused topic.
+
 ## Choosing a conversation
 Decide in this order:
 
@@ -72,7 +75,7 @@ A message can belong to more than one conversation. If this new message clearly 
 If this new message reveals that one or more of the *Recent Messages* or messages from the *Active Conversations* was placed in the wrong conversation, move them. Each move needs a one-line reason. You can ONLY move messages whose IDs appear in this prompt — never any other. Examples of when to reassign:
 - The new message reveals the prior 1-2 messages were the start of a different topic (sandwich case).
 - The new message reopens a conversation that was prematurely marked resolved.
-- The new message shows two adjacent conversations are actually the same specific topic — move the smaller one into the larger. Same participants, same session, or "both are casual chat" is NOT the same topic: never fold a focused conversation into a broader or busier one, and never merge to tidy up. When in doubt, do not merge.
+- The new message shows two adjacent conversations are actually the same specific topic — move the smaller one into the larger. Same participants, same session, both naming the same person/product/model/project, or "both are casual chat" is NOT the same topic: never fold a focused conversation into a broader or busier one, and never merge to tidy up. When in doubt, do not merge.
 
 Reassignment is *the* mechanism for fixing classification mistakes, and it works in both directions — it is how conversations settle as more context arrives:
 - MERGE: the new message shows two threads are really one topic, or that an earlier message belongs with the current exchange — move it in.
@@ -94,6 +97,7 @@ Use it whenever the new message gives you evidence the prior placement was wrong
 When you set newConversationTopic, write a short title of 2-5 words that names the topic itself. Never exceed 5 words.
 - Lead with the subject. Do NOT add framing like "Discussion about", "Chat about", "Conversation regarding", "Thoughts on", "Questions about", and do NOT describe the tone ("Casual chat", "Quick question", "Banter about"). That a conversation discusses something is already implied — name the thing, not the act of discussing it.
 - Never use a vague catch-all label as a title: "General chat", "Reaction message", "Random", "Misc", "Off-topic", and the like name nothing and become a magnet that wrongly absorbs later messages. Always name the concrete subject the messages are actually about; if a short opener has no subject of its own, name what it is reacting to.
+- Name the specific aspect, not a bare recurring name. When the topic is one facet of a person, product, model, or project that comes up repeatedly, put the facet in the title ("Fable-priser", "Fable på svenska"), never the bare name alone — a lone recurring proper noun is a magnet that wrongly absorbs every later mention of it, the same failure as a catch-all label.
 - Do NOT state which language the conversation is in (never write "in Swedish", "auf Deutsch", etc.); that label is noise next to the conversation.
 - Write the title in the dominant language of the conversation, not English by default. If the participants are talking in Swedish, the title is in Swedish; if in Japanese, in Japanese. When the messages mix languages, follow the language the topic is actually discussed in and reuse the participants' own phrasing.
 - Keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation. Never translate, localize, or re-spell them — carry the participants' own words into the title verbatim.
