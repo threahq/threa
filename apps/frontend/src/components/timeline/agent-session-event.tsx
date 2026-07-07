@@ -195,14 +195,20 @@ function buildStatusConfig(
     case "retrying": {
       // Non-terminal: a turn attempt failed and the queue is retrying the same
       // session. Amber (not the red terminal-fail) and a spinner, so it reads as
-      // "in progress, hang on" rather than "done, broken". The step count is the
-      // interrupted payload's snapshot (steps reached before the failure) — the
-      // live rail reports 0 during backoff (the synthetic started-event entry) and
-      // restarts from 0 on the retry, so the snapshot is the stable, honest number.
-      const steps = interruptedPayload?.stepCount ?? 0
+      // "in progress, hang on" rather than "done, broken". Step count is max(live,
+      // snapshot): the interrupted payload's snapshot (steps reached before the
+      // failure) is the floor, and once the retry resumes and its progress ticks
+      // climb past it the count moves again — so a long retry shows liveness (a
+      // live substep too, below) instead of a frozen "N steps" that reads as a hang.
+      // The live rail reports 0 during backoff (the synthetic started-event entry),
+      // so max keeps the count from dropping back to 0 there.
+      const steps = Math.max(liveCounts?.stepCount ?? 0, interruptedPayload?.stepCount ?? 0)
       const parts: string[] = []
       if (rerunReasonLabel) {
         parts.push(rerunReasonLabel)
+      }
+      if (rerunReasonDetail) {
+        parts.push(rerunReasonDetail)
       }
       parts.push(`${steps} ${steps === 1 ? "step" : "steps"}`)
       return {
@@ -327,7 +333,10 @@ export function AgentSessionEvent({
   // (roadmap 2.1), so the buttons stay stable for the entire run (INV-21).
   const showSessionActions = status === "running"
   const showRedirectHint = showSessionActions && redirectHintVisible
-  const showLiveSubstep = status === "running" && !!liveSubstep
+  // Substep also shows while retrying — a resumed attempt streams its live phase
+  // text, which is what keeps the amber "Interrupted, retrying…" card from reading
+  // as a hang during a long retry.
+  const showLiveSubstep = (status === "running" || status === "retrying") && !!liveSubstep
   const personaName = startedPayload?.personaName ?? "The agent"
 
   return (

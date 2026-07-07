@@ -131,6 +131,25 @@ describe("AgentSessionEvent", () => {
       expect(screen.queryByText("Session failed")).not.toBeInTheDocument()
     })
 
+    it("shows live progress once the retry climbs past the interrupted snapshot", () => {
+      // Active retry ticking past where it failed (snapshot 2) → live 5 wins, so the
+      // card shows movement instead of a frozen count.
+      renderEvent(
+        <AgentSessionEvent events={[startedEvent, interruptedEvent]} liveCounts={{ stepCount: 5, messageCount: 1 }} />
+      )
+
+      expect(screen.getByText("Interrupted, retrying…")).toBeInTheDocument()
+      expect(screen.getByText("5 steps")).toBeInTheDocument()
+    })
+
+    it("keeps the snapshot as a floor when the live rail reports 0 (backoff)", () => {
+      renderEvent(
+        <AgentSessionEvent events={[startedEvent, interruptedEvent]} liveCounts={{ stepCount: 0, messageCount: 0 }} />
+      )
+
+      expect(screen.getByText("2 steps")).toBeInTheDocument()
+    })
+
     it("shows no Stop/Redirect actions while retrying (not running)", () => {
       renderEvent(<AgentSessionEvent events={[startedEvent, interruptedEvent]} onStopSession={vi.fn()} />)
 
