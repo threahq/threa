@@ -1,5 +1,5 @@
 import { useCallback, useState, type ReactNode } from "react"
-import { Check, ChevronUp, Layers, Loader2, X } from "lucide-react"
+import { Check, ChevronUp, Layers, Loader2, Plus, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -7,6 +7,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
@@ -262,61 +263,70 @@ export function ConversationOverlayRow({
           </span>
         )}
         {!selectionActive && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="Correct conversation for this message"
-              title="Correct conversation"
-              className={cn(
-                "reveal-actions absolute left-1 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full",
-                "border border-border/60 bg-popover shadow-sm sm:flex",
-                isPending && "opacity-100"
-              )}
-            >
-              {isPending ? (
-                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-              ) : (
-                <span
-                  aria-hidden
-                  className="h-2 w-2 rounded-full"
-                  style={{
-                    backgroundColor:
-                      colorIndex != null ? conversationColor(colorIndex) : "hsl(var(--muted-foreground) / 0.5)",
-                  }}
-                />
-              )}
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" side="right" className="w-64">
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-              This message belongs to…
-            </DropdownMenuLabel>
-            {model.conversations.map((candidate) => {
-              const isCurrent = candidate.id === annotation.conversationId
-              const candidateColorIndex = model.colorIndexById.get(candidate.id) ?? 0
-              return (
-                <DropdownMenuItem
-                  key={candidate.id}
-                  disabled={isCurrent || isPending}
-                  onSelect={() => onReassignMessage(messageId, candidate.id)}
-                  className="gap-2"
-                >
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Correct conversation for this message"
+                title="Correct conversation"
+                className={cn(
+                  "reveal-actions absolute left-1 top-1/2 z-10 hidden h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full",
+                  "border border-border/60 bg-popover shadow-sm sm:flex",
+                  isPending && "opacity-100"
+                )}
+              >
+                {isPending ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                ) : (
                   <span
                     aria-hidden
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: conversationColor(candidateColorIndex) }}
+                    className="h-2 w-2 rounded-full"
+                    style={{
+                      backgroundColor:
+                        colorIndex != null ? conversationColor(colorIndex) : "hsl(var(--muted-foreground) / 0.5)",
+                    }}
                   />
-                  <span className="flex-1 truncate">{candidate.topicSummary || "Untitled conversation"}</span>
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {candidate.messageIds.length}
-                  </span>
-                  {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-                </DropdownMenuItem>
-              )
-            })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                )}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" side="right" className="w-64">
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                This message belongs to…
+              </DropdownMenuLabel>
+              {model.conversations.map((candidate) => {
+                const isCurrent = candidate.id === annotation.conversationId
+                const candidateColorIndex = model.colorIndexById.get(candidate.id) ?? 0
+                return (
+                  <DropdownMenuItem
+                    key={candidate.id}
+                    disabled={isCurrent || isPending}
+                    onSelect={() => onReassignMessage(messageId, candidate.id)}
+                    className="gap-2"
+                  >
+                    <span
+                      aria-hidden
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: conversationColor(candidateColorIndex) }}
+                    />
+                    <span className="flex-1 truncate">{candidate.topicSummary || "Untitled conversation"}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {candidate.messageIds.length}
+                    </span>
+                    {isCurrent && <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                  </DropdownMenuItem>
+                )
+              })}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                disabled={isPending}
+                onSelect={() => onReassignMessage(messageId, null)}
+                className="gap-2"
+              >
+                <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="flex-1 truncate">New conversation</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
     </div>
@@ -383,6 +393,22 @@ export function ConversationPickerDrawer({
               </button>
             )
           })}
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() => {
+              if (isPending) return
+              onOpenChange(false)
+              onReassignMessage(messageId, null)
+            }}
+            className={cn(
+              "mt-1 flex w-full items-center gap-3 rounded-lg border-t border-border/60 px-3 py-2.5 text-left text-sm transition-colors",
+              isPending ? "opacity-60" : "active:bg-muted/80"
+            )}
+          >
+            <Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">New conversation</span>
+          </button>
         </div>
       </DrawerContent>
     </Drawer>

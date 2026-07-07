@@ -120,8 +120,11 @@ export interface ConversationOverlayContext {
   /** Conversation being focused via the in-view panel; others dim. */
   focusedConversationId: string | null
   onToggleFocus: (conversationId: string) => void
-  /** User correction: move a message's primary membership. */
-  onReassignMessage: (messageId: string, toConversationId: string) => void
+  /**
+   * User correction: move a message's primary membership to an existing
+   * conversation, or to a freshly minted one when `toConversationId` is null.
+   */
+  onReassignMessage: (messageId: string, toConversationId: string | null) => void
   /**
    * messageIds with an in-flight correction, for pending affordance state.
    * A set rather than the latest mutation's variables: two rapid corrections

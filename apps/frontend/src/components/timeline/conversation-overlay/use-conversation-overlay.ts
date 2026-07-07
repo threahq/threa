@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import type { ConversationWithStaleness } from "@threa/types"
-import { useConversations, useReassignConversationMessage } from "@/hooks/use-conversations"
+import {
+  useConversations,
+  useReassignConversationMessage,
+  useReassignMessagesToConversation,
+} from "@/hooks/use-conversations"
 import { buildConversationOverlayModel, type ConversationOverlayContext } from "./model"
 
 export interface ConversationOverlayState {
@@ -46,6 +50,10 @@ export function useConversationOverlay({
   const { conversations } = useConversations(workspaceId, streamId, { enabled })
   const [focusedConversationId, setFocusedConversationId] = useState<string | null>(null)
   const reassign = useReassignConversationMessage(workspaceId, streamId)
+  // "New conversation" reuses the bulk endpoint with a single id and a null
+  // target — the only path that mints a destination; the single-message
+  // endpoint moves to an existing conversation only.
+  const reassignToNew = useReassignMessagesToConversation(workspaceId, streamId)
 
   // Focus is ephemeral view state: drop it when the overlay closes or the
   // user navigates to another stream.
@@ -118,25 +126,36 @@ export function useConversationOverlay({
   // decorated rows' pending affordances.
   const [pendingMessageIds, setPendingMessageIds] = useState<ReadonlySet<string>>(() => new Set())
 
-  const { mutate } = reassign
+  const { mutate: mutateReassign } = reassign
+  const { mutate: mutateReassignToNew } = reassignToNew
   const onReassignMessage = useCallback(
-    (messageId: string, toConversationId: string) => {
+    (messageId: string, toConversationId: string | null) => {
       setPendingMessageIds((previous) => new Set(previous).add(messageId))
-      mutate(
+      const clearPending = () =>
+        setPendingMessageIds((previous) => {
+          const next = new Set(previous)
+          next.delete(messageId)
+          return next
+        })
+      if (toConversationId === null) {
+        mutateReassignToNew(
+          { messageIds: [messageId], targetConversationId: null },
+          {
+            onError: () => toast.error("Couldn't move the message to a new conversation"),
+            onSettled: clearPending,
+          }
+        )
+        return
+      }
+      mutateReassign(
         { messageId, toConversationId },
         {
           onError: () => toast.error("Couldn't move the message to that conversation"),
-          onSettled: () => {
-            setPendingMessageIds((previous) => {
-              const next = new Set(previous)
-              next.delete(messageId)
-              return next
-            })
-          },
+          onSettled: clearPending,
         }
       )
     },
-    [mutate]
+    [mutateReassign, mutateReassignToNew]
   )
 
   const context = useMemo(
