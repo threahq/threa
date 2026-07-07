@@ -3,6 +3,10 @@ import { isContinuation, type RenderableMessage } from "@/components/message/mes
 import { AgentSessionEvent } from "@/components/timeline/agent-session-event"
 import { MemoCapturedEvent } from "@/components/timeline/memo-captured-event"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
+import { getSessionId } from "@/components/timeline/session-grouping"
+import { useSocket } from "@/contexts"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useAgentActivity, type MessageAgentActivity } from "@/hooks/use-agent-activity"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import type { BranchGrouping, BranchNode, BranchConversationView } from "@/lib/board/branch-grouping"
 
@@ -310,7 +314,7 @@ export function BoardEventRowItem({ row, workspaceId }: { row: BoardEventRow; wo
     case "session":
       return (
         <div className="px-3 sm:px-4">
-          <AgentSessionEvent events={row.events as StreamEvent[]} />
+          <BoardAgentSessionRow events={row.events as StreamEvent[]} workspaceId={workspaceId} />
         </div>
       )
     case "memo":
@@ -324,4 +328,53 @@ export function BoardEventRowItem({ row, workspaceId }: { row: BoardEventRow; wo
         />
       )
   }
+}
+
+const SESSION_TERMINAL_EVENT_TYPES = new Set<string>([
+  "agent_session:completed",
+  "agent_session:failed",
+  "agent_session:deleted",
+])
+
+/**
+ * An agent-session row on a board card / conversation panel. A terminal session
+ * carries its final step + message counts in its own payload, so it renders the
+ * shared card straight. A still-running session has no counts in its events — they
+ * arrive as ephemeral `agent_session:progress` socket ticks — so it delegates to
+ * {@link BoardRunningSessionRow}, which mounts the same live rail the timeline runs
+ * (`useAgentActivity`, event-list.tsx). Without that subscription the card sits at
+ * "0 steps" until the terminal event lands. Splitting keeps the subscription off
+ * the many past-trace rows a board carries, and confines a progress-tick re-render
+ * to this leaf instead of the whole card.
+ */
+function BoardAgentSessionRow({ events, workspaceId }: { events: StreamEvent[]; workspaceId: string }) {
+  const running = !events.some((event) => SESSION_TERMINAL_EVENT_TYPES.has(event.eventType))
+  if (!running) return <AgentSessionEvent events={events} />
+  return <BoardRunningSessionRow events={events} workspaceId={workspaceId} />
+}
+
+function BoardRunningSessionRow({ events, workspaceId }: { events: StreamEvent[]; workspaceId: string }) {
+  const socket = useSocket()
+  const userId = useWorkspaceUserId(workspaceId)
+  const activity = useAgentActivity(events, socket, workspaceId, userId)
+  const sessionId = events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
+  // `useAgentActivity` keys by trigger message and also carries socket-only
+  // sessions from other rows on the shared socket, so match this row's session by
+  // id — the same lookup event-list.tsx does off the activity map.
+  let live: MessageAgentActivity | undefined
+  if (sessionId != null) {
+    for (const entry of activity.values()) {
+      if (entry.sessionId === sessionId) {
+        live = entry
+        break
+      }
+    }
+  }
+  return (
+    <AgentSessionEvent
+      events={events}
+      liveCounts={live ? { stepCount: live.stepCount, messageCount: live.messageCount } : undefined}
+      liveSubstep={live?.substep ?? null}
+    />
+  )
 }
