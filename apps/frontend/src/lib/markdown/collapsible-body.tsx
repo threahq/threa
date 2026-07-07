@@ -49,16 +49,21 @@ export function CollapsibleBody({
   const { collapsed, canToggle, toggle } = useBlockCollapse({ kind, content, collapsible })
 
   const collapsedMaxHeight = collapsed && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined
-  const bodyExpandable = collapsed && canToggle
 
   return (
     <div className="relative">
       <InsideCollapsibleBlockProvider active={canToggle}>
+        {/* Expansion lives only on the explicit Show more/less button below — the
+            body itself is NOT click-to-toggle. A message body carries clickable
+            mentions/links (their onClick would double-fire with the fold) and, on
+            touch, receives the row's long-press → a synthetic post-press click
+            would toggle the fold. The button is always rendered when foldable, so
+            nothing is stranded. (CodeBlock keeps body-tap because code has neither
+            hazard and defers long-press via data-native-context.) */}
         <div
           ref={bodyRef}
-          className={cn(collapsed && "overflow-hidden", bodyExpandable && "cursor-pointer")}
+          className={cn(collapsed && "overflow-hidden")}
           style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
-          onClick={bodyExpandable ? toggle : undefined}
         >
           {children}
         </div>
