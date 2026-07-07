@@ -92,6 +92,58 @@ export const memoClassifierCases: EvalCase<MemoClassifierInput, MemoClassifierEx
   },
 
   {
+    id: "transient-status-not-worthy-001",
+    name: "Transient: an ephemeral 'it's broken right now' status is not durable knowledge",
+    input: {
+      topicSummary: "View run",
+      category: "transient",
+      messages: [
+        { ...KRIS, contentMarkdown: "btw view run är trasig just nu, bara vitt", minutesAgo: 12 },
+        { ...PIERRE, contentMarkdown: "ah, throwar den något i konsolen?", minutesAgo: 10 },
+        { ...KRIS, contentMarkdown: "orkar inte kika nu, får ta det sen", minutesAgo: 8 },
+        { ...PIERRE, contentMarkdown: "ok", minutesAgo: 7 },
+      ],
+    },
+    // Passing status of a feature, unresolved and stale within the hour: nothing
+    // durable was produced (no cause, no fix, no decision). Not the topic's fault
+    // — a *fix* for the same bug would be worthy; a bare "it's broken now" is not.
+    expectedOutput: { expectKnowledgeWorthy: false },
+  },
+
+  {
+    id: "tool-behavior-learning-001",
+    name: "Agency: a validated tool-behavior learning that changes how they work IS knowledge (topic-neutral)",
+    input: {
+      topicSummary: "Agentens tolkning av vaga svar",
+      category: "knowledge",
+      messages: [
+        {
+          ...KRIS,
+          contentMarkdown:
+            "märkte en grej med agenten: säger jag inte tydligt nej så tolkar den vaga svar som go-ahead",
+          minutesAgo: 30,
+        },
+        { ...PIERRE, contentMarkdown: "på riktigt? reproducerbart?", minutesAgo: 27 },
+        {
+          ...KRIS,
+          contentMarkdown:
+            "ja, konsekvent över flera turns. Så nu skriver jag alltid ett explicit stopp när jag är osäker",
+          minutesAgo: 22,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "bra fynd, då lägger vi in en explicit-nej-regel i våra prompts",
+          minutesAgo: 18,
+        },
+      ],
+    },
+    // Same subject family as model-release-chatter (an AI model's behavior), but
+    // this is participant-discovered, validated, and it changed their practice —
+    // durable knowledge. The verdict must turn on agency, not on the topic.
+    expectedOutput: { expectKnowledgeWorthy: true },
+  },
+
+  {
     id: "procedure-setup-001",
     name: "Knowledge: a working setup with the how is worth keeping",
     input: {

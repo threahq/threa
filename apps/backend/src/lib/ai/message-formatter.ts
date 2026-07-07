@@ -4,6 +4,7 @@ import type { AttachmentWithExtraction } from "../../features/attachments"
 import { UserRepository } from "../../features/workspaces"
 import { PersonaRepository } from "../../features/agents"
 import { escapeXmlAttr } from "../xml"
+import { formatRelativeDate } from "../temporal"
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -24,6 +25,11 @@ export class MessageFormatter {
    *   a model asked to cite source messages (memorizer, suggestion collector) has
    *   real ids to return. Off by default — callers that don't cite stay unchanged.
    *
+   * @param options.relativeTo - Anchor date for a human-readable `age` attribute
+   *   (e.g. `age="2 days ago"`). Absolute `createdAt` requires the model to reason
+   *   about elapsed time; a relative age lets it judge durability directly (is the
+   *   captured state still live, or a stale one-off?). Off by default.
+   *
    * @example
    * const formatted = await messageFormatter.formatMessages(client, workspaceId, messages)
    * // <messages>
@@ -32,21 +38,23 @@ export class MessageFormatter {
    * // </messages>
    *
    * @example
-   * // With ids (memorizer / suggestion collector)
-   * const formatted = await messageFormatter.formatMessages(client, ws, messages, { includeIds: true })
-   * // <message id="msg_123" authorType="user" authorId="user_123" authorName="Alice" createdAt="...">Hello!</message>
+   * // With ids + relative age (memorizer / classifier)
+   * const formatted = await messageFormatter.formatMessages(client, ws, messages, { includeIds: true, relativeTo: new Date() })
+   * // <message id="msg_123" authorType="user" authorId="user_123" authorName="Alice" createdAt="..." age="2 days ago">Hello!</message>
    */
   async formatMessages(
     client: Querier,
     workspaceId: string,
     messages: Message[],
-    options?: { includeIds?: boolean }
+    options?: { includeIds?: boolean; relativeTo?: Date }
   ): Promise<string> {
     if (messages.length === 0) return "<messages></messages>"
 
     const nameById = await this.resolveAuthorNames(client, workspaceId, messages)
 
-    const formatted = messages.map((m) => this.formatSingleMessage(m, nameById, options?.includeIds ?? false))
+    const formatted = messages.map((m) =>
+      this.formatSingleMessage(m, nameById, options?.includeIds ?? false, options?.relativeTo)
+    )
 
     return `<messages>\n${formatted.join("\n")}\n</messages>`
   }
@@ -80,10 +88,19 @@ export class MessageFormatter {
     return nameById
   }
 
-  private formatSingleMessage(m: Message, nameById: Map<string, string>, includeIds: boolean): string {
+  private formatSingleMessage(
+    m: Message,
+    nameById: Map<string, string>,
+    includeIds: boolean,
+    relativeTo?: Date
+  ): string {
     const authorName = nameById.get(m.authorId) ?? "Unknown"
     const idAttr = includeIds ? `id="${m.id}" ` : ""
-    return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(authorName)}" createdAt="${m.createdAt.toISOString()}">${escapeXml(m.contentMarkdown)}</message>`
+    // Keep this attribute shape in sync with the eval fixture renderer
+    // (apps/backend/evals/fixtures/memo.ts formatEvalMessages) so evals exercise
+    // the same prompt the classifier/memorizer see in production (INV-45).
+    const ageAttr = relativeTo ? ` age="${escapeXmlAttr(formatRelativeDate(m.createdAt, relativeTo))}"` : ""
+    return `<message ${idAttr}authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXmlAttr(authorName)}" createdAt="${m.createdAt.toISOString()}"${ageAttr}>${escapeXml(m.contentMarkdown)}</message>`
   }
 
   /**

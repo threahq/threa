@@ -8,6 +8,7 @@ import { ulid } from "ulid"
 import type { Memo } from "../../src/features/memos"
 import type { Conversation } from "../../src/features/conversations"
 import { MemoStatuses, MemoTypes, ConversationStatuses } from "@threa/types"
+import { formatRelativeDate } from "../../src/lib/temporal"
 import type { EvalClassifierMessage } from "../suites/memo-classifier/types"
 
 function escapeXml(text: string): string {
@@ -15,15 +16,18 @@ function escapeXml(text: string): string {
 }
 
 /**
- * Render messages exactly as MessageFormatter.formatMessages does in
- * production (the classifier counts messages by splitting on "<message"), but
- * from eval fixtures instead of DB rows.
+ * Render messages exactly as MessageFormatter.formatMessages does in production
+ * with `{ includeIds: true, relativeTo: now }` (the classifier counts messages by
+ * splitting on "<message"), but from eval fixtures instead of DB rows. Keep the
+ * attribute shape — including the relative `age` — in step with
+ * MessageFormatter.formatSingleMessage so evals exercise the real prompt (INV-45).
  */
 export function formatEvalMessages(messages: EvalClassifierMessage[], now: Date): string {
   const rendered = messages.map((m, i) => {
     const id = m.id ?? `msg_${ulid()}`
     const createdAt = new Date(now.getTime() - (m.minutesAgo ?? (messages.length - i) * 2) * 60_000)
-    return `<message id="${id}" authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXml(m.authorName)}" createdAt="${createdAt.toISOString()}">${escapeXml(m.contentMarkdown)}</message>`
+    const age = escapeXml(formatRelativeDate(createdAt, now))
+    return `<message id="${id}" authorType="${m.authorType}" authorId="${m.authorId}" authorName="${escapeXml(m.authorName)}" createdAt="${createdAt.toISOString()}" age="${age}">${escapeXml(m.contentMarkdown)}</message>`
   })
   return `<messages>\n${rendered.join("\n")}\n</messages>`
 }

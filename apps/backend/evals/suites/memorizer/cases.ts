@@ -63,6 +63,51 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   },
 
   {
+    id: "transient-status-yields-nothing-001",
+    name: "Selectivity: an ephemeral 'broken right now' status produces no memo",
+    input: {
+      category: "transient",
+      messages: [
+        { ...KRIS, contentMarkdown: "btw view run är trasig just nu, bara vitt", minutesAgo: 12 },
+        { ...PIERRE, contentMarkdown: "ah, throwar den något?", minutesAgo: 10 },
+        { ...KRIS, contentMarkdown: "orkar inte kika nu, tar det sen", minutesAgo: 8 },
+        { ...PIERRE, contentMarkdown: "ok", minutesAgo: 7 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 0,
+    },
+  },
+
+  {
+    id: "tool-behavior-learning-captured-001",
+    name: "Extraction: a validated tool-behavior learning that changed their practice is captured",
+    input: {
+      category: "extraction",
+      messages: [
+        {
+          ...KRIS,
+          contentMarkdown:
+            "märkte en grej med agenten: säger jag inte tydligt nej så tolkar den vaga svar som go-ahead",
+          minutesAgo: 30,
+        },
+        { ...PIERRE, contentMarkdown: "reproducerbart?", minutesAgo: 27 },
+        {
+          ...KRIS,
+          contentMarkdown: "ja, konsekvent. Så nu skriver jag alltid ett explicit stopp när jag är osäker",
+          minutesAgo: 22,
+        },
+        { ...PIERRE, contentMarkdown: "bra fynd, vi lägger in en explicit-nej-regel i prompten", minutesAgo: 18 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 2,
+      minMemos: 1,
+      mustCoverAny: [["go-ahead", "vaga", "tolkar", "explicit", "stopp", "nej"]],
+    },
+  },
+
+  {
     id: "revision-all-covered-001",
     name: "Revision: rephrased already-captured facts yield an empty set",
     input: {

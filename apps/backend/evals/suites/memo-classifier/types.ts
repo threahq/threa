@@ -26,7 +26,7 @@ export interface MemoClassifierInput {
   messages: EvalClassifierMessage[]
   /** Active memos already sourced from this conversation (revision path). */
   existingMemos?: EvalExistingMemo[]
-  category?: "chatter" | "news-reactions" | "logistics" | "knowledge" | "mixed" | "revision"
+  category?: "chatter" | "news-reactions" | "logistics" | "knowledge" | "mixed" | "revision" | "transient"
 }
 
 export interface MemoClassifierOutput {
