@@ -400,18 +400,22 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // The composer sits above the virtualized rows inside the same scroller, so
   // virtua must know how much space it occupies (`startMargin`) or its item
   // offsets are off by the composer's height. Measured live — the composer grows
-  // when opened/typed — via a ResizeObserver on its wrapper.
-  const composerRef = useRef<HTMLDivElement>(null)
+  // when opened/typed — via a ResizeObserver on its wrapper. A callback ref into
+  // state (not a plain ref + mount-once effect) re-attaches the observer when the
+  // wrapper node changes: on mobile, opening a conversation panel unmounts the
+  // whole board column and closing it mounts a fresh composer node, and a
+  // mount-once effect would leave the observer bound to the dead node — freezing
+  // `startMargin` so virtua's offsets drift once the new composer resizes.
+  const [composerEl, setComposerEl] = useState<HTMLDivElement | null>(null)
   const [startMargin, setStartMargin] = useState(0)
   useLayoutEffect(() => {
-    const el = composerRef.current
-    if (!el) return
-    const measure = () => setStartMargin(el.offsetHeight)
+    if (!composerEl) return
+    const measure = () => setStartMargin(composerEl.offsetHeight)
     measure()
     const observer = new ResizeObserver(measure)
-    observer.observe(el)
+    observer.observe(composerEl)
     return () => observer.disconnect()
-  }, [])
+  }, [composerEl])
 
   // Changing lens OR scope replaces the feed with a different (often much
   // shorter) subset, so jump to the top pre-paint — otherwise a viewer scrolled
@@ -452,16 +456,18 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   // Where the post lives — the stream's own name (channel #slug, DM peer,
   // scratchpad name), used as the card's locator. The glyph follows the type.
-  function labelsFor(conversation: ConversationWithStaleness): {
-    contextLabel: string
-    streamType: string | undefined
-  } {
-    const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
-    return {
-      contextLabel: streamName ?? "Unknown stream",
-      streamType: streamById.get(conversation.streamId)?.type,
-    }
-  }
+  // Stable per workspace-cache change so the row memo below only recomputes when a
+  // label input actually changes, not on every parent re-render.
+  const labelsFor = useCallback(
+    (conversation: ConversationWithStaleness): { contextLabel: string; streamType: string | undefined } => {
+      const streamName = resolveStreamName(conversation.streamId, { streams, users, dmPeers }, "generic")
+      return {
+        contextLabel: streamName ?? "Unknown stream",
+        streamType: streamById.get(conversation.streamId)?.type,
+      }
+    },
+    [streams, users, dmPeers, streamById]
+  )
 
   // Flat if-chain, not a nested ternary (INV-47 / no-nested-ternary).
   let loadMoreLabel = "Load more"
@@ -496,42 +502,52 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     return rows
   }, [showFeed, sections, hasNextPage])
 
-  const renderFeedRow = (row: FeedRow): ReactNode => {
-    if (row.kind === "header") {
-      return (
-        <h2
-          key={row.key}
-          className={cn(
-            "px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
-            row.first ? "pt-2" : "pt-6"
-          )}
-        >
-          {row.label}
-        </h2>
-      )
-    }
-    if (row.kind === "load-more") {
-      return (
-        <div key={row.key} className="mt-1 flex flex-col items-center gap-1 pb-3">
-          {isFetchNextPageError && <p className="text-xs text-destructive">Couldn't load more.</p>}
-          <Button
-            variant="ghost"
-            onClick={() => fetchNextPage()}
-            disabled={isFetchingNextPage}
-            className="min-h-11 px-6"
-          >
-            {loadMoreLabel}
-          </Button>
-        </div>
-      )
-    }
-    const { contextLabel, streamType } = labelsFor(row.post.conversation)
-    return (
-      <div key={row.key} className="pb-3">
-        <BoardCard workspaceId={workspaceId} post={row.post} contextLabel={contextLabel} streamType={streamType} />
-      </div>
-    )
-  }
+  // Render the flat rows to elements ONCE per real change and hand virtua a stable
+  // array. Deliberately excludes `startMargin`: the composer's ResizeObserver bumps
+  // it on every line-wrap while typing a post, and without this memo that would
+  // rebuild all ~430 elements (each `labelsFor` + a fresh <BoardCard>) and re-render
+  // every mounted card on the exact page this PR de-janks. virtua only mounts the
+  // visible slice, but the element array is built in full regardless.
+  const renderedRows = useMemo<ReactNode[]>(
+    () =>
+      feedRows.map((row) => {
+        if (row.kind === "header") {
+          return (
+            <h2
+              key={row.key}
+              className={cn(
+                "px-1 pb-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground",
+                row.first ? "pt-2" : "pt-6"
+              )}
+            >
+              {row.label}
+            </h2>
+          )
+        }
+        if (row.kind === "load-more") {
+          return (
+            <div key={row.key} className="mt-1 flex flex-col items-center gap-1 pb-3">
+              {isFetchNextPageError && <p className="text-xs text-destructive">Couldn't load more.</p>}
+              <Button
+                variant="ghost"
+                onClick={() => fetchNextPage()}
+                disabled={isFetchingNextPage}
+                className="min-h-11 px-6"
+              >
+                {loadMoreLabel}
+              </Button>
+            </div>
+          )
+        }
+        const { contextLabel, streamType } = labelsFor(row.post.conversation)
+        return (
+          <div key={row.key} className="pb-3">
+            <BoardCard workspaceId={workspaceId} post={row.post} contextLabel={contextLabel} streamType={streamType} />
+          </div>
+        )
+      }),
+    [feedRows, labelsFor, isFetchNextPageError, isFetchingNextPage, fetchNextPage, loadMoreLabel, workspaceId]
+  )
 
   // Non-feed states (error / skeleton / empty) render as a single centered block
   // below the composer — nothing to virtualize.
@@ -640,24 +656,27 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
                 measured height feeds virtua's `startMargin` so item offsets stay
                 aligned. It is not virtualized, so its open/draft state survives a
                 scroll away and back. */}
-            <div ref={composerRef} className="pt-3">
+            <div ref={setComposerEl} className="pt-3">
               <BoardComposer workspaceId={workspaceId} onPosted={handlePosted} />
             </div>
             {showFeed ? (
               <BoardFeedList scrollRef={scrollerRef} startMargin={startMargin}>
-                {feedRows.map(renderFeedRow)}
+                {renderedRows}
               </BoardFeedList>
             ) : (
               stateContent
             )}
           </main>
         </div>
-        {/* The "N new" pill floats over the top of the scroller — outside it, so it
-            can't be swallowed as a virtualized row — and stays reachable while
-            cards accumulate behind it. Clicking scrolls to the top and commits the
-            buffered order (revealNew). Transparent row; only the button takes taps. */}
+        {/* The "N new" pill floats over the scroller — outside it, so it can't be
+            swallowed as a virtualized row — and stays reachable while cards
+            accumulate behind it. Anchored just BELOW the composer (`top` = its
+            measured height) so it never overlaps the compose box at rest; the
+            composer scrolls under it once the viewer scrolls down. Clicking scrolls
+            to the top and commits (revealNew). Transparent row; only the button
+            takes taps. */}
         {newCount > 0 && (
-          <div className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center">
+          <div className="pointer-events-none absolute inset-x-0 z-10 flex justify-center" style={{ top: startMargin }}>
             <Button
               size="sm"
               onClick={revealNew}
