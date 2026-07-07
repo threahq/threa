@@ -244,9 +244,16 @@ export async function startServer(): Promise<ServerInstance> {
   await runMigrations(pool)
 
   // Pre-warm before workers start: 15+ workers connecting at once can overwhelm
-  // an empty pool and cause phantom connections.
-  logger.info("Pre-warming connection pool...")
-  await warmPool(pools.main, 15)
+  // an empty pool and cause phantom connections. Env-configurable (clamped to
+  // the pool max so a misconfig can't wedge boot) so shared-DB PR deploys, which
+  // see no real startup herd, warm just a couple instead of grabbing 15 at once
+  // and colliding on the shared server's connection cap.
+  const warmCount = Math.min(
+    Number(process.env.DATABASE_WARM_POOL_COUNT) || 15,
+    Number(process.env.DATABASE_POOL_MAX) || 30
+  )
+  logger.info({ warmCount }, "Pre-warming connection pool...")
+  await warmPool(pools.main, warmCount)
   logger.info("Connection pool pre-warmed")
 
   const workosOrgService = config.useStubAuth ? new StubWorkosOrgService() : new WorkosOrgServiceImpl(config.workos)

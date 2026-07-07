@@ -86,23 +86,46 @@ function toInternalDbUrl(publicUrl: string, dbName: string): string {
   return `postgresql://${u.username}:${u.password}@postgres.railway.internal:5432/${dbName}`
 }
 
+const PSQL_MAX_ATTEMPTS = 5
+
+// The shared staging Postgres is connection-capped, so "too many clients
+// already" spikes whenever several PR deploys overlap. These are transient —
+// riding them out with backoff turns a hard deploy failure into a short wait,
+// which is the whole point of this change (the deploy used to abort here and
+// only succeed on a manual re-run once slots freed up).
+function isTransientPsqlError(stderr: string): boolean {
+  return /too many clients already|the database system is starting up|could not connect|connection reset|server closed the connection|connection refused/i.test(
+    stderr
+  )
+}
+
+async function execPsql(url: string, sql: string): Promise<string> {
+  let lastStderr = ""
+  for (let attempt = 1; attempt <= PSQL_MAX_ATTEMPTS; attempt++) {
+    const result = await $`psql ${url} -tAc ${sql}`.quiet().nothrow()
+    if (result.exitCode === 0) return result.stdout.toString().trim()
+
+    lastStderr = result.stderr.toString()
+    if (attempt < PSQL_MAX_ATTEMPTS && isTransientPsqlError(lastStderr)) {
+      const backoffMs = 1000 * 2 ** (attempt - 1)
+      console.log(
+        `psql transient failure (attempt ${attempt}/${PSQL_MAX_ATTEMPTS}), retrying in ${backoffMs}ms: ${lastStderr.trim()}`
+      )
+      await Bun.sleep(backoffMs)
+      continue
+    }
+    throw new Error(`psql failed: ${lastStderr}`)
+  }
+  throw new Error(`psql failed after ${PSQL_MAX_ATTEMPTS} attempts: ${lastStderr}`)
+}
+
 async function runPsql(db: string, sql: string): Promise<string> {
   const url = STAGING_DATABASE_URL.replace(/\/([^/?]+)(\?.*)?$/, `/${db}$2`)
-  const result = await $`psql ${url} -tAc ${sql}`.quiet().nothrow()
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString()
-    throw new Error(`psql failed: ${stderr}`)
-  }
-  return result.stdout.toString().trim()
+  return execPsql(url, sql)
 }
 
 async function runPsqlOnDefault(sql: string): Promise<string> {
-  const result = await $`psql ${STAGING_DATABASE_URL} -tAc ${sql}`.quiet().nothrow()
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.toString()
-    throw new Error(`psql failed: ${stderr}`)
-  }
-  return result.stdout.toString().trim()
+  return execPsql(STAGING_DATABASE_URL, sql)
 }
 
 async function databaseExists(dbName: string): Promise<boolean> {
@@ -160,14 +183,17 @@ async function seedPreExistingMigrations(prDb: string, sourceDb: string, migrati
     return
   }
 
-  let seeded = 0
-  for (const name of appliedNames) {
-    const result = await runPsql(
-      prDb,
-      `INSERT INTO umzug_migrations (name) VALUES ('${name}') ON CONFLICT DO NOTHING RETURNING name`
-    )
-    if (result) seeded++
-  }
+  // One batched INSERT, not one psql connection per migration file. The old
+  // per-file loop opened dozens of short-lived connections on every deploy
+  // against a connection-capped shared server. Escape single quotes defensively
+  // — migration filenames don't contain them today, but the batch must not be
+  // injectable by a stray name.
+  const valuesList = appliedNames.map((name) => `('${name.replace(/'/g, "''")}')`).join(", ")
+  const result = await runPsql(
+    prDb,
+    `INSERT INTO umzug_migrations (name) VALUES ${valuesList} ON CONFLICT DO NOTHING RETURNING name`
+  )
+  const seeded = result ? result.split("\n").filter(Boolean).length : 0
 
   if (seeded > 0) {
     console.log(`Seeded ${seeded} pre-existing migration entries into '${prDb}' umzug_migrations`)
@@ -386,6 +412,18 @@ async function createRailwayService(): Promise<string> {
     REGION: regionName,
     CORS_ALLOWED_ORIGINS: STAGING_CORS_ORIGINS,
     FAST_SHUTDOWN: "true",
+    // Shrink the per-instance connection footprint. Every PR backend shares one
+    // staging Postgres, so production sizing (main 30 / listen 12 / realtime 8
+    // + 15 warmed at boot ≈ 50 per instance) exhausts the shared server's
+    // max_connections as open PRs accumulate — which is what tips deploys into
+    // "too many clients already". At staging traffic each backend holds ~2
+    // LISTEN connections (outbox dispatcher + enclave nudge) and little
+    // transactional load, so these caps are ample while cutting the ceiling to
+    // ~16 and the boot burst to 2.
+    DATABASE_POOL_MAX: "8",
+    DATABASE_LISTEN_POOL_MAX: "4",
+    DATABASE_REALTIME_POOL_MAX: "4",
+    DATABASE_WARM_POOL_COUNT: "2",
   }
 
   await railwayGql(
