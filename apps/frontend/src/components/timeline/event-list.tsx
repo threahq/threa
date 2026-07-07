@@ -54,6 +54,13 @@ interface EventListProps {
 export interface BatchTimelineState {
   /** Whether batch-selection mode is active. */
   enabled: boolean
+  /**
+   * Whether this batch uses the drag-onto-a-target gesture (move-to-thread). When
+   * false (split-conversation), rows must NOT get `touch-action: none` — the user
+   * scrolls the timeline by touch to reach far-apart messages, and selection is a
+   * plain tap toggle, so suppressing native pan would trap touch users.
+   */
+  dragSelect: boolean
   /** Message IDs currently selected for the batch operation. */
   selectedMessageIds: Set<string>
   /** Message IDs that are not valid drop targets during a drag. */
@@ -700,6 +707,10 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
           overlay={ctx.conversationOverlay}
           annotation={item.conversationRow}
           messageId={overlayMessageId}
+          // Split-select keeps the overlay mounted for its coloring, but the row
+          // is a selection toggle then — hide the single-message correction swatch
+          // so it can't steal the tap (it renders outside the row's `inert` slot).
+          selectionActive={ctx.batch?.enabled ?? false}
         >
           {eventNode}
         </ConversationOverlayRow>

@@ -90,6 +90,16 @@ const splitThreadSchema = z.object({
   threadStreamId: z.string().min(1),
 })
 
+// Batch reassignment of hand-picked messages to another conversation. A present
+// `targetConversationId` reassigns into that existing conversation; absent/null
+// mints a new one (the "split into its own topic" gesture). Capped at 100, like
+// the message-move flow, so a hand-built request can't splice an unbounded set.
+const reassignMessagesSchema = z.object({
+  streamId: z.string().min(1),
+  messageIds: z.array(z.string().min(1)).min(1).max(100),
+  targetConversationId: z.string().min(1).nullish(),
+})
+
 const markReadSchema = z.object({
   throughMessageId: z.string().min(1),
 })
@@ -290,6 +300,36 @@ export function createConversationHandlers({
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
       const result = await conversationService.reassignMessage({ workspaceId, conversationId, messageId, userId })
+      res.json(result)
+    },
+
+    /**
+     * User correction from the timeline conversation overlay: reassign a set of
+     * selected messages to another conversation — an existing one
+     * (`targetConversationId`) or a freshly minted one (absent → the split
+     * gesture). Access gates on the source stream (the messages' home, and the
+     * mint's anchor); the service pins an existing target to that same stream.
+     */
+    async reassignMessages(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const { streamId, messageIds, targetConversationId } = validateRequest(reassignMessagesSchema, req.body)
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+
+      const target = targetConversationId
+        ? { kind: "existing" as const, conversationId: targetConversationId }
+        : { kind: "new" as const }
+
+      const result = await conversationService.reassignMessagesToConversation({
+        workspaceId,
+        streamId,
+        messageIds,
+        target,
+        actorUserId: userId,
+      })
       res.json(result)
     },
 

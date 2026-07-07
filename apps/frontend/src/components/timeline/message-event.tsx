@@ -743,7 +743,10 @@ function MessageLayout({
             "before:content-[''] before:absolute before:-top-4 before:-bottom-4 before:left-0 before:right-0 before:bg-primary/[0.04] before:-z-10",
           isHighlighted && "animate-highlight-flash",
           isNew && !isHighlighted && "animate-new-message-fade",
-          batchEnabled && "cursor-pointer select-none touch-none",
+          batchEnabled && "cursor-pointer select-none",
+          // `touch-none` only for the drag-to-target gesture (move-to-thread);
+          // split mode is tap-only and must leave native touch scrolling intact.
+          batchEnabled && batch?.dragSelect && "touch-none",
           batchEnabled && isSelected && "bg-primary/[0.07] ring-1 ring-primary/45 ring-inset",
           batchEnabled && isInvalidTarget && "opacity-40 grayscale",
           batchEnabled && isHoveredTarget && "ring-2 ring-primary/60 ring-inset"
@@ -1213,7 +1216,15 @@ function SentMessageEvent({
       // and on archived streams to match the stream-header menu's gating.
       onMoveToThread:
         !batch?.enabled && !isThreadParentProp && !currentStream?.archivedAt
-          ? () => dispatchStartBatchSelect(streamId, payload.messageId)
+          ? () => dispatchStartBatchSelect(streamId, "moveToThread", payload.messageId)
+          : undefined,
+      // Multi-select entry into the conversation-split flow: reassign several
+      // messages' conversation membership at once. Only meaningful with the
+      // overlay on (it needs the conversation list to pick a target) and hidden
+      // during batch mode itself.
+      onSplitConversation:
+        conversationOverlayRow && !batch?.enabled && !currentStream?.archivedAt
+          ? () => dispatchStartBatchSelect(streamId, "splitConversation", payload.messageId)
           : undefined,
       // Destination-side discovery for moved messages. The drawer only
       // renders once the tombstone hydrates from IDB, so gate the menu

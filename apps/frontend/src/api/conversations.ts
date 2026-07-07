@@ -171,6 +171,21 @@ export const conversationsApi = {
   },
 
   /**
+   * User correction: reassign a set of selected messages to another conversation.
+   * A `targetConversationId` reassigns into that existing conversation; omit it to
+   * mint a new one (the split gesture). The backend applies every move in one
+   * transaction and records each as boundary-extraction feedback; the response
+   * carries the destination and every source that lost messages, so the overlay
+   * recolors immediately (the follow-up socket events are idempotent overwrites).
+   */
+  async reassignMessages(
+    workspaceId: string,
+    body: { streamId: string; messageIds: string[]; targetConversationId?: string | null }
+  ): Promise<{ conversation: ConversationWithStaleness; sourceConversations: ConversationWithStaleness[] }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/reassign-messages`, body)
+  },
+
+  /**
    * User edit of a conversation from the board card / panel: rename the topic
    * (`topicSummary`) and/or mark it resolved/reopened (`status`). At least one
    * field required; `status` is limited to `active`/`resolved`.
