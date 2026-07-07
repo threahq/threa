@@ -55,6 +55,7 @@ export function ConversationActionsMenu({
   isHidden = false,
   triggerClassName,
 }: ConversationActionsMenuProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
   const update = useUpdateConversation(workspaceId)
@@ -64,7 +65,7 @@ export function ConversationActionsMenu({
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
@@ -78,9 +79,12 @@ export function ConversationActionsMenu({
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             onSelect={(event) => {
-              // Defer the dialog until the menu has closed so Radix returns focus
-              // to the trigger before the dialog claims it.
+              // Close the menu explicitly and open the dialog. `preventDefault`
+              // stops Radix's own select-close (which returns focus to the
+              // trigger and can race the dialog); we drive the close via state so
+              // the menu can't linger open behind a dialog that doesn't steal focus.
               event.preventDefault()
+              setMenuOpen(false)
               setRenameOpen(true)
             }}
           >
@@ -101,8 +105,8 @@ export function ConversationActionsMenu({
           {streamId && (
             <DropdownMenuItem
               onSelect={(event) => {
-                // Defer past the menu close so focus returns to the trigger first.
                 event.preventDefault()
+                setMenuOpen(false)
                 setSplitOpen(true)
               }}
             >

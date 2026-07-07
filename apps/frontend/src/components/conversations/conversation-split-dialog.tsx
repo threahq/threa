@@ -83,14 +83,14 @@ export function ConversationSplitDialog({
   let body: ReactNode
   if (propose.isPending) {
     body = (
-      <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+      <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground" role="status">
         <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
         Analyzing the conversation…
       </div>
     )
   } else if (propose.isError) {
     body = (
-      <div className="flex flex-col items-start gap-3 py-6 text-sm">
+      <div className="flex flex-col items-start gap-3 py-2 text-sm">
         <p className="text-muted-foreground">Couldn&apos;t analyze this conversation.</p>
         <Button variant="outline" size="sm" onClick={() => conversationId && mutatePropose(conversationId)}>
           Try again
@@ -98,14 +98,14 @@ export function ConversationSplitDialog({
       </div>
     )
   } else if (!canSplit) {
-    body = <p className="py-8 text-sm text-muted-foreground">This conversation looks focused — no split suggested.</p>
+    body = <p className="py-4 text-sm text-muted-foreground">This conversation looks focused — no split suggested.</p>
   } else {
     body = (
-      <div className="flex flex-col gap-2 py-1">
+      <div className="flex flex-col gap-3">
         <p className="text-xs text-muted-foreground">
           The first group stays in this conversation — it takes on that title. The rest become new conversations.
         </p>
-        <ul className="flex flex-col gap-2">
+        <ul className="-mx-1 flex max-h-[45vh] flex-col gap-2 overflow-y-auto px-1 scrollbar-thin">
           {proposal!.groups.map((group, index) => (
             <li key={index} className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
               <div className="flex items-center justify-between gap-2">
@@ -129,8 +129,8 @@ export function ConversationSplitDialog({
 
   return (
     <ResponsiveDialog open={open} onOpenChange={handleOpenChange} disableSnapPoints>
-      <ResponsiveDialogContent className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-lg" desktopClassName="pt-6">
-        <ResponsiveDialogHeader className="px-4 pb-3 sm:px-6">
+      <ResponsiveDialogContent>
+        <ResponsiveDialogHeader>
           <ResponsiveDialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-muted-foreground" aria-hidden />
             Split with AI
@@ -140,9 +140,9 @@ export function ConversationSplitDialog({
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody className="min-h-24 py-2">{body}</ResponsiveDialogBody>
+        <ResponsiveDialogBody>{body}</ResponsiveDialogBody>
 
-        <ResponsiveDialogFooter className="gap-2 px-4 pb-4 pt-3 sm:px-6">
+        <ResponsiveDialogFooter>
           <Button variant="ghost" onClick={() => handleOpenChange(false)} disabled={apply.isPending}>
             {canSplit ? "Cancel" : "Close"}
           </Button>
