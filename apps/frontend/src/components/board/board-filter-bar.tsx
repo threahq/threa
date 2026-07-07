@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
 import {
+  Archive,
   Ban,
   Bell,
   BellOff,
@@ -130,6 +131,10 @@ interface BoardFilterBarProps {
   mutedStreamIds?: ReadonlySet<string>
   /** Toggle a stream's board mute; the page owns the write. */
   onToggleMute?: (streamId: string, mute: boolean) => void
+  /** Whether archived cards are currently included (`?archived=true`). */
+  showArchived: boolean
+  /** Toggle the archived opt-in; the page owns the URL write. */
+  onToggleArchived: (next: boolean) => void
 }
 
 /**
@@ -165,6 +170,8 @@ export function BoardFilterBar({
   onLabelFilterChange,
   mutedStreamIds,
   onToggleMute,
+  showArchived,
+  onToggleArchived,
 }: BoardFilterBarProps) {
   const location = useLocation()
   const streams = useWorkspaceStreams(workspaceId)
@@ -235,6 +242,18 @@ export function BoardFilterBar({
           onLabelFilterChange={onLabelFilterChange}
         />
       )}
+      <Button
+        type="button"
+        variant={showArchived ? "secondary" : "outline"}
+        size="sm"
+        onClick={() => onToggleArchived(!showArchived)}
+        aria-pressed={showArchived}
+        className="h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs font-normal"
+        aria-label={showArchived ? "Hide archived conversations" : "Show archived conversations"}
+      >
+        <Archive className="h-3.5 w-3.5" />
+        Archived
+      </Button>
       {scopeStreamTypes.map((type) => (
         <FilterChip
           key={`is-${type}`}

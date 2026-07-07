@@ -74,6 +74,7 @@ export const conversationKeys = {
       excludeTypes?: string[]
       labels?: string[]
       excludeLabels?: string[]
+      showArchived?: boolean
       limit?: number
     }
   ) => [...conversationKeys.all, "workspaceList", workspaceId, options ?? {}] as const,
@@ -150,11 +151,12 @@ export function useWorkspaceConversations(
     excludeTypes?: BoardScopeStreamType[]
     labels?: string[]
     excludeLabels?: string[]
+    showArchived?: boolean
     limit?: number
   }
 ) {
   const conversationService = useConversationService()
-  const { status, lens, limit } = options ?? {}
+  const { status, lens, limit, showArchived } = options ?? {}
   // Canonicalize the scopes for the query key: order-insensitive, and re-split
   // so the key holds stable primitive-derived arrays rather than the caller's
   // per-render array identities.
@@ -177,6 +179,7 @@ export function useWorkspaceConversations(
       excludeTypes,
       labels,
       excludeLabels,
+      showArchived,
       limit,
     }),
     queryFn: ({ pageParam }) =>
@@ -189,6 +192,7 @@ export function useWorkspaceConversations(
         excludeTypes,
         labels,
         excludeLabels,
+        showArchived,
         limit,
         cursor: pageParam,
       }),

@@ -261,6 +261,17 @@ describe("Conversation Handlers", () => {
       })
     })
 
+    test("threads showArchived: true through when ?archived=true", async () => {
+      await handlers.listByWorkspace(mockReq({ query: { archived: "true" } }), mockRes())
+      expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", expect.objectContaining({ showArchived: true }))
+    })
+
+    test("rejects a non-boolean ?archived with a 400", async () => {
+      await expect(handlers.listByWorkspace(mockReq({ query: { archived: "yes" } }), mockRes())).rejects.toMatchObject({
+        status: 400,
+      })
+    })
+
     test("passes cursor: undefined when none is supplied", async () => {
       await handlers.listByWorkspace(mockReq({ query: {} }), mockRes())
       expect(mockListByWorkspace).toHaveBeenCalledWith("ws_1", "usr_1", {

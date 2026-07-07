@@ -773,6 +773,18 @@ export interface BoardPost {
    * post) until a fetch reseeds it.
    */
   rootStreamType?: BoardScopeStreamType
+  /**
+   * Whether that effective root is archived. Like {@link hasCapturedMemo} and
+   * {@link isMine} this is a per-fetch board-level flag (not on the conversation
+   * aggregate the `conversation:*` events carry), so it's only as fresh as the
+   * last board fetch. The board hides archived cards by default and only seeds
+   * them when the viewer opts in (`?archived=true`), so this pins exactly the
+   * cards the client must drop again when the viewer toggles archived back off —
+   * a per-card signal that survives in IDB, unlike a workspace-streams lookup
+   * (the bootstrap seeds active streams only). Optional because cached rows
+   * predate the field; the client fails OPEN (surfaces the post) until reseed.
+   */
+  rootArchived?: boolean
 }
 
 /**

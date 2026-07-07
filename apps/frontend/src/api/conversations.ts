@@ -30,6 +30,8 @@ export interface ListWorkspaceConversationsParams extends ListConversationsParam
   labels?: string[]
   /** Label veto. */
   excludeLabels?: string[]
+  /** Include conversations under archived streams; omitted on the wire when false. */
+  showArchived?: boolean
   /** Opaque keyset cursor from a prior page's `nextCursor`. */
   cursor?: string
 }
@@ -62,6 +64,8 @@ export const conversationsApi = {
     if (params?.labels && params.labels.length > 0) searchParams.set("labels", params.labels.join(","))
     if (params?.excludeLabels && params.excludeLabels.length > 0)
       searchParams.set("excludeLabels", params.excludeLabels.join(","))
+    // Hide-archived is the server default — only the opt-in rides the wire.
+    if (params?.showArchived) searchParams.set("archived", "true")
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     if (params?.cursor) searchParams.set("cursor", params.cursor)
     const query = searchParams.toString()

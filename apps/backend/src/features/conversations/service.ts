@@ -45,6 +45,8 @@ export interface ListWorkspaceConversationsOptions extends ListConversationsOpti
   scopeLabelIds?: string[]
   /** Label veto: drop conversations whose anchor/root carries one of the viewer's labels. */
   excludeLabelIds?: string[]
+  /** Include conversations under archived streams; defaults to hiding them. */
+  showArchived?: boolean
   /** Keyset cursor from a prior page's `nextCursor` (the last row's activity + id). */
   cursor?: { lastActivityAt: string; id: string }
 }
@@ -92,6 +94,9 @@ export interface BoardPost {
   rootStreamId: string
   /** That root's type (never `thread`) — the client's stream-type filter matches on this. */
   rootStreamType: BoardScopeStreamType | undefined
+  /** Whether that effective root is archived — the client drops archived cards
+   *  seeded under `?archived=true` once the viewer toggles archived back off. */
+  rootArchived: boolean
 }
 
 export interface ReassignMessageParams {
@@ -329,6 +334,11 @@ export class ConversationService {
         // The root row's type is one of the scope grains by construction (a root
         // is never a thread); the cast narrows the broader StreamType.
         rootStreamType: streamById.get(rootStreamId)?.type as BoardScopeStreamType | undefined,
+        // Archived state of the effective root — matches `boardArchivedExcludeSql`
+        // (archiving marks only the root row, INV-62). Only ever true for a card
+        // seeded under `?archived=true`; the client uses it to re-hide the card
+        // when archived is toggled back off. Missing root row (deleted) → false.
+        rootArchived: streamById.get(rootStreamId)?.archivedAt != null,
       }
     })
 

@@ -42,6 +42,8 @@ import {
   BOARD_EXCLUDE_SCOPE_PARAM,
   BOARD_EXCLUDE_TYPE_PARAM,
   BOARD_EXCLUDE_LABEL_PARAM,
+  BOARD_ARCHIVED_PARAM,
+  BOARD_ARCHIVED_ON,
   boardHomeSearch,
   parseIdListParam,
   parseTypeListParam,
@@ -205,6 +207,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     () => parseIdListParam(excludeLabelParam).slice(0, MAX_BOARD_SCOPE_LABELS),
     [excludeLabelParam]
   )
+  // Archived is a broadening opt-in (`?archived=true`), not an id-list narrowing.
+  const showArchived = searchParams.get(BOARD_ARCHIVED_PARAM) === BOARD_ARCHIVED_ON
   const scopeKey = useMemo(() => [...scopeStreamIds].sort().join(","), [scopeStreamIds])
   const excludeScopeKey = useMemo(() => [...excludeStreamIds].sort().join(","), [excludeStreamIds])
   const typeKey = useMemo(() => [...scopeStreamTypes].sort().join(","), [scopeStreamTypes])
@@ -235,6 +239,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeTypes: excludeStreamTypes.length > 0 ? { key: excludeTypeKey, ids: new Set(excludeStreamTypes) } : null,
       labels: labelStreamIds ? { key: labelKey, streamIds: labelStreamIds } : null,
       excludeLabels: excludeLabelStreamIds ? { key: excludeLabelKey, streamIds: excludeLabelStreamIds } : null,
+      showArchived,
     }),
     [
       lens,
@@ -250,6 +255,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       labelStreamIds,
       excludeLabelKey,
       excludeLabelStreamIds,
+      showArchived,
     ]
   )
   // One URL write per toggle: a dimension's include/exclude params are rewritten
@@ -282,6 +288,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       [BOARD_LABEL_PARAM, include],
       [BOARD_EXCLUDE_LABEL_PARAM, exclude],
     ])
+  const setShowArchived = (next: boolean) => setParamLists([[BOARD_ARCHIVED_PARAM, next ? [BOARD_ARCHIVED_ON] : []]])
   const {
     containerRef,
     panelWidth,
@@ -309,6 +316,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       excludeTypes: excludeStreamTypes,
       labels: scopeLabelIds,
       excludeLabels: excludeLabelIds,
+      showArchived,
       limit: 50,
     })
 
@@ -392,7 +400,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // wall who taps Decisions lands past the end of a one-card list.
   useBoardScrollAnchor(
     viewport,
-    `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}`
+    `${lens}|${scopeKey}|${typeKey}|${excludeScopeKey}|${excludeTypeKey}|${labelKey}|${excludeLabelKey}|${showArchived ? "arch" : ""}`
   )
 
   const revealNew = () => {
@@ -567,6 +575,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         onLabelFilterChange={setLabelFilter}
         mutedStreamIds={muted}
         onToggleMute={(streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId))}
+        showArchived={showArchived}
+        onToggleArchived={setShowArchived}
       />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} new ${newCount === 1 ? "post" : "posts"} available` : ""}

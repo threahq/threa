@@ -91,6 +91,15 @@ export interface BoardViewFilter {
   labels: BoardLabelScope | null
   /** Label veto, or null. */
   excludeLabels: BoardLabelScope | null
+  /**
+   * Viewer opted into archived cards (`?archived=true`). A view SELECTION like
+   * lens/scope — it rides the view-reset key, so toggling it re-commits the feed
+   * (archived cards interleave by activity, and toggling back off re-hides them)
+   * instead of silently appending them below the fold. Gates against each post's
+   * own `rootArchived` verdict (the server's per-card archived flag), so it needs
+   * no workspace-streams lookup — the bootstrap seeds active streams only.
+   */
+  showArchived: boolean
 }
 
 /**
@@ -289,21 +298,26 @@ export function useStableBoardView(
   filter: BoardViewFilter,
   exclusions: BoardExclusionState = NO_EXCLUSIONS
 ): StableBoardView {
-  const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels } = filter
+  const { lens, scope, types, excludeStreams, excludeTypes, labels, excludeLabels, showArchived } = filter
   const { hidden, muted, muteActive } = exclusions
   const rawLive = useBoardPosts(workspaceId)
 
   // A hidden card is excluded until it revives (activity passes its `hiddenAt`
   // watermark — mirrors the server `<=` boundary); a muted stream's cards are
-  // excluded unless the viewer named explicit streams via `?in=` (`muteActive`).
+  // excluded unless the viewer named explicit streams via `?in=` (`muteActive`);
+  // a card whose effective root is archived is excluded unless the viewer opted
+  // into `showArchived` (`post.rootArchived` is the server's per-card verdict,
+  // the read-side twin of `boardArchivedExcludeSql` — a card seeded under
+  // `?archived=true` re-hides here the instant archived is toggled back off).
   const isExcluded = useCallback(
     (post: CachedBoardPost): boolean => {
       const hiddenAt = hidden.get(post.conversation.id)
       if (hiddenAt !== undefined && postMs(post) <= hiddenAt) return true
       if (muteActive && muted.has(post.rootStreamId ?? post.conversation.streamId)) return true
+      if (!showArchived && post.rootArchived === true) return true
       return false
     },
-    [hidden, muted, muteActive]
+    [hidden, muted, muteActive, showArchived]
   )
 
   // The branch relationship for one-card-per-root suppression (below) derives
@@ -387,7 +401,7 @@ export function useStableBoardView(
   // from EMPTY_VIEW and commit its own feed wholesale.
   // Label keys are the SELECTED ids, not the resolved streams — a live
   // re-resolution (an assignment changing) must not reset the frozen view.
-  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}`
+  const viewKey = `${workspaceId}|${lens}|${scope?.key ?? ""}|${types?.key ?? ""}|${excludeStreams?.key ?? ""}|${excludeTypes?.key ?? ""}|${labels?.key ?? ""}|${excludeLabels?.key ?? ""}|${showArchived ? "arch" : ""}`
   const viewKeyRef = useRef(viewKey)
   let committedInput = committed
   let bufferedInput = buffered
